@@ -113,15 +113,26 @@ class ImplicitDomain(
         representations. This method estimates the number of points by computing
         the volume and assuming a typical mesh spacing of 0.1.
 
+        The result is **cached on first call** (Issue #1037): ``compute_volume``
+        uses Monte-Carlo sampling without a fixed seed, so subsequent calls would
+        return slightly different values. Cached returns guarantee the property
+        is deterministic within one process — required by callers like
+        ``MFGComponents._setup_custom_initial_density`` that pre-allocate based
+        on the value and then iterate the spatial grid.
+
         Note: For actual discretization, use sample_uniform() or meshfree methods.
         """
+        # Issue #1037: cache to avoid MC-volume non-determinism across calls
+        if self._num_spatial_points_cached is not None:
+            return self._num_spatial_points_cached
+
         # Estimate number of points based on volume
         # Assume typical mesh spacing h = 0.1
         try:
             volume = self.compute_volume(n_monte_carlo=10000)
             h = 0.1  # Typical mesh spacing
             n_points = int(volume / (h**self.dimension))
-            return max(n_points, 100)  # Minimum of 100 points
+            result = max(n_points, 100)  # Minimum of 100 points
         except (ValueError, RuntimeError) as e:
             # Issue #547: Volume computation can fail for complex implicit domains
             logger.warning(
@@ -134,7 +145,10 @@ class ImplicitDomain(
             bounds = self.get_bounding_box()
             bbox_volume = np.prod(bounds[:, 1] - bounds[:, 0])
             h = 0.1
-            return max(int(bbox_volume / (h**self.dimension)), 100)
+            result = max(int(bbox_volume / (h**self.dimension)), 100)
+
+        self._num_spatial_points_cached = result
+        return result
 
     def get_spatial_grid(self) -> NDArray[np.float64]:
         """
@@ -826,6 +840,10 @@ class ImplicitDomain(
     # =========================================================================
 
     _regions_dict: dict | None = None  # Lazy-initialized by _regions property
+
+    # Issue #1037: cache for num_spatial_points to prevent MC-volume non-determinism
+    # across calls within one process. None until first computation.
+    _num_spatial_points_cached: int | None = None
 
     @property
     def _regions(self) -> dict:
