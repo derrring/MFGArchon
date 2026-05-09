@@ -26,6 +26,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HJBSemiLagrangianSolver._stochastic_sl_step_nd` companion fixes**
+  (Issue #1054): apply the analogous trio of correctness fixes to the nD
+  stochastic SL path:
+  1. **Monotone interpolation**: when `interpolation_method ∈ {"cubic",
+     "quintic"}`, route through `RegularGridInterpolator(method="pchip")`
+     (tensor-product monotone Hermite, scipy ≥ 1.10) instead of the
+     non-monotone tensor-product cubic. Mirrors 1D Issue #1033.
+  2. **Per-axis BC handling on Brownian feet**: apply iterated mirror
+     reflection (`reflect`) or modular wrap (`wrap`) per axis to
+     `y_plus`/`y_minus` before interpolation. Previously the nD path
+     silently extrapolated via `bounds_error=False, fill_value=None`,
+     producing values dependent on the nearest interior cell rather than
+     respecting the SDE's reflection/periodicity. Mirrors 1D Issue #1048.
+  3. **Vectorized batch interpolation**: replace per-(node, axis)
+     `_interpolate_value` calls (which rebuilt the interpolator each call)
+     with a single `RegularGridInterpolator` built once and queried on the
+     full `(2*d*N_total, d)` departure batch. Linear interpolation
+     continues to work alongside stochastic dispatch (Issue #1049 carries
+     through).
+
 - **`HJBSemiLagrangianSolver._stochastic_sl_step_1d` trio of fixes** (Issues
   #1033, #1048, #1049):
   1. **#1033**: replace `scipy.interpolate.CubicSpline` (non-monotone, blew up
