@@ -1925,8 +1925,27 @@ class FPParticleSolver(BaseFPSolver):
         else:
             sigma_sde_constant = None
 
-        # Initialize particles - either from pre-sampled or from density grid
-        current_particles = np.zeros((Nt + 1, self.num_particles, dimension))
+        # Issue #1042: detect segment-aware BC (e.g. Dirichlet absorbing exits) so we
+        # can route through the absorbing-particle path instead of the uniform-topology
+        # path. The grid-drift solver (`_solve_fp_system_grid_drift`) does this; the
+        # callable-drift path was bypassing it.
+        use_segment_aware_bc = self._needs_segment_aware_bc()
+        if use_segment_aware_bc:
+            # Reset exit-flux tracking for this solve (mirrors grid-drift path)
+            self.exit_flux_history = []
+            self.exit_positions_history = []
+            self.total_absorbed = 0
+
+        # Initialize particles - either from pre-sampled or from density grid.
+        # Storage choice: segment-aware BC may absorb particles → variable count per
+        # step → list. Uniform BC preserves count → fixed (Nt+1, N, d) array.
+        if use_segment_aware_bc:
+            particles_list: list[np.ndarray] | None = [None] * (Nt + 1)  # type: ignore[list-item]
+            current_particles = None
+        else:
+            particles_list = None
+            current_particles = np.zeros((Nt + 1, self.num_particles, dimension))
+
         if initial_particles is not None:
             # Meshfree initialization: use pre-sampled particles directly
             if initial_particles.shape[0] != self.num_particles:
@@ -1935,10 +1954,15 @@ class FPParticleSolver(BaseFPSolver):
                 )
             if initial_particles.shape[1] != dimension:
                 raise ValueError(f"initial_particles has dimension {initial_particles.shape[1]}, expected {dimension}")
-            current_particles[0] = initial_particles
+            init_p = initial_particles
         else:
             # Standard: sample from grid density
-            current_particles[0] = self._sample_particles_from_density_nd(M_initial, coordinates, self.num_particles)
+            init_p = self._sample_particles_from_density_nd(M_initial, coordinates, self.num_particles)
+
+        if use_segment_aware_bc:
+            particles_list[0] = init_p
+        else:
+            current_particles[0] = init_p
 
         # Allocate density array (only used if density_mode != "query_only")
         M_density_on_grid = np.zeros((Nt + 1, *grid_shape))
@@ -1960,13 +1984,23 @@ class FPParticleSolver(BaseFPSolver):
         # Time evolution with callable drift
         for t_idx in timestep_range:
             t_current = t_idx * Dt
-            particles_t = current_particles[t_idx]  # Shape: (num_particles, dimension)
+            # Fetch particles at this step (variable count under segment-aware BC)
+            particles_t = particles_list[t_idx] if use_segment_aware_bc else current_particles[t_idx]
+            n_particles_t = len(particles_t)
+            # Skip if all particles absorbed (mirrors grid-drift path, lines ~1606-1613)
+            if n_particles_t == 0:
+                if use_segment_aware_bc:
+                    particles_list[t_idx + 1] = np.empty((0, dimension), dtype=particles_t.dtype)
+                if self.density_mode != "query_only":
+                    M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
+                self._increment_time_step()
+                continue
 
             # Estimate density at particle positions for state-dependent drift
             # Skip if drift_needs_density=False (optimization for drifts that don't use m)
             if not drift_needs_density:
                 # Drift doesn't depend on density - pass dummy zeros
-                m_at_particles = np.zeros(self.num_particles)
+                m_at_particles = np.zeros(n_particles_t)
             elif M_initial is not None:
                 # Standard: interpolate from grid density
                 m_at_particles = self._estimate_density_at_particles(
@@ -1998,9 +2032,11 @@ class FPParticleSolver(BaseFPSolver):
                     drift = np.tile(drift[:, np.newaxis], (1, dimension))
 
             # Generate Brownian increments with per-particle diffusion support
+            # Issue #1042: use n_particles_t (current step count) instead of
+            # self.num_particles, since count varies under segment-aware BC.
             if sigma_sde_constant is not None:
                 # Constant diffusion - use pre-computed value
-                dW = self._generate_brownian_increment_nd(self.num_particles, dimension, Dt, sigma_sde_constant)
+                dW = self._generate_brownian_increment_nd(n_particles_t, dimension, Dt, sigma_sde_constant)
             else:
                 # Spatially varying or callable volatility - evaluate at particle positions
                 if volatility_is_callable:
@@ -2016,19 +2052,17 @@ class FPParticleSolver(BaseFPSolver):
                         particles_t, volatility_field, coordinates, bounds
                     )
 
-                # Ensure sigma_at_particles is 1D array of shape (num_particles,)
+                # Ensure sigma_at_particles is 1D array of shape (n_particles_t,)
                 sigma_at_particles = np.atleast_1d(sigma_at_particles).ravel()
                 if sigma_at_particles.shape[0] == 1:
                     # Broadcast scalar to all particles
-                    sigma_at_particles = np.full(self.num_particles, sigma_at_particles[0])
+                    sigma_at_particles = np.full(n_particles_t, sigma_at_particles[0])
 
                 # Generate per-particle Brownian increments
                 # Issue #717 fix: sigma_at_particles IS the SDE volatility σ
                 # SDE: dX = v dt + σ dW, so dW_i = σ_i * N(0, sqrt(dt))
                 sigma_sde_particles = sigma_at_particles  # Direct use
-                dW = sigma_sde_particles[:, np.newaxis] * np.random.normal(
-                    0, np.sqrt(Dt), (self.num_particles, dimension)
-                )
+                dW = sigma_sde_particles[:, np.newaxis] * np.random.normal(0, np.sqrt(Dt), (n_particles_t, dimension))
 
             # Euler-Maruyama step
             new_particles = particles_t + drift * Dt + dW
@@ -2036,11 +2070,15 @@ class FPParticleSolver(BaseFPSolver):
             # Enforce obstacle boundaries if implicit domain is set (Issue #533)
             new_particles = self._enforce_obstacle_boundary(new_particles)
 
-            # Apply boundary conditions
-            topologies = self._get_topology_per_dimension(dimension)
-            new_particles = self._apply_boundary_conditions_nd(new_particles, bounds, topologies)
-
-            current_particles[t_idx + 1] = new_particles
+            # Apply boundary conditions — Issue #1042 fix: route to segment-aware
+            # path when BC has Dirichlet (absorbing) segments, mirroring grid-drift.
+            if use_segment_aware_bc:
+                new_particles, _n_absorbed, _ = self._apply_boundary_conditions_segment_aware(new_particles, bounds)
+                particles_list[t_idx + 1] = new_particles
+            else:
+                topologies = self._get_topology_per_dimension(dimension)
+                new_particles = self._apply_boundary_conditions_nd(new_particles, bounds, topologies)
+                current_particles[t_idx + 1] = new_particles
 
             # Estimate density from particles (skip if query_only mode - Issue #711 optimization)
             # When density_mode="query_only", grid density is not used - density is queried
@@ -2058,8 +2096,15 @@ class FPParticleSolver(BaseFPSolver):
 
         # Finalize: store trajectory, build history, return result
         # Note: callable drift uses Nt+1 time points (0 to Nt inclusive)
+        # Issue #1042: trajectory storage and use_segment_aware_bc flag now match
+        # the BC routing path taken in the loop.
+        trajectory = particles_list if use_segment_aware_bc else current_particles
         return self._finalize_particle_solve(
-            M_density_on_grid, current_particles, Nt + 1, dimension=dimension, use_segment_aware_bc=False
+            M_density_on_grid,
+            trajectory,
+            Nt + 1,
+            dimension=dimension,
+            use_segment_aware_bc=use_segment_aware_bc,
         )
 
     def _interpolate_field_at_particles(

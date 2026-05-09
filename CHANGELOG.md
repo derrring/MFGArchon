@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`FPParticleSolver._solve_fp_system_callable_drift` now honors segment-aware
+  Dirichlet absorbing boundary conditions** (Issue #1042). Previously the
+  callable-drift path always routed through `_apply_boundary_conditions_nd`
+  (uniform topology BC) and ignored `boundary_conditions=BoundaryConditions(segments=[...])`
+  with Dirichlet exit segments. Particles approaching exits piled up indefinitely
+  instead of being absorbed; the grid-based-drift path correctly routed through
+  `_apply_boundary_conditions_segment_aware`, but the callable-drift path bypassed
+  it. The fix mirrors the grid-drift segment-aware branching: per-step variable
+  particle count via list storage, Dirichlet absorption applied via
+  `_apply_boundary_conditions_segment_aware`, exit-flux tracking populated
+  (`exit_flux_history`, `total_absorbed`). Verified by trajectory storage type
+  (now `list` for segment-aware vs `ndarray` for uniform).
+
 ### Added
 
 - **`HJBGFDMSolver` now emits a `UserWarning` when `monotonicity_scheme` is
