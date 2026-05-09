@@ -877,9 +877,7 @@ class FPParticleSolver(BaseFPSolver):
         """
         return _enforce_obstacle(particles, self._implicit_domain)
 
-    def _infer_reflect_bounds(
-        self, bounds: list[tuple[float, float]]
-    ) -> list[tuple[float, float]] | None:
+    def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
         """
         Issue #1083: infer per-axis bounds for KDE reflection from solver BC.
 
@@ -903,10 +901,7 @@ class FPParticleSolver(BaseFPSolver):
         from mfgarchon.geometry.boundary import BCType
 
         reflective_types = {BCType.NO_FLUX, BCType.REFLECTING, BCType.NEUMANN}
-        has_reflective = any(
-            getattr(seg, "bc_type", None) in reflective_types
-            for seg in bc.segments
-        )
+        has_reflective = any(getattr(seg, "bc_type", None) in reflective_types for seg in bc.segments)
         if has_reflective:
             return list(bounds)
         return None
@@ -2063,7 +2058,8 @@ class FPParticleSolver(BaseFPSolver):
 
                 reflect_bounds = self._infer_reflect_bounds(bounds)
                 query = ParticleDensityQuery(
-                    particles_t, bandwidth_rule="scott",
+                    particles_t,
+                    bandwidth_rule="scott",
                     reflect_bounds=reflect_bounds,
                 )
                 m_at_particles = query.query_density(particles_t, method="hybrid", k=min(50, len(particles_t) - 1))
