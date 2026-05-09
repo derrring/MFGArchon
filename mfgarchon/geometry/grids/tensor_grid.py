@@ -251,8 +251,7 @@ class TensorProductGrid(
         for i, n in enumerate(self._Nx_points):
             if n < 1:
                 raise ValueError(
-                    f"Nx_points[{i}] = {n} requires N >= 1 grid points per axis. "
-                    f"Got Nx_points = {self._Nx_points}."
+                    f"Nx_points[{i}] = {n} requires N >= 1 grid points per axis. Got Nx_points = {self._Nx_points}."
                 )
 
         # Issue #1077: validate bounds (lo < hi, finite). Inverted or infinite bounds
@@ -264,9 +263,7 @@ class TensorProductGrid(
                     f"Inverted/degenerate bounds produce negative grid spacing."
                 )
             if not (np.isfinite(lo) and np.isfinite(hi)):
-                raise ValueError(
-                    f"bounds[{i}] = ({lo}, {hi}) must be finite."
-                )
+                raise ValueError(f"bounds[{i}] = ({lo}, {hi}) must be finite.")
 
         self._dimension = dimension
         self.bounds = list(bounds)
