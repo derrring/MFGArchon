@@ -731,9 +731,13 @@ def integrate_gaussian_quadrature_mc(
     domain = list(zip(lower_bounds.tolist(), upper_bounds.tolist(), strict=True))
 
     # Gaussian importance function
+    # Issue #1066: use solve() not inv() — for high-dim cov with cond > 1e10,
+    # inv()-based Mahalanobis silently returns wrong values. solve() is stable.
     def gaussian_importance(x):
         diff = x - mean
-        return np.exp(-0.5 * np.sum(diff @ np.linalg.inv(cov) * diff, axis=1))
+        # cov is symmetric → diff @ cov^{-1} = solve(cov, diff.T).T
+        sol = np.linalg.solve(cov, diff.T).T
+        return np.exp(-0.5 * np.einsum("ij,ij->i", sol, diff))
 
     config = MCConfig(num_samples=num_samples, sampling_method="importance", importance_function=gaussian_importance)
 
