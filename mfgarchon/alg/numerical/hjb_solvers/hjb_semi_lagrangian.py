@@ -1409,12 +1409,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         time_idx: int,
         dt: float,
     ) -> np.ndarray:
-        """nD stochastic SL step.
+        """nD stochastic SL step (Carlini-Silva 2014, axis-aligned Brownian).
 
-        Uses the existing per-point _interpolate_value path (handles cubic /
-        quintic via RegularGridInterpolator). The Brownian quadrature is over
-        2*d departures (one pair per coordinate axis).
+        Brownian quadrature: 2*d departures per node (one pair per axis).
+        Mirrors the 1D path's three correctness fixes:
+          - Issue #1033: monotone-preserving cubic — RegularGridInterpolator
+            method="cubic" / "quintic" is non-monotone; route through "pchip"
+            (scipy ≥ 1.10 monotone Hermite, tensor-product) for stochastic.
+          - Issue #1048: reflect/wrap characteristic feet at Neumann/periodic
+            boundaries (per-axis), not silent extrapolation by RGI.
+          - Issue #1049: linear is allowed alongside stochastic (canonical CS).
         """
+        from scipy.interpolate import RegularGridInterpolator
+
         # Reshape to grid form (matches the Strang-splitting nD path)
         if U_next.ndim == 1:
             total_points = U_next.size
@@ -1432,7 +1439,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         sigma = self.problem.sigma
         if isinstance(sigma, np.ndarray):
-            # Diagonal volatility: sigma[k] is the volatility along axis k
             sigma_diag = np.asarray(sigma, dtype=float).ravel()
             if sigma_diag.size != self.dimension:
                 raise ValueError(
@@ -1443,32 +1449,76 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         else:
             sigma_diag = np.full(self.dimension, float(sigma))
         sqrt_dt = float(np.sqrt(dt))
+        d = self.dimension
 
         grad_components = self._compute_gradient(U_next_shaped, check_cfl=True, t_idx=time_idx, m_density=M_next_shaped)
 
-        U_current_shaped = np.zeros_like(U_next_shaped)
-        d = self.dimension
+        # Issue #1054 fix: build interpolator once, dispatch monotone method.
+        # "cubic"/"quintic" → "pchip" (monotone Hermite, tensor-product).
+        # "linear" → "linear" (canonical Carlini-Silva, monotone).
+        if self.interpolation_method == "linear":
+            interp_method = "linear"
+        elif self.interpolation_method in ("cubic", "quintic"):
+            interp_method = "pchip"
+        else:
+            interp_method = "linear"
 
+        grid_coords = tuple(self.grid.coordinates)
+        interp_fn = RegularGridInterpolator(
+            grid_coords,
+            U_next_shaped,
+            method=interp_method,
+            bounds_error=False,
+            fill_value=None,
+        )
+
+        # Issue #1054 fix: per-axis BC handling (reflect/wrap) on Brownian feet.
+        bc = self.get_boundary_conditions()
+        bc_type_str = get_bc_type_string(bc)
+        bc_op = bc_type_to_geometric_operation(bc_type_str)
+        bounds = self.problem.geometry.get_bounds()
+        x_min = np.asarray(bounds[0], dtype=float)
+        x_max = np.asarray(bounds[1], dtype=float)
+        L_axis = x_max - x_min
+
+        # Pre-build all departure points (2*d per node), batch-interpolate.
+        n_total = int(np.prod(grid_shape))
+        # x_drift_flat[i, ax] = x_current[ax] − dt * p[ax] for node i
+        mesh = np.meshgrid(*grid_coords, indexing="ij")
+        x_drift_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        for ax in range(d):
+            x_drift_flat[:, ax] -= grad_components[ax].ravel() * dt
+
+        # Build (2*d*N_total, d) departure array
+        all_departures = np.empty((2 * d * n_total, d), dtype=float)
+        for ax in range(d):
+            offset = np.zeros(d)
+            offset[ax] = sigma_diag[ax] * sqrt_dt
+            block_start = 2 * ax * n_total
+            all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
+            all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
+
+        # Apply BC vectorized (per-axis broadcast)
+        if bc_op == "reflect":
+            all_departures = x_min + np.abs(((all_departures - x_min) % (2 * L_axis)) - L_axis)
+        elif bc_op == "wrap":
+            all_departures = x_min + (all_departures - x_min) % L_axis
+
+        # Single batch interpolation
+        all_u = interp_fn(all_departures)
+
+        # u_avg per node = mean over 2*d departures (factor 1/(2d), matches the
+        # original loop's `interp_acc / d` after the inner `0.5 * (u_plus + u_minus)`)
+        u_avg = all_u.reshape(2 * d, n_total).mean(axis=0).reshape(grid_shape)
+
+        # Hamiltonian — kept per-point (matches existing implementation)
+        U_current_shaped = np.zeros_like(U_next_shaped)
         for multi_idx in np.ndindex(grid_shape):
-            x_current = np.array([self.grid.coordinates[ax][multi_idx[ax]] for ax in range(d)])
+            x_current = np.array([grid_coords[ax][multi_idx[ax]] for ax in range(d)])
             m_current = M_next_shaped[multi_idx]
             p_optimal = np.array([grad_components[ax][multi_idx] for ax in range(d)])
-            x_drift = x_current - p_optimal * dt
-
-            # 2d stochastic departures - one pair per axis
-            interp_acc = 0.0
-            for ax in range(d):
-                offset = np.zeros(d)
-                offset[ax] = sigma_diag[ax] * sqrt_dt
-                y_plus = x_drift + offset
-                y_minus = x_drift - offset
-                u_plus = self._interpolate_value(U_next_shaped, y_plus)
-                u_minus = self._interpolate_value(U_next_shaped, y_minus)
-                interp_acc += 0.5 * (u_plus + u_minus)
-            u_avg = interp_acc / d
-
             H_value = self._evaluate_hamiltonian(x_current, p_optimal, m_current, time_idx)
-            U_current_shaped[multi_idx] = u_avg - dt * H_value
+            U_current_shaped[multi_idx] = u_avg[multi_idx] - dt * H_value
 
         # Enforce BC on the result
         U_current_shaped = self._enforce_boundary_conditions(U_current_shaped)

@@ -942,5 +942,92 @@ class TestStochasticCharacteristicSL:
         assert max_diff < 5e-3, f"Stochastic and ADI diverge on smooth Gaussian: max diff = {max_diff:.3e}"
 
 
+class TestStochasticCharacteristicSL_nD:
+    """Issue #1054: nD stochastic SL companion fixes (analogous to 1D #1033/#1048/#1049)."""
+
+    def _make_2d_problem(self, sigma=0.3, T=0.1, Nt=4, N=15):
+        from mfgarchon.core.hamiltonian import HamiltonianBase, OptimizationSense
+
+        class ZeroH(HamiltonianBase):
+            def __init__(self):
+                super().__init__(sense=OptimizationSense.MINIMIZE)
+
+            def __call__(self, x, m, p, t=0.0):
+                p_arr = np.atleast_1d(np.asarray(p, dtype=float))
+                if p_arr.ndim > 0:
+                    return np.zeros(p_arr.shape[:-1])
+                return 0.0
+
+            def gradient_p(self, x, m, p, t=0.0):
+                return np.zeros_like(np.asarray(p, dtype=float))
+
+            def density_derivative(self, x, m, p, t=0.0):
+                return 0.0
+
+        bc = no_flux_bc(dimension=2)
+        grid = TensorProductGrid(
+            dimension=2, bounds=[(0.0, 1.0), (0.0, 1.0)],
+            Nx_points=[N, N], boundary_conditions=bc,
+        )
+
+        def m0(x):
+            return np.exp(-10.0 * ((x[..., 0] - 0.5) ** 2 + (x[..., 1] - 0.5) ** 2))
+
+        components = MFGComponents(
+            hamiltonian=ZeroH(),
+            m_initial=m0,
+            u_terminal=lambda x: 1.0,
+        )
+        return MFGProblem(
+            geometry=grid, T=T, Nt=Nt, sigma=sigma,
+            components=components, boundary_conditions=bc,
+        ), grid, m0
+
+    def test_2d_linear_stochastic_finite(self):
+        """Issue #1054: linear+stochastic on 2D no-flux must produce finite output."""
+        problem, grid, m0 = self._make_2d_problem()
+        solver = HJBSemiLagrangianSolver(
+            problem, diffusion_method="stochastic",
+            interpolation_method="linear", check_cfl=False,
+        )
+        U_terminal = np.zeros(tuple(grid.Nx_points))
+        M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
+        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        assert U_step.shape == tuple(grid.Nx_points)
+        assert np.isfinite(U_step).all()
+
+    def test_2d_cubic_stochastic_uses_pchip(self):
+        """Issue #1054: cubic+stochastic in nD routes through monotone PCHIP (no NaN)."""
+        problem, grid, m0 = self._make_2d_problem()
+        with __import__("warnings").catch_warnings():
+            __import__("warnings").simplefilter("ignore")
+            solver = HJBSemiLagrangianSolver(
+                problem, diffusion_method="stochastic",
+                interpolation_method="cubic", check_cfl=False,
+            )
+        U_terminal = np.zeros(tuple(grid.Nx_points))
+        M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
+        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        assert np.isfinite(U_step).all()
+
+    def test_2d_reflect_bc_no_extrapolation(self):
+        """Issue #1054: high-curvature U near walls must not produce NaN under no-flux."""
+        problem, grid, m0 = self._make_2d_problem()
+        solver = HJBSemiLagrangianSolver(
+            problem, diffusion_method="stochastic",
+            interpolation_method="linear", check_cfl=False,
+        )
+        # Stress-test: bowl U_T peaking near walls — Brownian feet would otherwise
+        # extrapolate (silent fill_value=None) and produce nonsense values.
+        Nx = grid.Nx_points[0]
+        U_terminal = np.fromfunction(
+            lambda i, j: ((i / (Nx - 1) - 0.5) ** 2 + (j / (Nx - 1) - 0.5) ** 2),
+            (Nx, Nx),
+        ).astype(float)
+        M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
+        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        assert np.isfinite(U_step).all()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
