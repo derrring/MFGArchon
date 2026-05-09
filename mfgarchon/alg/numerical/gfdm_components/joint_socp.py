@@ -190,11 +190,14 @@ def solve_joint_socp_at_stencil(
         try:
             W_diag = np.diag(np.asarray(wendland_w, dtype=float))
             ATA = A.T @ W_diag @ A
-            ATA_inv = np.linalg.inv(ATA)
-            L_lsq = W_diag @ A @ ATA_inv @ e_lap
-            D_lsq = np.zeros((dimension, n))
-            for d in range(dimension):
-                D_lsq[d] = W_diag @ A @ ATA_inv @ e_grad[d]
+            # Issue #1066: use solve() instead of inv() — squares condition number
+            # and would silently break SOCP feasibility on marginal stencils.
+            # Solve once for [e_lap, e_grad[0], ..., e_grad[d-1]] as columns.
+            rhs = np.column_stack([e_lap, *e_grad])  # shape (k, 1+dimension)
+            sol = np.linalg.solve(ATA, rhs)  # shape (k, 1+dimension)
+            WA = W_diag @ A
+            L_lsq = WA @ sol[:, 0]
+            D_lsq = (WA @ sol[:, 1:]).T  # shape (dimension, n)
 
             # Check feasibility
             L_off = np.delete(L_lsq, center_idx)

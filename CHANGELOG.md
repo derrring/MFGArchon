@@ -76,7 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and returns the bounds list when at least one segment is `NO_FLUX` /
   `REFLECTING` / `NEUMANN`. Per-axis disambiguation is deferred until BC
   framework exposes segment→axis mapping.- **`enforce_obstacle_boundary` no longer captures particles past the outer
-  bounding box** (Issue #1064). When `FPParticleSolver` is configured with
+- **`np.linalg.inv()` → `np.linalg.solve()` in 2 hot paths** (Issue #1066,
+  partial — neighborhood_builder cache deferred). `joint_socp.py:193`
+  computed `ATA_inv` then matmul'd with `e_grad[d]` in a Python loop;
+  now uses a single `solve(ATA, [e_lap|e_grad].T)` (kills Python loop +
+  squares fewer condition numbers). `sampling.py:736` Mahalanobis used
+  `inv(cov)` (silently wrong for cond > 1e10); now uses `solve(cov, ...)`
+  + `einsum`. Third site `neighborhood_builder.py:744` deferred
+  (long-lived cache needs `lu_factor`/`lu_solve`).- **`enforce_obstacle_boundary` no longer captures particles past the outer  bounding box** (Issue #1064). When `FPParticleSolver` is configured with
   both `implicit_domain` (for obstacle reflection) and a `BoundaryConditions`
   containing a Dirichlet (absorbing) segment on the outer boundary,
   `enforce_obstacle_boundary` was projecting **all** particles outside the
