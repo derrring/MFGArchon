@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``domain.signed_distance``. Docstring example added in both
   ``HJBGFDMSolver.__init__`` and ``NeighborhoodBuilder.__init__``.
 
+### Fixed
+
+- **`ImplicitDomain.num_spatial_points` now caches the result** (Issue #1037).
+  Previously the property recomputed from an unseeded Monte-Carlo volume
+  estimate on every call, returning slightly different values across calls
+  within one process. Downstream callers like
+  `MFGComponents._setup_custom_initial_density` that pre-allocate based on
+  the value and then iterate the spatial grid would overrun and surface an
+  unhelpful `IndexError: index N out of bounds for size N` (Issue #1036,
+  obsoleted by this cache fix).
+
 ## [0.19.6] - 2026-05-06
 
 ### Fixed
