@@ -502,6 +502,8 @@ class PrecomputedJointSocpStencils:
         use_relaxed_fallback: bool = False,
         lambda_M: float = 1.0e4,
         lambda_C: float = 1.0e4,
+        n_enlargement_retries: int = 0,
+        enlargement_max_radius_mult: float = 3.0,
     ):
         if not _CVXPY_AVAILABLE:
             raise ImportError("cvxpy is required for joint SOCP. Install with: pip install cvxpy")
@@ -527,6 +529,16 @@ class PrecomputedJointSocpStencils:
         self._use_relaxed_fallback = bool(use_relaxed_fallback)
         self._lambda_M = float(lambda_M)
         self._lambda_C = float(lambda_C)
+        # SOCP-infeasibility-triggered stencil enlargement (#1106). When >0,
+        # stencils that remain infeasible after C-bisection retry the SOCP
+        # with the next-nearest cloud point appended, up to this many times.
+        # Default 0 = disabled (legacy behavior, falls straight to relaxed
+        # fallback). HJBGFDMSolver passes 3 in joint_socp construction.
+        # ``enlargement_max_radius_mult`` caps the geometric extent: a new
+        # neighbor farther than this multiple of ``delta`` is rejected to
+        # avoid unbounded growth at sparse cloud edges.
+        self._n_enlargement_retries = int(n_enlargement_retries)
+        self._enlargement_max_radius_mult = float(enlargement_max_radius_mult)
         self._dimension = self._points.shape[1] if self._points.ndim == 2 else 1
 
         if self._dimension not in (1, 2):
@@ -545,9 +557,39 @@ class PrecomputedJointSocpStencils:
             "n_relaxed_fallback": 0,  # stencils that needed slack-penalty solve
             "max_eps_M": 0.0,
             "max_eps_C": 0.0,
+            # Enlargement diagnostics (#1106). n_enlarged = stencils that
+            # needed at least one neighbor added; max_enlargement_added =
+            # most extra neighbors any single stencil needed.
+            "n_enlarged": 0,
+            "max_enlargement_added": 0,
             "time_ms": 0.0,
         }
         self._precompute()
+
+    def _try_enlarge_stencil(self, i: int, current_nbr: np.ndarray) -> np.ndarray | None:
+        """Append the next-nearest cloud point not in ``current_nbr``.
+
+        Returns the enlarged neighbor index array, or ``None`` if no cloud
+        point lies within ``self._enlargement_max_radius_mult * delta`` of
+        the center (cloud locally exhausted).
+
+        The added neighbor is the geometrically nearest non-member,
+        regardless of direction. For genuinely directional infeasibility
+        (e.g. all current neighbors on one side of a wall), this works only
+        when at least one cloud point exists in the missing direction;
+        otherwise enlargement bottoms out and the caller falls through to
+        the relaxed-SOCP path.
+        """
+        dists = np.linalg.norm(self._points - self._points[i], axis=1)
+        in_nbr = np.zeros(len(self._points), dtype=bool)
+        in_nbr[current_nbr] = True
+        dists_outside = np.where(in_nbr, np.inf, dists)
+        j_new = int(np.argmin(dists_outside))
+        if not np.isfinite(dists_outside[j_new]):
+            return None
+        if dists_outside[j_new] > self._enlargement_max_radius_mult * self._delta:
+            return None
+        return np.append(current_nbr, j_new)
 
     def _precompute(self) -> None:
         t0 = time.time()
@@ -618,14 +660,64 @@ class PrecomputedJointSocpStencils:
                     wendland_w=w_neighbor,
                 )
 
-            # If still infeasible after C-bisection, fall through to the always-
-            # feasible relaxed SOCP. This eliminates the discrete scheme switch
-            # between joint_socp and Phase-2 M-matrix-QP that creates
-            # discontinuous discretization on irregular clouds. For
-            # well-conditioned stencils (the C-bisection feasible cases), the
-            # original joint_socp solution is used. For marginally infeasible
-            # stencils, the relaxed SOCP smoothly degrades while maintaining
-            # the equality constraints (consistency).
+            # Stencil enlargement (#1106): if SOCP still infeasible after
+            # C-bisection, try adding the next-nearest cloud point and retry.
+            # This is the structurally correct path for geometric
+            # infeasibility (adds DoF instead of relaxing the constraint).
+            # When successful, the stencil grows from its original size to
+            # original + r additional points.
+            enlargement_count = 0
+            if self._n_enlargement_retries > 0 and res["status"] != "feasible":
+                C_after_bisection = C_try  # the largest C that was tried
+                for _r in range(self._n_enlargement_retries):
+                    nbr_enlarged = self._try_enlarge_stencil(i, nbr)
+                    if nbr_enlarged is None:
+                        break  # cloud locally exhausted within radius cap
+                    nbr = nbr_enlarged
+                    # Re-locate center in enlarged stencil (still at same position)
+                    center_match = np.where(nbr == int(i))[0]
+                    if len(center_match) == 0:
+                        break  # should not happen but guard
+                    center_in_nbr = int(center_match[0])
+                    # Rebuild geometric quantities for enlarged stencil
+                    offsets = self._points[nbr] - self._points[i]
+                    offsets_for_taylor = offsets.reshape(-1) if self._dimension == 1 and offsets.ndim == 2 else offsets
+                    A, _ = build_A(offsets_for_taylor)
+                    if self._dimension == 1:
+                        offsets_1d = offsets.reshape(-1)
+                        dists = np.abs(offsets_1d)
+                        w_neighbor = wendland_stencil_weights(offsets_1d, self._delta)
+                    else:
+                        dists = np.linalg.norm(offsets, axis=1)
+                        w_neighbor = wendland_stencil_weights(offsets, self._delta)
+                    nz = dists[dists > 1e-12]
+                    h_i = float(np.median(nz)) if len(nz) > 0 else self._delta
+                    enlargement_count += 1
+                    # Retry SOCP at the bisection-final C
+                    res = solve_joint_socp_at_stencil(
+                        A,
+                        center_in_nbr,
+                        h_i,
+                        C_after_bisection,
+                        eps_pos=self._eps_pos,
+                        dimension=self._dimension,
+                        wendland_w=w_neighbor,
+                    )
+                    if res["status"] == "feasible":
+                        break
+                if enlargement_count > 0 and res["status"] == "feasible":
+                    self.stats["n_enlarged"] += 1
+                    if enlargement_count > self.stats["max_enlargement_added"]:
+                        self.stats["max_enlargement_added"] = enlargement_count
+
+            # If still infeasible after C-bisection AND stencil enlargement,
+            # fall through to the always-feasible relaxed SOCP. This
+            # eliminates the discrete scheme switch between joint_socp and
+            # Phase-2 M-matrix-QP that creates discontinuous discretization
+            # on irregular clouds. For well-conditioned stencils (the
+            # C-bisection feasible cases), the original joint_socp solution
+            # is used. For marginally infeasible stencils, the relaxed SOCP
+            # smoothly degrades while maintaining the equality constraints.
             if res["status"] != "feasible" and self._use_relaxed_fallback:
                 C_relaxed = self._C if self._C_max is None else self._C_max
                 res = solve_relaxed_joint_socp_at_stencil(

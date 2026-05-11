@@ -943,6 +943,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                 use_relaxed_fallback=True,
                 lambda_M=1.0e4,
                 lambda_C=1.0e4,
+                # Stencil enlargement (#1106): when SOCP is infeasible after
+                # C-bisection at the per-stencil cap, try adding the next-
+                # nearest cloud point and retry, up to 3 times. Adds DoF
+                # (more neighbors) instead of relaxing constraints — the
+                # structurally correct response to geometric infeasibility.
+                # Stencils that enlargement still can't fix (cloud edge,
+                # directional infeasibility) fall through to the relaxed-
+                # fallback path.
+                n_enlargement_retries=3,
             )
             stats = self._joint_socp_stencils.stats
             relax_C_msg = (
@@ -956,11 +965,16 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if stats.get("n_relaxed_fallback", 0) > 0
                 else ""
             )
+            enlarge_msg = (
+                f"; {stats['n_enlarged']} via stencil enlargement (max +{stats['max_enlargement_added']} neighbors)"
+                if stats.get("n_enlarged", 0) > 0
+                else ""
+            )
             logger.info(
                 f"Precomputed joint SOCP stencils: feasible {stats['n_feasible']}/"
                 f"{stats['n_interior']} interior "
                 f"({stats['n_fast_path']} via Wendland-LSQ fast-path, "
-                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{relax_fb_msg}) in "
+                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}{relax_fb_msg}) in "
                 f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} fall "
                 f"back to M-matrix QP (Phase 2)"
             )
@@ -1782,16 +1796,24 @@ class HJBGFDMSolver(BaseHJBSolver):
         if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(point_idx):
             socp = self._joint_socp_stencils.get_weights_dict(point_idx)
             if socp is not None:
-                L_w = socp["lap_weights"]  # shape (n_neighbors,)
-                D_w = socp["grad_weights"]  # shape (d, n_neighbors)
-                # Override gradient: ∂u/∂x_d (i) = sum_j D_w[d, j] * b_j
+                L_w = socp["lap_weights"]  # shape (n_socp_neighbors,)
+                D_w = socp["grad_weights"]  # shape (d, n_socp_neighbors)
+                socp_nbr = socp["neighbor_indices"]
+                # Rebuild b on the SOCP stencil. When stencil enlargement (#1106)
+                # fires, socp_nbr has more entries than runtime
+                # ``self.neighborhoods[point_idx]["indices"]``; the contraction
+                # ``L_w @ b`` must use the same stencil source as L_w was
+                # computed on. When enlargement did not fire, socp_nbr ==
+                # runtime neighborhoods and ``b_socp == b`` to FP precision.
+                b_socp = u_values[socp_nbr] - u_center
+                # Override gradient: ∂u/∂x_d (i) = sum_j D_w[d, j] * b_socp_j
                 for d in range(self.dimension):
                     beta = tuple(1 if k == d else 0 for k in range(self.dimension))
-                    derivatives[beta] = float(D_w[d] @ b)
+                    derivatives[beta] = float(D_w[d] @ b_socp)
                 # Override Laplacian sum (= trace of Hessian) via diagonal split.
                 # Preserves bare-WT off-diagonal Hessian entries (e.g. (1,1) in 2D)
-                # while enforcing target_lap = L_w · b on the trace.
-                target_lap = float(L_w @ b)
+                # while enforcing target_lap = L_w · b_socp on the trace.
+                target_lap = float(L_w @ b_socp)
                 current_lap = sum(
                     float(derivatives.get(beta, 0.0))
                     for beta in self.multi_indices
