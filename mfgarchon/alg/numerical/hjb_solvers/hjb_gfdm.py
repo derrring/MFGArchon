@@ -1165,9 +1165,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     break
 
             if matching_segment is None:
-                unmatched.append(
-                    (i, point, face, f"BoundaryFace={face!r} not covered by any segment")
-                )
+                unmatched.append((i, point, face, f"BoundaryFace={face!r} not covered by any segment"))
                 continue
 
             self._bc_face_per_point[i] = face
@@ -2309,25 +2307,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Legacy uniform-BC scaffold
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
         legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
-        legacy_normals = (
-            self._bc_config.get("normals", None)
-            if not use_per_point_bc and self._bc_config else None
-        )
+        legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
         bc_str_to_enum = {
             "dirichlet": BCType.DIRICHLET,
-            "neumann":   BCType.NEUMANN,
-            "no_flux":   BCType.NO_FLUX,
-            "periodic":  BCType.PERIODIC,
-            "robin":     BCType.ROBIN,
+            "neumann": BCType.NEUMANN,
+            "no_flux": BCType.NO_FLUX,
+            "periodic": BCType.PERIODIC,
+            "robin": BCType.ROBIN,
         }
 
         dimension = self.dimension
         n = self.n_points
         # Time coordinate for callable BC values
-        current_time = (
-            time_idx * (self.problem.T / self.problem.Nt)
-            if getattr(self.problem, "Nt", 0) > 0 else 0.0
-        )
+        current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0
 
         for local_idx, i in enumerate(self.boundary_indices):
             i = int(i)
@@ -2368,9 +2360,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 case BCType.DIRICHLET:
                     new_row = np.zeros(n)
                     new_row[i] = 1.0
-                    new_rhs = self._eval_bc_dirichlet_value(
-                        i, segment, legacy_bc_values, current_time
-                    )
+                    new_rhs = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
                 case BCType.NEUMANN | BCType.NO_FLUX:
                     new_row, new_rhs = self._build_neumann_bc_row(
                         i, normal, dimension, segment, legacy_bc_values, current_time

@@ -232,16 +232,12 @@ class BoundaryHandler:
             # Path 1: classify to axis-aligned face, derive normal from face.
             if bc_obj is not None:
                 try:
-                    face = bc_obj.identify_boundary_face(
-                        point=point, tolerance=tolerance, domain_bounds=bounds
-                    )
+                    face = bc_obj.identify_boundary_face(point=point, tolerance=tolerance, domain_bounds=bounds)
                 except (AttributeError, TypeError):
                     face = None
                 if face is not None:
                     try:
-                        normals[local_idx] = bc_obj.outward_normal_for_face(
-                            face, dimension=self.dimension
-                        )
+                        normals[local_idx] = bc_obj.outward_normal_for_face(face, dimension=self.dimension)
                         continue
                     except AttributeError:
                         pass  # older BC objects without outward_normal_for_face
