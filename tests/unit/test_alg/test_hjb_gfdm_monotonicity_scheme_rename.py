@@ -269,7 +269,6 @@ def test_joint_socp_weights_satisfy_constraints(setup):
                          adaptive_neighborhoods=True)
 
     socp = s._joint_socp_stencils
-    C = 1.0  # cone constant used internally
     for i in s._joint_socp_stencils._interior_indices[:20]:   # sample 20 stencils
         i = int(i)
         if not socp.has_stencil(i):
@@ -290,7 +289,11 @@ def test_joint_socp_weights_satisfy_constraints(setup):
         L_off = np.delete(sd.L, sd.center_in_neighbors)
         assert np.all(L_off >= -1e-9), f"L_off must be ≥ 0 at i={i}: min(L_off)={L_off.min()}"
 
-        # Per-edge cone
+        # Per-edge cone. C-bisection may have raised C beyond the solver default
+        # for marginally infeasible stencils, so the constraint to check at
+        # stencil i is the C *actually achieved* there, not the solver-level
+        # default. `achieved_C[i]` records the per-stencil bound used.
+        C_i = socp.achieved_C.get(i, socp._C)
         h_i = float(np.median(np.linalg.norm(offsets[offsets.any(axis=1)], axis=1)))
         for j in range(len(sd.neighbor_indices)):
             if j == sd.center_in_neighbors:
@@ -298,8 +301,8 @@ def test_joint_socp_weights_satisfy_constraints(setup):
             if sd.L[j] <= 1e-12:
                 continue
             kappa = h_i * np.linalg.norm(sd.D[:, j]) / sd.L[j]
-            assert kappa <= C + 1e-7, \
-                f"Cone violated at i={i}, j={j}: kappa={kappa:.4e} > C={C}"
+            assert kappa <= C_i + 1e-7, \
+                f"Cone violated at i={i}, j={j}: kappa={kappa:.4e} > C_i={C_i}"
 
 
 @_requires_cvxpy
