@@ -941,8 +941,18 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # 2D obstacle navigation; latent on 1D / quasi-uniform clouds
                 # where infeasibility doesn't fire.
                 use_relaxed_fallback=True,
-                lambda_M=1.0e4,
-                lambda_C=1.0e4,
+                # λ_M, λ_C: slack-penalty weights for relaxed SOCP fallback.
+                # At λ=1e4 (prior default), marginally infeasible stencils
+                # receive ε_M ~ 5-7% slack on M-matrix and ε_C ~ 5-7% slack
+                # on per-edge cone. Newton over many backward steps amplifies
+                # the slack into point-wise U asymmetry. At λ=1e8 (1e4
+                # stiffer), ε drops to ~5e-7 — effectively recovers strict
+                # M-matrix and cone constraints at all stencils. CLARABEL
+                # conditioning slightly harder (~2× per-stencil solve time at
+                # the marginally infeasible stencils, ~50% precompute total),
+                # acceptable for the asymmetry reduction. See Issue #1104.
+                lambda_M=1.0e8,
+                lambda_C=1.0e8,
             )
             stats = self._joint_socp_stencils.stats
             relax_C_msg = (
