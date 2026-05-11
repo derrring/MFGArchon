@@ -838,7 +838,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         # This must be called BEFORE Taylor matrices are built, since it augments neighborhoods
         if self._use_ghost_nodes:
             if self._boundary_handler is not None:
-                self._boundary_handler.apply_ghost_nodes_to_neighborhoods()
+                # Per-point dispatch (Issue #1110 Bug A fix): pass the
+                # pre-classified BC type lookup so ghost augmentation
+                # correctly handles mixed-BC setups — apply to NEUMANN/
+                # NO_FLUX wall points, skip DIRICHLET exit points.
+                self._boundary_handler.apply_ghost_nodes_to_neighborhoods(
+                    bc_type_for_point=self._get_bc_type_for_point,
+                )
             else:
                 # Legacy fallback (shouldn't happen with new infrastructure)
                 self._apply_ghost_nodes_to_neighborhoods()
