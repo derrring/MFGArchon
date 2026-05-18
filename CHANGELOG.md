@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`preserve_indices=False` flag on `FPParticleSolver`** (Issue #1119).
+  When `True`, absorbed particles are NaN-marked in the per-step trajectory
+  rather than compact-removed, so `particle_history[t].shape == (num_particles, d)`
+  is constant across all timesteps and original particle indices are preserved
+  across absorption events. Enables follow-individual-particle trajectory plots
+  in evacuation experiments without NN-matching artifacts. Default `False`
+  preserves the legacy compact-array behavior bit-for-bit. Currently supported
+  only in the callable-drift n-D path with segment-aware (Dirichlet) BC; other
+  paths raise `NotImplementedError` when the flag is set.
+
 - **HJB-FP volatility consistency check in `FixedPointIterator`** (Issue #1082).
   Warns when `volatility_field=X` is passed AND `problem.sigma=Y` with
   `X != Y` (scalar case). HJB sees Y, FP sees X — Picard fixed point not
