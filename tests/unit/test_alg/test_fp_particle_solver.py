@@ -784,7 +784,9 @@ class TestEnforceObstacleBoundary:
     def _make_diff_domain(self):
         """Box [0,1]² minus circular obstacle, off-center to avoid degenerate projection."""
         from mfgarchon.geometry.implicit import (
-            DifferenceDomain, Hyperrectangle, Hypersphere,
+            DifferenceDomain,
+            Hyperrectangle,
+            Hypersphere,
         )
         box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
         # Obstacle off bbox center so project_to_domain has a non-degenerate direction
@@ -838,6 +840,100 @@ class TestEnforceObstacleBoundary:
         particles = np.array([[10.0, 10.0]])
         result = enforce_obstacle_boundary(particles.copy(), None)
         np.testing.assert_array_equal(result, particles)
+
+
+class TestFPParticlePreserveIndices:
+    """Issue #1119: preserve_indices flag for particle ID tracking across absorption."""
+
+    @staticmethod
+    def _absorbing_corridor_problem():
+        """2D corridor with absorbing right wall, neumann elsewhere."""
+        from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+        Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
+        bc = BoundaryConditions(segments=[
+            BCSegment(name="left",   bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+            BCSegment(name="right",  bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+            BCSegment(name="bottom", bc_type=BCType.NEUMANN, value=0.0, boundary="y_min"),
+            BCSegment(name="top",    bc_type=BCType.NEUMANN, value=0.0, boundary="y_max"),
+        ], dimension=2)
+        grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
+        return MFGProblem(geometry=grid, Nt=Nt, T=T, sigma=0.3,
+                          boundary_conditions=bc, components=_default_components_2d()), bc
+
+    @staticmethod
+    def _drift_rightward(t, x, m):
+        return np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))])
+
+    def _run(self, preserve_indices, seed=42):
+        np.random.seed(seed)
+        problem, bc = self._absorbing_corridor_problem()
+        solver = FPParticleSolver(
+            problem, num_particles=500, density_mode="query_only",
+            boundary_conditions=bc, preserve_indices=preserve_indices,
+        )
+        init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
+        return solver.solve_fp_system(
+            initial_particles=init, drift_field=self._drift_rightward,
+            volatility_field=0.3, drift_needs_density=False, show_progress=False,
+        )
+
+    def test_default_off_preserves_legacy_behavior(self):
+        """preserve_indices=False (default): compact-remove, varying particle count."""
+        result = self._run(preserve_indices=False)
+        sizes = [result.get_particles(t).shape[0] for t in range(21)]
+        assert sizes[0] == 500
+        assert sizes[-1] < 500, "Particles should be absorbed at right exit"
+        assert sizes[0] != sizes[-1], "Particle count should vary across timesteps"
+
+    def test_preserve_indices_constant_shape(self):
+        """preserve_indices=True: particle_history[t].shape == (N, d) for all t."""
+        result = self._run(preserve_indices=True)
+        sizes = [result.get_particles(t).shape[0] for t in range(21)]
+        assert all(s == 500 for s in sizes), f"Expected constant 500, got {set(sizes)}"
+
+    def test_preserve_indices_nan_marks_absorbed(self):
+        """Absorbed particles become NaN at their absorption step + all subsequent."""
+        result = self._run(preserve_indices=True)
+        nan_counts = [int(np.sum(np.isnan(result.get_particles(t)[:, 0]))) for t in range(21)]
+        assert nan_counts[0] == 0
+        assert nan_counts[-1] > 0, "Some particles should be absorbed by final t"
+        # Monotone non-decreasing (no resurrection)
+        for t in range(1, 21):
+            assert nan_counts[t] >= nan_counts[t-1], (
+                f"NaN count decreased at t={t}: {nan_counts[t-1]} -> {nan_counts[t]}"
+            )
+
+    def test_preserve_indices_equivalent_absorbed_count(self):
+        """Same RNG seed → same absorbed total in compact vs NaN-marked modes."""
+        r_off = self._run(preserve_indices=False, seed=42)
+        r_on = self._run(preserve_indices=True, seed=42)
+        absorbed_off = 500 - r_off.get_particles(20).shape[0]
+        absorbed_on = int(np.sum(np.isnan(r_on.get_particles(20)[:, 0])))
+        # Same RNG → identical physics; absorbed count should match exactly
+        assert absorbed_off == absorbed_on, (
+            f"Absorbed totals differ: off={absorbed_off}, on={absorbed_on}"
+        )
+
+    def test_preserve_indices_unsupported_paths_raise(self):
+        """preserve_indices not yet supported in non-segment-aware paths."""
+        from mfgarchon.geometry.boundary import no_flux_bc
+        Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
+        bc = no_flux_bc(dimension=2)
+        grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
+        problem = MFGProblem(geometry=grid, Nt=Nt, T=T, sigma=0.3,
+                              boundary_conditions=bc, components=_default_components_2d())
+        solver = FPParticleSolver(
+            problem, num_particles=500, density_mode="query_only",
+            boundary_conditions=bc, preserve_indices=True,
+        )
+        np.random.seed(0)
+        init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
+        with pytest.raises(NotImplementedError, match="segment-aware"):
+            solver.solve_fp_system(
+                initial_particles=init,
+                drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))]),
+                volatility_field=0.3, drift_needs_density=False, show_progress=False,
+            )
 
 
 if __name__ == "__main__":

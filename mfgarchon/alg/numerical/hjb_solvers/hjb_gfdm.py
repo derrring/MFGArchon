@@ -2322,7 +2322,13 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return jacobian.tocsr()
 
-    def _apply_boundary_conditions_to_sparse_system(self, jacobian_sparse, residual: np.ndarray, time_idx: int):
+    def _apply_boundary_conditions_to_sparse_system(
+        self,
+        jacobian_sparse,
+        residual: np.ndarray,
+        time_idx: int,
+        u_current: np.ndarray,
+    ):
         """Apply boundary conditions to the sparse Jacobian via row replacement.
 
         Two dispatch paths:
@@ -2346,6 +2352,17 @@ class HJBGFDMSolver(BaseHJBSolver):
         Row construction is **atomic**: we build the full replacement row in a
         local ``np.ndarray`` and assign in one shot, instead of clearing first
         and then conditionally refilling.
+
+        Newton residual semantics (Issue #1116): the BC row's RHS encodes the
+        **current violation** ``F_bc(u_current) - target``, not the BC target
+        value alone. The pre-#1116 code used the target value, which made the
+        boundary half of ``(J, r)`` structurally inconsistent: J rows were the
+        Jacobian of ``F_bc``, but r rows were a constant in u, so ``J·δ = -r``
+        did not describe a Newton step on the same nonlinear function. The
+        pathology was masked for pure Dirichlet ``bc=0`` (post-step projection
+        rescues the iterate) and for Neumann ``bc=0`` with ``w·u_init=0``;
+        it surfaced on mixed-BC + non-trivial initial state (Stage C v3).
+        See ``docs/bug_reports/2026_05_hjb_bc_newton_mismatch.md``.
         """
         if len(self.boundary_indices) == 0:
             return jacobian_sparse, residual
@@ -2410,15 +2427,20 @@ class HJBGFDMSolver(BaseHJBSolver):
                     continue
 
             # --- Build replacement row + rhs (atomic) ---
+            # `new_rhs` is the Newton residual at this row: F_bc(u_current) - target.
+            # `_eval_bc_dirichlet_value` and `_build_neumann_bc_row` return the
+            # BC target; we subtract from the current state to get the violation.
             match bc_enum:
                 case BCType.DIRICHLET:
                     new_row = np.zeros(n)
                     new_row[i] = 1.0
-                    new_rhs = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
+                    bc_target = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
+                    new_rhs = float(u_current[i]) - bc_target
                 case BCType.NEUMANN | BCType.NO_FLUX:
-                    new_row, new_rhs = self._build_neumann_bc_row(
+                    new_row, bc_target = self._build_neumann_bc_row(
                         i, normal, dimension, segment, legacy_bc_values, current_time
                     )
+                    new_rhs = float(new_row @ u_current) - bc_target
                 case BCType.PERIODIC:
                     raise NotImplementedError(
                         f"PERIODIC BC at boundary point {i} not supported by HJBGFDMSolver "
@@ -2905,9 +2927,12 @@ class HJBGFDMSolver(BaseHJBSolver):
 
                 jacobian_sparse = self._compute_hjb_jacobian_sparse(u_current, m_n_plus_1, time_idx, all_derivs)
 
-            # Apply boundary conditions (sparse-aware)
+            # Apply boundary conditions (sparse-aware).
+            # `u_current` is needed so BC rows encode the Newton residual
+            # F_bc(u_current) - target rather than just the target value
+            # (Issue #1116 fix).
             jacobian_bc, residual_bc = self._apply_boundary_conditions_to_sparse_system(
-                jacobian_sparse, residual, time_idx
+                jacobian_sparse, residual, time_idx, u_current
             )
 
             # Newton update using sparse solver: solve J·δ = -r for δ

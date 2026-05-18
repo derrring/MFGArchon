@@ -132,6 +132,7 @@ class FPParticleSolver(BaseFPSolver):
         boundary_conditions: BoundaryConditions | None = None,
         implicit_domain: ImplicitDomain | None = None,
         backend: str | None = None,
+        preserve_indices: bool = False,
         # Deprecated parameters (backward compatibility)
         mode: str | None = None,
         external_particles: Any = None,
@@ -195,6 +196,13 @@ class FPParticleSolver(BaseFPSolver):
         # Implicit domain for obstacle handling (Issue #533)
         # When set, particles entering obstacles are reflected back
         self._implicit_domain = implicit_domain
+
+        # Issue #1119: preserve_indices flag for particle ID tracking
+        # When True, absorbed particles are NaN-marked instead of compact-removed,
+        # so particle_history[t] has constant shape (num_particles, d) and original
+        # indices are preserved across timesteps. Currently supported only in the
+        # callable-drift n-D path with segment-aware BC (other paths raise).
+        self._preserve_indices: bool = preserve_indices
 
         # Initialize backend (defaults to NumPy)
         from mfgarchon.backends import create_backend
@@ -938,7 +946,7 @@ class FPParticleSolver(BaseFPSolver):
         self,
         particles: np.ndarray,
         bounds: list[tuple[float, float]],
-    ) -> tuple[np.ndarray, int, np.ndarray]:
+    ) -> tuple[np.ndarray, int, np.ndarray, np.ndarray]:
         """
         Apply segment-aware boundary conditions using the applicator.
 
@@ -962,6 +970,9 @@ class FPParticleSolver(BaseFPSolver):
             Number of particles absorbed this step
         exit_positions : np.ndarray
             Positions where particles exited, shape (K, dimension)
+        absorbed_mask : np.ndarray
+            Boolean mask of absorbed particles in the INPUT array, shape (N,).
+            Issue #1119: exposed for preserve_indices bookkeeping.
         """
         remaining, absorbed_mask, exit_positions = self._applicator.apply(
             particles,
@@ -977,7 +988,7 @@ class FPParticleSolver(BaseFPSolver):
             self.exit_positions_history.append(exit_positions)
             self.total_absorbed += n_absorbed
 
-        return remaining, n_absorbed, exit_positions
+        return remaining, n_absorbed, exit_positions, absorbed_mask
 
     def _apply_boundary_conditions_with_flux_limits(
         self,
@@ -1358,7 +1369,9 @@ class FPParticleSolver(BaseFPSolver):
         self._show_progress = show_progress
         self._drift_is_precomputed = drift_is_precomputed
 
-        # Initialize particle history for direct query modes (Issue #489)
+        # Initialize particle history for direct query modes (Issue #489).
+        # Issue #1119: NB this is the n-D grid-drift entry; preserve_indices is
+        # NOT supported here (the segment-aware callsite raises NotImplementedError).
         if self.density_mode in ("hybrid", "query_only"):
             self._particle_history = []
 
@@ -1521,7 +1534,11 @@ class FPParticleSolver(BaseFPSolver):
                 # Segment-aware BC: may absorb particles
                 # Convert to 2D for applicator (expects shape (N, d))
                 particles_2d = new_particles.reshape(-1, 1)
-                remaining_2d, _n_absorbed, _ = self._apply_boundary_conditions_segment_aware(
+                if self._preserve_indices:
+                    raise NotImplementedError(
+                        "preserve_indices=True not supported in 1D path; use callable-drift n-D path (Issue #1119)."
+                    )
+                remaining_2d, _n_absorbed, _, _ = self._apply_boundary_conditions_segment_aware(
                     particles_2d, [(xmin, xmin + Lx)]
                 )
                 new_particles = remaining_2d[:, 0]  # Back to 1D
@@ -1697,7 +1714,12 @@ class FPParticleSolver(BaseFPSolver):
             # Apply boundary conditions
             if use_segment_aware_bc:
                 # Segment-aware BC: may absorb particles
-                new_particles, _n_absorbed, _ = self._apply_boundary_conditions_segment_aware(new_particles, bounds)
+                if self._preserve_indices:
+                    raise NotImplementedError(
+                        "preserve_indices=True not supported in grid-drift n-D path; "
+                        "use callable-drift path (Issue #1119)."
+                    )
+                new_particles, _n_absorbed, _, _ = self._apply_boundary_conditions_segment_aware(new_particles, bounds)
                 particles_list[t_idx + 1] = new_particles
             else:
                 # Uniform BC: topology-based (no absorption)
@@ -1938,8 +1960,9 @@ class FPParticleSolver(BaseFPSolver):
         coordinates = params["coordinates"]
 
         # Initialize particle history for direct query modes (Issue #489 / callable drift path)
-        # This must be done here since callable drift returns early from solve_fp_system()
-        if self.density_mode in ("hybrid", "query_only"):
+        # This must be done here since callable drift returns early from solve_fp_system().
+        # Issue #1119: preserve_indices implies user wants per-step trajectories, so force-enable.
+        if self.density_mode in ("hybrid", "query_only") or self._preserve_indices:
             self._particle_history = []
 
         # Get volatility - supports constant, array, or callable
@@ -2007,6 +2030,26 @@ class FPParticleSolver(BaseFPSolver):
         else:
             current_particles[0] = init_p
 
+        # Issue #1119: preserve_indices bookkeeping. Maintain orig_indices mapping
+        # live particles → their original index, and a parallel full-size NaN-marked
+        # history. Internal SDE/KDE loop still uses compact arrays for performance;
+        # NaN-marked array is only built for storage.
+        if self._preserve_indices:
+            if not use_segment_aware_bc:
+                raise NotImplementedError(
+                    "preserve_indices=True requires segment-aware BC (Dirichlet absorbing). "
+                    "With purely reflecting BC, no particles are absorbed, so the default "
+                    "compact array already preserves all indices (Issue #1119)."
+                )
+            preserve_orig_indices: np.ndarray | None = np.arange(self.num_particles)
+            preserve_full_history: list[np.ndarray] | None = [None] * (Nt + 1)
+            full_t0 = np.full((self.num_particles, dimension), np.nan)
+            full_t0[preserve_orig_indices] = init_p
+            preserve_full_history[0] = full_t0
+        else:
+            preserve_orig_indices = None
+            preserve_full_history = None
+
         # Allocate density array (only used if density_mode != "query_only")
         M_density_on_grid = np.zeros((Nt + 1, *grid_shape))
         if M_initial is not None:
@@ -2034,6 +2077,9 @@ class FPParticleSolver(BaseFPSolver):
             if n_particles_t == 0:
                 if use_segment_aware_bc:
                     particles_list[t_idx + 1] = np.empty((0, dimension), dtype=particles_t.dtype)
+                # Issue #1119: maintain full-NaN history once all particles absorbed
+                if self._preserve_indices:
+                    preserve_full_history[t_idx + 1] = np.full((self.num_particles, dimension), np.nan)
                 if self.density_mode != "query_only":
                     M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
                 self._increment_time_step()
@@ -2123,8 +2169,17 @@ class FPParticleSolver(BaseFPSolver):
             # Apply boundary conditions — Issue #1042 fix: route to segment-aware
             # path when BC has Dirichlet (absorbing) segments, mirroring grid-drift.
             if use_segment_aware_bc:
-                new_particles, _n_absorbed, _ = self._apply_boundary_conditions_segment_aware(new_particles, bounds)
+                new_particles, _n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(
+                    new_particles, bounds
+                )
                 particles_list[t_idx + 1] = new_particles
+                # Issue #1119: update orig_indices + build NaN-marked full array
+                if self._preserve_indices:
+                    if _n_absorbed > 0:
+                        preserve_orig_indices = preserve_orig_indices[~absorbed_mask]
+                    full_t = np.full((self.num_particles, dimension), np.nan)
+                    full_t[preserve_orig_indices] = new_particles
+                    preserve_full_history[t_idx + 1] = full_t
             else:
                 topologies = self._get_topology_per_dimension(dimension)
                 new_particles = self._apply_boundary_conditions_nd(new_particles, bounds, topologies)
@@ -2148,7 +2203,12 @@ class FPParticleSolver(BaseFPSolver):
         # Note: callable drift uses Nt+1 time points (0 to Nt inclusive)
         # Issue #1042: trajectory storage and use_segment_aware_bc flag now match
         # the BC routing path taken in the loop.
-        trajectory = particles_list if use_segment_aware_bc else current_particles
+        # Issue #1119: when preserve_indices=True, swap trajectory to the
+        # NaN-marked full-size history (fixed (Nt+1, N, d) shape).
+        if self._preserve_indices and use_segment_aware_bc:
+            trajectory = preserve_full_history
+        else:
+            trajectory = particles_list if use_segment_aware_bc else current_particles
         return self._finalize_particle_solve(
             M_density_on_grid,
             trajectory,

@@ -398,7 +398,7 @@ def test_dispatch_dirichlet_row_is_identity():
     fake_res = np.ones(n)
 
     jac_bc, res_bc = solver._apply_boundary_conditions_to_sparse_system(
-        fake_jac, fake_res, time_idx=0
+        fake_jac, fake_res, time_idx=0, u_current=np.zeros(n)
     )
 
     # Every boundary row should be exactly [0, ..., 1@i, ..., 0]
@@ -422,7 +422,7 @@ def test_dispatch_neumann_row_uses_normal_grad():
     fake_jac = sp.eye(n, format="csr") * 0.5
     fake_res = np.ones(n)
     jac_bc, _ = solver._apply_boundary_conditions_to_sparse_system(
-        fake_jac, fake_res, time_idx=0
+        fake_jac, fake_res, time_idx=0, u_current=np.zeros(n)
     )
 
     # No Neumann row should be all-zero (the bug fixed by this PR)
@@ -461,7 +461,7 @@ def test_dispatch_periodic_raises():
     fake_res = np.ones(n)
 
     with pytest.raises(NotImplementedError) as exc_info:
-        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0)
+        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
     assert "PERIODIC" in str(exc_info.value)
     assert "TensorProductGrid" in str(exc_info.value) or "FDM" in str(exc_info.value)
 
@@ -485,7 +485,7 @@ def test_dispatch_robin_raises():
     fake_jac = sp.eye(n, format="csr") * 0.5
     fake_res = np.ones(n)
     with pytest.raises(NotImplementedError) as exc_info:
-        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0)
+        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
     assert "ROBIN" in str(exc_info.value)
     assert "BCValueProvider" in str(exc_info.value) or "625" in str(exc_info.value)
 
@@ -511,7 +511,7 @@ def test_invariant_no_zero_rows_after_bc_apply():
     fake_jac = sp.eye(n, format="csr") * 0.5
     fake_res = np.ones(n)
     jac_bc, _ = solver._apply_boundary_conditions_to_sparse_system(
-        fake_jac, fake_res, time_idx=0
+        fake_jac, fake_res, time_idx=0, u_current=np.zeros(n)
     )
 
     row_sums = np.abs(jac_bc).sum(axis=1).A.flatten()
@@ -572,7 +572,7 @@ def test_stress_thousand_boundary_points():
     fake_jac = sp.eye(n, format="csr") * 0.5
     fake_res = np.ones(n)
     jac_bc, _ = solver._apply_boundary_conditions_to_sparse_system(
-        fake_jac, fake_res, time_idx=0
+        fake_jac, fake_res, time_idx=0, u_current=np.zeros(n)
     )
     row_sums = np.abs(jac_bc).sum(axis=1).A.flatten()
     zero_rows = np.where(row_sums < 1e-15)[0]
