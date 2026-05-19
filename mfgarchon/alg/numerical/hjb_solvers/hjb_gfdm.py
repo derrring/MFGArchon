@@ -986,6 +986,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                 operator=self._gfdm_operator,
                 is_boundary=is_buffer,
                 tolerance=1e-6,
+                # Issue #1102: pass post-filter neighborhoods so the M-matrix
+                # QP runs on the same stencil indices the override site sees
+                # at runtime. Without this, adaptive_neighborhoods=True (or
+                # ghost-node augmentation) silently desynchronises L_w
+                # (pre-adaptive, from op) from b = u_neighbors - u_center
+                # (post-adaptive, from self.neighborhoods).
+                neighborhoods=self.neighborhoods,
+                points=self.collocation_points,
+                delta=delta,
             )
             logger.info(
                 f"Precomputed monotone stencils: {self._precomputed_stencils.stats['n_monotonized']}/{self._precomputed_stencils.stats['n_boundary']} "

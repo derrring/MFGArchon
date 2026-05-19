@@ -37,6 +37,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.alg.numerical.gfdm_components.joint_socp import (
+    build_taylor_matrix_1d,
+    build_taylor_matrix_2d,
+    wendland_stencil_weights,
+)
+
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 
@@ -79,11 +85,26 @@ class PrecomputedMonotoneStencils:
     Parameters
     ----------
     operator : TaylorOperator
-        GFDM operator with precomputed Taylor matrices
+        GFDM operator with precomputed Taylor matrices. Used when ``neighborhoods``
+        is None (legacy path); read for pre-adaptive ``op.get_derivative_weights(i)``.
     is_boundary : np.ndarray
         Boolean array indicating boundary points
     tolerance : float
         Numerical tolerance for M-matrix check (default: 1e-6)
+    neighborhoods : dict | None
+        Post-filter stencil dict (typically ``HJBGFDMSolver.neighborhoods`` built
+        by ``NeighborhoodBuilder``). When provided, stencils are built on
+        post-adaptive ``neighborhoods[i]["indices"]`` rather than the pre-adaptive
+        ``op.get_derivative_weights(i)``. Requires ``points`` and ``delta``.
+        Issue #1102: required for correctness on irregular clouds where
+        ``adaptive_neighborhoods=True`` enlarges boundary stencils.
+    points : np.ndarray | None
+        Collocation points, shape (n_total, dimension). Required when
+        ``neighborhoods`` is provided.
+    delta : float | None
+        Wendland kernel support radius. Required when ``neighborhoods`` is
+        provided. Sets the LSQ weighting used to recompute unconstrained
+        Laplacian weights on the enlarged stencil.
 
     Attributes
     ----------
@@ -104,10 +125,38 @@ class PrecomputedMonotoneStencils:
         operator: TaylorOperator,
         is_boundary: np.ndarray,
         tolerance: float = 1e-6,
+        neighborhoods: dict | None = None,
+        points: np.ndarray | None = None,
+        delta: float | None = None,
     ):
         self._operator = operator
         self._is_boundary = np.asarray(is_boundary)
         self._tolerance = tolerance
+        # Post-filter neighborhoods (after visibility filter, ghost nodes,
+        # adaptive δ-enlargement). Issue #1102: when None, fall back to
+        # pre-adaptive op.get_derivative_weights() (legacy path that crashes
+        # if adaptive enlargement modified self.neighborhoods).
+        self._neighborhoods = neighborhoods
+        if neighborhoods is not None:
+            if points is None or delta is None:
+                raise ValueError(
+                    "PrecomputedMonotoneStencils: when neighborhoods= is provided, "
+                    "points= and delta= are also required (used to recompute "
+                    "unconstrained Wendland-LSQ Laplacian weights on the enlarged "
+                    "stencil)."
+                )
+            self._points = np.asarray(points)
+            self._delta = float(delta)
+            self._dimension = self._points.shape[1] if self._points.ndim == 2 else 1
+            if self._dimension not in (1, 2):
+                raise ValueError(
+                    f"PrecomputedMonotoneStencils with neighborhoods= currently "
+                    f"supports 1D or 2D, got dimension {self._dimension}"
+                )
+        else:
+            self._points = None
+            self._delta = None
+            self._dimension = None
 
         self.stencils: dict[int, MonotoneStencilData] = {}
         self.stats = {
@@ -130,12 +179,28 @@ class PrecomputedMonotoneStencils:
         self.stats["n_boundary"] = len(boundary_indices)
 
         for i in boundary_indices:
-            weights_data = self._operator.get_derivative_weights(i)
-            if weights_data is None:
-                continue
+            i = int(i)
+            if self._neighborhoods is not None:
+                # Post-adaptive path (Issue #1102): use runtime stencil indices
+                # so L_w aligns with `b = u_neighbors - u_center` built from
+                # the same neighborhoods at the override site in
+                # HJBGFDMSolver.approximate_derivatives.
+                stencil = self._compute_unconstrained_from_neighborhoods(i)
+            else:
+                # Legacy path: pre-adaptive op weights. Crashes at the override
+                # site if adaptive_neighborhoods modified self.neighborhoods
+                # (see Issue #1102 for the dual-source bug class).
+                weights_data = self._operator.get_derivative_weights(i)
+                if weights_data is None:
+                    continue
+                stencil = (
+                    weights_data["lap_weights"].copy(),
+                    weights_data["neighbor_indices"].copy(),
+                )
 
-            lap_weights = weights_data["lap_weights"].copy()
-            neighbor_indices = weights_data["neighbor_indices"].copy()
+            if stencil is None:
+                continue
+            lap_weights, neighbor_indices = stencil
 
             # Find center point in neighbor list
             center_in_neighbors = self._find_center_in_neighbors(i, neighbor_indices)
@@ -176,6 +241,53 @@ class PrecomputedMonotoneStencils:
             if idx == point_idx:
                 return j
         return None
+
+    def _compute_unconstrained_from_neighborhoods(self, point_idx: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """Compute unconstrained Wendland-LSQ Laplacian weights on the
+        post-adaptive stencil at ``point_idx``.
+
+        Mirrors the Wendland-LSQ fast-path in
+        :func:`mfgarchon.alg.numerical.gfdm_components.joint_socp.solve_joint_socp_at_stencil`
+        (lap-only): builds Taylor matrix on offsets from the post-filter
+        neighborhood, then ``L = WA @ solve(A^T W A, e_lap)``.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray] | None
+            ``(lap_weights, neighbor_indices)`` for the post-adaptive stencil,
+            or None if the neighborhood is missing or the LSQ is singular.
+        """
+        # Caller invariants (set when neighborhoods= is provided to __init__).
+        assert self._neighborhoods is not None
+        assert self._points is not None
+        assert self._delta is not None
+        nh = self._neighborhoods.get(point_idx)
+        if nh is None:
+            return None
+        nbr = np.asarray(nh["indices"])
+        if len(nbr) < 3:  # need at least k=3 Taylor cols in 1D, 6 in 2D
+            return None
+
+        offsets = self._points[nbr] - self._points[point_idx]
+        if self._dimension == 1:
+            offsets_1d = offsets.reshape(-1)
+            A, _ = build_taylor_matrix_1d(offsets_1d)
+            w_neighbor = wendland_stencil_weights(offsets_1d, self._delta)
+            e_lap = np.array([0.0, 0.0, 1.0])
+        else:
+            A, _ = build_taylor_matrix_2d(offsets)
+            w_neighbor = wendland_stencil_weights(offsets, self._delta)
+            e_lap = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 1.0])
+
+        W_diag = np.diag(w_neighbor)
+        ATA = A.T @ W_diag @ A
+        try:
+            # Issue #1066: solve, not inv — squares condition number.
+            coeffs = np.linalg.solve(ATA, e_lap)
+        except np.linalg.LinAlgError:
+            return None
+        lap_weights = (W_diag @ A) @ coeffs  # shape (n,)
+        return lap_weights, nbr
 
     def _violates_m_matrix(self, weights: np.ndarray, center_idx: int | None) -> bool:
         """Check if Laplacian weights violate M-matrix property."""
