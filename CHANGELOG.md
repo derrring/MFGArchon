@@ -60,6 +60,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PrecomputedMonotoneStencils` accepts `neighborhoods=` parameter**
+  (Issue #1102). Pre-fix, the class built stencils on
+  `op.get_derivative_weights(i)` (pre-adaptive, e.g. 53 neighbors on a corner
+  buffer point) while the runtime override site in
+  `HJBGFDMSolver.approximate_derivatives` contracted against
+  `self.neighborhoods[i]["indices"]` (post-adaptive, e.g. 522 after
+  `adaptive_neighborhoods=True` enlargement). The size divergence raised
+  `ValueError: matmul: size N is different from K` and forced the b-rebuild
+  workaround in commit `67fa5ad8`, which silently dropped adaptive-enlarged
+  neighbors from the Phase-2 Laplacian correction.
+
+  Fix: the constructor now accepts `neighborhoods`, `points`, and `delta`
+  (mirroring `PrecomputedJointSocpStencils`, joint_socp.py:491). When
+  provided, stencils are built on post-adaptive indices with Wendland-LSQ
+  unconstrained Laplacian weights recomputed on the enlarged stencil, then
+  passed through the existing M-matrix QP. The wired call in
+  `HJBGFDMSolver` (hjb_gfdm.py:985) now passes `neighborhoods=self.neighborhoods`.
+  Closes the second instance of the [[feedback_mfgarchon_dual_stencil_bug]]
+  recurrence (first instance: `PrecomputedJointSocpStencils`, #1099).
+  Adds the first dedicated test file for `PrecomputedMonotoneStencils`
+  (audit 2026-05-10 D.1 gap), exercising legacy / matched-indices /
+  enlarged-indices / integration regression paths.
+
 - **`HJBGFDMSolver` diffusion-term arithmetic in `scheme="none"` path**
   (Issue #1073). Four sites in `hjb_gfdm.py` (residual_vectorized at L1840,
   residual_hamiltonian at L1889, jacobian_hamiltonian at L1926,
