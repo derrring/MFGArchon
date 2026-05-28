@@ -383,7 +383,10 @@ class FPParticleSolver(BaseFPSolver):
             if self.problem.dt is not None
             else (self.problem.T / self.problem.Nt if self.problem.Nt > 0 else 0.0)
         )
-        sigma = self.problem.sigma if self.problem.sigma is not None else 0.1
+        # Issue #1081: problem.sigma is typed float and resolved in the MFGProblem
+        # constructor, so it is never None here; the prior `else 0.1` silent
+        # default was dead defensive code masking a malformed problem.
+        sigma = self.problem.sigma
         coupling_coefficient = (
             self.problem.coupling_coefficient if self.problem.coupling_coefficient is not None else 1.0
         )
