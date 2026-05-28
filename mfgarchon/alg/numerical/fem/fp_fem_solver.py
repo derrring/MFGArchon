@@ -24,6 +24,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .assembly import assemble_mass, assemble_stiffness, create_basis
+from .discretization import FEMDiscretization
 from .mesh_adapter import meshdata_to_skfem
 
 if TYPE_CHECKING:
@@ -62,10 +63,11 @@ class FPFEMSolver(BaseFPSolver):
 
         self._skfem_mesh = meshdata_to_skfem(mesh_data)
         self._basis = create_basis(self._skfem_mesh, order=order)
+        self._disc = FEMDiscretization(self._basis)  # Issue #1131: assembly backend
         self._n_dof = self._basis.N
 
-        self._K = assemble_stiffness(self._basis)
-        self._M = assemble_mass(self._basis)
+        self._K = self._disc.stiffness()
+        self._M = self._disc.mass()
 
         # BC from problem geometry (same framework as FDM/GFDM)
         self._bc = getattr(problem.geometry, "boundary_conditions", None)

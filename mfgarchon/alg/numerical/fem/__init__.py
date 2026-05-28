@@ -23,6 +23,7 @@ from mfgarchon.alg.numerical.fem.assembly import (
     assemble_stiffness,
     create_basis,
 )
+from mfgarchon.alg.numerical.fem.discretization import FEMDiscretization
 from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.alg.numerical.fem.mesh_adapter import (
@@ -33,6 +34,7 @@ from mfgarchon.alg.numerical.fem.mesh_adapter import (
 __all__ = [
     "HJBFEMSolver",
     "FPFEMSolver",
+    "FEMDiscretization",
     "create_basis",
     "assemble_stiffness",
     "assemble_mass",
