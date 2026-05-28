@@ -23,7 +23,8 @@ from scipy.sparse.linalg import spsolve
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .assembly import assemble_gradient_projection, assemble_mass, assemble_stiffness, create_basis
+from .assembly import assemble_mass, assemble_stiffness, create_basis
+from .discretization import FEMDiscretization
 from .mesh_adapter import meshdata_to_skfem
 
 if TYPE_CHECKING:
@@ -71,14 +72,15 @@ class HJBFEMSolver(BaseHJBSolver):
 
         self._skfem_mesh = meshdata_to_skfem(mesh_data)
         self._basis = create_basis(self._skfem_mesh, order=order)
+        self._disc = FEMDiscretization(self._basis)  # Issue #1131: assembly backend
         self._n_dof = self._basis.N
 
         # Pre-assemble constant matrices
-        self._K = assemble_stiffness(self._basis)  # Stiffness (Laplacian)
-        self._M = assemble_mass(self._basis)  # Mass
+        self._K = self._disc.stiffness()  # Stiffness (Laplacian)
+        self._M = self._disc.mass()  # Mass
 
         # Gradient projection matrices for Newton iteration (lazy-built)
-        self._R_grad = assemble_gradient_projection(self._basis)
+        self._R_grad = self._disc.gradient_projection()
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._M_lumped_inv: NDArray | None = None
 
