@@ -132,9 +132,7 @@ def shape_functions_and_grads_jax(
         import jax
         import jax.numpy as jnp
     except ImportError:
-        raise ImportError(
-            "backend='jax' requires jax. Install jax, or use backend='numpy'."
-        ) from None
+        raise ImportError("backend='jax' requires jax. Install jax, or use backend='numpy'.") from None
 
     jax.config.update("jax_enable_x64", True)
     nodes_j = jnp.asarray(nodes, dtype=jnp.float64)

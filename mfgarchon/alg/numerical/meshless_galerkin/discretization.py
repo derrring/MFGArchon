@@ -64,9 +64,7 @@ class MeshlessGalerkinDiscretization:
             np.asarray(quad_points, dtype=np.float64), self._nodes, self._rho, exps, backend
         )
         # gradients at the nodes for the gradient-projection operators: (N, N, dim)
-        _, self._grad_nodes = shape_functions_and_grads(
-            self._nodes, self._nodes, self._rho, exps, backend
-        )
+        _, self._grad_nodes = shape_functions_and_grads(self._nodes, self._nodes, self._rho, exps, backend)
 
     @property
     def n_dof(self) -> int:
@@ -129,9 +127,7 @@ if __name__ == "__main__":
         # gradient projection of linear field u = x_e reproduces delta_{ec}.
         R = [r.toarray() for r in disc.gradient_projection()]
         grad_err = max(
-            float(np.max(np.abs(R[e] @ nodes[:, c] - (1.0 if e == c else 0.0))))
-            for e in range(d)
-            for c in range(d)
+            float(np.max(np.abs(R[e] @ nodes[:, c] - (1.0 if e == c else 0.0)))) for e in range(d) for c in range(d)
         )
         alpha = -np.asarray(pts).T  # velocity at dofs is (dim, N); use nodes-consistent shape
         v = -nodes.T  # (dim, N): drift -x at dofs (potential MFG, Psi=|x|^2/2)
