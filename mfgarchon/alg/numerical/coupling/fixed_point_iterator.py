@@ -162,7 +162,7 @@ class FixedPointIterator(BaseCouplingIterator):
         self.volatility_field = volatility_field
         self.drift_field = drift_field
 
-        # Issue #1082: warn on HJB-FP volatility mismatch when both are scalars.
+        # Issue #1081: warn on HJB-FP volatility mismatch when both are scalars.
         # If user passes `volatility_field=X` here AND `problem.sigma=Y` with
         # X != Y, HJB sees Y and FP sees X — Picard fixed point corresponds
         # to neither original nor (X, Y)-augmented MFG. Same trap pattern as
