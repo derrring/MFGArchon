@@ -47,6 +47,10 @@ class FEMDiscretization:
     def dim(self) -> int:
         return int(self._basis.mesh.dim())
 
+    @property
+    def dof_coordinates(self) -> NDArray:
+        return self._basis.doflocs.T
+
     def stiffness(self) -> sparse.csr_matrix:
         return assemble_stiffness(self._basis)
 

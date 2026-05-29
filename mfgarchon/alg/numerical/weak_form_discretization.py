@@ -43,6 +43,17 @@ class WeakFormDiscretization(Protocol):
         """Spatial dimension."""
         ...
 
+    @property
+    def dof_coordinates(self) -> NDArray:
+        """Coordinates of the degrees of freedom, shape ``(n_dof, dim)``.
+
+        The point at which nodal fields (value function, density, drift) live;
+        a basis-agnostic solver evaluates the Hamiltonian here. For finite
+        elements these are the Lagrange dof locations; for meshless Galerkin,
+        the collocation cloud.
+        """
+        ...
+
     def stiffness(self) -> sparse.csr_matrix:
         r"""Stiffness matrix $K_{ij} = \int_\Omega \nabla\phi_i \cdot \nabla\phi_j \, dx$.
 

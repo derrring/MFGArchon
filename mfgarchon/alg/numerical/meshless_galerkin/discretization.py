@@ -74,6 +74,10 @@ class MeshlessGalerkinDiscretization:
     def dim(self) -> int:
         return self._dim
 
+    @property
+    def dof_coordinates(self) -> NDArray:
+        return self._nodes
+
     def stiffness(self) -> sparse.csr_matrix:
         K = np.einsum("q,qid,qjd->ij", self._w, self._grad, self._grad)
         return sparse.csr_matrix(K)
