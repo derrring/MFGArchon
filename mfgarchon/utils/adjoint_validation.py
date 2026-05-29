@@ -227,8 +227,14 @@ def check_solver_duality(
         )
 
     # Case 4: Same family → Check duality type
-    # Type A families: Discrete transpose (exact)
-    discrete_families = {SchemeFamily.FDM, SchemeFamily.SL, SchemeFamily.FVM}
+    # Type A families: Discrete transpose (exact). MESHLESS_GALERKIN is the
+    # meshfree Type-A member (Galerkin MLS, A_FP = A_HJB^T exact; Issue #1131).
+    discrete_families = {
+        SchemeFamily.FDM,
+        SchemeFamily.SL,
+        SchemeFamily.FVM,
+        SchemeFamily.MESHLESS_GALERKIN,
+    }
 
     if hjb_family in discrete_families:
         return DualityValidationResult(

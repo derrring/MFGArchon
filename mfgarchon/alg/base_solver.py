@@ -111,7 +111,8 @@ class SchemeFamily(Enum):
     SL = "semi_lagrangian"  # Semi-Lagrangian
     FVM = "fvm"  # Finite Volume (future)
     FEM = "fem"  # Finite Element Methods (Issue #773)
-    GFDM = "gfdm"  # Meshfree GFDM
+    GFDM = "gfdm"  # Meshfree GFDM (strong-form, Type B)
+    MESHLESS_GALERKIN = "meshless_galerkin"  # Meshfree Galerkin / MLS (weak-form, Type A; Issue #1131)
     PINN = "pinn"  # Physics-Informed Neural Network (future)
     GENERIC = "generic"  # Unknown/custom solvers
 
