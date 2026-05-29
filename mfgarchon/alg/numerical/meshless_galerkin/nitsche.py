@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import sparse
 
-from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss
+from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss, surface_quadrature
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -94,6 +94,49 @@ def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
     )
 
 
+def _check_boundary_node_coverage(x_b: NDArray, disc) -> None:
+    """Fail fast if any boundary quadrature point lacks MLS node support.
+
+    A point with fewer than ``len(exps)`` cloud nodes within the support radius makes
+    the MLS moment matrix singular; raise a greppable error naming the bare point
+    rather than letting a deep ``LinAlgError`` surface later. The cloud must cover the
+    Dirichlet boundary ``{sdf=0}``.
+    """
+    from scipy.spatial import cKDTree
+
+    n_min = len(disc._exps)
+    counts = np.asarray(cKDTree(disc.dof_coordinates).query_ball_point(x_b, disc.rho, return_length=True))
+    bad = np.flatnonzero(counts < n_min)
+    if bad.size:
+        i = int(bad[0])
+        raise ValueError(
+            f"Curved-boundary quadrature point {np.round(x_b[i], 4).tolist()} has only {int(counts[i])} cloud "
+            f"nodes within rho={disc.rho:.4g} (need >= {n_min}); the cloud must cover the Dirichlet boundary "
+            "{sdf=0}. Add nodes near the boundary or enlarge delta (#1139)."
+        )
+
+
+def _segment_quadrature(segment, disc, bounds, n_gauss):
+    """Boundary quadrature ``(x_b, w_b, n_b)`` for one Dirichlet segment.
+
+    A segment carrying ``sdf_region`` (a curved boundary, #1139) is integrated on the
+    level set ``{sdf_region = 0}`` via ``surface_quadrature``; the background resolution
+    mirrors the cloud scale (``n_cells ~ max bbox side / rho``). Otherwise the existing
+    axis-aligned bounding-box face rule (``boundary_tensor_gauss``) is used.
+    """
+    sdf = getattr(segment, "sdf_region", None)
+    if sdf is not None:
+        # Boundary marching grid finer than the support radius for a smooth boundary
+        # curve; the boundary points still need rho-coverage (checked below).
+        max_side = max(b - a for a, b in bounds)
+        n_cells = max(16, int(np.ceil(2.0 * max_side / disc.rho)))
+        x_b, w_b, n_b = surface_quadrature(sdf, bounds, n_cells)
+        _check_boundary_node_coverage(x_b, disc)
+        return x_b, w_b, n_b
+    faces = _segment_faces(segment, disc.dim)
+    return boundary_tensor_gauss(bounds, faces, n_gauss=n_gauss)
+
+
 def _evaluate_g(value, x_b: NDArray) -> NDArray:
     """Prescribed Dirichlet value at boundary points (scalar or callable g(x))."""
     if isinstance(value, (int, float)):
@@ -134,14 +177,12 @@ def assemble_nitsche_terms(
     if not segs:
         return None, None
 
-    d = disc.dim
     bounds = _domain_bounds(disc)
     rho = disc.rho
 
     xs, ws, ns, gs = [], [], [], []
     for s in segs:
-        faces = _segment_faces(s, d)
-        x_b, w_b, n_b = boundary_tensor_gauss(bounds, faces, n_gauss=n_gauss)
+        x_b, w_b, n_b = _segment_quadrature(s, disc, bounds, n_gauss)
         xs.append(x_b)
         ws.append(w_b)
         ns.append(n_b)

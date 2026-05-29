@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
 
@@ -109,3 +111,105 @@ def boundary_tensor_gauss(
         all_nrm.append(np.tile(normal, (pts.shape[0], 1)))
 
     return np.vstack(all_pts), np.concatenate(all_wts), np.vstack(all_nrm)
+
+
+def surface_quadrature(
+    sdf: Callable[[NDArray], NDArray],
+    bounds: list[tuple[float, float]],
+    n_cells: int,
+) -> tuple[NDArray, NDArray, NDArray]:
+    r"""Surface quadrature on the curved boundary ``{x : sdf(x) = 0}`` of a domain.
+
+    Midpoint rule on the zero level set extracted by marching squares (2D) over an
+    ``n_cells`` background grid on ``bounds``; the boundary measure is the segment
+    length (1 in 1D, where a boundary is a point), and outward unit normals come from
+    ``outward_normal_from_sdf`` (the SDF convention is ``sdf < 0`` inside, so the
+    gradient points outward -- no sign flip). This is the curved-boundary source for
+    the symmetric Nitsche terms (#1139), the analogue of ``boundary_tensor_gauss`` for
+    axis-aligned faces.
+
+    Args:
+        sdf: signed distance / level-set function, ``(N, d) -> (N,)``, negative inside.
+        bounds: ``(a, b)`` per dimension; ``len(bounds)`` is the dimension ``d``.
+        n_cells: background cells per dimension for the marching grid.
+
+    Returns:
+        ``(points, weights, normals)`` of shapes ``(Q, d)``, ``(Q,)``, ``(Q, d)``.
+
+    Raises:
+        NotImplementedError: ``d >= 3`` (marching-cubes deferred; #1139).
+        ValueError: no zero crossing found within ``bounds``.
+    """
+    d = len(bounds)
+    if d == 1:
+        return _surface_quadrature_1d(sdf, bounds, n_cells)
+    if d == 2:
+        return _surface_quadrature_2d(sdf, bounds, n_cells)
+    raise NotImplementedError("surface_quadrature: 3D marching-cubes deferred (#1139); only 1D/2D supported.")
+
+
+def _surface_quadrature_1d(sdf, bounds, n_cells):
+    a, b = bounds[0]
+    xs = np.linspace(a, b, n_cells + 1)
+    phi = np.asarray(sdf(xs[:, None]), dtype=np.float64).ravel()
+    pts, normals = [], []
+    for i in range(n_cells):
+        s0, s1 = phi[i], phi[i + 1]
+        if (s0 <= 0) != (s1 <= 0):  # boundary crossing on this interval
+            t = s0 / (s0 - s1)
+            pts.append([xs[i] + t * (xs[i + 1] - xs[i])])
+            normals.append([1.0 if s1 > s0 else -1.0])  # outward = sign of sdf'
+    if not pts:
+        raise ValueError("surface_quadrature(1D): sdf has no zero crossing in bounds; check sdf/bounds.")
+    pts = np.asarray(pts, dtype=np.float64)
+    return pts, np.ones(pts.shape[0]), np.asarray(normals, dtype=np.float64)
+
+
+def _surface_quadrature_2d(sdf, bounds, n_cells):
+    from mfgarchon.operators.differential.function_gradient import outward_normal_from_sdf
+
+    (ax0, bx0), (ax1, bx1) = bounds
+    xs = np.linspace(ax0, bx0, n_cells + 1)
+    ys = np.linspace(ax1, bx1, n_cells + 1)
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")
+    phi = np.asarray(sdf(np.stack([gx.ravel(), gy.ravel()], axis=1)), dtype=np.float64).reshape(
+        n_cells + 1, n_cells + 1
+    )
+
+    points, weights = [], []
+    for i in range(n_cells):
+        for j in range(n_cells):
+            # cell corners CCW: bottom-left, bottom-right, top-right, top-left
+            corners = [
+                (xs[i], ys[j], phi[i, j]),
+                (xs[i + 1], ys[j], phi[i + 1, j]),
+                (xs[i + 1], ys[j + 1], phi[i + 1, j + 1]),
+                (xs[i], ys[j + 1], phi[i, j + 1]),
+            ]
+            crossings = []
+            for k in range(4):
+                x0, y0, s0 = corners[k]
+                x1, y1, s1 = corners[(k + 1) % 4]
+                if (s0 <= 0) != (s1 <= 0):  # zero crossing on this edge (phi=0 -> inside)
+                    t = s0 / (s0 - s1)
+                    crossings.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+            # 2 crossings -> one segment; 4 (saddle, rare for smooth SDF) -> pair in edge
+            # order (a tiny arc-length error if mispaired, negligible for quadrature).
+            if len(crossings) == 2:
+                segments = [(crossings[0], crossings[1])]
+            elif len(crossings) == 4:
+                segments = [(crossings[0], crossings[1]), (crossings[2], crossings[3])]
+            else:
+                continue
+            for p, q in segments:
+                p, q = np.asarray(p), np.asarray(q)
+                length = float(np.linalg.norm(q - p))
+                if length > 0.0:
+                    points.append(0.5 * (p + q))
+                    weights.append(length)
+
+    if not points:
+        raise ValueError("surface_quadrature(2D): sdf has no zero level set in bounds; check sdf/bounds.")
+    points = np.asarray(points, dtype=np.float64)
+    normals = outward_normal_from_sdf(sdf, points)
+    return points, np.asarray(weights, dtype=np.float64), np.asarray(normals, dtype=np.float64)
