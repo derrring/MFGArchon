@@ -52,9 +52,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
+        domain: object | None = None,
         nitsche_penalty: float = 20.0,
     ) -> None:
-        disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend)
+        disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss

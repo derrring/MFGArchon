@@ -201,3 +201,30 @@ class TestMeshlessGalerkinNitsche:
         eps = 1e-6
         fd = (residual(U0 + eps * e) - residual(U0 - eps * e)) / (2 * eps)
         assert np.linalg.norm(fd - J @ e) / np.linalg.norm(J @ e) < 1e-7
+
+
+@pytest.mark.integration
+class TestMeshlessGalerkinDomainClipping:
+    """Quadrature clipping to a non-rectangular Omega threads to BOTH pair members (#1139)."""
+
+    def test_domain_threads_to_both_solvers(self):
+        # A `domain` in hjb_config must reach the FP solver too, or the pair clips
+        # differently and A_FP = A_HJB^T breaks. The factory threads it like delta/cloud.
+        from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+
+        n = 9
+        ax = np.linspace(0.0, 1.0, n)
+        cloud = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)  # 2D grid cloud
+
+        def domain(P):  # keep the left 70% of the box -> a non-bounding-box Omega
+            return P[:, 0] <= 0.7
+
+        problem = _problem(n=n)
+        cfg = {"collocation_points": cloud, "delta": 0.35, "n_gauss": 2, "domain": domain}
+        hjb, fp = create_paired_solvers(problem, NumericalScheme.MESHLESS_GALERKIN, hjb_config=cfg)
+        # both discretizations were assembled from the SAME masked quadrature
+        assert hjb._disc._phi.shape == fp._disc._phi.shape
+        assert np.allclose(hjb._disc.stiffness().toarray(), fp._disc.stiffness().toarray())
+        # and the mask actually dropped the x > 0.7 quadrature points
+        unmasked = discretization_from_cloud(cloud, 0.35, n_gauss=2)
+        assert hjb._disc._phi.shape[0] < unmasked._phi.shape[0]

@@ -43,9 +43,10 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
+        domain: object | None = None,
         nitsche_penalty: float = 20.0,
     ) -> None:
-        disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend)
+        disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
         self.hjb_method_name = "MeshlessGalerkin"
         self._n_gauss = n_gauss
