@@ -100,6 +100,9 @@ def create_paired_solvers(
     elif scheme in (NumericalScheme.FEM_P1, NumericalScheme.FEM_P2):
         hjb_solver, fp_solver = _create_fem_pair(problem, scheme, hjb_config, fp_config)
 
+    elif scheme == NumericalScheme.MESHLESS_GALERKIN:
+        hjb_solver, fp_solver = _create_meshless_galerkin_pair(problem, hjb_config, fp_config)
+
     else:
         raise NotImplementedError(
             f"Scheme {scheme.value} is defined but not yet implemented in factory. "
@@ -260,6 +263,34 @@ def _create_gfdm_pair(
     hjb_solver = HJBGFDMSolver(problem, **hjb_config)
     fp_solver = FPGFDMSolver(problem, **fp_config)
 
+    return hjb_solver, fp_solver
+
+
+def _create_meshless_galerkin_pair(
+    problem: MFGProblem,
+    hjb_config: dict[str, Any],
+    fp_config: dict[str, Any],
+) -> tuple[BaseHJBSolver, BaseFPSolver]:
+    """Create the meshless Galerkin (MLS) HJB-FP solver pair.
+
+    Discrete duality (Type A): the FP operator is the exact transpose of the
+    Galerkin HJB operator, so no renormalization is needed. Requires
+    ``collocation_points`` (and typically ``delta``) in the configs; these are
+    threaded across HJB/FP for consistency, mirroring the GFDM pair.
+    """
+    from mfgarchon.alg.numerical.meshless_galerkin import (
+        MeshlessGalerkinFPSolver,
+        MeshlessGalerkinHJBSolver,
+    )
+
+    for key in ("delta", "collocation_points", "degree", "n_gauss", "backend"):
+        if key in hjb_config and key not in fp_config:
+            fp_config[key] = hjb_config[key]
+        elif key in fp_config and key not in hjb_config:
+            hjb_config[key] = fp_config[key]
+
+    hjb_solver = MeshlessGalerkinHJBSolver(problem, **hjb_config)
+    fp_solver = MeshlessGalerkinFPSolver(problem, **fp_config)
     return hjb_solver, fp_solver
 
 

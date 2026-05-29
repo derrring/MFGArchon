@@ -15,10 +15,16 @@ Issue #1131 Phase 2.
 
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import (
     MeshlessGalerkinDiscretization,
+    discretization_from_cloud,
 )
+from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+from mfgarchon.alg.numerical.meshless_galerkin.hjb_solver import MeshlessGalerkinHJBSolver
 from mfgarchon.alg.numerical.meshless_galerkin.quadrature import tensor_gauss
 
 __all__ = [
     "MeshlessGalerkinDiscretization",
+    "MeshlessGalerkinHJBSolver",
+    "MeshlessGalerkinFPSolver",
+    "discretization_from_cloud",
     "tensor_gauss",
 ]

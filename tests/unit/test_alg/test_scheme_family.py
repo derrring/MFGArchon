@@ -17,7 +17,9 @@ class TestSchemeFamilyEnum:
         assert hasattr(SchemeFamily, "FDM")
         assert hasattr(SchemeFamily, "SL")
         assert hasattr(SchemeFamily, "FVM")
+        assert hasattr(SchemeFamily, "FEM")
         assert hasattr(SchemeFamily, "GFDM")
+        assert hasattr(SchemeFamily, "MESHLESS_GALERKIN")
         assert hasattr(SchemeFamily, "PINN")
         assert hasattr(SchemeFamily, "GENERIC")
 
@@ -26,7 +28,9 @@ class TestSchemeFamilyEnum:
         assert SchemeFamily.FDM.value == "fdm"
         assert SchemeFamily.SL.value == "semi_lagrangian"
         assert SchemeFamily.FVM.value == "fvm"
+        assert SchemeFamily.FEM.value == "fem"
         assert SchemeFamily.GFDM.value == "gfdm"
+        assert SchemeFamily.MESHLESS_GALERKIN.value == "meshless_galerkin"
         assert SchemeFamily.PINN.value == "pinn"
         assert SchemeFamily.GENERIC.value == "generic"
 
@@ -43,9 +47,10 @@ class TestSchemeFamilyEnum:
     def test_enum_iteration(self):
         """Test that enum can be iterated."""
         families = list(SchemeFamily)
-        assert len(families) == 7
+        assert len(families) == 8
         assert SchemeFamily.FDM in families
         assert SchemeFamily.FEM in families
+        assert SchemeFamily.MESHLESS_GALERKIN in families
         assert SchemeFamily.GENERIC in families
 
 

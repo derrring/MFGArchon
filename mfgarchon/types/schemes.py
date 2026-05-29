@@ -161,6 +161,9 @@ class NumericalScheme(Enum):
     # Type B: Continuous duality schemes (asymptotic adjoint)
     GFDM = "gfdm"
 
+    # Type A (meshfree): discrete duality via Galerkin weak form on MLS (Issue #1131)
+    MESHLESS_GALERKIN = "meshless_galerkin"
+
     def __str__(self) -> str:
         """Human-readable string representation."""
         return self.value
@@ -185,6 +188,7 @@ class NumericalScheme(Enum):
             self.SL_CUBIC,
             self.FEM_P1,
             self.FEM_P2,
+            self.MESHLESS_GALERKIN,
         }
 
     def requires_renormalization(self) -> bool:

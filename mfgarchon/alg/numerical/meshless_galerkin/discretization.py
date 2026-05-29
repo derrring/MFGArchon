@@ -102,6 +102,31 @@ class MeshlessGalerkinDiscretization:
         return [sparse.csr_matrix(self._grad_nodes[:, :, d]) for d in range(self._dim)]
 
 
+def discretization_from_cloud(
+    collocation_points: NDArray,
+    delta: float,
+    degree: int = 2,
+    n_gauss: int = 4,
+    backend: str = "numpy",
+) -> MeshlessGalerkinDiscretization:
+    """Build a discretization from a point cloud with interior tensor-Gauss quadrature.
+
+    The background-grid resolution is ~ one cell per node per dimension (assumes a
+    quasi-uniform cloud). ``delta`` is the MLS support radius; ``backend`` selects
+    the numpy (default) or jax derivative engine.
+    """
+    from mfgarchon.alg.numerical.meshless_galerkin.quadrature import tensor_gauss
+
+    nodes = np.asarray(collocation_points, dtype=np.float64)
+    if nodes.ndim == 1:
+        nodes = nodes[:, None]
+    n, d = nodes.shape
+    n_per = max(2, round(n ** (1.0 / d)))
+    bounds = [(float(nodes[:, k].min()), float(nodes[:, k].max())) for k in range(d)]
+    pts, wts = tensor_gauss(bounds, n_cells=n_per - 1, n_gauss=n_gauss)
+    return MeshlessGalerkinDiscretization(nodes, delta, degree, pts, wts, backend=backend)
+
+
 if __name__ == "__main__":
     """Smoke test: numpy/jax backends agree; protocol invariants hold (1D, 2D)."""
     from scipy.sparse import linalg as sla
