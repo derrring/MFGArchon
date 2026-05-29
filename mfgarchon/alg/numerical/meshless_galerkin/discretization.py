@@ -131,12 +131,28 @@ def discretization_from_cloud(
     degree: int = 2,
     n_gauss: int = 4,
     backend: str = "numpy",
+    domain: object | None = None,
 ) -> MeshlessGalerkinDiscretization:
     """Build a discretization from a point cloud with interior tensor-Gauss quadrature.
 
     The background-grid resolution is ~ one cell per node per dimension (assumes a
     quasi-uniform cloud). ``delta`` is the MLS support radius; ``backend`` selects
     the numpy (default) or jax derivative engine.
+
+    ``domain`` is an optional point predicate ``(N, d) -> bool`` (``True`` = inside
+    Omega), composable with ``mfgarchon.geometry.predicates`` (``sphere_region``,
+    ``sdf_region``, ...). When given, the background tensor-Gauss is **masked to
+    Omega**, so the Galerkin operators integrate over a non-rectangular (Lipschitz)
+    domain rather than the cloud bounding box. Default ``None`` keeps the full
+    bounding box (rectangular Omega).
+
+    Masking is *required* for well-posedness on a non-rectangular Omega: unclipped
+    quadrature points fall outside the node cloud where the MLS moment matrix is
+    singular. The cloud must therefore **cover** Omega; if near-boundary points lack
+    node support the MLS solve raises ``LinAlgError`` (fail-fast, no silent fallback).
+    The structural identities (``K = K^T``, mass conservation, ``A_FP = A_HJB^T``) are
+    algebraic and hold for any quadrature, so masking preserves them; only boundary
+    accuracy is affected (crude mask is ~O(h^1.5); high-order moment-fitting is #1139).
     """
     from mfgarchon.alg.numerical.meshless_galerkin.quadrature import tensor_gauss
 
@@ -147,6 +163,11 @@ def discretization_from_cloud(
     n_per = max(2, round(n ** (1.0 / d)))
     bounds = [(float(nodes[:, k].min()), float(nodes[:, k].max())) for k in range(d)]
     pts, wts = tensor_gauss(bounds, n_cells=n_per - 1, n_gauss=n_gauss)
+    if domain is not None:
+        mask = np.asarray(domain(pts), dtype=bool)
+        if not mask.any():
+            raise ValueError("domain predicate excluded every quadrature point; check the cloud and domain.")
+        pts, wts = pts[mask], wts[mask]
     return MeshlessGalerkinDiscretization(nodes, delta, degree, pts, wts, backend=backend)
 
 
