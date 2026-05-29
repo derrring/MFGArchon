@@ -57,14 +57,15 @@ class MeshlessGalerkinDiscretization:
         self._rho = float(rho)
         self._backend = backend
         self._w = np.asarray(quad_weights, dtype=np.float64)
-        exps = monomial_exponents(self._dim, degree)
+        self._degree = int(degree)
+        self._exps = monomial_exponents(self._dim, degree)
 
         # (phi, grad) at quadrature points: (Q, N), (Q, N, dim)
         self._phi, self._grad = shape_functions_and_grads(
-            np.asarray(quad_points, dtype=np.float64), self._nodes, self._rho, exps, backend
+            np.asarray(quad_points, dtype=np.float64), self._nodes, self._rho, self._exps, backend
         )
         # gradients at the nodes for the gradient-projection operators: (N, N, dim)
-        _, self._grad_nodes = shape_functions_and_grads(self._nodes, self._nodes, self._rho, exps, backend)
+        _, self._grad_nodes = shape_functions_and_grads(self._nodes, self._nodes, self._rho, self._exps, backend)
 
     @property
     def n_dof(self) -> int:
@@ -77,6 +78,28 @@ class MeshlessGalerkinDiscretization:
     @property
     def dof_coordinates(self) -> NDArray:
         return self._nodes
+
+    @property
+    def rho(self) -> float:
+        """MLS support radius (the length scale for the Nitsche penalty)."""
+        return self._rho
+
+    def boundary_shape_data(self, x_b: NDArray, normals: NDArray) -> tuple[NDArray, NDArray]:
+        """MLS shape functions and normal-projected gradients at boundary points.
+
+        Evaluates ``phi`` and ``grad(phi)`` at the surface quadrature points
+        ``x_b`` (shape ``(Q_b, dim)``) and contracts the gradient with the
+        per-point outward unit normals (shape ``(Q_b, dim)``). Returns
+        ``(phi_b, gn_b)`` of shape ``(Q_b, n_dof)`` with
+        ``phi_b[b, i] = phi_i(x_b)`` and ``gn_b[b, j] = n_b . grad phi_j(x_b)``.
+        These are the primitives for the Nitsche boundary operators ``B`` and
+        ``P`` (see ``meshless_galerkin/nitsche.py``).
+        """
+        x_b = np.asarray(x_b, dtype=np.float64)
+        normals = np.asarray(normals, dtype=np.float64)
+        phi_b, grad_b = shape_functions_and_grads(x_b, self._nodes, self._rho, self._exps, self._backend)
+        gn_b = np.einsum("qjd,qd->qj", grad_b, normals)
+        return phi_b, gn_b
 
     def stiffness(self) -> sparse.csr_matrix:
         K = np.einsum("q,qid,qjd->ij", self._w, self._grad, self._grad)

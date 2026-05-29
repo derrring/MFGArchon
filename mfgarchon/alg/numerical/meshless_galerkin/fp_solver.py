@@ -10,7 +10,16 @@ the velocity v = -coupling * grad(U) is recovered at the nodes via the
 mass-lumped gradient projection and assembled with the protocol's advection.
 (Convention alignment to drift = v = -grad_p H is tracked under #1043.)
 
-Issue #1131 Phase 2.
+Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
+absorbing ``m = 0`` on Dirichlet faces via symmetric Nitsche (#1138). The Nitsche
+block is IDENTICAL to the HJB solver's (it is symmetric, hence its own transpose),
+so the Type-A duality ``A_FP = A_HJB^T`` is preserved on the diffusion + Nitsche
+block; mass leaves through ``Gamma_D`` (do not renormalize under absorbing). Only
+the homogeneous case ``m = 0`` is supported. NOTE the advection operator carries no
+boundary term, so ``Gamma_D`` is diffusively absorbing but advectively reflecting
+(rigorous for ``b.n = 0`` on ``Gamma_D``); see ``nitsche.py``.
+
+Issue #1131 Phase 2; Nitsche absorbing #1138.
 """
 
 from __future__ import annotations
@@ -43,10 +52,15 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         degree: int = 2,
         n_gauss: int = 4,
         backend: str = "numpy",
+        nitsche_penalty: float = 20.0,
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend)
         super().__init__(problem, disc)
         self._G_grad: list[sparse.csr_matrix] | None = None
+        self._n_gauss = n_gauss
+        self._nitsche_penalty = nitsche_penalty
+        self._nitsche_cache: tuple | None = None
+        self._nitsche_cache_D: float | None = None
 
     def _gradient_operators(self) -> list[sparse.csr_matrix]:
         # G_d = diag(1/M_lumped) @ R_d : mass-lumped L2 projection of d/dx_d.
@@ -62,14 +76,36 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
 
         return is_pure_neumann(self._bc)
 
+    def _weak_bc_terms(self, D: float):
+        """Symmetric Nitsche absorbing terms ``m = 0`` for the FP diffusion block.
+
+        Returns ``(N_nitsche, None)`` -- the homogeneous case adds no RHS data. The
+        block is assembled identically to the HJB solver (``include_data=False`` only
+        skips the zero data vector), so it is symmetric and equals the HJB block,
+        keeping ``A_FP = A_HJB^T``. ``(None, None)`` if no Dirichlet segments. Cached
+        on ``D``."""
+        if self._nitsche_cache is not None and self._nitsche_cache_D == D:
+            return self._nitsche_cache
+        from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
+
+        terms = assemble_nitsche_terms(
+            self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss, include_data=False
+        )
+        self._nitsche_cache = terms
+        self._nitsche_cache_D = D
+        return terms
+
     def _dirichlet_dofs_and_values(self):
         raise NotImplementedError(
-            "MeshlessGalerkinFPSolver supports Neumann/no-flux BC only; Dirichlet (Nitsche) deferred (#1131)."
+            "MeshlessGalerkinFPSolver imposes absorbing (m=0) BC weakly via Nitsche (_weak_bc_terms), "
+            "not nodal condensation -- its MLS basis is non-interpolatory. Reaching this hook means an "
+            "unsupported BC type (e.g. Robin, or inhomogeneous m=g!=0)."
         )
 
     def _apply_bc_to_system(self, matrix, rhs):
         raise NotImplementedError(
-            "MeshlessGalerkinFPSolver supports Neumann/no-flux BC only; Dirichlet (Nitsche) deferred (#1131)."
+            "MeshlessGalerkinFPSolver imposes absorbing (m=0) BC weakly via Nitsche (_weak_bc_terms), "
+            "not nodal condensation. Reaching this hook means an unsupported BC type."
         )
 
     def _build_advection(self, U_n: NDArray) -> sparse.csr_matrix:

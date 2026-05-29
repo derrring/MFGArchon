@@ -70,6 +70,16 @@ class WeakFormHJBSolver(BaseHJBSolver):
         """Condense the linear system onto interior dofs for Dirichlet BC."""
         raise NotImplementedError
 
+    def _weak_bc_terms(self, D: float):
+        """Optional weak (Nitsche) boundary terms for non-interpolatory bases.
+
+        Returns ``(A_extra, rhs_extra)`` to ADD to the full-size implicit operator
+        and RHS, then solved on ALL dofs (no condensation), or ``(None, None)`` for
+        no weak BC. Default no-op: FEM uses nodal condensation, so it never enters
+        the weak path. Meshless Galerkin overrides this with the symmetric Nitsche
+        terms (its MLS basis is non-interpolatory, so condensation is invalid)."""
+        return None, None
+
     # --- Gradient recovery: mass-lumped L2 projection grad_d(u) = G_d @ u -----
     def _build_gradient_operators(self) -> None:
         if self._G_grad is not None:
@@ -106,10 +116,15 @@ class WeakFormHJBSolver(BaseHJBSolver):
         dim = len(self._G_grad)
         x_grid = self._disc.dof_coordinates  # (N, dim)
 
+        A_extra, rhs_extra = self._weak_bc_terms(D)
+        weak_bc = A_extra is not None
         J_fixed = self._M / dt + D * self._K
+        if weak_bc:
+            J_fixed = J_fixed + A_extra
 
         pure_neumann = self._is_pure_neumann()
-        if not pure_neumann:
+        condense = not pure_neumann and not weak_bc
+        if condense:
             d_dofs, d_vals = self._dirichlet_dofs_and_values()
             interior = np.setdiff1d(np.arange(N), d_dofs)
         else:
@@ -118,7 +133,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
             interior = np.arange(N)
 
         U_current = U_next.copy()
-        if not pure_neumann:
+        if condense:
             U_current[d_dofs] = d_vals
 
         delta_norm = np.inf
@@ -133,18 +148,22 @@ class WeakFormHJBSolver(BaseHJBSolver):
             residual = (
                 (self._M / dt) @ (U_current - U_next) + D * (self._K @ U_current) + self._M @ H_vals - rhs_coupling
             )
+            if weak_bc:
+                residual = residual + A_extra @ U_current
+                if rhs_extra is not None:
+                    residual = residual - rhs_extra
 
             J = J_fixed.copy()
             for d in range(dim):
                 J = J + self._M @ sparse.diags(dH_dp[:, d]) @ self._G_grad[d]
 
-            if pure_neumann:
-                delta = spsolve(J.tocsc(), -residual)
-            else:
+            if condense:
                 residual[d_dofs] = 0.0
                 J_bc, res_bc = self._apply_bc_to_system(J, -residual)
                 delta = np.zeros(N)
                 delta[interior] = spsolve(J_bc, res_bc)
+            else:
+                delta = spsolve(J.tocsc(), -residual)
 
             U_current += delta
 
@@ -204,6 +223,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U[Nt] = U_terminal
 
         A_system = self._M / dt + D * self._K
+        A_extra, rhs_extra = self._weak_bc_terms(D)
+        weak_bc = A_extra is not None
+        if weak_bc:
+            A_system = A_system + A_extra
         H_class = self.problem.hamiltonian_class
 
         for n in range(Nt - 1, -1, -1):
@@ -228,7 +251,11 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     ).ravel()
                     rhs += self._M @ H_values
 
-                if self._is_pure_neumann():
+                if weak_bc:
+                    if rhs_extra is not None:
+                        rhs = rhs + rhs_extra
+                    U[n] = spsolve(A_system, rhs)
+                elif self._is_pure_neumann():
                     U[n] = spsolve(A_system, rhs)
                 else:
                     A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs)

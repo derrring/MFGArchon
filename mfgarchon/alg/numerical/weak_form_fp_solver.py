@@ -44,7 +44,10 @@ class WeakFormFPSolver(BaseFPSolver):
         self._n_dof = discretization.n_dof
         self._K = discretization.stiffness()
         self._M = discretization.mass()
-        self._bc = getattr(problem.geometry, "boundary_conditions", None)
+        # Single source of truth for BCs (matches WeakFormHJBSolver); plain
+        # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
+        # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
+        self._bc = self.get_boundary_conditions()
 
     @property
     def n_dof(self) -> int:
@@ -59,6 +62,17 @@ class WeakFormFPSolver(BaseFPSolver):
 
     def _apply_bc_to_system(self, matrix, rhs):
         raise NotImplementedError
+
+    def _weak_bc_terms(self, D: float):
+        """Optional weak (Nitsche) boundary terms for non-interpolatory bases.
+
+        Returns ``(A_extra, rhs_extra)`` to ADD to the full-size operator and RHS,
+        solved on ALL dofs, or ``(None, None)`` for no weak BC (default no-op; FEM
+        uses condensation). Meshless Galerkin overrides this with the symmetric
+        Nitsche block for absorbing (``m = 0``) boundaries -- the SAME block as the
+        HJB solver, so the Type-A transpose identity ``A_FP = A_HJB^T`` is preserved.
+        ``rhs_extra`` is ``None`` for the homogeneous absorbing case."""
+        return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------
     def _build_advection(self, U_n: NDArray) -> sparse.csr_matrix:
@@ -90,6 +104,10 @@ class WeakFormFPSolver(BaseFPSolver):
         M[0] = m_initial[:N] if len(m_initial) >= N else np.pad(m_initial, (0, N - len(m_initial)))
 
         A_base = self._M / dt + D * self._K
+        A_extra, rhs_extra = self._weak_bc_terms(D)
+        weak_bc = A_extra is not None
+        if weak_bc:
+            A_base = A_base + A_extra
         pure_neumann = self._is_pure_neumann()
 
         for n in range(Nt):
@@ -101,7 +119,11 @@ class WeakFormFPSolver(BaseFPSolver):
             else:
                 A_system = A_base
 
-            if pure_neumann:
+            if weak_bc:
+                if rhs_extra is not None:
+                    rhs = rhs + rhs_extra
+                M[n + 1] = spsolve(A_system, rhs)
+            elif pure_neumann:
                 M[n + 1] = spsolve(A_system, rhs)
             else:
                 A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs)
