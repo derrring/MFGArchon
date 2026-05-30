@@ -77,8 +77,11 @@ class FPFEMSolver(WeakFormFPSolver):
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
 
     # --- advection from drift via exact quadrature-point gradient of U --------
-    def _build_advection(self, U_n: NDArray) -> sparse.csr_matrix:
-        r"""Assemble $\int (v \cdot \nabla\phi_j)\,\phi_i\,dx$ with $v = -\text{coupling}\cdot\nabla U_n$."""
+    def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
+        r"""Assemble $\int (v \cdot \nabla\phi_j)\,\phi_i\,dx$ with $v = -\text{coupling}\cdot\nabla U_n$.
+
+        ``D`` (the current diffusion coefficient) is part of the base contract but unused by
+        FEM, which adds no diffusion-scaled stabilization term."""
         import skfem
         from skfem import BilinearForm
 

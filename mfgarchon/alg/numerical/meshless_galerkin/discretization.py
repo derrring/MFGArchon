@@ -118,6 +118,37 @@ class MeshlessGalerkinDiscretization:
         C = np.einsum("q,qi,qj->ij", self._w, self._phi, a)
         return sparse.csr_matrix(C)
 
+    def streamline_diffusion(self, velocity: NDArray, diffusion: float, c_scale: float = 1.0) -> sparse.csr_matrix:
+        r"""Symmetric SUPG streamline-diffusion operator for an advection ``velocity``.
+
+        ``S[i,j] = sum_q w_q tau_q (b.grad phi_i)(b.grad phi_j)`` with the SUPG parameter
+        ``tau = c_scale * (delta/2|b|)(coth Pe - 1/Pe)``, ``Pe = |b| delta/(2 diffusion)``,
+        length scale ``delta`` = the MLS support radius. ``b`` (``(dim, n_dof)`` or
+        ``(n_dof,)``) is interpolated to the quadrature points through the shape functions,
+        exactly as ``advection`` interpolates its velocity.
+
+        ``S`` is **symmetric** (an outer product of ``b.grad phi_i`` with itself) and
+        ``S @ 1 = 0`` (partition of unity ``sum_j grad phi_j = 0``). Added IDENTICALLY to
+        the FP advection block and the HJB Newton Jacobian, the former preserves the
+        Type-A duality ``A_FP = A_HJB^T`` and the latter keeps the FP mass-conserving.
+        ``diffusion`` MUST be the same ``D = sigma^2/2`` used on the other operator, or
+        the duality breaks. ``c_scale == 0`` returns the zero matrix. Issue #1145 (Bug B).
+        """
+        if c_scale == 0.0:
+            return sparse.csr_matrix((self._n_dof, self._n_dof))
+        velocity = np.asarray(velocity, dtype=np.float64)
+        if velocity.ndim == 1:
+            velocity = velocity[None, :]
+        delta = self._rho  # single global MLS support radius (a scalar)
+        b_q = np.einsum("qj,dj->qd", self._phi, velocity)  # (Q, dim): velocity at quad points
+        b_norm = np.sqrt((b_q**2).sum(axis=1))  # (Q,)
+        pe = b_norm * delta / (2.0 * diffusion)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xi = 1.0 / np.tanh(pe) - 1.0 / pe  # coth(Pe) - 1/Pe -> 0 as Pe -> 0
+            tau = np.where(b_norm > 1e-12, c_scale * (delta / (2.0 * b_norm)) * xi, 0.0)
+        b_grad = np.einsum("qd,qid->qi", b_q, self._grad)  # (Q, N): b . grad phi_i
+        return sparse.csr_matrix(np.einsum("q,q,qi,qj->ij", self._w, tau, b_grad, b_grad))
+
     def gradient_projection(self) -> list[sparse.csr_matrix]:
         # Weak-form derivative R_d[i, j] = int phi_i (d phi_j / d x_d) dx (the
         # WeakFormDiscretization protocol contract): the solver recovers the nodal

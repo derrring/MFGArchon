@@ -286,7 +286,16 @@ def _create_meshless_galerkin_pair(
     # Thread shared keys across HJB/FP so the pair builds the SAME operators.
     # domain (#1139) and nitsche_penalty (#1138) MUST match too, or the clipped /
     # Nitsche blocks differ between HJB and FP and the Type-A transpose identity breaks.
-    for key in ("delta", "collocation_points", "degree", "n_gauss", "backend", "domain", "nitsche_penalty"):
+    for key in (
+        "delta",
+        "collocation_points",
+        "degree",
+        "n_gauss",
+        "backend",
+        "domain",
+        "nitsche_penalty",
+        "streamline_diffusion_scale",
+    ):
         if key in hjb_config and key not in fp_config:
             fp_config[key] = hjb_config[key]
         elif key in fp_config and key not in hjb_config:
