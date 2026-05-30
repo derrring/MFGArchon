@@ -232,12 +232,14 @@ class WeakFormHJBSolver(BaseHJBSolver):
         if M_density.ndim == 1:
             M_density = np.tile(M_density, (Nt + 1, 1))
 
+        # volatility_field is the SDE volatility sigma; the PDE diffusion is D = sigma^2 / 2
+        # (Conventions Index; Issue #811) -- matches the FP _diffusion_coefficient and adjoint mode.
         if volatility_field is None:
             D = 0.5 * self.problem.sigma**2
         elif isinstance(volatility_field, (int, float)):
-            D = float(volatility_field)
+            D = 0.5 * float(volatility_field) ** 2
         else:
-            D = float(np.mean(volatility_field))
+            D = 0.5 * float(np.mean(volatility_field)) ** 2
 
         U = np.zeros((Nt + 1, N))
         U[Nt] = U_terminal

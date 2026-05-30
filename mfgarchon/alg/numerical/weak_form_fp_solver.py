@@ -84,11 +84,15 @@ class WeakFormFPSolver(BaseFPSolver):
         raise NotImplementedError
 
     def _diffusion_coefficient(self, volatility_field) -> float:
+        # volatility_field is the SDE volatility sigma (codebase-wide convention); the PDE
+        # diffusion coefficient is D = sigma^2 / 2 (Conventions Index; Issue #811). The
+        # scalar/array branches previously returned the input as D, skipping the conversion
+        # the None branch and solve_fp_step_adjoint_mode already apply.
         if volatility_field is None:
             return 0.5 * self.problem.sigma**2
         if isinstance(volatility_field, (int, float)):
-            return float(volatility_field)
-        return float(np.mean(volatility_field))
+            return 0.5 * float(volatility_field) ** 2
+        return 0.5 * float(np.mean(volatility_field)) ** 2
 
     def solve_fp_system(
         self,
