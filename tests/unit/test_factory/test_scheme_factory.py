@@ -84,8 +84,9 @@ class TestCreatePairedSolversFDM:
         assert isinstance(hjb, HJBFDMSolver)
         assert isinstance(fp, FPFDMSolver)
 
-        # Check FP advection scheme
-        assert fp.advection_scheme == "gradient_centered"
+        # Check FP advection scheme: conservative central form (Issue #1149 -- the
+        # non-conservative gradient_centered leaked mass through no-flux walls).
+        assert fp.advection_scheme == "divergence_centered"
 
     def test_fdm_custom_config(self):
         """Test FDM pairing with custom configs."""
