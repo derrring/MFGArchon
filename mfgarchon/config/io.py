@@ -46,18 +46,26 @@ def load_solver_config(path: str | Path) -> SolverConfig:
 
     YAML Format
     -----------
-    solver:
-      hjb:
-        method: fdm
-        accuracy_order: 2
-      fp:
-        method: particle
-        num_particles: 5000
-      picard:
-        max_iterations: 50
-        tolerance: 1.0e-6
-    backend:
-      type: numpy
+    The schema is FLAT: the top-level keys are the ``MFGSolverConfig`` fields
+    (``hjb``, ``fp``, ``picard``, ``backend``, ``logging``). There is no
+    ``solver:`` wrapper::
+
+        hjb:
+          method: fdm
+          accuracy_order: 2
+        fp:
+          method: particle
+          particle:
+            num_particles: 5000
+        picard:
+          max_iterations: 50
+          tolerance: 1.0e-6
+        backend:
+          type: numpy
+
+    A ``solver:``-wrapped or OmegaConf-vocabulary YAML (e.g. the generated
+    ``mfgarchon/config/configs/*.yaml``) is a different format; load those via
+    :mod:`mfgarchon.config.omegaconf_manager`, not this function.
     """
     from .core import SolverConfig
 
@@ -76,6 +84,21 @@ def load_solver_config(path: str | Path) -> SolverConfig:
 
     if data is None:
         data = {}
+
+    # Fail fast on unknown top-level keys. The schema is flat, so a ``solver:``-wrapped
+    # or OmegaConf-vocabulary YAML maps to nothing -- a plain ``model_validate`` would
+    # silently drop the unknown keys and return all-default config (wrong-config-silently-
+    # ignored). Surface it instead of defaulting (kernel fail-fast).
+    if isinstance(data, dict):
+        valid_keys = set(SolverConfig.model_fields)
+        unknown = sorted(set(data) - valid_keys)
+        if unknown:
+            raise ValueError(
+                f"Unknown top-level key(s) {unknown} in {path}.\n"
+                f"The solver-config schema is flat; valid top-level keys are {sorted(valid_keys)}.\n"
+                f"A 'solver:'-wrapped or OmegaConf-style YAML (e.g. config/configs/*.yaml) is a "
+                f"different format -- load those via mfgarchon.config.omegaconf_manager."
+            )
 
     # Validate and construct
     try:
