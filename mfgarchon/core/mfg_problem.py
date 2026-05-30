@@ -2436,8 +2436,12 @@ See: docs/migration/HAMILTONIAN_API.md"""
             tolerance: Convergence tolerance (default: from config or 1e-6)
             verbose: Show solver progress (default: from config or True)
             config: Optional MFGSolverConfig for advanced configuration.
-                If config is provided, its values are used as defaults.
-                Explicit parameters (max_iterations, tolerance, verbose) override config.
+                Only ``config.picard`` is applied in Safe/Auto mode (explicit
+                max_iterations/tolerance/verbose override it). ``config.hjb`` /
+                ``config.fp`` are NOT yet threaded into factory-built solvers
+                (Issue #1155); passing non-default hjb/fp values raises rather than
+                silently ignoring them. Use Expert Mode (hjb_solver/fp_solver) for
+                full HJB/FP control.
             scheme: NumericalScheme for Safe Mode (FDM_UPWIND, SL_LINEAR, GFDM, etc.)
             hjb_solver: Pre-initialized HJB solver for Expert Mode
             fp_solver: Pre-initialized FP solver for Expert Mode
@@ -2526,6 +2530,31 @@ See: docs/migration/HAMILTONIAN_API.md"""
                 "  • Expert Mode: problem.solve(hjb_solver=hjb, fp_solver=fp)\n"
                 "  • Auto Mode: problem.solve() [no scheme/solver params]"
             )
+
+        # config.hjb / config.fp are not yet threaded into factory-built solvers
+        # (Issue #1155): the composite HJB/FP configs do not map cleanly to the
+        # per-solver constructor kwargs. Fail loud rather than silently ignore a
+        # user-supplied hjb/fp config in the factory paths (Safe/Auto mode). Expert
+        # Mode builds the solvers directly, so config.hjb/.fp are irrelevant there.
+        if not expert_mode:
+            from mfgarchon.config.mfg_methods import FPConfig, HJBConfig
+
+            unhonored = [
+                name
+                for name, sub, default in (
+                    ("config.hjb", config.hjb, HJBConfig()),
+                    ("config.fp", config.fp, FPConfig()),
+                )
+                if sub != default
+            ]
+            if unhonored:
+                raise NotImplementedError(
+                    f"{' and '.join(unhonored)} cannot be applied in "
+                    f"{'Safe' if safe_mode else 'Auto'} mode yet: the composite HJB/FP config "
+                    "does not map to the factory's per-solver settings (Issue #1155). Only "
+                    "config.picard is honored here. For full HJB/FP control now, use Expert "
+                    "Mode: solve(hjb_solver=..., fp_solver=...)."
+                )
 
         # ─────────────────────────────────────────────────────────────────────
         # Safe Mode: Automatic dual pairing via scheme selection
