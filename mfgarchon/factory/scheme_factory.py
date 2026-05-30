@@ -161,8 +161,12 @@ def _create_fdm_pair(
         # Note: gradient_upwind has boundary flux bug, see Issue #382
         fp_config.setdefault("advection_scheme", "divergence_upwind")
     elif scheme == NumericalScheme.FDM_CENTERED:
-        # FDM centered uses gradient_centered (second-order, oscillates for high Peclet)
-        fp_config.setdefault("advection_scheme", "gradient_centered")
+        # FDM centered uses divergence_centered: 2nd-order central and CONSERVATIVE
+        # (telescoping flux, zero boundary flux). The non-conservative gradient_centered
+        # (v.grad(m)) leaks probability mass through no-flux walls (Issue #1149); it stays
+        # available as an explicit advection_scheme but is no longer the centered default.
+        # Both are second-order and oscillate for cell-Peclet > 2.
+        fp_config.setdefault("advection_scheme", "divergence_centered")
 
     # Create solvers
     hjb_solver = HJBFDMSolver(problem, **hjb_config)
