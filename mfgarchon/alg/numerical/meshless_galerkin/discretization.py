@@ -64,8 +64,6 @@ class MeshlessGalerkinDiscretization:
         self._phi, self._grad = shape_functions_and_grads(
             np.asarray(quad_points, dtype=np.float64), self._nodes, self._rho, self._exps, backend
         )
-        # gradients at the nodes for the gradient-projection operators: (N, N, dim)
-        _, self._grad_nodes = shape_functions_and_grads(self._nodes, self._nodes, self._rho, self._exps, backend)
 
     @property
     def n_dof(self) -> int:
@@ -121,8 +119,15 @@ class MeshlessGalerkinDiscretization:
         return sparse.csr_matrix(C)
 
     def gradient_projection(self) -> list[sparse.csr_matrix]:
-        # R_d[i, j] = d phi_j / d x_d evaluated at node x_i.
-        return [sparse.csr_matrix(self._grad_nodes[:, :, d]) for d in range(self._dim)]
+        # Weak-form derivative R_d[i, j] = int phi_i (d phi_j / d x_d) dx (the
+        # WeakFormDiscretization protocol contract): the solver recovers the nodal
+        # gradient via the mass-lumped projection G_d = M_lumped^{-1} R_d. Returning
+        # the strong pointwise derivative d phi_j / d x_d(x_i) here makes that
+        # M_lumped^{-1} a spurious second factor (~1/dx blow-up). Issue #1145.
+        return [
+            sparse.csr_matrix(np.einsum("q,qi,qj->ij", self._w, self._phi, self._grad[:, :, d]))
+            for d in range(self._dim)
+        ]
 
 
 def discretization_from_cloud(
@@ -197,10 +202,13 @@ if __name__ == "__main__":
         one = np.ones(disc.n_dof)
         K_sym = np.linalg.norm(K - K.T) / np.linalg.norm(K)
         K_one = np.max(np.abs(K @ one))
-        # gradient projection of linear field u = x_e reproduces delta_{ec}.
-        R = [r.toarray() for r in disc.gradient_projection()]
+        # gradient projection is the weak-form R_d (Issue #1145); the solver recovers
+        # the nodal gradient via G_d = M_lumped^{-1} R_d, which on a linear field
+        # u = x_e reproduces delta_{ec}.
+        M_lumped_inv = 1.0 / disc.mass().toarray().sum(axis=1)
+        G = [M_lumped_inv[:, None] * r.toarray() for r in disc.gradient_projection()]
         grad_err = max(
-            float(np.max(np.abs(R[e] @ nodes[:, c] - (1.0 if e == c else 0.0)))) for e in range(d) for c in range(d)
+            float(np.max(np.abs(G[e] @ nodes[:, c] - (1.0 if e == c else 0.0)))) for e in range(d) for c in range(d)
         )
         alpha = -np.asarray(pts).T  # velocity at dofs is (dim, N); use nodes-consistent shape
         v = -nodes.T  # (dim, N): drift -x at dofs (potential MFG, Psi=|x|^2/2)
