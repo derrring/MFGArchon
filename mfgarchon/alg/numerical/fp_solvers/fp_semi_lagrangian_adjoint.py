@@ -134,6 +134,10 @@ class FPSLSolver(BaseFPSolver):
                 raise ValueError(f"For nD problems, only 'linear' splatting is supported. Got: {interpolation_method}.")
         self.interpolation_method = interpolation_method
 
+        # Positivity-clip diagnostic state (Issue #1147 class). Reset per solve_fp_system call;
+        # tracks whether the once-per-solve mass-injection warning has already fired.
+        self._clip_warned = False
+
         # Precompute grid parameters (dimension-agnostic)
         self.dt = problem.dt
 
@@ -297,6 +301,9 @@ class FPSLSolver(BaseFPSolver):
         else:
             M_shape = (Nt_points, *self.grid_shape)
 
+        # Reset the once-per-solve positivity-clip warning (Issue #1147 class).
+        self._clip_warned = False
+
         M = np.zeros(M_shape)
         M[0] = M_initial.copy().reshape(self.grid_shape if self.dimension > 1 else -1)
 
@@ -392,7 +399,7 @@ class FPSLSolver(BaseFPSolver):
 
         # Ensure non-negativity (only matters for cubic/quintic which may oscillate)
         if self.interpolation_method != "linear":
-            m_star = np.maximum(m_star, 0)
+            m_star = self._clip_nonneg(m_star)
 
         # Step 2: Diffusion via Crank-Nicolson (Finite Volume formulation)
         # ================================================================
@@ -441,7 +448,7 @@ class FPSLSolver(BaseFPSolver):
         m_new = solve_banded((1, 1), ab, rhs)
 
         # Ensure non-negativity
-        m_new = np.maximum(m_new, 0)
+        m_new = self._clip_nonneg(m_new)
 
         return m_new
 
@@ -519,7 +526,7 @@ class FPSLSolver(BaseFPSolver):
         m_star = m_star.reshape(self.grid_shape)
 
         # Ensure non-negativity
-        m_star = np.maximum(m_star, 0)
+        m_star = self._clip_nonneg(m_star)
 
         # Step 2: Diffusion via ADI
         # =========================
@@ -533,9 +540,36 @@ class FPSLSolver(BaseFPSolver):
         )
 
         # Ensure non-negativity
-        m_new = np.maximum(m_new, 0)
+        m_new = self._clip_nonneg(m_new)
 
         return m_new
+
+    def _clip_nonneg(self, m: np.ndarray) -> np.ndarray:
+        """Clip negative density to zero, warning once per solve if the clip injects
+        non-trivial mass.
+
+        Cubic/quintic splatting and the CN/ADI diffusion step are not monotone, so the
+        density can undershoot below zero; deleting those undershoots injects positive
+        mass and violates conservation. Surface it once per ``solve_fp_system`` call
+        rather than failing silently (kernel fail-fast). Mirrors the
+        ``WeakFormFPSolver`` positivity-clip diagnostic (Issue #1147).
+
+        The injected/total ratio is grid-quadrature-invariant on a uniform grid, so raw
+        sums (no ``dx`` weighting) give the correct fraction.
+        """
+        if not self._clip_warned:
+            injected = -float(np.minimum(m, 0.0).sum())
+            total = float(np.maximum(m, 0.0).sum())
+            if injected > 1e-6 * max(total, 1e-300):
+                logger.warning(
+                    "FP-SL positivity clip injected mass %.2e (%.1f%% of total): cubic/quintic "
+                    "splatting or CN/ADI diffusion is not monotone; consider linear interpolation "
+                    "or a finer grid.",
+                    injected,
+                    100.0 * injected / max(total, 1e-300),
+                )
+                self._clip_warned = True
+        return np.maximum(m, 0.0)
 
     def _get_solver_type_id(self) -> str | None:
         """Get solver type identifier for compatibility checking."""
