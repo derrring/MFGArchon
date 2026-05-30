@@ -80,6 +80,16 @@ class WeakFormHJBSolver(BaseHJBSolver):
         terms (its MLS basis is non-interpolatory, so condensation is invalid)."""
         return None, None
 
+    def _stabilization_terms(self, u: NDArray, D: float):
+        """Optional symmetric stabilization operator added to BOTH the Newton residual
+        (as ``S @ u``) and the Newton Jacobian (as ``S``), recomputed each Newton iterate.
+
+        Returns a symmetric sparse matrix ``S`` or ``None``. Default no-op (FEM is
+        unaffected and byte-identical). Meshless Galerkin overrides this to return the
+        streamline-diffusion block; because the SAME symmetric ``S`` is added to the FP
+        advection operator, ``A_FP = A_HJB^T`` is preserved (Issue #1145, Bug B)."""
+        return None
+
     # --- Gradient recovery: mass-lumped L2 projection grad_d(u) = G_d @ u -----
     def _build_gradient_operators(self) -> None:
         if self._G_grad is not None:
@@ -153,7 +163,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 if rhs_extra is not None:
                     residual = residual - rhs_extra
 
+            # Optional symmetric stabilization (e.g. streamline diffusion) for the
+            # canonical HJB residual -u_t + H - (sigma^2/2) Delta u = 0; recomputed each
+            # iterate (depends on the current gradient). The same S is added to the FP
+            # advection block, preserving A_FP = A_HJB^T (default None -> FEM unaffected).
+            S_stab = self._stabilization_terms(U_current, D)
+            if S_stab is not None:
+                residual = residual + S_stab @ U_current
+
             J = J_fixed.copy()
+            if S_stab is not None:
+                J = J + S_stab
             for d in range(dim):
                 J = J + self._M @ sparse.diags(dH_dp[:, d]) @ self._G_grad[d]
 

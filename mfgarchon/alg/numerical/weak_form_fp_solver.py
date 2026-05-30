@@ -75,8 +75,12 @@ class WeakFormFPSolver(BaseFPSolver):
         return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------
-    def _build_advection(self, U_n: NDArray) -> sparse.csr_matrix:
-        r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form."""
+    def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
+        r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
+
+        ``D`` is the diffusion coefficient of the CURRENT solve (``_diffusion_coefficient``,
+        volatility-aware), passed so a subclass that adds a diffusion-scaled stabilization
+        term (e.g. meshless streamline diffusion) uses the same ``D`` as the stiffness block."""
         raise NotImplementedError
 
     def _diffusion_coefficient(self, volatility_field) -> float:
@@ -116,7 +120,7 @@ class WeakFormFPSolver(BaseFPSolver):
 
             if drift_field is not None:
                 U_n = drift_field[n] if drift_field.ndim > 1 else drift_field
-                A_system = A_base + self._build_advection(U_n)
+                A_system = A_base + self._build_advection(U_n, D)
             else:
                 A_system = A_base
 

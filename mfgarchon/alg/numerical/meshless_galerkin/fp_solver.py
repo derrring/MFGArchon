@@ -54,6 +54,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         backend: str = "numpy",
         domain: object | None = None,
         nitsche_penalty: float = 20.0,
+        streamline_diffusion_scale: float = 0.0,
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
@@ -62,6 +63,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         self._nitsche_penalty = nitsche_penalty
         self._nitsche_cache: tuple | None = None
         self._nitsche_cache_D: float | None = None
+        # SUPG streamline-diffusion strength on the advection (Issue #1145, Bug B); 0 = off
+        # (default), 1 = canonical SUPG. MUST match the paired HJB solver's value or
+        # A_FP = A_HJB^T breaks (the factory threads it across the pair).
+        self._sd_scale = float(streamline_diffusion_scale)
 
     def _gradient_operators(self) -> list[sparse.csr_matrix]:
         # G_d = diag(1/M_lumped) @ R_d : mass-lumped L2 projection of d/dx_d.
@@ -109,8 +114,8 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
             "not nodal condensation. Reaching this hook means an unsupported BC type."
         )
 
-    def _build_advection(self, U_n: NDArray) -> sparse.csr_matrix:
-        coupling = getattr(self.problem, "coupling_coefficient", 0.5)
+    def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
+        coupling = self.problem.coupling_coefficient
         G = self._gradient_operators()
         grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim)
         velocity = (-coupling * grad_U).T  # (dim, N): v = -coupling * grad(U)
@@ -121,4 +126,11 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # gradient sum to zero (sum_i grad phi_i = 0), so column sums vanish and
         # integral(m) is conserved without renormalization. The MINUS comes from
         # the divergence integration by parts. Issue #1131.
-        return (-self._disc.advection(velocity).T).tocsr()
+        block = -self._disc.advection(velocity).T
+        if self._sd_scale > 0.0:
+            # Add the symmetric streamline-diffusion block (Issue #1145, Bug B). It is the
+            # IDENTICAL matrix the paired HJB Newton Jacobian adds (same velocity, same D,
+            # same scale), so A_FP = A_HJB^T is preserved; S @ 1 = 0 keeps the FP
+            # mass-conserving. D is the current solve's (volatility-aware) diffusion.
+            block = block + self._disc.streamline_diffusion(velocity, D, c_scale=self._sd_scale)
+        return block.tocsr()
