@@ -237,11 +237,26 @@ def check_solver_duality(
     }
 
     if hjb_family in discrete_families:
+        # FDM: the default upwind pairing (gradient_upwind HJB + divergence_upwind FP) is
+        # structure-preserving (both mass-conservative, consistent) but the FP operator is
+        # assembled independently and is NOT a bit-exact transpose in general; the exact
+        # L_FP = L_HJB^T is opt-in via the iterator's adjoint_mode="jacobian_transpose".
+        # SL (splatting = transpose of interpolation, #708) and MESHLESS_GALERKIN (Galerkin
+        # MLS, #1131) are exact transposes by construction.
+        # NOTE: this check matches only the _scheme_family enum, not the actual advection
+        # scheme pairing, so it does not detect a mismatched same-family pair.
+        if hjb_family == SchemeFamily.FDM:
+            message = (
+                "Valid discrete dual pair: FDM schemes (structure-preserving; exact "
+                "L_FP = L_HJB^T is opt-in via adjoint_mode='jacobian_transpose')"
+            )
+        else:
+            message = f"Valid discrete dual pair: {hjb_family.value} schemes (L_FP = L_HJB^T)"
         return DualityValidationResult(
             status=DualityStatus.DISCRETE_DUAL,
             hjb_family=hjb_family,
             fp_family=fp_family,
-            message=f"Valid discrete dual pair: {hjb_family.value} schemes (L_FP = L_HJB^T)",
+            message=message,
             recommendation=None,  # No action needed
         )
 
