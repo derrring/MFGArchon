@@ -110,6 +110,7 @@ class WeakFormFPSolver(BaseFPSolver):
             A_base = A_base + A_extra
         pure_neumann = self._is_pure_neumann()
 
+        clip_warned = False
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
 
@@ -132,6 +133,23 @@ class WeakFormFPSolver(BaseFPSolver):
                 M[n + 1, interior] = spsolve(A_bc, rhs_bc)
                 M[n + 1, d_dofs] = d_vals
 
+            # Positivity clip. The Galerkin/MLS advection is not an M-matrix, so the
+            # solve can produce density undershoots; the clip deletes them, which INJECTS
+            # mass and violates conservation. Surface it once per solve rather than failing
+            # silently (kernel fail-fast). Streamline diffusion suppresses the undershoots
+            # at the source (meshless ``streamline_diffusion_scale > 0``, Issue #1145).
+            if not clip_warned:
+                injected = -float((self._M @ np.minimum(M[n + 1], 0.0)).sum())
+                total = float((self._M @ np.maximum(M[n + 1], 0.0)).sum())
+                if injected > 1e-6 * max(total, 1e-300):
+                    logger.warning(
+                        "FP positivity clip injected mass %.2e (%.1f%% of total) at step %d: the "
+                        "Galerkin advection is not monotone; consider stabilization.",
+                        injected,
+                        100.0 * injected / max(total, 1e-300),
+                        n,
+                    )
+                    clip_warned = True
             M[n + 1] = np.maximum(M[n + 1], 0.0)
 
         return M
