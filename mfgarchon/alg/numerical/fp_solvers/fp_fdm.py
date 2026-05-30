@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 # - pde_form: "gradient" (v·∇m) or "divergence" (∇·(vm))
 # - spatial_scheme: "centered" or "upwind"
 AdvectionScheme = Literal[
-    "gradient_centered",  # Non-conservative, oscillates for Peclet > 2
-    "gradient_upwind",  # Conservative (row sums), stable [DEFAULT]
-    "divergence_centered",  # Conservative (telescoping), oscillates for Peclet > 2
-    "divergence_upwind",  # Conservative (telescoping), stable
+    "gradient_centered",  # NON-conservative (v.grad m), oscillates for Peclet > 2
+    "gradient_upwind",  # NON-conservative at no-flux walls (row sums=1/dt is not mass cons.), stable
+    "divergence_centered",  # Conservative (telescoping flux), oscillates for Peclet > 2
+    "divergence_upwind",  # Conservative (telescoping flux), stable [factory DEFAULT for FDM]
     # Legacy aliases (DEPRECATED, will be removed in v1.0.0)
     "centered",  # -> gradient_centered
     "upwind",  # -> gradient_upwind
@@ -61,8 +61,10 @@ class FPFDMSolver(BaseFPSolver):
             Use to demonstrate why conservative schemes are needed.
 
         **gradient_upwind**: Non-conservative form with upwind differences.
-            Mass-conservative via row sums = 1/dt. Stable but first-order.
-            WARNING: Has boundary flux bug when flow crosses boundaries.
+            Row sums = 1/dt, which is NOT mass conservation: column sums are
+            unbalanced at no-flux walls, so mass leaks (up to ~99.8% when the
+            drift is wall-directed). Stable but first-order. Use divergence_* for
+            no-flux FP; the factory routes FDM_UPWIND to divergence_upwind (#382).
 
         **divergence_centered**: Conservative form with centered flux averaging.
             Mass-conservative via flux telescoping. Oscillates for Peclet > 2.

@@ -362,8 +362,17 @@ def add_boundary_no_flux_entries_divergence_centered(
             col_indices.append(flat_idx_plus)
             data_values.append(-D / dx_sq)
 
-            # Velocity at node 1 (one-sided)
-            v_plus = -coupling_coefficient * (u_plus - u_center) / dx
+            # Velocity at node 1 for the shared face F_{1/2}. It MUST use the same central
+            # stencil the interior handler uses for node 1 (whose neighbors 0 and 2 exist),
+            # or F_{1/2} is double-valued, the fluxes do not telescope, and mass leaks at
+            # the wall (Issue #1149). One-sided only when node 2 is absent (n <= 2).
+            multi_idx_plus2 = list(multi_idx)
+            multi_idx_plus2[d] = 2
+            if multi_idx_plus2[d] < shape[d]:
+                u_plus2 = u_flat[grid.get_index(tuple(multi_idx_plus2))]
+                v_plus = -coupling_coefficient * (u_plus2 - u_center) / (2 * dx)
+            else:
+                v_plus = -coupling_coefficient * (u_plus - u_center) / dx
 
             # Centered flux at right face only: F_{1/2} = (v_1*m_1 + v_0*m_0)/2
             # But F_{-1/2} = 0, so divergence = F_{1/2} / dx
@@ -395,8 +404,17 @@ def add_boundary_no_flux_entries_divergence_centered(
             col_indices.append(flat_idx_minus)
             data_values.append(-D / dx_sq)
 
-            # Velocity at node N-1 (one-sided)
-            v_minus = -coupling_coefficient * (u_center - u_minus) / dx
+            # Velocity at node N-2 for the shared face F_{N-1/2}. Use the same central
+            # stencil the interior handler uses for node N-2 (whose neighbors N-3 and N-1
+            # exist), or F_{N-1/2} is double-valued and mass leaks at the wall (Issue #1149).
+            # One-sided only when node N-3 is absent (n <= 2).
+            multi_idx_minus2 = list(multi_idx)
+            multi_idx_minus2[d] = shape[d] - 3
+            if multi_idx_minus2[d] >= 0:
+                u_minus2 = u_flat[grid.get_index(tuple(multi_idx_minus2))]
+                v_minus = -coupling_coefficient * (u_center - u_minus2) / (2 * dx)
+            else:
+                v_minus = -coupling_coefficient * (u_center - u_minus) / dx
 
             # Centered flux at left face only: -F_{N-1/2} = -(v_N*m_N + v_{N-1}*m_{N-1})/2
             # Contribution: -v_minus * m_minus / (2*dx) - v_center * m_center / (2*dx)
