@@ -1,9 +1,14 @@
 """Gradient form with upwind differences for FP advection term.
 
 This module implements the advective (gradient) form FDM discretization
-using upwind differences for the advection term. This is the standard
-mass-conservative scheme that achieves discrete conservation through
-row sums = 1/dt property.
+using upwind differences for the advection term.
+
+WARNING: this scheme is NOT mass-conservative at no-flux boundaries. The
+advective (v.grad(m)) form conserves ROW sums = 1/dt, but mass conservation of
+an implicit FP step requires COLUMN sums = 1/dt; the column sums are unbalanced
+at the walls, so probability mass leaks out (measured: up to ~99.8% loss when
+the drift is wall-directed). Use divergence_upwind (or divergence_centered) for
+no-flux FP. See Issue #382; factory routes FDM_UPWIND to divergence_upwind.
 
 Mathematical Formulation:
     Advection term: -div(m * v) ≈ -v · grad(m)  (advective/gradient form)
@@ -13,7 +18,8 @@ Mathematical Formulation:
     - If v < 0 (flow to left): use forward difference dm/dx ≈ (m_{i+1} - m_i) / dx
 
     This ensures:
-    - Mass conservation: row sums = 1/dt (discrete conservation)
+    - Row sums = 1/dt -- this is NOT mass conservation (column sums are
+      unbalanced at no-flux walls; mass leaks). Use divergence_* for no-flux FP.
     - Unconditional stability (no Peclet number restriction)
     - First-order accuracy O(dx)
     - Some numerical diffusion (upwind dissipation)
@@ -64,10 +70,11 @@ def add_interior_entries_gradient_upwind(
     Upwind discretization for advection:
         - Uses ppart/npart to select upwind direction based on velocity
         - ppart(x) = max(0, x), npart(x) = max(0, -x)
-        - Row sums = 1/dt guarantees discrete mass conservation
+        - Row sums = 1/dt (NOT mass conservation: column sums are unbalanced at
+          no-flux walls, so mass leaks; use divergence_* for no-flux FP)
 
     This discretization:
-    - IS mass-conservative (row sums = 1/dt)
+    - Has row sums = 1/dt but is NOT mass-conservative at no-flux boundaries
     - Is unconditionally stable (no Peclet restriction)
     - Has first-order accuracy O(dx)
     - Adds numerical diffusion (upwind dissipation)

@@ -40,22 +40,26 @@ def test_fdm_centered_routes_to_conservative_divergence_centered():
 
 
 def test_fdm_centered_conserves_mass_under_no_flux():
-    """An FP solve with a non-trivial drift on a no-flux domain conserves mass to machine
-    precision (Issue #1149: gradient_centered leaked through the walls)."""
+    """An FP solve conserves mass to machine precision on a no-flux domain (Issue #1149).
+
+    The density is placed AT the wall (columns 0-2) and the drift pushes toward it, so the
+    boundary-face flux is exercised. The boundary handler previously evaluated that face
+    velocity one-sided while the interior used a central stencil -> double-valued face flux
+    -> leak; a mid-domain density (as an earlier version of this test used) is blind to it."""
     n, nt = 41, 40
     prob = _problem(n=n, nt=nt)
     _, fp = create_paired_solvers(prob, NumericalScheme.FDM_CENTERED)
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    drift = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))  # steady confining drift toward 0.5
-    m0 = np.exp(-40 * (x - 0.35) ** 2)
+    drift = np.tile(4.0 * (x - 0.7) ** 2, (nt + 1, 1))  # pushes mass toward the left wall
+    m0 = np.exp(-200 * (x - 0.05) ** 2)  # bump AT the left wall (columns 0-2)
     m0 /= m0.sum() * dx
 
     traj = fp.solve_fp_system(m0, drift_field=drift)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.all(np.isfinite(traj))
-    assert np.max(np.abs(mass - mass[0])) < 1e-9, (
-        f"mass drift {np.max(np.abs(mass - mass[0])):.2e} (no-flux must conserve)"
+    assert np.max(np.abs(mass - mass[0])) < 1e-12, (
+        f"mass drift {np.max(np.abs(mass - mass[0])):.2e} (no-flux must conserve to machine precision)"
     )
 
 
@@ -87,9 +91,6 @@ def test_fdm_centered_coupled_solve_conserves_mass():
     x = np.linspace(0.0, 1.0, 31)
     dx = x[1] - x[0]
     assert np.all(np.isfinite(M))
-    # The #1149 bug leaked ~57% (terminal mass ~0.43); the conservative form keeps it
-    # near 1 (residual is the centered scheme's mild boundary inexactness under the strong
-    # coupled drift, ~0.5%, not a wall leak). A 2% bound catches a regression to the leak.
-    assert abs(M[-1].sum() * dx - 1.0) < 2e-2, (
-        f"terminal mass {M[-1].sum() * dx:.4f} (centered must not leak; bug was 0.43)"
-    )
+    # The #1149 bug leaked ~57% (terminal mass ~0.43). With the conservative scheme AND the
+    # boundary-flux fix the coupled solve conserves mass to ~machine precision.
+    assert abs(M[-1].sum() * dx - 1.0) < 1e-9, f"terminal mass {M[-1].sum() * dx:.8f} (centered must conserve)"
