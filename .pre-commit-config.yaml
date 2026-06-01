@@ -9,7 +9,7 @@
 repos:
   # Unified formatting and linting with Ruff (replaces Black + isort + Pylint)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.3
+    rev: v0.15.15
     hooks:
       # Format code (replaces Black + isort)
       - id: ruff-format
@@ -24,7 +24,7 @@ repos:
 
   # Essential safety checks (low friction, prevent bugs)
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: v0.15.15
     hooks:
       - id: trailing-whitespace
         exclude: \.md$
