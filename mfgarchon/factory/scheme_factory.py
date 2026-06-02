@@ -141,7 +141,14 @@ def _create_fdm_pair(
     """
     Create FDM HJB-FP solver pair.
 
-    Discrete duality (Type A): L_FP = L_HJB^T exactly.
+    Discrete duality (Type A): the default pairing (gradient_upwind HJB +
+    divergence_upwind FP) is structure-preserving -- both are mass-conservative
+    and consistent with the continuous adjoint -- but the FP operator is assembled
+    independently and is NOT a bit-exact transpose of the HJB operator in general
+    (the two candidate HJB operators, the velocity advection and the linearized
+    Jacobian, are themselves different). The exact discrete transpose L_FP = L_HJB^T
+    is obtained on demand via the iterator's ``adjoint_mode="jacobian_transpose"``,
+    which assembles the FP step as the transpose of the HJB Jacobian.
 
     Args:
         problem: MFG problem
