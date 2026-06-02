@@ -7,8 +7,8 @@ Module structure per issue #388:
     fp_fdm_operators.py - Common utilities and backward-compatible re-exports
 
 Advection Scheme Files (2x2 classification):
-    fp_fdm_alg_gradient_centered.py   - gradient_centered (NOT conservative)
-    fp_fdm_alg_gradient_upwind.py     - gradient_upwind (conservative via row sums)
+    fp_fdm_alg_gradient_centered.py   - gradient_centered (NOT mass-conservative at no-flux walls)
+    fp_fdm_alg_gradient_upwind.py     - gradient_upwind (NOT mass-conservative at no-flux walls, Issue #1075)
     fp_fdm_alg_divergence_centered.py - divergence_centered (conservative, oscillates)
     fp_fdm_alg_divergence_upwind.py   - divergence_upwind (conservative via telescoping)
 
@@ -66,8 +66,8 @@ def add_interior_entries(
 
     This is a backward-compatible wrapper that calls add_interior_entries_gradient_upwind.
     For explicit scheme selection, use:
-    - fp_fdm_alg_gradient_centered: add_interior_entries_gradient_centered (NOT conservative)
-    - fp_fdm_alg_gradient_upwind: add_interior_entries_gradient_upwind (conservative via rows)
+    - fp_fdm_alg_gradient_centered: add_interior_entries_gradient_centered (NOT mass-conservative at no-flux walls)
+    - fp_fdm_alg_gradient_upwind: add_interior_entries_gradient_upwind (NOT mass-conservative at no-flux walls, Issue #1075)
     - fp_fdm_alg_divergence_centered: add_interior_entries_divergence_centered (conservative, oscillates)
     - fp_fdm_alg_divergence_upwind: add_interior_entries_divergence_upwind (conservative via telescoping)
 

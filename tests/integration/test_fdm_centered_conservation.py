@@ -10,6 +10,8 @@ mass-conservative. The non-conservative form stays available as an explicit
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -65,12 +67,14 @@ def test_fdm_centered_conserves_mass_under_no_flux():
 
 def test_gradient_centered_still_available_and_leaks():
     """The non-conservative form is still selectable explicitly, and demonstrably does NOT
-    conserve mass -- documenting why it is no longer the centered default."""
+    conserve mass -- documenting why it is no longer the centered default. Issue #1075:
+    selecting it with a no-flux BC must emit a non-conservation UserWarning."""
     n, nt = 41, 40
     prob = _problem(n=n, nt=nt)
-    _, fp = create_paired_solvers(
-        prob, NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
-    )
+    with pytest.warns(UserWarning, match="Issue #1075"):
+        _, fp = create_paired_solvers(
+            prob, NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
+        )
     assert fp.advection_scheme == "gradient_centered"
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
@@ -80,6 +84,47 @@ def test_gradient_centered_still_available_and_leaks():
     traj = fp.solve_fp_system(m0, drift_field=drift)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.max(np.abs(mass - mass[0])) > 1e-3, "gradient_centered is expected to violate conservation"
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind"])
+def test_gradient_scheme_warns_only_under_no_flux(scheme):
+    """Issue #1075: gradient (non-conservative point-value) schemes warn when paired with a
+    no-flux BC, but the conservative divergence_* schemes do not. The warning steers users
+    to the conservative default rather than silently leaking mass."""
+    prob = _problem()
+    with pytest.warns(UserWarning, match="does NOT conserve mass at no-flux"):
+        create_paired_solvers(prob, NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": scheme})
+
+    # The conservative default must NOT warn under the same no-flux BC.
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        create_paired_solvers(
+            _problem(), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "divergence_upwind"}
+        )
+    assert not [w for w in rec if "Issue #1075" in str(w.message)]
+
+
+def test_gradient_leaks_even_with_zero_drift():
+    """Issue #1075 diagnosis: the gradient-scheme no-flux leak is dominated by the boundary
+    DIFFUSION discretization (point-value Neumann Laplacian), not advection -- so it leaks
+    even with zero drift, while the conservative scheme stays at machine precision."""
+    n, nt = 81, 60
+    x = np.linspace(0.0, 1.0, n)
+    dx = x[1] - x[0]
+    m0 = np.exp(-200 * (x - 0.05) ** 2)
+    m0 /= m0.sum() * dx
+    U_zero = np.zeros((nt + 1, n))  # zero drift => pure diffusion at the wall
+
+    _, fp_div = create_paired_solvers(_problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED)
+    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, drift_field=U_zero)])
+    assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12
+
+    with pytest.warns(UserWarning, match="Issue #1075"):
+        _, fp_grad = create_paired_solvers(
+            _problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
+        )
+    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, drift_field=U_zero)])
+    assert np.max(np.abs(mass_grad - mass_grad[0])) > 1e-3  # leaks under pure diffusion
 
 
 @pytest.mark.integration
