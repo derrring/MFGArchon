@@ -2697,12 +2697,24 @@ if __name__ == "__main__":
     # Test 9: Carlini-Silva stochastic SL (Issue #1026)
     print("\n9. Testing Carlini-Silva stochastic SL (Issue #1026)...")
 
-    # 9a: linear + stochastic rejected at __init__
-    try:
-        HJBSemiLagrangianSolver(problem, interpolation_method="linear", diffusion_method="stochastic")
-        raise AssertionError("Expected ValueError for linear + stochastic")
-    except ValueError:
-        print("   9a: linear + stochastic rejected at __init__: OK")
+    # 9a: linear + stochastic is the canonical Carlini-Silva 2014 combo — accepted (Issue #1049)
+    solver_linear_cs = HJBSemiLagrangianSolver(
+        problem, interpolation_method="linear", diffusion_method="stochastic", check_cfl=False
+    )
+    assert solver_linear_cs.interpolation_method == "linear"
+    assert solver_linear_cs.diffusion_method == "stochastic"
+    print("   9a: linear + stochastic accepted (canonical CS 2014, Issue #1049): OK")
+
+    # 9a': cubic + stochastic is outside the CS 2014 monotone proof — warns, not rejected (Issue #1049/#1033)
+    import warnings as _warnings
+
+    with _warnings.catch_warnings(record=True) as _w:
+        _warnings.simplefilter("always")
+        HJBSemiLagrangianSolver(problem, interpolation_method="cubic", diffusion_method="stochastic", check_cfl=False)
+    assert any(issubclass(rec.category, UserWarning) for rec in _w), (
+        "Expected UserWarning for cubic + stochastic (outside CS 2014 proof)"
+    )
+    print("   9a': cubic + stochastic warns (outside CS 2014 proof): OK")
 
     # 9b: cubic + stochastic instantiates and dispatches correctly
     solver_cs = HJBSemiLagrangianSolver(
