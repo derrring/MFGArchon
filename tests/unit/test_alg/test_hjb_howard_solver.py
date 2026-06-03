@@ -101,7 +101,7 @@ def _make_1d_cloud(LX=2.0, n_int=11):
     return pts, bdry_idx, geom
 
 
-def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors=12):
+def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors=12, inner_solver="newton"):
     bc = BoundaryConditions(
         segments=[
             BCSegment(name=f"side_{d}_{end}", bc_type=BCType.NO_FLUX, boundary=f"{ax}_{end}")
@@ -127,7 +127,20 @@ def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors
             boundary_conditions=bc,
             monotonicity_scheme=scheme,
             monotonicity_application="precompute",
+            inner_solver=inner_solver,
         )
+
+
+class _LQHam:
+    """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(x, m, p, t) = p (so α* = -dp = -p).
+
+    Used to validate the integrated `inner_solver='howard'` path, which derives α* from
+    `problem.hamiltonian_class.dp` (Issue #1118). Matches the explicit `lambda x,p,m,t: -p`
+    the standalone Howard tests pass.
+    """
+
+    def dp(self, x, m, p, t=0.0):
+        return np.asarray(p, dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -367,3 +380,65 @@ def test_2d_smoke_with_running_cost_callable():
     if len(interior_idx) > 0:
         diff_at_t0 = float(np.mean(with_rc[0, interior_idx]) - np.mean(base[0, interior_idx]))
         assert diff_at_t0 > 0, f"Constant running cost did not increase U(0) at center; diff={diff_at_t0:.4f}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Integrated path: HJBGFDMSolver(inner_solver='howard') (Issue #1118 PR1)
+# ---------------------------------------------------------------------------
+
+
+def test_integrated_howard_inner_solver_lq_1d():
+    """inner_solver='howard' wired into HJBGFDMSolver.solve_hjb_system reproduces the 1D LQ
+    Riccati profile — proving the integrated path derives alpha* = -hamiltonian_class.dp,
+    delegates the backward sweep to Howard, and round-trips the collocation output. Same
+    fixture and loose bound as test_1d_lq_closed_form_riccati (the standalone solver)."""
+    LX = 4.0
+    pts, bdry, geom = _make_1d_cloud(LX=LX, n_int=11)
+    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=20, dimension=1)
+    problem.hamiltonian_class = _LQHam()  # H = |p|²/2 → dp = p → α* = -p
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
+
+    x_pts = pts[:, 0]
+    x_c = LX / 2
+    U_T = 0.5 * (x_pts - x_c) ** 2
+
+    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)  # delegates to Howard internally
+
+    assert np.all(np.isfinite(U)), "integrated Howard path produced non-finite U"
+    probe_idx = int(np.argmin(np.abs(x_pts - (x_c - 1.0))))
+    U_T_probe = float(U_T[probe_idx])
+    assert U_T_probe > 0.1, "fixture broken: probe is at the quadratic's vertex"
+    ratio = float(U[0, probe_idx]) / U_T_probe
+    assert 0.3 < ratio < 0.85, (
+        f"integrated inner_solver='howard' Riccati ratio U(0)/U(T)={ratio:.3f}, expected ~0.5 "
+        f"(matches the standalone test_1d_lq_closed_form_riccati)."
+    )
+
+
+def test_inner_solver_rejects_unknown_value():
+    """An unknown inner_solver value fails fast at construction."""
+    pts, bdry, geom = _make_1d_cloud()
+    problem = _MockProblem(geom, dimension=1)
+    with pytest.raises(ValueError, match="inner_solver must be"):
+        _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="bogus")
+
+
+def test_integrated_howard_requires_joint_socp_stencils():
+    """inner_solver='howard' on a non-SOCP scheme raises at solve time (no _joint_socp_stencils)."""
+    pts, bdry, geom = _make_1d_cloud()
+    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=5, dimension=1)
+    problem.hamiltonian_class = _LQHam()
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, scheme="none", k_neighbors=5, inner_solver="howard")
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    with pytest.raises(ValueError, match="SOCP-precomputed"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_requires_hamiltonian_class():
+    """inner_solver='howard' without problem.hamiltonian_class raises (cannot derive α*)."""
+    pts, bdry, geom = _make_1d_cloud()
+    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=5, dimension=1)  # hamiltonian_class=None
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    with pytest.raises(ValueError, match="hamiltonian_class"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)

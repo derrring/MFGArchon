@@ -247,6 +247,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         weight_scale: float = 1.0,
         max_newton_iterations: int | None = None,
         newton_tolerance: float | None = None,
+        # Inner HJB solver selector (Issue #1118). 'newton' (default): the existing
+        # per-timestep Newton + Armijo line search. 'howard': delegate the backward
+        # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
+        # MIN_ALPHA stall that freezes Newton on advection-dominant / no-flux-BC regimes).
+        # 'howard' requires monotonicity_scheme='joint_socp' + monotonicity_application=
+        # 'precompute', unit control cost, and a no-flux/Dirichlet BC (validated in solve).
+        inner_solver: str = "newton",
         # Deprecated parameters for backward compatibility
         NiterNewton: int | None = None,
         l2errBoundNewton: float | None = None,
@@ -581,6 +588,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Newton parameters (store with new names)
         self.max_newton_iterations = max_newton_iterations
         self.newton_tolerance = newton_tolerance
+
+        # Issue #1118: inner-solver selector (Newton default; Howard policy iteration opt-in)
+        if inner_solver not in ("newton", "howard"):
+            raise ValueError(f"inner_solver must be 'newton' or 'howard', got {inner_solver!r}")
+        self.inner_solver = inner_solver
 
         # Keep old names for backward compatibility (without warnings when accessed)
         self.NiterNewton = max_newton_iterations
@@ -2731,29 +2743,38 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Set final condition at t=T (last time index = n_time_points - 1)
             U_solution_collocation[n_time_points - 1, :] = self._mapper.map_grid_to_collocation(U_terminal.flatten())
 
-        # Backward time stepping: Nt steps from index (n_time_points-2) down to 0
-        # This covers all Nt intervals in the backward direction (Issue #587 Protocol pattern)
-        from mfgarchon.utils.progress import create_progress_bar, should_show_progress
+        if self.inner_solver == "howard":
+            # Issue #1118: delegate the backward sweep to Howard's policy iteration (no
+            # Armijo line search -> no MIN_ALPHA stall). Howard owns the full Nt loop and
+            # works in collocation space; the grid<->collocation mapping above and below is
+            # unchanged. Validation + alpha* synthesis live in the helper.
+            U_solution_collocation = self._solve_backward_howard(
+                M_collocation, U_solution_collocation[n_time_points - 1, :]
+            )
+        else:
+            # Backward time stepping: Nt steps from index (n_time_points-2) down to 0
+            # This covers all Nt intervals in the backward direction (Issue #587 Protocol pattern)
+            from mfgarchon.utils.progress import create_progress_bar, should_show_progress
 
-        timestep_range = create_progress_bar(
-            range(n_time_points - 2, -1, -1),
-            verbose=should_show_progress(show_progress),
-            desc="HJB (backward)",
-        )
-
-        for n in timestep_range:
-            rc_n = self._running_cost_fn(n) if self._running_cost_fn is not None else None
-
-            U_solution_collocation[n, :] = self._solve_timestep(
-                U_solution_collocation[n + 1, :],
-                M_collocation[n, :],  # FIXED: Use m^n, not m^{n+1} (same-time coupling)
-                n,
-                running_cost=rc_n,
+            timestep_range = create_progress_bar(
+                range(n_time_points - 2, -1, -1),
+                verbose=should_show_progress(show_progress),
+                desc="HJB (backward)",
             )
 
-            # Update progress bar with QP statistics if available (Issue #587 Protocol - no hasattr needed)
-            if self.qp_optimization_level in ["auto", "always"]:
-                timestep_range.update_metrics(qp_solves=self.qp_stats.get("total_qp_solves", 0))
+            for n in timestep_range:
+                rc_n = self._running_cost_fn(n) if self._running_cost_fn is not None else None
+
+                U_solution_collocation[n, :] = self._solve_timestep(
+                    U_solution_collocation[n + 1, :],
+                    M_collocation[n, :],  # FIXED: Use m^n, not m^{n+1} (same-time coupling)
+                    n,
+                    running_cost=rc_n,
+                )
+
+                # Update progress bar with QP statistics if available (Issue #587 Protocol - no hasattr needed)
+                if self.qp_optimization_level in ["auto", "always"]:
+                    timestep_range.update_metrics(qp_solves=self.qp_stats.get("total_qp_solves", 0))
 
         # Return format depends on input mode
         if is_meshfree_input:
@@ -2763,6 +2784,82 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Hybrid mode: map back to grid
             U_solution = self._mapper.map_collocation_to_grid_batch(U_solution_collocation)
             return U_solution
+
+    def _solve_backward_howard(self, M_collocation: np.ndarray, U_terminal_colloc: np.ndarray) -> np.ndarray:
+        """Issue #1118: backward HJB sweep via Howard's policy iteration (inner_solver='howard').
+
+        Howard has no Armijo line search, so it avoids the MIN_ALPHA stall the per-point Newton
+        path hits on advection-dominant / no-flux-BC regimes (#1118). Operates in collocation
+        space; the caller handles grid<->collocation mapping. PR1 scope: requires joint_socp+
+        precompute stencils, a Hamiltonian exposing dp(), unit control cost, and a no-flux/
+        Neumann/Dirichlet BC. Robin/mixed BC and non-unit control cost are deferred to PR2.
+        """
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+        if getattr(self, "_joint_socp_stencils", None) is None:
+            raise ValueError(
+                "inner_solver='howard' requires SOCP-precomputed stencils. Construct the solver with "
+                "monotonicity_scheme='joint_socp', monotonicity_application='precompute'."
+            )
+        H_class = getattr(self.problem, "hamiltonian_class", None)
+        if H_class is None:
+            raise ValueError(
+                "inner_solver='howard' requires problem.hamiltonian_class to derive the optimal "
+                "control alpha* = -dH/dp; the legacy no-Hamiltonian LQ path is unsupported."
+            )
+        lambda_val = self._get_lambda_value()
+        if abs(lambda_val - 1.0) > 1e-12:
+            raise NotImplementedError(
+                f"inner_solver='howard' currently assumes unit control cost (lambda_=1), got {lambda_val}. "
+                "Howard's policy-evaluation Lagrangian is hardcoded to (1/2)|alpha|^2; non-unit control cost "
+                "needs a running-cost correction (deferred, Issue #1118 PR2)."
+            )
+        # BC-parity restriction (Issue #1118 PR2 deferral): Howard's BC handling is a
+        # self-contained Neumann-by-nearest-interior + Dirichlet-identity scheme — it does not
+        # honor Robin or coupling providers (e.g. AdjointConsistentProvider). Inspect segments
+        # directly: for a mixed BC, `boundary_conditions.type` raises and `_bc_config["type"]`
+        # is a meaningless 'periodic' fallback, so neither is a reliable indicator.
+        allowed_bc = {"no_flux", "neumann", "dirichlet"}
+        segments = getattr(self.boundary_conditions, "segments", None)
+        if segments:
+            for seg in segments:
+                seg_type = seg.bc_type.value if hasattr(seg.bc_type, "value") else str(seg.bc_type)
+                if seg_type not in allowed_bc:
+                    raise NotImplementedError(
+                        f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC only; segment "
+                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. Robin/periodic/mixed BC parity "
+                        f"is deferred (Issue #1118 PR2)."
+                    )
+                if callable(getattr(getattr(seg, "value", None), "compute", None)):
+                    raise NotImplementedError(
+                        "inner_solver='howard' does not honor a BCValueProvider (e.g. "
+                        "AdjointConsistentProvider); deferred (Issue #1118 PR2)."
+                    )
+        else:
+            try:
+                uniform_type = self.boundary_conditions.type
+            except Exception:
+                uniform_type = None
+            if uniform_type is not None and uniform_type not in allowed_bc:
+                raise NotImplementedError(
+                    f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC only, got "
+                    f"{uniform_type!r}. Robin/periodic BC parity is deferred (Issue #1118 PR2)."
+                )
+
+        dt = float(self.problem.T) / int(self.problem.Nt)
+
+        def alpha_star(x_pts, p, m, t_idx):
+            # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
+            return -np.asarray(H_class.dp(x_pts, m, p, t=t_idx * dt), dtype=float)
+
+        howard = HJBHowardSolver(
+            self.problem,
+            stencil_provider=self,
+            alpha_star=alpha_star,
+            running_cost=self._running_cost_fn,
+            discretisation="central" if self.dimension == 1 else "upwind_projection",
+        )
+        return howard.solve_hjb_system(M_collocation, U_terminal_colloc)
 
     def _solve_timestep(
         self,
