@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-population HJB now sees cross-population densities** (Issue #1157).
+  `MultiPopulationIterator` computed the cross-density bound Hamiltonian but never
+  passed it to `solve_hjb_system`, so each population's HJB solved against the
+  uncoupled `problem.hamiltonian_class` — the coupling reached the FP drift but not
+  the value function, a silently wrong half-coupled equilibrium. `solve_hjb_system`
+  now accepts a `hamiltonian_override`; `HJBFDMSolver` threads it through the batch
+  Hamiltonian path (forcing `backend=None`, which is numerically equivalent to the
+  per-point path) so the stacked density field reaches the Hamiltonian. The
+  iterator sends the override only to backends that honor it (FDM) and **fails loud**
+  for K>1 on backends that do not, rather than silently decoupling; single-population
+  (K==1) runs are byte-identical (no override is sent). `BoundHamiltonian` now
+  time-indexes a `(Nt+1, K*N)` density trajectory by the evaluation time
+  `t -> n = round(t/dt)`, so each backward step sees the cross-density at that step.
+
 - **`HJBGFDMSolver` now re-reads geometry boundary conditions per solve** when
   the BC was sourced from the geometry (Issue #1118). GFDM previously snapshotted
   the BC and its preclassified per-point segment map at construction, so the

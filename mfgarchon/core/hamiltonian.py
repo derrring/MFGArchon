@@ -994,7 +994,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     # === Multi-population support ===
 
-    def bind_cross_density(self, m_all: np.ndarray) -> BoundHamiltonian:
+    def bind_cross_density(self, m_all: np.ndarray, dt: float | None = None) -> BoundHamiltonian:
         """Return a wrapper that binds cross-population density.
 
         The wrapper delegates all methods to this Hamiltonian. When called,
@@ -1008,13 +1008,18 @@ class HamiltonianBase(MFGOperatorBase):
         m_all : np.ndarray
             Stacked density from all K populations.
             Shape (K*N,) per timestep, or (Nt+1, K*N) for full trajectory.
+        dt : float, optional
+            Time step. Required when ``m_all`` is a full trajectory ``(Nt+1, K*N)``
+            so the wrapper can map the Hamiltonian's evaluation time ``t`` to the
+            trajectory row ``n = round(t/dt)`` (Issue #1157). Ignored for a
+            per-timestep ``(K*N,)`` ``m_all``.
 
         Returns
         -------
         BoundHamiltonian
             Wrapper with bound cross-population density.
         """
-        return BoundHamiltonian(self, m_all)
+        return BoundHamiltonian(self, m_all, dt=dt)
 
     def optimal_control(
         self,
@@ -1292,33 +1297,81 @@ class HamiltonianBase(MFGOperatorBase):
 class BoundHamiltonian:
     """Lightweight wrapper binding cross-population density to a HamiltonianBase.
 
+    [PROVISIONAL — SUPERSEDED-BY: Issue #1071] This is the tactical adapter for
+    multi-population cross-coupling (Issue #1157): it transports the stacked density,
+    discards the solver-supplied ``m``, and infers the timestep from ``t`` via
+    ``round(t/dt)``. Those two smells (a dead ``m`` argument; a time index reverse-
+    engineered from a float) signal the missing abstraction — multi-population should
+    be first-class *state* on the Hamiltonian, folded into the #1071 ``evaluate(state)``
+    redesign rather than wrapped at call time. Deferred on purpose: revisit when
+    multi-population MFG is in real use, so the design trade-offs are judged from
+    experience instead of guessed up front.
+
     Created by HamiltonianBase.bind_cross_density(m_all). Delegates all
-    methods to the inner Hamiltonian. __call__ passes m_all instead of
-    single-population m — enabling cross-population coupling.
+    methods to the inner Hamiltonian, substituting the stacked K-population
+    density ``m_all`` for the single-population ``m`` the solver supplies —
+    enabling cross-population coupling (Issue #1157).
+
+    ``m_all`` may be supplied as a single per-timestep vector ``(K*N,)`` or as
+    a full backward trajectory ``(Nt+1, K*N)``. The HJB residual evaluates the
+    Hamiltonian one timestep at a time, calling with ``m = M_k[n]`` (shape
+    ``(N,)``) and ``t = n * dt`` (base_hjb.py:1315/1336). A whole trajectory
+    therefore cannot be passed wholesale to the inner Hamiltonian's batch call
+    — it must be indexed to the row for the current timestep. When ``m_all`` is
+    a trajectory, ``dt`` is required so that ``t`` resolves to row
+    ``n = round(t / dt)``; the inner Hamiltonian then sees the cross-density at
+    exactly the timestep the single-population solver would have used for its
+    own ``M_k[n]``. A 1D ``m_all`` is treated as already-per-timestep and used
+    as-is (the index is ignored).
 
     No mutation of the original Hamiltonian. Thread-safe.
     """
 
-    def __init__(self, inner: HamiltonianBase, m_all: np.ndarray):
+    def __init__(self, inner: HamiltonianBase, m_all: np.ndarray, dt: float | None = None):
         self._inner = inner
-        self._m_all = m_all
+        self._m_all = np.asarray(m_all)
+        self._dt = dt
+
+    def _m_at(self, t: float) -> np.ndarray:
+        """Cross-density at time ``t``: the trajectory row for ``n = round(t/dt)``.
+
+        A per-timestep (1D) ``m_all`` is returned unchanged. A trajectory (2D)
+        ``m_all`` is indexed by timestep; ``dt`` must have been supplied, and the
+        resolved row index must lie within the trajectory — both fail loud rather
+        than silently returning the wrong timestep's density.
+        """
+        if self._m_all.ndim < 2:
+            return self._m_all
+        if self._dt is None:
+            raise ValueError(
+                "BoundHamiltonian was given a trajectory m_all (ndim=2) but no dt; "
+                "cannot map the Hamiltonian's time t to a trajectory row. Pass dt to "
+                "bind_cross_density (Issue #1157)."
+            )
+        n = round(t / self._dt)
+        if not 0 <= n < self._m_all.shape[0]:
+            raise IndexError(
+                f"BoundHamiltonian: time t={t} -> row n={n} is outside the "
+                f"cross-density trajectory of length {self._m_all.shape[0]} (dt={self._dt})."
+            )
+        return self._m_all[n]
 
     def __call__(self, x, m, p, t=0.0):
-        """Evaluate H with cross-population density m_all."""
-        return self._inner(x, self._m_all, p, t)
+        """Evaluate H with cross-population density at the current timestep."""
+        return self._inner(x, self._m_at(t), p, t)
 
     def optimal_control(self, x, m, p, t=0.0):
-        """Compute α* using m_all for cross-coupling."""
-        return self._inner.optimal_control(x, self._m_all, p, t)
+        """Compute α* using the cross-population density at the current timestep."""
+        return self._inner.optimal_control(x, self._m_at(t), p, t)
 
     def dp(self, x, m, p, t=0.0):
-        return self._inner.dp(x, m, p, t)
+        return self._inner.dp(x, self._m_at(t), p, t)
 
     def dm(self, x, m, p, t=0.0):
-        return self._inner.dm(x, self._m_all, p, t)
+        return self._inner.dm(x, self._m_at(t), p, t)
 
     def dx(self, x, m, p, t=0.0):
-        return self._inner.dx(x, m, p, t)
+        return self._inner.dx(x, self._m_at(t), p, t)
 
     def is_smooth(self):
         return self._inner.is_smooth()

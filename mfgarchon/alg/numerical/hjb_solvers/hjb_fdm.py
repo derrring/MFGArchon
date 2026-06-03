@@ -129,6 +129,11 @@ class HJBFDMSolver(BaseHJBSolver):
 
     _scheme_family = SchemeFamily.FDM
 
+    # Issue #1157: this backend threads the multi-population cross-density bound Hamiltonian
+    # (hamiltonian_override) into the HJB solve. MultiPopulationIterator checks this flag and
+    # fails loud for K>1 on backends that lack it rather than silently decoupling the HJB.
+    _honors_multipop_hamiltonian_override = True
+
     @deprecated_parameter(
         param_name="NiterNewton",
         since="v0.16.0",
@@ -400,6 +405,8 @@ class HJBFDMSolver(BaseHJBSolver):
         U_from_prev_picard: NDArray | None = None,
         M_density_evolution: NDArray | None = None,
         U_final_condition: NDArray | None = None,
+        *,
+        hamiltonian_override=None,  # Issue #1157: multi-population cross-density bound H
     ) -> NDArray:
         """
         Solve HJB system backward in time.
@@ -454,6 +461,15 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError("U_terminal is required")
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
+        # Issue #1157: a multi-population bound Hamiltonian carries the stacked cross-density
+        # field, which only the batch Hamiltonian path (compute_hjb_residual at backend=None)
+        # can consume; the nD path's per-timestep evaluation is not yet validated for it.
+        if hamiltonian_override is not None and self.dimension != 1:
+            raise NotImplementedError(
+                "Multi-population Hamiltonian override (Issue #1157) is currently validated "
+                f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
+                "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
+            )
         # Issue #889: merge tensor_volatility_field into volatility_field
         # Deprecation warning issued by @deprecated_parameter decorator
         if tensor_volatility_field is not None:
@@ -492,6 +508,13 @@ class HJBFDMSolver(BaseHJBSolver):
                 with suppress(AttributeError):
                     logger.debug(f"[DEBUG Issue #542] BC has {len(bc.segments)} segments")
 
+            # Issue #1157: when a cross-density bound Hamiltonian is supplied, force the batch
+            # Hamiltonian path (backend=None) — the per-point problem.H() fallback receives only
+            # a scalar own-population density and cannot express cross-population coupling. The
+            # batch path is numerically equivalent to the per-point path (Issue #789), so this
+            # changes nothing for single-population solves (override None => self.backend).
+            effective_backend = None if hamiltonian_override is not None else self.backend
+
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
                 M_density_from_prev_picard=M_density,
@@ -500,12 +523,13 @@ class HJBFDMSolver(BaseHJBSolver):
                 problem=self.problem,
                 max_newton_iterations=self.max_newton_iterations,
                 newton_tolerance=self.newton_tolerance,
-                backend=self.backend,
+                backend=effective_backend,
                 volatility_field=volatility_field,
                 use_upwind=self.use_upwind,
                 bc=bc,  # Uses Robin BC from geometry; providers resolved by iterator (Issue #625)
                 domain_bounds=domain_bounds,
                 source_term=source_term,
+                active_hamiltonian=hamiltonian_override,  # Issue #1157
             )
 
             # Apply variational inequality constraint via projection (Issue #591)
