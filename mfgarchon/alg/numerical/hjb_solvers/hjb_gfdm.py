@@ -252,7 +252,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
         # MIN_ALPHA stall that freezes Newton on advection-dominant / no-flux-BC regimes).
         # 'howard' requires monotonicity_scheme='joint_socp' + monotonicity_application=
-        # 'precompute', unit control cost, and a no-flux/Dirichlet BC (validated in solve).
+        # 'precompute', unit control cost, and a homogeneous no-flux BC (validated in solve).
         inner_solver: str = "newton",
         # Deprecated parameters for backward compatibility
         NiterNewton: int | None = None,
@@ -2791,8 +2791,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         Howard has no Armijo line search, so it avoids the MIN_ALPHA stall the per-point Newton
         path hits on advection-dominant / no-flux-BC regimes (#1118). Operates in collocation
         space; the caller handles grid<->collocation mapping. PR1 scope: requires joint_socp+
-        precompute stencils, a Hamiltonian exposing dp(), unit control cost, and a no-flux/
-        Neumann/Dirichlet BC. Robin/mixed BC and non-unit control cost are deferred to PR2.
+        precompute stencils, a Hamiltonian exposing dp(), unit control cost, and a HOMOGENEOUS
+        no-flux BC (Howard hardcodes Dirichlet b=0 and approximates Neumann by nearest interior,
+        so nonzero-Dirichlet/Neumann, Robin, and BCValueProviders are deferred to PR2).
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 
@@ -2814,21 +2815,23 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Howard's policy-evaluation Lagrangian is hardcoded to (1/2)|alpha|^2; non-unit control cost "
                 "needs a running-cost correction (deferred, Issue #1118 PR2)."
             )
-        # BC-parity restriction (Issue #1118 PR2 deferral): Howard's BC handling is a
-        # self-contained Neumann-by-nearest-interior + Dirichlet-identity scheme — it does not
-        # honor Robin or coupling providers (e.g. AdjointConsistentProvider). Inspect segments
-        # directly: for a mixed BC, `boundary_conditions.type` raises and `_bc_config["type"]`
-        # is a meaningless 'periodic' fallback, so neither is a reliable indicator.
-        allowed_bc = {"no_flux", "neumann", "dirichlet"}
+        # BC-parity restriction (Issue #1118 PR2 deferral): Howard's BC handling correctly
+        # models only HOMOGENEOUS no-flux walls (Neumann-by-nearest-interior). It hardcodes
+        # Dirichlet rows to b=0 (ignoring the prescribed value) and cannot honor nonzero-Neumann,
+        # Robin, or coupling providers (e.g. AdjointConsistentProvider). Restrict to no-flux until
+        # the BC-row parity refactor (Howard's value-form rows vs the Newton-residual-form GFDM BC
+        # builders, #1116). Inspect segments directly: for a mixed BC, `boundary_conditions.type`
+        # raises and `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
+        allowed_bc = {"no_flux"}
         segments = getattr(self.boundary_conditions, "segments", None)
         if segments:
             for seg in segments:
                 seg_type = seg.bc_type.value if hasattr(seg.bc_type, "value") else str(seg.bc_type)
                 if seg_type not in allowed_bc:
                     raise NotImplementedError(
-                        f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC only; segment "
-                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. Robin/periodic/mixed BC parity "
-                        f"is deferred (Issue #1118 PR2)."
+                        f"inner_solver='howard' supports homogeneous no-flux BC only; segment "
+                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. Dirichlet-value/Neumann-value/"
+                        f"Robin/mixed BC parity is deferred (Issue #1118 PR2)."
                     )
                 if callable(getattr(getattr(seg, "value", None), "compute", None)):
                     raise NotImplementedError(
@@ -2842,8 +2845,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 uniform_type = None
             if uniform_type is not None and uniform_type not in allowed_bc:
                 raise NotImplementedError(
-                    f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC only, got "
-                    f"{uniform_type!r}. Robin/periodic BC parity is deferred (Issue #1118 PR2)."
+                    f"inner_solver='howard' supports homogeneous no-flux BC only, got "
+                    f"{uniform_type!r}. Dirichlet/Neumann-value/Robin BC parity is deferred (Issue #1118 PR2)."
                 )
 
         dt = float(self.problem.T) / int(self.problem.Nt)
