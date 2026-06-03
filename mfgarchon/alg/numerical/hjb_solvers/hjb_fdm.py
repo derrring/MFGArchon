@@ -891,8 +891,12 @@ class HJBFDMSolver(BaseHJBSolver):
                     import warnings
 
                     warnings.warn(
-                        "Non-diagonal tensor diffusion detected. "
-                        "Using diagonal approximation (ignoring off-diagonal terms).",
+                        "Non-diagonal tensor diffusion detected: dropping the off-diagonal "
+                        "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
+                        "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
+                        "correction (Issue #1079). The result is only meaningful when the "
+                        "off-diagonals are physically negligible; pass a scalar or diagonal "
+                        "sigma to avoid the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )
@@ -902,8 +906,12 @@ class HJBFDMSolver(BaseHJBSolver):
                     import warnings
 
                     warnings.warn(
-                        "Non-diagonal tensor diffusion detected. "
-                        "Using diagonal approximation (ignoring off-diagonal terms).",
+                        "Non-diagonal tensor diffusion detected: dropping the off-diagonal "
+                        "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
+                        "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
+                        "correction (Issue #1079). The result is only meaningful when the "
+                        "off-diagonals are physically negligible; pass a scalar or diagonal "
+                        "sigma to avoid the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )
