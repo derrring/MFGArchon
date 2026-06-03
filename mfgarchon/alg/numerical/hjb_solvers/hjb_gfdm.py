@@ -2445,10 +2445,34 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"geometries, or rephrase as paired Dirichlet/Neumann segments."
                 )
             case BCType.ROBIN:
-                raise NotImplementedError(
-                    f"ROBIN BC at boundary point {i} not supported by HJBGFDMSolver "
-                    f"via row replacement. Use the BCValueProvider pattern in the "
-                    f"coupling layer (Issue #625, see AdjointConsistentProvider)."
+                # Issue #1118 PR2b: the adjoint-consistent BC is ROBIN(alpha=0, beta=1),
+                # whose equation beta*(n.grad u) = g reduces to n.grad u = g — exactly the
+                # Neumann normal-derivative row with RHS = the resolved scalar g (segment.value
+                # is a plain float after with_resolved_providers). Delegate to the SAME builder
+                # the NEUMANN/NO_FLUX arm uses: single coefficient source, no second ROBIN
+                # stencil (the dual-source BC bug class). General Robin (alpha != 0) adds an
+                # alpha*u term the normal-derivative row cannot represent, and beta != 1 would
+                # need a 1/beta scaling the builder does not apply — both are reachable via the
+                # BCSegment API and would be silently mis-solved, so fail loud instead.
+                alpha = getattr(segment, "alpha", 1.0) if segment is not None else 1.0
+                beta = getattr(segment, "beta", 0.0) if segment is not None else 0.0
+                if abs(alpha) > 0.0:
+                    raise NotImplementedError(
+                        f"ROBIN BC with alpha={alpha!r} at boundary point {i} is not supported "
+                        f"by HJBGFDMSolver: the normal-derivative row encodes only "
+                        f"beta*(n.grad u) = g and cannot represent the alpha*u term. Only the "
+                        f"adjoint-consistent ROBIN(alpha=0, beta=1) case is supported "
+                        f"(Issue #1118 PR2b; see AdjointConsistentProvider)."
+                    )
+                if abs(beta - 1.0) > 0.0:
+                    raise NotImplementedError(
+                        f"ROBIN BC with beta={beta!r} at boundary point {i} is not supported: "
+                        f"the delegated Neumann row assumes coefficient 1 on n.grad u and does "
+                        f"not apply a 1/beta scaling. Only beta=1 (the adjoint-consistent case) "
+                        f"is supported (Issue #1118 PR2b)."
+                    )
+                new_row, bc_target = self._build_neumann_bc_row(
+                    i, normal, dimension, segment, legacy_bc_values, current_time
                 )
             case _:
                 raise ValueError(
@@ -2943,21 +2967,34 @@ class HJBGFDMSolver(BaseHJBSolver):
         # either path) and BCValueProvider coupling (e.g. AdjointConsistentProvider). Inspect
         # segments directly: for a mixed BC, `boundary_conditions.type` raises and
         # `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
-        allowed_bc = {"no_flux", "neumann", "dirichlet"}
+        # Issue #1118 PR2b: ROBIN is now consumable by the value-form row builder, but only
+        # the adjoint-consistent ROBIN(alpha=0, beta=1) case (n.grad u = g). The alpha/beta
+        # check lives in exactly one place — _bc_row_for_point fail-louds on ROBIN(alpha != 0)
+        # or beta != 1 — so we add "robin" here and let the row builder be the gate.
+        allowed_bc = {"no_flux", "neumann", "dirichlet", "robin"}
         segments = getattr(self.boundary_conditions, "segments", None)
         if segments:
             for seg in segments:
                 seg_type = seg.bc_type.value if hasattr(seg.bc_type, "value") else str(seg.bc_type)
                 if seg_type not in allowed_bc:
                     raise NotImplementedError(
-                        f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC; segment "
-                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. ROBIN/PERIODIC parity is "
-                        f"deferred (Issue #1118 PR2b)."
+                        f"inner_solver='howard' supports no-flux/Neumann/Dirichlet/Robin BC; "
+                        f"segment {getattr(seg, 'name', '?')!r} is {seg_type!r}. PERIODIC parity "
+                        f"is deferred (Issue #1118 PR2b)."
                     )
                 if callable(getattr(getattr(seg, "value", None), "compute", None)):
-                    raise NotImplementedError(
-                        "inner_solver='howard' does not honor a BCValueProvider (e.g. "
-                        "AdjointConsistentProvider); deferred (Issue #1118 PR2)."
+                    # Providers are resolved UPSTREAM by the coupling layer
+                    # (problem.using_resolved_bc -> with_resolved_providers swaps in a float,
+                    # keeping bc_type=ROBIN) and Part 1's per-solve refresh transports that float
+                    # into the solver. By the time Howard runs, no segment should still carry a
+                    # callable .compute; if one does, the coupling layer failed to resolve it (or
+                    # a static BC carries a raw provider) — a real bug, not a deferred feature.
+                    raise AssertionError(
+                        f"inner_solver='howard': segment {getattr(seg, 'name', '?')!r} still "
+                        f"carries an unresolved BCValueProvider (callable .compute) at solve "
+                        f"time. Providers must be resolved by the coupling layer "
+                        f"(using_resolved_bc / with_resolved_providers) before reaching the "
+                        f"solver (Issue #1118 PR2b)."
                     )
         else:
             try:
@@ -2966,8 +3003,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 uniform_type = None
             if uniform_type is not None and uniform_type not in allowed_bc:
                 raise NotImplementedError(
-                    f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC, got "
-                    f"{uniform_type!r}. ROBIN/PERIODIC parity is deferred (Issue #1118 PR2b)."
+                    f"inner_solver='howard' supports no-flux/Neumann/Dirichlet/Robin BC, got "
+                    f"{uniform_type!r}. PERIODIC parity is deferred (Issue #1118 PR2b)."
                 )
 
         dt = float(self.problem.T) / int(self.problem.Nt)

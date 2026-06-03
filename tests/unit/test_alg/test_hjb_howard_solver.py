@@ -493,18 +493,21 @@ def test_integrated_howard_dirichlet_value():
     )
 
 
-def test_integrated_howard_rejects_robin_bc():
-    """ROBIN stays guarded under inner_solver='howard' (no row builder on either path; #1118 PR2b)."""
+def test_integrated_howard_rejects_robin_nonzero_alpha():
+    """ROBIN with alpha != 0 has no normal-derivative row representation (it would drop the
+    alpha*u term); it must keep raising even after #1118 PR2b enabled ROBIN(alpha=0). The
+    Howard guard now admits 'robin', so the fail-loud comes from _bc_row_for_point during
+    the solve, with a message naming alpha."""
     bc = BoundaryConditions(
         segments=[
-            BCSegment(name="x_min", bc_type=BCType.ROBIN, value=0.0, boundary="x_min"),
-            BCSegment(name="x_max", bc_type=BCType.ROBIN, value=0.0, boundary="x_max"),
+            BCSegment(name="x_min", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=0.0, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=0.0, boundary="x_max"),
         ],
         dimension=1,
     )
     gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
-    with pytest.raises(NotImplementedError, match=r"ROBIN|PERIODIC"):
+    with pytest.raises(NotImplementedError, match=r"alpha"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
@@ -622,3 +625,165 @@ def test_gfdm_refresh_noop_when_bc_unchanged():
     snapshot = gfdm.boundary_conditions
     gfdm._refresh_boundary_conditions_if_changed()
     assert gfdm.boundary_conditions is snapshot
+
+
+# ---------------------------------------------------------------------------
+# 9. ROBIN / adjoint-consistent BC for inner_solver='howard' (Issue #1118 PR2b)
+#
+# The adjoint-consistent BC is ROBIN(alpha=0, beta=1) whose resolved scalar is
+# g = -sigma^2/2 * d ln(m)/dn. PR2b routes it through _build_neumann_bc_row
+# (n.grad u = g), lifts the Howard guard for "robin", and fail-louds on the
+# unsupported-but-reachable forms (alpha != 0, beta != 1, unresolved provider).
+# Part 1's per-solve refresh transports the per-Picard resolved float in.
+# ---------------------------------------------------------------------------
+
+_AC_SIGMA = 0.3
+_AC_DX = 0.1
+_AC_REG = 1e-10
+
+
+class _ProviderGeom:
+    """Minimal geometry carrying only the grid spacing the provider state needs.
+
+    Decouples the provider's density-array spacing (_AC_DX) from the GFDM cloud
+    spacing: the provider indexes the density array, not the collocation cloud.
+    """
+
+    dimension = 1
+
+    def get_grid_spacing(self):
+        return [_AC_DX]
+
+
+def _adjoint_robin_bc(sigma=_AC_SIGMA):
+    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+
+    return BoundaryConditions(
+        segments=[
+            BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+                      value=AdjointConsistentProvider(side="left", diffusion=sigma), boundary="x_min"),
+            BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+                      value=AdjointConsistentProvider(side="right", diffusion=sigma), boundary="x_max"),
+        ],
+        dimension=1,
+    )
+
+
+def _expected_g(m, sigma=_AC_SIGMA):
+    """Closed-form adjoint value g = -sigma^2/2 * d ln(m)/dn at each face (outward normal)."""
+    ln = np.log(m + _AC_REG)
+    g_left = -(sigma**2) / 2.0 * (-(ln[1] - ln[0]) / _AC_DX)
+    g_right = -(sigma**2) / 2.0 * ((ln[-1] - ln[-2]) / _AC_DX)
+    return g_left, g_right
+
+
+def test_howard_robin_row_target_tracks_resolved_adjoint_g():
+    """LOAD-BEARING: two DIFFERENT FP densities -> resolve the AdjointConsistentProvider ->
+    Part-1 refresh -> read the value-form BC target from _value_form_bc_rows. The target MUST
+    move between the two densities AND equal the hand-computed closed form each time. FAILS if
+    g were frozen (refresh/row-builder stale): a frozen g gives g_iter2 == g_iter1, which the
+    `!=` assertion rejects. A happy-path 'it ran' test would pass even with a frozen g."""
+    prov_geom = _ProviderGeom()
+    bc = _adjoint_robin_bc()
+    gfdm, geom, _pts, bdry = _make_geom_sourced_gfdm_1d(bc, inner_solver="howard")
+    assert gfdm._bc_from_geometry is True
+    bi_left, bi_right = int(bdry[0]), int(bdry[1])  # lower 1e-7 -> x_min, upper -> x_max
+
+    def resolve_refresh_and_read(m):
+        resolved = bc.with_resolved_providers(
+            {"m_current": m, "geometry": prov_geom, "diffusion": _AC_SIGMA}
+        )
+        assert resolved is not bc  # new object -> Part-1 refresh fires
+        assert resolved.segments[0].bc_type is BCType.ROBIN  # stays ROBIN, value -> float
+        geom.boundary_conditions = resolved
+        gfdm._refresh_boundary_conditions_if_changed()
+        assert gfdm.boundary_conditions is geom.boundary_conditions
+        rows = gfdm._value_form_bc_rows(0)
+        return rows[bi_left][1], rows[bi_right][1]
+
+    m1 = np.array([1.0, 0.8, 0.6, 0.5, 0.4, 0.35, 0.3, 0.28, 0.26, 0.25])
+    m2 = m1[::-1].copy()  # reversed slope -> g flips on both faces
+
+    g1_left, g1_right = resolve_refresh_and_read(m1)
+    e1_left, e1_right = _expected_g(m1)
+    assert g1_left == pytest.approx(e1_left, abs=1e-9), (g1_left, e1_left)
+    assert g1_right == pytest.approx(e1_right, abs=1e-9), (g1_right, e1_right)
+
+    g2_left, g2_right = resolve_refresh_and_read(m2)
+    e2_left, e2_right = _expected_g(m2)
+    assert g2_left == pytest.approx(e2_left, abs=1e-9), (g2_left, e2_left)
+    assert g2_right == pytest.approx(e2_right, abs=1e-9), (g2_right, e2_right)
+
+    assert g2_left != g1_left, "g_left frozen across iterations (refresh/row-builder stale)"
+    assert g2_right != g1_right, "g_right frozen across iterations (refresh/row-builder stale)"
+
+
+def test_howard_robin_nonzero_beta_rejected():
+    """ROBIN(alpha=0, beta!=1) needs a 1/beta scaling the delegated Neumann row does not apply;
+    it is reachable via the BCSegment API, so it must fail loud, not be silently mis-solved."""
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.ROBIN, alpha=0.0, beta=2.0, value=0.0, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.ROBIN, alpha=0.0, beta=2.0, value=0.0, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    with pytest.raises(NotImplementedError, match=r"beta"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_howard_unresolved_provider_fails_loud():
+    """A raw (unresolved) AdjointConsistentProvider reaching Howard means the coupling layer
+    failed to resolve it; the converted guard must fail loud (AssertionError), not silently
+    solve against a meaningless provider object."""
+    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+                      value=AdjointConsistentProvider(side="left", diffusion=0.3), boundary="x_min"),
+            BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+                      value=AdjointConsistentProvider(side="right", diffusion=0.3), boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)  # explicit BC, providers NOT resolved
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    with pytest.raises(AssertionError, match=r"unresolved BCValueProvider"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_howard_honors_resolved_robin_in_solution():
+    """Howard must HONOR the resolved Robin row in the solved value function, not just build it:
+    the value-form boundary equation row @ U == g holds at the solved (non-terminal) slices.
+    Complements the load-bearing test (which checks the row is BUILT correctly). Verifies the
+    value-form RHS=target is consumed by the inner solve (Constraint c) without depending on the
+    Newton path (whose stall on this regime is the very motivation for Howard, #1118)."""
+    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+
+    sigma = _AC_SIGMA
+    m = np.linspace(1.0, 0.25, 10)
+    state = {"m_current": m, "geometry": _ProviderGeom(), "diffusion": sigma}
+    g_left = AdjointConsistentProvider(side="left", diffusion=sigma).compute(state)
+    g_right = AdjointConsistentProvider(side="right", diffusion=sigma).compute(state)
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=float(g_left), boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=float(g_right), boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc, sigma=sigma)
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+    assert np.all(np.isfinite(U))
+
+    bi_left, bi_right = int(bdry[0]), int(bdry[1])
+    rows = gfdm._value_form_bc_rows(0)
+    row_l, tgt_l = rows[bi_left]
+    row_r, tgt_r = rows[bi_right]
+    u0 = np.asarray(U[0]).ravel()  # solved initial-time slice (terminal slice U[-1] is imposed)
+    assert row_l @ u0 == pytest.approx(tgt_l, abs=1e-8), "Howard did not honor the left Robin row"
+    assert row_r @ u0 == pytest.approx(tgt_r, abs=1e-8), "Howard did not honor the right Robin row"
