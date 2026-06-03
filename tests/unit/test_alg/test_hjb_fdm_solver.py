@@ -552,6 +552,12 @@ class TestHJBFDMSolverDiagonalTensor:
             # Check that warning was raised
             tensor_warnings = [warning for warning in w if "non-diagonal" in str(warning.message).lower()]
             assert len(tensor_warnings) > 0, "Should warn for non-diagonal tensor"
+            # Issue #1079: the warning must convey the O(1) severity (dropping off-diagonal
+            # sigma_ij is not a small correction), not merely "using diagonal approximation".
+            assert any(
+                "o(1)" in str(warning.message).lower() or "1079" in str(warning.message)
+                for warning in tensor_warnings
+            ), "Warning should state the off-diagonal drop is an O(1) error (Issue #1079)"
 
         # Solution should still be computed (fallback to diagonal)
         assert U_solution.shape == (Nt_points, Nx, Ny)
