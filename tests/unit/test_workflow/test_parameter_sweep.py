@@ -5,6 +5,7 @@ Tests parameter space exploration including combination generation,
 execution modes, result collection, and error handling.
 """
 
+import pickle
 import tempfile
 from pathlib import Path
 
@@ -578,3 +579,32 @@ def test_results_persist_after_execution():
     assert len(sweep.results) == 3
     # Check we can access results multiple times
     assert len(sweep.results) == 3
+
+
+# ============================================================================
+# Test: Issue #1080 — picklability for ProcessPoolExecutor under macOS spawn
+# ============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.fast
+def test_parameter_sweep_is_picklable_issue_1080():
+    """ParameterSweep must pickle (for ProcessPoolExecutor under macOS/Windows 'spawn')
+    despite its logger holding a non-picklable threading.Lock. __getstate__ drops the
+    logger; __setstate__ re-initializes it in the worker."""
+    sweep = ParameterSweep({"x": [1, 2], "y": [3, 4]})
+    restored = pickle.loads(pickle.dumps(sweep))
+    assert restored.total_combinations == sweep.total_combinations
+    assert restored.parameters == sweep.parameters
+    assert restored.logger is not None
+    restored.logger.info("worker logger re-initialized OK")  # must not raise
+
+
+@pytest.mark.unit
+@pytest.mark.fast
+def test_parallel_processes_fails_loud_on_unpicklable_function_issue_1080():
+    """A non-picklable sweep function (lambda/closure) must raise an actionable ValueError at
+    the call site, not a cryptic deep-pickle TypeError inside a worker (macOS/Windows spawn)."""
+    sweep = ParameterSweep({"x": [1, 2]})
+    with pytest.raises(ValueError, match="not picklable"):
+        sweep._execute_parallel_processes(lambda x: x)
