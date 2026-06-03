@@ -106,6 +106,19 @@ class ParameterSweep:
 
         self.logger.info(f"Initialized parameter sweep with {self.total_combinations} combinations")
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Issue #1080: the logger holds a non-picklable ``threading.Lock``, so pickling the
+        instance to a ``ProcessPoolExecutor`` worker fails under the macOS/Windows ``spawn``
+        start method (Linux ``fork`` inherits memory without pickling, masking it). Drop the
+        logger here; ``__setstate__`` re-initializes it in the worker."""
+        state = self.__dict__.copy()
+        state.pop("logger", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self.logger = self._setup_logging()
+
     def _generate_combinations(self) -> list[dict[str, Any]]:
         """Generate all parameter combinations."""
         param_names = []
@@ -233,6 +246,24 @@ class ParameterSweep:
 
     def _execute_parallel_processes(self, function: Callable, **kwargs) -> list[dict[str, Any]]:
         """Execute parameter sweep using process pool."""
+        # Issue #1080: under macOS/Windows 'spawn', worker args are pickled. Fail fast with an
+        # actionable message instead of a cryptic deep-pickle TypeError when the sweep function
+        # (or its captured state) is non-picklable — typically a lambda/closure. (Linux 'fork'
+        # inherits memory without pickling, so this only bites on spawn platforms.)
+        if self.parameter_combinations:
+            probe = (self, function, self.parameter_combinations[0], 0, kwargs)
+            try:
+                pickle.dumps(probe)
+            except (TypeError, AttributeError, pickle.PicklingError) as e:
+                raise ValueError(
+                    f"ParameterSweep parallel-process worker args are not picklable ({e}). Under "
+                    "the macOS/Windows 'spawn' start method the sweep `function` and any captured "
+                    "objects must be picklable: use a module-level/named function rather than a "
+                    "lambda or closure, keep `MFGComponents` callables module-level, and avoid "
+                    "passing live file handles/locks. Or set execution_mode='parallel_threads' "
+                    "(or 'sequential') to sweep in-process without pickling."
+                ) from e
+
         with ProcessPoolExecutor(max_workers=self.config.max_workers) as executor:
             # Prepare arguments for each worker — include self for pickling
             worker_args = [(self, function, params, i, kwargs) for i, params in enumerate(self.parameter_combinations)]
