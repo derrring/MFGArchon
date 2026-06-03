@@ -63,7 +63,7 @@ class Hypersphere(ImplicitDomain):
             radius: Radius (must be positive)
 
         Raises:
-            ValueError: If radius <= 0
+            ValueError: If radius is not a positive, finite scalar
 
         Example:
             >>> # 2D circle at (1, 2) with radius 0.5
@@ -77,6 +77,12 @@ class Hypersphere(ImplicitDomain):
 
         if self.radius <= 0:
             raise ValueError(f"Radius must be positive, got {radius}")
+
+        # Issue #1077: radius=inf/nan slips past the `<= 0` check (inf/nan comparisons are
+        # False), then yields an infinite bounding box -> np.random.uniform(-inf, inf) -> NaN
+        # in rejection sampling. Fail fast.
+        if not np.isfinite(self.radius):
+            raise ValueError(f"Radius must be finite, got {radius}")
 
         if self.center.ndim != 1:
             raise ValueError(f"Center must be 1D array, got shape {self.center.shape}")

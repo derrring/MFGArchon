@@ -70,6 +70,17 @@ class TestHypersphere:
         assert domain.contains(np.array([0.5, 0]))  # Interior
         assert not domain.contains(np.array([2, 0]))  # Exterior
 
+    def test_radius_must_be_positive_and_finite(self):
+        """Issue #1077: a non-positive or non-finite radius must fail fast. inf/nan slip
+        past the `<= 0` check and would otherwise yield inf bounding boxes -> NaN in
+        rejection sampling."""
+        for bad in (0.0, -1.0):
+            with pytest.raises(ValueError, match="positive"):
+                Hypersphere(center=[0, 0], radius=bad)
+        for bad in (float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="finite"):
+                Hypersphere(center=[0, 0], radius=bad)
+
     def test_4d_hypersphere(self):
         """Test 4D hypersphere."""
         domain = Hypersphere(center=[0] * 4, radius=1.0)
