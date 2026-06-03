@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coupled-MFG-vs-reference MMS test** (`tests/integration/test_coupled_mfg_mms.py`).
+  Closes a critical verification gap: every prior coupled-MFG test checked only Picard
+  self-consistency residual (→0 for *any* fixed point) and mass conservation (~1 for any
+  conservative scheme) — neither verifies the converged `(u_h, m_h)` is the *correct*
+  solution, which is how the σ→D factor bug (#1152) and the no-flux wall-leak (#1151)
+  shipped. The test manufactures a smooth periodic pair with active bidirectional
+  coupling, injects analytic `S_HJB`/`S_FP` (3-way independently derived + cross-checked)
+  so `(u*, m*)` is the exact source-augmented solution, runs the real `FixedPointIterator`,
+  and asserts the empirical convergence order of *both* fields — a wrong diffusion factor,
+  coupling sign/coefficient, or non-conservative flux breaks the rate even though Picard
+  still converges and mass is conserved. Marked `slow` (~2 min; runs on merge/release).
+
 - **`HJBGFDMSolver(inner_solver='howard')` now supports adjoint-consistent Robin BC**
   (Issue #1118 PR2b). `BCType.ROBIN(alpha=0, beta=1)` — the `AdjointConsistentProvider`
   pattern whose resolved scalar is `g = -sigma^2/2 * d ln(m)/dn` — is routed through the
