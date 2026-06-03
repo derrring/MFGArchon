@@ -99,5 +99,39 @@ def test_silent_when_callable():
     assert len(sigma_warns) == 0
 
 
+def test_warns_when_newton_tolerance_looser_than_picard():
+    """Issue #1081: a Newton tolerance looser than the Picard tolerance is a convergence
+    floor — each inner HJB solve injects a ~newton_tolerance residual, so Picard cannot
+    drop below it and reports 'max iterations' without converging. Warn at solve()."""
+    problem = _make_problem(sigma=0.3)
+    hjb = HJBFDMSolver(problem, newton_tolerance=1e-4)
+    fp = FPFDMSolver(problem)
+    iterator = FixedPointIterator(problem, hjb, fp)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        iterator.solve(max_iterations=1, tolerance=1e-8)
+        tol_warns = [x for x in w if "newton_tolerance" in str(x.message)]
+
+    assert len(tol_warns) == 1, f"expected 1 tolerance-floor warning, got {len(tol_warns)}"
+    assert "looser" in str(tol_warns[0].message)
+
+
+def test_silent_when_newton_tolerance_tight_enough():
+    """No tolerance-floor warning when newton_tolerance <= picard tolerance (the equal
+    1e-6 defaults are fine; a tighter Newton tolerance is also fine)."""
+    problem = _make_problem(sigma=0.3)
+    hjb = HJBFDMSolver(problem, newton_tolerance=1e-8)
+    fp = FPFDMSolver(problem)
+    iterator = FixedPointIterator(problem, hjb, fp)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        iterator.solve(max_iterations=1, tolerance=1e-6)
+        tol_warns = [x for x in w if "newton_tolerance" in str(x.message)]
+
+    assert len(tol_warns) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
