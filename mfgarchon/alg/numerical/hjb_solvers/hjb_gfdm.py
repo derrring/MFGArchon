@@ -2336,6 +2336,55 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return jacobian.tocsr()
 
+    def _bc_row_for_point(
+        self,
+        i: int,
+        bc_enum,
+        segment,
+        normal,
+        dimension: int,
+        n: int,
+        legacy_bc_values,
+        current_time: float,
+    ) -> tuple[np.ndarray, float]:
+        """Build the value-form BC row (coefficients + target) for boundary point ``i``.
+
+        Returns ``(row_coeffs, bc_target)`` WITHOUT any residual subtraction, so it is the
+        single coefficient source shared by both BC application paths (Issue #1118 PR2):
+        - the Newton path forms the #1116 residual RHS ``row_coeffs @ u_current - bc_target``;
+        - the Howard value-form path uses ``bc_target`` as the RHS directly.
+        Keeping one source prevents the two paths from drifting (the recurring dual-source BC
+        bug class). Raises for BC types with no row builder (PERIODIC/ROBIN).
+        """
+        match bc_enum:
+            case BCType.DIRICHLET:
+                new_row = np.zeros(n)
+                new_row[i] = 1.0
+                bc_target = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
+            case BCType.NEUMANN | BCType.NO_FLUX:
+                new_row, bc_target = self._build_neumann_bc_row(
+                    i, normal, dimension, segment, legacy_bc_values, current_time
+                )
+            case BCType.PERIODIC:
+                raise NotImplementedError(
+                    f"PERIODIC BC at boundary point {i} not supported by HJBGFDMSolver "
+                    f"via row replacement. Use TensorProductGrid + FDM for periodic "
+                    f"geometries, or rephrase as paired Dirichlet/Neumann segments."
+                )
+            case BCType.ROBIN:
+                raise NotImplementedError(
+                    f"ROBIN BC at boundary point {i} not supported by HJBGFDMSolver "
+                    f"via row replacement. Use the BCValueProvider pattern in the "
+                    f"coupling layer (Issue #625, see AdjointConsistentProvider)."
+                )
+            case _:
+                raise ValueError(
+                    f"Unhandled BCType {bc_enum!r} at boundary point {i}. "
+                    f"This indicates a new BCType value not yet wired into HJBGFDMSolver "
+                    f"BC row construction."
+                )
+        return new_row, float(bc_target)
+
     def _apply_boundary_conditions_to_sparse_system(
         self,
         jacobian_sparse,
@@ -2440,39 +2489,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                     # Symmetric ghost stencils enforce BC structurally; leave row.
                     continue
 
-            # --- Build replacement row + rhs (atomic) ---
-            # `new_rhs` is the Newton residual at this row: F_bc(u_current) - target.
-            # `_eval_bc_dirichlet_value` and `_build_neumann_bc_row` return the
-            # BC target; we subtract from the current state to get the violation.
-            match bc_enum:
-                case BCType.DIRICHLET:
-                    new_row = np.zeros(n)
-                    new_row[i] = 1.0
-                    bc_target = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
-                    new_rhs = float(u_current[i]) - bc_target
-                case BCType.NEUMANN | BCType.NO_FLUX:
-                    new_row, bc_target = self._build_neumann_bc_row(
-                        i, normal, dimension, segment, legacy_bc_values, current_time
-                    )
-                    new_rhs = float(new_row @ u_current) - bc_target
-                case BCType.PERIODIC:
-                    raise NotImplementedError(
-                        f"PERIODIC BC at boundary point {i} not supported by HJBGFDMSolver "
-                        f"via row replacement. Use TensorProductGrid + FDM for periodic "
-                        f"geometries, or rephrase as paired Dirichlet/Neumann segments."
-                    )
-                case BCType.ROBIN:
-                    raise NotImplementedError(
-                        f"ROBIN BC at boundary point {i} not supported by HJBGFDMSolver "
-                        f"via row replacement. Use the BCValueProvider pattern in the "
-                        f"coupling layer (Issue #625, see AdjointConsistentProvider)."
-                    )
-                case _:
-                    raise ValueError(
-                        f"Unhandled BCType {bc_enum!r} at boundary point {i}. "
-                        f"This indicates a new BCType value not yet wired into "
-                        f"HJBGFDMSolver._apply_boundary_conditions_to_sparse_system."
-                    )
+            # --- Build replacement row + value-form target, then form the Newton residual. ---
+            # `_bc_row_for_point` returns (row coefficients, BC target) WITHOUT the residual
+            # subtraction, so the Howard value-form path (Issue #1118 PR2) reuses the SAME
+            # coefficient source. Here we form the #1116 residual: F_bc(u_current) - target.
+            # (Dirichlet's row is e_i, so `new_row @ u_current == u_current[i]` — unchanged.)
+            new_row, bc_target = self._bc_row_for_point(
+                i, bc_enum, segment, normal, dimension, n, legacy_bc_values, current_time
+            )
+            new_rhs = float(new_row @ u_current) - bc_target
 
             # --- Atomic row replacement ---
             jac_lil[i, :] = new_row
