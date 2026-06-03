@@ -1297,6 +1297,16 @@ class HamiltonianBase(MFGOperatorBase):
 class BoundHamiltonian:
     """Lightweight wrapper binding cross-population density to a HamiltonianBase.
 
+    [PROVISIONAL — SUPERSEDED-BY: Issue #1071] This is the tactical adapter for
+    multi-population cross-coupling (Issue #1157): it transports the stacked density,
+    discards the solver-supplied ``m``, and infers the timestep from ``t`` via
+    ``round(t/dt)``. Those two smells (a dead ``m`` argument; a time index reverse-
+    engineered from a float) signal the missing abstraction — multi-population should
+    be first-class *state* on the Hamiltonian, folded into the #1071 ``evaluate(state)``
+    redesign rather than wrapped at call time. Deferred on purpose: revisit when
+    multi-population MFG is in real use, so the design trade-offs are judged from
+    experience instead of guessed up front.
+
     Created by HamiltonianBase.bind_cross_density(m_all). Delegates all
     methods to the inner Hamiltonian, substituting the stacked K-population
     density ``m_all`` for the single-population ``m`` the solver supplies —
