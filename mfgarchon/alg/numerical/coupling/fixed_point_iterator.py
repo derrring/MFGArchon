@@ -579,6 +579,28 @@ class FixedPointIterator(BaseCouplingIterator):
 
             verbose = should_show_progress()
 
+        # Issue #1081: Picard cannot converge below the inner Newton-solve floor. When the
+        # HJB Newton tolerance is looser than the Picard tolerance, each inner solve injects
+        # a ~newton_tolerance residual, so the outer Picard residual plateaus there and the
+        # run reports "max iterations reached" without ever converging. Warn (strictly
+        # looser; equal default tolerances of 1e-6 are fine).
+        _newton_tol = getattr(self.hjb_solver, "newton_tolerance", None)
+        if (
+            isinstance(_newton_tol, (int, float))
+            and isinstance(final_tolerance, (int, float))
+            and _newton_tol > final_tolerance
+        ):
+            import warnings as _warnings
+
+            _warnings.warn(
+                f"HJB newton_tolerance ({_newton_tol:.1e}) is looser than the Picard "
+                f"tolerance ({final_tolerance:.1e}); the outer Picard residual cannot drop "
+                f"below the inner Newton floor and may report 'max iterations reached' "
+                f"without converging. Set newton_tolerance <= picard tolerance.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Get problem dimensions - handle both old 1D and new nD interfaces
         num_time_steps = self.problem.Nt + 1  # Renamed from Nt
 
