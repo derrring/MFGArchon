@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 from scipy.linalg import lstsq
@@ -2336,6 +2336,39 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return jacobian.tocsr()
 
+    _BC_STR_TO_ENUM: ClassVar[dict[str, BCType]] = {
+        "dirichlet": BCType.DIRICHLET,
+        "neumann": BCType.NEUMANN,
+        "no_flux": BCType.NO_FLUX,
+        "periodic": BCType.PERIODIC,
+        "robin": BCType.ROBIN,
+    }
+
+    def _classify_boundary_point(self, i: int, local_idx: int, use_per_point_bc: bool, global_bc_type, legacy_normals):
+        """Resolve ``(bc_enum, segment, normal)`` for boundary point ``i``.
+
+        Mixed BC uses the pre-classified per-point maps; uniform BC uses the global type +
+        computed outward normal. Single source shared by the Newton residual-BC path and the
+        Howard value-form path (Issue #1118 PR2), so the two never drift in classification.
+        """
+        if use_per_point_bc:
+            segment = self._bc_segment_per_point[i]
+            return segment.bc_type, segment, self._bc_normal_per_point[i]
+        bc_str = (global_bc_type or "neumann").lower()
+        if bc_str not in self._BC_STR_TO_ENUM:
+            raise ValueError(
+                f"Unknown BC type {bc_str!r} at boundary point {i} (uniform path). "
+                f"Supported: {tuple(self._BC_STR_TO_ENUM)}."
+            )
+        bc_enum = self._BC_STR_TO_ENUM[bc_str]
+        if legacy_normals is not None and local_idx < len(legacy_normals):
+            normal = legacy_normals[local_idx]
+        elif self._boundary_handler is not None:
+            normal = self._boundary_handler.compute_outward_normal(i)
+        else:
+            normal = self._compute_outward_normal(i)
+        return bc_enum, None, normal
+
     def _bc_row_for_point(
         self,
         i: int,
@@ -2384,6 +2417,48 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"BC row construction."
                 )
         return new_row, float(bc_target)
+
+    def _value_form_bc_rows(self, time_idx: int) -> dict[int, tuple[np.ndarray, float]]:
+        """Value-form boundary rows ``{i: (row_coeffs, bc_target)}`` for the Howard inner
+        solver (Issue #1118 PR2).
+
+        Uses the SAME per-point classifier (`_classify_boundary_point`) and coefficient
+        source (`_bc_row_for_point`) as the Newton residual-BC path, over the solver's
+        official `self.boundary_indices`, so the two paths never drift. Howard applies these
+        directly (``A[i,:] = row``, ``b[i] = bc_target``); the Newton path forms its #1116
+        residual RHS from the same rows instead. Ghost-node-enforced Neumann points are
+        omitted (their PDE row stands) — only relevant when ``_use_ghost_nodes`` is on, which
+        the joint_socp Howard path does not use.
+        """
+        try:
+            use_per_point_bc = self.boundary_conditions.is_mixed
+        except AttributeError:
+            use_per_point_bc = False
+        global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
+        legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
+        legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
+        dimension = self.dimension
+        n = self.n_points
+        current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0
+
+        rows: dict[int, tuple[np.ndarray, float]] = {}
+        for local_idx, i in enumerate(self.boundary_indices):
+            i = int(i)
+            bc_enum, segment, normal = self._classify_boundary_point(
+                i, local_idx, use_per_point_bc, global_bc_type, legacy_normals
+            )
+            if (
+                bc_enum in (BCType.NEUMANN, BCType.NO_FLUX)
+                and self._use_ghost_nodes
+                and self._boundary_handler is not None
+                and i in self._boundary_handler.ghost_node_map
+            ):
+                continue  # symmetric ghost stencils enforce the BC structurally; PDE row stands
+            row, target = self._bc_row_for_point(
+                i, bc_enum, segment, normal, dimension, n, legacy_bc_values, current_time
+            )
+            rows[i] = (row, target)
+        return rows
 
     def _apply_boundary_conditions_to_sparse_system(
         self,
@@ -2442,13 +2517,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
         legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
         legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
-        bc_str_to_enum = {
-            "dirichlet": BCType.DIRICHLET,
-            "neumann": BCType.NEUMANN,
-            "no_flux": BCType.NO_FLUX,
-            "periodic": BCType.PERIODIC,
-            "robin": BCType.ROBIN,
-        }
 
         dimension = self.dimension
         n = self.n_points
@@ -2458,26 +2526,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         for local_idx, i in enumerate(self.boundary_indices):
             i = int(i)
 
-            # --- Resolve BC for this point ---
-            if use_per_point_bc:
-                segment = self._bc_segment_per_point[i]
-                bc_enum = segment.bc_type
-                normal = self._bc_normal_per_point[i]
-            else:
-                bc_str = (global_bc_type or "neumann").lower()
-                if bc_str not in bc_str_to_enum:
-                    raise ValueError(
-                        f"Unknown BC type {bc_str!r} at boundary point {i} (uniform path). "
-                        f"Supported: {tuple(bc_str_to_enum)}."
-                    )
-                bc_enum = bc_str_to_enum[bc_str]
-                segment = None
-                if legacy_normals is not None and local_idx < len(legacy_normals):
-                    normal = legacy_normals[local_idx]
-                elif self._boundary_handler is not None:
-                    normal = self._boundary_handler.compute_outward_normal(i)
-                else:
-                    normal = self._compute_outward_normal(i)
+            # --- Resolve BC for this point (shared classifier, Issue #1118 PR2) ---
+            bc_enum, segment, normal = self._classify_boundary_point(
+                i, local_idx, use_per_point_bc, global_bc_type, legacy_normals
+            )
 
             # --- Ghost-nodes structural BC: keep PDE row intact ---
             if bc_enum in (BCType.NEUMANN, BCType.NO_FLUX):
@@ -2840,23 +2892,23 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Howard's policy-evaluation Lagrangian is hardcoded to (1/2)|alpha|^2; non-unit control cost "
                 "needs a running-cost correction (deferred, Issue #1118 PR2)."
             )
-        # BC-parity restriction (Issue #1118 PR2 deferral): Howard's BC handling correctly
-        # models only HOMOGENEOUS no-flux walls (Neumann-by-nearest-interior). It hardcodes
-        # Dirichlet rows to b=0 (ignoring the prescribed value) and cannot honor nonzero-Neumann,
-        # Robin, or coupling providers (e.g. AdjointConsistentProvider). Restrict to no-flux until
-        # the BC-row parity refactor (Howard's value-form rows vs the Newton-residual-form GFDM BC
-        # builders, #1116). Inspect segments directly: for a mixed BC, `boundary_conditions.type`
-        # raises and `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
-        allowed_bc = {"no_flux"}
+        # BC parity (Issue #1118 PR2a): the howard path now consumes the provider's shared
+        # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
+        # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
+        # nearest-interior copy). Still deferred to PR2b: ROBIN / PERIODIC (no row builder on
+        # either path) and BCValueProvider coupling (e.g. AdjointConsistentProvider). Inspect
+        # segments directly: for a mixed BC, `boundary_conditions.type` raises and
+        # `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
+        allowed_bc = {"no_flux", "neumann", "dirichlet"}
         segments = getattr(self.boundary_conditions, "segments", None)
         if segments:
             for seg in segments:
                 seg_type = seg.bc_type.value if hasattr(seg.bc_type, "value") else str(seg.bc_type)
                 if seg_type not in allowed_bc:
                     raise NotImplementedError(
-                        f"inner_solver='howard' supports homogeneous no-flux BC only; segment "
-                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. Dirichlet-value/Neumann-value/"
-                        f"Robin/mixed BC parity is deferred (Issue #1118 PR2)."
+                        f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC; segment "
+                        f"{getattr(seg, 'name', '?')!r} is {seg_type!r}. ROBIN/PERIODIC parity is "
+                        f"deferred (Issue #1118 PR2b)."
                     )
                 if callable(getattr(getattr(seg, "value", None), "compute", None)):
                     raise NotImplementedError(
@@ -2870,8 +2922,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 uniform_type = None
             if uniform_type is not None and uniform_type not in allowed_bc:
                 raise NotImplementedError(
-                    f"inner_solver='howard' supports homogeneous no-flux BC only, got "
-                    f"{uniform_type!r}. Dirichlet/Neumann-value/Robin BC parity is deferred (Issue #1118 PR2)."
+                    f"inner_solver='howard' supports no-flux/Neumann/Dirichlet BC, got "
+                    f"{uniform_type!r}. ROBIN/PERIODIC parity is deferred (Issue #1118 PR2b)."
                 )
 
         dt = float(self.problem.T) / int(self.problem.Nt)
@@ -2886,6 +2938,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             alpha_star=alpha_star,
             running_cost=self._running_cost_fn,
             discretisation="central" if self.dimension == 1 else "upwind_projection",
+            use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
         )
         return howard.solve_hjb_system(M_collocation, U_terminal_colloc)
 

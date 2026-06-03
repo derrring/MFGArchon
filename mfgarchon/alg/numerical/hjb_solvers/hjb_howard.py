@@ -279,6 +279,7 @@ class HJBHowardSolver:
         max_iter: int = 20,
         tol: float = 1e-4,
         volatility_field: float | np.ndarray | None = None,
+        use_provider_bc_rows: bool = False,
     ):
         if getattr(stencil_provider, "_joint_socp_stencils", None) is None:
             raise RuntimeError(
@@ -300,6 +301,10 @@ class HJBHowardSolver:
         self.max_iter = int(max_iter)
         self.tol = float(tol)
         self._volatility_field_override = volatility_field
+        # Issue #1118 PR2: when True, pull value-form BC rows from the provider's shared
+        # `_value_form_bc_rows` (Dirichlet value + real Neumann normal·grad stencil) instead
+        # of the self-contained Dirichlet-identity/Neumann-by-nearest scheme below.
+        self.use_provider_bc_rows = bool(use_provider_bc_rows)
 
         self._static: dict | None = None  # lazy-built on first solve
 
@@ -418,6 +423,10 @@ class HJBHowardSolver:
         rc_t = self.running_cost(t_idx) if self.running_cost is not None else None
         u_new = u_next.copy()
 
+        # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
+        # across inner iterations at this time step; None -> the legacy self-contained scheme.
+        bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
+
         for _ in range(self.max_iter):
             A_adv = self._build_A_adv(alpha, static)
             A = eye(n, format="csr") / dt - A_adv - 0.5 * sigma * sigma * D_lap
@@ -430,15 +439,23 @@ class HJBHowardSolver:
 
             # Apply BC rows in-place on A.
             A_lil = A.tolil()
-            for i in boundary_idx:
-                A_lil[i, :] = 0
-                if is_dirichlet[i]:
-                    A_lil[i, i] = 1.0
-                    b[i] = 0.0
-                else:
-                    A_lil[i, i] = -1.0
-                    A_lil[i, int(nearest_int[i])] = 1.0
-                    b[i] = 0.0
+            if bc_rows is not None:
+                # Value-form rows shared with the Newton path (Issue #1118 PR2): A[i,:]=row,
+                # b[i]=bc_target. Honors Dirichlet values + the real Neumann normal·grad stencil.
+                for i, (row, target) in bc_rows.items():
+                    A_lil[i, :] = row
+                    b[i] = target
+            else:
+                # Legacy self-contained scheme (homogeneous no-flux only).
+                for i in boundary_idx:
+                    A_lil[i, :] = 0
+                    if is_dirichlet[i]:
+                        A_lil[i, i] = 1.0
+                        b[i] = 0.0
+                    else:
+                        A_lil[i, i] = -1.0
+                        A_lil[i, int(nearest_int[i])] = 1.0
+                        b[i] = 0.0
 
             u_new = spsolve(A_lil.tocsr(), b)
             if not np.all(np.isfinite(u_new)):

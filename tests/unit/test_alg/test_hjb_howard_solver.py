@@ -444,20 +444,11 @@ def test_integrated_howard_requires_hamiltonian_class():
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
-def test_integrated_howard_rejects_non_no_flux_bc():
-    """inner_solver='howard' rejects BC beyond homogeneous no-flux. Howard hardcodes Dirichlet
-    b=0 and approximates Neumann by nearest interior, so it must fail loud on a Dirichlet BC
-    rather than silently mishandle the prescribed value (#1118 PR2 BC-parity deferral)."""
+def _make_howard_gfdm_with_bc(bc, sigma=0.3, Nt=5):
+    """Construct an inner_solver='howard' HJBGFDMSolver on the 1D cloud with the given BC."""
     pts, bdry, geom = _make_1d_cloud()
-    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=5, dimension=1)
+    problem = _MockProblem(geom, sigma=sigma, T=0.5, Nt=Nt, dimension=1)
     problem.hamiltonian_class = _LQHam()
-    dirichlet_bc = BoundaryConditions(
-        segments=[
-            BCSegment(name="x_min", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
-            BCSegment(name="x_max", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
-        ],
-        dimension=1,
-    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         gfdm = HJBGFDMSolver(
@@ -471,11 +462,47 @@ def test_integrated_howard_rejects_non_no_flux_bc():
             weight_function="wendland",
             collocation_geometry=geom,
             adaptive_neighborhoods=False,
-            boundary_conditions=dirichlet_bc,
+            boundary_conditions=bc,
             monotonicity_scheme="joint_socp",
             monotonicity_application="precompute",
             inner_solver="howard",
         )
+    return gfdm, pts, bdry
+
+
+def test_integrated_howard_dirichlet_value():
+    """Issue #1118 PR2a: inner_solver='howard' now honors the prescribed Dirichlet VALUE via
+    the shared value-form BC rows, not the old hardcoded b=0. Uses a NONZERO g_D and a uniform
+    Dirichlet BC (the previously-silently-misclassified case): the backward steps must pin the
+    boundary to g_D, not 0 and not the terminal value."""
+    g_D = 2.0
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.DIRICHLET, value=g_D, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.DIRICHLET, value=g_D, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc)
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2  # terminal != g_D at the boundary
+    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+    assert np.all(np.isfinite(U))
+    assert np.allclose(U[0, bdry], g_D, atol=1e-6), (
+        f"Dirichlet boundary not honored: U[0, boundary]={U[0, bdry]} != g_D={g_D} "
+        f"(would be ~0 with the old hardcoded b=0)."
+    )
+
+
+def test_integrated_howard_rejects_robin_bc():
+    """ROBIN stays guarded under inner_solver='howard' (no row builder on either path; #1118 PR2b)."""
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.ROBIN, value=0.0, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.ROBIN, value=0.0, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
-    with pytest.raises(NotImplementedError, match="homogeneous no-flux"):
+    with pytest.raises(NotImplementedError, match=r"ROBIN|PERIODIC"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
