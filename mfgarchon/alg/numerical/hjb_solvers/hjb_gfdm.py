@@ -608,12 +608,18 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Get BC from parameter, or from problem geometry (Issue #542 fix, Issue #527 centralized BC)
         if boundary_conditions is not None:
             self.boundary_conditions = boundary_conditions
+            # Explicit param is the caller's authoritative static choice; never
+            # re-read from geometry at solve time (Issue #1118 BC refresh).
+            self._bc_from_geometry = False
         else:
             # Use centralized BC resolution from BaseMFGSolver (Issue #527)
             # Checks: cached _boundary_conditions, geometry.boundary_conditions,
             # geometry.get_boundary_conditions(), problem.boundary_conditions,
             # problem.get_boundary_conditions()
             self.boundary_conditions = self.get_boundary_conditions()
+            # Geometry-sourced BC may be re-resolved per Picard iteration by the
+            # coupling layer (using_resolved_bc); refresh at solve time (Issue #1118).
+            self._bc_from_geometry = True
         self.interior_indices = np.setdiff1d(np.arange(self.n_points), self.boundary_indices)
 
         # Monotonicity scheme (single source of truth) — already set above (v0.18.0 rename)
@@ -1150,10 +1156,44 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
         return bc_type
 
+    def _refresh_boundary_conditions_if_changed(self) -> None:
+        """Re-sync BC-derived state from geometry if it changed since construction.
+
+        GFDM snapshots ``self.boundary_conditions`` and the preclassified
+        ``_bc_segment_per_point`` map at ``__init__``; FDM instead re-reads
+        ``get_boundary_conditions()`` every solve (hjb_fdm.py:319). When the
+        coupling layer resolves a provider per Picard iteration via
+        ``problem.using_resolved_bc`` (Issue #625), it swaps
+        ``geometry.boundary_conditions`` for a new object whose segments carry
+        the resolved scalar value (e.g. AdjointConsistentProvider's
+        ``g = -sigma^2/2 * d ln(m)/dn``). Without this refresh the GFDM/Howard
+        path would solve every iteration against the construction-time BC,
+        silently freezing the adjoint coupling in the >1000x-impact regime.
+
+        No-op when:
+        - BC came from an explicit constructor argument (static, never resolved);
+        - the live geometry BC is the same object as the cached snapshot
+          (``with_resolved_providers`` fast-paths ``return self`` for
+          provider-free BC, so the object is unchanged).
+        """
+        if not self._bc_from_geometry:
+            return
+        live_bc = self.get_boundary_conditions()
+        if live_bc is None or live_bc is self.boundary_conditions:
+            return
+        self.boundary_conditions = live_bc
+        # Keep the handler's BC reference consistent (its default_bc fallback in
+        # create_bc_config reads it); normals are geometry-only and unaffected.
+        self._boundary_handler.boundary_conditions = live_bc
+        self._bc_config = self._boundary_handler.create_bc_config()
+        self._preclassify_boundary_points()
+
     def _preclassify_boundary_points(self) -> None:
         """Pre-classify every boundary collocation point to a BCSegment + face + normal.
 
-        Called once at __init__ time. Populates three companion maps:
+        Called at __init__ time and re-run by ``_refresh_boundary_conditions_if_changed``
+        when the geometry BC is resolved per Picard iteration. Populates three
+        companion maps:
 
         - ``self._bc_face_per_point[i]``: BoundaryFace the point lies on.
         - ``self._bc_segment_per_point[i]``: BCSegment that applies to ``i``.
@@ -2766,6 +2806,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             if U_coupling_prev is not None:
                 raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
             U_coupling_prev = U_from_prev_picard
+
+        # Pick up any per-Picard resolved BC the coupling layer installed on the
+        # geometry since construction (Issue #1118; matches FDM's per-solve re-read).
+        self._refresh_boundary_conditions_if_changed()
 
         # Validate required parameters
         if U_terminal is None:
