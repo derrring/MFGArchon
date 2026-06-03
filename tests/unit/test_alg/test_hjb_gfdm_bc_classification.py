@@ -466,8 +466,10 @@ def test_dispatch_periodic_raises():
     assert "TensorProductGrid" in str(exc_info.value) or "FDM" in str(exc_info.value)
 
 
-def test_dispatch_robin_raises():
-    """ROBIN BC type at a boundary point raises NotImplementedError pointing at provider."""
+def test_dispatch_robin_nonzero_alpha_raises():
+    """ROBIN with alpha != 0 has no normal-derivative row representation (the alpha*u term
+    cannot be expressed), so it raises NotImplementedError naming alpha — on the Newton path
+    too (Issue #1118 PR2b enabled only the adjoint-consistent ROBIN(alpha=0, beta=1) case)."""
     LX, LY = 10.0, 10.0
     geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
     points, boundary_idx = _grid_with_boundary(LX, LY, n_in=4, eps=1e-7)
@@ -487,7 +489,45 @@ def test_dispatch_robin_raises():
     with pytest.raises(NotImplementedError) as exc_info:
         solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
     assert "ROBIN" in str(exc_info.value)
-    assert "BCValueProvider" in str(exc_info.value) or "625" in str(exc_info.value)
+    assert "alpha" in str(exc_info.value)
+
+
+def test_dispatch_robin_zero_alpha_builds_neumann_row():
+    """ROBIN(alpha=0, beta=1) is the adjoint-consistent case: its row equals the Neumann
+    normal-derivative row with RHS = the resolved scalar g (Issue #1118 PR2b). Verify on the
+    Newton path that ROBIN(alpha=0, beta=1, value=g) produces a Jacobian row byte-identical to
+    NEUMANN(value=g) — same single coefficient source (_build_neumann_bc_row), no second
+    stencil. This is the path Part 1 unfroze for AdjointConsistentProvider on Newton."""
+    LX, LY = 10.0, 10.0
+    geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
+    points, boundary_idx = _grid_with_boundary(LX, LY, n_in=4, eps=1e-7)
+    g = 0.5
+
+    def _bc(left_type):
+        segs = [BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
+                BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
+                BCSegment(name="right", bc_type=BCType.NO_FLUX, boundary="x_max")]
+        if left_type == "robin":
+            segs.insert(0, BCSegment(name="left", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=g, boundary="x_min"))
+        else:
+            segs.insert(0, BCSegment(name="left", bc_type=BCType.NEUMANN, value=g, boundary="x_min"))
+        return BoundaryConditions(segments=segs, dimension=2)
+
+    n = len(points)
+
+    def _apply(left_type):
+        solver = _build_solver(points, boundary_idx, _bc(left_type), geom)
+        jac = sp.eye(n, format="csr") * 0.5
+        res = np.ones(n)
+        jac_out, res_out = solver._apply_boundary_conditions_to_sparse_system(
+            jac, res, time_idx=0, u_current=np.zeros(n)
+        )
+        return np.asarray(jac_out.todense()), np.asarray(res_out)
+
+    jac_robin, res_robin = _apply("robin")  # must NOT raise
+    jac_neumann, res_neumann = _apply("neumann")
+    assert np.allclose(jac_robin, jac_neumann), "ROBIN(alpha=0,beta=1) row != Neumann row"
+    assert np.allclose(res_robin, res_neumann), "ROBIN(alpha=0,beta=1) RHS != Neumann RHS"
 
 
 # ---------------------------------------------------------------------------

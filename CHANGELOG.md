@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`HJBGFDMSolver(inner_solver='howard')` now supports adjoint-consistent Robin BC**
+  (Issue #1118 PR2b). `BCType.ROBIN(alpha=0, beta=1)` — the `AdjointConsistentProvider`
+  pattern whose resolved scalar is `g = -sigma^2/2 * d ln(m)/dn` — is routed through the
+  shared `_build_neumann_bc_row` (the equation reduces to `n.grad u = g`), so both the
+  Newton and Howard inner solvers honor it from a single coefficient source. The Howard
+  guard admits `"robin"`; the alpha/beta check lives only in the row builder. Combined
+  with the per-solve BC refresh, the per-Picard resolved value now reaches the Howard
+  value-form rows. Reachable-but-unsupported forms fail loud: `ROBIN(alpha != 0)` and
+  `ROBIN(beta != 1)` raise `NotImplementedError` (the normal-derivative row cannot
+  represent `alpha*u` and does not apply a `1/beta` scaling); an unresolved
+  `BCValueProvider` reaching the solver raises `AssertionError` (the coupling layer must
+  resolve it via `using_resolved_bc` first).
+
 ### Fixed
 
 - **`HJBGFDMSolver` now re-reads geometry boundary conditions per solve** when
