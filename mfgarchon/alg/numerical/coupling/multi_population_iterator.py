@@ -139,12 +139,34 @@ class MultiPopulationIterator:
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
                 H_k = prob_k.hamiltonian_class
+                solver_k = self.hjb_solvers[k]
 
-                # Bind cross-population density (no mutation of H_k)
-                H_bound = H_k.bind_cross_density(m_all) if hasattr(H_k, "bind_cross_density") else H_k
+                # Bind cross-population density so the HJB sees other populations' densities
+                # (Issue #1157). dt lets BoundHamiltonian map the solve-time t to the trajectory
+                # row n=round(t/dt); the FDM solver routes the bound H through the batch
+                # Hamiltonian path that consumes the stacked density field.
+                H_bound = H_k.bind_cross_density(m_all, dt=prob_k.dt) if hasattr(H_k, "bind_cross_density") else H_k
 
                 U_terminal_k = U[k][-1]
-                U[k] = self.hjb_solvers[k].solve_hjb_system(M[k], U_terminal_k, U[k])
+                # Only HJBFDMSolver threads the cross-density override into the HJB solve today
+                # (Issue #1157). Other backends would silently decouple (their solve reads the
+                # uncoupled problem.hamiltonian_class), so fail loud for K>1 rather than pass an
+                # override they ignore. K==1 has no cross-coupling: a standalone solve is correct
+                # and byte-identical, so no override is sent regardless of backend.
+                honors_override = getattr(solver_k, "_honors_multipop_hamiltonian_override", False)
+                if K > 1 and not honors_override:
+                    raise NotImplementedError(
+                        f"Multi-population cross-coupling requires HJBFDMSolver for the HJB step "
+                        f"(Issue #1157); population {k} uses {type(solver_k).__name__}, which does "
+                        "not thread the cross-density bound Hamiltonian into solve_hjb_system and "
+                        "would silently decouple. Use HJBFDMSolver for multi-population MFG."
+                    )
+                if honors_override:
+                    U[k] = solver_k.solve_hjb_system(
+                        M[k], U_terminal_k, U[k], hamiltonian_override=(None if K == 1 else H_bound)
+                    )
+                else:
+                    U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
 
             # Step 2: Solve K FP equations with drift from H_k
             for k in range(K):
@@ -152,8 +174,10 @@ class MultiPopulationIterator:
                 m0_k = M[k][0]
                 H_k = prob_k.hamiltonian_class
 
-                # Use bound H for velocity computation (sees cross-pop density)
-                H_bound = H_k.bind_cross_density(m_all) if hasattr(H_k, "bind_cross_density") else H_k
+                # Use bound H for velocity computation (sees cross-pop density). dt is required
+                # because _compute_velocity_field calls optimal_control per timestep with t=n*dt,
+                # which BoundHamiltonian maps to trajectory row n (Issue #1157).
+                H_bound = H_k.bind_cross_density(m_all, dt=prob_k.dt) if hasattr(H_k, "bind_cross_density") else H_k
                 velocity = self._compute_velocity_field(U[k], M[k], H_bound, prob_k)
 
                 M_new_k = self.fp_solvers[k].solve_fp_system(m0_k, drift_field=velocity, show_progress=False)

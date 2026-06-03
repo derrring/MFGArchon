@@ -548,6 +548,7 @@ def compute_hjb_residual(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification: pre-evaluated S(t, x)
+    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H (None => problem's own)
 ) -> np.ndarray:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -631,7 +632,16 @@ def compute_hjb_residual(
 
     # Issue #789: Batch Hamiltonian path — single H_class() call replaces per-point loop
     # Conditions: precomputed_grad available (BC-aware), no backend (NumPy), H_class exists
-    H_class = problem.hamiltonian_class
+    # Issue #1157: a multi-population bound Hamiltonian (active_hamiltonian) is honored
+    # only on this batch path; the per-point fallback below calls problem.H() (the
+    # uncoupled Hamiltonian), which would silently drop the cross-density coupling.
+    H_class = active_hamiltonian if active_hamiltonian is not None else problem.hamiltonian_class
+    if active_hamiltonian is not None and not (precomputed_grad is not None and backend is None):
+        raise NotImplementedError(
+            "Multi-population Hamiltonian override requires the batch Hamiltonian path "
+            "(precomputed_grad available, backend=None); the per-point problem.H() fallback "
+            "cannot honor the cross-density coupling and would silently decouple (Issue #1157)."
+        )
     if precomputed_grad is not None and backend is None and H_class is not None:
         # Build batch arrays
         x_grid = problem.geometry.get_spatial_grid()  # (Nx, 1)
@@ -709,6 +719,7 @@ def compute_hjb_jacobian(
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
+    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H (None => problem's own)
 ) -> sparse.csr_matrix:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -758,7 +769,15 @@ def compute_hjb_jacobian(
 
     # Hamiltonian part: analytical Jacobian via chain rule (Issue #789)
     # dΦ/dU_j = (dH/dp)_i * (dp_i/dU_j), where dp/dU comes from the gradient stencil.
-    H_class = problem.hamiltonian_class
+    # Issue #1157: the multi-pop bound Hamiltonian is honored only on the batch dp() path;
+    # the per-point problem.H() fallback below would silently drop the cross-density coupling.
+    H_class = active_hamiltonian if active_hamiltonian is not None else problem.hamiltonian_class
+    if active_hamiltonian is not None and not (backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1):
+        raise NotImplementedError(
+            "Multi-population Hamiltonian override requires the batch Jacobian path "
+            "(backend=None, Nx>1); the per-point problem.H() fallback cannot honor the "
+            "cross-density coupling and would silently decouple (Issue #1157)."
+        )
     if backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1:
         # Compute BC-aware gradient for stencil direction
         precomputed_grad = _compute_gradient_array_1d(U_n_np, dx, bc=bc, upwind=use_upwind, time=current_time)
@@ -931,6 +950,7 @@ def newton_hjb_step(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574
     source_term: np.ndarray | None = None,  # MMS verification
+    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
 ) -> tuple[np.ndarray, float]:
     dx = problem.geometry.get_grid_spacing()[0]
     dx_norm = dx if abs(dx) > 1e-12 else 1.0
@@ -952,6 +972,7 @@ def newton_hjb_step(
         current_time=current_time,
         bc_values=bc_values,  # Issue #574
         source_term=source_term,
+        active_hamiltonian=active_hamiltonian,  # Issue #1157
     )
     if has_nan_or_inf(residual_F_U, backend):
         return U_n_current_newton_iterate, np.inf
@@ -969,6 +990,7 @@ def newton_hjb_step(
         bc=bc,
         domain_bounds=domain_bounds,
         current_time=current_time,
+        active_hamiltonian=active_hamiltonian,  # Issue #1157
     )
     if np.any(np.isnan(jacobian_J_U.data)) or np.any(np.isinf(jacobian_J_U.data)):
         return U_n_current_newton_iterate, np.inf
@@ -1043,6 +1065,7 @@ def solve_hjb_timestep_newton(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification
+    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1104,6 +1127,7 @@ def solve_hjb_timestep_newton(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574
             source_term=source_term,
+            active_hamiltonian=active_hamiltonian,  # Issue #1157
         )
 
         if has_nan_or_inf(U_n_next_newton_iterate, backend):
@@ -1248,6 +1272,7 @@ def solve_hjb_system_backward(
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: Callable | None = None,  # MMS verification: S(t, x_grid) -> values
+    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1358,6 +1383,7 @@ def solve_hjb_system_backward(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574: Per-boundary BC values
             source_term=source_at_n,
+            active_hamiltonian=active_hamiltonian,  # Issue #1157
         )
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
 
