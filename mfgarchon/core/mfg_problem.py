@@ -526,6 +526,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # No physical parameter specified — deterministic (sigma = 0)
             vola_value = 0.0
 
+        # Issue #1077: T <= 0 is a degenerate (zero/inverted) time horizon — dt = T/Nt = 0
+        # silently produces all-zero integration. Fail fast, consistent with MFGGridConfig's
+        # T-positive validation. (Nt=0 is intentionally graceful — see test_mfg_problem_zero_nt.)
+        if T is not None and T <= 0:
+            raise ValueError(f"T (time horizon) must be > 0, got {T}.")
+
         # Set defaults for T, Nt if not provided
         if T is None:
             T = 1.0

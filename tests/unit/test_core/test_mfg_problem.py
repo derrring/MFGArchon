@@ -653,6 +653,16 @@ def test_mfg_problem_zero_nt():
     assert len(problem.tSpace) == 1
 
 
+@pytest.mark.unit
+def test_mfg_problem_rejects_nonpositive_T():
+    """Issue #1077: T <= 0 is a degenerate time horizon (dt = T/Nt = 0 -> all-zero
+    integration) and must fail fast, consistent with MFGGridConfig's T-positive validation.
+    (Nt=0 stays intentionally graceful, above.)"""
+    for bad_T in (0.0, -1.0):
+        with pytest.raises(ValueError, match=r"T .*must be > 0"):
+            create_test_problem(T=bad_T)
+
+
 # ===================================================================
 # Test Module Exports
 # ===================================================================
