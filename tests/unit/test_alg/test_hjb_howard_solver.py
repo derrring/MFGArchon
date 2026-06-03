@@ -442,3 +442,40 @@ def test_integrated_howard_requires_hamiltonian_class():
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(ValueError, match="hamiltonian_class"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_non_no_flux_bc():
+    """inner_solver='howard' rejects BC beyond homogeneous no-flux. Howard hardcodes Dirichlet
+    b=0 and approximates Neumann by nearest interior, so it must fail loud on a Dirichlet BC
+    rather than silently mishandle the prescribed value (#1118 PR2 BC-parity deferral)."""
+    pts, bdry, geom = _make_1d_cloud()
+    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=5, dimension=1)
+    problem.hamiltonian_class = _LQHam()
+    dirichlet_bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gfdm = HJBGFDMSolver(
+            problem,
+            collocation_points=pts,
+            boundary_indices=bdry,
+            delta=1.5,
+            k_neighbors=5,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            collocation_geometry=geom,
+            adaptive_neighborhoods=False,
+            boundary_conditions=dirichlet_bc,
+            monotonicity_scheme="joint_socp",
+            monotonicity_application="precompute",
+            inner_solver="howard",
+        )
+    U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
+    with pytest.raises(NotImplementedError, match="homogeneous no-flux"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
