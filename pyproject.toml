@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.19.6"  # v0.19.6: J/r consistency fix in approximate_derivatives
+version = "0.19.7"  # v0.19.7: fail-loud/conservation batch + Howard inner solver (#1118)
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
