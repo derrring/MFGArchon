@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`HJBGFDMSolver` now re-reads geometry boundary conditions per solve** when
+  the BC was sourced from the geometry (Issue #1118). GFDM previously snapshotted
+  the BC and its preclassified per-point segment map at construction, so the
+  coupling layer's per-Picard `using_resolved_bc` swap of
+  `geometry.boundary_conditions` never reached the solver — freezing any resolved
+  value (e.g. `AdjointConsistentProvider`'s `g = -sigma^2/2 * d ln(m)/dn`) at its
+  construction-time value, a silent error in the boundary-stall regime. FDM
+  already re-read BC each solve; GFDM now matches via
+  `_refresh_boundary_conditions_if_changed()` at the top of `solve_hjb_system`.
+  No-op for explicitly-passed `boundary_conditions=` (static) and for
+  provider-free BC (object identity unchanged). Prerequisite for the
+  Robin/adjoint-consistent Howard inner-solver support that follows.
+
 ## [0.19.7] - 2026-06-03
 
 ### Added

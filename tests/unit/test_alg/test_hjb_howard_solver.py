@@ -506,3 +506,119 @@ def test_integrated_howard_rejects_robin_bc():
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(NotImplementedError, match=r"ROBIN|PERIODIC"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+# ---------------------------------------------------------------------------
+# 8. Part 1: per-solve BC refresh (Issue #1118)
+#
+# GFDM snapshots boundary conditions + the preclassified segment map at
+# __init__; the coupling layer resolves providers per Picard iteration by
+# swapping geometry.boundary_conditions (FDM re-reads it each solve, GFDM did
+# not). Without the refresh the adjoint coupling value would freeze at the
+# construction-time BC — silent-wrong in the >1000x-impact regime.
+# ---------------------------------------------------------------------------
+
+
+def _neumann_per_face_1d(value):
+    """Mixed (per-face) Neumann BC so the value flows through _bc_segment_per_point."""
+    return BoundaryConditions(
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.NEUMANN, value=value, boundary="x_min"),
+            BCSegment(name="x_max", bc_type=BCType.NEUMANN, value=value, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+
+
+def _make_geom_sourced_gfdm_1d(bc, inner_solver="howard"):
+    """Construct a 1D GFDM solver that reads BC from geometry (no explicit param).
+
+    Returns (gfdm, geom, pts, bdry). Mutating geom.boundary_conditions then calling
+    a solve (or _refresh_boundary_conditions_if_changed) mimics the coupling layer's
+    per-iteration using_resolved_bc swap.
+    """
+    pts, bdry, geom = _make_1d_cloud()
+    geom.boundary_conditions = bc
+    problem = _MockProblem(geom, dimension=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gfdm = HJBGFDMSolver(
+            problem,
+            collocation_points=pts,
+            boundary_indices=bdry,
+            delta=1.5,
+            k_neighbors=8,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            collocation_geometry=geom,
+            adaptive_neighborhoods=False,
+            monotonicity_scheme="joint_socp",
+            monotonicity_application="precompute",
+            inner_solver=inner_solver,
+        )
+    return gfdm, geom, pts, bdry
+
+
+def test_gfdm_refreshes_geometry_bc_per_solve():
+    """Geometry-sourced BC: a value swapped after construction must reach the value-form
+    BC rows (Howard path). This FAILS on the pre-#1118 snapshot (frozen at construction)."""
+    gfdm, geom, _pts, bdry = _make_geom_sourced_gfdm_1d(_neumann_per_face_1d(0.3))
+    assert gfdm._bc_from_geometry is True
+    bi = int(bdry[0])
+    assert gfdm._bc_segment_per_point[bi].value == pytest.approx(0.3)
+    assert gfdm._value_form_bc_rows(0)[bi][1] == pytest.approx(0.3)
+
+    # Coupling layer swaps the geometry BC (resolved-per-Picard analogue).
+    geom.boundary_conditions = _neumann_per_face_1d(0.9)
+    gfdm._refresh_boundary_conditions_if_changed()
+
+    assert gfdm.boundary_conditions is geom.boundary_conditions
+    assert gfdm._bc_segment_per_point[bi].value == pytest.approx(0.9)
+    assert gfdm._value_form_bc_rows(0)[bi][1] == pytest.approx(0.9), (
+        "value-form BC target did not track the resolved geometry BC — stale snapshot."
+    )
+
+
+def test_gfdm_explicit_param_bc_not_refreshed():
+    """An explicit boundary_conditions= argument is the caller's static choice and must
+    NOT be overridden by the geometry, even if the geometry BC changes."""
+    pts, bdry, geom = _make_1d_cloud()
+    geom.boundary_conditions = _neumann_per_face_1d(0.3)
+    problem = _MockProblem(geom, dimension=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gfdm = HJBGFDMSolver(
+            problem,
+            collocation_points=pts,
+            boundary_indices=bdry,
+            delta=1.5,
+            k_neighbors=8,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            collocation_geometry=geom,
+            adaptive_neighborhoods=False,
+            monotonicity_scheme="joint_socp",
+            monotonicity_application="precompute",
+            inner_solver="howard",
+            boundary_conditions=_neumann_per_face_1d(0.5),
+        )
+    assert gfdm._bc_from_geometry is False
+    bi = int(bdry[0])
+    assert gfdm._bc_segment_per_point[bi].value == pytest.approx(0.5)
+
+    geom.boundary_conditions = _neumann_per_face_1d(0.9)
+    gfdm._refresh_boundary_conditions_if_changed()
+
+    assert gfdm._bc_segment_per_point[bi].value == pytest.approx(0.5), (
+        "explicit-param BC was wrongly overridden by the geometry on refresh."
+    )
+
+
+def test_gfdm_refresh_noop_when_bc_unchanged():
+    """No provider / no swap: refresh leaves the snapshot object identity intact (no churn)."""
+    gfdm, _geom, _pts, _bdry = _make_geom_sourced_gfdm_1d(_neumann_per_face_1d(0.3))
+    snapshot = gfdm.boundary_conditions
+    gfdm._refresh_boundary_conditions_if_changed()
+    assert gfdm.boundary_conditions is snapshot
