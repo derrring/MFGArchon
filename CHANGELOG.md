@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.7] - 2026-06-03
+
 ### Added
+
+- **`HJBGFDMSolver(inner_solver='howard')`** — opt-in delegation of the backward
+  HJB sweep to `HJBHowardSolver` (Issue #1118, PRs #1165/#1166). The default
+  `inner_solver='newton'` is byte-identical; `'howard'` avoids the Armijo
+  `MIN_ALPHA` stall (policy iteration has no line search) by deriving the optimal
+  control `α* = -hamiltonian_class.dp`. Restricted to `joint_socp`+`precompute`
+  stencils, unit control cost, and homogeneous no-flux BC; fail-loud otherwise.
+  Dirichlet-value / nonzero-Neumann / Robin BC parity is deferred to a follow-up.
 
 - **`HJBHowardSolver`** — Howard's policy iteration inner solver for HJB on
   GFDM clouds (Issue #1118). Replaces the Newton inner loop of
@@ -98,6 +108,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   M-matrix verification deferred (depends on dt + advection regime).
 
 ### Changed
+
+- **Fail-loud config & coupling guards** (Issues #1081/#1154/#1156). `FixedPointIterator`
+  warns on an HJB–FP volatility mismatch and when the HJB Newton tolerance is looser than
+  the Picard tolerance (a convergence floor); the silent `σ=0.1` default in `fp_particle`
+  was removed. `load_solver_config` raises on unknown top-level keys; `solve()` raises when
+  `config.hjb`/`config.fp` cannot be honored by the Safe/Auto factory paths.
+
+- **`gradient_*` FP advection schemes documented + warned as non-conservative** (Issue
+  #1075). They leak mass at no-flux walls even at zero drift (boundary diffusion
+  discretization, not advection); a `UserWarning` steers callers to the conservative
+  `divergence_*` default. Corrected the false "`gradient_upwind` is conservative via row
+  sums" docstrings.
+
+- **`FPSLSolver` warns once when its positivity clip injects mass** (Issue #1153),
+  mirroring the weak-form FP clip warning.
 
 - **`TaylorOperator` now accepts `obstacle_sdf=` / `visibility_samples=` /
   `visibility_margin=`** (Issue #1124). When provided, stencil edges
@@ -217,6 +242,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. 7/7 pass.
 
 ### Fixed
+
+- **Weak-form FP `volatility_field` is σ, not D** (Issue #1152). FEM/meshless FP and HJB
+  treated a scalar/array `volatility_field` as the diffusion coefficient directly, skipping
+  `D = σ²/2` (~6.7× too-large diffusion); both branches now square it.
+
+- **`divergence_centered` FP conserves mass at no-flux walls** (Issue #1151). The boundary
+  handler evaluated the shared-face velocity one-sided while the interior used a central
+  stencil → double-valued face flux → leak; now uses the central face velocity (one-sided
+  only at corners). Verified to ~1e-15.
+
+- **`Hypersphere` fails fast on a non-finite radius** (Issue #1077). `inf`/`nan` slipped past
+  the `radius <= 0` check, producing an infinite bounding box → NaN rejection sampling.
+
+- **Duality-claim honesty** (PR #1158). `check_solver_duality` / `_create_fdm_pair` no longer
+  claim the default FDM pair (gradient_upwind HJB + divergence_upwind FP) is a bit-exact
+  transpose; the exact transpose remains opt-in via `adjoint_mode='jacobian_transpose'`.
 
 - **`PrecomputedMonotoneStencils` accepts `neighborhoods=` parameter**
   (Issue #1102). Pre-fix, the class built stencils on
