@@ -121,10 +121,12 @@ class FPFDMSolver(BaseFPSolver):
             Advection term discretization (default: "divergence_upwind").
 
             Scheme names:
-            - "gradient_centered": v·grad(m) with central diff, NOT conservative
-            - "gradient_upwind": v·grad(m) with upwind, has boundary flux bug
-            - "divergence_centered": div(v*m) with centered flux, conservative (telescoping)
-            - "divergence_upwind": div(v*m) with upwind flux, conservative (telescoping) [DEFAULT]
+            - "gradient_centered": v·grad(m), central diff. NOT mass-conservative at
+              no-flux walls -- leaks even for pure diffusion (Issue #1075).
+            - "gradient_upwind": v·grad(m), upwind. Also NOT mass-conservative at
+              no-flux walls (point-value boundary Laplacian; Issue #1075).
+            - "divergence_centered": div(v*m), centered flux. Mass-conservative (telescoping).
+            - "divergence_upwind": div(v*m), upwind flux. Mass-conservative (telescoping). [DEFAULT]
 
             Legacy names (DEPRECATED, will be removed in v1.0.0):
             - "centered" -> gradient_centered
@@ -231,6 +233,25 @@ class FPFDMSolver(BaseFPSolver):
                 from mfgarchon.geometry.boundary import no_flux_bc
 
                 self.boundary_conditions = no_flux_bc(dimension=self.dimension)
+
+        # Issue #1075: the non-conservative gradient (point-value) advection schemes do
+        # NOT conserve mass at no-flux walls -- even for pure diffusion -- because the
+        # boundary node uses the point-value Neumann Laplacian (sigma^2/dx^2) rather than
+        # the finite-volume half-cell closure. Measured leak ~1.5e-2 (zero drift, n=81).
+        # The conservative path is a 'divergence_*' scheme. Warn once at construction.
+        if self.advection_scheme.startswith("gradient") and (
+            getattr(self.boundary_conditions, "is_uniform", False)
+            and getattr(self.boundary_conditions, "type", None) == "no_flux"
+        ):
+            warnings.warn(
+                f"advection_scheme='{self.advection_scheme}' uses the non-conservative "
+                "gradient (point-value) form and does NOT conserve mass at no-flux walls "
+                "(leaks O(1e-2), even with zero drift; see Issue #1075). Use a "
+                "'divergence_*' scheme (default 'divergence_upwind') for mass-conservative "
+                "no-flux solves.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 

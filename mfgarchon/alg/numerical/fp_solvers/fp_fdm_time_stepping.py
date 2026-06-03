@@ -576,7 +576,8 @@ def solve_fp_nd_full_system(
         - "gradient_centered": Gradient form + central differences
           (NOT conservative, oscillates for Peclet > 2)
         - "gradient_upwind": Gradient form + upwind differences
-          (conservative via row sums, stable, O(dx))
+          (row-sum consistent but NOT mass-conservative at no-flux walls -- leaks
+          mass even for pure diffusion, Issue #1075; stable, O(dx))
         - "divergence_centered": Divergence form + centered fluxes
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
@@ -1051,7 +1052,8 @@ def solve_timestep_full_nd(
         - "gradient_centered": Gradient form + central differences
           (NOT conservative, oscillates for Peclet > 2)
         - "gradient_upwind": Gradient form + upwind differences
-          (conservative via row sums, stable, O(dx))
+          (row-sum consistent but NOT mass-conservative at no-flux walls -- leaks
+          mass even for pure diffusion, Issue #1075; stable, O(dx))
         - "divergence_centered": Divergence form + centered fluxes
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
