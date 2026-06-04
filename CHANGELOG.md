@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Diffusion-magnitude invariant CI gate** (`tests/integration/test_diffusion_magnitude_gate.py`).
+  A standing parametrized gate that pins every diffusion-carrying solver to the correct
+  magnitude `D = sigma^2/2` (Issue #811) via cosine-eigenmode decay (`exp(-D*sum k^2*T)`).
+  It FAILS on the wrong-coefficient bug class that finiteness/mass/self-consistency tests
+  miss (#1152 sigma->D, #1178 ADI dt/dimension, #1183 sigma->mean) — verified discriminating
+  (a halved magnitude gives relerr 0.46 vs the 0.03 threshold). Covers ADI (1D/2D/3D, tier1)
+  and the FP-FDM explicit + implicit paths (tier2). HJB-solver diffusion isolation (past the
+  Hamiltonian advection) is a documented follow-up.
+
 ### Changed
 
 - **Spatially varying volatility on the explicit-drift / strict-adjoint FP paths now warns**
