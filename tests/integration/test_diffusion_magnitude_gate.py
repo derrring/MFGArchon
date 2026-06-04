@@ -21,15 +21,20 @@ intact — so this gate FAILS on exactly the bugs that shipped:
   - #1169  anisotropic off-diagonal sigma dropped
 
 Coverage: ADI diffusion step (standalone; also the SL HJB default diffusion path,
-which delegates to it) over 1D/2D/3D, and the FP-FDM explicit-drift and implicit
-per-point diffusion paths. Constant sigma (the clean eigenmode invariant).
+which delegates to it) over 1D/2D/3D, the FP-FDM explicit-drift and implicit
+per-point diffusion paths, and the HJB-GFDM per-point Newton path (the production
+``joint_socp`` + ``precompute`` stack) via MMS source-cancellation. Constant sigma
+(the clean eigenmode invariant).
 
-NOT covered yet (follow-up): the HJB FDM/GFDM diffusion magnitude in isolation —
-isolating pure diffusion past the Hamiltonian advection needs an MMS
-source-cancellation harness; the HJB-side bugs this session were BC/coupling, not
-diffusion-magnitude. Spatially-varying sigma is partially guarded by the #1183
-warning + the per-point implicit path; a varying-sigma magnitude reference (cos is
-not an eigenmode of ``div(D(x)grad)``) is a separate follow-up.
+The HJB-GFDM case isolates pure diffusion past the Hamiltonian advection with an
+MMS source ``L^n[i] = -H(grad u*^n)`` evaluated on the analytic backward-decaying
+eigenmode, so the ``H`` term cancels in the residual and the recovered field reads
+the diffusion coefficient directly (the #1073 chain: ``problem.diffusion`` already
+equals ``sigma^2/2``, so a path that re-squared it produced ``(sigma^2/2)^2``).
+
+NOT covered yet (follow-up): spatially-varying sigma is partially guarded by the
+#1183 warning + the per-point implicit path; a varying-sigma magnitude reference
+(cos is not an eigenmode of ``div(D(x)grad)``) is a separate follow-up.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -129,4 +135,73 @@ def test_fp_fdm_diffusion_magnitude(path):
     factor, analytic = _fp_pure_diffusion_decay(path, sigma=0.3)
     assert _decay_relerr(factor, analytic) < 0.03, (
         f"FP {path} diffusion magnitude wrong: factor {factor:.6f} vs analytic {analytic:.6f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# HJB-GFDM diffusion magnitude in isolation (production joint_socp + precompute path)
+# ---------------------------------------------------------------------------
+
+_PI = np.pi  # cos(pi x) is a no-flux Laplacian eigenmode on [0,1]
+
+
+def _gfdm_diffusion_field_relerr(sigma: float, D_reference: float, n_x: int = 41,
+                                 T: float = 0.05, nt: int = 50, amp: float = 1e-3,
+                                 lam: float = 1.0, delta: float = 0.3) -> float:
+    """L2 error between the GFDM-recovered field and the analytic backward eigenmode.
+
+    The solver applies its own ``D = sigma^2/2`` (the path under test); the analytic
+    reference ``u*`` and the MMS source are built on ``D_reference``. With
+    ``D_reference == 0.5*sigma**2`` (the correct magnitude) the recovered field tracks
+    ``u*`` and the relerr is small; a mismatched ``D_reference`` detunes the decay and
+    the relerr blows up -- which is how this gate would catch a wrong solver magnitude.
+    The Hamiltonian ``H = |p|^2/(2 lam)`` advection is cancelled by the MMS source
+    ``L^n[i] = -H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
+    clean (diffusion O(amp) dominates the O(amp^2) Hamiltonian remnant).
+    """
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x],
+                             boundary_conditions=no_flux_bc(dimension=1))
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=lam),
+        coupling=lambda m: 0.0 * np.asarray(m),
+        coupling_dm=lambda m: 0.0 * np.asarray(m),
+    )
+    x = np.linspace(0.0, 1.0, n_x)
+    comps = MFGComponents(
+        m_initial=lambda xx: np.ones_like(np.asarray(xx, dtype=float)),
+        u_terminal=lambda xx: amp * np.cos(_PI * np.asarray(xx, dtype=float)),
+        hamiltonian=H,
+    )
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
+    solver = HJBGFDMSolver(prob, x.reshape(-1, 1), delta=delta,
+                           monotonicity_scheme="joint_socp", monotonicity_application="precompute")
+    tspace = np.linspace(0.0, T, nt + 1)
+
+    def running_cost_fn(n):  # L^n[i] = -H(grad u*^n) on the analytic field
+        grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - tspace[n])) * _PI * np.sin(_PI * x)
+        return -(grad_u_star**2) / (2.0 * lam)
+
+    U = solver.solve_hjb_system(
+        M_density=np.ones((nt + 1, n_x)),
+        U_terminal=amp * np.cos(_PI * x),
+        running_cost=running_cost_fn,
+        show_progress=False,
+    )
+    u0_star = amp * np.exp(-D_reference * _PI**2 * T) * np.cos(_PI * x)
+    return float(np.linalg.norm(U[0, :] - u0_star) / np.linalg.norm(u0_star))
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.tier3
+def test_hjb_gfdm_diffusion_magnitude():
+    """The production HJB-GFDM per-point Newton path (joint_socp + precompute) must apply
+    D = sigma^2/2. Verified discriminating: correct D -> field relerr ~0.012, a halved D ->
+    ~0.105, a doubled D -> ~0.295; the 0.05 threshold separates correct from either error
+    with margin. This is the #1073 class (re-squaring problem.diffusion to (sigma^2/2)^2)."""
+    sigma = 1.0
+    relerr = _gfdm_diffusion_field_relerr(sigma, D_reference=0.5 * sigma**2)
+    assert relerr < 0.05, (
+        f"HJB-GFDM diffusion magnitude wrong: field relerr {relerr:.4e} >= 0.05 "
+        "(solver D = sigma^2/2 disagrees with the analytic eigenmode)"
     )
