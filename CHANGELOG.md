@@ -64,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WENO HJB now sub-steps each backward interval to cover the full `dt`** (Issue #1180). The
+  1D/2D/3D/nD backward sweeps advanced only one CFL/diffusion-stable `dt_stable` per interval
+  (often `dt_stable << dt`) while recording it as a full `dt` step, so in the common
+  diffusion-limited regime the value function was silently near-frozen at the terminal
+  condition (integrated ~2% of the horizon at `sigma=0.3`). Added a shared
+  `_advance_full_interval` substep loop (recomputes `dt_stable` per sub-step, fails loud at
+  `max_substeps`) wrapping the full directional-split sequence in each branch; happy path
+  (`dt_stable >= dt`) is byte-identical. Also fixed the 3-D branch's reference to an unset
+  `self.dt` (it raised `AttributeError`). **Behavior change**: the WENO solver now actually
+  integrates, so it surfaces (as non-finite, fail-fast) the pre-existing spatial instability
+  for oscillatory terminal data tracked in **#1200** — previously masked by the under-integration.
+  Cost: per-interval work scales `~dt/dt_stable` in diffusion-limited regimes.
 - **Roll-based finite-difference stencils now work on the torch backend** (Issue #1194).
   `finite_difference.py` and `tensor_calculus.py` called `xp.roll(u, k, axis=...)`, but
   `torch.roll` uses `dims=` not `axis=`, so every roll-based stencil (gradient/laplacian/
