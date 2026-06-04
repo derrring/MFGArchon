@@ -32,6 +32,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import solve_banded
 
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
 
 def solve_crank_nicolson_diffusion_1d(
     U_star: np.ndarray,
@@ -61,8 +63,8 @@ def solve_crank_nicolson_diffusion_1d(
     Nx = len(U_star)
     dx = x_grid[1] - x_grid[0]
 
-    # Diffusion coefficient: alpha = sigma^2/2 * dt/dx^2
-    alpha = 0.5 * sigma**2 * dt / dx**2
+    # Diffusion coefficient: alpha = D * dt/dx^2, D = sigma^2/2 (Issue #811, single source).
+    alpha = diffusion_from_volatility(sigma) * dt / dx**2
     theta = 0.5  # Crank-Nicolson parameter
 
     if bc_type == "periodic":
@@ -252,9 +254,9 @@ def adi_diffusion_step(
 
     for d in range(dimension):
         # Solve implicit diffusion in dimension d over the full dt.
-        # α_d = (σ_d²/2) * dt / dx_d²
+        # α_d = D_d * dt / dx_d², D_d = σ_d²/2 (Issue #811, single source).
         dx_d = spacing[d]
-        alpha_d = 0.5 * sigma_vec[d] ** 2 * dt / dx_d**2
+        alpha_d = diffusion_from_volatility(sigma_vec[d]) * dt / dx_d**2
         theta = 0.5  # Crank-Nicolson parameter
 
         # Apply implicit solve along dimension d

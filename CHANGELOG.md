@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a halved magnitude gives relerr 0.46 vs the 0.03 threshold). Covers ADI (1D/2D/3D, tier1)
   and the FP-FDM explicit + implicit paths (tier2). HJB-solver diffusion isolation (past the
   Hamiltonian advection) is a documented follow-up.
+- **Canonical `diffusion_from_volatility(sigma, *, kind=None)` converter**
+  (`mfgarchon/utils/pde_coefficients.py`, Issue #811). Single source of truth for the
+  SDE-volatility -> PDE-diffusion conversion `D = (1/2) Sigma Sigma^T` (scalar `sigma^2/2`),
+  per NAMING_CONVENTIONS "Volatility vs Diffusion": tensor-first (volatility is a tensor in
+  general), `Sigma Sigma^T` not `Sigma^T Sigma`. Fail-loud, no silent guess: a scalar `sigma`
+  is unambiguous, but an array requires `kind` (`"field"` = isotropic per-point `sigma^2/2`
+  elementwise; `"tensor"` = trailing `(d,k)` is Sigma, `D = 0.5*Sigma@Sigma.T`, `ndim>=2`) —
+  an array with `kind=None` raises rather than guessing `(d,d)`-tensor vs `(Nx,Ny)`-field.
+  Replaces the dominant silent-convention bug class (#1152/#1178/#1183) at the root by making
+  `D` come from one place. First consumer: `hjb_sl_adi.py`; remaining ~36 ad-hoc
+  `0.5*sigma**2` sites tracked in #1189 (byte-identical migration).
 
 ### Changed
 

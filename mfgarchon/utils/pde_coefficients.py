@@ -20,6 +20,52 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def diffusion_from_volatility(
+    sigma: float | np.ndarray,
+    dimension: int | None = None,
+) -> float | np.ndarray:
+    r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` (Issue #811).
+
+    Single source of truth for the volatility -> diffusion conversion documented in
+    ``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion". Volatility is a tensor in general
+    (the noise matrix :math:`\Sigma`, shape ``(d, k)``); the scalar :math:`\sigma` is the
+    isotropic special case. The diffusion coefficient is
+
+    .. math::  D = \tfrac{1}{2}\,\Sigma\Sigma^\top
+
+    i.e. half the noise covariance :math:`\Sigma\Sigma^\top` (Oksendal, Karatzas-Shreve) --
+    **not** :math:`\Sigma^\top\Sigma`; only :math:`\Sigma\Sigma^\top` has the correct ``(d, d)``
+    shape for a ``(d, k)`` volatility. For a square symmetric :math:`\Sigma` they coincide.
+
+    Shapes:
+
+    - scalar (0-d)               -> ``D = sigma**2 / 2``                  (isotropic scalar)
+    - ``(*spatial,)`` field       -> ``D = sigma**2 / 2`` elementwise       (isotropic per-point)
+    - ``(d, k)`` matrix Sigma      -> ``D = 0.5 * Sigma @ Sigma.T``          (``(d, d)`` symmetric PSD)
+    - ``(*spatial, d, k)`` field   -> per-point ``0.5 * Sigma @ Sigma.T``
+
+    ``dimension`` disambiguates a 2-D array: it is a Sigma tensor when its leading axis
+    equals ``dimension`` (shape ``(d, k)``), otherwise a ``(Nx, Ny, ...)`` spatial field.
+    Without ``dimension`` a 2-D array is treated as a Sigma tensor (volatility is tensor by
+    default); pass ``dimension`` when a 2-D *spatial* field could be mistaken for a tensor.
+    Arrays of ``ndim >= 3`` are always ``(*spatial, d, k)`` tensor fields.
+
+    For scalar / field inputs this is byte-identical to the literal ``0.5 * sigma**2`` it
+    replaces (IEEE-754: ``0.5 * x == x / 2``).
+    """
+    arr = np.asarray(sigma, dtype=float)
+    if arr.ndim == 0:
+        return 0.5 * float(arr) ** 2
+    # Treat the trailing two axes as a noise matrix Sigma (d, k) when:
+    #   - ndim >= 3: always a (*spatial, d, k) tensor field, or
+    #   - ndim == 2 and (no dimension hint => default-tensor, or leading axis == d).
+    is_tensor = arr.ndim >= 3 or (arr.ndim == 2 and (dimension is None or arr.shape[0] == dimension))
+    if is_tensor:
+        return 0.5 * np.matmul(arr, np.swapaxes(arr, -1, -2))
+    # Otherwise: scalar volatility on a (*spatial,) grid -> isotropic per-point D.
+    return 0.5 * arr**2
+
+
 class CoefficientMode(Enum):
     """
     Specifies which variables a callable coefficient depends on.
