@@ -1714,10 +1714,10 @@ class DualHamiltonian(HamiltonianBase):
                 [float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
             )
 
-            if self.sense == OptimizationSense.MINIMIZE:
-                return float(np.max(values))  # sup for minimization
-            else:
-                return float(np.min(values))  # inf for maximization
+            # H is the convex conjugate L*(p) = sup_alpha { p.alpha - L(alpha) },
+            # independent of OptimizationSense (matches the d>1 branch below, the
+            # always-sup ControlCostBase.evaluate, and dp's argmax). Issue #1185.
+            return float(np.max(values))
 
         # For higher dimensions, use scipy if available
         try:
@@ -1872,10 +1872,10 @@ class DualLagrangian(LagrangianBase):
                 [float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
             )
 
-            if self.sense == OptimizationSense.MINIMIZE:
-                return float(np.max(values))
-            else:
-                return float(np.min(values))
+            # L is the convex conjugate H*(alpha) = sup_p { p.alpha - H(p) },
+            # independent of OptimizationSense (matches the d>1 branch below and
+            # d_alpha's argmax). Issue #1185.
+            return float(np.max(values))
 
         # For higher dimensions, use scipy if available
         try:

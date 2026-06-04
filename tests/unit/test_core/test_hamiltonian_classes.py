@@ -274,6 +274,48 @@ class TestLegendreDuality:
         # Should recover original within numerical tolerance
         assert abs(L_recovered_val - L_orig_val) < 0.2
 
+    def test_dual_hamiltonian_maximize_returns_sup_not_inf(self):
+        """Issue #1185: the Legendre conjugate H = L*(p) = sup_a {p.a - L(a)} is a
+        supremum by definition, independent of OptimizationSense. Pre-fix the 1D
+        ``DualHamiltonian.__call__`` returned the *infimum* under MAXIMIZE (the value at
+        a control bound), disagreeing with its own ``dp`` argmax and the d>1 scipy branch.
+        """
+
+        class _QuadL(LagrangianBase):
+            def __init__(self, lam, sense):
+                super().__init__(sense=sense)
+                self.lam = lam
+
+            def __call__(self, x, alpha, m, t=0.0):
+                return 0.5 * self.lam * np.sum(np.atleast_1d(alpha) ** 2)
+
+        x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
+        H_min = _QuadL(2.0, OptimizationSense.MINIMIZE).legendre_transform()
+        H_max = _QuadL(2.0, OptimizationSense.MAXIMIZE).legendre_transform()
+
+        # H = sup_a {p a - 0.5 lam a^2} = p^2/(2 lam) = 0.25 (lam=2, p=1); NOT the
+        # bound infimum -110 the pre-fix MAXIMIZE branch returned.
+        assert abs(H_max(x, m, p, t) - 0.25) < 0.05
+        # sense must not change the conjugate value
+        assert abs(H_max(x, m, p, t) - H_min(x, m, p, t)) < 1e-9
+        # 1D must agree with the d>1 branch under MAXIMIZE: H([1,1]) = |p|^2/(2 lam) = 0.5
+        assert abs(H_max(x, m, np.array([1.0, 1.0]), t) - 0.5) < 0.05
+        # envelope consistency: H(p) == p.alpha* - L(alpha*), alpha* = dp
+        a = float(H_max.dp(x, m, p, t)[0])
+        assert abs(H_max(x, m, p, t) - (1.0 * a - 0.5 * 2.0 * a**2)) < 1e-2
+
+    def test_dual_lagrangian_maximize_returns_sup_not_inf(self):
+        """Issue #1185: the symmetric DualLagrangian L = H*(a) = sup_p {p.a - H(p)} must
+        also be the supremum under MAXIMIZE (not the infimum)."""
+        x, alpha, m, t = np.array([0.5]), np.array([1.0]), 0.3, 0.0
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=2.0),
+            sense=OptimizationSense.MAXIMIZE,
+        )
+        L = H.legendre_transform()  # DualLagrangian(sense=MAXIMIZE)
+        # L = H*(alpha) = 0.5 lam alpha^2 = 1.0 at lam=2, alpha=1
+        assert abs(L(x, alpha, m, t) - 1.0) < 0.1
+
 
 class TestQuadraticMFGHamiltonian:
     """Tests for QuadraticMFGHamiltonian."""
