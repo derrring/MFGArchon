@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Callable/tensor explicit-drift FP advection now honors the domain boundary conditions**
+  (Issue #1181). `solve_timestep_explicit_with_drift` and `solve_timestep_tensor_explicit`
+  called `compute_advection_from_drift_nd` without `bc=`, so on a no-flux domain the
+  advection defaulted to periodic and mass exiting one wall silently re-entered at the
+  opposite wall (a #1151-class wall leak; the U-derived sibling already passed the BC).
+  Reachable via `solve_fp_system(drift_field=<callable>)` or any tensor/anisotropic
+  `volatility_field`. Fixed to pass the in-scope `boundary_conditions`; regression test
+  asserts a leftward drift on a no-flux domain leaves the far-right (near-wall) region empty.
+
+### Fixed
+
 - **nD ADI diffusion now applies the full prescribed diffusion** (Issue #1178). The
   semi-Lagrangian `adi_diffusion_step` split the time step across dimensions
   (`dt/dimension` per directional Crank-Nicolson sweep), applying only `1/dimension`

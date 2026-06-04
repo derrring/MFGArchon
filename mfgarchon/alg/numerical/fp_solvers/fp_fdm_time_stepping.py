@@ -504,8 +504,10 @@ def solve_timestep_explicit_with_drift(
     # Solve implicit diffusion
     M_star = sparse.linalg.spsolve(A_diffusion, b_rhs).reshape(shape)
 
-    # Step 2: Explicit advection using direct drift
-    advection_term = compute_advection_from_drift_nd(M_star, drift, spacing, ndim)
+    # Step 2: Explicit advection using direct drift.
+    # Issue #1181: pass boundary_conditions so a no-flux domain does not default to
+    # periodic (AdvectionOperator bc=None == periodic), which silently wraps wall mass.
+    advection_term = compute_advection_from_drift_nd(M_star, drift, spacing, ndim, bc=boundary_conditions)
     M_next = M_star - dt * advection_term
 
     # Step 3: Add source term (MMS verification)
@@ -984,8 +986,10 @@ def solve_timestep_tensor_explicit(
     # Compute advection term: div(alpha * m)
     # Use upwind scheme from fp_fdm_advection module
     if drift is not None:
-        # Direct drift provided (standalone FP mode)
-        advection_term = compute_advection_from_drift_nd(M_current, drift, spacing, ndim)
+        # Direct drift provided (standalone FP mode).
+        # Issue #1181: pass boundary_conditions (the U-derived branch below already does)
+        # so a no-flux domain does not default to periodic and wrap wall mass.
+        advection_term = compute_advection_from_drift_nd(M_current, drift, spacing, ndim, bc=boundary_conditions)
     else:
         # MFG coupled mode: derive drift from U
         advection_term = compute_advection_term_nd(
