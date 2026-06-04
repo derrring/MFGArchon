@@ -20,6 +20,60 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def diffusion_from_volatility(
+    sigma: float | np.ndarray,
+    *,
+    kind: str | None = None,
+) -> float | np.ndarray:
+    r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` (Issue #811).
+
+    Single source of truth for the volatility -> diffusion conversion documented in
+    ``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion". Volatility is a tensor in general
+    (the noise matrix :math:`\Sigma`, shape ``(d, k)``); the scalar :math:`\sigma` is the
+    isotropic special case. The diffusion coefficient is
+
+    .. math::  D = \tfrac{1}{2}\,\Sigma\Sigma^\top
+
+    i.e. half the noise covariance :math:`\Sigma\Sigma^\top` (Oksendal, Karatzas-Shreve) --
+    **not** :math:`\Sigma^\top\Sigma`; only :math:`\Sigma\Sigma^\top` has the correct ``(d, d)``
+    shape for a ``(d, k)`` volatility. For a square symmetric :math:`\Sigma` they coincide.
+
+    A **scalar** ``sigma`` is unambiguous: ``D = sigma**2 / 2``. For an **array** ``sigma``
+    the shape alone cannot distinguish a ``(d, d)`` noise tensor from an ``(Nx, Ny)`` spatial
+    field, so ``kind`` is **required** -- the converter refuses to guess (fail-loud, the same
+    silent-convention class this single-source converter exists to eliminate):
+
+    - ``kind="field"``  -> isotropic per-point volatility; ``D = sigma**2 / 2`` elementwise
+      (any spatial shape). Byte-identical to the literal ``0.5 * sigma**2`` (IEEE: ``0.5*x == x/2``).
+    - ``kind="tensor"`` -> the trailing two axes are the noise matrix :math:`\Sigma` ``(d, k)``;
+      ``D = 0.5 * Sigma @ Sigma.T`` over the last two axes (any leading axes are spatial).
+      Requires ``ndim >= 2``. A diagonal-anisotropic volatility is passed as a ``(d, d)``
+      diagonal matrix here, not a ``(d,)`` vector.
+
+    Raises ``ValueError`` for an array with ``kind is None`` (ambiguous), an unknown ``kind``,
+    or ``kind="tensor"`` with ``ndim < 2``.
+    """
+    arr = np.asarray(sigma, dtype=float)
+    if arr.ndim == 0:
+        return 0.5 * float(arr) ** 2  # scalar isotropic: unambiguous, kind not needed
+    if kind is None:
+        raise ValueError(
+            "array volatility is ambiguous: pass kind='field' (isotropic per-point sigma, "
+            "D = sigma^2/2 elementwise) or kind='tensor' (trailing (d,k) is the noise matrix "
+            "Sigma, D = 1/2 Sigma Sigma^T). Refusing to guess a (d,d) tensor vs a spatial "
+            "field (Issue #811)."
+        )
+    if kind == "field":
+        return 0.5 * arr**2
+    if kind == "tensor":
+        if arr.ndim < 2:
+            raise ValueError(
+                f"kind='tensor' needs a (d,k) or (*spatial,d,k) noise matrix (ndim>=2), got ndim={arr.ndim}."
+            )
+        return 0.5 * np.matmul(arr, np.swapaxes(arr, -1, -2))
+    raise ValueError(f"kind must be 'field' or 'tensor' (or None for scalar sigma), got {kind!r}.")
+
+
 class CoefficientMode(Enum):
     """
     Specifies which variables a callable coefficient depends on.
