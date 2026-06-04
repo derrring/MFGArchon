@@ -392,5 +392,39 @@ class TestLaplacianWithBC:
         np.testing.assert_allclose(Lu_bc, Lu_stencil, atol=1e-14)
 
 
+class TestBackendRollEquivalence:
+    """Issue #1194: roll-based stencils must work on the torch backend (torch.roll
+    takes dims=, not numpy's axis=) and match the numpy result exactly. Pre-fix the
+    torch path raised TypeError; the numpy path is unchanged (byte-identical)."""
+
+    def test_stencils_torch_backend_match_numpy(self):
+        torch = pytest.importorskip("torch")  # noqa: F841
+        from mfgarchon.backends.torch_backend import TorchBackend
+        from mfgarchon.utils.numerical.tensor_calculus import divergence, hessian, laplacian
+
+        rng = np.random.RandomState(0)
+        a = rng.rand(6, 5)
+        sp = [0.2, 0.3]
+        be = TorchBackend(device="cpu")
+        t = be.array_module.tensor(a, dtype=be.array_module.float64)
+
+        # tensor_calculus operators (backend=) -- pre-fix raised TypeError on roll(axis=)
+        assert np.allclose(laplacian(t, sp, backend=be).numpy(), laplacian(a, sp))
+        assert np.allclose(
+            divergence([t, t * 2], sp, backend=be).numpy(), divergence([a, a * 2], sp)
+        )
+        assert np.allclose(hessian(t, sp, backend=be).numpy(), hessian(a, sp))
+
+        # stencil module (xp = torch module directly), the path the GPU particle solver hits
+        g_t = gradient_central(t, axis=1, h=0.1, xp=be.array_module)
+        assert np.allclose(g_t.numpy(), gradient_central(a, axis=1, h=0.1, xp=np))
+        assert all(
+            np.allclose(x.numpy(), y)
+            for x, y in zip(
+                gradient_nd(t, sp, xp=be.array_module), gradient_nd(a, sp, xp=np), strict=True
+            )
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

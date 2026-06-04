@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Roll-based finite-difference stencils now work on the torch backend** (Issue #1194).
+  `finite_difference.py` and `tensor_calculus.py` called `xp.roll(u, k, axis=...)`, but
+  `torch.roll` uses `dims=` not `axis=`, so every roll-based stencil (gradient/laplacian/
+  divergence/hessian) raised `TypeError` on the torch backend (e.g.
+  `test_particle_gpu_pipeline::test_boundary_conditions_gpu`). Added a backend-aware `_roll`
+  shim (`dims=` for torch, `axis=` for numpy/cupy); the numpy/cupy path is byte-identical.
 - **`DualHamiltonian`/`DualLagrangian` Legendre transform now returns the supremum under
   `OptimizationSense.MAXIMIZE`** (Issue #1185). The 1-D `__call__` flipped to the *infimum*
   for MAXIMIZE (the value at a control bound), disagreeing with its own `dp` argmax and the

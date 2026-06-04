@@ -50,6 +50,18 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary import BoundaryConditions
 
 
+def _roll(xp: type, u: NDArray, shift: int, axis: int) -> NDArray:
+    """Backend-aware periodic shift.
+
+    ``numpy``/``cupy`` use the ``axis=`` keyword; ``torch.roll`` uses ``dims=``.
+    Detecting the module by name keeps the numpy/cupy path byte-identical
+    while routing torch tensors to the correct keyword (Issue #1194).
+    """
+    if xp.__name__ == "torch":
+        return xp.roll(u, shift, dims=axis)
+    return xp.roll(u, shift, axis=axis)
+
+
 # =============================================================================
 # First-Order Derivative Stencils
 # =============================================================================
@@ -80,7 +92,7 @@ def gradient_central(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
         Uses periodic wrapping via np.roll. For non-periodic boundaries,
         use fix_boundaries_one_sided() or the LinearOperator classes.
     """
-    return (xp.roll(u, -1, axis=axis) - xp.roll(u, 1, axis=axis)) / (2 * h)
+    return (_roll(xp, u, -1, axis) - _roll(xp, u, 1, axis)) / (2 * h)
 
 
 def gradient_forward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
@@ -104,7 +116,7 @@ def gradient_forward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     Returns:
         Approximation of ∂u/∂x with same shape as u
     """
-    return (xp.roll(u, -1, axis=axis) - u) / h
+    return (_roll(xp, u, -1, axis) - u) / h
 
 
 def gradient_backward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
@@ -128,7 +140,7 @@ def gradient_backward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray
     Returns:
         Approximation of ∂u/∂x with same shape as u
     """
-    return (u - xp.roll(u, 1, axis=axis)) / h
+    return (u - _roll(xp, u, 1, axis)) / h
 
 
 def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
@@ -263,7 +275,7 @@ def laplacian_stencil_nd(u: NDArray, spacings: list[float] | tuple[float, ...], 
     """
     result = xp.zeros_like(u)
     for axis, h in enumerate(spacings):
-        result += (xp.roll(u, -1, axis=axis) - 2 * u + xp.roll(u, 1, axis=axis)) / (h * h)
+        result += (_roll(xp, u, -1, axis) - 2 * u + _roll(xp, u, 1, axis)) / (h * h)
     return result
 
 
@@ -292,7 +304,7 @@ def weighted_laplacian_stencil_nd(
     """
     result = xp.zeros_like(u)
     for axis, (h, w) in enumerate(zip(spacings, axis_weights, strict=True)):
-        result += w * (xp.roll(u, -1, axis=axis) - 2 * u + xp.roll(u, 1, axis=axis)) / (h * h)
+        result += w * (_roll(xp, u, -1, axis) - 2 * u + _roll(xp, u, 1, axis)) / (h * h)
     return result
 
 
