@@ -98,17 +98,21 @@ def _volatility_to_diffusion(
     Returns:
         PDE diffusion coefficient D.
     """
+    # Single source for the conversion (Issue #811): delegate the shape dispatch
+    # to the canonical converter. Byte-identical: scalar -> sigma^2/2, 1D diagonal
+    # -> sigma_i^2/2 elementwise (kind="field"), 2D -> 0.5 Sigma Sigma^T (kind="tensor").
+    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
     if isinstance(sigma, (int, float)):
-        return float(sigma) ** 2 / 2.0
+        return diffusion_from_volatility(float(sigma))
 
     sigma_arr = np.asarray(sigma, dtype=float)
     if sigma_arr.ndim == 0:
-        return float(sigma_arr) ** 2 / 2.0
+        return diffusion_from_volatility(sigma_arr)
     if sigma_arr.ndim == 1:
-        return sigma_arr**2 / 2.0
+        return diffusion_from_volatility(sigma_arr, kind="field")
     if sigma_arr.ndim == 2:
-        # Full matrix: D = (1/2) Sigma Sigma^T
-        return 0.5 * (sigma_arr @ sigma_arr.T)
+        return diffusion_from_volatility(sigma_arr, kind="tensor")
 
     raise ValueError(f"Unsupported volatility shape: {sigma_arr.shape}")
 
@@ -1325,7 +1329,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         state-dependent diffusion, evaluate ``self.volatility_field`` and
         apply the conversion ``D = sigma^2/2`` as needed.
         """
-        return self.sigma**2 / 2.0
+        return _volatility_to_diffusion(self.sigma)
 
     @property
     def diffusion_field(self):
