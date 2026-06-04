@@ -181,14 +181,21 @@ def adi_diffusion_step(
     """
     Apply ADI (Alternating Direction Implicit) diffusion for nD grids.
 
-    Uses Peaceman-Rachford splitting for unconditional stability:
-    - For each dimension d, solve implicit diffusion in that direction
-    - Each direction is a set of independent 1D tridiagonal solves
+    Uses sequential (Lie) dimensional splitting with an implicit Crank-Nicolson
+    solve in each direction, each over the FULL dt:
+    - For each dimension d, solve implicit 1D diffusion in that direction over dt
+    - Each direction is a set of independent 1D tridiagonal solves (unconditionally
+      stable)
     - For full tensor diffusion, cross-derivative terms are added explicitly
 
-    For 2D with isotropic σ²:
-        Half-step x: (I - θα L_x) u^{1/2} = (I + θα L_y) u*
-        Half-step y: (I - θα L_y) u^{n}   = (I + θα L_x) u^{1/2}
+    The per-direction Laplacians commute on a tensor grid (constant-coefficient,
+    separable), so for isotropic diffusion the split is exact up to CN time
+    truncation; each directional solve must carry the full dt (NOT dt/dimension,
+    which would apply only 1/dimension of the prescribed diffusion).
+
+    For 2D with isotropic σ² (α = (σ²/2) dt / dx²):
+        Sweep x: (I - θα L_x) u^{1/2} = (I + (1-θ)α L_x) u^{n}
+        Sweep y: (I - θα L_y) u^{n+1} = (I + (1-θ)α L_y) u^{1/2}
 
     For full tensor diffusion (σ_ij):
         ADI handles diagonal terms implicitly, cross terms explicitly:
@@ -235,17 +242,19 @@ def adi_diffusion_step(
     if sigma_tensor is not None:
         U_shaped = apply_cross_diffusion_explicit(U_shaped, sigma_tensor, dt, spacing)
 
-    # Peaceman-Rachford ADI: cycle through dimensions
-    # Split dt evenly across dimensions for symmetric treatment
-    dt_per_dim = dt / dimension
-
+    # Sequential (Lie) dimensional splitting: solve the implicit 1D diffusion in
+    # each direction over the FULL dt. The per-direction Laplacians commute on a
+    # tensor grid (constant-coefficient, separable), so exp(dt L_x) exp(dt L_y) =
+    # exp(dt (L_x + L_y)) exactly — each directional solve MUST carry the full dt.
+    # Using dt/dimension here applied only 1/dimension of the prescribed diffusion
+    # (a 2x under-diffusion in 2D, 3x in 3D), silently wrong (no exception).
     U_current = U_shaped
 
     for d in range(dimension):
-        # Solve implicit diffusion in dimension d
+        # Solve implicit diffusion in dimension d over the full dt.
         # α_d = (σ_d²/2) * dt / dx_d²
         dx_d = spacing[d]
-        alpha_d = 0.5 * sigma_vec[d] ** 2 * dt_per_dim / dx_d**2
+        alpha_d = 0.5 * sigma_vec[d] ** 2 * dt / dx_d**2
         theta = 0.5  # Crank-Nicolson parameter
 
         # Apply implicit solve along dimension d

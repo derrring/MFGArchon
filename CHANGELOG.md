@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **nD ADI diffusion now applies the full prescribed diffusion** (Issue #1178). The
+  semi-Lagrangian `adi_diffusion_step` split the time step across dimensions
+  (`dt/dimension` per directional Crank-Nicolson sweep), applying only `1/dimension`
+  of the diffusion — a silent 2x under-diffusion in 2D, 3x in 3D — on the default
+  `diffusion_method='adi'` path for 2D/3D SL HJB and the SL-adjoint FP. Sequential
+  (Lie) splitting requires the full `dt` per directional solve (the directional
+  Laplacians commute on a tensor grid). Fixed to full `dt`; added a magnitude-pinning
+  regression test (cosine-mode decay vs analytic, 2D + 3D) — no prior test constrained
+  the diffusion magnitude, which is how it shipped.
+
 ## [0.19.8] - 2026-06-04
 
 ### Added
