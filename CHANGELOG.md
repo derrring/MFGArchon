@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   divergence/hessian) raised `TypeError` on the torch backend (e.g.
   `test_particle_gpu_pipeline::test_boundary_conditions_gpu`). Added a backend-aware `_roll`
   shim (`dims=` for torch, `axis=` for numpy/cupy); the numpy/cupy path is byte-identical.
+- **GFDM QP monotonicity path no longer emits deprecated OSQP kwargs** (Issue #1196). The
+  `qp_m_matrix` schemes solve an OSQP problem per collocation point per Newton iteration via
+  `polish=False` + bare `prob.solve()`; OSQP 1.0 renamed `polish`→`polishing` and warns
+  `raise_error`-default-change on every solve (tens of thousands per run, log-flooding, and a
+  latent break when `polish` is removed). Switched to `polishing=False` + explicit
+  `raise_error=False` (byte-identical: same fail-soft fallback on non-`solved` status); bumped
+  the floor to `osqp>=1.0`.
 - **`DualHamiltonian`/`DualLagrangian` Legendre transform now returns the supremum under
   `OptimizationSense.MAXIMIZE`** (Issue #1185). The 1-D `__call__` flipped to the *infimum*
   for MAXIMIZE (the value at a control bound), disagreeing with its own `dp` argmax and the

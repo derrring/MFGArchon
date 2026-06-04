@@ -143,9 +143,10 @@ class TestHJBGFDMSolverInitialization:
         must not change the answer, so all three levels must converge to the same field.
         Measured agreement vs ``none``: adaptive ~1e-6, always ~7e-6 (threshold 1e-4).
 
-        (filterwarnings: the ``always`` config solves a QP per point per iteration; its
-        scipy backend emits a ``polish``/``raise_error`` deprecation per solve -- library
-        noise, not a solver issue, suppressed so it does not flood the log.)
+        (filterwarnings: defensive — the ``always`` config solves a QP per point per
+        iteration; its OSQP backend previously emitted a ``polish``/``raise_error``
+        deprecation per solve, fixed in #1196. Kept to absorb any other per-solve library
+        noise so it cannot flood the log.)
         """
         n = 15
         grid = TensorProductGrid(
@@ -185,6 +186,48 @@ class TestHJBGFDMSolverInitialization:
                 f"QP level {key} disagrees with 'none' by {relerr:.2e} (>1e-4): "
                 "monotonicity enforcement corrupted the smooth solution"
             )
+
+    @pytest.mark.slow
+    def test_qp_osqp_emits_no_polish_deprecation(self):
+        """Issue #1196: the qp_m_matrix OSQP path solves a QP per point per Newton
+        iteration; the deprecated ``polish=`` kwarg (and implicit ``raise_error``) warned
+        on every solve -- flooding logs and a latent break when OSQP removes ``polish``.
+        This must NOT be suppressed by filterwarnings (it captures and inspects), so it
+        regresses loudly if the deprecated kwargs return.
+        """
+        import warnings
+
+        n = 11
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)
+        )
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: 0.0 * np.asarray(m),
+            coupling_dm=lambda m: 0.0 * np.asarray(m),
+        )
+        x = np.linspace(0.0, 1.0, n)
+        comps = MFGComponents(
+            m_initial=lambda xx: np.ones_like(np.asarray(xx, dtype=float)),
+            u_terminal=lambda xx: np.cos(np.pi * np.asarray(xx, dtype=float)),
+            hamiltonian=H,
+        )
+        problem = MFGProblem(geometry=grid, T=0.02, Nt=4, sigma=0.5, components=comps)
+        solver = HJBGFDMSolver(
+            problem, x.reshape(-1, 1), delta=0.3,
+            monotonicity_scheme="qp_m_matrix", monotonicity_application="always",
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            solver.solve_hjb_system(
+                M_density=np.ones((problem.Nt + 1, n)),
+                U_terminal=np.cos(np.pi * x), show_progress=False,
+            )
+        offenders = [
+            str(w.message) for w in caught
+            if "polish" in str(w.message).lower() or "raise_error" in str(w.message).lower()
+        ]
+        assert not offenders, f"OSQP polish/raise_error deprecation leaked: {offenders[:3]}"
 
 
 class TestHJBGFDMSolverNeighborhoods:

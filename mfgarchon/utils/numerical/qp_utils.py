@@ -468,7 +468,7 @@ class QPSolver:
             eps_abs=1e-6,
             eps_rel=1e-6,
             max_iter=10000,
-            polish=False,
+            polishing=False,  # OSQP 1.0+ name; "polish" deprecated (warns per QP solve)
         )
 
         # Apply warm-start if available
@@ -482,8 +482,9 @@ class QPSolver:
         else:
             self.stats["cold_starts"] += 1
 
-        # Solve
-        result = prob.solve()
+        # Solve. raise_error=False is the current default but explicit here to silence the
+        # OSQP 1.x PendingDeprecationWarning; failures are handled below via the status check.
+        result = prob.solve(raise_error=False)
 
         if result.info.status == "solved":
             self.stats["successes"] += 1

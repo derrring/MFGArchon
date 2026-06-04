@@ -54,7 +54,7 @@ dependencies = [
     "meshio>=5.3",             # Mesh I/O (Gmsh, VTK)
 
     # GFDM monotone stencils (used by HJBGFDMSolver)
-    "osqp>=0.6",               # QP solver for monotonicity enforcement
+    "osqp>=1.0",               # QP solver for monotonicity enforcement (1.0+: polishing=/raise_error= kwargs)
 
     # Network MFG (used by NetworkGeometry)
     "igraph>=0.10.0",          # Graph backend (C-based, fast)
