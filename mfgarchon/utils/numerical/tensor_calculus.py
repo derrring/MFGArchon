@@ -70,6 +70,18 @@ AdvectionScheme = Literal["gradient", "divergence"]
 AdvectionMethod = Literal["centered", "upwind"]
 
 
+def _roll(xp: type, u: NDArray, shift: int, axis: int) -> NDArray:
+    """Backend-aware periodic shift.
+
+    ``numpy``/``cupy`` use the ``axis=`` keyword; ``torch.roll`` uses ``dims=``.
+    Detecting the module by name keeps the numpy/cupy path byte-identical
+    while routing torch tensors to the correct keyword (Issue #1194).
+    """
+    if xp.__name__ == "torch":
+        return xp.roll(u, shift, dims=axis)
+    return xp.roll(u, shift, axis=axis)
+
+
 # =============================================================================
 # First-Order Operators: Gradient
 # =============================================================================
@@ -257,7 +269,7 @@ def divergence(
             F_d_work = F_d
 
         # Central difference for divergence: ∂F_d/∂x_d
-        dF_d = (xp.roll(F_d_work, -1, axis=d) - xp.roll(F_d_work, 1, axis=d)) / (2 * h)
+        dF_d = (_roll(xp, F_d_work, -1, d) - _roll(xp, F_d_work, 1, d)) / (2 * h)
 
         # Extract interior if ghost cells were added
         if bc is not None:
@@ -323,7 +335,7 @@ def laplacian(
     for d in range(u.ndim):
         h = spacings[d]
         if h > 1e-14:
-            lap += (xp.roll(u_work, -1, axis=d) - 2 * u_work + xp.roll(u_work, 1, axis=d)) / (h * h)
+            lap += (_roll(xp, u_work, -1, d) - 2 * u_work + _roll(xp, u_work, 1, d)) / (h * h)
 
     # Extract interior if ghost cells were added
     if bc is not None:
@@ -398,15 +410,15 @@ def hessian(
 
             if i == j:
                 # Diagonal: ∂²u/∂xᵢ²
-                d2u = (xp.roll(u_work, -1, axis=i) - 2 * u_work + xp.roll(u_work, 1, axis=i)) / (hi * hi)
+                d2u = (_roll(xp, u_work, -1, i) - 2 * u_work + _roll(xp, u_work, 1, i)) / (hi * hi)
             else:
                 # Off-diagonal: ∂²u/∂xᵢ∂xⱼ (mixed derivative)
                 # Use central differences in both directions
                 d2u = (
-                    xp.roll(xp.roll(u_work, -1, axis=i), -1, axis=j)
-                    - xp.roll(xp.roll(u_work, -1, axis=i), 1, axis=j)
-                    - xp.roll(xp.roll(u_work, 1, axis=i), -1, axis=j)
-                    + xp.roll(xp.roll(u_work, 1, axis=i), 1, axis=j)
+                    _roll(xp, _roll(xp, u_work, -1, i), -1, j)
+                    - _roll(xp, _roll(xp, u_work, -1, i), 1, j)
+                    - _roll(xp, _roll(xp, u_work, 1, i), -1, j)
+                    + _roll(xp, _roll(xp, u_work, 1, i), 1, j)
                 ) / (4 * hi * hj)
 
             # Extract interior if ghost cells were added
@@ -667,17 +679,17 @@ def advection(
 
 def _gradient_central(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
     """Central difference: (u[i+1] - u[i-1]) / (2h)."""
-    return (xp.roll(u, -1, axis=axis) - xp.roll(u, 1, axis=axis)) / (2 * h)
+    return (_roll(xp, u, -1, axis) - _roll(xp, u, 1, axis)) / (2 * h)
 
 
 def _gradient_forward(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
     """Forward difference: (u[i+1] - u[i]) / h."""
-    return (xp.roll(u, -1, axis=axis) - u) / h
+    return (_roll(xp, u, -1, axis) - u) / h
 
 
 def _gradient_backward(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
     """Backward difference: (u[i] - u[i-1]) / h."""
-    return (u - xp.roll(u, 1, axis=axis)) / h
+    return (u - _roll(xp, u, 1, axis)) / h
 
 
 def _gradient_upwind(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
@@ -752,17 +764,17 @@ def _divergence_upwind(
             v_d_work = v_d
 
         # Upwind flux at faces
-        F_forward = xp.roll(F_d, -1, axis=d)
+        F_forward = _roll(xp, F_d, -1, d)
         F_backward = F_d
 
         # Face velocity (average)
-        v_face = 0.5 * (v_d_work + xp.roll(v_d_work, -1, axis=d))
+        v_face = 0.5 * (v_d_work + _roll(xp, v_d_work, -1, d))
 
         # Select upwind flux
         F_face_right = xp.where(v_face >= 0, F_backward, F_forward)
 
-        F_backward_left = xp.roll(F_d, 1, axis=d)
-        v_face_left = 0.5 * (xp.roll(v_d_work, 1, axis=d) + v_d_work)
+        F_backward_left = _roll(xp, F_d, 1, d)
+        v_face_left = 0.5 * (_roll(xp, v_d_work, 1, d) + v_d_work)
         F_face_left = xp.where(v_face_left >= 0, F_backward_left, F_d)
 
         # Divergence
