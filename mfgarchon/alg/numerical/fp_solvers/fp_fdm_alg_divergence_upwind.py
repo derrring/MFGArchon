@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -84,7 +86,7 @@ def add_interior_entries_divergence_upwind(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = sigma**2 / 2.0
+    D = diffusion_from_volatility(sigma)
 
     # For each dimension, add flux-based advection + diffusion contributions
     for d in range(ndim):

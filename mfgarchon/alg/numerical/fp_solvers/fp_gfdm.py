@@ -30,6 +30,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -460,7 +461,7 @@ class FPGFDMSolver(BaseFPSolver):
         else:
             raise NotImplementedError("Only scalar volatility currently supported")
 
-        diffusion_coeff = 0.5 * sigma**2
+        diffusion_coeff = diffusion_from_volatility(sigma)
 
         # Validate inputs
         m_init = np.asarray(m_initial_condition).ravel()

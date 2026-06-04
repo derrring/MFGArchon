@@ -44,6 +44,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_fp import BaseFPSolver
 
@@ -457,7 +458,7 @@ class FPSLJacobianSolver(BaseFPSolver):
 
         # Step 2: Diffusion via Crank-Nicolson
         # ====================================
-        D = sigma**2 / 2
+        D = diffusion_from_volatility(sigma)
         r = D * dt / (self.dx**2)
 
         # Build RHS: (I + r/2 * L) * m_advected

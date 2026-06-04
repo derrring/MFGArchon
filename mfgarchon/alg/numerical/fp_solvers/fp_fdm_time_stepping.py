@@ -66,7 +66,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
 from mfgarchon.geometry.boundary.types import BoundaryFace
-from mfgarchon.utils.pde_coefficients import CoefficientField, _DriftDispatcher
+from mfgarchon.utils.pde_coefficients import CoefficientField, _DriftDispatcher, diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -488,7 +488,7 @@ def solve_timestep_explicit_with_drift(
     else:
         sigma_val = float(sigma)
 
-    D = 0.5 * sigma_val**2  # Diffusion coefficient
+    D = diffusion_from_volatility(sigma_val)  # Diffusion coefficient
     shape = M_current.shape
 
     # Set default boundary conditions
