@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Upgraded two "plumbing-only" tests to run-and-compare (retrospect rec ③).**
+  `test_qp_optimization_levels` only asserted constructor *labels* (`hjb_method_name`) — it
+  would pass even if a QP monotonicity level corrupted the solution; added
+  `test_qp_optimization_levels_agree_on_smooth_problem`, which solves at all three levels on
+  a smooth problem and asserts they agree to <1e-4 (a real regression guard). And
+  `test_fp_matrix_conservation`'s `TestFPMatrixConservation` asserted column-sum=1/dt on a
+  *test-local re-implementation* of the FP matrix (a shadow that passed even if the production
+  assembly diverged); replaced by `TestFPProductionConservation`, which runs the real
+  `FPFDMSolver` and asserts machine-precision (<1e-12) mass conservation — the tight signal a
+  wrong boundary stencil would break. Removed a no-op placeholder test.
 - **~30 numerical-core diffusion sites now route through `diffusion_from_volatility`**
   (Issue #1189, the sweep follow-up to the #1190 converter). The literal `0.5*sigma**2`
   / `sigma**2/2` is replaced by the single-source converter across the problem core

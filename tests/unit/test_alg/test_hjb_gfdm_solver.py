@@ -131,6 +131,61 @@ class TestHJBGFDMSolverInitialization:
             if application is not None:
                 assert solver.monotonicity_application == application
 
+    @pytest.mark.slow
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    @pytest.mark.filterwarnings("ignore::PendingDeprecationWarning")
+    def test_qp_optimization_levels_agree_on_smooth_problem(self):
+        """Behavioral guard: the monotonicity levels must actually SOLVE consistently.
+
+        The sibling ``test_qp_optimization_levels`` only checks constructor labels --
+        it would pass even if a QP level corrupted the solution. On a smooth problem
+        whose unconstrained solution is already monotone, the QP M-matrix enforcement
+        must not change the answer, so all three levels must converge to the same field.
+        Measured agreement vs ``none``: adaptive ~1e-6, always ~7e-6 (threshold 1e-4).
+
+        (filterwarnings: the ``always`` config solves a QP per point per iteration; its
+        scipy backend emits a ``polish``/``raise_error`` deprecation per solve -- library
+        noise, not a solver issue, suppressed so it does not flood the log.)
+        """
+        n = 15
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)
+        )
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: 0.0 * np.asarray(m),
+            coupling_dm=lambda m: 0.0 * np.asarray(m),
+        )
+        x = np.linspace(0.0, 1.0, n)
+        comps = MFGComponents(
+            m_initial=lambda xx: np.ones_like(np.asarray(xx, dtype=float)),
+            u_terminal=lambda xx: np.cos(np.pi * np.asarray(xx, dtype=float)),
+            hamiltonian=H,
+        )
+        problem = MFGProblem(geometry=grid, T=0.05, Nt=10, sigma=0.5, components=comps)
+        cp = x.reshape(-1, 1)
+        M_density = np.ones((problem.Nt + 1, n))
+        U_terminal = np.cos(np.pi * x)
+
+        configs = [("none", None), ("qp_m_matrix", "adaptive"), ("qp_m_matrix", "always")]
+        sols = {}
+        for scheme, application in configs:
+            solver = HJBGFDMSolver(
+                problem, cp, delta=0.3,
+                monotonicity_scheme=scheme, monotonicity_application=application,
+            )
+            U = solver.solve_hjb_system(M_density=M_density, U_terminal=U_terminal, show_progress=False)
+            assert np.all(np.isfinite(U)), f"{scheme}/{application} produced non-finite U"
+            sols[(scheme, application)] = U
+
+        base = sols[("none", None)]
+        for key, U in sols.items():
+            relerr = float(np.linalg.norm(U - base) / np.linalg.norm(base))
+            assert relerr < 1e-4, (
+                f"QP level {key} disagrees with 'none' by {relerr:.2e} (>1e-4): "
+                "monotonicity enforcement corrupted the smooth solution"
+            )
+
 
 class TestHJBGFDMSolverNeighborhoods:
     """Test neighborhood structure building."""
