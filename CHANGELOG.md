@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Spatially varying volatility on the explicit-drift / strict-adjoint FP paths now warns**
+  instead of silently approximating (Issue #1183). Those paths use a constant-coefficient
+  diffusion (scalar `D = mean(sigma)^2/2`), so a genuinely non-uniform `volatility_field`
+  silently solved a different PDE than the per-point implicit path. They now emit a
+  `UserWarning` when a non-uniform array sigma is collapsed (uniform arrays collapse exactly
+  and do not warn). The full per-point variable-coefficient diffusion on these paths remains
+  tracked in #1183 (it needs an operator that matches the existing conservative no-flux
+  discretization).
+
 ### Fixed
 
 - **Callable/tensor explicit-drift FP advection now honors the domain boundary conditions**

@@ -467,6 +467,22 @@ def solve_timestep_explicit_with_drift(
     """
     # Get diffusion coefficient
     if isinstance(sigma, np.ndarray):
+        # Issue #1183: the explicit-drift path uses a constant-coefficient LaplacianOperator,
+        # so a spatially varying sigma is collapsed to its mean (a scalar D). For a genuinely
+        # non-uniform sigma this silently solves a different PDE than the per-point implicit
+        # path (solve_timestep_full_nd). Fail loud rather than silently approximate; a true
+        # per-point variable-coefficient diffusion on this path is tracked in #1183.
+        if float(np.ptp(sigma)) > 1e-12:
+            import warnings
+
+            warnings.warn(
+                "Spatially varying volatility on the explicit-drift FP path is approximated by "
+                "its spatial mean (Issue #1183): the per-point variable-coefficient diffusion is "
+                "not yet implemented here. Results differ from the per-point implicit path. Use an "
+                "array drift_field (implicit path) for per-point sigma fidelity.",
+                UserWarning,
+                stacklevel=2,
+            )
         # For spatially varying, use scalar approximation (mean)
         sigma_val = float(np.mean(sigma))
     else:
