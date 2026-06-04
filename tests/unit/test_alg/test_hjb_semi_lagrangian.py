@@ -1029,5 +1029,61 @@ class TestStochasticCharacteristicSL_nD:
         assert np.isfinite(U_step).all()
 
 
+class TestADIDiffusionMagnitude:
+    """Regression: the nD ADI diffusion step must apply the FULL prescribed diffusion.
+
+    A cosine eigenmode of the Laplacian decays analytically as
+    ``exp(-D (sum_d k_d^2) t)`` with ``D = sigma^2/2``. The sequential (Lie) ADI split
+    is exact for this separable mode up to Crank-Nicolson time truncation, so the ADI
+    decay must match the analytic decay. The pre-fix code used ``dt/dimension`` per
+    directional sweep, applying only ``1/dimension`` of the diffusion (2x under in 2D,
+    3x in 3D) — a silent magnitude error no prior test caught (they asserted only
+    finiteness / loose mass). These tests fail on that bug and pass on the full-dt fix.
+    """
+
+    @staticmethod
+    def _decay_relerr(adi_fac, analytic_fac):
+        # relative error in the (small) decay increment, robust near fac~1
+        return abs(adi_fac - analytic_fac) / abs(1.0 - analytic_fac)
+
+    def test_adi_2d_diffusion_matches_analytic(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
+
+        N, L, sigma, dt = 81, 1.0, 1.0, 1e-3
+        D = 0.5 * sigma**2
+        x = np.linspace(0.0, L, N)
+        X, Y = np.meshgrid(x, x, indexing="ij")
+        k = np.pi
+        u0 = np.cos(k * X) * np.cos(k * Y)
+        dx = L / (N - 1)
+        u1 = adi_diffusion_step(u0.copy(), dt, sigma, np.array([dx, dx]), (N, N), "neumann")
+        i, j = N // 3, N // 4
+        adi_fac = u1[i, j] / u0[i, j]
+        analytic_fac = np.exp(-D * (2 * k**2) * dt)  # full 2D decay
+        # pre-fix this would be exp(-D*k^2*dt) (half exponent) -> rel error ~1.0
+        assert self._decay_relerr(adi_fac, analytic_fac) < 0.02, (
+            f"ADI 2D under/over-diffuses: factor {adi_fac:.6f} vs analytic {analytic_fac:.6f}"
+        )
+
+    def test_adi_3d_diffusion_matches_analytic(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
+
+        N, L, sigma, dt = 31, 1.0, 1.0, 5e-4
+        D = 0.5 * sigma**2
+        x = np.linspace(0.0, L, N)
+        X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
+        k = np.pi
+        u0 = np.cos(k * X) * np.cos(k * Y) * np.cos(k * Z)
+        dx = L / (N - 1)
+        u1 = adi_diffusion_step(u0.copy(), dt, sigma, np.array([dx, dx, dx]), (N, N, N), "neumann")
+        i = N // 3
+        adi_fac = u1[i, i, i] / u0[i, i, i]
+        analytic_fac = np.exp(-D * (3 * k**2) * dt)  # full 3D decay
+        # pre-fix this would be exp(-D*k^2*dt) (one-third exponent) -> rel error ~2.0
+        assert self._decay_relerr(adi_fac, analytic_fac) < 0.03, (
+            f"ADI 3D under/over-diffuses: factor {adi_fac:.6f} vs analytic {analytic_fac:.6f}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
