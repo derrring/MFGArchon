@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -103,7 +105,7 @@ def add_interior_entries_divergence_centered(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = sigma**2 / 2.0
+    D = diffusion_from_volatility(sigma)
 
     # Check for periodic BC
     # Issue #543 Phase 2: Replace hasattr with try/except
@@ -278,7 +280,7 @@ def add_boundary_no_flux_entries_divergence_centered(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = sigma**2 / 2.0
+    D = diffusion_from_volatility(sigma)
 
     for d in range(ndim):
         dx = spacing[d]

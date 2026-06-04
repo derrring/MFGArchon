@@ -56,6 +56,7 @@ import numpy as np
 # Import BC types from geometry submodules directly for clarity
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.types import BCSegment, BCType
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -168,7 +169,7 @@ def create_adjoint_consistent_bc_1d(
     )
 
     # Robin BC values: g = -σ²/2 · ∂ln(m)/∂n
-    diffusion_coeff = sigma**2 / 2
+    diffusion_coeff = diffusion_from_volatility(sigma)
     value_left = -diffusion_coeff * grad_ln_m_left
     value_right = -diffusion_coeff * grad_ln_m_right
 

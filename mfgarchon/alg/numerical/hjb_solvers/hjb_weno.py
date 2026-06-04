@@ -45,6 +45,7 @@ from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
 
@@ -737,7 +738,7 @@ class HJBWenoSolver(BaseHJBSolver):
             hamiltonian = self._evaluate_hamiltonian(i, m[i], u_x[i], direction=(1,))
 
             # RHS = -H + diffusion
-            rhs[i] = -hamiltonian + (self.problem.sigma**2 / 2) * u_xx[i]
+            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_xx[i]
 
         return rhs
 
@@ -1301,7 +1302,7 @@ class HJBWenoSolver(BaseHJBSolver):
         # Hamiltonian evaluation for Y-direction (direction (0,1) = y-derivative)
         for i in range(n):
             hamiltonian = self._evaluate_hamiltonian(i, m[i], u_y[i], direction=(0, 1))
-            rhs[i] = -hamiltonian + (self.problem.sigma**2 / 2) * u_yy[i]
+            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_yy[i]
 
         return rhs
 
@@ -1426,7 +1427,7 @@ class HJBWenoSolver(BaseHJBSolver):
         # Hamiltonian evaluation for Z-direction (direction (0,0,1) = z-derivative)
         for i in range(n):
             hamiltonian = self._evaluate_hamiltonian(i, m[i], u_z[i], direction=(0, 0, 1))
-            rhs[i] = -hamiltonian + (self.problem.sigma**2 / 2) * u_zz[i]
+            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_zz[i]
 
         return rhs
 

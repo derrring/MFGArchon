@@ -40,6 +40,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_fp import BaseFPSolver
 from .fp_sl_splatting import splat_1d, splat_nd
@@ -416,7 +417,7 @@ class FPSLSolver(BaseFPSolver):
         # This gives boundary stencil: L[0] = (m[1] - m[0])/dx^2
         # The resulting matrix has column sums = 0, ensuring mass conservation.
         #
-        D = sigma**2 / 2
+        D = diffusion_from_volatility(sigma)
         r = D * dt / (self.dx**2)
 
         # Build RHS: (I + r/2 * L_fv) * m_star

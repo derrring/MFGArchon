@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **~30 numerical-core diffusion sites now route through `diffusion_from_volatility`**
+  (Issue #1189, the sweep follow-up to the #1190 converter). The literal `0.5*sigma**2`
+  / `sigma**2/2` is replaced by the single-source converter across the problem core
+  (`mfg_problem._volatility_to_diffusion` now delegates its scalar/diagonal/tensor shape
+  dispatch; `.diffusion` property routes through it), all 8 FP solvers, 5 HJB solvers
+  (`base_hjb`/`hjb_fdm` use `kind="field"` for their array-capable sigma; the 7 gfdm,
+  3 weno, 1 SL sites are scalar), and the adjoint ADI/BC-coupling builders. Byte-identical
+  (verified against the diffusion-magnitude gate + the FP/HJB suites). The wrong-coefficient
+  bug class (#1152/#1178) is now unrepresentable in these paths, not merely caught downstream.
+  Out of scope (documented): the PINN/torch-backend sites (torch tensors, not numpy), the
+  code-generation template, and `flux_diagnostics`.
 - **Spatially varying volatility on the explicit-drift / strict-adjoint FP paths now warns**
   instead of silently approximating (Issue #1183). Those paths use a constant-coefficient
   diffusion (scalar `D = mean(sigma)^2/2`), so a genuinely non-uniform `volatility_field`

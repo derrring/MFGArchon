@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.utils.deprecation import deprecated
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 # Import from submodules directly (deprecated module, see Issue #704)
 from .conditions import BoundaryConditions
@@ -81,7 +82,7 @@ def create_adjoint_consistent_bc_1d(
     grad_ln_m_left = -(ln_m[1] - ln_m[0]) / dx
     grad_ln_m_right = (ln_m[-1] - ln_m[-2]) / dx
 
-    diffusion_coeff = sigma**2 / 2
+    diffusion_coeff = diffusion_from_volatility(sigma)
     value_left = -diffusion_coeff * grad_ln_m_left
     value_right = -diffusion_coeff * grad_ln_m_right
 
