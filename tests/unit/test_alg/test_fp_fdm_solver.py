@@ -6,6 +6,8 @@ Tests the Finite Difference Method (FDM) solver for Fokker-Planck equations
 with different boundary conditions (periodic, Dirichlet, no-flux).
 """
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -1136,6 +1138,52 @@ class TestFPFDMSolverCallableDrift:
         assert M.shape == (problem.Nt + 1, Nx, Ny)
         assert np.all(np.isfinite(M))
         assert np.all(M >= -1e-10)
+
+
+class TestVaryingSigmaExplicitDriftWarning:
+    """Issue #1183: the explicit-drift FP path collapses a spatially varying volatility to its
+    mean (scalar D). It must fail loud (warn) for a genuinely non-uniform sigma rather than
+    silently solve a different PDE than the per-point implicit path; a uniform array sigma
+    collapses exactly and must NOT warn."""
+
+    @staticmethod
+    def _solve(sigma_field):
+        n, nt = 41, 30
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: np.asarray(m) * 0.0,
+            coupling_dm=lambda m: np.asarray(m) * 0.0,
+        )
+        comps = MFGComponents(
+            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.5) ** 2) / 0.02),
+            u_terminal=lambda x: np.asarray(x) * 0.0,
+            hamiltonian=H,
+        )
+        prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, sigma=0.1, components=comps)
+        x = np.linspace(0.0, 1.0, n)
+        dx = x[1] - x[0]
+        m0 = np.exp(-((x - 0.5) ** 2) / 0.02)
+        m0 /= m0.sum() * dx
+        # callable drift routes through the explicit path (signature (t, grid, density))
+        FPFDMSolver(prob).solve_fp_system(m0, drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma_field)
+
+    def test_non_uniform_sigma_warns(self):
+        n = 41
+        x = np.linspace(0.0, 1.0, n)
+        sigma_field = np.where(x < 0.5, 0.05, 0.30)  # genuinely non-uniform
+        with pytest.warns(UserWarning, match="1183"):
+            self._solve(sigma_field)
+
+    def test_uniform_array_sigma_does_not_warn(self):
+        n = 41
+        sigma_field = np.full(n, 0.1)  # uniform array: mean-collapse is exact
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._solve(sigma_field)
+        assert not [w for w in caught if "1183" in str(w.message)], (
+            "uniform array sigma collapses exactly and must not raise the #1183 warning"
+        )
 
 
 if __name__ == "__main__":

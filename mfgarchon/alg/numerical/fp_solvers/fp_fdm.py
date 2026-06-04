@@ -704,8 +704,20 @@ class FPFDMSolver(BaseFPSolver):
 
         # Compute diffusion coefficient
         if isinstance(sigma_val, np.ndarray):
-            # For spatially varying diffusion, use mean (approximation)
-            # TODO: Support full spatially varying in matrix form
+            # Issue #1183: the strict-adjoint FP step uses a scalar D; a spatially varying
+            # sigma is collapsed to its mean. For a genuinely non-uniform sigma this silently
+            # solves a different PDE. Fail loud rather than silently approximate; the per-point
+            # variable-coefficient diffusion (matrix form) is tracked in #1183.
+            if float(np.ptp(sigma_val)) > 1e-12:
+                import warnings
+
+                warnings.warn(
+                    "Spatially varying volatility in strict-adjoint FP mode is approximated by "
+                    "its spatial mean (Issue #1183): the per-point matrix form is not yet "
+                    "implemented. Results differ from a true per-point diffusion.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             D = 0.5 * float(np.mean(sigma_val)) ** 2
         else:
             D = 0.5 * float(sigma_val) ** 2
