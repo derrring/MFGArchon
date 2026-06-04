@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`DualHamiltonian`/`DualLagrangian` Legendre transform now returns the supremum under
+  `OptimizationSense.MAXIMIZE`** (Issue #1185). The 1-D `__call__` flipped to the *infimum*
+  for MAXIMIZE (the value at a control bound), disagreeing with its own `dp` argmax and the
+  d>1 scipy branch — e.g. `L=½·2·α²`, `p=1` returned `-110.0` instead of the correct
+  `sup_α{p·α−L}=0.25`. The convex conjugate is a supremum by definition, independent of
+  optimization sense; the 1-D branch now always takes the `sup` (matching the d>1 branch).
+  Reachable via a non-separable `LagrangianBase` with `sense=MAXIMIZE` passed to
+  `MFGComponents(lagrangian=...)`.
 - **Callable/tensor explicit-drift FP advection now honors the domain boundary conditions**
   (Issue #1181). `solve_timestep_explicit_with_drift` and `solve_timestep_tensor_explicit`
   called `compute_advection_from_drift_nd` without `bc=`, so on a no-flux domain the
