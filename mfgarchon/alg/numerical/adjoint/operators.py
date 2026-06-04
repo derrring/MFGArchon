@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 from scipy import sparse
 
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -151,7 +153,7 @@ def build_diffusion_matrix(
     for d in range(ndim):
         # Build 1D Laplacian for dimension d
         Nd = grid_shape[d]
-        alpha_d = 0.5 * sigma**2 * dt / dx[d] ** 2
+        alpha_d = diffusion_from_volatility(sigma) * dt / dx[d] ** 2
 
         # 1D Laplacian: L = [-1, 2, -1] / dx²
         # For (I - θ·α·L), we need to add θ·α times the Laplacian contribution
@@ -275,7 +277,7 @@ def build_diffusion_matrix_1d(
         For Dirichlet BC with zero values, the matrix is also symmetric.
         For periodic BC, the matrix is symmetric (circulant structure).
     """
-    alpha = 0.5 * sigma**2 * dt / dx**2
+    alpha = diffusion_from_volatility(sigma) * dt / dx**2
 
     # Main diagonal
     main = np.ones(Nx) * (1.0 + 2.0 * theta * alpha)
@@ -342,8 +344,8 @@ def build_diffusion_matrix_2d(
     else:
         dx_x, dx_y = dx
 
-    alpha_x = 0.5 * sigma**2 * dt / dx_x**2
-    alpha_y = 0.5 * sigma**2 * dt / dx_y**2
+    alpha_x = diffusion_from_volatility(sigma) * dt / dx_x**2
+    alpha_y = diffusion_from_volatility(sigma) * dt / dx_y**2
 
     # Build sparse matrix
     A = sparse.lil_matrix((N, N))
