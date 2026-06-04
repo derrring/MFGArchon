@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.8] - 2026-06-04
+
 ### Added
 
 - **Coupled-MFG-vs-reference MMS test** (`tests/integration/test_coupled_mfg_mms.py`).
@@ -34,7 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BCValueProvider` reaching the solver raises `AssertionError` (the coupling layer must
   resolve it via `using_resolved_bc` first).
 
+- **`HJBGFDMSolver(inner_solver='howard')` honors prescribed Dirichlet values and the
+  real Neumann normal-derivative stencil** (Issue #1118 PR2a). The Howard inner solver
+  previously hardcoded the Dirichlet RHS to 0 and approximated Neumann by a
+  nearest-interior copy; both now flow through the shared `_value_form_bc_rows` /
+  `_bc_row_for_point` single coefficient source, so a nonzero `g_D` and the true
+  `n.grad u = g` stencil are applied (and the Newton/Howard paths share one BC-row builder).
+
+### Changed
+
+- **`MFGProblem` rejects non-positive `T`** (Issue #1077 case 4). `T <= 0` previously
+  produced a degenerate time grid silently; it now raises at construction.
+
+- **Anisotropic non-diagonal σ-tensor warning strengthened** (Issue #1079). The warning
+  now states the dropped off-diagonal cross-derivatives are an O(1) error (not
+  higher-order) in the affected HJB-FDM path. The diagonal-approximation behavior is
+  unchanged (deliberate, codified by `test_non_diagonal_tensor_warning`).
+
 ### Fixed
+
+- **Parameter sweep no longer crashes on macOS `spawn`** (Issue #1080). `ParameterSweep`
+  carried a `threading.Lock` (via its logger) into the pickled payload for
+  `ProcessPoolExecutor`; `__getstate__`/`__setstate__` now drop the logger, and a
+  pre-flight `pickle.dumps` probe fails loud with a clear message instead of an opaque
+  spawn error.
 
 - **Multi-population HJB now sees cross-population densities** (Issue #1157).
   `MultiPopulationIterator` computed the cross-density bound Hamiltonian but never
