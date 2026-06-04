@@ -14,9 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   magnitude `D = sigma^2/2` (Issue #811) via cosine-eigenmode decay (`exp(-D*sum k^2*T)`).
   It FAILS on the wrong-coefficient bug class that finiteness/mass/self-consistency tests
   miss (#1152 sigma->D, #1178 ADI dt/dimension, #1183 sigma->mean) — verified discriminating
-  (a halved magnitude gives relerr 0.46 vs the 0.03 threshold). Covers ADI (1D/2D/3D, tier1)
-  and the FP-FDM explicit + implicit paths (tier2). HJB-solver diffusion isolation (past the
-  Hamiltonian advection) is a documented follow-up.
+  (a halved magnitude gives relerr 0.46 vs the 0.03 threshold). Covers ADI (1D/2D/3D, tier1),
+  the FP-FDM explicit + implicit paths (tier2), and the production HJB-GFDM per-point Newton
+  path (`joint_socp` + `precompute`) in isolation via MMS source-cancellation (slow/tier3;
+  correct D -> field relerr ~0.012, halved/doubled D -> 0.105/0.295, 0.05 threshold).
 - **Canonical `diffusion_from_volatility(sigma, *, kind=None)` converter**
   (`mfgarchon/utils/pde_coefficients.py`, Issue #811). Single source of truth for the
   SDE-volatility -> PDE-diffusion conversion `D = (1/2) Sigma Sigma^T` (scalar `sigma^2/2`),
