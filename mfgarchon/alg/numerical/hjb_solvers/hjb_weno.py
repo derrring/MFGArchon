@@ -141,6 +141,7 @@ class HJBWenoSolver(BaseHJBSolver):
         weno_m_parameter: float = 1.0,
         time_integration: str = "tvd_rk3",
         splitting_method: str = "strang",
+        max_substeps: int = 10000,
     ):
         """
         Initialize WENO family HJB solver with multi-dimensional support.
@@ -159,6 +160,11 @@ class HJBWenoSolver(BaseHJBSolver):
             weno_m_parameter: WENO-M mapping parameter for critical points (typically 1.0)
             time_integration: Time integration scheme ("tvd_rk3", "explicit_euler")
             splitting_method: Dimensional splitting method for 2D+ ("strang", "godunov")
+            max_substeps: Safety cap on CFL/diffusion-stable sub-steps per backward time
+                interval (Issue #1180). Each interval is sub-stepped until the full ``dt``
+                is covered; the solve fails loud if this cap is hit (mirrors the
+                semi-Lagrangian solver). Generous default; raise only for extreme
+                diffusion/CFL ratios.
         """
         super().__init__(problem)
 
@@ -190,6 +196,7 @@ class HJBWenoSolver(BaseHJBSolver):
         self.weno_z_parameter = weno_z_parameter
         self.weno_m_parameter = weno_m_parameter
         self.time_integration = time_integration
+        self.max_substeps = max_substeps
 
         # Validate user-provided parameters before dimension adjustment
         self._validate_parameters()
@@ -895,6 +902,73 @@ class HJBWenoSolver(BaseHJBSolver):
             # Use generalized nD solver for dimensions > 3
             return self._solve_hjb_system_nd(M_density, U_terminal, U_coupling_prev)
 
+    def _advance_full_interval(self, u_current, m_current, dt, dt_stable_fn, step_fn):
+        """Sub-step ``step_fn`` until the full physical interval ``dt`` is covered (Issue #1180).
+
+        WENO is explicit, so a single step is limited to the CFL/diffusion-stable ``dt_stable``,
+        often ``<< dt`` in a diffusion-limited regime. Stepping only once per backward interval
+        (the pre-#1180 behavior) advanced physical time by ``dt_stable`` while recording it as a
+        full ``dt`` -- the value function was silently near-frozen at the terminal condition.
+        Here each interval accumulates CFL-stable sub-steps, recomputing ``dt_stable`` on the
+        evolving field each sub-step, until the whole ``dt`` is integrated.
+
+        ``dt_stable_fn(u, m) -> float`` returns the stable step; ``step_fn(u, m, dt_sub) -> u``
+        advances one sub-step (a complete directional-split sweep in 2D/3D/nD). Happy path
+        ``dt_stable >= dt``: exactly one step of size ``dt`` (byte-identical to the prior
+        single-step code). Fails loud at ``max_substeps`` rather than silently truncating.
+        """
+        t_remaining = dt
+        u = u_current
+        n_sub = 0
+        while t_remaining > 1e-14 * dt and n_sub < self.max_substeps:
+            dt_sub = min(dt_stable_fn(u, m_current), t_remaining)
+            u = step_fn(u, m_current, dt_sub)
+            t_remaining -= dt_sub
+            n_sub += 1
+        if t_remaining > 1e-12 * dt:
+            raise ValueError(
+                f"WENO HJB: hit max_substeps={self.max_substeps} with {t_remaining:.3e} of "
+                f"dt={dt:.3e} uncovered (last dt_stable={dt_stable_fn(u, m_current):.3e}). "
+                "The CFL/diffusion limit is extreme for this grid; raise max_substeps or coarsen."
+            )
+        return u
+
+    def _step_2d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
+        """One 2D dimensional-split step of size ``dt`` (Strang or Godunov)."""
+        if self.splitting_method == "strang":
+            u_half = self._solve_hjb_step_2d_x_direction(u, m, dt / 2)
+            u_full = self._solve_hjb_step_2d_y_direction(u_half, m, dt)
+            return self._solve_hjb_step_2d_x_direction(u_full, m, dt / 2)
+        u_half = self._solve_hjb_step_2d_x_direction(u, m, dt)
+        return self._solve_hjb_step_2d_y_direction(u_half, m, dt)
+
+    def _step_3d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
+        """One 3D dimensional-split step of size ``dt`` (Strang or Godunov)."""
+        if self.splitting_method == "strang":
+            u1 = self._solve_hjb_step_3d_x_direction(u, m, dt / 2)
+            u2 = self._solve_hjb_step_3d_y_direction(u1, m, dt / 2)
+            u3 = self._solve_hjb_step_3d_z_direction(u2, m, dt)
+            u4 = self._solve_hjb_step_3d_y_direction(u3, m, dt / 2)
+            return self._solve_hjb_step_3d_x_direction(u4, m, dt / 2)
+        u1 = self._solve_hjb_step_3d_x_direction(u, m, dt)
+        u2 = self._solve_hjb_step_3d_y_direction(u1, m, dt)
+        return self._solve_hjb_step_3d_z_direction(u2, m, dt)
+
+    def _step_nd_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
+        """One nD dimensional-split step of size ``dt`` (Strang or Godunov)."""
+        if self.splitting_method == "strang":
+            u_temp = u.copy()
+            for dim_idx in range(self.dimension - 1):
+                u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt / 2, dim_idx)
+            u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt, self.dimension - 1)
+            for dim_idx in range(self.dimension - 2, -1, -1):
+                u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt / 2, dim_idx)
+            return u_temp
+        u_new = u.copy()
+        for dim_idx in range(self.dimension):
+            u_new = self._solve_hjb_step_direction_nd(u_new, m, dt, dim_idx)
+        return u_new
+
     def _solve_hjb_system_1d(
         self,
         M_density_evolution_from_FP: np.ndarray,
@@ -922,11 +996,10 @@ class HJBWenoSolver(BaseHJBSolver):
             # Current value function (start with final condition)
             u_current = U_solved[t_idx + 1, :].copy()
 
-            # Compute stable time step
-            dt_stable = min(dt, self._compute_dt_stable_1d(u_current, m_current))
-
-            # Solve HJB step using selected WENO variant
-            U_solved[t_idx, :] = self.solve_hjb_step(u_current, m_current, dt_stable)
+            # Sub-step over the full interval dt under the CFL/diffusion limit (Issue #1180)
+            U_solved[t_idx, :] = self._advance_full_interval(
+                u_current, m_current, dt, self._compute_dt_stable_1d, self.solve_hjb_step
+            )
 
         return U_solved
 
@@ -956,21 +1029,10 @@ class HJBWenoSolver(BaseHJBSolver):
             # Current value function
             u_current = U_solved[t_idx + 1, :, :].copy()
 
-            # Compute stable time step for 2D
-            dt_stable = min(dt, self._compute_dt_stable_2d(u_current, m_current))
-
-            # Apply dimensional splitting
-            if self.splitting_method == "strang":
-                # Strang splitting: X → Y → X with half time steps
-                u_half = self._solve_hjb_step_2d_x_direction(u_current, m_current, dt_stable / 2)
-                u_full = self._solve_hjb_step_2d_y_direction(u_half, m_current, dt_stable)
-                u_new = self._solve_hjb_step_2d_x_direction(u_full, m_current, dt_stable / 2)
-            else:  # godunov
-                # Godunov splitting: X → Y with full time steps
-                u_half = self._solve_hjb_step_2d_x_direction(u_current, m_current, dt_stable)
-                u_new = self._solve_hjb_step_2d_y_direction(u_half, m_current, dt_stable)
-
-            U_solved[t_idx, :, :] = u_new
+            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
+            U_solved[t_idx, :, :] = self._advance_full_interval(
+                u_current, m_current, dt, self._compute_dt_stable_2d, self._step_2d_split
+            )
 
         return U_solved
 
@@ -995,6 +1057,9 @@ class HJBWenoSolver(BaseHJBSolver):
         # Set final condition (last time index)
         U_solved[-1, :, :, :] = U_final_condition_at_T
 
+        # n_time_points - 1 intervals (was missing here: the loop referenced an unset self.dt)
+        dt = self.problem.T / (n_time_points - 1)
+
         # Solve backward in time
         for time_idx in range(n_time_points - 2, -1, -1):
             logger.debug(f"  3D Time step {time_idx + 1}/{n_time_points - 1}")
@@ -1002,24 +1067,10 @@ class HJBWenoSolver(BaseHJBSolver):
             u_current = U_solved[time_idx + 1, :, :, :]
             m_current = M_density_evolution_from_FP[time_idx, :, :, :]
 
-            # Compute stable time step for 3D
-            dt_stable = min(self.dt, self._compute_dt_stable_3d(u_current, m_current))
-
-            # Apply dimensional splitting (3D requires x, y, z directions)
-            if self.splitting_method == "strang":
-                # Strang splitting: x(dt/2) -> y(dt/2) -> z(dt) -> y(dt/2) -> x(dt/2)
-                u_step1 = self._solve_hjb_step_3d_x_direction(u_current, m_current, dt_stable / 2)
-                u_step2 = self._solve_hjb_step_3d_y_direction(u_step1, m_current, dt_stable / 2)
-                u_step3 = self._solve_hjb_step_3d_z_direction(u_step2, m_current, dt_stable)
-                u_step4 = self._solve_hjb_step_3d_y_direction(u_step3, m_current, dt_stable / 2)
-                u_new = self._solve_hjb_step_3d_x_direction(u_step4, m_current, dt_stable / 2)
-            else:  # Godunov splitting
-                # Godunov splitting: x(dt) -> y(dt) -> z(dt)
-                u_step1 = self._solve_hjb_step_3d_x_direction(u_current, m_current, dt_stable)
-                u_step2 = self._solve_hjb_step_3d_y_direction(u_step1, m_current, dt_stable)
-                u_new = self._solve_hjb_step_3d_z_direction(u_step2, m_current, dt_stable)
-
-            U_solved[time_idx, :, :, :] = u_new
+            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
+            U_solved[time_idx, :, :, :] = self._advance_full_interval(
+                u_current, m_current, dt, self._compute_dt_stable_3d, self._step_3d_split
+            )
 
             # Progress logging for long computations
             if (time_idx + 1) % 20 == 0:
@@ -1068,29 +1119,10 @@ class HJBWenoSolver(BaseHJBSolver):
             u_current = U_solved[time_idx + 1, ...]
             m_current = M_density_evolution_from_FP[time_idx, ...]
 
-            # Compute stable time step for nD
-            dt_stable = min(dt, self._compute_dt_stable_nd(u_current, m_current))
-
-            # Apply dimensional splitting
-            if self.splitting_method == "strang":
-                # Strang splitting: Forward half-steps, full step on last dimension, backward half-steps
-                u_temp = u_current.copy()
-                # Forward half-steps: d0(dt/2) -> d1(dt/2) -> ... -> d(n-2)(dt/2)
-                for dim_idx in range(self.dimension - 1):
-                    u_temp = self._solve_hjb_step_direction_nd(u_temp, m_current, dt_stable / 2, dim_idx)
-                # Full step on last dimension: d(n-1)(dt)
-                u_temp = self._solve_hjb_step_direction_nd(u_temp, m_current, dt_stable, self.dimension - 1)
-                # Backward half-steps: d(n-2)(dt/2) -> ... -> d1(dt/2) -> d0(dt/2)
-                for dim_idx in range(self.dimension - 2, -1, -1):
-                    u_temp = self._solve_hjb_step_direction_nd(u_temp, m_current, dt_stable / 2, dim_idx)
-                u_new = u_temp
-            else:  # Godunov splitting
-                # Godunov splitting: d0(dt) -> d1(dt) -> ... -> d(n-1)(dt)
-                u_new = u_current.copy()
-                for dim_idx in range(self.dimension):
-                    u_new = self._solve_hjb_step_direction_nd(u_new, m_current, dt_stable, dim_idx)
-
-            U_solved[time_idx, ...] = u_new
+            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
+            U_solved[time_idx, ...] = self._advance_full_interval(
+                u_current, m_current, dt, self._compute_dt_stable_nd, self._step_nd_split
+            )
 
         return U_solved
 
@@ -1331,7 +1363,7 @@ class HJBWenoSolver(BaseHJBSolver):
             dt_cfl_z = self.cfl_number * self.grid_spacing_z / (max_grad_z + 1e-12)
             dt_cfl = min(dt_cfl_x, dt_cfl_y, dt_cfl_z)
         else:
-            dt_cfl = self.dt
+            dt_cfl = float("inf")  # no gradient -> no CFL limit; diffusion bound governs (was unset self.dt)
 
         # Stability condition for diffusion term (very restrictive in 3D)
         # All modern MFGProblem have sigma; getattr with default for safety

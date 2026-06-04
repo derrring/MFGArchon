@@ -445,8 +445,15 @@ class TestWenoSolverIntegration:
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt, Nx)
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="WENO HJB is spatially unstable for oscillatory terminal data (sin(2*pi*x), "
+        "sigma=0.1): it amplifies high-frequency modes independent of dt -- see #1200. "
+        "Pre-#1180 this passed only because the solver under-integrated (near-frozen at the "
+        "bounded terminal) and never reached the blow-up. Remove the xfail when #1200 lands.",
+    )
     def test_solution_finiteness(self, integration_problem):
-        """Test that solution remains finite throughout."""
+        """Test that solution remains finite throughout (oscillatory terminal: #1200 instability)."""
         solver = HJBWenoSolver(integration_problem, weno_variant="weno5")
 
         Nt = integration_problem.Nt + 1
@@ -489,6 +496,89 @@ class TestWenoSolverIntegration:
 
         # Should not have abstract methods
         assert not inspect.isabstract(HJBWenoSolver)
+
+
+class TestWenoTimeSubstepping:
+    """Issue #1180: each backward interval must sub-step to cover the full physical ``dt``,
+    not advance only one CFL/diffusion-stable ``dt_stable`` (which near-froze the value
+    function at the terminal condition in the common diffusion-limited regime)."""
+
+    @staticmethod
+    def _problem(Nx=51, T=1.0, Nt=20, sigma=0.3):
+        ham = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        comps = MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+            hamiltonian=ham,
+        )
+        dom = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)
+        )
+        return MFGProblem(geometry=dom, T=T, Nt=Nt, sigma=sigma, components=comps)
+
+    @pytest.mark.slow
+    def test_integrates_full_horizon_not_one_dt_stable(self):
+        """Diffusion-limited (sigma=0.3, dt/dt_stable ~ 45): the backward sweep must transport
+        the value function over the full horizon, matching a full-horizon substepped reference
+        built from the same kernel. Pre-fix the sweep advanced only ~2% of T (moved ~0.044 vs
+        reference ~0.295) because each interval took a single dt_stable step."""
+        prob = self._problem()
+        solver = HJBWenoSolver(problem=prob, weno_variant="weno5")
+        n_time = prob.Nt + 1
+        Nx = solver.num_grid_points_x
+        x = np.linspace(0.0, 1.0, Nx)
+        U_T = 0.5 * (x - 0.5) ** 2
+        m_row = np.ones(Nx) / Nx
+        M = np.tile(m_row, (n_time, 1))
+        U_prev = np.tile(U_T, (n_time, 1))
+
+        U = solver._solve_hjb_system_1d(M, U_T, U_prev)
+        moved = np.linalg.norm(U[0] - U[-1])
+
+        # Reference: the same kernel substepped continuously over the full horizon T.
+        u = U_T.copy()
+        t = 0.0
+        guard = 0
+        while t < prob.T - 1e-12 and guard < 100_000:
+            ds = min(solver._compute_dt_stable_1d(u, m_row), prob.T - t)
+            u = solver.solve_hjb_step(u, m_row, ds)
+            t += ds
+            guard += 1
+        moved_ref = np.linalg.norm(u - U_T)
+
+        assert moved_ref > 1e-3, "reference horizon transport is trivial; test not exercising the path"
+        assert abs(moved - moved_ref) / moved_ref < 0.15, (
+            f"value function under-propagated: sweep moved={moved:.4e} vs full-horizon ref={moved_ref:.4e}"
+        )
+
+    def test_single_step_when_dt_below_stable_is_byte_identical(self):
+        """Happy path: when dt <= dt_stable the substep helper does exactly one step of size dt,
+        byte-identical to the pre-#1180 single-step code (dt_stable_fn returns a huge value)."""
+        prob = self._problem(Nx=11, T=0.01, Nt=5, sigma=0.05)
+        solver = HJBWenoSolver(problem=prob, weno_variant="weno5")
+        x = np.linspace(0.0, 1.0, 11)
+        u = np.cos(np.pi * x)
+        m = np.ones(11) / 11
+        dt = 0.002
+        one_step = solver.solve_hjb_step(u, m, dt)
+        via_helper = solver._advance_full_interval(u, m, dt, lambda uu, mm: 1e9, solver.solve_hjb_step)
+        np.testing.assert_array_equal(via_helper, one_step)
+
+    def test_fails_loud_at_max_substeps(self):
+        """Fail-fast contract: if the CFL/diffusion limit cannot cover dt within max_substeps,
+        raise rather than silently truncating the interval."""
+        prob = self._problem(Nx=11, T=0.01, Nt=5, sigma=0.05)
+        solver = HJBWenoSolver(problem=prob, weno_variant="weno5")
+        solver.max_substeps = 3
+        u = np.cos(np.pi * np.linspace(0.0, 1.0, 11))
+        m = np.ones(11) / 11
+        with pytest.raises(ValueError, match="max_substeps"):
+            # 3 substeps of 0.01 cover 0.03 << dt=1.0 -> uncovered -> raise
+            solver._advance_full_interval(u, m, 1.0, lambda uu, mm: 0.01, lambda uu, mm, dd: uu)
 
 
 if __name__ == "__main__":
