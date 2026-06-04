@@ -34,7 +34,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import check_adi_compatibility
+from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
 from .hjb_sl_adi import (
@@ -2333,7 +2333,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Solution after explicit diffusion step
         """
         sigma = self.problem.sigma
-        sigma_sq_half = 0.5 * sigma**2
+        sigma_sq_half = diffusion_from_volatility(sigma)
 
         if self.dimension == 1:
             dx = self.dx

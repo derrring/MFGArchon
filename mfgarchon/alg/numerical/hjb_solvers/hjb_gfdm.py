@@ -29,6 +29,7 @@ from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.utils.deprecation import deprecated_parameter, deprecated_value
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import (
     DEFAULT_NEWTON_MAX_ITERATIONS,
@@ -2045,7 +2046,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
         # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
         sigma = self._get_sigma_value(None)
-        diffusion_term = 0.5 * sigma**2 * lap_u
+        diffusion_term = diffusion_from_volatility(sigma) * lap_u
 
         # HJB residual: -u_t + H - diffusion = 0
         residual = -u_t + H_total - diffusion_term
@@ -2099,7 +2100,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
         # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
         sigma = self._get_sigma_value(None)
-        diffusion_term = 0.5 * sigma**2 * lap_u
+        diffusion_term = diffusion_from_volatility(sigma) * lap_u
 
         # HJB residual: -u_t + H - diffusion = 0
         return -u_t + H_total - diffusion_term
@@ -2150,7 +2151,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         jacobian = (1.0 / dt) * eye(n, format="csr")
         for dim in range(d):
             jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ self._D_grad[dim]
-        jacobian = jacobian - 0.5 * sigma**2 * self._D_lap
+        jacobian = jacobian - diffusion_from_volatility(sigma) * self._D_lap
 
         return jacobian
 
@@ -2239,7 +2240,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 H = H + running_cost[i]
 
             sigma_val = self._get_sigma_value(i)
-            diffusion_term = 0.5 * sigma_val**2 * laplacian
+            diffusion_term = diffusion_from_volatility(sigma_val) * laplacian
             residual[i] = -u_t[i] + H - diffusion_term
 
         return residual
@@ -2276,7 +2277,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
         # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
         sigma = self._get_sigma_value(None)
-        diffusion_coeff = 0.5 * sigma**2
+        diffusion_coeff = diffusion_from_volatility(sigma)
 
         # Time derivative term: (1/dt) * I
         jacobian = (1.0 / dt) * eye(n, format="csr")
@@ -2359,7 +2360,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 dH_dp = self._compute_dH_dp_fd(i, m_n_plus_1[i], p_derivs, time_idx)
 
             sigma_val = self._get_sigma_value(i)
-            diffusion_coeff = 0.5 * sigma_val**2
+            diffusion_coeff = diffusion_from_volatility(sigma_val)
 
             # Neighbor contributions
             for k, j in enumerate(neighbor_indices):
@@ -3333,7 +3334,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             # Get sigma for diffusion term
             sigma_val = self._get_sigma_value(i)
-            diffusion_coeff = 0.5 * sigma_val**2
+            diffusion_coeff = diffusion_from_volatility(sigma_val)
 
             # Build row i of Jacobian
             # For neighbors: use GFDM weights directly

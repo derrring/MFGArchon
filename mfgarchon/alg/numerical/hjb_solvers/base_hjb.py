@@ -10,6 +10,7 @@ from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -616,7 +617,7 @@ def compute_hjb_residual(
 
         # Apply diffusion term (NumPy broadcasts scalar automatically)
         # Works for both constant σ (scalar) and σ(x,t) (array)
-        Phi_U += -(sigma**2 / 2.0) * U_xx
+        Phi_U += -diffusion_from_volatility(sigma, kind="field") * U_xx
 
     # Precompute BC-aware gradient for entire array (Issue #542 fix)
     # This avoids repeated per-point computation with wrong BC

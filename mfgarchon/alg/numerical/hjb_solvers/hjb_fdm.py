@@ -20,7 +20,7 @@ from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured gri
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
-from mfgarchon.utils.pde_coefficients import CoefficientField
+from mfgarchon.utils.pde_coefficients import CoefficientField, diffusion_from_volatility
 
 from . import base_hjb
 from .base_hjb import BaseHJBSolver
@@ -969,7 +969,7 @@ class HJBFDMSolver(BaseHJBSolver):
             # Follows 1D pattern in base_hjb.py:774-803
             sigma = sigma_at_n if sigma_at_n is not None else self.problem.sigma
             lap_u = self._get_laplacian_op()(U).ravel()
-            H_values_flat = H_convective - 0.5 * sigma**2 * lap_u
+            H_values_flat = H_convective - diffusion_from_volatility(sigma, kind="field") * lap_u
 
         return H_values_flat.reshape(self.shape)
 
