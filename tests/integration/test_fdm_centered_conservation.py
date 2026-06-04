@@ -139,3 +139,45 @@ def test_fdm_centered_coupled_solve_conserves_mass():
     # The #1149 bug leaked ~57% (terminal mass ~0.43). With the conservative scheme AND the
     # boundary-flux fix the coupled solve conserves mass to ~machine precision.
     assert abs(M[-1].sum() * dx - 1.0) < 1e-9, f"terminal mass {M[-1].sum() * dx:.8f} (centered must conserve)"
+
+
+@pytest.mark.integration
+def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
+    """Issue #1181: the callable-drift explicit FP path must use the domain's no-flux BC,
+    not the periodic default. With a constant leftward drift on a no-flux domain, mass piles
+    at the LEFT wall and must NOT appear at the RIGHT wall. Pre-fix the advection omitted the
+    BC argument -> periodic default -> mass exiting the left wall re-entered at the right wall
+    (right-edge mass ~0.19); the fix passes boundary_conditions so the right half stays empty.
+    """
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+
+    n, nt, T = 81, 50, 0.5
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: np.asarray(m) * 0.0,
+        coupling_dm=lambda m: np.asarray(m) * 0.0,
+    )
+    comps = MFGComponents(
+        m_initial=lambda x: np.exp(-((np.asarray(x) - 0.5) ** 2) / 0.01),
+        u_terminal=lambda x: np.asarray(x) * 0.0,
+        hamiltonian=H,
+    )
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=0.05, components=comps)
+    x = np.linspace(0.0, 1.0, n)
+    dx = x[1] - x[0]
+    m0 = np.exp(-((x - 0.5) ** 2) / 0.01)
+    m0 /= m0.sum() * dx
+    # callable drift signature is (t, grid, density); constant leftward velocity toward x=0
+    M = FPFDMSolver(prob).solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.full(n, -0.3))
+    assert np.all(np.isfinite(M))
+    # No periodic wrap: the leftward drift moves the bump to x ~ 0.39, so the far-right region
+    # (x >= 0.7, well clear of the bump tail) must be empty. Pre-#1181 the periodic default
+    # re-entered mass exiting the left wall at the RIGHT wall, giving O(0.1) here.
+    far_right_mass = M[-1, int(0.7 * n) :].sum() * dx
+    assert far_right_mass < 1e-5, (
+        f"mass wrapped through the no-flux wall: far-right (x>=0.7) mass {far_right_mass:.3e} "
+        f"(pre-#1181 the periodic default gave O(0.1) here)"
+    )
+    # Mass should pile toward the LEFT wall (where the leftward drift transports it).
+    assert M[-1, 0] > M[-1, -1], "leftward drift did not pile mass at the left wall"
