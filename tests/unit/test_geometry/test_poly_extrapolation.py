@@ -135,6 +135,44 @@ def test_order_5_neumann_1d():
     print("✓ Order 5 Neumann 1D: 3 ghost cells filled with high accuracy")
 
 
+def test_order_5_neumann_both_boundaries_accurate():
+    """High-order ghosts must be accurate at BOTH boundaries (Issue #1200 regression).
+
+    The high-boundary Vandermonde fit previously paired ``x_interior=[-dx,-2dx,...]``
+    (nearest-first) with ``interior_indices`` ordered farthest-first, so the high-boundary
+    ghosts were badly wrong (the low boundary, where both orderings agree, was fine). The
+    bug stayed latent because the only order-5 test checked the low boundary only. Here we
+    use ``cos(pi x)`` -- Neumann-compatible (du/dx=0) at both x=0 and x=1 -- and require the
+    high-boundary ghosts to be reconstructed as accurately as the low-boundary ghosts.
+    """
+    nx = 41
+    x = np.linspace(0.0, 1.0, nx)
+    dx = 1.0 / (nx - 1)
+    u_exact = np.cos(np.pi * x)
+
+    buffer = PreallocatedGhostBuffer(
+        interior_shape=(nx,),
+        boundary_conditions=neumann_bc(dimension=1),
+        domain_bounds=np.array([[0.0, 1.0]]),
+        order=5,
+        ghost_depth=3,
+    )
+    buffer.interior[:] = u_exact
+    buffer.update_ghosts(time=0.0)
+
+    g = 3
+    # Low ghosts: padded[0..g-1] at x = -g*dx .. -dx (padded[0] farthest).
+    low_err = max(abs(buffer.padded[k] - np.cos(np.pi * (-(g - k) * dx))) for k in range(g))
+    # High ghosts: padded[-g..-1] at x = 1+dx .. 1+g*dx (padded[-1] farthest).
+    high_err = max(abs(buffer.padded[-g + k] - np.cos(np.pi * (1.0 + (k + 1) * dx))) for k in range(g))
+
+    # Both boundaries must be accurate (order-5 extrapolation of a smooth function).
+    assert low_err < 1e-3, f"low-boundary ghost error too large: {low_err}"
+    assert high_err < 1e-3, f"high-boundary ghost error too large (#1200): {high_err}"
+    # And symmetric to within an order of magnitude (the bug made high ~1e5x worse).
+    assert high_err < 100 * low_err, f"high/low ghost asymmetry: high={high_err}, low={low_err}"
+
+
 def test_order_3_neumann_2d():
     """Test order=3 polynomial extrapolation in 2D."""
     nx, ny = 10, 12
