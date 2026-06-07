@@ -527,7 +527,11 @@ def solve_timestep_explicit_with_drift(
     # Step 2: Explicit advection using direct drift.
     # Issue #1181: pass boundary_conditions so a no-flux domain does not default to
     # periodic (AdvectionOperator bc=None == periodic), which silently wraps wall mass.
-    advection_term = compute_advection_from_drift_nd(M_star, drift, spacing, ndim, bc=boundary_conditions)
+    # Issue #1184: conservative FV divergence so mass driven against a no-flux wall by
+    # strong drift does not leak (the explicit upwind advection was non-conservative there).
+    advection_term = compute_advection_from_drift_nd(
+        M_star, drift, spacing, ndim, bc=boundary_conditions, mass_conservative=True
+    )
     M_next = M_star - dt * advection_term
 
     # Step 3: Add source term (MMS verification)
@@ -1013,7 +1017,10 @@ def solve_timestep_tensor_explicit(
         # Direct drift provided (standalone FP mode).
         # Issue #1181: pass boundary_conditions (the U-derived branch below already does)
         # so a no-flux domain does not default to periodic and wrap wall mass.
-        advection_term = compute_advection_from_drift_nd(M_current, drift, spacing, ndim, bc=boundary_conditions)
+        # Issue #1184: conservative FV divergence (zero advective flux through no-flux walls).
+        advection_term = compute_advection_from_drift_nd(
+            M_current, drift, spacing, ndim, bc=boundary_conditions, mass_conservative=True
+        )
     else:
         # MFG coupled mode: derive drift from U
         advection_term = compute_advection_term_nd(

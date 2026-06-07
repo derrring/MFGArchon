@@ -171,13 +171,19 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
     # callable drift signature is (t, grid, density); constant leftward velocity toward x=0
     M = FPFDMSolver(prob).solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.full(n, -0.3))
     assert np.all(np.isfinite(M))
-    # No periodic wrap: the leftward drift moves the bump to x ~ 0.39, so the far-right region
-    # (x >= 0.7, well clear of the bump tail) must be empty. Pre-#1181 the periodic default
-    # re-entered mass exiting the left wall at the RIGHT wall, giving O(0.1) here.
+    # No periodic wrap: a periodic default re-enters mass exiting the LEFT wall AT the RIGHT
+    # wall, giving O(0.1) there. The direct wrap signal is the right-wall value itself.
+    assert M[-1, -1] < 1e-6, f"mass wrapped to the right wall (no-flux violated): M[-1,-1]={M[-1, -1]:.3e}"
+    # The far-right region stays a smooth, negligible diffusion tail. The conservative FV advection
+    # (#1184) retains the mass the old scheme leaked and is slightly more diffusive, so the tail
+    # (~4e-5) is fatter than the pre-#1184 leaking scheme (<1e-5) but still ~1e4x below the O(0.1)
+    # periodic-wrap level this test guards against.
     far_right_mass = M[-1, int(0.7 * n) :].sum() * dx
-    assert far_right_mass < 1e-5, (
+    assert far_right_mass < 1e-3, (
         f"mass wrapped through the no-flux wall: far-right (x>=0.7) mass {far_right_mass:.3e} "
-        f"(pre-#1181 the periodic default gave O(0.1) here)"
+        f"(periodic default gives O(0.1); a diffusion tail is ~4e-5)"
     )
+    # Conservative FV advection (#1184) conserves mass exactly even under strong wall-directed drift.
+    assert abs(M[-1].sum() * dx - 1.0) < 1e-9, f"mass not conserved: {M[-1].sum() * dx:.8f}"
     # Mass should pile toward the LEFT wall (where the leftward drift transports it).
     assert M[-1, 0] > M[-1, -1], "leftward drift did not pile mass at the left wall"
