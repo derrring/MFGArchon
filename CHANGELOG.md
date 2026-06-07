@@ -104,6 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Nonzero Neumann flux in the linear-reflection ghost path** (Issue #1186 sibling, FDM/SL).
+  `PreallocatedGhostBuffer._apply_linear_reflection` (the order<=2 ghost path used by FDM/SL)
+  filled Neumann/no-flux ghosts with a pure mirror, silently dropping a nonzero
+  `neumann_bc(value=g)` (it always encoded du/dn=0). It now adds the linear flux offset with the
+  Robin-branch sign (`-dx*g` at the low wall, `+dx*g` at the high wall), so the prescribed
+  `du/dn = g` is recovered at both walls. `g = 0` (and `NO_FLUX`/`REFLECTING`, definitionally
+  zero-flux) keeps the pure mirror -> byte-identical for the no-flux case, so existing FDM/SL
+  solves are unchanged. Companion to the WENO/poly-path fix (#1186); regression tests added.
 - **WENO HJB spatial scheme rebuilt: correct gradient + Lax-Friedrichs numerical Hamiltonian**
   (Issue #1200). The previous scheme reconstructed WENO interface *values* and then took a bogus
   central difference `(u_right − u_left)/(2·dx)`, so the nodal gradient fed to the Hamiltonian was
@@ -133,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the outward-normal sign (`p'(0) = -g` at the low boundary, `+g` at the high boundary,
   matching the Robin branch); `NO_FLUX`/`REFLECTING` stay zero-flux. A quadratic with `du/dn = g`
   at both ends is now reproduced to machine precision (regression test added). The order<=2 linear
-  reflection path (shared by FDM/SL) still zeroes nonzero Neumann flux — tracked separately.
+  reflection path (shared by FDM/SL) is fixed in the companion entry above (#1186 sibling).
 - **Conservative no-flux Laplacian for the implicit FP diffusion solve** (Issue #1184, diffusion
   half). `LaplacianOperator.as_scipy_sparse()` no-flux branch had zero *row* sums (2nd-order
   Neumann accuracy) but nonzero *column* sums at the walls (`≈1/h²`); the implicit FP system
