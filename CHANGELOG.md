@@ -127,6 +127,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derivative correctly before; the prior order-5 test checked the low boundary only. Now ordered
   nearest-first to match; smooth high-boundary ghosts recover machine-level accuracy (a `cos(pi x)`
   ghost went from ~1.6e-1 error to ~1e-9), with a both-boundaries regression test added.
+- **High-order ghost extrapolation honours a nonzero Neumann flux** (Issue #1186). The order>2
+  ghost BC row hardcoded `p'(0) = 0`, so a `neumann_bc(value=g)` with `g != 0` was silently
+  dropped (WENO5 HJB is the order-5 consumer). The row now encodes the prescribed `du/dn = g`
+  with the outward-normal sign (`p'(0) = -g` at the low boundary, `+g` at the high boundary,
+  matching the Robin branch); `NO_FLUX`/`REFLECTING` stay zero-flux. A quadratic with `du/dn = g`
+  at both ends is now reproduced to machine precision (regression test added). The order<=2 linear
+  reflection path (shared by FDM/SL) still zeroes nonzero Neumann flux — tracked separately.
 - **Conservative no-flux Laplacian for the implicit FP diffusion solve** (Issue #1184, diffusion
   half). `LaplacianOperator.as_scipy_sparse()` no-flux branch had zero *row* sums (2nd-order
   Neumann accuracy) but nonzero *column* sums at the walls (`≈1/h²`); the implicit FP system

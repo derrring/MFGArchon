@@ -173,6 +173,44 @@ def test_order_5_neumann_both_boundaries_accurate():
     assert high_err < 100 * low_err, f"high/low ghost asymmetry: high={high_err}, low={low_err}"
 
 
+def test_order_5_nonzero_neumann_flux():
+    """A nonzero Neumann flux is honoured, not silently zeroed (Issue #1186).
+
+    The high-order ghost BC row previously hardcoded du/dn = 0, so a ``neumann_bc(value=g)``
+    with g != 0 was dropped (WENO5 is the order-5 consumer). Uses ``u = (g/L) x^2 - g x + c``,
+    whose outward-normal derivative is exactly ``g`` at BOTH boundaries (consistent with a
+    uniform ``neumann_bc(value=g)``). Degree-5 extrapolation reproduces this quadratic
+    exactly, so the ghosts must equal ``u(x_ghost)`` to machine precision at both ends --
+    which holds only if the constraint encodes ``p'(0) = -g`` (low) / ``+g`` (high).
+    """
+    n, gd = 41, 3
+    length = 1.0
+    dx = length / (n - 1)
+    g_flux = 0.7
+    c = 2.0
+    x = np.linspace(0.0, length, n)
+
+    def u_exact(xq):
+        return (g_flux / length) * xq**2 - g_flux * xq + c
+
+    buffer = PreallocatedGhostBuffer(
+        interior_shape=(n,),
+        boundary_conditions=neumann_bc(dimension=1, value=g_flux),
+        domain_bounds=np.array([[0.0, length]]),
+        order=5,
+        ghost_depth=gd,
+    )
+    buffer.interior[:] = u_exact(x)
+    buffer.update_ghosts(time=0.0)
+
+    # Low ghosts padded[0..gd-1] at x = -gd*dx .. -dx; high ghosts padded[-gd..-1] at L+dx .. L+gd*dx.
+    for k in range(gd):
+        assert abs(buffer.padded[k] - u_exact(-(gd - k) * dx)) < 1e-9, f"low ghost {k} dropped flux g={g_flux}"
+        assert abs(buffer.padded[-gd + k] - u_exact(length + (k + 1) * dx)) < 1e-9, (
+            f"high ghost {k} dropped flux g={g_flux}"
+        )
+
+
 def test_order_3_neumann_2d():
     """Test order=3 polynomial extrapolation in 2D."""
     nx, ny = 10, 12
