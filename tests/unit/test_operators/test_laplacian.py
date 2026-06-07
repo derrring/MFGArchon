@@ -353,5 +353,50 @@ class TestLaplacianValidation:
         assert "order=2" in r
 
 
+class TestLaplacianMassConservative:
+    """Issue #1184: the no-flux sparse Laplacian used as the implicit FP system matrix must
+    be COLUMN-conservative (1ᵀL = 0) or the diffusion solve leaks mass at the walls."""
+
+    @staticmethod
+    def _sums(L):
+        A = L.as_scipy_sparse()
+        A = A.toarray() if hasattr(A, "toarray") else np.asarray(A)
+        return float(np.max(np.abs(A.sum(axis=1)))), float(np.max(np.abs(A.sum(axis=0)))), A
+
+    def test_default_noflux_is_row_but_not_column_conservative(self):
+        """The default (2nd-order ghost-mirror) stencil has zero row sums but NONZERO column
+        sums at the walls -- this is the leak the flag exists to fix."""
+        n, h = 51, 1.0 / 50
+        rmax, cmax, _ = self._sums(LaplacianOperator([h], (n,), bc=no_flux_bc(dimension=1)))
+        assert rmax < 1e-9, f"default row sums should be 0, got {rmax:.2e}"
+        assert cmax > 1.0 / h**2 / 2, f"default must show the column-sum defect, got {cmax:.2e}"
+
+    @pytest.mark.parametrize("dim", [1, 2])
+    def test_conservative_noflux_row_and_column_sums_zero(self, dim):
+        """mass_conservative=True emits the FV zero-flux stencil: BOTH row and column sums
+        vanish, so the implicit FP diffusion solve conserves mass exactly."""
+        n = 41 if dim == 1 else 11
+        h = 1.0 / (n - 1)
+        bc = no_flux_bc(dimension=dim)
+        L = LaplacianOperator([h] * dim, (n,) * dim, bc=bc, mass_conservative=True)
+        rmax, cmax, A = self._sums(L)
+        assert rmax < 1e-10, f"{dim}D conservative row sums must be 0, got {rmax:.2e}"
+        assert cmax < 1e-10, f"{dim}D conservative column sums must be 0, got {cmax:.2e}"
+        assert np.allclose(A, A.T), "FV no-flux Laplacian must be symmetric"
+
+    def test_default_unchanged_by_flag_off(self):
+        """mass_conservative=False (default) is byte-identical to the pre-#1184 stencil:
+        diag -2/h², wall interior-neighbor +2/h² (regression-lock)."""
+        n, h = 7, 0.25
+        A = LaplacianOperator([h], (n,), bc=no_flux_bc(dimension=1)).as_scipy_sparse().toarray()
+        h2 = h**2
+        assert A[0, 0] == pytest.approx(-2.0 / h2)
+        assert A[0, 1] == pytest.approx(2.0 / h2)  # ghost-mirror, not the FV +1/h²
+        assert A[-1, -1] == pytest.approx(-2.0 / h2)
+        assert A[-1, -2] == pytest.approx(2.0 / h2)
+        assert A[3, 3] == pytest.approx(-2.0 / h2)  # interior unchanged
+        assert A[3, 2] == pytest.approx(1.0 / h2)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

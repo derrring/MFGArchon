@@ -504,7 +504,11 @@ def solve_timestep_explicit_with_drift(
     else:
         from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
-        L_op = LaplacianOperator(spacings=list(spacing), field_shape=shape, bc=boundary_conditions)
+        # mass_conservative=True: the implicit FP diffusion solve needs a column-conservative
+        # (1ᵀL = 0) no-flux stencil, else mass leaks at the walls (Issue #1184).
+        L_op = LaplacianOperator(
+            spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
+        )
         L_matrix = L_op.as_scipy_sparse()
 
     # Build implicit system matrix: (I/dt - D*Δ) m^{k+1} = m^k/dt
@@ -768,7 +772,11 @@ def solve_fp_nd_full_system(
         try:
             from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
-            _L_op = LaplacianOperator(spacings=list(spacing), field_shape=shape, bc=boundary_conditions)
+            # mass_conservative=True: cached implicit-FP diffusion matrix must conserve mass
+            # at no-flux walls (column-conservative stencil; Issue #1184).
+            _L_op = LaplacianOperator(
+                spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
+            )
             _cached_laplacian = _L_op.as_scipy_sparse()
         except (ValueError, AttributeError):
             _cached_laplacian = None  # Fallback: rebuild each step
