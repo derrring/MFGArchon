@@ -24,7 +24,11 @@ from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import (
     TaylorOperator,
     create_operator,
 )
-from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
+    assemble_hjb_jacobian_diag,
+    assemble_hjb_residual,
+    eval_dH_dp_batch,
+)
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.utils.deprecation import deprecated_parameter, deprecated_value
@@ -2085,26 +2089,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         dt = self.problem.T / self.problem.Nt
         u_t = (u_n_plus_1 - u_current) / dt
-
-        # Batch Hamiltonian evaluation: H(x, m, p, t) -> (N,)
-        x = self.collocation_points  # (N, d)
-        H_total = eval_H_batch(H_class, x, m_n_plus_1, grad_u, current_time)
-
-        # Running cost L(x) at this timestep (passed explicitly from backward loop)
-        if running_cost is not None:
-            H_total = H_total + running_cost
-
-        # Diffusion term: (sigma^2 / 2) * Laplacian
-        # Issue #1073: use _get_sigma_value (returns σ) instead of confusing
-        # `getattr(problem, "diffusion") or getattr(problem, "sigma")` chain.
-        # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
-        # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
-        # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
+        # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
         sigma = self._get_sigma_value(None)
-        diffusion_term = diffusion_from_volatility(sigma) * lap_u
-
-        # HJB residual: -u_t + H - diffusion = 0
-        return -u_t + H_total - diffusion_term
+        return assemble_hjb_residual(
+            H_class=H_class,
+            x=self.collocation_points,
+            m=m_n_plus_1,
+            p=grad_u,
+            lap_u=lap_u,
+            sigma=sigma,
+            t=current_time,
+            u_t=u_t,
+            running_cost=running_cost,
+        )
 
     def _compute_hjb_jacobian_hamiltonian(
         self,
@@ -2128,33 +2125,24 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             Sparse Jacobian matrix in CSR format
         """
-        from scipy.sparse import diags, eye
-
         # Lazy initialization of differentiation matrices
         if self._D_grad is None:
             self._build_differentiation_matrices()
 
-        n = self.n_points
-        d = self.dimension
         dt = self.problem.T / self.problem.Nt
-        # Issue #1073: use _get_sigma_value (returns σ) instead of confusing
-        # `getattr(problem, "diffusion") or getattr(problem, "sigma")` chain.
-        # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
-        # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
-        # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
+        # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
         sigma = self._get_sigma_value(None)
-
-        # Batch dH/dp: shape (N, d)
-        x = self.collocation_points
-        dH_dp = eval_dH_dp_batch(H_class, x, m_n_plus_1, grad_u, current_time)
-
-        # J = (1/dt)I + sum_d diag(dH/dp_d) @ D_grad[d] - (sigma^2/2) D_lap
-        jacobian = (1.0 / dt) * eye(n, format="csr")
-        for dim in range(d):
-            jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ self._D_grad[dim]
-        jacobian = jacobian - diffusion_from_volatility(sigma) * self._D_lap
-
-        return jacobian
+        return assemble_hjb_jacobian_diag(
+            H_class=H_class,
+            x=self.collocation_points,
+            m=m_n_plus_1,
+            p=grad_u,
+            sigma=sigma,
+            t=current_time,
+            dt=dt,
+            D_grad=self._D_grad,
+            D_lap=self._D_lap,
+        )
 
     def _interpolate_potential_to_collocation(self) -> np.ndarray:
         """

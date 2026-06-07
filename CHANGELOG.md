@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-source HJB residual/Jacobian assembly** (`hjb_solvers/h_eval.py`, Issue #1071 Layer B).
+  Added `assemble_hjb_residual` (`-u_t + H(+running_cost) - D·lap_u`) and
+  `assemble_hjb_jacobian_diag` (`(1/dt)I + Σ_d diag(∂H/∂p_d)@D_grad[d] - D·D_lap`), so the
+  diffusion-term convention (`D = σ²/2`, #1073/#811) and the assembly skeleton live in one place;
+  callers supply their own discrete operators (`D_grad`, `D_lap`) and time-derivative. Folded
+  `hjb_gfdm`'s `_compute_hjb_residual_hamiltonian` + `_compute_hjb_jacobian_hamiltonian` onto them,
+  **byte-identical** (112 gfdm tests unchanged). Scoped to the gfdm implicit-residual framing; the
+  `base_hjb` (`Phi_U += -D·U_xx`) and WENO (explicit `-H + D·Δu`) framings are intentionally not
+  folded (irreducibly different). Most of the diffusion-convention centralization value was already
+  delivered by the #1189 converter sweep + Layer A.
 - **Single-source batch Hamiltonian evaluation** (`hjb_solvers/h_eval.py`, Issue #1071 Layer A).
   Every HJB solver inlined the same `np.asarray(H_class(x, m, p, t=t), dtype=float)` batch call
   (6 value + 5 `dp` sites across `base_hjb`/`hjb_fdm`/`hjb_gfdm`/`hjb_semi_lagrangian`); these now
