@@ -194,6 +194,7 @@ def compute_advection_from_drift_nd(
     ndim: int,
     scheme: str = "upwind",
     bc: Any | None = None,
+    mass_conservative: bool = False,
 ) -> np.ndarray:
     """
     Compute advection term div(alpha * m) with drift alpha provided directly.
@@ -216,6 +217,11 @@ def compute_advection_from_drift_nd(
         Advection scheme: "upwind" (default) or "centered"
     bc : BoundaryConditions, optional
         Boundary conditions. If None, uses periodic.
+    mass_conservative : bool, optional
+        If True (upwind only), use the discretely-conservative finite-volume divergence
+        that zeroes the advective flux through no-flux walls, so a density driven against
+        a wall by strong drift does not leak mass (Issue #1184). Default False keeps the
+        byte-identical node-based divergence.
 
     Returns
     -------
@@ -264,6 +270,7 @@ def compute_advection_from_drift_nd(
         scheme=scheme,
         form="divergence",  # Conservative form: ∇·(vm)
         bc=bc,
+        mass_conservative=mass_conservative,
     )
 
     # Apply operator

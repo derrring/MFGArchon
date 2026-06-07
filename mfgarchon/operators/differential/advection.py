@@ -146,6 +146,7 @@ class AdvectionOperator(LinearOperator):
         form: Literal["gradient", "divergence"] = "divergence",
         bc: BoundaryConditions | None = None,
         time: float = 0.0,
+        mass_conservative: bool = False,
     ):
         """
         Initialize advection operator.
@@ -162,6 +163,15 @@ class AdvectionOperator(LinearOperator):
                 - "divergence": ∇·(vm) (conservative, for FP)
             bc: Boundary conditions (None for periodic/wrap)
             time: Time for time-dependent BCs (default 0.0)
+            mass_conservative: If True (only for ``form="divergence"``, ``scheme="upwind"``),
+                use a finite-volume flux-difference discretisation that is discretely
+                mass-conservative at no-flux walls — the advective flux through a no-flux
+                boundary face is set to zero, so ``1ᵀA = 0`` (column-conservative) and a
+                density piled against a wall by strong drift does not leak (Issue #1184).
+                Default ``False`` keeps the node-based ``gradient_upwind`` divergence
+                (byte-identical), which is conservative in the interior but leaks
+                ``±(v·m)`` at no-flux walls. Mirrors ``LaplacianOperator.mass_conservative``
+                (Issue #1184 diffusion half / #1202).
 
         Raises:
             ValueError: If scheme or form invalid
@@ -188,6 +198,12 @@ class AdvectionOperator(LinearOperator):
         if form not in ("gradient", "divergence"):
             raise ValueError(f"Unknown form: {form}. Use 'gradient' or 'divergence'.")
 
+        if mass_conservative and not (form == "divergence" and scheme == "upwind"):
+            raise ValueError(
+                "mass_conservative=True is only supported for form='divergence' with "
+                f"scheme='upwind' (got form={form!r}, scheme={scheme!r})."
+            )
+
         self.velocity_field = velocity_field
         self.spacings = list(spacings)
         self.field_shape = field_shape
@@ -195,6 +211,7 @@ class AdvectionOperator(LinearOperator):
         self.form = form
         self.bc = bc
         self.time = time
+        self.mass_conservative = mass_conservative
         self.dimension = len(field_shape)
 
         # Validate
@@ -232,6 +249,10 @@ class AdvectionOperator(LinearOperator):
 
         # Reshape to field
         m = m_flat.reshape(self.field_shape)
+
+        # Issue #1184: opt-in discretely-conservative finite-volume divergence.
+        if self.mass_conservative:
+            return self._divergence_upwind_conservative(m).ravel()
 
         # Apply ghost cell padding if BC provided (for non-periodic)
         if self.bc is not None:
@@ -275,6 +296,56 @@ class AdvectionOperator(LinearOperator):
 
         # Return flattened
         return adv_m.ravel()
+
+    def _divergence_upwind_conservative(self, m: NDArray) -> NDArray:
+        """Discretely-conservative finite-volume upwind divergence ``∇·(vm)`` (Issue #1184).
+
+        Per axis, builds the upwind flux at each interior cell face
+        ``F_{i+1/2} = v_{i+1/2} m_i`` if ``v_{i+1/2} >= 0`` else ``v_{i+1/2} m_{i+1}``
+        (``v_{i+1/2}`` = node-average), then ``div_i = (F_{i+1/2} - F_{i-1/2}) / h``. The
+        flux telescopes, so the column sum equals the net boundary-face flux:
+
+        - **No-flux BC**: the two wall faces are set to zero flux -> ``1ᵀA = 0`` exactly
+          (mass conserved even when strong drift piles density against the wall).
+        - **Periodic (bc=None)**: the wrap face closes the telescope -> ``1ᵀA = 0``.
+
+        Only no-flux / Neumann / reflecting / periodic boundaries are supported here (the
+        FP use case); other BCs would need an inflow flux and should not opt in.
+        """
+        from mfgarchon.geometry.boundary import BCType, BoundaryConditions
+
+        periodic = self.bc is None
+        if not periodic:
+            ok = isinstance(self.bc, BoundaryConditions) and self.bc.is_uniform
+            seg_type = self.bc.segments[0].bc_type if ok else None
+            if seg_type not in (BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING):
+                raise NotImplementedError(
+                    "mass_conservative divergence supports only no-flux/Neumann/reflecting "
+                    f"(zero wall flux) or periodic boundaries; got {self.bc!r}."
+                )
+
+        div = np.zeros_like(m, dtype=np.float64)
+        for d in range(self.dimension):
+            h = self.spacings[d]
+            md = np.moveaxis(m, d, -1)
+            vd = np.moveaxis(self.velocity_field[d], d, -1)
+            # Upwind flux on interior faces i+1/2 (i = 0 .. N-2), velocity averaged to the face.
+            v_face = 0.5 * (vd[..., :-1] + vd[..., 1:])
+            flux = np.where(v_face >= 0.0, v_face * md[..., :-1], v_face * md[..., 1:])
+            dvar = np.empty_like(md)
+            if periodic:
+                v_wrap = 0.5 * (vd[..., -1] + vd[..., 0])
+                flux_wrap = np.where(v_wrap >= 0.0, v_wrap * md[..., -1], v_wrap * md[..., 0])
+                dvar[..., 0] = (flux[..., 0] - flux_wrap) / h
+                dvar[..., 1:-1] = (flux[..., 1:] - flux[..., :-1]) / h
+                dvar[..., -1] = (flux_wrap - flux[..., -1]) / h
+            else:
+                # No-flux walls: zero flux through both boundary faces.
+                dvar[..., 0] = flux[..., 0] / h
+                dvar[..., 1:-1] = (flux[..., 1:] - flux[..., :-1]) / h
+                dvar[..., -1] = -flux[..., -1] / h
+            div += np.moveaxis(dvar, -1, d)
+        return div
 
     def __call__(self, m: NDArray) -> NDArray:
         """

@@ -77,6 +77,159 @@ class TestFPProductionConservation:
         assert np.all(M[-1] > -1e-12), "production FP step produced a negative density"
 
 
+class TestConservativeAdvection:
+    """Conservative finite-volume divergence at no-flux walls (Issue #1184).
+
+    The default node-based upwind divergence is conservative in the interior but leaks
+    +-(v*m) through no-flux walls; under strong drift into a wall the explicit-drift FP
+    solve loses (or even negates) mass. The opt-in ``mass_conservative=True`` FV
+    flux-difference zeroes the wall flux so the assembled operator is column-conservative.
+    """
+
+    @staticmethod
+    def _adv_matrix(drift_val, n, conservative, bc):
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_from_drift_nd
+
+        dx = 1.0 / (n - 1)
+        drift = np.full(n, drift_val)
+        cols = []
+        for j in range(n):
+            e = np.zeros(n)
+            e[j] = 1.0
+            cols.append(compute_advection_from_drift_nd(e, drift, (dx,), 1, bc=bc, mass_conservative=conservative))
+        return np.array(cols).T, dx
+
+    def test_conservative_operator_column_sum_zero_no_flux(self):
+        """1^T A = 0 (mass conserved) for the conservative operator at no-flux walls."""
+        for drift_val in (0.3, 0.8):
+            A, dx = self._adv_matrix(drift_val, 41, conservative=True, bc=no_flux_bc(dimension=1))
+            col_sums = A.sum(axis=0) * dx
+            assert np.max(np.abs(col_sums)) < 1e-12, (
+                f"conservative operator leaks at drift={drift_val}: max|colsum|={np.max(np.abs(col_sums)):.2e}"
+            )
+
+    def test_conservative_operator_column_sum_zero_periodic(self):
+        """1^T A = 0 for the conservative operator under periodic wrap."""
+        A, dx = self._adv_matrix(0.5, 41, conservative=True, bc=None)
+        assert np.max(np.abs(A.sum(axis=0))) * dx < 1e-12
+
+    def test_default_leaks_but_conservative_holds_at_wall(self):
+        """Direct contrast in a pure-advection wall-piling loop: the default node-based
+        upwind divergence loses mass at the no-flux wall, the conservative FV form does not.
+        (The default is state-dependent/non-linear, so it is exercised in a real solve loop
+        rather than via a meaningless basis-vector matrix probe.)"""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_from_drift_nd
+
+        n = 51
+        x = np.linspace(0.0, 1.0, n)
+        dx = x[1] - x[0]
+        bc = no_flux_bc(dimension=1)
+        drift = np.full(n, -0.8)
+        dt = 0.2 * dx / 0.8  # CFL-stable for pure explicit advection
+
+        def run(conservative):
+            M = np.exp(-200.0 * (x - 0.18) ** 2)
+            M /= M.sum() * dx
+            for _ in range(400):
+                M = M - dt * compute_advection_from_drift_nd(M, drift, (dx,), 1, bc=bc, mass_conservative=conservative)
+            return float(M.sum() * dx)
+
+        mass_default = run(False)
+        mass_conservative = run(True)
+        assert abs(mass_default - 1.0) > 1e-3, f"expected default to leak at wall, got mass={mass_default:.6f}"
+        assert abs(mass_conservative - 1.0) < 1e-12, (
+            f"conservative form must preserve mass, got {mass_conservative:.8f}"
+        )
+
+    def test_explicit_drift_fp_conserves_mass_into_wall(self):
+        """The explicit-drift FP step keeps mass=1 and density>=0 when strong drift piles
+        density against a no-flux wall (pre-fix this leaked to negative mass)."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_explicit_with_drift
+
+        n = 51
+        x = np.linspace(0.0, 1.0, n)
+        dx = x[1] - x[0]
+        dt = 5e-4
+        bc = no_flux_bc(dimension=1)
+        M = np.exp(-200.0 * (x - 0.18) ** 2)
+        M /= M.sum() * dx
+        drift = np.full(n, -0.8)  # strong drift into the left wall
+        for _ in range(800):
+            M = solve_timestep_explicit_with_drift(M, drift, dt, 0.1, (dx,), 1, boundary_conditions=bc)
+        mass = float(M.sum() * dx)
+        assert abs(mass - 1.0) < 1e-9, f"explicit-drift FP leaked mass at wall: mass={mass:.8f}"
+        assert M.min() > -1e-12, f"explicit-drift FP produced negative density: min={M.min():.2e}"
+
+    def test_mass_conservative_requires_upwind_divergence(self):
+        """mass_conservative is only valid for form='divergence', scheme='upwind'."""
+        from mfgarchon.operators import AdvectionOperator
+
+        v = np.zeros((1, 5))
+        with pytest.raises(ValueError, match="mass_conservative"):
+            AdvectionOperator(v, [0.25], (5,), scheme="centered", form="divergence", mass_conservative=True)
+        with pytest.raises(ValueError, match="mass_conservative"):
+            AdvectionOperator(v, [0.25], (5,), scheme="upwind", form="gradient", mass_conservative=True)
+
+    def test_conservative_rejects_unsupported_bc(self):
+        """The conservative path supports only no-flux/Neumann/reflecting/periodic (zero wall
+        flux); other BCs (e.g. Dirichlet inflow) raise rather than silently mishandling the wall."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_from_drift_nd
+        from mfgarchon.geometry.boundary import dirichlet_bc
+
+        m = np.ones(11)
+        drift = np.full(11, 0.4)
+        with pytest.raises(NotImplementedError, match="conservative"):
+            compute_advection_from_drift_nd(
+                m, drift, (0.1,), 1, bc=dirichlet_bc(value=0.0, dimension=1), mass_conservative=True
+            )
+
+    def test_default_path_byte_identical_golden(self):
+        """Pin the DEFAULT (mass_conservative=False) divergence to frozen values, so a future
+        change to the node-based path is caught. The opt-in EOC-safety story depends on the
+        default staying byte-identical for HJB/geometry/non-opted-in consumers (Issue #1184)."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_from_drift_nd
+
+        x = np.linspace(0.0, 1.0, 11)
+        m = np.exp(-10.0 * (x - 0.5) ** 2)
+        drift = np.full(11, 0.4)
+        r = compute_advection_from_drift_nd(m, drift, (x[1] - x[0],), 1, bc=no_flux_bc(dimension=1))
+        expected = np.array([0.0, 0.818693, 0.938069, -0.938069, -0.818693, 0.0])
+        np.testing.assert_allclose(r[::2], expected, atol=1e-6)
+
+    def test_tensor_explicit_path_conserves_at_wall(self):
+        """The second opted-in production site (solve_timestep_tensor_explicit, tensor-diffusion
+        explicit path) also conserves mass when strong drift piles density against a no-flux wall."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_tensor_explicit
+
+        n = 51
+        x = np.linspace(0.0, 1.0, n)
+        dx = x[1] - x[0]
+        bc = no_flux_bc(dimension=1)
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=bc)
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: 0.0 * np.asarray(m),
+            coupling_dm=lambda m: 0.0 * np.asarray(m),
+        )
+        comps = MFGComponents(
+            m_initial=lambda xx: np.exp(-((np.asarray(xx) - 0.18) ** 2) / 0.005),
+            u_terminal=lambda xx: 0.0 * np.asarray(xx),
+            hamiltonian=H,
+        )
+        prob = MFGProblem(geometry=grid, T=0.4, Nt=50, sigma=0.05, components=comps)
+        M = np.exp(-200.0 * (x - 0.18) ** 2)
+        M /= M.sum() * dx
+        tensor = np.array([[0.05**2]])  # 1x1 diffusion tensor
+        drift = np.full(n, -0.8)  # strong drift into the left wall
+        for k in range(800):
+            M = solve_timestep_tensor_explicit(
+                M, None, prob, 5e-4, tensor, 1.0, (dx,), grid, 1, (n,), bc, k, drift=drift
+            )
+        mass = float(M.sum() * dx)
+        assert abs(mass - 1.0) < 1e-9, f"tensor-explicit path leaked mass at wall: mass={mass:.8f}"
+        assert M.min() > -1e-12, f"tensor-explicit path produced negative density: min={M.min():.2e}"
+
+
 class TestLinearConstraintMatrixAssembly:
     """
     Test LinearConstraint-based matrix assembly.

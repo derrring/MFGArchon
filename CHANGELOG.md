@@ -144,6 +144,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`mass_conservative=True`, both row- and column-conservative), so pure diffusion at no-flux walls
   conserves mass to machine precision (was 0.84% → 1.9e-15). The explicit *advection* sub-step's
   non-conservation under strong drift is a separate follow-up (#1184 step 4); `Refs #1184`.
+- **Conservative finite-volume advection at no-flux walls** (Issue #1184, advection half). The
+  divergence-form upwind advection applied a *node-based* `gradient_upwind` to the flux `v·m`,
+  which telescopes in the interior but leaks `±(v·m)` through a no-flux wall — under strong drift
+  into a wall the explicit-drift FP solve lost mass catastrophically (a density piled against the
+  wall reached mass `0.79` at drift −0.3 and went **negative** (`−0.57`) at drift −0.8). Added
+  `AdvectionOperator(mass_conservative=…)` (opt-in; mirrors `LaplacianOperator`): a finite-volume
+  flux-difference with velocity-upwinded face fluxes and **zero flux through no-flux/periodic
+  boundary faces**, so `1ᵀA = 0` exactly (column-conservative). The explicit-drift FP paths
+  (`solve_timestep_explicit_with_drift`, `solve_timestep_tensor_explicit`) opt in: mass is now
+  conserved to machine precision under arbitrary wall-directed drift, with no negative densities;
+  the scheme self-converges (L1 rate ≈ 1.2–1.6). Default `False` keeps the byte-identical
+  node-based divergence for all other consumers (verified bit-for-bit over 19 cases), so there is
+  no change to the HJB/geometry advection paths. `Fixes #1184`.
 - **WENO HJB now sub-steps each backward interval to cover the full `dt`** (Issue #1180). The
   1D/2D/3D/nD backward sweeps advanced only one CFL/diffusion-stable `dt_stable` per interval
   (often `dt_stable << dt`) while recording it as a full `dt` step, so in the common
