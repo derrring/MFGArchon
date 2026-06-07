@@ -1194,9 +1194,14 @@ class PreallocatedGhostBuffer:
             interior_indices = list(range(g + 1, g + 1 + n_stencil))
         else:
             # Ghost points: indices -g to -1 (i.e., -g, -g+1, ..., -1)
-            # Interior stencil: indices -g-n_stencil-1 to -g-1 (skip boundary at -g-1)
+            # Interior stencil: indices -g-n_stencil-1 to -g-1 (skip boundary at -g-1).
+            # Order nearest-boundary first so the pairing matches ``x_interior`` below
+            # ([-dx, -2dx, ...], also nearest-first). Without the reversal the Vandermonde
+            # rows pair x=-dx with the farthest interior value, fitting a garbage polynomial
+            # -> badly wrong high-boundary ghosts (Issue #1200: latent until HJ-WENO5 became
+            # the first high-order scheme to consume the high-boundary ghost derivative).
             ghost_indices = list(range(n_total - g, n_total))
-            interior_indices = list(range(n_total - g - n_stencil - 1, n_total - g - 1))
+            interior_indices = list(range(n_total - g - n_stencil - 1, n_total - g - 1))[::-1]
 
         # Compute polynomial coefficients once, then apply to all slices
         # Build Vandermonde matrix and solve for extrapolation weights

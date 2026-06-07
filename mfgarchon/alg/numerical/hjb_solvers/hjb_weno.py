@@ -289,8 +289,9 @@ class HJBWenoSolver(BaseHJBSolver):
         """
         Setup ghost cell buffer for boundary handling with high-order accuracy.
 
-        WENO5 requires:
-        - ghost_depth=2: 2 ghost cells on each side for 5-point stencil (i-2 to i+2)
+        HJ-WENO5 requires:
+        - ghost_depth=3: 3 ghost cells on each side for the one-sided derivative
+          stencils p_minus / p_plus (undivided differences over i-3 to i+3, #1200)
         - order=5: High-order polynomial extrapolation for O(h^5) boundary accuracy
 
         Issue #576: Unified ghost node architecture enables WENO5 to achieve
@@ -299,8 +300,12 @@ class HJBWenoSolver(BaseHJBSolver):
         Uses composition pattern: the solver holds a PreallocatedGhostBuffer
         component rather than inheriting from a BoundaryAwareSolver base class.
         """
-        # Ghost depth for WENO5: 2 cells on each side for 5-point stencil
-        self.ghost_depth = 2
+        # Ghost depth for the Osher-Shu HJ-WENO5 one-sided derivative stencil.
+        # Reconstructing p_minus / p_plus at an interior node needs the undivided
+        # differences spanning u_{i-3} .. u_{i+3} (Issue #1200), i.e. 3 ghost cells
+        # per side -- not 2. (2 sufficed only for the previous, incorrect, value-
+        # interface reconstruction.)
+        self.ghost_depth = 3
 
         # Reconstruction order: 5th-order accuracy at boundaries
         # Issue #576: Uses polynomial extrapolation (not simple reflection)
@@ -312,24 +317,17 @@ class HJBWenoSolver(BaseHJBSolver):
         # Build domain bounds from grid information
         domain_bounds = self._get_domain_bounds()
 
-        # Create ghost buffer for each dimension
-        # For 1D, interior_shape is (num_points,)
-        # For nD, we create per-dimension buffers for dimensional splitting
-        if self.dimension == 1:
-            interior_shape = (self.num_grid_points_x,)
-            self.ghost_buffer = PreallocatedGhostBuffer(
-                interior_shape=interior_shape,
-                boundary_conditions=bc,
-                domain_bounds=domain_bounds,
-                ghost_depth=self.ghost_depth,
-                order=self.ghost_order,  # High-order ghost cells for WENO5
-            )
-        else:
-            # For multi-D with dimensional splitting, we create 1D buffers on demand
-            # Store BC and bounds for later use
-            self._bc = bc
-            self._domain_bounds = domain_bounds
-            self.ghost_buffer = None  # Created per-sweep in multi-D
+        # Single nD ghost buffer for every dimension. update_ghosts() fills ghosts
+        # on all axes; each directional sweep reads the BC-correct line along its
+        # axis from the padded buffer (Issue #1200 -- replaces the former
+        # per-dimension special-casing and the multi-D None placeholder).
+        self.ghost_buffer = PreallocatedGhostBuffer(
+            interior_shape=tuple(self.num_grid_points),
+            boundary_conditions=bc,
+            domain_bounds=domain_bounds,
+            ghost_depth=self.ghost_depth,
+            order=self.ghost_order,  # High-order ghost cells for WENO5
+        )
 
     def _get_boundary_conditions(self):
         """
@@ -611,7 +609,10 @@ class HJBWenoSolver(BaseHJBSolver):
 
     def solve_hjb_step(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
         """
-        Solve one time step of the HJB equation using selected WENO variant.
+        Solve one 1D backward time step of the HJB equation (axis 0).
+
+        Multi-dimensional sweeps call ``_solve_hjb_step_axis`` directly with the
+        target axis; this is the public 1D entry point.
 
         Args:
             u_current: Current value function
@@ -621,33 +622,31 @@ class HJBWenoSolver(BaseHJBSolver):
         Returns:
             u_new: Updated value function after one time step
         """
+        return self._solve_hjb_step_axis(u_current, m_current, dt, axis=0)
+
+    def _solve_hjb_step_axis(self, u: np.ndarray, m: np.ndarray, dt: float, axis: int) -> np.ndarray:
+        """One backward time step of the 1D HJB operator along ``axis``.
+
+        The spatial discretisation (HJ-WENO5 derivatives + Lax-Friedrichs
+        numerical Hamiltonian + central diffusion) is supplied by
+        ``_compute_hjb_rhs_axis``; this method only advances it in time. Used for
+        the 1D solve (axis 0) and for every direction of the multi-D
+        dimensional split.
+        """
         if self.time_integration == "tvd_rk3":
-            return self._solve_hjb_tvd_rk3(u_current, m_current, dt)
+            # Stage 1
+            k1 = self._compute_hjb_rhs_axis(u, m, axis)
+            u1 = u + dt * k1
+            # Stage 2
+            k2 = self._compute_hjb_rhs_axis(u1, m, axis)
+            u2 = (3 / 4) * u + (1 / 4) * u1 + (1 / 4) * dt * k2
+            # Stage 3
+            k3 = self._compute_hjb_rhs_axis(u2, m, axis)
+            return (1 / 3) * u + (2 / 3) * u2 + (2 / 3) * dt * k3
         elif self.time_integration == "explicit_euler":
-            return self._solve_hjb_explicit_euler(u_current, m_current, dt)
+            return u + dt * self._compute_hjb_rhs_axis(u, m, axis)
         else:
             raise ValueError(f"Unknown time integration: {self.time_integration}")
-
-    def _solve_hjb_explicit_euler(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
-        """Explicit Euler time step with WENO spatial discretization."""
-        rhs = self._compute_hjb_rhs(u_current, m_current)
-        return u_current + dt * rhs
-
-    def _solve_hjb_tvd_rk3(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
-        """TVD-RK3 time step with WENO spatial discretization."""
-        # Stage 1
-        k1 = self._compute_hjb_rhs(u_current, m_current)
-        u1 = u_current + dt * k1
-
-        # Stage 2
-        k2 = self._compute_hjb_rhs(u1, m_current)
-        u2 = (3 / 4) * u_current + (1 / 4) * u1 + (1 / 4) * dt * k2
-
-        # Stage 3
-        k3 = self._compute_hjb_rhs(u2, m_current)
-        u_new = (1 / 3) * u_current + (2 / 3) * u2 + (2 / 3) * dt * k3
-
-        return u_new
 
     def _evaluate_hamiltonian(self, x_idx: int, m_val: float, grad: float, direction: tuple[int, ...] = (1,)) -> float:
         """
@@ -698,128 +697,159 @@ class HJBWenoSolver(BaseHJBSolver):
         # For 1D partial: H = (1/2)|∂u/∂x_i|² + m * ∂u/∂x_i
         return 0.5 * grad**2 + m_val * grad
 
-    def _compute_hjb_rhs(self, u: np.ndarray, m: np.ndarray) -> np.ndarray:
+    def _compute_hjb_rhs_axis(self, u: np.ndarray, m: np.ndarray, axis: int) -> np.ndarray:
+        """Right-hand side of the HJB equation along a single ``axis``.
+
+        Implements the monotone Hamilton-Jacobi discretisation (Issue #1200):
+
+            RHS = -Hhat(p_minus, p_plus) + D * d^2u/dx_axis^2
+
+        where ``p_minus`` / ``p_plus`` are the Osher-Shu HJ-WENO5 one-sided nodal
+        derivatives along ``axis`` and ``Hhat`` is the global Lax-Friedrichs
+        numerical Hamiltonian
+
+            Hhat = H((p_minus + p_plus)/2) - (alpha/2) * (p_plus - p_minus),
+            alpha = max |dH/dp|.
+
+        The LF viscosity (proportional to ``p_plus - p_minus ~ dx * u_xx``) damps
+        the high-frequency modes the previous central-difference scheme amplified,
+        while staying O(h^5) where the field is smooth. ``D = sigma^2/2``. Works in
+        any dimension: the field is padded on every axis and differentiated along
+        ``axis`` only, so this single operator serves both the 1D solve and each
+        direction of the multi-D dimensional split.
         """
-        Compute right-hand side of HJB equation using WENO discretization.
+        dx = self.grid_spacing[axis]
+        g = self.ghost_depth
 
-        RHS = -H(x, ∇u, m) + (σ²/2)Δu
-
-        Uses ghost cells for full 5th-order accuracy at boundaries.
-        """
-        n = len(u)
-        rhs = np.zeros(n)
-        dx = self.grid_spacing_x
-        g = self.ghost_depth  # 2 for WENO5
-
-        # Apply boundary conditions via ghost buffer
-        # This gives us a padded array with ghost cells on each side
+        # BC-aware ghost padding on every axis; the line along `axis` is then exact.
         self.ghost_buffer.interior[:] = u
         self.ghost_buffer.update_ghosts()
-        u_padded = self.ghost_buffer.padded  # Shape: (n + 2*g,)
+        u_padded = self.ghost_buffer.padded
 
-        # Compute spatial derivatives using WENO reconstruction on padded array
-        # Now we can use full WENO stencil at ALL interior points
-        u_x = np.zeros(n)
+        # One-sided HJ-WENO5 derivatives along `axis`.
+        p_minus, p_plus = self._weno5_hj_derivatives(u_padded, axis, dx)
 
-        for i in range(n):  # All interior points
-            # Index in padded array
-            i_pad = i + g
+        # Central second derivative along `axis` (ghost cells make it valid everywhere).
+        # Restrict non-swept axes to interior so u_aa is interior-shaped on all axes.
+        interior = [slice(g, -g)] * u_padded.ndim
+        interior[axis] = slice(None)
+        ua = np.moveaxis(u_padded[tuple(interior)], axis, -1)
+        n = ua.shape[-1] - 2 * g
+        u_aa = (ua[..., g + 1 : g + 1 + n] - 2.0 * ua[..., g : g + n] + ua[..., g - 1 : g - 1 + n]) / dx**2
+        u_aa = np.moveaxis(u_aa, -1, axis)
 
-            # WENO reconstruction for derivative approximation
-            # Now uses full stencil without clamping at boundaries
-            u_left, u_right = self._weno_reconstruction_padded(u_padded, i_pad)
+        # Per-direction Hamiltonian value at the averaged momentum + LF dissipation.
+        p_mid = 0.5 * (p_minus + p_plus)
+        direction = tuple(1 if d == axis else 0 for d in range(self.dimension))
+        h_mid, alpha = self._directional_hamiltonian_and_speed(m, p_mid, direction, axis)
+        h_hat = h_mid - 0.5 * alpha * (p_plus - p_minus)
 
-            # High-order central difference for first derivative
-            u_x[i] = (u_right - u_left) / (2 * dx)
+        diffusion = diffusion_from_volatility(self.problem.sigma)
+        return -h_hat + diffusion * u_aa
 
-        # Compute second derivative using central differences on padded array
-        # With ghost cells, we can use standard central diff at all points
-        u_xx = np.zeros(n)
-        for i in range(n):
-            i_pad = i + g
-            u_xx[i] = (u_padded[i_pad + 1] - 2 * u_padded[i_pad] + u_padded[i_pad - 1]) / dx**2
+    def _weno5_hj_derivatives(self, u_padded: np.ndarray, axis: int, dx: float) -> tuple[np.ndarray, np.ndarray]:
+        """Osher-Shu HJ-WENO5 one-sided nodal derivatives along ``axis``.
 
-        # Compute Hamiltonian and assemble RHS
-        for i in range(n):
-            # Evaluate Hamiltonian using problem interface (direction (1,) = x-derivative)
-            hamiltonian = self._evaluate_hamiltonian(i, m[i], u_x[i], direction=(1,))
-
-            # RHS = -H + diffusion
-            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_xx[i]
-
-        return rhs
-
-    def _weno_reconstruction_padded(self, u_padded: np.ndarray, i: int) -> tuple[float, float]:
+        Returns ``(p_minus, p_plus)`` -- the left- and right-biased fifth-order
+        WENO reconstructions of ``du/dx_axis`` at every interior node, shaped like
+        the interior field. Both are O(h^5) where the field is smooth and degrade
+        gracefully (no Gibbs growth) near kinks. Requires ``ghost_depth >= 3``: the
+        stencils span the undivided differences over ``u_{i-3} .. u_{i+3}``.
         """
-        WENO reconstruction on padded array (no boundary clamping needed).
+        g = self.ghost_depth
+        # Keep ghosts on the swept axis (the derivative needs them); restrict every
+        # other axis to its interior so the result is interior-shaped on all axes.
+        interior = [slice(g, -g)] * u_padded.ndim
+        interior[axis] = slice(None)
+        ua = np.moveaxis(u_padded[tuple(interior)], axis, -1)
+        # Undivided differences D[k] = (u[k+1] - u[k]) / dx, living at k+1/2.
+        diffs = np.diff(ua, axis=-1) / dx
+        n = ua.shape[-1] - 2 * g
 
-        Args:
-            u_padded: Padded array with ghost cells
-            i: Index in padded array (must have valid stencil i-2 to i+2)
+        # Left-biased stencil:  v_minus = [D[i],   D[i+1], D[i+2], D[i+3], D[i+4]]
+        vm = np.stack([diffs[..., k : k + n] for k in range(5)], axis=-1)
+        # Right-biased stencil: v_plus  = [D[i+5], D[i+4], D[i+3], D[i+2], D[i+1]]
+        vp = np.stack([diffs[..., (5 - k) : (5 - k) + n] for k in range(5)], axis=-1)
 
-        Returns:
-            (u_left, u_right): Reconstructed values at interface
+        p_minus = self._weno5_reconstruct_derivative(vm)
+        p_plus = self._weno5_reconstruct_derivative(vp)
+        return np.moveaxis(p_minus, -1, axis), np.moveaxis(p_plus, -1, axis)
+
+    def _weno5_reconstruct_derivative(self, v: np.ndarray) -> np.ndarray:
+        """Fifth-order WENO combination of three candidate derivative stencils.
+
+        ``v`` has shape ``(..., 5)`` and holds the five undivided differences,
+        ordered so the smooth (optimal-weight) combination approximates the nodal
+        derivative. Honours the selected WENO variant via the nonlinear weights.
+        Each candidate's coefficients sum to one, so on a constant-gradient field
+        the reconstruction is exact.
         """
-        # Get WENO weights using selected variant
-        w_plus, w_minus = self._compute_weno_weights_padded(u_padded, i)
+        beta = self._weno5_smoothness(v)
+        w = self._weno5_nonlinear_weights(beta)
+        v1, v2, v3, v4, v5 = (v[..., k] for k in range(5))
+        # Candidate third-order derivative reconstructions (Osher-Shu / Jiang-Peng).
+        q0 = v1 / 3.0 - 7.0 * v2 / 6.0 + 11.0 * v3 / 6.0
+        q1 = -v2 / 6.0 + 5.0 * v3 / 6.0 + v4 / 3.0
+        q2 = v3 / 3.0 + 5.0 * v4 / 6.0 - v5 / 6.0
+        return w[..., 0] * q0 + w[..., 1] * q1 + w[..., 2] * q2
 
-        # Extract 5-point stencil (no clamping - ghost cells ensure validity)
-        u = u_padded[i - 2 : i + 3]
+    @staticmethod
+    def _weno5_smoothness(v: np.ndarray) -> np.ndarray:
+        """Vectorised WENO5 smoothness indicators from stacked differences ``v`` (..., 5)."""
+        v1, v2, v3, v4, v5 = (v[..., k] for k in range(5))
+        b0 = (13.0 / 12.0) * (v1 - 2.0 * v2 + v3) ** 2 + 0.25 * (v1 - 4.0 * v2 + 3.0 * v3) ** 2
+        b1 = (13.0 / 12.0) * (v2 - 2.0 * v3 + v4) ** 2 + 0.25 * (v2 - v4) ** 2
+        b2 = (13.0 / 12.0) * (v3 - 2.0 * v4 + v5) ** 2 + 0.25 * (3.0 * v3 - 4.0 * v4 + v5) ** 2
+        return np.stack([b0, b1, b2], axis=-1)
 
-        # Reconstruct using weighted combination of sub-stencil polynomials
-        u_left = 0.0
-        u_right = 0.0
+    def _weno5_nonlinear_weights(self, beta: np.ndarray) -> np.ndarray:
+        """Vectorised nonlinear weights for the HJ derivative reconstruction.
 
-        for k in range(3):
-            # Left reconstruction (positive direction)
-            u_left += w_plus[k] * np.dot(self.c_plus[k], u[k : k + 3])
-
-            # Right reconstruction (negative direction)
-            if k == 0:
-                u_vals = u[2::-1]  # [u2, u1, u0]
-            elif k == 1:
-                u_vals = u[3:0:-1]  # [u3, u2, u1]
-            else:  # k == 2
-                u_vals = u[4:1:-1]  # [u4, u3, u2]
-
-            u_right += w_minus[k] * np.dot(self.c_minus[k], u_vals)
-
-        return u_left, u_right
-
-    def _compute_weno_weights_padded(self, u_padded: np.ndarray, i: int) -> tuple[np.ndarray, np.ndarray]:
+        Optimal linear weights for the one-sided derivative are ``(0.1, 0.6, 0.3)``.
+        ``weno5`` / ``weno-js`` use the classic Jiang-Shu weights; ``weno-z`` adds
+        the global smoothness measure ``tau_5 = |beta_0 - beta_2|``; ``weno-m``
+        applies the Henrick mapping toward the optimal weights.
         """
-        Compute WENO weights on padded array (no boundary clamping).
+        eps = self.weno_epsilon
+        d = np.array([0.1, 0.6, 0.3])
 
-        Args:
-            u_padded: Padded array with ghost cells
-            i: Index in padded array
-
-        Returns:
-            (w_plus, w_minus): WENO weights for upwind and downwind reconstruction
-        """
-        # Extract 5-point stencil directly (ghost cells ensure validity)
-        u = u_padded[i - 2 : i + 3]
-
-        # Compute smoothness indicators (same for all variants)
-        beta = self._compute_smoothness_indicators(u)
-
-        # Select weight calculation based on variant
-        if self.weno_variant == "weno5" or self.weno_variant == "weno-js":
-            w_plus = self._compute_classic_weights(beta, self.d_plus)
-            w_minus = self._compute_classic_weights(beta[::-1], self.d_minus)
-        elif self.weno_variant == "weno-z":
-            tau = self._compute_tau_indicator(u)
-            w_plus = self._compute_z_weights(beta, tau, self.d_plus)
-            w_minus = self._compute_z_weights(beta[::-1], tau, self.d_minus)
+        if self.weno_variant == "weno-z":
+            tau5 = np.abs(beta[..., 0:1] - beta[..., 2:3])
+            alpha = d * (1.0 + (tau5 / (eps + beta)) ** self.weno_z_parameter)
         elif self.weno_variant == "weno-m":
-            w_plus = self._compute_mapped_weights(beta, self.d_plus)
-            w_minus = self._compute_mapped_weights(beta[::-1], self.d_minus)
-        else:
-            # Fallback to classic
-            w_plus = self._compute_classic_weights(beta, self.d_plus)
-            w_minus = self._compute_classic_weights(beta[::-1], self.d_minus)
+            alpha0 = d / (eps + beta) ** 2
+            w0 = alpha0 / np.sum(alpha0, axis=-1, keepdims=True)
+            # Henrick et al. (2005) mapping toward the optimal linear weights.
+            alpha = w0 * (d + d * d - 3.0 * d * w0 + w0 * w0) / (d * d + w0 * (1.0 - 2.0 * d))
+        else:  # weno5 / weno-js (classic Jiang-Shu)
+            alpha = d / (eps + beta) ** 2
 
-        return w_plus, w_minus
+        return alpha / np.sum(alpha, axis=-1, keepdims=True)
+
+    def _directional_hamiltonian_and_speed(
+        self, m: np.ndarray, p_mid: np.ndarray, direction: tuple[int, ...], axis: int
+    ) -> tuple[np.ndarray, float]:
+        """Per-node Hamiltonian ``H(p_mid)`` and global LF speed ``alpha = max|dH/dp|``.
+
+        Reuses ``_evaluate_hamiltonian`` (dimensional-splitting convention: only the
+        derivative along ``axis`` is non-zero). ``alpha`` is estimated by a central
+        finite difference of ``H`` in ``p``; over-estimating it only adds
+        dissipation, so the bound is safe. ``x_idx`` is the index along the swept
+        axis, matching the pre-#1200 per-direction operators.
+        """
+        h_mid = np.empty_like(p_mid)
+        speed = np.empty_like(p_mid)
+        eps = 1e-7
+        for idx in np.ndindex(p_mid.shape):
+            x_idx = idx[axis]
+            m_val = float(m[idx])
+            p = float(p_mid[idx])
+            h_mid[idx] = self._evaluate_hamiltonian(x_idx, m_val, p, direction=direction)
+            h_plus = self._evaluate_hamiltonian(x_idx, m_val, p + eps, direction=direction)
+            h_minus = self._evaluate_hamiltonian(x_idx, m_val, p - eps, direction=direction)
+            speed[idx] = abs((h_plus - h_minus) / (2.0 * eps))
+        alpha = float(np.max(speed)) if speed.size else 0.0
+        return h_mid, alpha
 
     def _compute_dt_stable_1d(self, u: np.ndarray, m: np.ndarray) -> float:
         """Compute stable time step based on CFL and diffusion stability."""
@@ -935,38 +965,31 @@ class HJBWenoSolver(BaseHJBSolver):
 
     def _step_2d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
         """One 2D dimensional-split step of size ``dt`` (Strang or Godunov)."""
-        if self.splitting_method == "strang":
-            u_half = self._solve_hjb_step_2d_x_direction(u, m, dt / 2)
-            u_full = self._solve_hjb_step_2d_y_direction(u_half, m, dt)
-            return self._solve_hjb_step_2d_x_direction(u_full, m, dt / 2)
-        u_half = self._solve_hjb_step_2d_x_direction(u, m, dt)
-        return self._solve_hjb_step_2d_y_direction(u_half, m, dt)
+        return self._step_nd_split(u, m, dt)
 
     def _step_3d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
         """One 3D dimensional-split step of size ``dt`` (Strang or Godunov)."""
-        if self.splitting_method == "strang":
-            u1 = self._solve_hjb_step_3d_x_direction(u, m, dt / 2)
-            u2 = self._solve_hjb_step_3d_y_direction(u1, m, dt / 2)
-            u3 = self._solve_hjb_step_3d_z_direction(u2, m, dt)
-            u4 = self._solve_hjb_step_3d_y_direction(u3, m, dt / 2)
-            return self._solve_hjb_step_3d_x_direction(u4, m, dt / 2)
-        u1 = self._solve_hjb_step_3d_x_direction(u, m, dt)
-        u2 = self._solve_hjb_step_3d_y_direction(u1, m, dt)
-        return self._solve_hjb_step_3d_z_direction(u2, m, dt)
+        return self._step_nd_split(u, m, dt)
 
     def _step_nd_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """One nD dimensional-split step of size ``dt`` (Strang or Godunov)."""
+        """One dimensional-split step of size ``dt`` (Strang or Godunov), any dim.
+
+        Each axis is advanced by the single unified operator ``_solve_hjb_step_axis``
+        (Issue #1200). Strang splitting sweeps axes ``0..d-2`` at half step, the last
+        axis ``d-1`` at full step, then ``0..d-2`` again at half step (second-order in
+        time); Godunov sweeps each axis once at full step (first-order).
+        """
         if self.splitting_method == "strang":
             u_temp = u.copy()
             for dim_idx in range(self.dimension - 1):
-                u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt / 2, dim_idx)
-            u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt, self.dimension - 1)
+                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx)
+            u_temp = self._solve_hjb_step_axis(u_temp, m, dt, self.dimension - 1)
             for dim_idx in range(self.dimension - 2, -1, -1):
-                u_temp = self._solve_hjb_step_direction_nd(u_temp, m, dt / 2, dim_idx)
+                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx)
             return u_temp
         u_new = u.copy()
         for dim_idx in range(self.dimension):
-            u_new = self._solve_hjb_step_direction_nd(u_new, m, dt, dim_idx)
+            u_new = self._solve_hjb_step_axis(u_new, m, dt, dim_idx)
         return u_new
 
     def _solve_hjb_system_1d(
@@ -1126,74 +1149,6 @@ class HJBWenoSolver(BaseHJBSolver):
 
         return U_solved
 
-    def _solve_hjb_step_direction_nd(self, u: np.ndarray, m: np.ndarray, dt: float, axis: int) -> np.ndarray:
-        """
-        Apply WENO reconstruction along a specific axis for nD problems.
-
-        This is the dimension-agnostic directional solver that works for any dimension.
-
-        Args:
-            u: Value function array (shape: [n0, n1, ..., nd])
-            m: Density array (shape: [n0, n1, ..., nd])
-            dt: Time step
-            axis: Axis index to apply WENO (0 = first spatial dimension, etc.)
-
-        Returns:
-            u_new: Updated value function after WENO step along specified axis
-        """
-        u_new = u.copy()
-
-        # Move target axis to the end for easier slicing
-        u_transposed = np.moveaxis(u, axis, -1)
-        m_transposed = np.moveaxis(m, axis, -1)
-        u_new_transposed = np.moveaxis(u_new, axis, -1)
-
-        # Get shape of all dimensions except the target axis
-        shape_except_axis = u_transposed.shape[:-1]
-
-        # Iterate over all slices perpendicular to the target axis
-        for idx in np.ndindex(shape_except_axis):
-            u_slice = u_transposed[idx]
-            m_slice = m_transposed[idx]
-
-            # Apply 1D WENO step adapted for this direction
-            u_new_transposed[idx] = self._solve_hjb_step_1d_direction_adapted(u_slice, m_slice, dt, axis)
-
-        # Move axis back to original position
-        u_new = np.moveaxis(u_new_transposed, -1, axis)
-
-        return u_new
-
-    def _solve_hjb_step_1d_direction_adapted(
-        self, u_1d: np.ndarray, m_1d: np.ndarray, dt: float, axis: int
-    ) -> np.ndarray:
-        """
-        Apply 1D WENO step adapted for a specific direction with appropriate grid spacing.
-
-        Args:
-            u_1d: 1D slice of value function
-            m_1d: 1D slice of density
-            dt: Time step
-            axis: Axis index (0, 1, 2, ...) to determine grid spacing
-
-        Returns:
-            u_new: Updated 1D slice
-        """
-        # Save current grid spacing and temporarily replace with axis-specific spacing
-        original_spacing = self.grid_spacing_x
-        self.grid_spacing_x = self.grid_spacing[axis]
-
-        # Apply 1D WENO solver
-        if self.time_integration == "tvd_rk3":
-            u_new = self._solve_hjb_tvd_rk3(u_1d, m_1d, dt)
-        else:
-            u_new = self._solve_hjb_explicit_euler(u_1d, m_1d, dt)
-
-        # Restore original spacing
-        self.grid_spacing_x = original_spacing
-
-        return u_new
-
     def _compute_dt_stable_nd(self, u: np.ndarray, m: np.ndarray) -> float:
         """
         Compute stable time step for nD problem based on CFL and diffusion stability.
@@ -1251,99 +1206,6 @@ class HJBWenoSolver(BaseHJBSolver):
 
         return max(dt_stable, 1e-10)  # Ensure positive time step
 
-    def _solve_hjb_step_2d_x_direction(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """Apply WENO reconstruction in X-direction for 2D problem."""
-        u_new = u.copy()
-
-        # Apply 1D WENO reconstruction in X-direction for each Y-slice
-        for j in range(self.num_grid_points_y):
-            u_slice = u[:, j]
-            m_slice = m[:, j]
-
-            # Use existing 1D WENO step
-            u_new[:, j] = self.solve_hjb_step(u_slice, m_slice, dt)
-
-        return u_new
-
-    def _solve_hjb_step_2d_y_direction(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """Apply WENO reconstruction in Y-direction for 2D problem."""
-        u_new = u.copy()
-
-        # Apply 1D WENO reconstruction in Y-direction for each X-slice
-        # This requires adapting the 1D solver to work on transposed arrays
-        for i in range(self.num_grid_points_x):
-            u_slice = u[i, :]
-            m_slice = m[i, :]
-
-            # Apply 1D WENO step (would need adaptation for different grid spacing)
-            # For now, use simplified approach
-            u_new[i, :] = self._solve_hjb_step_1d_y_adapted(u_slice, m_slice, dt)
-
-        return u_new
-
-    def _solve_hjb_step_1d_y_adapted(self, u_1d: np.ndarray, m_1d: np.ndarray, dt: float) -> np.ndarray:
-        """Apply 1D WENO step adapted for Y-direction with appropriate grid spacing."""
-        # This is a simplified adaptation - in full implementation would properly
-        # handle different grid spacing and coordinate systems
-
-        # Use existing WENO reconstruction logic but with Y-direction spacing
-        if self.time_integration == "tvd_rk3":
-            return self._solve_hjb_tvd_rk3_y_adapted(u_1d, m_1d, dt)
-        else:
-            return self._solve_hjb_explicit_euler_y_adapted(u_1d, m_1d, dt)
-
-    def _solve_hjb_tvd_rk3_y_adapted(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
-        """TVD-RK3 time stepping adapted for Y-direction."""
-        # Stage 1
-        L1 = self._compute_spatial_operator_y_adapted(u_current, m_current)
-        u1 = u_current + dt * L1
-
-        # Stage 2
-        L2 = self._compute_spatial_operator_y_adapted(u1, m_current)
-        u2 = 0.75 * u_current + 0.25 * u1 + 0.25 * dt * L2
-
-        # Stage 3
-        L3 = self._compute_spatial_operator_y_adapted(u2, m_current)
-        u_new = (1.0 / 3.0) * u_current + (2.0 / 3.0) * u2 + (2.0 / 3.0) * dt * L3
-
-        return u_new
-
-    def _solve_hjb_explicit_euler_y_adapted(
-        self, u_current: np.ndarray, m_current: np.ndarray, dt: float
-    ) -> np.ndarray:
-        """Explicit Euler time stepping adapted for Y-direction."""
-        L = self._compute_spatial_operator_y_adapted(u_current, m_current)
-        return u_current + dt * L
-
-    def _compute_spatial_operator_y_adapted(self, u: np.ndarray, m: np.ndarray) -> np.ndarray:
-        """Compute spatial operator for Y-direction with adapted grid spacing."""
-        # This is a placeholder - full implementation would properly handle
-        # Y-direction WENO reconstruction with self.grid_spacing_y spacing
-        n = len(u)
-        rhs = np.zeros(n)
-
-        # Compute derivatives using Y-direction spacing
-        u_y = self._weno_reconstruction_y_adapted(u)
-
-        # Second derivative (central differences with Y spacing)
-        u_yy = np.zeros(n)
-        u_yy[1:-1] = (u[:-2] - 2 * u[1:-1] + u[2:]) / (self.grid_spacing_y**2)
-        u_yy[0] = u_yy[1]
-        u_yy[-1] = u_yy[-2]
-
-        # Hamiltonian evaluation for Y-direction (direction (0,1) = y-derivative)
-        for i in range(n):
-            hamiltonian = self._evaluate_hamiltonian(i, m[i], u_y[i], direction=(0, 1))
-            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_yy[i]
-
-        return rhs
-
-    def _weno_reconstruction_y_adapted(self, u: np.ndarray) -> np.ndarray:
-        """WENO reconstruction adapted for Y-direction with proper grid spacing."""
-        # This would use the same WENO logic but with Dy spacing
-        # For now, use standard gradient as placeholder
-        return np.gradient(u, self.grid_spacing_y)
-
     def _compute_dt_stable_3d(self, u: np.ndarray, m: np.ndarray) -> float:
         """Compute stable time step for 3D problem based on CFL and diffusion stability."""
         # Compute gradients for stability analysis
@@ -1374,100 +1236,6 @@ class HJBWenoSolver(BaseHJBSolver):
         dt_diffusion = min(dt_diffusion_x, dt_diffusion_y, dt_diffusion_z)
 
         return min(dt_cfl, dt_diffusion)
-
-    def _solve_hjb_step_3d_x_direction(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """Apply WENO reconstruction in X-direction for 3D problem."""
-        u_new = u.copy()
-        # Apply 1D WENO reconstruction in X-direction for each (Y,Z)-slice
-        for j in range(self.num_grid_points_y):
-            for k in range(self.num_grid_points_z):
-                u_slice = u[:, j, k]
-                m_slice = m[:, j, k]
-                # Apply 1D WENO step
-                u_new[:, j, k] = self._solve_hjb_step_1d_adapted(u_slice, m_slice, dt)
-        return u_new
-
-    def _solve_hjb_step_3d_y_direction(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """Apply WENO reconstruction in Y-direction for 3D problem."""
-        u_new = u.copy()
-        # Apply 1D WENO reconstruction in Y-direction for each (X,Z)-slice
-        for i in range(self.num_grid_points_x):
-            for k in range(self.num_grid_points_z):
-                u_slice = u[i, :, k]
-                m_slice = m[i, :, k]
-                # Apply 1D WENO step adapted for Y-direction
-                u_new[i, :, k] = self._solve_hjb_step_1d_y_adapted(u_slice, m_slice, dt)
-        return u_new
-
-    def _solve_hjb_step_3d_z_direction(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """Apply WENO reconstruction in Z-direction for 3D problem."""
-        u_new = u.copy()
-        # Apply 1D WENO reconstruction in Z-direction for each (X,Y)-slice
-        for i in range(self.num_grid_points_x):
-            for j in range(self.num_grid_points_y):
-                u_slice = u[i, j, :]
-                m_slice = m[i, j, :]
-                # Apply 1D WENO step adapted for Z-direction
-                u_new[i, j, :] = self._solve_hjb_step_1d_z_adapted(u_slice, m_slice, dt)
-        return u_new
-
-    def _solve_hjb_step_1d_z_adapted(self, u_1d: np.ndarray, m_1d: np.ndarray, dt: float) -> np.ndarray:
-        """Apply 1D WENO step adapted for Z-direction with appropriate grid spacing."""
-        # Use existing WENO reconstruction logic but with Z-direction spacing
-        if self.time_integration == "tvd_rk3":
-            return self._solve_hjb_tvd_rk3_z_adapted(u_1d, m_1d, dt)
-        else:
-            return self._solve_hjb_explicit_euler_z_adapted(u_1d, m_1d, dt)
-
-    def _solve_hjb_tvd_rk3_z_adapted(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
-        """TVD-RK3 time stepping adapted for Z-direction."""
-        # Stage 1
-        L1 = self._compute_spatial_operator_z_adapted(u_current, m_current)
-        u1 = u_current + dt * L1
-
-        # Stage 2
-        L2 = self._compute_spatial_operator_z_adapted(u1, m_current)
-        u2 = 0.75 * u_current + 0.25 * u1 + 0.25 * dt * L2
-
-        # Stage 3
-        L3 = self._compute_spatial_operator_z_adapted(u2, m_current)
-        u_new = (1.0 / 3.0) * u_current + (2.0 / 3.0) * u2 + (2.0 / 3.0) * dt * L3
-
-        return u_new
-
-    def _solve_hjb_explicit_euler_z_adapted(
-        self, u_current: np.ndarray, m_current: np.ndarray, dt: float
-    ) -> np.ndarray:
-        """Explicit Euler time stepping adapted for Z-direction."""
-        L = self._compute_spatial_operator_z_adapted(u_current, m_current)
-        return u_current + dt * L
-
-    def _compute_spatial_operator_z_adapted(self, u: np.ndarray, m: np.ndarray) -> np.ndarray:
-        """Compute spatial operator for Z-direction with adapted grid spacing."""
-        n = len(u)
-        rhs = np.zeros(n)
-
-        # Compute derivatives using Z-direction spacing
-        u_z = self._weno_reconstruction_z_adapted(u)
-
-        # Second derivative (central differences with Z spacing)
-        u_zz = np.zeros(n)
-        u_zz[1:-1] = (u[:-2] - 2 * u[1:-1] + u[2:]) / (self.grid_spacing_z**2)
-        u_zz[0] = u_zz[1]
-        u_zz[-1] = u_zz[-2]
-
-        # Hamiltonian evaluation for Z-direction (direction (0,0,1) = z-derivative)
-        for i in range(n):
-            hamiltonian = self._evaluate_hamiltonian(i, m[i], u_z[i], direction=(0, 0, 1))
-            rhs[i] = -hamiltonian + diffusion_from_volatility(self.problem.sigma) * u_zz[i]
-
-        return rhs
-
-    def _weno_reconstruction_z_adapted(self, u: np.ndarray) -> np.ndarray:
-        """WENO reconstruction adapted for Z-direction with proper grid spacing."""
-        # This would use the same WENO logic but with Dz spacing
-        # For now, use standard gradient as placeholder
-        return np.gradient(u, self.grid_spacing_z)
 
     def get_variant_info(self) -> dict[str, str]:
         """

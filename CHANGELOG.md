@@ -104,6 +104,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WENO HJB spatial scheme rebuilt: correct gradient + Lax-Friedrichs numerical Hamiltonian**
+  (Issue #1200). The previous scheme reconstructed WENO interface *values* and then took a bogus
+  central difference `(u_right − u_left)/(2·dx)`, so the nodal gradient fed to the Hamiltonian was
+  `≈ −0.25 · du/dx` (wrong sign **and** magnitude) — the solver had never computed a correct
+  gradient in any dimension, and the 2D/3D off-axis sweeps were `np.gradient` placeholders. With no
+  numerical Hamiltonian, oscillatory terminal data amplified high-frequency modes and blew up
+  (`1e26+`), CFL-independent; the whole WENO suite only asserted `isfinite`/shape so this was never
+  caught. Replaced with the Osher–Shu HJ-WENO5 one-sided nodal derivatives `p_minus`/`p_plus`
+  (undivided-difference stencils, ghost depth 2→3) and a global Lax-Friedrichs numerical Hamiltonian
+  `Ĥ = H((p_minus+p_plus)/2) − (α/2)(p_plus−p_minus)`, `α = max|∂_pH|`, whose viscosity damps the
+  unstable modes while staying O(h⁵) on smooth data (measured EOC ≈ 6, polynomial-exact to degree 3).
+  All dimensions now route through a single vectorized axis operator (`_compute_hjb_rhs_axis`); the
+  duplicated/placeholder 2D/3D direction methods are removed (−232 lines net). New tests assert the
+  gradient sign/magnitude, polynomial exactness, convergence order, bounded oscillatory solve, and 2D
+  axis-symmetry; the `#1200` `xfail` is removed. `Fixes #1200`.
+- **High-order ghost extrapolation fixed at the high boundary** (`PreallocatedGhostBuffer`, surfaced
+  by #1200). `_extrapolate_boundary_1d` paired the nearest-first `x_interior = [-dx, -2dx, ...]` with
+  `interior_indices` ordered farthest-first at the high boundary, so the Vandermonde fit produced
+  badly wrong order>2 ghosts there (the low boundary, where both orderings coincide, was correct).
+  Latent because WENO5 is the only order-5 consumer and nothing had consumed the high-boundary ghost
+  derivative correctly before; the prior order-5 test checked the low boundary only. Now ordered
+  nearest-first to match; smooth high-boundary ghosts recover machine-level accuracy (a `cos(pi x)`
+  ghost went from ~1.6e-1 error to ~1e-9), with a both-boundaries regression test added.
 - **Conservative no-flux Laplacian for the implicit FP diffusion solve** (Issue #1184, diffusion
   half). `LaplacianOperator.as_scipy_sparse()` no-flux branch had zero *row* sums (2nd-order
   Neumann accuracy) but nonzero *column* sums at the walls (`≈1/h²`); the implicit FP system
