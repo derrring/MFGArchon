@@ -790,7 +790,9 @@ def compute_hjb_jacobian(
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
         # Single batch call: dH/dp at all grid points
-        dH_dp = eval_dH_dp_batch(H_class, x_grid, m_grid, p_grid, current_time).ravel()  # (Nx,) — squeeze the 1D momentum dimension
+        dH_dp = eval_dH_dp_batch(
+            H_class, x_grid, m_grid, p_grid, current_time
+        ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
 
         # Stencil coefficients: dp_i/dU_j depends on upwind direction
         # Godunov upwind: p >= 0 uses backward (U_i - U_{i-1})/dx,
