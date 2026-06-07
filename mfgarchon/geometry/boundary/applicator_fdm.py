@@ -1232,14 +1232,21 @@ class PreallocatedGhostBuffer:
 
         # Last row: BC constraint at x=0
         if bc_type in [BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING]:
-            # Neumann: p'(0) = 0
-            # p'(x) = sum_j j * a_j * x^{j-1}
-            # p'(0) = a_1 (only linear term survives)
+            # Derivative constraint p'(0) = a_1 (only the linear term survives at x=0).
             V[n_stencil, 0] = 0.0  # a_0 doesn't contribute to derivative
             V[n_stencil, 1] = 1.0  # a_1 coefficient
             for j in range(2, n_poly + 1):
                 V[n_stencil, j] = 0.0  # Higher terms vanish at x=0
-            rhs[n_stencil] = 0.0  # Zero derivative
+            # Issue #1186: encode the prescribed flux du/dn = bc_value, not a hardcoded 0.
+            # The local poly coordinate has x>0 pointing INTO the domain at the low boundary
+            # (outward normal = -x_local -> p'(0) = -g) and OUT of the domain at the high
+            # boundary (outward normal = +x_local -> p'(0) = +g); g = du/dn (outward), matching
+            # the Robin branch's sign convention above. NO_FLUX / REFLECTING are definitionally
+            # zero-flux and keep p'(0) = 0 regardless of any stray value.
+            if bc_type == BCType.NEUMANN:
+                rhs[n_stencil] = -bc_value if is_low else bc_value
+            else:
+                rhs[n_stencil] = 0.0
 
         elif bc_type == BCType.DIRICHLET:
             # Dirichlet: p(0) = bc_value
