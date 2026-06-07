@@ -1240,3 +1240,55 @@ class TestGhostBuffer:
         # Check wrap-around on first axis
         np.testing.assert_array_equal(buffer.padded[0, 1:-1, 1:-1], buffer.padded[-2, 1:-1, 1:-1])
         np.testing.assert_array_equal(buffer.padded[-1, 1:-1, 1:-1], buffer.padded[1, 1:-1, 1:-1])
+
+
+class TestLinearReflectionNeumannFlux:
+    """Nonzero Neumann flux in the order<=2 linear-reflection ghost path (Issue #1186 sibling).
+
+    The FDM/SL ghost path (``_apply_linear_reflection``) used a pure mirror for
+    Neumann/no-flux, silently dropping a nonzero ``neumann_bc(value=g)`` (it always encoded
+    du/dn=0). The fix adds the linear flux offset (Robin-branch sign convention). g=0 stays a
+    pure mirror -> byte-identical for the no-flux/zero-Neumann case the paper uses (EOC-safe).
+    """
+
+    @staticmethod
+    def _ghosts(bc, u, dx=0.1, g=1):
+        from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
+
+        buf = PreallocatedGhostBuffer(
+            interior_shape=(len(u),),
+            boundary_conditions=bc,
+            domain_bounds=np.array([[0.0, (len(u) - 1) * dx]]),
+            order=2,  # order<=2 -> linear reflection path
+            ghost_depth=g,
+        )
+        buf.interior[:] = u
+        buf.update_ghosts()
+        return buf.padded.copy()
+
+    def test_zero_neumann_byte_identical_to_no_flux(self):
+        """g=0 must reproduce the pure mirror (no-flux), bit-for-bit -- the EOC-safe property."""
+        u = np.sin(np.linspace(0.0, 1.0, 11))
+        g_noflux = self._ghosts(no_flux_bc(dimension=1), u)
+        g_neumann0 = self._ghosts(neumann_bc(dimension=1, value=0.0), u)
+        np.testing.assert_array_equal(g_neumann0, g_noflux)
+
+    def test_nonzero_neumann_flux_recovered(self):
+        """A nonzero neumann_bc(value=v) is applied (not dropped): the cell-centered ghost
+        encodes du/dn = v at both walls (was silently 0)."""
+        dx = 0.1
+        u = np.sin(np.linspace(0.0, 1.0, 11))
+        for v in (0.5, -1.3):
+            gh = self._ghosts(neumann_bc(dimension=1, value=v), u, dx=dx)
+            dudn_low = (gh[1] - gh[0]) / dx  # (u_interior - u_ghost)/dx, low outward = -x
+            dudn_high = (gh[-1] - gh[-2]) / dx  # (u_ghost - u_interior)/dx, high outward = +x
+            assert abs(dudn_low - v) < 1e-12, f"low du/dn={dudn_low} != {v}"
+            assert abs(dudn_high - v) < 1e-12, f"high du/dn={dudn_high} != {v}"
+
+    def test_no_flux_ignores_stray_value(self):
+        """NO_FLUX is definitionally zero-flux: the mirror is unchanged regardless of input."""
+        u = np.cos(np.linspace(0.0, 1.0, 11))
+        # no_flux must equal a true zero-Neumann mirror (no offset applied to NO_FLUX).
+        np.testing.assert_array_equal(
+            self._ghosts(no_flux_bc(dimension=1), u), self._ghosts(neumann_bc(dimension=1, value=0.0), u)
+        )

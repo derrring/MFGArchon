@@ -1029,7 +1029,15 @@ class PreallocatedGhostBuffer:
             #
             # Padded array structure: [ghost_0, ..., ghost_{g-1}, interior_0, interior_1, ...]
             # For g=1: ghost at idx 0 should equal interior at idx 1 (adjacent).
+            #
+            # Issue #1186 sibling: for BCType.NEUMANN with a NONZERO prescribed flux du/dn = v,
+            # add the linear flux offset on top of the mirror (the mirror alone silently dropped
+            # it). Sign matches the Robin branch below: -dx*v at the low wall (outward normal -1),
+            # +dx*v at the high wall (+1). v == 0 (and NO_FLUX / REFLECTING, definitionally
+            # zero-flux) leaves the pure mirror -> byte-identical.
+            apply_flux = bc_type == BCType.NEUMANN and v != 0.0
             for axis in range(d):
+                dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
                 # Low boundary: ghost mirrors adjacent interior
                 for k in range(g):
                     lo_ghost = [slice(None)] * d
@@ -1037,6 +1045,8 @@ class PreallocatedGhostBuffer:
                     lo_interior = [slice(None)] * d
                     lo_interior[axis] = g + k  # Adjacent interior cells from g up
                     buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
+                    if apply_flux:
+                        buf[tuple(lo_ghost)] -= dx * v
 
                 # High boundary: ghost mirrors adjacent interior
                 for k in range(g):
@@ -1045,6 +1055,8 @@ class PreallocatedGhostBuffer:
                     hi_interior = [slice(None)] * d
                     hi_interior[axis] = -(g + k + 1)  # Adjacent interior cells
                     buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
+                    if apply_flux:
+                        buf[tuple(hi_ghost)] += dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g
