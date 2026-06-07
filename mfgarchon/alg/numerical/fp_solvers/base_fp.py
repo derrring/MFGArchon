@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
+
+
+class DriftConvention(Enum):
+    """What an FP solver's drift input MEANS (Issue #1043).
+
+    The FP equation only ever sees the advective velocity ``α`` in ``div(α m)``. Most solvers
+    take that velocity directly; a few take the value function ``U`` and recover
+    ``α = -coupling·∇U`` internally (e.g. weak-form/FEM/meshless, which differentiate ``U`` on
+    their own quadrature/MLS basis rather than on a possibly-coarse FP grid). This trait makes
+    that distinction explicit and machine-readable so a coupler can dispatch the right object to
+    each solver instead of guessing from the parameter name.
+    """
+
+    VELOCITY = "velocity"  # input is α* = -∂_p H (consumed as flux = m·α)
+    VALUE_FUNCTION = "value_function"  # input is U; the solver computes α = -coupling·∇U itself
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,6 +73,12 @@ class BaseFPSolver(BaseNumericalSolver):
 
     # Scheme family trait for duality validation (Issue #580)
     _scheme_family = SchemeFamily.GENERIC
+
+    # Drift-input convention trait (Issue #1043). Default VELOCITY: the canonical contract is
+    # drift_field = advective velocity α*. Solvers that take the value function U instead set
+    # this to VALUE_FUNCTION. Metadata only today; a future coupler dispatch reads it (the
+    # signature-sniffing it would replace carries paper-number risk, deferred).
+    _drift_convention: DriftConvention = DriftConvention.VELOCITY
 
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         """

@@ -46,7 +46,7 @@ from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
-from .base_fp import BaseFPSolver
+from .base_fp import BaseFPSolver, DriftConvention
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,6 +94,7 @@ class FPSLJacobianSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.SL
+    _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
 
     @deprecated(since="v0.17.6", replacement="FPSLSolver")
     def __init__(

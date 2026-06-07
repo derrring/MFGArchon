@@ -42,7 +42,7 @@ from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
-from .base_fp import BaseFPSolver
+from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd
 
 if TYPE_CHECKING:
@@ -94,6 +94,7 @@ class FPSLSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.SL  # Forward SL (adjoint of HJB Backward SL)
+    _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
 
     def __init__(
         self,

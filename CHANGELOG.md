@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Canonical FP drift contract: explicit `_drift_convention` trait + weak-form `potential_field`
+  rename** (Issue #1043). The FP equation only ever sees the advective velocity `α` in
+  `div(α m)`; most solvers (FDM, GFDM) take that velocity as `drift_field`, but the weak-form
+  family (`WeakFormFPSolver` + FEM/meshless) and the network/SL solvers take the value function
+  `U` and recover `α = -coupling·∇U` internally. Added a `DriftConvention` enum + a
+  `_drift_convention` class trait (default `VELOCITY`) so this distinction is explicit and
+  machine-readable, and set `VALUE_FUNCTION` on the U-taking solvers. Renamed the weak-form
+  family's misnamed `drift_field` U-input to **`potential_field`** (the name the SL solvers +
+  couplers already prefer, #919), with a `drift_field` deprecation alias (byte-identical;
+  equivalence + fail-loud-on-both tests added). **Deferred** (paper-number risk, like #1071
+  steps 4-5): the coupler trait-dispatch that would *enforce* the contract (the smooth-H common
+  case currently passes raw `U` and the solver differentiates it on its own grid — moving that
+  into the coupler changes where the gradient is taken → not byte-identical), and the
+  `FPNetworkSolver`/`FPParticleSolver` param renames (network is internally inconsistent; particle
+  is bivalent via a flag). `Refs #1043`.
 - **Single-source HJB residual/Jacobian assembly** (`hjb_solvers/h_eval.py`, Issue #1071 Layer B).
   Added `assemble_hjb_residual` (`-u_t + H(+running_cost) - D·lap_u`) and
   `assemble_hjb_jacobian_diag` (`(1/dt)I + Σ_d diag(∂H/∂p_d)@D_grad[d] - D·D_lap`), so the
