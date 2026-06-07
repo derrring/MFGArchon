@@ -445,15 +445,16 @@ class TestWenoSolverIntegration:
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt, Nx)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="WENO HJB is spatially unstable for oscillatory terminal data (sin(2*pi*x), "
-        "sigma=0.1): it amplifies high-frequency modes independent of dt -- see #1200. "
-        "Pre-#1180 this passed only because the solver under-integrated (near-frozen at the "
-        "bounded terminal) and never reached the blow-up. Remove the xfail when #1200 lands.",
-    )
     def test_solution_finiteness(self, integration_problem):
-        """Test that solution remains finite throughout (oscillatory terminal: #1200 instability)."""
+        """Oscillatory terminal data stays bounded (Issue #1200 regression).
+
+        ``sin(2*pi*x)`` at ``sigma=0.1`` previously triggered a CFL-independent
+        high-frequency blow-up (1e26+ by a handful of intervals) because the scheme
+        used a central derivative with no numerical viscosity. With the Osher-Shu
+        HJ-WENO5 derivatives + Lax-Friedrichs numerical Hamiltonian the solution
+        stays smooth and O(1). A finiteness check alone is too weak (it would pass
+        on a slowly-growing instability), so we also bound the magnitude.
+        """
         solver = HJBWenoSolver(integration_problem, weno_variant="weno5")
 
         Nt = integration_problem.Nt + 1
@@ -467,8 +468,12 @@ class TestWenoSolverIntegration:
 
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
-        # All values should be finite
         assert np.all(np.isfinite(U_solution))
+        # No high-frequency amplification: the value function never exceeds a small
+        # multiple of the terminal amplitude (the unstable scheme reached 1e26+).
+        assert np.max(np.abs(U_solution)) < 10.0, (
+            f"oscillatory terminal amplified (#1200 regression): max|U|={np.max(np.abs(U_solution)):.3e}"
+        )
 
     def test_different_cfl_numbers(self, integration_problem):
         """Test solver with different CFL numbers."""
@@ -515,9 +520,7 @@ class TestWenoTimeSubstepping:
             u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
             hamiltonian=ham,
         )
-        dom = TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)
-        )
+        dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
         return MFGProblem(geometry=dom, T=T, Nt=Nt, sigma=sigma, components=comps)
 
     @pytest.mark.slow
@@ -579,6 +582,214 @@ class TestWenoTimeSubstepping:
         with pytest.raises(ValueError, match="max_substeps"):
             # 3 substeps of 0.01 cover 0.03 << dt=1.0 -> uncovered -> raise
             solver._advance_full_interval(u, m, 1.0, lambda uu, mm: 0.01, lambda uu, mm, dd: uu)
+
+
+class TestWenoHJDerivativeCorrectness:
+    """Numerical-correctness guards for the HJ-WENO5 spatial scheme (Issue #1200).
+
+    The pre-#1200 scheme reconstructed *interface values* and then took a bogus
+    central difference, so the nodal gradient it fed the Hamiltonian was
+    ``~ -0.25 * du/dx`` (wrong sign AND magnitude). The whole WENO test suite only
+    asserted ``isfinite`` / shape, so this never surfaced. These tests assert the
+    gradient and the scheme order directly.
+    """
+
+    def _solver(self, n, variant="weno5"):
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x), u_terminal=lambda x: 0.0, hamiltonian=H)
+        dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        prob = MFGProblem(geometry=dom, T=1.0, Nt=30, sigma=0.1, components=comp)
+        return HJBWenoSolver(prob, weno_variant=variant)
+
+    def _derivatives(self, solver, u):
+        solver.ghost_buffer.interior[:] = u
+        solver.ghost_buffer.update_ghosts()
+        padded = solver.ghost_buffer.padded
+        return solver._weno5_hj_derivatives(padded, 0, solver.grid_spacing[0])
+
+    def test_ghost_depth_is_three(self):
+        """HJ-WENO5 one-sided derivative needs a 3-cell ghost layer (u_{i-3}..u_{i+3})."""
+        assert self._solver(41).ghost_depth == 3
+
+    def test_gradient_sign_and_magnitude(self):
+        """p_minus, p_plus recover du/dx on the new reconstruction path.
+
+        The pre-#1200 code computed ``~ -0.25 * du/dx`` (wrong sign and magnitude); this
+        is a strong guard on the replacement (it flags a sign flip or a 0.25x scale by
+        ~3900x). (It exercises ``_weno5_hj_derivatives``, which did not exist before the
+        fix, so it guards the new code path rather than literally re-running the old one.)
+        """
+        solver = self._solver(41)
+        x = np.linspace(0.0, 1.0, 41)
+        interior = slice(6, 41 - 6)
+        for u, du in [(x**2, 2 * x), (np.sin(2 * np.pi * x), 2 * np.pi * np.cos(2 * np.pi * x))]:
+            p_minus, p_plus = self._derivatives(solver, u)
+            for p in (p_minus, p_plus):
+                np.testing.assert_allclose(p[interior], du[interior], rtol=2e-3, atol=2e-3)
+
+    def test_gradient_accurate_at_boundary_nodes(self):
+        """Gradient is accurate AT the boundary nodes, not just the deep interior.
+
+        The boundary nodes are exactly those whose WENO stencils consume the
+        ghost-extrapolated cells; the other accuracy tests slice the boundary band out.
+        Uses ``cos(pi x)`` (du/dn = 0 at both ends, Neumann-compatible). Both endpoints
+        must be accurate -- this also guards the high-boundary ghost-extrapolation fix
+        (Issue #1200): before it, the last node's gradient was off by ~0.19."""
+        n = 81
+        solver = self._solver(n)
+        x = np.linspace(0.0, 1.0, n)
+        u = np.cos(np.pi * x)
+        d_true = -np.pi * np.sin(np.pi * x)
+        p_minus, p_plus = self._derivatives(solver, u)
+        p_mid = 0.5 * (p_minus + p_plus)
+        # Whole domain INCLUDING both boundary nodes (no interior slicing).
+        np.testing.assert_allclose(p_mid, d_true, atol=1e-5)
+        # The two endpoints specifically (the ghost-consuming nodes).
+        assert abs(p_mid[0] - d_true[0]) < 1e-6
+        assert abs(p_mid[-1] - d_true[-1]) < 1e-6
+
+    def test_polynomial_exactness(self):
+        """WENO5 derivative is exact (machine precision) for polynomials up to degree 3."""
+        n = 61
+        solver = self._solver(n)
+        x = np.linspace(0.0, 1.0, n)
+        interior = slice(8, n - 8)
+        for deg in (1, 2, 3):
+            p_minus, p_plus = self._derivatives(solver, x**deg)
+            d_true = deg * x ** (deg - 1)
+            assert np.max(np.abs(p_minus[interior] - d_true[interior])) < 1e-10
+            assert np.max(np.abs(p_plus[interior] - d_true[interior])) < 1e-10
+
+    def test_high_order_convergence(self):
+        """Smooth-data derivative converges at >=4th order (design order 5)."""
+        prev_err = None
+        rates = []
+        for n in (21, 41, 81, 161):
+            solver = self._solver(n)
+            x = np.linspace(0.0, 1.0, n)
+            p_minus, p_plus = self._derivatives(solver, np.sin(2 * np.pi * x))
+            d_true = 2 * np.pi * np.cos(2 * np.pi * x)
+            interior = slice(8, n - 8)
+            err = np.max(np.abs(0.5 * (p_minus + p_plus)[interior] - d_true[interior]))
+            if prev_err is not None:
+                rates.append(np.log(prev_err / err) / np.log(2))
+            prev_err = err
+        assert min(rates) > 4.0, f"WENO5 derivative convergence too low: rates={rates}"
+
+    @pytest.mark.parametrize("variant", ["weno5", "weno-z", "weno-m", "weno-js"])
+    def test_all_variants_recover_gradient(self, variant):
+        """Every WENO variant reconstructs the gradient (not just weno5)."""
+        solver = self._solver(41, variant=variant)
+        x = np.linspace(0.0, 1.0, 41)
+        p_minus, p_plus = self._derivatives(solver, np.sin(2 * np.pi * x))
+        d_true = 2 * np.pi * np.cos(2 * np.pi * x)
+        interior = slice(6, 41 - 6)
+        np.testing.assert_allclose(0.5 * (p_minus + p_plus)[interior], d_true[interior], rtol=5e-3, atol=5e-3)
+
+
+class TestWeno2DSolve:
+    """The dimensional-split multi-D path is now a real WENO5 sweep, not the former
+    ``np.gradient`` placeholder (Issue #1200)."""
+
+    def _problem_2d(self, n):
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[..., 0]), u_terminal=lambda x: 0.0, hamiltonian=H)
+        dom = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        return MFGProblem(geometry=dom, T=0.2, Nt=10, sigma=0.2, components=comp)
+
+    def test_2d_solve_finite_and_bounded(self):
+        """A 2D HJB solve with oscillatory terminal data stays finite and bounded."""
+        n = 21
+        prob = self._problem_2d(n)
+        solver = HJBWenoSolver(prob, weno_variant="weno5")
+        Nt = prob.Nt + 1
+        x = np.linspace(0.0, 1.0, n)
+        xx, yy = np.meshgrid(x, x, indexing="ij")
+        U_terminal = np.sin(2 * np.pi * xx) * np.sin(2 * np.pi * yy)
+        M_density = np.ones((Nt, n, n)) * 0.5
+        U_prev = np.zeros((Nt, n, n))
+
+        U = solver.solve_hjb_system(M_density, U_terminal, U_prev)
+
+        assert U.shape == (Nt, n, n)
+        assert np.all(np.isfinite(U))
+        assert np.max(np.abs(U)) < 10.0
+
+    def test_2d_split_symmetry(self):
+        """An x<->y symmetric problem yields a near-symmetric value function: both
+        axes are now advanced by the *same* WENO5 operator. The former placeholder
+        (x = WENO, y = np.gradient) produced an O(1) directional bias; here the only
+        asymmetry is the Strang-split axis-swap error, O(dt^2) ~ 3e-4 here. We assert
+        the relative asymmetry is well below 1% (a placeholder-class bug would be
+        comparable to the field amplitude)."""
+        n = 21
+        prob = self._problem_2d(n)
+        solver = HJBWenoSolver(prob, weno_variant="weno5")
+        Nt = prob.Nt + 1
+        x = np.linspace(0.0, 1.0, n)
+        xx, yy = np.meshgrid(x, x, indexing="ij")
+        # Symmetric under (x, y) -> (y, x).
+        U_terminal = np.cos(np.pi * xx) * np.cos(np.pi * yy)
+        M_density = np.ones((Nt, n, n)) * 0.5
+        U_prev = np.zeros((Nt, n, n))
+
+        U = solver.solve_hjb_system(M_density, U_terminal, U_prev)
+        asymmetry = np.max(np.abs(U[0] - U[0].T))
+        assert asymmetry < 1e-2 * np.max(np.abs(U[0])), (
+            f"value function not axis-symmetric (directional-bias regression): "
+            f"asymmetry={asymmetry:.3e}, max|U|={np.max(np.abs(U[0])):.3e}"
+        )
+
+    @staticmethod
+    def _rect_problem(bounds, npts):
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        comp = MFGComponents(m_initial=lambda x: np.ones_like(x[..., 0]), u_terminal=lambda x: 0.0, hamiltonian=H)
+        dom = TensorProductGrid(bounds=bounds, Nx_points=npts, boundary_conditions=no_flux_bc(dimension=2))
+        return MFGProblem(geometry=dom, T=0.2, Nt=10, sigma=0.2, components=comp)
+
+    def test_2d_anisotropic_transpose_invariance(self):
+        """Per-axis grid spacing is honoured (Issue #1200). On a SQUARE grid a
+        grid_spacing[axis] mix-up is invisible (dx_x == dx_y), so the square symmetry
+        test cannot guard it -- the exact area the deleted placeholder warned about
+        ('would need adaptation for different grid spacing'). Here problem B is problem A
+        with both axes swapped (domain, grid, and terminal data all transposed). Because
+        the Hamiltonian/diffusion are isotropic, the correct solver must satisfy
+        U_B = U_A.T up to the O(dt^2) Strang axis-swap error. A spacing mix-up (e.g. the
+        y-sweep using dx_x) breaks this by O(1) -- it shifts U by ~50% of its amplitude
+        on this 1-vs-2 aspect-ratio grid."""
+        nx, ny = 21, 31
+        # A: x in [0,1] (fine), y in [0,2] (coarse); B: axes swapped.
+        probA = self._rect_problem([(0.0, 1.0), (0.0, 2.0)], [nx, ny])
+        probB = self._rect_problem([(0.0, 2.0), (0.0, 1.0)], [ny, nx])
+        solA = HJBWenoSolver(probA, weno_variant="weno5")
+        solB = HJBWenoSolver(probB, weno_variant="weno5")
+        Nt = probA.Nt + 1
+        xa = np.linspace(0.0, 1.0, nx)
+        ya = np.linspace(0.0, 2.0, ny)
+        xxa, yya = np.meshgrid(xa, ya, indexing="ij")
+        # Neumann-compatible (du/dn = 0 on all four edges).
+        U_T_A = np.cos(np.pi * xxa) * np.cos(np.pi * yya / 2.0)
+        U_A = solA.solve_hjb_system(np.ones((Nt, nx, ny)) * 0.5, U_T_A, np.zeros((Nt, nx, ny)))
+        U_B = solB.solve_hjb_system(np.ones((Nt, ny, nx)) * 0.5, U_T_A.T, np.zeros((Nt, ny, nx)))
+
+        diff = np.max(np.abs(U_B[0] - U_A[0].T))
+        amp = np.max(np.abs(U_A[0]))
+        # O(dt^2) Strang asymmetry only; a per-axis-spacing bug would be ~0.5*amp.
+        assert diff < 5e-2 * amp, f"per-axis spacing not honoured: diff={diff:.3e}, amp={amp:.3e}"
 
 
 if __name__ == "__main__":

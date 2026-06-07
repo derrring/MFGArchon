@@ -51,12 +51,15 @@ def test_weno_uses_high_order_ghosts():
     # Create WENO solver
     solver = HJBWenoSolver(problem)
 
-    # Check that ghost buffer was created with correct parameters
+    # Check that ghost buffer was created with correct parameters.
+    # Issue #1200: the Osher-Shu HJ-WENO5 one-sided derivative stencil spans
+    # u_{i-3}..u_{i+3}, so WENO5 needs 3 ghost cells per side (was 2 for the old,
+    # incorrect, value-interface reconstruction).
     assert solver.ghost_buffer is not None, "WENO should create ghost buffer in 1D"
-    assert solver.ghost_depth == 2, "WENO5 needs 2 ghost cells per side"
+    assert solver.ghost_depth == 3, "HJ-WENO5 needs 3 ghost cells per side (#1200)"
     assert solver.ghost_order == 5, "WENO5 should use order=5 for high-order accuracy"
     assert solver.ghost_buffer._order == 5, "Ghost buffer should have order=5"
-    assert solver.ghost_buffer._ghost_depth == 2, "Ghost buffer should have depth=2"
+    assert solver.ghost_buffer._ghost_depth == 3, "Ghost buffer should have depth=3"
 
     print(f"✓ WENO ghost buffer: depth={solver.ghost_depth}, order={solver.ghost_order}")
 
@@ -88,40 +91,26 @@ def test_weno_ghost_cells_work():
     solver.ghost_buffer.interior[:] = u
     solver.ghost_buffer.update_ghosts(time=0.0)
 
-    # Check that ghost cells were filled with reasonable values
-    ghost_0 = solver.ghost_buffer.padded[0]
-    ghost_1 = solver.ghost_buffer.padded[1]
-
-    # For x^3 with Neumann BC at x=0 (du/dx = 0), ghosts should be negative of interior
-    # due to reflection about the zero-derivative point
+    # Ghost cell ordering (depth g): padded[0] is furthest from the boundary
+    # (x = -g*dx), padded[g-1] is nearest (x = -dx). Extrapolation error grows with
+    # distance, so the nearest ghost is the tight accuracy gate; the farther ones
+    # only need to stay bounded (Issue #1200 bumped the depth 2 -> 3).
+    g = solver.ghost_depth
     dx = 1.0 / (solver.num_grid_points_x - 1)
 
-    # Ghost cells should not be NaN or infinite
-    assert not np.isnan(ghost_0), "Ghost cell 0 should be valid"
-    assert not np.isnan(ghost_1), "Ghost cell 1 should be valid"
-    assert not np.isinf(ghost_0), "Ghost cell 0 should be finite"
-    assert not np.isinf(ghost_1), "Ghost cell 1 should be finite"
+    ghosts = [solver.ghost_buffer.padded[k] for k in range(g)]
+    assert np.all(np.isfinite(ghosts)), f"ghost cells must be finite, got {ghosts}"
 
-    # Check that ghost values are reasonable (should be close to extrapolated values)
-    # For cubic with zero derivative at x=0:
-    # Ghost cell ordering: ghost[0] is furthest from boundary, ghost[1] is nearest
-    # ghost[0] at x=-2*dx, ghost[1] at x=-dx
-    x_ghost_0 = -2 * dx  # Furthest ghost cell
-    x_ghost_1 = -dx  # Nearest ghost cell
-    u_exact_ghost_0 = x_ghost_0**3
-    u_exact_ghost_1 = x_ghost_1**3
-
-    # Order-5 extrapolation should be reasonably accurate for cubics
-    error_0 = np.abs(ghost_0 - u_exact_ghost_0)
-    error_1 = np.abs(ghost_1 - u_exact_ghost_1)
-
-    print(f"  Ghost[0] @ x={x_ghost_0:.6f}: computed={ghost_0:.6f}, exact={u_exact_ghost_0:.6f}, error={error_0:.6e}")
-    print(f"  Ghost[1] @ x={x_ghost_1:.6f}: computed={ghost_1:.6f}, exact={u_exact_ghost_1:.6f}, error={error_1:.6e}")
-
-    # Should be reasonably accurate (allow for some extrapolation error)
-    # For a cubic function, order-5 extrapolation should give good accuracy
-    assert error_0 < 1e-4, f"Ghost 0 error too large: {error_0}"
-    assert error_1 < 1e-4, f"Ghost 1 error too large: {error_1}"
+    # The data is a cubic and the ghost scheme is a degree-5 polynomial extrapolation
+    # (n_stencil=order=5 interior points + p'(0)=0), so x^3 is reproduced EXACTLY at every
+    # ghost regardless of distance -- a true machine-precision guard (a distance-scaled
+    # tolerance would let a real boundary-extrapolation regression pass silently).
+    for k in range(g):
+        x_ghost = -(g - k) * dx  # padded[k] sits at this coordinate
+        u_exact = x_ghost**3
+        error = np.abs(ghosts[k] - u_exact)
+        print(f"  Ghost[{k}] @ x={x_ghost:.6f}: computed={ghosts[k]:.6f}, exact={u_exact:.6f}, error={error:.6e}")
+        assert error < 1e-10, f"Ghost {k} (x={x_ghost:.4f}) error too large: {error}"
 
     print("✓ WENO high-order ghost cells work correctly")
 
