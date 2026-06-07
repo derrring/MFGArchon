@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -37,6 +38,10 @@ logger = get_logger(__name__)
 
 class WeakFormFPSolver(BaseFPSolver):
     """FP solver on assembled weak-form operators; BC + advection are subclass hooks."""
+
+    # Issue #1043: this family takes the value function U and recovers α = -coupling·∇U on its
+    # own quadrature/MLS basis (a genuine feature: avoids differentiating U on a coarse FP grid).
+    _drift_convention = DriftConvention.VALUE_FUNCTION
 
     def __init__(self, problem: MFGProblem, discretization: WeakFormDiscretization) -> None:
         super().__init__(problem)
@@ -94,14 +99,28 @@ class WeakFormFPSolver(BaseFPSolver):
             return 0.5 * float(volatility_field) ** 2
         return 0.5 * float(np.mean(volatility_field)) ** 2
 
+    @deprecated_parameter(param_name="drift_field", since="v0.20.0", replacement="potential_field")
     def solve_fp_system(
         self,
         m_initial: NDArray,
-        drift_field: NDArray | None = None,
+        potential_field: NDArray | None = None,
         volatility_field: float | NDArray | None = None,
+        drift_field: NDArray | None = None,  # DEPRECATED alias for potential_field (Issue #1043)
         **kwargs,
     ) -> NDArray:
-        """Solve the FP equation forward in time on the weak-form operators."""
+        """Solve the FP equation forward in time on the weak-form operators.
+
+        ``potential_field`` is the value function ``U(t,x)`` (Issue #1043); this solver recovers
+        the advective velocity ``α = -coupling·∇U`` on its own quadrature/MLS basis. It was
+        historically -- and misleadingly -- named ``drift_field``, but on this solver that input
+        always meant ``U``, never the velocity; ``drift_field`` is kept as a deprecated alias.
+        """
+        # Issue #1043: drift_field is the deprecated name for the U (potential) input here.
+        if drift_field is not None:
+            if potential_field is not None:
+                raise ValueError("Pass only potential_field; drift_field is its deprecated alias (Issue #1043).")
+            potential_field = drift_field
+
         Nt = self.problem.Nt
         dt = self.problem.dt
         N = self._n_dof
@@ -122,8 +141,8 @@ class WeakFormFPSolver(BaseFPSolver):
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
 
-            if drift_field is not None:
-                U_n = drift_field[n] if drift_field.ndim > 1 else drift_field
+            if potential_field is not None:
+                U_n = potential_field[n] if potential_field.ndim > 1 else potential_field
                 A_system = A_base + self._build_advection(U_n, D)
             else:
                 A_system = A_base

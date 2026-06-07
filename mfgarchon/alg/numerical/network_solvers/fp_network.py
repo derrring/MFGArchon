@@ -29,7 +29,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
@@ -39,6 +39,9 @@ if TYPE_CHECKING:
 
 
 class FPNetworkSolver(BaseFPSolver):
+    # Issue #1043: consumes the value function U (via the still-misnamed `drift_field` param,
+    # rename deferred — its body differentiates U); marked VALUE_FUNCTION for the contract trait.
+    _drift_convention = DriftConvention.VALUE_FUNCTION
     """
     Fokker-Planck solver for Mean Field Games on networks.
 
