@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-source batch Hamiltonian evaluation** (`hjb_solvers/h_eval.py`, Issue #1071 Layer A).
+  Every HJB solver inlined the same `np.asarray(H_class(x, m, p, t=t), dtype=float)` batch call
+  (6 value + 5 `dp` sites across `base_hjb`/`hjb_fdm`/`hjb_gfdm`/`hjb_semi_lagrangian`); these now
+  route through `eval_H_batch` / `eval_dH_dp_batch`, so a change to the batch contract (dtype,
+  shape, NaN policy) happens in one place. **Byte-identical** — callers keep their own `.ravel()`
+  / reshape / `alpha* = -dp` sign conventions and discrete operators (369 HJB tests unchanged).
+  Foundation for the residual/Jacobian assembly harness (Layer B); the hardcoded-LQ-default
+  elimination (steps 4-5) is deferred (it is not byte-identical and could shift paper EOC numbers).
 - **Upgraded two "plumbing-only" tests to run-and-compare (retrospect rec ③).**
   `test_qp_optimization_levels` only asserted constructor *labels* (`hjb_method_name`) — it
   would pass even if a QP monotonicity level corrupted the solution; added
