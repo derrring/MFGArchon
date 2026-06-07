@@ -7,6 +7,7 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -650,7 +651,7 @@ def compute_hjb_residual(
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
         # Single batch call — eliminates per-point problem.H() overhead
-        H_values = np.asarray(H_class(x_grid, m_grid, p_grid, t=current_time), dtype=float).ravel()
+        H_values = eval_H_batch(H_class, x_grid, m_grid, p_grid, current_time).ravel()
 
         # Mask: propagate NaN from existing Phi_U or from NaN gradients
         nan_mask = np.isnan(Phi_U) | np.isnan(precomputed_grad) | ~np.isfinite(H_values)
@@ -789,8 +790,8 @@ def compute_hjb_jacobian(
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
         # Single batch call: dH/dp at all grid points
-        dH_dp = np.asarray(
-            H_class.dp(x_grid, m_grid, p_grid, t=current_time), dtype=float
+        dH_dp = eval_dH_dp_batch(
+            H_class, x_grid, m_grid, p_grid, current_time
         ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
 
         # Stencil coefficients: dp_i/dU_j depends on upwind direction

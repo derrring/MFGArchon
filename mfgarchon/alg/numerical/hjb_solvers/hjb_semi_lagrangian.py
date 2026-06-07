@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 from mfgarchon.geometry.boundary.bc_utils import (
@@ -995,7 +996,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 p_batch = grad_u.reshape(-1, 1)  # (Nx, 1)
                 H_class = self.problem.hamiltonian_class
                 if H_class is not None:
-                    H_values = np.asarray(H_class(x_batch, M_next, p_batch, t=time_idx * self.dt), dtype=float).ravel()
+                    H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * self.dt).ravel()
                 else:
                     H_values = np.zeros(Nx)
 
@@ -1387,7 +1388,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         p_batch = grad_u.reshape(-1, 1)
         H_class = self.problem.hamiltonian_class
         if H_class is not None:
-            H_values = np.asarray(H_class(x_batch, M_next, p_batch, t=time_idx * dt), dtype=float).ravel()
+            H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
         else:
             H_values = np.zeros(Nx)
 

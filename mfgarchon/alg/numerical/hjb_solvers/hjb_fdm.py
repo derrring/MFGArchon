@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured grid ABC
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -946,7 +947,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
             # Convective Hamiltonian via H_class (same pattern as scalar path)
             H_class = self.problem.hamiltonian_class
-            H_convective = np.asarray(H_class(x_grid, m_grid, p_grid, t=time), dtype=float)
+            H_convective = eval_H_batch(H_class, x_grid, m_grid, p_grid, time)
 
             # Anisotropic diffusion: -(1/2) * sum_d sigma_d^2 * d^2u/dx_d^2
             from mfgarchon.operators.stencils.finite_difference import weighted_laplacian_with_bc
@@ -963,7 +964,7 @@ class HJBFDMSolver(BaseHJBSolver):
             # Scalar diffusion mode — batch HamiltonianBase (Issue #784)
             # hamiltonian_class is guaranteed by MFGComponents (Issue #670)
             H_class = self.problem.hamiltonian_class
-            H_convective = np.asarray(H_class(x_grid, m_grid, p_grid, t=time), dtype=float)
+            H_convective = eval_H_batch(H_class, x_grid, m_grid, p_grid, time)
 
             # Diffusion term: -(sigma^2/2) * Laplacian(U) (Issue #787)
             # Follows 1D pattern in base_hjb.py:774-803
@@ -1282,7 +1283,7 @@ class HJBFDMSolver(BaseHJBSolver):
         # Evaluate dH/dp at all grid points
         x_grid = self.problem.geometry.get_spatial_grid()  # (Nx, 1)
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
-        dH_dp = np.asarray(H_class.dp(x_grid, M_flat, p_grid, t=time), dtype=float).ravel()  # (Nx,)
+        dH_dp = eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time).ravel()  # (Nx,)
 
         # Stencil coefficients: dp_i/dU_j depends on Godunov upwind direction
         # p >= 0: backward stencil (U_i - U_{i-1})/dx
@@ -1340,7 +1341,7 @@ class HJBFDMSolver(BaseHJBSolver):
         p_grid = np.column_stack([gradients[d].ravel() for d in range(self.dimension)])
 
         # Evaluate dH/dp: returns (N_total, dim) -- one component per dimension
-        dH_dp_all = np.asarray(H_class.dp(x_grid, M_flat, p_grid, t=time), dtype=float)
+        dH_dp_all = eval_dH_dp_batch(H_class, x_grid, M_flat, p_grid, time)
         if dH_dp_all.ndim == 1:
             dH_dp_all = dH_dp_all.reshape(-1, 1)
 

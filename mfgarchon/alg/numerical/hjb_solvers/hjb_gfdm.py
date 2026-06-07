@@ -24,6 +24,7 @@ from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import (
     TaylorOperator,
     create_operator,
 )
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.utils.deprecation import deprecated_parameter, deprecated_value
@@ -2087,7 +2088,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Batch Hamiltonian evaluation: H(x, m, p, t) -> (N,)
         x = self.collocation_points  # (N, d)
-        H_total = np.asarray(H_class(x, m_n_plus_1, grad_u, t=current_time), dtype=float)
+        H_total = eval_H_batch(H_class, x, m_n_plus_1, grad_u, current_time)
 
         # Running cost L(x) at this timestep (passed explicitly from backward loop)
         if running_cost is not None:
@@ -2145,7 +2146,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Batch dH/dp: shape (N, d)
         x = self.collocation_points
-        dH_dp = np.asarray(H_class.dp(x, m_n_plus_1, grad_u, t=current_time), dtype=float)
+        dH_dp = eval_dH_dp_batch(H_class, x, m_n_plus_1, grad_u, current_time)
 
         # J = (1/dt)I + sum_d diag(dH/dp_d) @ D_grad[d] - (sigma^2/2) D_lap
         jacobian = (1.0 / dt) * eye(n, format="csr")
@@ -3012,7 +3013,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         def alpha_star(x_pts, p, m, t_idx):
             # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
-            return -np.asarray(H_class.dp(x_pts, m, p, t=t_idx * dt), dtype=float)
+            return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
 
         howard = HJBHowardSolver(
             self.problem,
