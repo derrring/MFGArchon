@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Conservative no-flux Laplacian for the implicit FP diffusion solve** (Issue #1184, diffusion
+  half). `LaplacianOperator.as_scipy_sparse()` no-flux branch had zero *row* sums (2nd-order
+  Neumann accuracy) but nonzero *column* sums at the walls (`≈1/h²`); the implicit FP system
+  `(I/dt − D·L)` conserves mass iff `1ᵀL = 0`, so it leaked at no-flux walls (a wall-touching
+  density lost ~0.84% per solve even at zero drift). Added `LaplacianOperator(mass_conservative=…)`
+  (default `False` keeps the byte-identical 2nd-order stencil for HJB/elliptic matvec consumers);
+  the explicit-drift FP diffusion path now requests the finite-volume zero-flux stencil
+  (`mass_conservative=True`, both row- and column-conservative), so pure diffusion at no-flux walls
+  conserves mass to machine precision (was 0.84% → 1.9e-15). The explicit *advection* sub-step's
+  non-conservation under strong drift is a separate follow-up (#1184 step 4); `Refs #1184`.
 - **WENO HJB now sub-steps each backward interval to cover the full `dt`** (Issue #1180). The
   1D/2D/3D/nD backward sweeps advanced only one CFL/diffusion-stable `dt_stable` per interval
   (often `dt_stable << dt`) while recording it as a full `dt` step, so in the common

@@ -93,6 +93,7 @@ class LaplacianOperator(LinearOperator):
         bc: BoundaryConditions | None = None,
         order: int = 2,
         time: float = 0.0,
+        mass_conservative: bool = False,
     ):
         """
         Initialize Laplacian operator.
@@ -103,6 +104,15 @@ class LaplacianOperator(LinearOperator):
             bc: Boundary conditions (None for periodic/wrap)
             order: Discretization order (currently only order=2 supported)
             time: Time for time-dependent BCs (default 0.0)
+            mass_conservative: Affects ONLY ``as_scipy_sparse()`` under a no-flux/Neumann BC
+                (Issue #1184). Default ``False`` keeps the 2nd-order-accurate ghost-mirror
+                stencil (diag ``-2/h²``, wall neighbor ``+2/h²``; row-conservative but NOT
+                column-conservative -- it leaks mass when used as the implicit FP system
+                matrix, because ``1ᵀL ≠ 0``). ``True`` emits the finite-volume zero-flux
+                stencil (wall diag ``-1/h²``, neighbor ``+1/h²``), which is BOTH row- and
+                column-conservative (``1ᵀL = 0``), so the implicit diffusion solve conserves
+                mass exactly -- at the cost of 1st-order wall accuracy. The FP mass path sets
+                this; HJB/elliptic consumers (matvec, accuracy-critical) leave it ``False``.
 
         Raises:
             ValueError: If order != 2 (higher orders not yet implemented)
@@ -118,6 +128,7 @@ class LaplacianOperator(LinearOperator):
         self.bc = bc
         self.order = order
         self.time = time
+        self.mass_conservative = mass_conservative
 
         # Validate
         if len(self.spacings) != len(self.field_shape):
@@ -274,7 +285,39 @@ class LaplacianOperator(LinearOperator):
             at_max = i_d == n_d - 1
             interior = ~at_min & ~at_max
 
-            if bc_type in ("neumann", "no_flux"):
+            if bc_type in ("neumann", "no_flux") and self.mass_conservative:
+                # Finite-volume zero-flux stencil (Issue #1184): omit the ghost face at the
+                # wall so each cell's row telescopes against its neighbors' columns. Wall cells
+                # lose one face in dimension d -> diag -1/h² (this dim); interior -2/h². The
+                # single interior neighbor of a wall cell gets +1/h² (NOT the +2/h² ghost
+                # mirror). This is BOTH row- and column-conservative (1ᵀL = 0), so the implicit
+                # FP diffusion solve conserves mass; it is 1st-order accurate at the wall.
+                rows_list.append(all_idx[interior])
+                cols_list.append(all_idx[interior])
+                vals_list.append(np.full(int(interior.sum()), -2.0 / h2))
+
+                wall = at_min | at_max
+                rows_list.append(all_idx[wall])
+                cols_list.append(all_idx[wall])
+                vals_list.append(np.full(int(wall.sum()), -1.0 / h2))
+
+                # Interior: both neighbors +1/h²
+                rows_list.append(all_idx[interior])
+                cols_list.append(all_idx[interior] - stride)
+                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
+                rows_list.append(all_idx[interior])
+                cols_list.append(all_idx[interior] + stride)
+                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
+
+                # Wall: single interior neighbor +1/h² (zero-flux: no ghost contribution)
+                rows_list.append(all_idx[at_min])
+                cols_list.append(all_idx[at_min] + stride)
+                vals_list.append(np.full(int(at_min.sum()), 1.0 / h2))
+                rows_list.append(all_idx[at_max])
+                cols_list.append(all_idx[at_max] - stride)
+                vals_list.append(np.full(int(at_max.sum()), 1.0 / h2))
+
+            elif bc_type in ("neumann", "no_flux"):
                 # ALL points get diagonal -2/h² (interior and boundary)
                 rows_list.append(all_idx)
                 cols_list.append(all_idx)

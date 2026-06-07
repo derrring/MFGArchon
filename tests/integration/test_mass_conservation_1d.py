@@ -358,5 +358,45 @@ class TestMassConservation1D:
             assert max_error < 0.1, f"Mass conservation failed for {name}: {max_error:.6e}"
 
 
+class TestExplicitDriftNoFluxDiffusionConservation:
+    """Issue #1184: the explicit-drift FP path's implicit DIFFUSION sub-step must conserve
+    mass at no-flux walls. The diffusion matrix is `LaplacianOperator.as_scipy_sparse()`; with
+    the column-conservative (mass_conservative=True) no-flux stencil, pure diffusion of a
+    wall-touching density conserves mass to machine precision (was ~0.84% leak from the
+    column-sum defect). The advection sub-step's non-conservation under drift is a separate
+    follow-up (#1184 step 4)."""
+
+    def test_pure_diffusion_no_flux_conserves_mass(self):
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+
+        n, nt, T, sigma = 51, 50, 0.5, 0.3
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)
+        )
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: 0.0 * np.asarray(m),
+            coupling_dm=lambda m: 0.0 * np.asarray(m),
+        )
+        x = np.linspace(0.0, 1.0, n)
+        comps = MFGComponents(
+            m_initial=lambda xx: np.exp(-30 * (np.asarray(xx) - 0.5) ** 2),
+            u_terminal=lambda xx: 0.0 * np.asarray(xx),
+            hamiltonian=H,
+        )
+        prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
+        solver = FPFDMSolver(prob)
+        dx = 1.0 / (n - 1)
+        m0 = np.exp(-30 * (x - 0.5) ** 2)
+        m0 /= m0.sum() * dx
+        # callable (zero) drift routes through the explicit-drift path; pure diffusion
+        M = solver.solve_fp_system(
+            m0.copy(), drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma
+        )
+        mass = M.sum(axis=1) * dx
+        rel = abs(mass[-1] - mass[0]) / mass[0]
+        assert rel < 1e-12, f"explicit-drift pure-diffusion no-flux mass leak {rel:.2e} (was ~0.84%)"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
