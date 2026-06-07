@@ -228,3 +228,55 @@ class TestMeshlessGalerkinDomainClipping:
         # and the mask actually dropped the x > 0.7 quadrature points
         unmasked = discretization_from_cloud(cloud, 0.35, n_gauss=2)
         assert hjb._disc._phi.shape[0] < unmasked._phi.shape[0]
+
+
+@pytest.mark.integration
+class TestMeshlessGalerkinCoupled:
+    """Issue #1145: the COUPLED meshless-Galerkin MFG fixed point — the path that was missing
+    a regression guard. Before Bug-A (gradient_projection) + Bug-B (streamline-diffusion /
+    Newton-inner), the unstabilized coupled solve diverged to NaN at outer-iter ~6 (mass →
+    5.9e4, singular matrix + overflow). With the opt-in stabilization recipe it stays finite,
+    mass-bounded, and its terminal mean position tracks the FDM_UPWIND reference."""
+
+    @pytest.mark.slow
+    def test_coupled_meshless_stabilized_is_finite_and_tracks_fdm(self):
+        """Stabilized (`use_newton=True`, streamline_diffusion_scale>0) coupled meshless MFG
+        must NOT diverge (the #1145 regression) and must match the FDM reference's terminal
+        mean within tolerance. The Galerkin positivity clip is not an M-matrix, so this pins
+        stability + reference-proximity, not tight Picard convergence."""
+        from mfgarchon.alg.numerical.coupling import FixedPointIterator
+
+        x = np.linspace(0.0, 1.0, 21)
+        dx = 1.0 / 20
+
+        p_ml = _problem()
+        hjb_ml, fp_ml = create_paired_solvers(
+            p_ml,
+            NumericalScheme.MESHLESS_GALERKIN,
+            hjb_config={
+                "collocation_points": x[:, None],
+                "delta": 3.5 / 20,
+                "use_newton": True,
+                "streamline_diffusion_scale": 1.0,
+            },
+        )
+        res_ml = FixedPointIterator(p_ml, hjb_solver=hjb_ml, fp_solver=fp_ml, relaxation=0.5).solve(
+            max_iterations=120, tolerance=1e-5, verbose=False
+        )
+        M_ml = np.asarray(res_ml.M)
+        assert np.all(np.isfinite(M_ml)), "coupled meshless diverged to NaN (Issue #1145 regression)"
+        mass_T = float(M_ml[-1].sum() * dx)
+        assert abs(mass_T - 1.0) < 0.05, f"coupled meshless mass not bounded: {mass_T:.4f}"
+        mean_ml = float((M_ml[-1] * x).sum() / M_ml[-1].sum())
+
+        # FDM reference (fast, converges) — the trusted equilibrium.
+        p_fdm = _problem()
+        hjb_f, fp_f = create_paired_solvers(p_fdm, NumericalScheme.FDM_UPWIND)
+        res_f = FixedPointIterator(p_fdm, hjb_solver=hjb_f, fp_solver=fp_f, relaxation=0.5).solve(
+            max_iterations=120, tolerance=1e-5, verbose=False
+        )
+        M_f = np.asarray(res_f.M)
+        mean_fdm = float((M_f[-1] * x).sum() / M_f[-1].sum())
+        assert abs(mean_ml - mean_fdm) < 0.05, (
+            f"coupled meshless terminal mean {mean_ml:.4f} far from FDM reference {mean_fdm:.4f}"
+        )

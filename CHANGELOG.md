@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coupled meshless-Galerkin-vs-FDM regression test** (Issue #1145 acceptance gap). The
+  meshless MFG fixed point previously diverged to NaN and had *no* coupled-vs-reference test —
+  only isolated-piece tests. `TestMeshlessGalerkinCoupled` runs the full HJB↔FP Picard with the
+  opt-in stabilization recipe (`use_newton=True`, streamline-diffusion) and asserts it stays
+  finite (the #1145 NaN regression), mass-bounded, and its terminal mean tracks `FDM_UPWIND`
+  within 0.05 (slow/integration). The *unstabilized default still NaNs*, so #1145 stays open for
+  that (default-stabilization decision) + the clip-limited convergence.
 - **Diffusion-magnitude invariant CI gate** (`tests/integration/test_diffusion_magnitude_gate.py`).
   A standing parametrized gate that pins every diffusion-carrying solver to the correct
   magnitude `D = sigma^2/2` (Issue #811) via cosine-eigenmode decay (`exp(-D*sum k^2*T)`).
