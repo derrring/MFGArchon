@@ -74,6 +74,39 @@ def diffusion_from_volatility(
     raise ValueError(f"kind must be 'field' or 'tensor' (or None for scalar sigma), got {kind!r}.")
 
 
+def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any) -> float:
+    """Single scalar PDE diffusion ``D`` for solvers that assemble ``D * K`` with a scalar ``D``
+    (the weak-form / FEM family).
+
+    Routes the SDE-volatility -> PDE-diffusion conversion through the single source
+    :func:`diffusion_from_volatility` (``D = sigma^2 / 2``; Issue #811) so the ``0.5 * sigma**2``
+    formula is not re-copied per solver:
+
+    - ``volatility_field is None`` -> ``D`` from ``fallback_sigma`` (the problem's ``sigma``);
+    - scalar ``volatility_field`` -> ``D`` from that scalar;
+    - array ``volatility_field`` -> ``D`` from ``mean(volatility_field)``, with a warning. These
+      solvers cannot represent a spatially-varying field (``D`` multiplies the assembled stiffness
+      as one scalar), so the field is collapsed to its mean -- made loud here rather than silent
+      (Issue #1079-adjacent). Use an FDM/GFDM path with ``coefficient_field`` for true varying ``D``.
+
+    Byte-identical to the prior inline ``0.5 * sigma**2`` / ``0.5 * mean(sigma)**2`` copies.
+    """
+    if volatility_field is None:
+        return float(diffusion_from_volatility(fallback_sigma))
+    if np.ndim(volatility_field) == 0:
+        return float(diffusion_from_volatility(float(volatility_field)))
+    import warnings
+
+    warnings.warn(
+        "Weak-form/FEM solver uses a single scalar diffusion D; the spatially-varying volatility "
+        "field is collapsed to its mean (D = mean(sigma)^2 / 2). For a true varying-coefficient "
+        "diffusion use an FDM/GFDM FP path with coefficient_field (Issue #1079).",
+        UserWarning,
+        stacklevel=2,
+    )
+    return float(diffusion_from_volatility(float(np.mean(volatility_field))))
+
+
 class CoefficientMode(Enum):
     """
     Specifies which variables a callable coefficient depends on.

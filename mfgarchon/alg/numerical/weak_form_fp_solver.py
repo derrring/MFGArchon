@@ -25,6 +25,7 @@ from scipy.sparse.linalg import spsolve
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -89,15 +90,9 @@ class WeakFormFPSolver(BaseFPSolver):
         raise NotImplementedError
 
     def _diffusion_coefficient(self, volatility_field) -> float:
-        # volatility_field is the SDE volatility sigma (codebase-wide convention); the PDE
-        # diffusion coefficient is D = sigma^2 / 2 (Conventions Index; Issue #811). The
-        # scalar/array branches previously returned the input as D, skipping the conversion
-        # the None branch and solve_fp_step_adjoint_mode already apply.
-        if volatility_field is None:
-            return 0.5 * self.problem.sigma**2
-        if isinstance(volatility_field, (int, float)):
-            return 0.5 * float(volatility_field) ** 2
-        return 0.5 * float(np.mean(volatility_field)) ** 2
+        # D = sigma^2 / 2 via the single-source converter (Issue #811). A spatially-varying field
+        # is collapsed to its mean with a warning (this scalar-D solver cannot represent it).
+        return scalar_diffusion_from_volatility(volatility_field, self.problem.sigma)
 
     @deprecated_parameter(param_name="drift_field", since="v0.20.0", replacement="potential_field")
     def solve_fp_system(
@@ -194,12 +189,7 @@ class WeakFormFPSolver(BaseFPSolver):
         e.g. as the transpose of the assembled HJB operator.
         """
         dt = self.problem.dt
-        if sigma is None:
-            D = 0.5 * self.problem.sigma**2
-        elif isinstance(sigma, (int, float)):
-            D = 0.5 * float(sigma) ** 2
-        else:
-            D = 0.5 * float(np.mean(sigma)) ** 2
+        D = self._diffusion_coefficient(sigma)
 
         A_system = self._M / dt + A_advection_T + D * self._K
         rhs = (self._M / dt) @ M_current.ravel()

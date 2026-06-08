@@ -436,3 +436,30 @@ class TestCoefficientFieldEdgeCases:
 
         with pytest.raises(ValueError, match="my_custom_field"):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
+
+
+class TestScalarDiffusionFromVolatility:
+    """Issue #811 / FEM survey: the weak-form / FEM family's single scalar D = sigma^2/2,
+    single-sourced via diffusion_from_volatility. Byte-identical to the prior inline copies
+    (None -> 0.5*sigma^2, scalar -> 0.5*v^2, array -> 0.5*mean(v)^2); the array case warns
+    because a scalar-D solver cannot represent a spatially-varying field."""
+
+    def test_none_uses_fallback_sigma(self):
+        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+
+        assert scalar_diffusion_from_volatility(None, 0.3) == pytest.approx(0.5 * 0.3**2, rel=1e-12)
+
+    def test_scalar_is_converted(self):
+        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+
+        for v in (0.1, 0.7, 2.5):
+            assert scalar_diffusion_from_volatility(v, 0.3) == pytest.approx(0.5 * v**2, rel=1e-12)
+
+    def test_array_collapses_to_mean_with_warning(self):
+        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+
+        arr = np.array([0.2, 0.4, 0.6])
+        with pytest.warns(UserWarning, match="collapsed to its mean"):
+            d = scalar_diffusion_from_volatility(arr, 0.3)
+        # byte-identical to the prior inline `0.5 * mean(arr)**2`
+        assert d == pytest.approx(0.5 * float(np.mean(arr)) ** 2, rel=1e-12)

@@ -60,6 +60,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-sourced the σ→D conversion in the weak-form / FEM family** (Issue #811 / #1192; FEM
+  audit). The weak-form HJB and FP solvers had three inline `0.5 * sigma**2` copies
+  (`weak_form_fp_solver._diffusion_coefficient`, `solve_fp_step_adjoint_mode`, and
+  `weak_form_hjb_solver.solve_hjb_system`) that bypassed the canonical `diffusion_from_volatility`
+  and had already diverged for an array volatility (silently collapsing the field to a scalar
+  mean). Added one `scalar_diffusion_from_volatility(volatility_field, fallback_sigma)` helper in
+  `pde_coefficients` that all three delegate to; it routes the formula through the single source
+  and makes the scalar-D field-collapse **loud** (warns that a spatially-varying field is reduced
+  to its mean, since these solvers assemble `D * K` with one scalar `D`). Byte-identical to the
+  prior copies (`None→0.5σ²`, `scalar→0.5v²`, `array→0.5·mean(v)²`); also dedups the
+  `solve_fp_step_adjoint_mode` copy onto `_diffusion_coefficient`. EOC-safe (weak-form/FEM is off
+  the paper EOC path; scalar paths bit-identical).
+
 - **Single-sourced boundary on-wall tolerances** (Issue #1101). The scattered `1e-6` / `1e-8` /
   `1e-10` / `1e-12` magic literals across the boundary / geometry on-wall classifiers are now
   named, documented, tunable constants in `mfgarchon/geometry/boundary/tolerances.py`
