@@ -313,17 +313,11 @@ class FPParticleSolver(BaseFPSolver):
             # Get bounds per dimension (with fallback chain for legacy interfaces)
             # NOTE: bounds needed before spacing for implicit geometry fallback
             try:
-                geom_bounds = geom.bounds
-                if geom_bounds is None:
-                    raise AttributeError("bounds is None")
-                # Handle Hyperrectangle: bounds is np.ndarray of shape (d, 2)
-                # Convert to list of tuples: [(xmin, xmax), (ymin, ymax), ...]
-                if isinstance(geom_bounds, np.ndarray) and geom_bounds.ndim == 2:
-                    # Numpy array format: bounds[d, 0] = min, bounds[d, 1] = max
-                    bounds = [(float(geom_bounds[d, 0]), float(geom_bounds[d, 1])) for d in range(geom_bounds.shape[0])]
-                else:
-                    # List/tuple format - convert to list of tuples
-                    bounds = [(float(b[0]), float(b[1])) for b in geom_bounds]
+                # Issue #1056: uniform get_bounds() -> (min_coords, max_coords); build per-axis
+                # (min, max). Replaces ad-hoc .bounds shape-sniffing, which transposed the
+                # PointCloud (min_coords, max_coords) form into [(min0, min1), (max0, max1)].
+                min_coords, max_coords = geom.get_bounds()
+                bounds = [(float(min_coords[d]), float(max_coords[d])) for d in range(len(min_coords))]
             except AttributeError:
                 try:
                     # Legacy 1D geometry

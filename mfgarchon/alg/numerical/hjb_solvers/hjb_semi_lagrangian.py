@@ -1668,11 +1668,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
                 m_current = M_next_shaped[multi_idx]
 
-                def dpp_cost_nd(alpha_vec, _xc=x_current, _mc=m_current):
+                _bnd_min, _bnd_max = self.grid.get_bounds()  # Issue #1056: uniform accessor
+
+                def dpp_cost_nd(alpha_vec, _xc=x_current, _mc=m_current, _lo=_bnd_min, _hi=_bnd_max):
                     x_next = _xc + alpha_vec * dt
-                    # Clip to domain bounds
+                    # Clip to domain bounds (per-axis; the prior self.grid.bounds[0][d] mis-indexed
+                    # the ad-hoc .bounds shape for d>=1 -- latent nD bug, Issue #1056).
                     for d in range(self.dimension):
-                        x_next[d] = np.clip(x_next[d], self.grid.bounds[0][d], self.grid.bounds[1][d])
+                        x_next[d] = np.clip(x_next[d], _lo[d], _hi[d])
                     u_next = self._interpolate_value(U_next_shaped, x_next)
                     L_val = float(L_class(_xc, alpha_vec, _mc, t_value))
                     return dt * L_val + u_next
@@ -1909,7 +1912,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             return apply_boundary_conditions_nd(
                 x_departure,
-                bounds=self.grid.bounds,
+                bounds=np.column_stack(self.grid.get_bounds()),  # Issue #1056: uniform accessor
                 bc_type=bc_op,
             )
 
@@ -2174,23 +2177,15 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Grid index (int for 1D, tuple for nD)
         """
-        # Get bounds from geometry (preferred) or legacy xmin/xmax
-        # Issue #545: Use try/except instead of hasattr
-        try:
-            bounds = self.problem.geometry.bounds if self.problem.geometry is not None else None
-        except AttributeError:
-            bounds = None
-        grid_shape = self.problem.geometry.get_grid_shape() if bounds is not None else None
+        # Issue #1056: uniform get_bounds() accessor (was a polymorphic .bounds-primary path with a
+        # get_bounds() fallback; get_bounds() gives the same mins, so this is byte-identical).
+        mins, _maxs = self.problem.geometry.get_bounds()
+        grid_shape = self.problem.geometry.get_grid_shape()
 
         if self.dimension == 1:
             x_scalar = float(x) if np.ndim(x) > 0 else x
-            if bounds is not None:
-                xmin = bounds[0][0]
-                Nx = grid_shape[0] - 1
-            else:
-                geom_bounds = self.problem.geometry.get_bounds()
-                xmin = geom_bounds[0][0]
-                Nx = self.problem.geometry.get_grid_shape()[0] - 1
+            xmin = mins[0]
+            Nx = grid_shape[0] - 1
             # dx is scalar for 1D
             dx = self.dx if np.isscalar(self.dx) else self.dx[0]
             x_idx = int((x_scalar - xmin) / dx)
@@ -2199,13 +2194,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             x_vec = np.atleast_1d(x)
             indices = []
             for i in range(self.dimension):
-                if bounds is not None:
-                    xmin_i = bounds[i][0]
-                    Nx_i = grid_shape[i] - 1
-                else:
-                    geom_bounds = self.problem.geometry.get_bounds()
-                    xmin_i = geom_bounds[0][i]
-                    Nx_i = self.problem.geometry.get_grid_shape()[i] - 1
+                xmin_i = mins[i]
+                Nx_i = grid_shape[i] - 1
                 # dx is array for nD
                 dx_i = self.dx[i]
                 idx = int((x_vec[i] - xmin_i) / dx_i)

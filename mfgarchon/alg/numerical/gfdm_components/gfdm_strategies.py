@@ -494,7 +494,9 @@ class TaylorOperator(DifferentialOperator):
         # Geometry provides protocol info (bounds, periodic_dims), utility does work
         from mfgarchon.geometry.boundary.periodic import create_periodic_ghost_points
 
-        bounds = self._geometry.bounds
+        # Issue #1056: uniform get_bounds() accessor; create_periodic_ghost_points takes the
+        # (d, 2) form, so rebuild it from (mins, maxs).
+        bounds = np.column_stack(self._geometry.get_bounds())
         periodic_dims = self._geometry.periodic_dimensions
         return create_periodic_ghost_points(self._points, bounds, periodic_dims)
 

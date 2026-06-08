@@ -123,6 +123,29 @@ class TestGeometryBoundsAccessor:
             assert mins.shape == maxs.shape, f"{name}: mins/maxs shape mismatch"
             assert np.all(mins <= maxs), f"{name}: mins must be <= maxs, got {mins} / {maxs}"
 
+    def test_get_bounding_box_is_derived_view_of_get_bounds(self):
+        """For the implicit family, get_bounding_box() is the (d, 2) view of the same source:
+        column_stack(get_bounds()) == get_bounding_box() (Issue #1056)."""
+        from mfgarchon.geometry.implicit.csg_operations import (
+            DifferenceDomain,
+            IntersectionDomain,
+            UnionDomain,
+        )
+        from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+        from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+
+        box = Hyperrectangle(bounds=[(0.0, 1.0), (0.0, 1.0)])
+        ball = Hypersphere(center=[0.5, 0.5], radius=0.4)
+        for name, geom in [
+            ("Hyperrectangle", box),
+            ("Hypersphere", ball),
+            ("UnionDomain", UnionDomain([box, ball])),
+            ("IntersectionDomain", IntersectionDomain([box, ball])),
+            ("DifferenceDomain", DifferenceDomain(box, ball)),
+        ]:
+            mins, maxs = geom.get_bounds()
+            np.testing.assert_allclose(np.column_stack([mins, maxs]), geom.get_bounding_box(), atol=1e-12, err_msg=name)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

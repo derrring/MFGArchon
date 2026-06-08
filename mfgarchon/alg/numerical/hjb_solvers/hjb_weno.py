@@ -379,9 +379,12 @@ class HJBWenoSolver(BaseHJBSolver):
 
     def _get_domain_bounds(self) -> np.ndarray:
         """Get domain bounds from problem/geometry (NO hasattr per CLAUDE.md)."""
-        # Priority 1: Try CartesianGrid geometry bounds attribute
+        # Priority 1: uniform get_bounds() accessor (Issue #1056). Returns (mins, maxs); rebuild
+        # the (d, 2) ndarray contract this method promises. np.array(geometry.bounds) gave the
+        # same (d, 2) for grid/rectangle but raised for geometries lacking the ad-hoc .bounds.
         try:
-            return np.array(self.problem.geometry.bounds)
+            mins, maxs = self.problem.geometry.get_bounds()
+            return np.column_stack([mins, maxs])
         except AttributeError:
             pass
 
