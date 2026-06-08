@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FixedPointIterator` supports unstructured-mesh geometry** (coupled-FEM chain, seam 3). The
+  coupling iterator was grid-only — it required a `CartesianGrid` and used `get_grid_shape()` /
+  `get_grid_spacing()`, so a FEM pair (which needs an unstructured mesh) could never run through
+  the standard fixed-point loop, only a hand-rolled Picard. It now accepts `UNSTRUCTURED_MESH`
+  geometry: flat per-DOF state `shape = (num_spatial_points,)` and a unit volume element (the L2
+  convergence is a *relative* tolerance, so a constant volume weight does not change convergence
+  detection). The `CartesianGrid` path is gated and **byte-identical** (verified: an FDM grid
+  coupled solve reproduces its pre-change `U`/`M` exactly). `track_measure_field` (grid-only
+  `GridMeasureField`) now fails loud on mesh geometry rather than crashing downstream. With this,
+  the **full coupled FEM MFG solves through the standard `FixedPointIterator`** (no-flux,
+  mass-conserved) — completing the seam-1→2→3 chain. `tests/integration/test_coupling_mesh_geometry.py`.
+
 - **Cross-path convention-agreement guards** (`tests/unit/test_convention_agreement.py`). The
   dominant bug class here is the same convention implemented along parallel code paths with
   private copies and silent divergence. These tests pin the conventions that have *converged*

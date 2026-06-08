@@ -616,11 +616,24 @@ class FixedPointIterator(BaseCouplingIterator):
         if geometry is None:
             raise ValueError("Problem geometry cannot be None")
 
-        if not isinstance(geometry, CartesianGrid):
-            raise ValueError("Problem geometry must be CartesianGrid")
+        from mfgarchon.geometry import GeometryType
 
-        shape = tuple(self.problem.geometry.get_grid_shape())
-        grid_spacing = self.problem.geometry.get_grid_spacing()[0]  # For compatibility
+        is_grid = isinstance(geometry, CartesianGrid)
+        if is_grid:
+            shape = tuple(self.problem.geometry.get_grid_shape())
+            grid_spacing = self.problem.geometry.get_grid_spacing()[0]  # For compatibility
+        elif getattr(geometry, "geometry_type", None) == GeometryType.UNSTRUCTURED_MESH:
+            # Coupled-FEM chain seam 3: unstructured mesh -> flat per-DOF state, no grid spacing.
+            # The FEM / meshless-Galerkin solvers assemble their own operators; the iterator only
+            # shuttles (Nt+1, N) arrays. grid_spacing is a benign unit weight here -- the L2
+            # convergence is a *relative* tolerance, so a constant volume element does not change
+            # convergence detection (only the absolute L2 value, which is not compared to anything).
+            shape = (int(self.problem.num_spatial_points),)
+            grid_spacing = 1.0
+        else:
+            raise ValueError(
+                f"Problem geometry must be a CartesianGrid or unstructured mesh, got {type(geometry).__name__}"
+            )
         time_step = self.problem.dt
 
         # Initialize arrays (cold start or warm start)
@@ -673,6 +686,11 @@ class FixedPointIterator(BaseCouplingIterator):
         # Layer 2: Initialize MeasureField for sensitivity tracking (#956)
         measure_field = None
         if track_measure_field:
+            if not is_grid:
+                raise NotImplementedError(
+                    "track_measure_field uses GridMeasureField (get_spatial_grid) and is only "
+                    "supported for CartesianGrid geometry, not unstructured mesh."
+                )
             from mfgarchon.core.measure import ParticleMeasure
             from mfgarchon.core.measure_field import GridMeasureField
 
