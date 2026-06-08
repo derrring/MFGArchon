@@ -2,24 +2,25 @@
 """
 Audit deprecated symbols for removal readiness.
 
-This script scans the codebase for @deprecated decorators and reports
-which symbols are ready for removal based on:
-1. All removal blockers cleared
-2. Minimum age requirements met
-3. No internal production usage
+Scans the IMPORTED ``mfgarchon`` package for live ``@deprecated`` /
+``@deprecated_parameter`` / ``@deprecated_value`` metadata -- the source of truth, read off
+the decorated objects rather than fragile source-text parsing -- and categorizes each unique
+deprecation against the removal policy (3 minor versions OR 6 months; CLAUDE.md):
+
+  - READY     : age-eligible AND all removal blockers cleared -> safe to delete
+  - NOT READY : age-eligible but removal blockers remain
+  - ACTIVE    : not yet old enough to remove
+
+Removal blockers (``internal_usage``, ``equivalence_test``, ``migration_docs``) are checklist
+items you mark cleared with ``--cleared`` once verified; the audit does NOT auto-check live
+usage, so always confirm a READY symbol's call sites before deleting.
 
 Usage:
     python scripts/audit_deprecated_symbols.py
+    python scripts/audit_deprecated_symbols.py --cleared internal_usage equivalence_test migration_docs
+    python scripts/audit_deprecated_symbols.py --current-version v0.19.8 --ready-only
 
-    # Mark blockers as cleared for specific symbol
-    python scripts/audit_deprecated_symbols.py --symbol old_function --cleared internal_usage equivalence_test
-
-Output:
-    - List of deprecated symbols
-    - Removal readiness status for each
-    - Actionable recommendations
-
-Created: 2026-01-20 (Issue #616)
+Created: 2026-01-20 (Issue #616); reworked to use the runtime deprecation registry.
 Reference: docs/development/DEPRECATION_LIFECYCLE_POLICY.md
 """
 
@@ -27,171 +28,59 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
-from typing import ClassVar
-
-# Add parent directory to path to import from scripts/
-script_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(script_dir.parent))
-
-from mfgarchon.utils.deprecation import check_removal_readiness  # noqa: E402
-from scripts.check_internal_deprecation import discover_deprecated_symbols  # noqa: E402
 
 
-def format_blocker_list(blockers: list[str]) -> str:
-    """Format blocker list for display."""
-    if not blockers:
-        return "None"
-    return ", ".join(blockers)
-
-
-def print_symbol_status(
-    symbol_name: str,
-    metadata: dict,
-    completed_blockers: list[str],
-    current_version: str = "v0.20.0",
-) -> None:
-    """Print detailed status for a deprecated symbol."""
-    print(f"\n{'=' * 70}")
-    print(f"Symbol: {symbol_name}")
-    print(f"{'=' * 70}")
-    print(f"Location: {metadata['location']}")
-    print(f"Deprecated since: {metadata['since']}")
-    print(f"Replacement: {metadata['replacement']}")
-    if metadata.get("reason"):
-        print(f"Reason: {metadata['reason']}")
-
-    print(f"\nRemoval blockers: {format_blocker_list(metadata['removal_blockers'])}")
-    print(f"Completed: {format_blocker_list(completed_blockers)}")
-
-    # Check readiness (simplified - using mock function object)
-    class MockDeprecatedObject:
-        """Mock object to hold metadata for check_removal_readiness."""
-
-        _deprecation_meta: ClassVar[dict] = {
-            "since": metadata["since"],
-            "removal_blockers": metadata["removal_blockers"],
-            "replacement": metadata["replacement"],
-            "reason": metadata.get("reason", ""),
-            "symbol": symbol_name,
-        }
-
-    status = check_removal_readiness(
-        MockDeprecatedObject,
-        current_version=current_version,
-        completed_blockers=completed_blockers,
-    )
-
-    print(f"\nRemoval readiness: {'✅ READY' if status['ready'] else '❌ NOT READY'}")
-
-    if not status["ready"]:
-        print("\nBlocking reasons:")
-        for reason in status["blocking_reasons"]:
-            print(f"  - {reason}")
-
-        print("\nTo proceed with removal:")
-        for blocker in status["remaining_blockers"]:
-            if blocker == "internal_usage":
-                print("  1. Run: python scripts/check_internal_deprecation.py")
-                print("     Fix any violations found")
-            elif blocker == "equivalence_test":
-                print("  2. Add test: tests/unit/test_deprecation_equivalence.py")
-                print(f"     Verify {symbol_name}(old) == new_api(new)")
-            elif blocker == "migration_docs":
-                print("  3. Update: docs/user/DEPRECATION_MODERNIZATION_GUIDE.md")
-                print(f"     Document migration path for {symbol_name}")
-    else:
-        print("\n✅ All conditions met. Symbol can be removed in next major version.")
-        print("\nRemoval checklist:")
-        print("  1. Remove deprecated code")
-        print("  2. Update CHANGELOG.md")
-        print("  3. Run full test suite")
-        print("  4. Update deprecation guide")
+def _emit(title: str, items: list[dict]) -> None:
+    print(f"\n{title}  ({len(items)})")
+    for it in sorted(items, key=lambda x: (x.get("since", ""), x.get("name", ""))):
+        line = f"  - {it['name']}  [{it.get('since', '?')}, {it.get('type', '?')}]"
+        if it.get("remaining_blockers"):
+            line += f"  blockers: {', '.join(it['remaining_blockers'])}"
+        print(line)
+        if it.get("age_reason"):
+            print(f"      {it['age_reason']}")
 
 
 def main() -> int:
-    """Main entry point."""
     parser = argparse.ArgumentParser(description="Audit deprecated symbols for removal readiness")
     parser.add_argument(
-        "--symbol",
-        help="Specific symbol to audit (default: all)",
+        "--current-version",
+        default=None,
+        help="Version to judge age against (default: installed mfgarchon version)",
     )
     parser.add_argument(
         "--cleared",
         nargs="+",
         default=[],
-        help="Blockers that have been cleared for this symbol",
+        help="Removal blockers cleared globally (e.g. internal_usage equivalence_test migration_docs)",
     )
-    parser.add_argument(
-        "--current-version",
-        default="v0.20.0",
-        help="Current version for age calculation (default: v0.20.0)",
-    )
-
+    parser.add_argument("--ready-only", action="store_true", help="List only the READY-for-removal symbols")
     args = parser.parse_args()
 
-    print("=" * 70)
-    print("Deprecated Symbol Audit")
-    print("=" * 70)
-    print()
+    import mfgarchon
+    from mfgarchon.utils.deprecation import audit_all_deprecations
 
-    # Discover deprecated symbols
-    repo_root = script_dir.parent
-    src_path = repo_root / "mfgarchon"
+    report = audit_all_deprecations(mfgarchon, current_version=args.current_version, completed_blockers=args.cleared)
+    all_items = report["ready"] + report["not_ready"] + report["active"]
+    cur_ver = all_items[0]["current_version"] if all_items else "(unknown)"
 
-    if not src_path.exists():
-        print(f"❌ ERROR: Source directory not found: {src_path}", file=sys.stderr)
-        return 2
+    print("=" * 72)
+    print(f"Deprecated Symbol Audit   current={cur_ver}   cleared blockers={args.cleared or 'none'}")
+    print("=" * 72)
 
-    deprecated_registry = discover_deprecated_symbols(src_path)
+    _emit("READY FOR REMOVAL (age-eligible + blockers cleared)", report["ready"])
+    if not args.ready_only:
+        _emit("NOT READY (age-eligible, blockers remain)", report["not_ready"])
+        print(f"\nACTIVE (not yet old enough): {len(report['active'])} symbol(s)")
 
-    if not deprecated_registry:
-        print("✅ No deprecated symbols found in codebase.")
-        return 0
-
-    print(f"Found {len(deprecated_registry)} deprecated symbol(s)\n")
-
-    # If specific symbol requested
-    if args.symbol:
-        if args.symbol not in deprecated_registry:
-            print(f"❌ ERROR: Symbol '{args.symbol}' not found", file=sys.stderr)
-            print(f"Available symbols: {', '.join(deprecated_registry.keys())}")
-            return 1
-
-        symbol = deprecated_registry[args.symbol]
-        print_symbol_status(
-            args.symbol,
-            {
-                "location": symbol.location,
-                "since": symbol.since,
-                "removal_blockers": symbol.replacement.split("removal_blockers=")[1].split(")")[0].split(",")
-                if "removal_blockers=" in symbol.replacement
-                else ["internal_usage", "equivalence_test", "migration_docs"],
-                "replacement": symbol.replacement,
-                "reason": "",
-            },
-            completed_blockers=args.cleared,
-            current_version=args.current_version,
-        )
-        return 0
-
-    # Otherwise, show summary for all symbols
-    print("Summary of all deprecated symbols:")
-    print()
-
-    for symbol_name, symbol in deprecated_registry.items():
-        print(f"  • {symbol_name}")
-        print(f"    Deprecated since: {symbol.since}")
-        print(f"    Location: {symbol.location}")
-        print(f"    Replacement: {symbol.replacement}")
-        print()
-
-    print(f"\nTotal: {len(deprecated_registry)} symbol(s)")
-    print("\nFor detailed status of a specific symbol:")
-    print(f"  python {Path(__file__).name} --symbol <symbol_name>")
-    print("\nTo check removal readiness:")
-    print(f"  python {Path(__file__).name} --symbol <symbol_name> --cleared internal_usage equivalence_test")
-
+    print(
+        f"\nSummary: {len(report['ready'])} ready, {len(report['not_ready'])} not-ready, "
+        f"{len(report['active'])} active."
+    )
+    print(
+        "\nNote: 'ready' means age-eligible with the listed blockers cleared via --cleared; "
+        "the audit does not scan live usage -- verify call sites before deleting."
+    )
     return 0
 
 
