@@ -281,7 +281,14 @@ class Mesh2D(_MeshGeneratorBase):
             warnings.warn(f"Hole creation failed: {e}. Continuing with domain without holes.", stacklevel=2)
 
     def generate_mesh(self) -> MeshData:
-        """Generate 2D triangular mesh using Gmsh → Meshio pipeline."""
+        """Generate 2D triangular mesh using Gmsh → Meshio pipeline.
+
+        If ``self.mesh_data`` is already populated (e.g. injected from a pre-built mesh via
+        ``mfgarchon.alg.numerical.fem.mesh_adapter.skfem_to_meshdata``), it is returned as-is —
+        a gmsh-free path for callers that supply their own mesh, and idempotent memoization
+        otherwise."""
+        if self.mesh_data is not None:
+            return self.mesh_data
         try:
             import gmsh
             import meshio  # noqa: F401

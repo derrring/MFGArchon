@@ -366,7 +366,12 @@ class Mesh3D(_MeshGeneratorBase):
             gmsh.model.occ.synchronize()
 
     def generate_mesh(self) -> MeshData:
-        """Generate 3D tetrahedral mesh."""
+        """Generate 3D tetrahedral mesh.
+
+        Returns a pre-populated ``self.mesh_data`` as-is if present (gmsh-free injected-mesh
+        path / idempotent memoization)."""
+        if self.mesh_data is not None:
+            return self.mesh_data
         try:
             import gmsh
             import meshio  # noqa: F401

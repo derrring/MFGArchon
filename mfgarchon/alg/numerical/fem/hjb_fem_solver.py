@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -40,6 +41,8 @@ class HJBFEMSolver(WeakFormHJBSolver):
         >>> U = solver.solve_hjb_system(M_density, U_terminal, U_coupling_prev)
         >>> U = solver.solve_hjb_system(M_density, U_terminal, use_newton=True)
     """
+
+    _scheme_family = SchemeFamily.FEM
 
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
         mesh_data = problem.geometry.mesh_data

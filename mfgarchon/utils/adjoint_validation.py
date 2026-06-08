@@ -227,13 +227,16 @@ def check_solver_duality(
         )
 
     # Case 4: Same family → Check duality type
-    # Type A families: Discrete transpose (exact). MESHLESS_GALERKIN is the
-    # meshfree Type-A member (Galerkin MLS, A_FP = A_HJB^T exact; Issue #1131).
+    # Type A families: Discrete transpose (exact). MESHLESS_GALERKIN is the meshfree Type-A
+    # member (Galerkin MLS, A_FP = A_HJB^T exact; Issue #1131); FEM is its mesh-based sibling
+    # (Galerkin Lagrange, exact transpose: the FP advection block is assembled as -C^T of the
+    # HJB convective form, and mass/stiffness are symmetric).
     discrete_families = {
         SchemeFamily.FDM,
         SchemeFamily.SL,
         SchemeFamily.FVM,
         SchemeFamily.MESHLESS_GALERKIN,
+        SchemeFamily.FEM,
     }
 
     if hjb_family in discrete_families:
