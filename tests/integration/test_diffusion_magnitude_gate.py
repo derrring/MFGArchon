@@ -145,9 +145,16 @@ def test_fp_fdm_diffusion_magnitude(path):
 _PI = np.pi  # cos(pi x) is a no-flux Laplacian eigenmode on [0,1]
 
 
-def _gfdm_diffusion_field_relerr(sigma: float, D_reference: float, n_x: int = 41,
-                                 T: float = 0.05, nt: int = 50, amp: float = 1e-3,
-                                 lam: float = 1.0, delta: float = 0.3) -> float:
+def _gfdm_diffusion_field_relerr(
+    sigma: float,
+    D_reference: float,
+    n_x: int = 41,
+    T: float = 0.05,
+    nt: int = 50,
+    amp: float = 1e-3,
+    lam: float = 1.0,
+    delta: float = 0.3,
+) -> float:
     """L2 error between the GFDM-recovered field and the analytic backward eigenmode.
 
     The solver applies its own ``D = sigma^2/2`` (the path under test); the analytic
@@ -159,8 +166,7 @@ def _gfdm_diffusion_field_relerr(sigma: float, D_reference: float, n_x: int = 41
     ``L^n[i] = -H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
     clean (diffusion O(amp) dominates the O(amp^2) Hamiltonian remnant).
     """
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x],
-                             boundary_conditions=no_flux_bc(dimension=1))
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=lam),
         coupling=lambda m: 0.0 * np.asarray(m),
@@ -173,8 +179,9 @@ def _gfdm_diffusion_field_relerr(sigma: float, D_reference: float, n_x: int = 41
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
-    solver = HJBGFDMSolver(prob, x.reshape(-1, 1), delta=delta,
-                           monotonicity_scheme="joint_socp", monotonicity_application="precompute")
+    solver = HJBGFDMSolver(
+        prob, x.reshape(-1, 1), delta=delta, monotonicity_scheme="joint_socp", monotonicity_application="precompute"
+    )
     tspace = np.linspace(0.0, T, nt + 1)
 
     def running_cost_fn(n):  # L^n[i] = -H(grad u*^n) on the analytic field

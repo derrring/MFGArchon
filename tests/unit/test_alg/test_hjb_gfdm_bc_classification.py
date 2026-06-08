@@ -108,13 +108,18 @@ def _mixed_bc_with_exit(LX: float, LY: float, exit_y_lo=0.4, exit_y_hi=0.6):
             BCSegment(name="left", bc_type=BCType.NO_FLUX, boundary="x_min"),
             BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
             BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
-            BCSegment(name="right_below", bc_type=BCType.NO_FLUX,
-                      boundary="x_max", region={"y": (0.0, exit_y_lo * LY)}),
-            BCSegment(name="right_above", bc_type=BCType.NO_FLUX,
-                      boundary="x_max", region={"y": (exit_y_hi * LY, LY)}),
-            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0,
-                      boundary="x_max", region={"y": (exit_y_lo * LY, exit_y_hi * LY)},
-                      priority=1),
+            BCSegment(
+                name="right_below", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.0, exit_y_lo * LY)}
+            ),
+            BCSegment(name="right_above", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (exit_y_hi * LY, LY)}),
+            BCSegment(
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                value=0.0,
+                boundary="x_max",
+                region={"y": (exit_y_lo * LY, exit_y_hi * LY)},
+                priority=1,
+            ),
         ],
         dimension=2,
     )
@@ -147,12 +152,12 @@ def _build_solver(points, boundary_idx, bc, geometry, scheme="none"):
 @pytest.mark.parametrize(
     "LX,LY,eps",
     [
-        (1.0, 1.0, 0.0),       # exactly on wall
-        (1.0, 1.0, 1e-7),      # well inside tol
-        (1.0, 1.0, 1e-6),      # at tol boundary
-        (10.0, 10.0, 1e-6),    # moderate bound + tol-boundary ε
-        (20.0, 10.0, 1e-6),    # the stageC case (FP rounding regime)
-        (100.0, 50.0, 1e-6),   # larger bound, tighter relative
+        (1.0, 1.0, 0.0),  # exactly on wall
+        (1.0, 1.0, 1e-7),  # well inside tol
+        (1.0, 1.0, 1e-6),  # at tol boundary
+        (10.0, 10.0, 1e-6),  # moderate bound + tol-boundary ε
+        (20.0, 10.0, 1e-6),  # the stageC case (FP rounding regime)
+        (100.0, 50.0, 1e-6),  # larger bound, tighter relative
     ],
 )
 def test_preclassify_eps_off_wall(LX, LY, eps):
@@ -232,8 +237,7 @@ def test_identify_face_domain_bounds_override():
     )
     # Override to [0, 1]: point at x=0.9 should now classify as on x_max
     override = np.array([[0.0, 1.0], [0.0, 1.0]])
-    face = bc.identify_boundary_face(np.array([1.0, 0.5]), tolerance=1e-6,
-                                      domain_bounds=override)
+    face = bc.identify_boundary_face(np.array([1.0, 0.5]), tolerance=1e-6, domain_bounds=override)
     assert face is not None
     assert face.axis == 0 and face.side == "max"
 
@@ -254,6 +258,7 @@ def test_identify_face_domain_bounds_override():
 )
 def test_outward_normal_for_face_2d(axis, side, expected):
     from mfgarchon.geometry.boundary.types import BoundaryFace
+
     bc = BoundaryConditions(segments=[], dimension=2)
     normal = bc.outward_normal_for_face(BoundaryFace(axis, side), dimension=2)
     np.testing.assert_array_equal(normal, expected)
@@ -270,6 +275,7 @@ def test_outward_normal_for_face_2d(axis, side, expected):
 )
 def test_outward_normal_for_face_3d(axis, side, expected):
     from mfgarchon.geometry.boundary.types import BoundaryFace
+
     bc = BoundaryConditions(segments=[], dimension=3)
     normal = bc.outward_normal_for_face(BoundaryFace(axis, side), dimension=3)
     np.testing.assert_array_equal(normal, expected)
@@ -296,10 +302,8 @@ def test_preclassify_corner_priority():
     # left has higher priority than bottom
     bc = BoundaryConditions(
         segments=[
-            BCSegment(name="left", bc_type=BCType.DIRICHLET, value=1.0,
-                      boundary="x_min", priority=10),
-            BCSegment(name="bottom", bc_type=BCType.NO_FLUX,
-                      boundary="y_min", priority=1),
+            BCSegment(name="left", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_min", priority=10),
+            BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min", priority=1),
         ],
         dimension=2,
     )
@@ -307,8 +311,7 @@ def test_preclassify_corner_priority():
     # The corner point should be assigned to "left" (higher priority)
     assigned = solver._bc_segment_per_point[int(boundary_idx[0])]
     assert assigned.name == "left", (
-        f"Corner point at (eps, eps) should bind to higher-priority segment 'left', "
-        f"got {assigned.name!r}"
+        f"Corner point at (eps, eps) should bind to higher-priority segment 'left', got {assigned.name!r}"
     )
 
 
@@ -341,9 +344,7 @@ def test_preclassify_unmatched_raises_with_coords():
     assert "pre-classification failed" in msg
     # Coordinate of an unmatched x_max point must appear in message
     # (x ≈ LX = 10.0 with eps offset)
-    assert "9.99" in msg or "10.0" in msg, (
-        "Unmatched right-wall coords should be greppable from the error message"
-    )
+    assert "9.99" in msg or "10.0" in msg, "Unmatched right-wall coords should be greppable from the error message"
     # BoundaryFace info must be in message
     assert "y_min" in msg or "y_max" in msg or "x_max" in msg or "BoundaryFace" in msg
 
@@ -361,12 +362,11 @@ def test_preclassify_uniform_bc_skipped():
 
     # Uniform Dirichlet — not mixed
     from mfgarchon.geometry.boundary import dirichlet_bc
+
     bc = dirichlet_bc(value=0.0, dimension=2)
 
     solver = _build_solver(points, boundary_idx, bc, geom)
-    assert len(solver._bc_segment_per_point) == 0, (
-        "Uniform BC must skip pre-classification (legacy fast path)"
-    )
+    assert len(solver._bc_segment_per_point) == 0, "Uniform BC must skip pre-classification (legacy fast path)"
 
 
 # ---------------------------------------------------------------------------
@@ -504,9 +504,11 @@ def test_dispatch_robin_zero_alpha_builds_neumann_row():
     g = 0.5
 
     def _bc(left_type):
-        segs = [BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
-                BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
-                BCSegment(name="right", bc_type=BCType.NO_FLUX, boundary="x_max")]
+        segs = [
+            BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
+            BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
+            BCSegment(name="right", bc_type=BCType.NO_FLUX, boundary="x_max"),
+        ]
         if left_type == "robin":
             segs.insert(0, BCSegment(name="left", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=g, boundary="x_min"))
         else:
@@ -597,6 +599,7 @@ def test_stress_thousand_boundary_points():
     bc = _mixed_bc_with_exit(LX, LY)
 
     import time as _time
+
     t0 = _time.perf_counter()
     solver = _build_solver(points, boundary_idx, bc, geom)
     t_init = _time.perf_counter() - t0

@@ -122,7 +122,8 @@ class TestHJBGFDMSolverInitialization:
         ]
         for scheme, application, expected_name in configs:
             solver = HJBGFDMSolver(
-                problem, collocation_points,
+                problem,
+                collocation_points,
                 monotonicity_scheme=scheme,
                 monotonicity_application=application,
             )
@@ -149,9 +150,7 @@ class TestHJBGFDMSolverInitialization:
         noise so it cannot flood the log.)
         """
         n = 15
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)
-        )
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
         H = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
             coupling=lambda m: 0.0 * np.asarray(m),
@@ -172,8 +171,11 @@ class TestHJBGFDMSolverInitialization:
         sols = {}
         for scheme, application in configs:
             solver = HJBGFDMSolver(
-                problem, cp, delta=0.3,
-                monotonicity_scheme=scheme, monotonicity_application=application,
+                problem,
+                cp,
+                delta=0.3,
+                monotonicity_scheme=scheme,
+                monotonicity_application=application,
             )
             U = solver.solve_hjb_system(M_density=M_density, U_terminal=U_terminal, show_progress=False)
             assert np.all(np.isfinite(U)), f"{scheme}/{application} produced non-finite U"
@@ -198,9 +200,7 @@ class TestHJBGFDMSolverInitialization:
         import warnings
 
         n = 11
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1)
-        )
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
         H = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
             coupling=lambda m: 0.0 * np.asarray(m),
@@ -214,17 +214,22 @@ class TestHJBGFDMSolverInitialization:
         )
         problem = MFGProblem(geometry=grid, T=0.02, Nt=4, sigma=0.5, components=comps)
         solver = HJBGFDMSolver(
-            problem, x.reshape(-1, 1), delta=0.3,
-            monotonicity_scheme="qp_m_matrix", monotonicity_application="always",
+            problem,
+            x.reshape(-1, 1),
+            delta=0.3,
+            monotonicity_scheme="qp_m_matrix",
+            monotonicity_application="always",
         )
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             solver.solve_hjb_system(
                 M_density=np.ones((problem.Nt + 1, n)),
-                U_terminal=np.cos(np.pi * x), show_progress=False,
+                U_terminal=np.cos(np.pi * x),
+                show_progress=False,
             )
         offenders = [
-            str(w.message) for w in caught
+            str(w.message)
+            for w in caught
             if "polish" in str(w.message).lower() or "raise_error" in str(w.message).lower()
         ]
         assert not offenders, f"OSQP polish/raise_error deprecation leaked: {offenders[:3]}"
@@ -601,11 +606,15 @@ class TestHJBGFDMSigmaConvention:
 
     def _make_solver(self, sigma):
         domain = TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[21],
+            bounds=[(0.0, 1.0)],
+            Nx_points=[21],
             boundary_conditions=no_flux_bc(dimension=1),
         )
         problem = MFGProblem(
-            geometry=domain, T=0.1, Nt=10, sigma=sigma,
+            geometry=domain,
+            T=0.1,
+            Nt=10,
+            sigma=sigma,
             components=_default_components(),
         )
         x_coords = np.linspace(0, 1, 11)
@@ -630,7 +639,7 @@ class TestHJBGFDMSigmaConvention:
         sigma_returned = solver._get_sigma_value(None)
         assert abs(sigma_returned - sigma) < 1e-12, (
             f"_get_sigma_value() returned {sigma_returned}, expected σ = {sigma}. "
-            f"If it returned σ²/2 = {sigma**2/2}, the Issue #1073 regression has returned."
+            f"If it returned σ²/2 = {sigma**2 / 2}, the Issue #1073 regression has returned."
         )
 
     @pytest.mark.parametrize("sigma", [0.3, 0.5, 1.0])
@@ -647,7 +656,7 @@ class TestHJBGFDMSigmaConvention:
         assert abs(diffusion_coeff - expected_D) < 1e-12, (
             f"σ={sigma}: diffusion coefficient = {diffusion_coeff}, "
             f"expected D = σ²/2 = {expected_D}. If diffusion = (σ²/2)²/2 = "
-            f"{(sigma**2/2)**2 / 2}, Issue #1073 regression."
+            f"{(sigma**2 / 2) ** 2 / 2}, Issue #1073 regression."
         )
 
 
