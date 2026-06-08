@@ -15,6 +15,8 @@ import warnings
 import pytest
 
 from mfgarchon.utils.deprecation import (
+    _removable_by_policy,
+    audit_all_deprecations,
     check_removal_readiness,
     deprecated,
     deprecated_parameter,
@@ -223,6 +225,164 @@ def test_removal_readiness_non_deprecated():
     status = check_removal_readiness(regular_function, "v0.20.0")
     assert not status["ready"]
     assert "Not a deprecated object" in status["blocking_reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Removal policy: 3 minor versions OR 6 months (the single source of truth).
+# ---------------------------------------------------------------------------
+
+
+def test_removal_policy_three_minor_versions():
+    """Age-eligible once >=3 minor versions have elapsed (no date needed)."""
+    eligible, reason = _removable_by_policy("v0.17.0", None, "v0.20.0")
+    assert eligible
+    assert ">= 3" in reason
+
+    eligible, reason = _removable_by_policy("v0.18.0", None, "v0.20.0")
+    assert not eligible  # only 2 minor versions, no date path
+    assert "< 3" in reason
+
+
+def test_removal_policy_major_aware_minor_diff():
+    """A major bump counts as 100 minor steps, so v0.x -> v1.0 is age-eligible."""
+    eligible, reason = _removable_by_policy("v0.19.0", None, "v1.0.0")
+    assert eligible
+    assert ">= 3" in reason
+
+
+def test_removal_policy_six_month_date_path():
+    """The date path makes a deprecation eligible even when too few versions elapsed."""
+    # Same minor version (0 version steps) but an old date -> eligible via 6-month rule.
+    eligible, reason = _removable_by_policy("v0.19.0", "2020-01-01", "v0.19.0")
+    assert eligible
+    assert "6 months" in reason
+
+    # No date and too few versions -> not eligible, and the reason states the date is absent.
+    eligible, reason = _removable_by_policy("v0.19.0", None, "v0.19.0")
+    assert not eligible
+    assert "no deprecated_on date" in reason
+
+
+def test_check_removal_readiness_uses_date_path():
+    """check_removal_readiness honors the 6-month date path through the decorator."""
+
+    # removal_blockers=[] isolates the age logic from the blocker gate.
+    @deprecated(since="v0.19.0", deprecated_on="2020-01-01", replacement="use new()", removal_blockers=[])
+    def old_dated():
+        return "result"
+
+    # Version criterion alone would fail (0 minor steps), date criterion carries it.
+    status = check_removal_readiness(old_dated, "v0.19.0", completed_blockers=[])
+    assert status["minimum_age_met"]
+    assert status["ready"]
+
+    # Same age, but the default 3-item blocker checklist gates readiness until cleared.
+    @deprecated(since="v0.19.0", deprecated_on="2020-01-01", replacement="use new()")
+    def old_dated_blocked():
+        return "result"
+
+    gated = check_removal_readiness(old_dated_blocked, "v0.19.0", completed_blockers=[])
+    assert gated["minimum_age_met"]
+    assert not gated["ready"]  # age met, blockers remain
+
+
+def test_deprecated_on_stored_in_metadata():
+    """deprecated_on round-trips into the deprecation metadata."""
+
+    @deprecated(since="v0.19.0", deprecated_on="2024-01-01", replacement="use new()")
+    def g():
+        return 1
+
+    meta = get_deprecation_metadata(g)
+    assert meta is not None
+    assert meta["deprecated_on"] == "2024-01-01"
+
+
+# ---------------------------------------------------------------------------
+# deprecated_parameter: warn iff the user actually passed the parameter, not
+# whenever its (non-None) default is present. Regression guard for the
+# bound.apply_defaults() false-positive bug.
+# ---------------------------------------------------------------------------
+
+
+def test_deprecated_parameter_no_warn_on_default():
+    """A non-None default must NOT trigger the deprecation warning by itself."""
+
+    @deprecated_parameter(param_name="mode", since="v0.18.0", replacement="strategy")
+    def f(strategy: str = "auto", mode: str = "auto") -> str:
+        return strategy
+
+    # User never passes `mode`; its default "auto" is non-None. Old code warned here.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert f(strategy="x") == "x"
+
+
+def test_deprecated_parameter_warns_when_passed():
+    """Passing the deprecated parameter (kw or positional) must warn."""
+
+    @deprecated_parameter(param_name="mode", since="v0.18.0", replacement="strategy")
+    def f(strategy: str = "auto", mode: str = "auto") -> str:
+        return strategy
+
+    with pytest.warns(DeprecationWarning, match="mode.*deprecated"):
+        f(mode="auto")
+
+    with pytest.warns(DeprecationWarning, match="mode.*deprecated"):
+        f("x", "auto")  # mode supplied positionally
+
+
+# ---------------------------------------------------------------------------
+# audit_all_deprecations: delegates age to the policy, dedups, categorizes.
+# ---------------------------------------------------------------------------
+
+
+def test_audit_all_categorizes_and_delegates():
+    """ready / not_ready / active partition via the shared policy + blocker check."""
+    import types
+
+    mod = types.ModuleType("fake_dep_module")
+
+    @deprecated(since="v0.10.0", replacement="use new()", removal_blockers=[])
+    def ancient():  # age-eligible, no blockers -> ready
+        return 1
+
+    @deprecated(since="v0.17.0", replacement="use new()", removal_blockers=["equivalence_test"])
+    def blocked():  # age-eligible (3 minor), blocker remains -> not_ready
+        return 2
+
+    @deprecated(since="v0.20.0", replacement="use new()")
+    def fresh():  # 0 minor steps, no date -> active
+        return 3
+
+    mod.ancient = ancient
+    mod.blocked = blocked
+    mod.fresh = fresh
+
+    report = audit_all_deprecations(mod, current_version="v0.20.0", completed_blockers=[])
+    names = {bucket: {it["name"] for it in report[bucket]} for bucket in ("ready", "not_ready", "active")}
+    assert "ancient" in names["ready"]
+    assert "blocked" in names["not_ready"]
+    assert "fresh" in names["active"]
+
+    # Clearing the blocker promotes `blocked` to ready.
+    report2 = audit_all_deprecations(mod, current_version="v0.20.0", completed_blockers=["equivalence_test"])
+    assert "blocked" in {it["name"] for it in report2["ready"]}
+
+
+def test_audit_all_default_version_and_dedup():
+    """Default current_version resolves; output keys are unique (dedup works)."""
+    import mfgarchon
+
+    report = audit_all_deprecations(mfgarchon)  # no current_version -> installed
+    all_items = report["ready"] + report["not_ready"] + report["active"]
+    assert all_items, "expected at least one live deprecation in mfgarchon"
+    # Every item carries the resolved version, identical across the run.
+    versions = {it["current_version"] for it in all_items}
+    assert len(versions) == 1
+    # Dedup invariant: each (name, type, since) appears at most once across all buckets.
+    keys = [(it.get("name"), it.get("type"), it.get("since")) for it in all_items]
+    assert len(keys) == len(set(keys))
 
 
 if __name__ == "__main__":

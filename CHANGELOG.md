@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **6-month removal criterion + `deprecated_on` date** for the deprecation policy (CLAUDE.md
+  "3 minor versions OR 6 months"). Only the version criterion was implemented; the time
+  criterion is now wired through a single source of truth, `_removable_by_policy(since,
+  deprecated_on, current_version)` (major-aware minor diff `(Δmajor·100 + Δminor) ≥ 3`, OR
+  `≥ 183` days since an optional `deprecated_on="YYYY-MM-DD"` recorded on `@deprecated` /
+  `@deprecated_parameter`). `check_removal_readiness` and `audit_all_deprecations` both delegate
+  to it, so the two eligibility calcs can no longer disagree. `audit_all_deprecations` now
+  defaults `current_version` to the installed package version and dedups deprecations surfaced
+  on many inherited subclasses by `(name, type, since)`. Added regression tests for the policy
+  (3-minor / major-aware / 6-month-date paths), the audit delegation/dedup, and the
+  `deprecated_parameter` user-vs-default fix below.
+
 - **Coupled meshless-Galerkin-vs-FDM regression test** (Issue #1145 acceptance gap). The
   meshless MFG fixed point previously diverged to NaN and had *no* coupled-vs-reference test —
   only isolated-piece tests. `TestMeshlessGalerkinCoupled` runs the full HJB↔FP Picard with the
@@ -103,6 +115,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discretization).
 
 ### Fixed
+
+- **`@deprecated_parameter` false-positive warning + dead removal-readiness lister**. The
+  decorator called `bound.apply_defaults()` and warned whenever the resolved value was
+  non-`None`, so any deprecated parameter with a **non-`None` default** emitted a deprecation
+  warning on *every* call even when the user never passed it. Now it binds without applying
+  defaults and warns iff the parameter was actually supplied (positionally or by keyword).
+  Separately, `scripts/audit_deprecated_symbols.py` listed removable symbols via fragile AST
+  source-parsing (broken — listed nothing); it now reads the runtime `@deprecated` registry via
+  `audit_all_deprecations`, so the READY/NOT-READY/ACTIVE report reflects the actual decorated
+  metadata and the shared age policy.
 
 - **Per-point spatially-varying volatility on the explicit-drift & strict-adjoint FP paths**
   (Issue #1183). Both paths collapsed a non-uniform `volatility_field` to its spatial **mean**

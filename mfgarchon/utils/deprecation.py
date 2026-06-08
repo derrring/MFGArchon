@@ -29,6 +29,7 @@ def deprecated(
     reason: str = "",
     removal: str = "v0.25.0",
     removal_blockers: list[str] | None = None,
+    deprecated_on: str | None = None,
 ) -> Callable[[F], F]:
     """
     Mark a function, class, or method as deprecated.
@@ -49,6 +50,8 @@ def deprecated(
         replacement: New API to use instead (e.g., "use advection_scheme parameter")
         reason: Optional explanation of why deprecated
         removal_blockers: Conditions that prevent removal (default: standard checklist)
+        deprecated_on: ISO date (``YYYY-MM-DD``) this deprecation was added. Optional; when set,
+            it enables the 6-month removal criterion (the earlier of the version/time policy).
             - "internal_usage": Production code still calls this
             - "equivalence_test": No test verifying old = new
             - "migration_docs": No migration guide in DEPRECATION_MODERNIZATION_GUIDE.md
@@ -79,6 +82,7 @@ def deprecated(
             "reason": reason,
             "removal": removal,
             "removal_blockers": removal_blockers,
+            "deprecated_on": deprecated_on,  # ISO date (YYYY-MM-DD); enables the 6-month criterion
             "symbol": func.__name__,
         }
 
@@ -108,6 +112,7 @@ def deprecated_parameter(
     replacement: str,
     removal: str = "v0.25.0",
     removal_blockers: list[str] | None = None,
+    deprecated_on: str | None = None,
 ) -> Callable[[F], F]:
     """
     Mark a function parameter as deprecated.
@@ -124,6 +129,8 @@ def deprecated_parameter(
         since: Version when deprecation started
         replacement: New parameter to use
         removal_blockers: Conditions preventing removal (default: standard checklist)
+        deprecated_on: ISO date (``YYYY-MM-DD``) this deprecation was added. Optional; enables
+            the 6-month removal criterion when set.
 
     Example:
         >>> @deprecated_parameter(
@@ -157,6 +164,7 @@ def deprecated_parameter(
                 "replacement": replacement,
                 "removal": removal,
                 "removal_blockers": removal_blockers,
+                "deprecated_on": deprecated_on,
             }
         )
 
@@ -165,28 +173,26 @@ def deprecated_parameter(
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Bind arguments to see which parameters are actually set
+            # Warn iff the user ACTUALLY passed the deprecated parameter. Bind WITHOUT
+            # apply_defaults() so bound.arguments holds only user-supplied args -- the
+            # previous apply_defaults() + `value is not None` check warned on every call
+            # whenever the parameter's default was non-None (false positive, regardless of
+            # whether the caller passed it).
             try:
                 bound = sig.bind(*args, **kwargs)
-                bound.apply_defaults()
-
-                # Check if the deprecated parameter was explicitly passed
-                if param_name in bound.arguments:
-                    value = bound.arguments[param_name]
-
-                    # Only warn if user explicitly set it (not None default)
-                    # This handles both positional and keyword argument cases
-                    if value is not None:
-                        warnings.warn(
-                            f"Parameter '{param_name}' in '{func.__name__}' is deprecated "
-                            f"since {since}. Use '{replacement}' instead.",
-                            DeprecationWarning,
-                            stacklevel=2,
-                        )
+                passed = param_name in bound.arguments
             except TypeError:
                 # If binding fails, fall through to original function
-                # (Let the original function handle signature errors)
-                pass
+                # (Let the original function handle signature errors).
+                passed = False
+
+            if passed:
+                warnings.warn(
+                    f"Parameter '{param_name}' in '{func.__name__}' is deprecated "
+                    f"since {since}. Use '{replacement}' instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
 
             # Call original function
             return func(*args, **kwargs)
@@ -319,6 +325,44 @@ def get_deprecated_parameters(func: Callable[..., Any]) -> list[dict[str, str]]:
     return getattr(func, "_deprecated_parameters", [])
 
 
+def _removable_by_policy(since: str, deprecated_on: str | None, current_version: str) -> tuple[bool, str]:
+    """Single source of truth for the time/version removal policy (CLAUDE.md).
+
+    A deprecation is age-eligible once **3 minor versions OR 6 months** have elapsed (either
+    suffices). The version criterion is always available (from ``since``); the 6-month criterion
+    is the earlier path, available only when the deprecation recorded a ``deprecated_on``
+    (``YYYY-MM-DD``) date. Returns ``(eligible, reason)``.
+    """
+    reasons: list[str] = []
+    try:
+        from packaging import version
+
+        cur = version.parse(current_version.lstrip("v"))
+        old = version.parse(since.lstrip("v"))
+        minor_diff = (cur.major - old.major) * 100 + (cur.minor - old.minor)
+        if minor_diff >= 3:
+            return True, f"{minor_diff} minor version(s) since {since} (>= 3)"
+        reasons.append(f"{minor_diff} minor version(s) since {since} (< 3)")
+    except (ImportError, ValueError):
+        reasons.append(f"unparseable version (since={since}, current={current_version})")
+
+    if deprecated_on:
+        try:
+            from datetime import date
+
+            y, m, d = (int(x) for x in str(deprecated_on).split("-"))
+            days = (date.today() - date(y, m, d)).days
+            if days >= 183:
+                return True, f"{days} days since {deprecated_on} (>= 6 months)"
+            reasons.append(f"{days} days since {deprecated_on} (< 6 months)")
+        except (ValueError, TypeError):
+            reasons.append(f"unparseable deprecated_on={deprecated_on!r}")
+    else:
+        reasons.append("no deprecated_on date (6-month criterion unavailable)")
+
+    return False, "; ".join(reasons)
+
+
 def check_removal_readiness(
     obj: Any,
     current_version: str,
@@ -328,9 +372,9 @@ def check_removal_readiness(
     Check if a deprecated object is ready for removal.
 
     Removal requires:
-    1. Deprecated for ≥3 versions OR ≥6 months (whichever is longer)
-    2. All removal blockers cleared
-    3. No internal production usage
+    1. Age-eligible: ≥3 minor versions OR ≥6 months elapsed (either suffices, per the
+       CLAUDE.md policy). The 6-month path is available only when ``deprecated_on`` was set.
+    2. All removal blockers cleared.
 
     Args:
         obj: Deprecated function, class, or method
@@ -374,34 +418,10 @@ def check_removal_readiness(
     if not blockers_cleared:
         blocking_reasons.extend([f"Blocker not cleared: {b}" for b in remaining_blockers])
 
-    # Check minimum age (3 minor versions)
-    # Parse version strings: "v0.17.0" → (0, 17, 0)
-    since_version_str = meta["since"]
-    try:
-        # Import packaging for version parsing
-        from packaging import version
-
-        current_ver = version.parse(current_version.lstrip("v"))
-        since_ver = version.parse(since_version_str.lstrip("v"))
-
-        # Calculate minor version difference
-        # e.g., v0.17.0 → v0.20.0 is 3 minor versions
-        minor_diff = (current_ver.major - since_ver.major) * 100 + (current_ver.minor - since_ver.minor)
-
-        minimum_age_met = minor_diff >= 3
-
-        if not minimum_age_met:
-            blocking_reasons.append(
-                f"Not deprecated long enough (since {since_version_str}, "
-                f"current {current_version}, need 3 minor versions)"
-            )
-    except (ImportError, ValueError):
-        # Fallback if packaging not available or version parse fails
-        # Be conservative - assume age not met
-        minimum_age_met = False
-        blocking_reasons.append(
-            f"Cannot verify age (since {since_version_str}, requires 'packaging' library for version parsing)"
-        )
+    # Check minimum age via the shared policy (3 minor versions OR 6 months).
+    minimum_age_met, age_reason = _removable_by_policy(meta["since"], meta.get("deprecated_on"), current_version)
+    if not minimum_age_met:
+        blocking_reasons.append(f"Not old enough for removal: {age_reason}")
 
     ready = blockers_cleared and minimum_age_met
 
@@ -573,6 +593,8 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                 "since": meta.get("since", ""),
                 "replacement": meta.get("replacement", ""),
                 "removal": meta.get("removal", "v1.0.0"),
+                "removal_blockers": meta.get("removal_blockers") or [],
+                "deprecated_on": meta.get("deprecated_on"),
             }
         )
 
@@ -587,6 +609,8 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                     "since": p.get("since", ""),
                     "replacement": p.get("replacement", ""),
                     "removal": p.get("removal", "v1.0.0"),
+                    "removal_blockers": p.get("removal_blockers") or [],
+                    "deprecated_on": p.get("deprecated_on"),
                 }
             )
 
@@ -603,6 +627,8 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                     "since": v.get("since", ""),
                     "replacement": f"values [{old_vals}] -> [{new_vals}]",
                     "removal": v.get("removal", "v1.0.0"),
+                    "removal_blockers": v.get("removal_blockers") or [],
+                    "deprecated_on": v.get("deprecated_on"),
                 }
             )
 
@@ -690,57 +716,59 @@ def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, An
 
 def audit_all_deprecations(
     module: Any,
-    target_version: str = "v1.0.0",
+    current_version: str | None = None,
     completed_blockers: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
-    Audit all deprecations in a module against a target version.
+    Audit every decorated deprecation in a module against the removal policy.
+
+    The age judgment delegates to the same policy as ``check_removal_readiness``
+    (3 minor versions OR 6 months; CLAUDE.md), so the two never disagree. Each *unique*
+    deprecation (deduped across the inherited subclasses that surface the same one) is sorted:
+        "ready"     -- age-eligible AND all removal blockers cleared
+        "not_ready" -- age-eligible but blockers remain
+        "active"    -- not yet old enough to remove
 
     Args:
-        module: Module to scan
-        target_version: Version to check readiness against
-        completed_blockers: Blockers that have been resolved globally
-
-    Returns:
-        Dict with keys:
-            "ready": items ready for removal
-            "not_ready": items with remaining blockers
-            "active": items not yet old enough
+        module: Module to scan (e.g. ``import mfgarchon``).
+        current_version: Version to judge age against (e.g. "v0.19.8"). Defaults to the
+            installed ``mfgarchon`` version.
+        completed_blockers: Removal blockers cleared globally (e.g. ``["internal_usage"]``).
 
     Example:
         >>> import mfgarchon
-        >>> report = audit_all_deprecations(mfgarchon, "v1.0.0")
+        >>> report = audit_all_deprecations(mfgarchon)
         >>> print(f"Ready for removal: {len(report['ready'])}")
     """
-    items = scan_deprecated(module)
-    completed_blockers = completed_blockers or []
+    if current_version is None:
+        try:
+            from importlib.metadata import version as _pkg_version
 
-    ready = []
-    not_ready = []
-    active = []
+            current_version = "v" + _pkg_version("mfgarchon")
+        except Exception:
+            current_version = "v0.0.0"
+    completed = set(completed_blockers or [])
 
-    for item in items:
-        if item["type"] == "parameter":
-            # Parameters don't have individual removal readiness
+    ready: list[dict[str, Any]] = []
+    not_ready: list[dict[str, Any]] = []
+    active: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    for raw in scan_deprecated(module):
+        # Dedup the identical deprecation surfaced on many inherited subclasses.
+        key = (raw.get("name"), raw.get("type"), raw.get("since"))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        eligible, reason = _removable_by_policy(raw.get("since", ""), raw.get("deprecated_on"), current_version)
+        item = {**raw, "age_reason": reason, "current_version": current_version}
+        if not eligible:
             active.append(item)
             continue
-
-        # Find the actual object to check readiness
-        # For now, categorize by version comparison
-        since = item.get("since", "")
-        try:
-            from packaging import version
-
-            since_ver = version.parse(since.lstrip("v"))
-            target_ver = version.parse(target_version.lstrip("v"))
-            minor_diff = target_ver.minor - since_ver.minor
-
-            if minor_diff >= 3:
-                ready.append(item)
-            else:
-                active.append(item)
-        except Exception:
-            active.append(item)
+        remaining = sorted(set(item.get("removal_blockers") or []) - completed)
+        item["remaining_blockers"] = remaining
+        (ready if not remaining else not_ready).append(item)
 
     return {"ready": ready, "not_ready": not_ready, "active": active}
 
