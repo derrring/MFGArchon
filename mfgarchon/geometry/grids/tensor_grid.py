@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.geometry.base import CartesianGrid
+from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.protocol import GeometryType
 from mfgarchon.geometry.protocols import (
     SupportsAdvection,
@@ -987,7 +988,7 @@ class TensorProductGrid(
                 raise ValueError(f"Unknown side: {side}. Expected 'min' or 'max'")
         else:
             # Infer boundary from point location
-            tolerance = 1e-10
+            tolerance = ONWALL_TOL
             min_coords, max_coords = self.get_bounds()
 
             for i, point in enumerate(points):
@@ -1098,7 +1099,7 @@ class TensorProductGrid(
     def project_to_interior(
         self,
         points: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray:
         """
         Project points from outside domain into interior.

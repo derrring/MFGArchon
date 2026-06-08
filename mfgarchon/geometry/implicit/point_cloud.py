@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.protocol import GeometryProtocol, GeometryType
 
 if TYPE_CHECKING:
@@ -147,7 +148,7 @@ class PointCloudGeometry:
     def is_on_boundary(
         self,
         points: NDArray[np.floating],
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray[np.bool_]:
         """Check if points are on the bounding box boundary."""
         points = np.atleast_2d(points)
@@ -170,7 +171,7 @@ class PointCloudGeometry:
         points = np.atleast_2d(points)
         normals = np.zeros_like(points)
         min_coords, max_coords = self.bounds
-        tolerance = 1e-10
+        tolerance = ONWALL_TOL
 
         for i, p in enumerate(points):
             for d in range(self.dimension):
@@ -261,7 +262,7 @@ class PointCloudGeometry:
     def get_boundary_indices(
         self,
         points: NDArray[np.floating],
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray[np.intp]:
         """Get indices of boundary points (default implementation)."""
         on_boundary = self.is_on_boundary(points, tolerance)
@@ -270,7 +271,7 @@ class PointCloudGeometry:
     def get_boundary_info(
         self,
         points: NDArray[np.floating],
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> tuple[NDArray[np.intp], NDArray[np.floating]]:
         """Get boundary indices and normals (default implementation)."""
         boundary_indices = self.get_boundary_indices(points, tolerance)

@@ -60,6 +60,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-sourced boundary on-wall tolerances** (Issue #1101). The scattered `1e-6` / `1e-8` /
+  `1e-10` / `1e-12` magic literals across the boundary / geometry on-wall classifiers are now
+  named, documented, tunable constants in `mfgarchon/geometry/boundary/tolerances.py`
+  (`BOUNDARY_TOL=1e-6`, `ONWALL_TOL=1e-10`, `SDF_BOUNDARY_TOL=1e-8`, `BOUNDARY_REL_TOL=1e-12`).
+  Routed ~25 sites across `conditions`, `base`, `types`, `point_cloud`, `implicit_domain`,
+  `tensor_grid`, `network_geometry`, GFDM `boundary_handler` and `hjb_gfdm`. **Byte-identical**:
+  each literal maps to a same-valued constant, so every path (incl. the GFDM `1e-6` paper path
+  and the analytic-geometry `1e-10` exact-membership path) is unchanged — verified by the full
+  geometry + GFDM suites (764 tests). The distinct values are preserved on purpose (grid-exact
+  `1e-10` vs scattered-cloud `1e-6` vs SDF `1e-8` are different *measures*); they are **not**
+  collapsed to one (that would loosen analytic boundary detection by four orders of magnitude).
+  Non-on-wall `1e-X` (FD-step `eps`, degenerate-normal guards, iterative-projection convergence,
+  Lipschitz validation, point-equality, QP active-set) were left untouched. `protocol.py`'s
+  `typing.Protocol` stub defaults are also left as literals (not executed; concrete impls route
+  through the constants). Pinned by `tests/unit/test_convention_agreement.py`.
+
 - **Canonical FP drift contract: explicit `_drift_convention` trait + weak-form `potential_field`
   rename** (Issue #1043). The FP equation only ever sees the advective velocity `α` in
   `div(α m)`; most solvers (FDM, GFDM) take that velocity as `drift_field`, but the weak-form

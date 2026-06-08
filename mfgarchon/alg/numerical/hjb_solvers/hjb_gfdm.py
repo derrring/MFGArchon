@@ -30,6 +30,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     eval_dH_dp_batch,
 )
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
+from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.utils.deprecation import deprecated_parameter, deprecated_value
 from mfgarchon.utils.mfg_logging import get_logger
@@ -1239,7 +1240,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # generators (e.g. SDF-clipped boundary points placed at micron
         # distance from the wall). Users with looser collocation can override
         # via a future kwarg; current default is conservative.
-        tol = 1e-6
+        tol = BOUNDARY_TOL
         unmatched: list[tuple[int, np.ndarray, BoundaryFace | None, str]] = []
 
         for i in self.boundary_indices:
@@ -1315,7 +1316,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         if bounds is None or len(bounds) == 0:
             return np.array([], dtype=int)
 
-        tol = 1e-6
+        tol = BOUNDARY_TOL
         boundary_mask = np.zeros(len(collocation_points), dtype=bool)
 
         for d, (d_min, d_max) in enumerate(bounds):
@@ -1411,7 +1412,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             return None
         return np.array(bounds_list, dtype=float)
 
-    def _infer_boundary_id(self, point: np.ndarray, domain_bounds: np.ndarray | None, tol: float = 1e-6) -> str | None:
+    def _infer_boundary_id(
+        self, point: np.ndarray, domain_bounds: np.ndarray | None, tol: float = BOUNDARY_TOL
+    ) -> str | None:
         """Infer boundary identifier for a point on rectangular domain boundary.
 
         This is optional - BCSegment.matches_point() can work without boundary_id
