@@ -136,6 +136,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`FPParticleSolver._drift_convention` trait was dishonest** (Issue #1043). It inherited the
+  base `VELOCITY` default, but the solver body is `VALUE_FUNCTION` by default — the 1D path always
+  takes the value function `U` via `drift_field` and computes `alpha = -coupling*grad(U)`, and the
+  nD default does the same (`drift_is_precomputed=True`, nD only, flips it to `VELOCITY`). Set the
+  class trait to `VALUE_FUNCTION` to match the default behavior, documenting the per-call
+  precomputed exception. Pure metadata: nothing dispatches on `_drift_convention` (verified — the
+  only readers are the contract test), so this is byte-identical on every path. Also added
+  `FPParticleSolver` to `test_drift_contract.py`, which previously silently omitted it from both
+  assertion lists — the one bivalent solver was the only untested one.
+
 - **Silent collapse of a spatially-varying diffusion tensor to a constant in the FDM tensor
   path** (Issue #1079, partial). When `HJBFDMSolver` is given a spatially-varying *diagonal*
   tensor `volatility_field` (shape `(*grid, d, d)`), it extracts the per-axis diagonal and

@@ -34,7 +34,7 @@ from mfgarchon.utils.numerical.particle import (
     sample_from_density,
 )
 
-from .base_fp import BaseFPSolver
+from .base_fp import BaseFPSolver, DriftConvention
 from .fp_particle_bc import apply_boundary_conditions as _apply_bc
 from .fp_particle_bc import enforce_obstacle_boundary as _enforce_obstacle
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
@@ -115,6 +115,14 @@ class FPParticleSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.GENERIC  # Particle methods don't fit standard families
+
+    # Issue #1043: the default body is VALUE_FUNCTION — it takes the value function U via
+    # `drift_field` and computes alpha = -coupling * grad(U) (see _solve_fp_system_cpu_1d/_nd).
+    # The 1D path is always VALUE_FUNCTION; `drift_is_precomputed=True` flips ONLY the nD path to
+    # VELOCITY (interpolate a precomputed alpha). The class trait records the default; the
+    # per-call exception lives in the drift_is_precomputed parameter. Previously this inherited
+    # the base VELOCITY default, which mislabeled the solver.
+    _drift_convention = DriftConvention.VALUE_FUNCTION
 
     @deprecated_parameter(param_name="mode", since="v0.17.0", replacement="density_mode")
     @deprecated_parameter(param_name="external_particles", since="v0.17.0", replacement="num_particles")
