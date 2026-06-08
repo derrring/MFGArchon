@@ -545,5 +545,52 @@ class TestLinearConstraintMatrixAssembly:
         assert abs(c_neum.bias - (-0.1)) < 1e-10
 
 
+class TestStrictAdjointPerPointSigma:
+    """Issue #1183: the strict-adjoint FP step honors a per-point sigma (conservative
+    variable-coefficient diffusion) instead of collapsing it to the mean."""
+
+    @staticmethod
+    def _solver(n):
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: 0.0 * np.asarray(m),
+            coupling_dm=lambda m: 0.0 * np.asarray(m),
+        )
+        comps = MFGComponents(
+            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.25) ** 2) / 0.01),
+            u_terminal=lambda x: 0.0 * np.asarray(x),
+            hamiltonian=H,
+        )
+        prob = MFGProblem(geometry=grid, T=0.3, Nt=30, sigma=0.1, components=comps)
+        return FPFDMSolver(prob)
+
+    def test_array_sigma_conserves_and_per_point(self):
+        """Pure-diffusion strict-adjoint step (zero advection matrix) with a non-uniform sigma:
+        mass conserved, density non-negative, and the low-sigma region retains a higher peak than
+        the mean-collapse would (the per-point fidelity the issue asks for)."""
+        n = 41
+        x = np.linspace(0.0, 1.0, n)
+        dx = x[1] - x[0]
+        solver = self._solver(n)
+        a_t_zero = sparse.csr_matrix((n, n))  # no advection -> isolate diffusion
+        m0 = np.exp(-((x - 0.25) ** 2) / 0.01)
+        m0 /= m0.sum() * dx
+        sigma_field = np.where(x < 0.5, 0.05, 0.30)  # bump sits in the low-sigma region
+
+        m_pp = m0.copy()
+        for _ in range(30):
+            m_pp = solver.solve_fp_step_adjoint_mode(m_pp, a_t_zero, sigma=sigma_field)
+        m_mc = m0.copy()
+        for _ in range(30):
+            m_mc = solver.solve_fp_step_adjoint_mode(m_mc, a_t_zero, sigma=float(np.mean(sigma_field)))
+
+        assert abs(m_pp.sum() * dx - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {m_pp.sum() * dx:.8f}"
+        assert np.all(m_pp >= -1e-12), "per-point strict-adjoint produced a negative density"
+        assert m_pp.max() > m_mc.max() * 1.02, (
+            f"per-point did not under-diffuse the low-sigma bump: {m_pp.max():.4f} vs mean {m_mc.max():.4f}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

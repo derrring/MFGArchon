@@ -398,5 +398,70 @@ class TestLaplacianMassConservative:
         assert A[3, 2] == pytest.approx(1.0 / h2)
 
 
+class TestLaplacianVariableCoefficient:
+    """Variable-coefficient diffusion via coefficient_field (Issue #1183): face-averaged
+    D_{i+1/2} baked into the conservative FV stencil, so ∇·(D(x)∇·) is column-conservative
+    even for varying D (a point-value D_i·Δ would leak)."""
+
+    def test_none_is_byte_identical_unit(self):
+        """coefficient_field=None reproduces the unit mass-conservative Laplacian exactly."""
+        n, h = 21, 1.0 / 20
+        bc = no_flux_bc(dimension=1)
+        unit = LaplacianOperator([h], (n,), bc=bc, mass_conservative=True).as_scipy_sparse().toarray()
+        again = (
+            LaplacianOperator([h], (n,), bc=bc, mass_conservative=True, coefficient_field=None)
+            .as_scipy_sparse()
+            .toarray()
+        )
+        np.testing.assert_array_equal(again, unit)
+
+    def test_constant_field_equals_scalar_times_unit(self):
+        """A constant coefficient_field D0 equals D0 * (unit Laplacian), bit-for-bit."""
+        n, h, d0 = 21, 1.0 / 20, 0.5
+        bc = no_flux_bc(dimension=1)
+        unit = LaplacianOperator([h], (n,), bc=bc, mass_conservative=True).as_scipy_sparse().toarray()
+        baked = (
+            LaplacianOperator([h], (n,), bc=bc, mass_conservative=True, coefficient_field=np.full(n, d0))
+            .as_scipy_sparse()
+            .toarray()
+        )
+        np.testing.assert_allclose(baked, d0 * unit, atol=1e-14)
+
+    def test_varying_field_is_column_conservative(self):
+        """1ᵀL = 0 for a spatially varying D (a point-value scheme would have colsum != 0)."""
+        n, h = 41, 1.0 / 40
+        x = np.linspace(0.0, 1.0, n)
+        d_field = np.where(x < 0.5, 0.02**2 / 2, 0.30**2 / 2)
+        A = (
+            LaplacianOperator([h], (n,), bc=no_flux_bc(dimension=1), mass_conservative=True, coefficient_field=d_field)
+            .as_scipy_sparse()
+            .toarray()
+        )
+        assert np.max(np.abs(A.sum(axis=0))) < 1e-12
+
+    def test_varying_field_2d_column_conservative(self):
+        n, h = 11, 1.0 / 10
+        d_field = np.outer(0.1 + np.linspace(0, 1, n), np.ones(n))
+        A = (
+            LaplacianOperator(
+                [h, h], (n, n), bc=no_flux_bc(dimension=2), mass_conservative=True, coefficient_field=d_field
+            )
+            .as_scipy_sparse()
+            .toarray()
+        )
+        assert np.max(np.abs(A.sum(axis=0))) < 1e-11
+
+    def test_coefficient_field_requires_mass_conservative(self):
+        """coefficient_field is only assembled in the conservative branch -> reject otherwise."""
+        with pytest.raises(ValueError, match="mass_conservative"):
+            LaplacianOperator([0.1], (5,), bc=no_flux_bc(dimension=1), coefficient_field=np.ones(5))
+
+    def test_coefficient_field_shape_validated(self):
+        with pytest.raises(ValueError, match="coefficient_field shape"):
+            LaplacianOperator(
+                [0.1], (5,), bc=no_flux_bc(dimension=1), mass_conservative=True, coefficient_field=np.ones(7)
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
