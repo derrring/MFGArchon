@@ -152,6 +152,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **HJB-SL reflecting-BC characteristic-foot fold was wrong on asymmetric domains**
+  (Issues #1161, #1048, #1054). Three sibling code paths in `hjb_semi_lagrangian.py` folded
+  out-of-bounds characteristic feet for no-flux/Neumann BC, each with a private copy of the
+  rule: the deterministic explicit/rk2 fast path used `np.clip` (clamping feet onto the wall
+  node, biasing toward the wall value — #1161), while the stochastic 1D (#1048) and nD (#1054)
+  paths used `xmin + |((x-xmin) mod 2L) - L|`, which is a point-inversion about the domain
+  *center* (`x -> xmin+xmax-x`), **not** a boundary reflection — it displaced even in-bounds
+  feet. All three shipped because their tests used a symmetric `[0,1]` domain/data where the
+  center-flip is a symmetry of the solution (silent divergence). Replaced all three (plus the
+  duplicated formula) with a single vectorized `reflect_into_domain(x, xmin, xmax)` helper in
+  `hjb_sl_characteristics.py`, the closed-form triangle wave `xmin + L - |((x-xmin) mod 2L) - L|`
+  verified equal to the trusted iterated scalar `apply_boundary_conditions_1d` on asymmetric
+  domains and identity in-bounds. Numerics are unchanged on symmetric-domain runs and on the
+  paper EOC paths (FDM / GFDM, not SL); asymmetric-domain reflecting-BC SL runs now reflect
+  correctly. Added `TestReflectIntoDomain` (asymmetric-domain reflected-value tests — the
+  coverage gap that let the bug ship).
+
 - **Polymorphic reads of the non-uniform `.bounds` geometry attribute** (Issue #1056). The ad-hoc
   `.bounds` attribute returns four incompatible shapes across geometry classes (`(d,2)` ndarray,
   `(min,max)` tuple, `list[(min,max)]`, or absent), while `get_bounds() -> (mins, maxs)` is the
