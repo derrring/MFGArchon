@@ -147,5 +147,35 @@ class TestGeometryBoundsAccessor:
             np.testing.assert_allclose(np.column_stack([mins, maxs]), geom.get_bounding_box(), atol=1e-12, err_msg=name)
 
 
+class TestBoundaryToleranceSingleSource:
+    """Issue #1101: boundary on-wall tolerances are single-sourced in
+    geometry/boundary/tolerances.py. Pin the values (a future edit cannot silently shift them)
+    and pin that the key classifier defaults reference the constants — so the scattered magic
+    literals do not regrow. The values are intentionally distinct (grid-exact vs scattered vs SDF)
+    and are NOT collapsed to one (that would loosen analytic boundary detection 4 decades)."""
+
+    def test_constant_values_pinned(self):
+        from mfgarchon.geometry.boundary import tolerances as tol
+
+        assert tol.BOUNDARY_TOL == 1e-6
+        assert tol.ONWALL_TOL == 1e-10
+        assert tol.SDF_BOUNDARY_TOL == 1e-8
+        assert tol.BOUNDARY_REL_TOL == 1e-12
+
+    def test_classifier_defaults_reference_single_source(self):
+        """The paper-path GFDM classifier defaults to BOUNDARY_TOL (1e-6) and the analytic
+        Geometry on-wall defaults to ONWALL_TOL (1e-10) — byte-identical to the prior literals."""
+        import inspect
+
+        from mfgarchon.geometry.base import Geometry
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+        from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL, ONWALL_TOL
+
+        face_default = inspect.signature(BoundaryConditions.identify_boundary_face).parameters["tolerance"].default
+        assert face_default == BOUNDARY_TOL == 1e-6
+        onwall_default = inspect.signature(Geometry.is_on_boundary).parameters["tolerance"].default
+        assert onwall_default == ONWALL_TOL == 1e-10
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

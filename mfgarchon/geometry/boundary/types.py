@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.utils.deprecation import deprecated
 
@@ -487,7 +488,7 @@ class BCSegment:
         point: np.ndarray,
         boundary_id: str | None,
         domain_bounds: np.ndarray | None,
-        tolerance: float = 1e-8,
+        tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
         domain_sdf: Callable[[np.ndarray], float] | None = None,
         geometry: SupportsRegionMarking | None = None,

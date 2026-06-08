@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from mfgarchon.geometry.base import ImplicitGeometry
+from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.geometry.protocol import GeometryType
 from mfgarchon.geometry.protocols import (
     SupportsBoundaryDistance,
@@ -503,7 +504,7 @@ class ImplicitDomain(
 
         return x_proj[0] if is_single else x_proj
 
-    def is_on_boundary(self, x: NDArray[np.float64], tol: float = 1e-8) -> bool | NDArray[np.bool_]:
+    def is_on_boundary(self, x: NDArray[np.float64], tol: float = SDF_BOUNDARY_TOL) -> bool | NDArray[np.bool_]:
         """
         Check if point(s) are on the domain boundary using SDF.
 

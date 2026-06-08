@@ -36,6 +36,7 @@ import numpy as np
 from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.utils.deprecation import deprecated
 
+from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
 from .types import BCSegment, BCType, BoundaryFace, _compute_sdf_gradient
 
 if TYPE_CHECKING:
@@ -289,7 +290,7 @@ class BoundaryConditions:
         self,
         point: np.ndarray,
         boundary_id: str | None = None,
-        tolerance: float = 1e-8,
+        tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
         geometry=None,  # Type: SupportsRegionMarking | None (Issue #596 Phase 2.5)
     ) -> BCSegment:
@@ -414,7 +415,7 @@ class BoundaryConditions:
     def identify_boundary_face(
         self,
         point: np.ndarray,
-        tolerance: float = 1e-6,
+        tolerance: float = BOUNDARY_TOL,
         domain_bounds: np.ndarray | None = None,
     ) -> BoundaryFace | None:
         """
@@ -461,8 +462,8 @@ class BoundaryConditions:
             bounds = np.asarray(bounds, dtype=float)
             for axis_idx in range(dimension):
                 low, high = bounds[axis_idx, 0], bounds[axis_idx, 1]
-                tol_low = tolerance + abs(low) * 1e-12
-                tol_high = tolerance + abs(high) * 1e-12
+                tol_low = tolerance + abs(low) * BOUNDARY_REL_TOL
+                tol_high = tolerance + abs(high) * BOUNDARY_REL_TOL
                 if abs(point[axis_idx] - low) <= tol_low:
                     return BoundaryFace(axis_idx, "min")
                 if abs(point[axis_idx] - high) <= tol_high:
@@ -522,7 +523,7 @@ class BoundaryConditions:
         normal[face.axis] = 1.0 if face.side == "max" else -1.0
         return normal
 
-    def identify_boundary_id(self, point: np.ndarray, tolerance: float = 1e-6) -> str | None:
+    def identify_boundary_id(self, point: np.ndarray, tolerance: float = BOUNDARY_TOL) -> str | None:
         """
         Identify which boundary a point lies on (legacy string interface).
 
@@ -548,7 +549,7 @@ class BoundaryConditions:
         side = "max" if normal[dominant_axis] > 0 else "min"
         return BoundaryFace(dominant_axis, side).to_string()
 
-    def is_on_boundary(self, point: np.ndarray, tolerance: float = 1e-8) -> bool:
+    def is_on_boundary(self, point: np.ndarray, tolerance: float = SDF_BOUNDARY_TOL) -> bool:
         """
         Check if a point is on the domain boundary.
 

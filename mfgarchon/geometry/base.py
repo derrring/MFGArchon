@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from .boundary.tolerances import ONWALL_TOL
 from .meshes.mesh_data import MeshVisualizationMode
 from .protocol import GeometryType
 from .traits import BoundaryDef, ConnectivityType, StructureType
@@ -425,7 +426,7 @@ class Geometry(ABC):
     def is_on_boundary(
         self,
         points: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray:
         """
         Check if points are on the domain boundary.
@@ -495,7 +496,7 @@ class Geometry(ABC):
             return normals
 
         min_coords, max_coords = bounds_result
-        tolerance = 1e-10
+        tolerance = ONWALL_TOL
 
         # Detect which boundaries each point is on (n, d) for min and max
         near_min = np.abs(points - min_coords) < tolerance
@@ -554,7 +555,7 @@ class Geometry(ABC):
     def is_near_corner(
         self,
         points: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray:
         """
         Check if points are near domain corners (where multiple boundaries meet).
@@ -591,7 +592,7 @@ class Geometry(ABC):
     def get_boundary_faces_at_point(
         self,
         point: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> list[tuple[int, str]]:
         """
         Get list of boundary faces that a point lies on.
@@ -738,7 +739,7 @@ class Geometry(ABC):
     def get_boundary_indices(
         self,
         points: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> NDArray:
         """
         Get indices of points that lie on the domain boundary.
@@ -768,7 +769,7 @@ class Geometry(ABC):
     def get_boundary_info(
         self,
         points: NDArray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> tuple[NDArray, NDArray]:
         """
         Get boundary indices and outward normals in one call.
@@ -1248,7 +1249,7 @@ class UnstructuredMesh(Geometry):
         # Placeholder: fall back to base class axis-aligned implementation
         return super().project_to_boundary(points)
 
-    def is_on_boundary(self, points: NDArray, tolerance: float = 1e-10) -> NDArray:
+    def is_on_boundary(self, points: NDArray, tolerance: float = ONWALL_TOL) -> NDArray:
         """
         Check if points are on the mesh boundary.
 

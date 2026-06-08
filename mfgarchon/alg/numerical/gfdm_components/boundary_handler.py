@@ -26,6 +26,7 @@ from mfgarchon.geometry.boundary.ghost import (
     compute_normal_from_bounds,
     create_reflection_ghost_points,
 )
+from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -161,7 +162,7 @@ class BoundaryHandler:
         # Wind BC hyperviscosity parameter
         self._wind_bc_hyperviscosity: float = 0.0
 
-    def compute_outward_normal(self, point_idx: int, tolerance: float = 1e-6) -> np.ndarray:
+    def compute_outward_normal(self, point_idx: int, tolerance: float = BOUNDARY_TOL) -> np.ndarray:
         """Compute outward normal vector at a single boundary point.
 
         Routes through ``BoundaryConditions.identify_boundary_face`` +
@@ -216,7 +217,7 @@ class BoundaryHandler:
         # Legacy fallback for setups with no BC object attached.
         return compute_normal_from_bounds(point, self.domain_bounds)
 
-    def compute_boundary_normals(self, tolerance: float = 1e-6) -> np.ndarray | None:
+    def compute_boundary_normals(self, tolerance: float = BOUNDARY_TOL) -> np.ndarray | None:
         """Compute outward normal vectors for all boundary points.
 
         Resolution order:

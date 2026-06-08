@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 # Import base geometry class
 from mfgarchon.geometry.base import GraphGeometry
+from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 
 # Import geometry protocol
 from mfgarchon.geometry.protocol import GeometryType
@@ -776,7 +777,7 @@ class NetworkGeometry(GraphGeometry):
     def is_on_boundary(
         self,
         points: np.ndarray,
-        tolerance: float = 1e-10,
+        tolerance: float = ONWALL_TOL,
     ) -> np.ndarray:
         """
         Check if points are on the network boundary.
@@ -834,7 +835,7 @@ class NetworkGeometry(GraphGeometry):
 
         min_coords, max_coords = bounds
         normals = np.zeros_like(points)
-        tolerance = 1e-10
+        tolerance = ONWALL_TOL
 
         for i, p in enumerate(points):
             for d in range(len(min_coords)):
