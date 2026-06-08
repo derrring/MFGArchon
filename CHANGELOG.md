@@ -136,6 +136,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Polymorphic reads of the non-uniform `.bounds` geometry attribute** (Issue #1056). The ad-hoc
+  `.bounds` attribute returns four incompatible shapes across geometry classes (`(d,2)` ndarray,
+  `(min,max)` tuple, `list[(min,max)]`, or absent), while `get_bounds() -> (mins, maxs)` is the
+  uniform `Geometry` ABC accessor present on every class. Migrated the eight cross-type `.bounds`
+  readers to `get_bounds()` (`projection`, `hjb_weno`, `gfdm_strategies` periodic, three
+  `hjb_semi_lagrangian` sites, `fp_particle`, `base_pinn`). Paper paths already consumed
+  `get_bounds()` and are untouched (byte-identical). The migration also fixes four latent bugs the
+  shape-divergence caused: `hjb_semi_lagrangian` nD clip (`bounds[0][d]` mis-indexed for `d>=1`),
+  `fp_particle` PointCloud bounds transpose, `projection` tuple/ndarray mismatch, and `base_pinn`
+  reading a nonexistent `self.problem.domain` (so it always fell back to default bounds).
+  1177 affected-suite tests pass. The per-class `.bounds` attributes remain as internal detail
+  (deprecating/uniformizing them is optional follow-up); `get_bounds()` is now the canonical
+  cross-geometry accessor, pinned by `tests/unit/test_convention_agreement.py`.
+
 - **`FPParticleSolver._drift_convention` trait was dishonest** (Issue #1043). It inherited the
   base `VELOCITY` default, but the solver body is `VALUE_FUNCTION` by default — the 1D path always
   takes the value function `U` via `drift_field` and computes `alpha = -coupling*grad(U)`, and the

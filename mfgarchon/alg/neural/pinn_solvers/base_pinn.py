@@ -921,8 +921,11 @@ class PINNBase(BaseNeuralSolver, ABC):
         upper_bounds = torch.tensor([1.0, 1.0], device=self.device, dtype=self.dtype)
 
         # Try to get bounds from problem if available
+        # Issue #1056: use the uniform get_bounds() accessor on .geometry (every other site in
+        # this class uses self.problem.geometry; .domain does not exist, so the prior code always
+        # fell through to the default bounds).
         try:
-            bounds = self.problem.domain.bounds
+            bounds = self.problem.geometry.get_bounds()
             if isinstance(bounds, list | tuple) and len(bounds) == 2:
                 lower_bounds = torch.tensor(bounds[0], device=self.device, dtype=self.dtype)
                 upper_bounds = torch.tensor(bounds[1], device=self.device, dtype=self.dtype)

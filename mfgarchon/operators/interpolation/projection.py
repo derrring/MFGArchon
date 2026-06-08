@@ -503,8 +503,9 @@ class GeometryProjector:
 
         Fast fallback for nD particle → grid projection.
         """
-        # Get grid bounds
-        bounds = self.hjb_geometry.bounds  # (min_coords, max_coords)
+        # Get grid bounds (Issue #1056: get_bounds() is the uniform accessor; the downstream
+        # indexing bounds[0][i]/bounds[1][i] expects exactly its (min_coords, max_coords) form).
+        bounds = self.hjb_geometry.get_bounds()  # (min_coords, max_coords)
 
         dimension = len(grid_shape)
 
