@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cross-path convention-agreement guards** (`tests/unit/test_convention_agreement.py`). The
+  dominant bug class here is the same convention implemented along parallel code paths with
+  private copies and silent divergence. These tests pin the conventions that have *converged*
+  so a future private-copy drift fails loudly: (1) `sigma -> D` resolution agrees across the
+  canonical converter, `MFGProblem.diffusion`, the GFDM `_get_sigma_value` path, and the backend
+  literal `0.5*sigma**2` (Issue #811/#1192); (2) `get_bounds()` is the one uniform bounds
+  accessor across `TensorProductGrid` / `Hyperrectangle` / `Hypersphere` / CSG composites
+  (the `.bounds` / `get_bounding_box` non-uniformity itself stays tracked in #1056).
+
 - **6-month removal criterion + `deprecated_on` date** for the deprecation policy (CLAUDE.md
   "3 minor versions OR 6 months"). Only the version criterion was implemented; the time
   criterion is now wired through a single source of truth, `_removable_by_policy(since,
