@@ -5,9 +5,8 @@
     This module is deprecated. Use the unified boundary condition API instead:
 
     **Old (deprecated):**
-        from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions, periodic_bc
+        from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions
         bc = BoundaryConditions(type="periodic")
-        bc = periodic_bc()
 
     **New (recommended):**
         from mfgarchon.geometry import periodic_bc
@@ -26,8 +25,6 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-
-from mfgarchon.utils.deprecation import deprecated
 
 
 @dataclass
@@ -171,84 +168,3 @@ class BoundaryConditions:
             )
         else:
             return f"Unknown({self.type})"
-
-
-# Convenience functions for common boundary condition types
-@deprecated(
-    since="v0.14.0",
-    replacement="Use from mfgarchon.geometry import periodic_bc; bc = periodic_bc(dimension=1).",
-)
-def periodic_bc() -> BoundaryConditions:
-    """Create periodic boundary conditions.
-
-    .. deprecated:: 0.14.0
-        Use ``from mfgarchon.geometry import periodic_bc; bc = periodic_bc(dimension=1)``
-    """
-    return BoundaryConditions(type="periodic")
-
-
-@deprecated(
-    since="v0.14.0",
-    replacement="Use from mfgarchon.geometry import dirichlet_bc; bc = dirichlet_bc(value=..., dimension=1).",
-)
-def dirichlet_bc(left_value: float, right_value: float) -> BoundaryConditions:
-    """Create Dirichlet boundary conditions.
-
-    .. deprecated:: 0.14.0
-        Use ``from mfgarchon.geometry import dirichlet_bc; bc = dirichlet_bc(value=..., dimension=1)``
-    """
-    return BoundaryConditions(type="dirichlet", left_value=left_value, right_value=right_value)
-
-
-@deprecated(
-    since="v0.14.0",
-    replacement="Use from mfgarchon.geometry import neumann_bc; bc = neumann_bc(value=..., dimension=1).",
-)
-def neumann_bc(left_gradient: float, right_gradient: float) -> BoundaryConditions:
-    """Create Neumann boundary conditions.
-
-    .. deprecated:: 0.14.0
-        Use ``from mfgarchon.geometry import neumann_bc; bc = neumann_bc(value=..., dimension=1)``
-    """
-    return BoundaryConditions(type="neumann", left_value=left_gradient, right_value=right_gradient)
-
-
-@deprecated(
-    since="v0.14.0",
-    replacement="Use from mfgarchon.geometry import no_flux_bc; bc = no_flux_bc(dimension=1).",
-)
-def no_flux_bc() -> BoundaryConditions:
-    """Create no-flux boundary conditions.
-
-    .. deprecated:: 0.14.0
-        Use ``from mfgarchon.geometry import no_flux_bc; bc = no_flux_bc(dimension=1)``
-    """
-    return BoundaryConditions(type="no_flux")
-
-
-@deprecated(
-    since="v0.14.0",
-    replacement="Use from mfgarchon.geometry import robin_bc; bc = robin_bc(alpha=..., beta=..., dimension=1).",
-)
-def robin_bc(
-    left_alpha: float,
-    left_beta: float,
-    left_value: float,
-    right_alpha: float,
-    right_beta: float,
-    right_value: float,
-) -> BoundaryConditions:
-    """Create Robin boundary conditions.
-
-    .. deprecated:: 0.14.0
-        Use ``from mfgarchon.geometry import robin_bc; bc = robin_bc(alpha=..., beta=..., dimension=1)``
-    """
-    return BoundaryConditions(
-        type="robin",
-        left_alpha=left_alpha,
-        left_beta=left_beta,
-        left_value=left_value,
-        right_alpha=right_alpha,
-        right_beta=right_beta,
-        right_value=right_value,
-    )

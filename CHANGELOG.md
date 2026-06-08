@@ -102,6 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracked in #1183 (it needs an operator that matches the existing conservative no-flux
   discretization).
 
+### Removed (BREAKING)
+
+- **Deprecated `fdm_bc_1d` 1D BC factory functions** `periodic_bc`, `dirichlet_bc`, `neumann_bc`,
+  `no_flux_bc`, `robin_bc` (deprecated since v0.14.0 — past the 3-minor-version removal window at
+  v0.19.8). They were dead code: every live import resolves the same names from the geometry-first
+  `conditions.py` (re-exported by `mfgarchon.geometry` / `…geometry.boundary`); nothing imported the
+  factories from `fdm_bc_1d` (only its `BoundaryConditions` dataclass is still used). Use
+  `from mfgarchon.geometry import periodic_bc; bc = periodic_bc(dimension=1)` (the documented
+  replacement). The legacy `fdm_bc_1d.BoundaryConditions` dataclass is unchanged (still imported by
+  the FDM/applicator layer; itself deprecated since v0.14.0 and kept until its consumers migrate).
+
 ### Fixed
 
 - **Per-point spatially-varying volatility on the explicit-drift & strict-adjoint FP paths**
