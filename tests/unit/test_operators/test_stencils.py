@@ -410,9 +410,7 @@ class TestBackendRollEquivalence:
 
         # tensor_calculus operators (backend=) -- pre-fix raised TypeError on roll(axis=)
         assert np.allclose(laplacian(t, sp, backend=be).numpy(), laplacian(a, sp))
-        assert np.allclose(
-            divergence([t, t * 2], sp, backend=be).numpy(), divergence([a, a * 2], sp)
-        )
+        assert np.allclose(divergence([t, t * 2], sp, backend=be).numpy(), divergence([a, a * 2], sp))
         assert np.allclose(hessian(t, sp, backend=be).numpy(), hessian(a, sp))
 
         # stencil module (xp = torch module directly), the path the GPU particle solver hits
@@ -420,9 +418,7 @@ class TestBackendRollEquivalence:
         assert np.allclose(g_t.numpy(), gradient_central(a, axis=1, h=0.1, xp=np))
         assert all(
             np.allclose(x.numpy(), y)
-            for x, y in zip(
-                gradient_nd(t, sp, xp=be.array_module), gradient_nd(a, sp, xp=np), strict=True
-            )
+            for x, y in zip(gradient_nd(t, sp, xp=be.array_module), gradient_nd(a, sp, xp=np), strict=True)
         )
 
 

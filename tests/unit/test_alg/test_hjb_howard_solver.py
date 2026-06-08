@@ -660,10 +660,22 @@ def _adjoint_robin_bc(sigma=_AC_SIGMA):
 
     return BoundaryConditions(
         segments=[
-            BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-                      value=AdjointConsistentProvider(side="left", diffusion=sigma), boundary="x_min"),
-            BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-                      value=AdjointConsistentProvider(side="right", diffusion=sigma), boundary="x_max"),
+            BCSegment(
+                name="left_ac",
+                bc_type=BCType.ROBIN,
+                alpha=0.0,
+                beta=1.0,
+                value=AdjointConsistentProvider(side="left", diffusion=sigma),
+                boundary="x_min",
+            ),
+            BCSegment(
+                name="right_ac",
+                bc_type=BCType.ROBIN,
+                alpha=0.0,
+                beta=1.0,
+                value=AdjointConsistentProvider(side="right", diffusion=sigma),
+                boundary="x_max",
+            ),
         ],
         dimension=1,
     )
@@ -690,9 +702,7 @@ def test_howard_robin_row_target_tracks_resolved_adjoint_g():
     bi_left, bi_right = int(bdry[0]), int(bdry[1])  # lower 1e-7 -> x_min, upper -> x_max
 
     def resolve_refresh_and_read(m):
-        resolved = bc.with_resolved_providers(
-            {"m_current": m, "geometry": prov_geom, "diffusion": _AC_SIGMA}
-        )
+        resolved = bc.with_resolved_providers({"m_current": m, "geometry": prov_geom, "diffusion": _AC_SIGMA})
         assert resolved is not bc  # new object -> Part-1 refresh fires
         assert resolved.segments[0].bc_type is BCType.ROBIN  # stays ROBIN, value -> float
         geom.boundary_conditions = resolved
@@ -742,10 +752,22 @@ def test_howard_unresolved_provider_fails_loud():
 
     bc = BoundaryConditions(
         segments=[
-            BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-                      value=AdjointConsistentProvider(side="left", diffusion=0.3), boundary="x_min"),
-            BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-                      value=AdjointConsistentProvider(side="right", diffusion=0.3), boundary="x_max"),
+            BCSegment(
+                name="left_ac",
+                bc_type=BCType.ROBIN,
+                alpha=0.0,
+                beta=1.0,
+                value=AdjointConsistentProvider(side="left", diffusion=0.3),
+                boundary="x_min",
+            ),
+            BCSegment(
+                name="right_ac",
+                bc_type=BCType.ROBIN,
+                alpha=0.0,
+                beta=1.0,
+                value=AdjointConsistentProvider(side="right", diffusion=0.3),
+                boundary="x_max",
+            ),
         ],
         dimension=1,
     )

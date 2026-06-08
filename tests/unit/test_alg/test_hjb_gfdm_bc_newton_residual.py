@@ -15,6 +15,7 @@ interior AND boundary rows, for problems where the pre-fix code visibly broke
 See docs/bug_reports/2026_05_hjb_bc_newton_mismatch.md for full evidence and
 the diagnostic protocol this test codifies.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -53,16 +54,23 @@ def _mixed_bc_walls_and_exit(LX: float, LY: float):
             BCSegment(name="bottom", bc_type=BCType.NO_FLUX, boundary="y_min"),
             BCSegment(name="top", bc_type=BCType.NO_FLUX, boundary="y_max"),
             BCSegment(
-                name="right_below", bc_type=BCType.NO_FLUX,
-                boundary="x_max", region={"y": (0.0, 0.4 * LY)},
+                name="right_below",
+                bc_type=BCType.NO_FLUX,
+                boundary="x_max",
+                region={"y": (0.0, 0.4 * LY)},
             ),
             BCSegment(
-                name="right_above", bc_type=BCType.NO_FLUX,
-                boundary="x_max", region={"y": (0.6 * LY, LY)},
+                name="right_above",
+                bc_type=BCType.NO_FLUX,
+                boundary="x_max",
+                region={"y": (0.6 * LY, LY)},
             ),
             BCSegment(
-                name="exit", bc_type=BCType.DIRICHLET, value=0.0,
-                boundary="x_max", region={"y": (0.4 * LY, 0.6 * LY)},
+                name="exit",
+                bc_type=BCType.DIRICHLET,
+                value=0.0,
+                boundary="x_max",
+                region={"y": (0.4 * LY, 0.6 * LY)},
                 priority=1,
             ),
         ],
@@ -112,13 +120,23 @@ def _residual_and_jacobian_with_bc(solver, u_current, u_n_plus_1, m_n_plus_1, ti
     """
     all_derivs = solver._approximate_all_derivatives_cached(u_current)
     residual = solver._compute_hjb_residual_with_cache(
-        u_current, u_n_plus_1, m_n_plus_1, time_idx, all_derivs,
+        u_current,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx,
+        all_derivs,
     )
     jacobian_sparse = solver._compute_hjb_jacobian_sparse(
-        u_current, m_n_plus_1, time_idx, all_derivs,
+        u_current,
+        m_n_plus_1,
+        time_idx,
+        all_derivs,
     )
     jacobian_bc, residual_bc = solver._apply_boundary_conditions_to_sparse_system(
-        jacobian_sparse, residual, time_idx, u_current,
+        jacobian_sparse,
+        residual,
+        time_idx,
+        u_current,
     )
     return jacobian_bc, residual_bc
 
@@ -149,9 +167,7 @@ def test_fd_jacobian_matches_analytic_on_all_rows(eps, seed):
     points = solver.collocation_points
     rng = np.random.default_rng(seed)
     u_current = (
-        0.3 * points[:, 0] * points[:, 1]
-        + 0.1 * np.sin(2 * np.pi * points[:, 0])
-        + 0.05 * rng.standard_normal(n)
+        0.3 * points[:, 0] * points[:, 1] + 0.1 * np.sin(2 * np.pi * points[:, 0]) + 0.05 * rng.standard_normal(n)
     )
     u_n_plus_1 = u_current + 0.01 * rng.standard_normal(n)
     m_n_plus_1 = 1.0 + 0.1 * rng.standard_normal(n)
@@ -159,7 +175,11 @@ def test_fd_jacobian_matches_analytic_on_all_rows(eps, seed):
 
     # Reference (J, r) at u_current
     J_bc, r_bc = _residual_and_jacobian_with_bc(
-        solver, u_current, u_n_plus_1, m_n_plus_1, time_idx,
+        solver,
+        u_current,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx,
     )
 
     # Direction: random unit vector
@@ -169,7 +189,11 @@ def test_fd_jacobian_matches_analytic_on_all_rows(eps, seed):
     # FD: (r(u + ε d) - r(u)) / ε, evaluated through the SAME BC path
     u_pert = u_current + eps * d
     _, r_bc_pert = _residual_and_jacobian_with_bc(
-        solver, u_pert, u_n_plus_1, m_n_plus_1, time_idx,
+        solver,
+        u_pert,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx,
     )
     Jd_fd = (r_bc_pert - r_bc) / eps
     Jd_analytic = J_bc.dot(d)
@@ -180,18 +204,13 @@ def test_fd_jacobian_matches_analytic_on_all_rows(eps, seed):
     if bd_idx.size > 0:
         int_mask[bd_idx] = False
 
-    int_rel = (
-        float(np.linalg.norm(Jd_fd[int_mask] - Jd_analytic[int_mask]))
-        / max(float(np.linalg.norm(Jd_analytic[int_mask])), 1e-30)
+    int_rel = float(np.linalg.norm(Jd_fd[int_mask] - Jd_analytic[int_mask])) / max(
+        float(np.linalg.norm(Jd_analytic[int_mask])), 1e-30
     )
-    bd_rel = (
-        float(np.linalg.norm(Jd_fd[~int_mask] - Jd_analytic[~int_mask]))
-        / max(float(np.linalg.norm(Jd_analytic[~int_mask])), 1e-30)
+    bd_rel = float(np.linalg.norm(Jd_fd[~int_mask] - Jd_analytic[~int_mask])) / max(
+        float(np.linalg.norm(Jd_analytic[~int_mask])), 1e-30
     )
-    full_rel = (
-        float(np.linalg.norm(Jd_fd - Jd_analytic))
-        / max(float(np.linalg.norm(Jd_analytic)), 1e-30)
-    )
+    full_rel = float(np.linalg.norm(Jd_fd - Jd_analytic)) / max(float(np.linalg.norm(Jd_analytic)), 1e-30)
 
     # ε=1e-6 gives O(ε * |H_uu|) truncation; with |u|, |∇u| ~ O(1) and quadratic
     # Hamiltonian, this stays ≤ 1e-4. ε=1e-5 stays ≤ 1e-3.
@@ -264,7 +283,11 @@ def test_1d_dirichlet_bc_zero_zero_init_residual_is_zero_at_boundary():
     m_n_plus_1 = np.ones(n)
 
     _, r_bc = _residual_and_jacobian_with_bc(
-        solver, u_current, u_n_plus_1, m_n_plus_1, time_idx=problem.Nt - 1,
+        solver,
+        u_current,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx=problem.Nt - 1,
     )
 
     for i in solver.boundary_indices:
@@ -321,7 +344,11 @@ def test_1d_dirichlet_bc_nonzero_uses_violation():
     m_n_plus_1 = np.ones(n)
 
     _, r_bc = _residual_and_jacobian_with_bc(
-        solver, u_current, u_n_plus_1, m_n_plus_1, time_idx=problem.Nt - 1,
+        solver,
+        u_current,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx=problem.Nt - 1,
     )
 
     for i in solver.boundary_indices:
@@ -388,15 +415,17 @@ def test_neumann_bc_residual_encodes_current_violation():
     m_n_plus_1 = np.ones(n)
 
     J_bc, r_bc = _residual_and_jacobian_with_bc(
-        solver, u_current, u_n_plus_1, m_n_plus_1, time_idx=problem.Nt - 1,
+        solver,
+        u_current,
+        u_n_plus_1,
+        m_n_plus_1,
+        time_idx=problem.Nt - 1,
     )
 
     boundary_indices = list(solver.boundary_indices)
     assert len(boundary_indices) > 0
     # Linear u has |w·u_current| O(1); residual must reflect that, not be 0.
-    boundary_residual_norm = float(np.linalg.norm(
-        np.array([r_bc[int(i)] for i in boundary_indices])
-    ))
+    boundary_residual_norm = float(np.linalg.norm(np.array([r_bc[int(i)] for i in boundary_indices])))
     assert boundary_residual_norm > 0.1, (
         f"Neumann BC residual on linear u (w·u ≠ 0) must be non-zero, "
         f"got |r_bc[bd]|={boundary_residual_norm:.3e}. Pre-#1116 this was "
@@ -409,6 +438,5 @@ def test_neumann_bc_residual_encodes_current_violation():
         row = J_bc.getrow(i_int).toarray().flatten()
         analytic_violation = float(row @ u_current)
         assert abs(float(r_bc[i_int]) - analytic_violation) < 1e-12, (
-            f"Neumann residual at i={i_int} should equal w·u_current = "
-            f"{analytic_violation}, got {float(r_bc[i_int])}."
+            f"Neumann residual at i={i_int} should equal w·u_current = {analytic_violation}, got {float(r_bc[i_int])}."
         )

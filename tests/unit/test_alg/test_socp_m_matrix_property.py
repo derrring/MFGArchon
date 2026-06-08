@@ -36,9 +36,7 @@ except ImportError:
     _HAS_CVXPY = False
 
 
-pytestmark = pytest.mark.skipif(
-    not _HAS_CVXPY, reason="cvxpy not installed; joint_socp tests skipped"
-)
+pytestmark = pytest.mark.skipif(not _HAS_CVXPY, reason="cvxpy not installed; joint_socp tests skipped")
 
 
 def _make_solver(sigma: float, n_x: int = 21):
@@ -62,9 +60,7 @@ def _make_solver(sigma: float, n_x: int = 21):
             coupling_dm=lambda m: np.ones_like(np.asarray(m)),
         ),
     )
-    problem = MFGProblem(
-        geometry=geometry, T=0.5, Nt=10, sigma=sigma, components=components
-    )
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=sigma, components=components)
     bounds = problem.geometry.get_bounds()
     x_coords = np.linspace(bounds[0][0], bounds[1][0], n_x)
     collocation_points = x_coords.reshape(-1, 1)
@@ -106,8 +102,7 @@ def test_socp_stencil_off_diagonal_nonnegative(sigma):
         L_off = np.delete(L, center)
         # Allow tiny SOCP slop (eps_pos default = 0)
         assert np.all(L_off >= -1e-9), (
-            f"point {idx}: min(L_off) = {L_off.min():.3e}, "
-            f"expected >= 0 (M-matrix off-diagonal sign)"
+            f"point {idx}: min(L_off) = {L_off.min():.3e}, expected >= 0 (M-matrix off-diagonal sign)"
         )
 
 
@@ -123,9 +118,7 @@ def test_socp_stencil_center_nonpositive(sigma):
         L = stencil.L
         center = stencil.center_in_neighbors
         L_center = L[center]
-        assert L_center <= 1e-9, (
-            f"point {idx}: L_center = {L_center:.3e}, expected <= 0"
-        )
+        assert L_center <= 1e-9, f"point {idx}: L_center = {L_center:.3e}, expected <= 0"
 
 
 @pytest.mark.parametrize("sigma", [0.5, 1.0, 1.5])
@@ -195,8 +188,7 @@ def test_socp_at_least_some_feasible():
     # At low Pe with σ=1, expect majority feasibility. Stage 1/2 paper
     # baseline reports >85% at N>=75.
     assert n_feasible > 0, (
-        f"sigma=1 low-Pe: 0/{total} stencils SOCP-feasible — "
-        f"joint_socp scheme producing no usable stencils"
+        f"sigma=1 low-Pe: 0/{total} stencils SOCP-feasible — joint_socp scheme producing no usable stencils"
     )
 
 

@@ -180,8 +180,7 @@ def test_compute_outward_normal_matches_bulk_method_on_eps_boundary():
             single,
             bulk_normals[local_idx],
             atol=1e-12,
-            err_msg=f"Dual-source mismatch at pt {global_idx}: "
-            f"single={single}, bulk={bulk_normals[local_idx]}",
+            err_msg=f"Dual-source mismatch at pt {global_idx}: single={single}, bulk={bulk_normals[local_idx]}",
         )
 
 
@@ -251,26 +250,14 @@ def test_apply_ghost_nodes_fires_on_mixed_bc_neumann_points():
 
     handler = s._boundary_handler
     # Count points classified as exit (Dirichlet) vs wall (Neumann)
-    n_exit = sum(
-        1
-        for i in bdry_idx
-        if s._bc_segment_per_point[int(i)].bc_type == BCType.DIRICHLET
-    )
-    n_wall = sum(
-        1
-        for i in bdry_idx
-        if s._bc_segment_per_point[int(i)].bc_type in (BCType.NEUMANN, BCType.NO_FLUX)
-    )
+    n_exit = sum(1 for i in bdry_idx if s._bc_segment_per_point[int(i)].bc_type == BCType.DIRICHLET)
+    n_wall = sum(1 for i in bdry_idx if s._bc_segment_per_point[int(i)].bc_type in (BCType.NEUMANN, BCType.NO_FLUX))
     # Setup sanity: at least one of each must exist
     assert n_wall > 0
     assert n_exit > 0
 
     # Ghost augmentation should fire on the n_wall Neumann points
-    n_ghosted = sum(
-        1
-        for i in bdry_idx
-        if handler.neighborhoods.get(int(i), {}).get("has_ghost", False)
-    )
+    n_ghosted = sum(1 for i in bdry_idx if handler.neighborhoods.get(int(i), {}).get("has_ghost", False))
     assert n_ghosted == n_wall, (
         f"Expected {n_wall} ghost-augmented points (one per NO_FLUX boundary pt), "
         f"got {n_ghosted}. Bug A regression: ghost augmentation no longer fires "
@@ -281,9 +268,7 @@ def test_apply_ghost_nodes_fires_on_mixed_bc_neumann_points():
         i = int(i)
         if s._bc_segment_per_point[i].bc_type == BCType.DIRICHLET:
             has_ghost = handler.neighborhoods.get(i, {}).get("has_ghost", False)
-            assert not has_ghost, (
-                f"Exit point pt {i} has ghost augmentation — should be skipped for Dirichlet"
-            )
+            assert not has_ghost, f"Exit point pt {i} has ghost augmentation — should be skipped for Dirichlet"
 
 
 def test_apply_ghost_nodes_skips_when_periodic_default():
@@ -317,14 +302,8 @@ def test_apply_ghost_nodes_skips_when_periodic_default():
             monotonicity_scheme="none",
         )
     handler = s._boundary_handler
-    n_ghosted = sum(
-        1
-        for i in bdry_idx
-        if handler.neighborhoods.get(int(i), {}).get("has_ghost", False)
-    )
-    assert n_ghosted == 0, (
-        f"Periodic BC should not trigger ghost augmentation, got {n_ghosted}"
-    )
+    n_ghosted = sum(1 for i in bdry_idx if handler.neighborhoods.get(int(i), {}).get("has_ghost", False))
+    assert n_ghosted == 0, f"Periodic BC should not trigger ghost augmentation, got {n_ghosted}"
 
 
 def test_apply_ghost_nodes_legacy_uniform_neumann_still_works():
@@ -376,9 +355,5 @@ def test_apply_ghost_nodes_legacy_uniform_neumann_still_works():
     # reflection proceed without hitting the post-#1113 raise for empty
     # interior-side neighbors.
     handler.apply_ghost_nodes_to_neighborhoods()
-    n_ghosted = sum(
-        1
-        for i in bdry_idx
-        if handler.neighborhoods[int(i)].get("has_ghost", False)
-    )
+    n_ghosted = sum(1 for i in bdry_idx if handler.neighborhoods[int(i)].get("has_ghost", False))
     assert n_ghosted > 0, "Legacy uniform-NEUMANN call must trigger ghost augmentation"

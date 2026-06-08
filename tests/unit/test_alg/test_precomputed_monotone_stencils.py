@@ -92,9 +92,7 @@ def test_dimension_3d_rejected():
     is_b[:5] = True
     nh = {i: {"indices": np.arange(20, dtype=int)} for i in range(20)}
     with pytest.raises(ValueError, match="1D or 2D"):
-        PrecomputedMonotoneStencils(
-            is_boundary=is_b, neighborhoods=nh, points=pts, delta=1.5
-        )
+        PrecomputedMonotoneStencils(is_boundary=is_b, neighborhoods=nh, points=pts, delta=1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +107,7 @@ def test_matched_neighborhoods_produces_m_matrix_compliant_stencils():
     """
     pts, nh, is_b = _build_2d_grid_with_neighborhoods()
 
-    precomp = PrecomputedMonotoneStencils(
-        is_boundary=is_b, neighborhoods=nh, points=pts, delta=1.5
-    )
+    precomp = PrecomputedMonotoneStencils(is_boundary=is_b, neighborhoods=nh, points=pts, delta=1.5)
 
     assert precomp.stats["n_boundary"] == int(is_b.sum())
     for i in np.where(is_b)[0]:
@@ -147,9 +143,7 @@ def test_enlarged_neighborhoods_produces_correct_length_weights():
         idx = np.asarray(tree.query_ball_point(pts[i], r=3.0), dtype=int)
         enlarged_nh[i] = {"indices": idx}
 
-    precomp = PrecomputedMonotoneStencils(
-        is_boundary=is_b, neighborhoods=enlarged_nh, points=pts, delta=1.5
-    )
+    precomp = PrecomputedMonotoneStencils(is_boundary=is_b, neighborhoods=enlarged_nh, points=pts, delta=1.5)
 
     for i in np.where(is_b)[0]:
         i = int(i)
@@ -158,8 +152,7 @@ def test_enlarged_neighborhoods_produces_correct_length_weights():
         n_enlarged = len(enlarged_nh[i]["indices"])
         n_base = len(base_nh[i]["indices"])
         assert n_enlarged > n_base, (
-            f"test fixture broken at point {i}: r=3 not larger than k=8 "
-            f"({n_enlarged} <= {n_base})"
+            f"test fixture broken at point {i}: r=3 not larger than k=8 ({n_enlarged} <= {n_base})"
         )
         assert len(sd.weights) == n_enlarged, (
             f"point {i}: L_w length {len(sd.weights)} != enlarged stencil "
