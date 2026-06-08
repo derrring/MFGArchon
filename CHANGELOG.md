@@ -165,6 +165,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FEM named-region BC silently unresolved: no facet boundary tags** (Issue #607; coupled-FEM
+  chain, seam 2). `meshdata_to_skfem` produced a skfem mesh with `mesh.boundaries = None`, so a
+  `BCSegment(boundary="x_min")` could not be resolved — the FEM `bc_adapter` either crashed
+  (`argument of type 'NoneType' is not iterable`) or fell back to the *entire* boundary. Now
+  `meshdata_to_skfem` tags axis-aligned wall facets as named boundaries (`x_min`/`x_max`/`y_min`/…,
+  matching `BoundaryFace.to_string()` / `BCSegment.boundary`) via skfem `with_boundaries`, keyed off
+  the mesh bounding box with `BOUNDARY_TOL`. A Dirichlet segment now resolves to exactly its wall's
+  DOFs (verified: `x_min` → only `x=xmin` DOFs, a strict subset of the boundary), and an FP solve
+  with a Dirichlet BC runs. `_find_segment_dofs` also guards `mesh.boundaries is None` (untagged
+  meshes fall back cleanly instead of raising). Curved/SDF region markers remain out of scope. The
+  last coupled-FEM seam is `FixedPointIterator` mesh-geometry support. Refs #607.
+
 - **`UnstructuredMesh.get_boundary_conditions()` returned boundary-handler metadata, not a
   `BoundaryConditions`** (coupled-FEM chain, seam 1). It returned `get_boundary_handler()` — e.g.
   `{"type": "unstructured_mesh", "boundary_faces": None}` — which, as the higher-priority accessor

@@ -9,10 +9,11 @@ broken and that this change fixes:
 2. the FP advection operator is mass-conserving (the ``-C^T`` fix),
 3. a pre-built mesh can be injected without gmsh (the ``generate_mesh`` memoization).
 
-Coupled FEM *through ``FixedPointIterator``* is NOT exercised here: the iterator currently requires
-a ``CartesianGrid`` geometry, while the FEM solvers require an unstructured mesh, and the
-``fem.bc_adapter`` expects a ``BoundaryConditions`` object where the solver receives a ``dict`` —
-those two seams must be closed before an end-to-end coupled-FEM test is possible.
+Coupled FEM *through ``FixedPointIterator``* is still NOT exercised here: the iterator requires a
+``CartesianGrid`` geometry while the FEM solvers require an unstructured mesh (the last seam of the
+coupled-FEM chain). The other two seams are now closed — the BC accessor returns a real
+``BoundaryConditions`` (seam 1) and ``meshdata_to_skfem`` tags axis-aligned named walls so Dirichlet
+segments resolve (seam 2, #607) — so coupled FEM is exercised via a manual Picard loop below.
 """
 
 from __future__ import annotations
@@ -158,6 +159,65 @@ class TestFEMBoundaryConditionResolution:
         masses = [float((mass_matrix @ m_sol[t]).sum()) for t in range(n_t + 1)]
         drift = abs(masses[-1] - masses[0]) / masses[0]
         assert drift < 1e-3, f"no-flux FEM mass drift {drift:.2%} (advection not conservative?)"
+
+
+@pytest.mark.integration
+class TestFEMFacetBoundaryTags:
+    """Seam 2 of the coupled-FEM chain (#607): meshdata_to_skfem tags axis-aligned wall facets as
+    named boundaries (x_min/x_max/...), so a BCSegment(boundary="x_min") resolves to the correct
+    facet set. Before this, mesh.boundaries was None and the Dirichlet path crashed with
+    "argument of type 'NoneType' is not iterable"."""
+
+    def test_named_axis_walls_are_tagged(self):
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+        problem, _ = _fem_problem()
+        fp = FPFEMSolver(problem)
+        assert set(fp._skfem_mesh.boundaries) == {"x_min", "x_max", "y_min", "y_max"}
+
+    def test_dirichlet_segment_resolves_to_correct_wall_dofs(self):
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+        from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_components import MFGComponents
+        from mfgarchon.core.mfg_problem import MFGProblem
+        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType, BoundaryConditions
+        from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+        geom = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+        geom.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_sqsymmetric().refined(2))
+        geom.boundary_conditions = BoundaryConditions(
+            segments=[BCSegment(name="inlet", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)],
+            dimension=2,
+        )
+        components = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+            ),
+        )
+        problem = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=components, coupling_coefficient=0.5)
+        fp = FPFEMSolver(problem)
+        dofs, _vals = fp._dirichlet_dofs_and_values()  # previously raised NoneType-not-iterable
+        assert len(dofs) > 0
+        # every constrained dof is on the x_min wall, not the whole boundary
+        assert np.allclose(fp._skfem_mesh.p[0, dofs], 0.0)
+        assert len(dofs) < len(fp._skfem_mesh.boundary_nodes())  # a wall, not all boundary
+
+    def test_untagged_mesh_falls_back_without_crashing(self):
+        """If mesh.boundaries is None (no tagging), _find_segment_dofs must fall back to all
+        boundary nodes, not raise."""
+        from mfgarchon.alg.numerical.fem.assembly import create_basis
+        from mfgarchon.alg.numerical.fem.bc_adapter import _find_segment_dofs
+        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType
+
+        mesh = skfem.MeshTri.init_sqsymmetric().refined(1)  # raw skfem mesh: boundaries is None
+        assert mesh.boundaries is None
+        basis = create_basis(mesh, order=1)
+        seg = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
+        dofs = _find_segment_dofs(mesh, basis, seg)  # must not raise
+        assert len(dofs) == len(mesh.boundary_nodes())  # fell back to all boundary nodes
 
 
 if __name__ == "__main__":

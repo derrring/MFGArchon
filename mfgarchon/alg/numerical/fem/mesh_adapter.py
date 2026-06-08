@@ -67,11 +67,39 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
 
     mesh = mesh_cls(nodes, elements)
 
-    # Transfer boundary tags if available
+    # Transfer boundary tags if available (gmsh physical-group path)
     if mesh_data.boundary_faces is not None and len(mesh_data.boundary_faces) > 0:
         _apply_boundary_tags(mesh, mesh_data)
 
+    # Issue #607: tag axis-aligned wall facets as named boundaries (x_min/x_max/...) matching the
+    # BoundaryFace naming, so a BCSegment(boundary="x_min") resolves to the right facet set. This
+    # is the unified segment->facet specification for axis-aligned (box) mesh domains; without it
+    # mesh.boundaries is None and the FEM bc_adapter falls back to the entire boundary.
+    mesh = _tag_axis_aligned_boundaries(mesh)
+
     return mesh
+
+
+def _tag_axis_aligned_boundaries(mesh: skfem.Mesh) -> skfem.Mesh:
+    """Return ``mesh`` with named axis-aligned wall boundaries (``x_min``/``x_max``/``y_min``/...).
+
+    A facet is on wall ``<axis>_<side>`` when its coordinate on that axis is within ``BOUNDARY_TOL``
+    of the mesh bounding-box bound. Names follow ``BoundaryFace.to_string()`` (axis 0->x, 1->y,
+    2->z), matching ``BCSegment.boundary``. For non-box domains these tag only the facets touching
+    the bounding box on each axis; SDF/region-based markers for curved domains are out of scope here.
+    """
+    from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
+
+    dim = mesh.p.shape[0]
+    mins = mesh.p.min(axis=1)
+    maxs = mesh.p.max(axis=1)
+    axis_names = "xyz"
+    predicates: dict = {}
+    for d in range(dim):
+        name = axis_names[d] if d < len(axis_names) else f"axis{d}"
+        predicates[f"{name}_min"] = lambda x, d=d, b=mins[d]: np.isclose(x[d], b, atol=BOUNDARY_TOL)
+        predicates[f"{name}_max"] = lambda x, d=d, b=maxs[d]: np.isclose(x[d], b, atol=BOUNDARY_TOL)
+    return mesh.with_boundaries(predicates)
 
 
 def skfem_to_meshdata(mesh: skfem.Mesh) -> MeshData:
