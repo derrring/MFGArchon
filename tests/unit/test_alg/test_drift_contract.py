@@ -16,6 +16,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
@@ -29,10 +30,22 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 def test_drift_convention_trait_values():
     """The velocity-taking solvers keep the VELOCITY default; the U-taking solvers are
-    explicitly VALUE_FUNCTION (machine-readable contract for a future coupler dispatch)."""
+    explicitly VALUE_FUNCTION (machine-readable contract for a future coupler dispatch).
+
+    FPParticleSolver is VALUE_FUNCTION by default: its 1D path always takes U via `drift_field`
+    and computes alpha = -coupling*grad(U), and the nD default does the same; only the per-call
+    `drift_is_precomputed=True` (nD) flips it to VELOCITY. The class trait records the default
+    (Issue #1043). Previously it silently inherited the base VELOCITY default and was untested."""
     assert FPFDMSolver._drift_convention is DriftConvention.VELOCITY
     assert FPGFDMSolver._drift_convention is DriftConvention.VELOCITY
-    for cls in (WeakFormFPSolver, MeshlessGalerkinFPSolver, FPSLJacobianSolver, FPSLSolver, FPNetworkSolver):
+    for cls in (
+        WeakFormFPSolver,
+        MeshlessGalerkinFPSolver,
+        FPSLJacobianSolver,
+        FPSLSolver,
+        FPNetworkSolver,
+        FPParticleSolver,
+    ):
         assert cls._drift_convention is DriftConvention.VALUE_FUNCTION, cls.__name__
 
 
