@@ -152,6 +152,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`BoundaryConditions.get_outward_normal` mis-fired on outer walls of Difference-style domains**
+  (Issue #1114). It checked `domain_sdf` *first*, so for a domain that is an outer box minus an
+  obstacle (both `domain_bounds` and `domain_sdf` set), a point on the outer wall received the
+  *obstacle's* SDF gradient — pointing toward the obstacle, tens of degrees off the wall normal —
+  instead of the axis-aligned wall normal. Unified the two normal sources into one classifier:
+  an axis-aligned outer-box wall now returns the exact face normal (via `outward_normal_for_face`),
+  and the SDF gradient is used only for genuinely curved boundaries (the obstacle surface, or a
+  pure-SDF domain). The box-wall branch is guarded by an explicit axis-bound match (not
+  `identify_boundary_face`, whose SDF Method-2 also classifies curved points) so obstacle-surface
+  normals keep the SDF gradient. The GFDM paper path was unaffected either way (it uses the
+  `identify_boundary_face` + `outward_normal_for_face` Path-1, with `get_outward_normal` only a
+  legacy fallback). Added `TestOutwardNormalSourceAgreement`.
+
 - **HJB-SL reflecting-BC characteristic-foot fold was wrong on asymmetric domains**
   (Issues #1161, #1048, #1054). Three sibling code paths in `hjb_semi_lagrangian.py` folded
   out-of-bounds characteristic feet for no-flux/Neumann BC, each with a private copy of the
