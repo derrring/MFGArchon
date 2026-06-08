@@ -25,6 +25,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -241,14 +242,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
         if M_density.ndim == 1:
             M_density = np.tile(M_density, (Nt + 1, 1))
 
-        # volatility_field is the SDE volatility sigma; the PDE diffusion is D = sigma^2 / 2
-        # (Conventions Index; Issue #811) -- matches the FP _diffusion_coefficient and adjoint mode.
-        if volatility_field is None:
-            D = 0.5 * self.problem.sigma**2
-        elif isinstance(volatility_field, (int, float)):
-            D = 0.5 * float(volatility_field) ** 2
-        else:
-            D = 0.5 * float(np.mean(volatility_field)) ** 2
+        # D = sigma^2 / 2 via the single-source converter (Issue #811) -- matches the FP
+        # _diffusion_coefficient / adjoint mode. Array field collapses to its mean (with a warning).
+        D = scalar_diffusion_from_volatility(volatility_field, self.problem.sigma)
 
         U = np.zeros((Nt + 1, N))
         U[Nt] = U_terminal
