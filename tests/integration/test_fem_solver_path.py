@@ -36,6 +36,9 @@ def _fem_problem(refine: int = 2):
     mesh = skfem.MeshTri.init_sqsymmetric().refined(refine)
     geom = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     geom.mesh_data = skfem_to_meshdata(mesh)
+    # BC attaches to the GEOMETRY (the codebase pattern; MFGProblem(boundary_conditions=) is
+    # dropped for mesh geometries). The geometry BC accessor then surfaces it to the solver.
+    geom.boundary_conditions = no_flux_bc(dimension=2)
     components = MFGComponents(
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
@@ -97,6 +100,64 @@ class TestFEMSolverPath:
         geom = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
         geom.mesh_data = mesh_data
         assert geom.generate_mesh() is mesh_data
+
+
+@pytest.mark.integration
+class TestFEMBoundaryConditionResolution:
+    """Seam 1 of the coupled-FEM chain: the FEM solver must receive a real ``BoundaryConditions``
+    (or ``None``), NOT the boundary-handler metadata dict that ``UnstructuredMesh.
+    get_boundary_conditions()`` used to return — that dict shadowed the real BC and crashed the
+    bc_adapter with ``'dict' object has no attribute 'segments'``."""
+
+    def test_mesh_bc_accessor_returns_bc_or_none_not_dict(self):
+        from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+        from mfgarchon.geometry.boundary import no_flux_bc
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+        from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+        geom = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+        geom.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_sqsymmetric().refined(1))
+        # no BC attached -> None (previously a {"type": "unstructured_mesh", ...} metadata dict)
+        assert geom.get_boundary_conditions() is None
+        # attached BC -> the real object
+        geom.boundary_conditions = no_flux_bc(dimension=2)
+        assert isinstance(geom.get_boundary_conditions(), BoundaryConditions)
+
+    def test_fem_solver_receives_real_boundary_conditions(self):
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+
+        problem, _ = _fem_problem()  # helper attaches no_flux_bc to the geometry
+        fp = FPFEMSolver(problem)
+        assert isinstance(fp._bc, BoundaryConditions)
+        assert fp._is_pure_neumann()  # no-flux is natural/Neumann
+
+    def test_coupled_fem_no_flux_runs_and_conserves_mass(self):
+        """First coupled FEM MFG through the real solver classes (manual Picard — the standard
+        FixedPointIterator is still grid-only, seam 3). No-flux ⇒ mass conserved, confirming the
+        -C^T advection fix end-to-end."""
+        from mfgarchon.alg.numerical.fem.assembly import assemble_mass
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+        from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+
+        problem, mesh = _fem_problem()
+        hjb, fp = HJBFEMSolver(problem), FPFEMSolver(problem)
+        n_dof, n_t = fp._basis.N, problem.Nt
+        mass_matrix = assemble_mass(fp._basis)
+        m0 = np.exp(-10 * ((mesh.p[0] - 0.5) ** 2 + (mesh.p[1] - 0.5) ** 2))
+        m0 /= (mass_matrix @ m0).sum()
+        u_sol = np.zeros((n_t + 1, n_dof))
+        m_sol = np.tile(m0, (n_t + 1, 1))
+        for _ in range(8):
+            u_new = np.asarray(hjb.solve_hjb_system(m_sol, np.zeros(n_dof), u_sol))
+            m_new = np.asarray(fp.solve_fp_system(m0, u_new))
+            u_sol = 0.5 * u_sol + 0.5 * u_new
+            m_sol = 0.5 * m_sol + 0.5 * m_new
+        assert np.all(np.isfinite(u_sol)) and np.all(np.isfinite(m_sol))
+        assert np.all(m_sol >= -1e-9)
+        masses = [float((mass_matrix @ m_sol[t]).sum()) for t in range(n_t + 1)]
+        drift = abs(masses[-1] - masses[0]) / masses[0]
+        assert drift < 1e-3, f"no-flux FEM mass drift {drift:.2%} (advection not conservative?)"
 
 
 if __name__ == "__main__":
