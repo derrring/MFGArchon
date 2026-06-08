@@ -45,6 +45,7 @@ from .hjb_sl_adi import (
 from .hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     apply_boundary_conditions_nd,
+    reflect_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
 )
@@ -974,8 +975,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
                 if bc_op == "reflect":
-                    # Reflect: fold back into domain
-                    x_departures = np.clip(x_departures, xmin, xmax)
+                    # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann),
+                    # not np.clip — clamping collapsed them onto the wall node.
+                    x_departures = reflect_into_domain(x_departures, xmin, xmax)
                 elif bc_op == "wrap":
                     # Periodic: wrap around
                     L = xmax - xmin
@@ -1348,13 +1350,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bounds = self.problem.geometry.get_bounds()
         xmin, xmax = bounds[0][0], bounds[1][0]
         if bc_op == "reflect":
-            # Iterated mirror reflection via modular arithmetic:
-            #   y' = xmin + |((y − xmin) mod 2L) − L|   where L = xmax − xmin
-            # Maps any y ∈ ℝ to [xmin, xmax] via reflections at xmin and xmax.
-            # Handles arbitrary numbers of bounces in a single expression.
-            L = xmax - xmin
-            y_plus = xmin + np.abs(((y_plus - xmin) % (2 * L)) - L)
-            y_minus = xmin + np.abs(((y_minus - xmin) % (2 * L)) - L)
+            # Issue #1048 fix used a center-flip (missing the leading "L -"), which
+            # mirrored every foot about the domain midpoint; reflect_into_domain is the
+            # correct boundary fold (identity in-bounds).
+            y_plus = reflect_into_domain(y_plus, xmin, xmax)
+            y_minus = reflect_into_domain(y_minus, xmin, xmax)
         elif bc_op == "wrap":
             L = xmax - xmin
             y_plus = xmin + (y_plus - xmin) % L
@@ -1501,7 +1501,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # Apply BC vectorized (per-axis broadcast)
         if bc_op == "reflect":
-            all_departures = x_min + np.abs(((all_departures - x_min) % (2 * L_axis)) - L_axis)
+            # Issue #1054: same center-flip bug as #1048 (missing "L -"); use the
+            # correct per-axis boundary fold.
+            all_departures = reflect_into_domain(all_departures, x_min, x_max)
         elif bc_op == "wrap":
             all_departures = x_min + (all_departures - x_min) % L_axis
 

@@ -222,6 +222,34 @@ def apply_boundary_conditions_1d(
     return float(np.clip(x, xmin, xmax))
 
 
+def reflect_into_domain(
+    x: np.ndarray,
+    xmin: float | np.ndarray,
+    xmax: float | np.ndarray,
+) -> np.ndarray:
+    r"""
+    Vectorized mirror-reflection of points into ``[xmin, xmax]`` (no-flux / Neumann fold).
+
+    Closed-form triangle wave, equivalent to the iterated scalar reflection in
+    :func:`apply_boundary_conditions_1d` (apply ``2*xmin - x`` / ``2*xmax - x`` until in
+    bounds):
+
+    .. math::
+        x' = x_{\min} + L - \bigl|\,((x - x_{\min}) \bmod 2L) - L\,\bigr|,
+        \qquad L = x_{\max} - x_{\min}.
+
+    Identity for in-bounds ``x``; resolves arbitrarily many bounces in one pass. ``xmin`` /
+    ``xmax`` may be scalars (1D) or per-axis arrays broadcastable against ``x`` (nD).
+
+    The leading ``L -`` is load-bearing: the variant ``xmin + |((x - xmin) mod 2L) - L|``
+    (without it) is a point-inversion about the domain *center* (``x -> xmin + xmax - x``),
+    not a boundary reflection — it displaces even in-bounds points and is correct only on
+    domains/data symmetric about the midpoint.
+    """
+    span = xmax - xmin
+    return xmin + span - np.abs(((x - xmin) % (2.0 * span)) - span)
+
+
 def apply_boundary_conditions_nd(
     x: np.ndarray,
     bounds: list[tuple[float, float]],

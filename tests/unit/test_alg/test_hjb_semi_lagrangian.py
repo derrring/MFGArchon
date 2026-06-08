@@ -966,8 +966,10 @@ class TestStochasticCharacteristicSL_nD:
 
         bc = no_flux_bc(dimension=2)
         grid = TensorProductGrid(
-            dimension=2, bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[N, N], boundary_conditions=bc,
+            dimension=2,
+            bounds=[(0.0, 1.0), (0.0, 1.0)],
+            Nx_points=[N, N],
+            boundary_conditions=bc,
         )
 
         def m0(x):
@@ -978,17 +980,27 @@ class TestStochasticCharacteristicSL_nD:
             m_initial=m0,
             u_terminal=lambda x: 1.0,
         )
-        return MFGProblem(
-            geometry=grid, T=T, Nt=Nt, sigma=sigma,
-            components=components, boundary_conditions=bc,
-        ), grid, m0
+        return (
+            MFGProblem(
+                geometry=grid,
+                T=T,
+                Nt=Nt,
+                sigma=sigma,
+                components=components,
+                boundary_conditions=bc,
+            ),
+            grid,
+            m0,
+        )
 
     def test_2d_linear_stochastic_finite(self):
         """Issue #1054: linear+stochastic on 2D no-flux must produce finite output."""
         problem, grid, m0 = self._make_2d_problem()
         solver = HJBSemiLagrangianSolver(
-            problem, diffusion_method="stochastic",
-            interpolation_method="linear", check_cfl=False,
+            problem,
+            diffusion_method="stochastic",
+            interpolation_method="linear",
+            check_cfl=False,
         )
         U_terminal = np.zeros(tuple(grid.Nx_points))
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
@@ -1002,8 +1014,10 @@ class TestStochasticCharacteristicSL_nD:
         with __import__("warnings").catch_warnings():
             __import__("warnings").simplefilter("ignore")
             solver = HJBSemiLagrangianSolver(
-                problem, diffusion_method="stochastic",
-                interpolation_method="cubic", check_cfl=False,
+                problem,
+                diffusion_method="stochastic",
+                interpolation_method="cubic",
+                check_cfl=False,
             )
         U_terminal = np.zeros(tuple(grid.Nx_points))
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
@@ -1014,14 +1028,16 @@ class TestStochasticCharacteristicSL_nD:
         """Issue #1054: high-curvature U near walls must not produce NaN under no-flux."""
         problem, grid, m0 = self._make_2d_problem()
         solver = HJBSemiLagrangianSolver(
-            problem, diffusion_method="stochastic",
-            interpolation_method="linear", check_cfl=False,
+            problem,
+            diffusion_method="stochastic",
+            interpolation_method="linear",
+            check_cfl=False,
         )
         # Stress-test: bowl U_T peaking near walls — Brownian feet would otherwise
         # extrapolate (silent fill_value=None) and produce nonsense values.
         Nx = grid.Nx_points[0]
         U_terminal = np.fromfunction(
-            lambda i, j: ((i / (Nx - 1) - 0.5) ** 2 + (j / (Nx - 1) - 0.5) ** 2),
+            lambda i, j: (i / (Nx - 1) - 0.5) ** 2 + (j / (Nx - 1) - 0.5) ** 2,
             (Nx, Nx),
         ).astype(float)
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
@@ -1083,6 +1099,65 @@ class TestADIDiffusionMagnitude:
         assert self._decay_relerr(adi_fac, analytic_fac) < 0.03, (
             f"ADI 3D under/over-diffuses: factor {adi_fac:.6f} vs analytic {analytic_fac:.6f}"
         )
+
+
+class TestReflectIntoDomain:
+    """Regression guard for the reflecting-BC characteristic-foot fold (Issues #1161/#1048/#1054).
+
+    The vectorized fold must equal the trusted iterated scalar reflection
+    (``apply_boundary_conditions_1d``) on ASYMMETRIC domains. The bug that shipped used
+    ``xmin + |((x-xmin) % 2L) - L|`` (a center-flip about the midpoint), which is correct only
+    on domains symmetric about their center — exactly why the prior [0,1]-only tests missed it.
+    """
+
+    def test_matches_trusted_scalar_reference_asymmetric(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
+            apply_boundary_conditions_1d,
+            reflect_into_domain,
+        )
+
+        xmin, xmax = 2.0, 5.0  # asymmetric, off-origin: center-flip != reflection here
+        pts = np.array([2.5, 1.8, 1.0, 5.0, 2.0, 3.5, 6.2, -1.0, 8.3, 4.99])
+        new = reflect_into_domain(pts, xmin, xmax)
+        ref = np.array([apply_boundary_conditions_1d(float(x), xmin, xmax, "reflect") for x in pts])
+        np.testing.assert_allclose(new, ref, atol=1e-12)
+
+    def test_in_bounds_is_identity(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+
+        xmin, xmax = 2.0, 5.0
+        interior = np.array([2.0, 2.5, 3.5, 4.99, 5.0])
+        np.testing.assert_allclose(reflect_into_domain(interior, xmin, xmax), interior, atol=1e-12)
+
+    def test_single_and_multi_bounce(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+
+        xmin, xmax = 2.0, 5.0  # L = 3
+        # 6.2 over by 1.2 -> 3.8 (one bounce); 8.3 -> two bounces -> 2.3; -1.0 -> 5.0
+        out = reflect_into_domain(np.array([6.2, 8.3, -1.0]), xmin, xmax)
+        np.testing.assert_allclose(out, [3.8, 2.3, 5.0], atol=1e-12)
+        assert np.all((out >= xmin - 1e-12) & (out <= xmax + 1e-12))
+
+    def test_not_center_flip(self):
+        """The specific bug: an interior point must NOT be mirrored about the midpoint."""
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+
+        xmin, xmax = 2.0, 5.0
+        x = 2.5
+        flipped = xmin + xmax - x  # 4.5 — what the broken formula produced
+        out = reflect_into_domain(np.array([x]), xmin, xmax)[0]
+        assert out == pytest.approx(x)
+        assert out != pytest.approx(flipped)
+
+    def test_per_axis_broadcast_nd(self):
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+
+        xmn = np.array([0.0, 2.0])
+        xmx = np.array([1.0, 5.0])
+        pts = np.array([[0.3, 2.5], [1.2, 6.2], [-0.3, 1.0]])
+        out = reflect_into_domain(pts, xmn, xmx)
+        np.testing.assert_allclose(out, [[0.3, 2.5], [0.8, 3.8], [0.3, 3.0]], atol=1e-12)
+        assert np.all((out >= xmn - 1e-9) & (out <= xmx + 1e-9))
 
 
 if __name__ == "__main__":
