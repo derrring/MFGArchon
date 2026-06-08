@@ -177,5 +177,48 @@ class TestBoundaryToleranceSingleSource:
         assert onwall_default == ONWALL_TOL == 1e-10
 
 
+class TestOutwardNormalSourceAgreement:
+    """Issue #1114: the two outward-normal sources (face-derived vs SDF-gradient) must agree on
+    outer-box walls. `get_outward_normal` returns the exact face normal there — NOT the obstacle
+    SDF gradient — for Difference-style domains (outer box + obstacle SDF); the SDF gradient is
+    used only for genuinely curved boundaries."""
+
+    @staticmethod
+    def _difference_bc():
+        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType, BoundaryConditions
+
+        def obstacle_sdf(p):
+            p = np.asarray(p, dtype=float)
+            return 0.2 - np.linalg.norm(p - np.array([0.5, 0.5]))
+
+        bc = BoundaryConditions(segments=[BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")], dimension=2)
+        bc.domain_bounds = np.array([[0.0, 1.0], [0.0, 1.0]])
+        bc.domain_sdf = obstacle_sdf
+        return bc
+
+    def test_outer_wall_uses_face_normal_not_obstacle_sdf(self):
+        bc = self._difference_bc()
+        point = np.array([0.0, 0.5])  # on the outer left wall
+        normal = bc.get_outward_normal(point)
+        # exact face normal, not the obstacle-pointing SDF gradient (the #1114 misfire)
+        np.testing.assert_allclose(normal, [-1.0, 0.0], atol=1e-12)
+        # and it agrees with the canonical face-derived source
+        face = bc.identify_boundary_face(point)
+        np.testing.assert_allclose(normal, bc.outward_normal_for_face(face, dimension=2), atol=1e-12)
+
+    def test_curved_boundary_still_uses_sdf_gradient(self):
+        bc = self._difference_bc()
+        # A point on the obstacle surface at a DIAGONAL (interior to the box, not on any outer
+        # wall). A face normal could only be axis-aligned, so a diagonal result proves the SDF
+        # gradient path is used — not snapped to an axis face.
+        d = 0.2 / np.sqrt(2.0)
+        point = np.array([0.5 + d, 0.5 + d])  # on the r=0.2 obstacle circle, 45 degrees
+        normal = bc.get_outward_normal(point)
+        assert normal is not None
+        np.testing.assert_allclose(np.linalg.norm(normal), 1.0, atol=1e-9)
+        # diagonal => both components non-trivial (an axis face normal would have a zero component)
+        assert abs(normal[0]) > 0.1 and abs(normal[1]) > 0.1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

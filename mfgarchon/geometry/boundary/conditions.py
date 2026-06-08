@@ -583,6 +583,14 @@ class BoundaryConditions:
         """
         Get the outward normal at a boundary point.
 
+        Single classifier (Issue #1114): the exact axis-aligned face normal is preferred for
+        points on an outer-box wall, and the SDF gradient is used only for genuinely curved
+        boundaries (or pure-SDF domains with no box). The prior ordering checked ``domain_sdf``
+        first, which mis-fired on Difference-style domains where ``domain_sdf`` is the *obstacle's*
+        SDF: a point on the outer wall received the obstacle-pointing gradient (off by tens of
+        degrees) instead of the wall normal. Routing the face case through
+        :meth:`outward_normal_for_face` unifies the two normal sources.
+
         Args:
             point: Spatial coordinates on the boundary
             epsilon: Finite difference step for SDF gradient
@@ -593,23 +601,25 @@ class BoundaryConditions:
         dimension = self._require_dimension("get_outward_normal")
         point = np.asarray(point, dtype=float)
 
-        # SDF domain: use gradient
+        # Outer-box wall: exact face-derived normal (the canonical source). Checked first so an
+        # obstacle SDF cannot override the wall normal on a Difference-style domain. Only an
+        # axis-aligned bound match counts — NOT identify_boundary_face, whose SDF Method-2 also
+        # classifies curved obstacle-surface points (those must keep the SDF gradient below).
+        if self.domain_bounds is not None:
+            face = self.identify_boundary_face(point)
+            if face is not None:
+                low, high = self.domain_bounds[face.axis]
+                bound = high if face.side == "max" else low
+                if abs(float(point[face.axis]) - bound) <= BOUNDARY_TOL + abs(bound) * BOUNDARY_REL_TOL:
+                    return self.outward_normal_for_face(face, dimension=dimension)
+
+        # Curved / SDF boundary (e.g. the obstacle surface, or a pure-SDF domain): use gradient.
         if self.domain_sdf is not None:
             normal = _compute_sdf_gradient(point, self.domain_sdf, epsilon=epsilon)
             normal_norm = np.linalg.norm(normal)
             if normal_norm > 1e-12:
                 return normal / normal_norm
             return None
-
-        # Rectangular domain: compute based on boundary face
-        if self.domain_bounds is not None:
-            face = self.identify_boundary_face(point)
-            if face is None:
-                return None
-
-            normal = np.zeros(dimension)
-            normal[face.axis] = 1.0 if face.side == "max" else -1.0
-            return normal
 
         return None
 
