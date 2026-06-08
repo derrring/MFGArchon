@@ -104,6 +104,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Per-point spatially-varying volatility on the explicit-drift & strict-adjoint FP paths**
+  (Issue #1183). Both paths collapsed a non-uniform `volatility_field` to its spatial **mean**
+  (a scalar `D`), silently solving a different PDE than the per-point implicit path (a low-σ
+  region was over-diffused, a high-σ region under-diffused — ~14–21% L2 error). Added a
+  variable-coefficient mode to `LaplacianOperator` (`coefficient_field=`): the conservative
+  finite-volume no-flux stencil now bakes in the **face-averaged** diffusion
+  `D_{i+1/2} = ½(D_i + D_{i+1})`, so `∇·(D(x)∇·)` stays column-conservative (`1ᵀL = 0`) even
+  for varying `D` — a point-value `D_i·Δ` would leak. The explicit-drift
+  (`solve_timestep_explicit_with_drift`) and strict-adjoint (`solve_fp_step_adjoint_mode`) FP
+  steps now build this per-point matrix for an array σ (replacing the mean-collapse + the interim
+  warning), so a non-uniform σ is honored per point **and** mass is conserved; low-σ regions
+  correctly under-diffuse. Scalar (and uniform-array) σ takes the existing scalar path unchanged
+  — **byte-identical**, so no EOC change for the common case. `coefficient_field=None` leaves
+  `LaplacianOperator` byte-identical for all other consumers. (The point-value implicit reference
+  `solve_timestep_full_nd` is itself non-conservative for varying σ, and the strict-adjoint
+  *scalar* path is not yet mass-conservative — both tracked as a follow-up.) `Fixes #1183`.
 - **Nonzero Neumann flux in the linear-reflection ghost path** (Issue #1186 sibling, FDM/SL).
   `PreallocatedGhostBuffer._apply_linear_reflection` (the order<=2 ghost path used by FDM/SL)
   filled Neumann/no-flux ghosts with a pure mirror, silently dropping a nonzero

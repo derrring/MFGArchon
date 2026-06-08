@@ -94,6 +94,7 @@ class LaplacianOperator(LinearOperator):
         order: int = 2,
         time: float = 0.0,
         mass_conservative: bool = False,
+        coefficient_field: NDArray | None = None,
     ):
         """
         Initialize Laplacian operator.
@@ -113,6 +114,12 @@ class LaplacianOperator(LinearOperator):
                 column-conservative (``1ᵀL = 0``), so the implicit diffusion solve conserves
                 mass exactly -- at the cost of 1st-order wall accuracy. The FP mass path sets
                 this; HJB/elliptic consumers (matvec, accuracy-critical) leave it ``False``.
+            coefficient_field: Optional per-point diffusion field ``D(x)`` (same shape as the
+                field) for a spatially-varying ``∇·(D∇·)`` (Issue #1183). Only honored by
+                ``as_scipy_sparse()`` with ``mass_conservative=True``: the stencil uses the
+                face-averaged ``D_{i+1/2} = ½(D_i + D_{i+1})``, so the flux telescopes and
+                ``1ᵀL = 0`` holds even for varying ``D`` (a *point-value* ``D_i·Δ`` would leak).
+                ``None`` (default) builds the unit Laplacian (caller multiplies by a scalar ``D``).
 
         Raises:
             ValueError: If order != 2 (higher orders not yet implemented)
@@ -129,6 +136,7 @@ class LaplacianOperator(LinearOperator):
         self.order = order
         self.time = time
         self.mass_conservative = mass_conservative
+        self.coefficient_field = None if coefficient_field is None else np.asarray(coefficient_field, dtype=np.float64)
 
         # Validate
         if len(self.spacings) != len(self.field_shape):
@@ -136,6 +144,17 @@ class LaplacianOperator(LinearOperator):
 
         if order != 2:
             raise ValueError(f"Only order=2 currently supported, got {order}")
+
+        if self.coefficient_field is not None:
+            if self.coefficient_field.shape != self.field_shape:
+                raise ValueError(
+                    f"coefficient_field shape {self.coefficient_field.shape} != field_shape {self.field_shape}"
+                )
+            if not mass_conservative:
+                raise ValueError(
+                    "coefficient_field requires mass_conservative=True (variable-coefficient diffusion "
+                    "is only assembled in the conservative finite-volume branch; Issue #1183)."
+                )
 
         # Compute operator shape
         N = int(np.prod(field_shape))
@@ -287,35 +306,50 @@ class LaplacianOperator(LinearOperator):
 
             if bc_type in ("neumann", "no_flux") and self.mass_conservative:
                 # Finite-volume zero-flux stencil (Issue #1184): omit the ghost face at the
-                # wall so each cell's row telescopes against its neighbors' columns. Wall cells
-                # lose one face in dimension d -> diag -1/h² (this dim); interior -2/h². The
-                # single interior neighbor of a wall cell gets +1/h² (NOT the +2/h² ghost
-                # mirror). This is BOTH row- and column-conservative (1ᵀL = 0), so the implicit
-                # FP diffusion solve conserves mass; it is 1st-order accurate at the wall.
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior])
-                vals_list.append(np.full(int(interior.sum()), -2.0 / h2))
+                # wall so each cell's row telescopes against its neighbors' columns -> BOTH
+                # row- and column-conservative (1ᵀL = 0), 1st-order accurate at the wall.
+                # Each face carries the face-averaged diffusion D_{i+1/2} = ½(D_i + D_{i+1})
+                # (Issue #1183); with no coefficient_field every face coefficient is 1 (the
+                # caller multiplies the unit Laplacian by a scalar D -> byte-identical).
+                d_flat = None if self.coefficient_field is None else self.coefficient_field.ravel()
+                ii = all_idx[interior]
+                amin = all_idx[at_min]
+                amax = all_idx[at_max]
+                if d_flat is None:
+                    f_lo_i = np.ones(ii.size)
+                    f_hi_i = np.ones(ii.size)
+                    f_hi_min = np.ones(amin.size)
+                    f_lo_max = np.ones(amax.size)
+                else:
+                    f_lo_i = 0.5 * (d_flat[ii] + d_flat[ii - stride])  # face i-1/2
+                    f_hi_i = 0.5 * (d_flat[ii] + d_flat[ii + stride])  # face i+1/2
+                    f_hi_min = 0.5 * (d_flat[amin] + d_flat[amin + stride])
+                    f_lo_max = 0.5 * (d_flat[amax] + d_flat[amax - stride])
 
-                wall = at_min | at_max
-                rows_list.append(all_idx[wall])
-                cols_list.append(all_idx[wall])
-                vals_list.append(np.full(int(wall.sum()), -1.0 / h2))
+                # Interior cell: diag -(f_lo+f_hi)/h², neighbors +f/h²
+                rows_list.append(ii)
+                cols_list.append(ii)
+                vals_list.append(-(f_lo_i + f_hi_i) / h2)
+                rows_list.append(ii)
+                cols_list.append(ii - stride)
+                vals_list.append(f_lo_i / h2)
+                rows_list.append(ii)
+                cols_list.append(ii + stride)
+                vals_list.append(f_hi_i / h2)
 
-                # Interior: both neighbors +1/h²
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior] - stride)
-                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior] + stride)
-                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
-
-                # Wall: single interior neighbor +1/h² (zero-flux: no ghost contribution)
-                rows_list.append(all_idx[at_min])
-                cols_list.append(all_idx[at_min] + stride)
-                vals_list.append(np.full(int(at_min.sum()), 1.0 / h2))
-                rows_list.append(all_idx[at_max])
-                cols_list.append(all_idx[at_max] - stride)
-                vals_list.append(np.full(int(at_max.sum()), 1.0 / h2))
+                # Wall cells: only the single interior-facing face (zero flux through the wall)
+                rows_list.append(amin)
+                cols_list.append(amin)
+                vals_list.append(-f_hi_min / h2)
+                rows_list.append(amin)
+                cols_list.append(amin + stride)
+                vals_list.append(f_hi_min / h2)
+                rows_list.append(amax)
+                cols_list.append(amax)
+                vals_list.append(-f_lo_max / h2)
+                rows_list.append(amax)
+                cols_list.append(amax - stride)
+                vals_list.append(f_lo_max / h2)
 
             elif bc_type in ("neumann", "no_flux"):
                 # ALL points get diagonal -2/h² (interior and boundary)

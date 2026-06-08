@@ -699,33 +699,31 @@ class FPFDMSolver(BaseFPSolver):
         spacing = list(self.problem.geometry.get_grid_spacing())
         bc = self.boundary_conditions
 
-        L_op = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc)
-        L_matrix = L_op.as_scipy_sparse()
+        sigma_arr = np.asarray(sigma_val)
+        varying_sigma = sigma_arr.ndim > 0 and float(np.ptp(sigma_arr)) > 1e-12
 
-        # Compute diffusion coefficient
-        if isinstance(sigma_val, np.ndarray):
-            # Issue #1183: the strict-adjoint FP step uses a scalar D; a spatially varying
-            # sigma is collapsed to its mean. For a genuinely non-uniform sigma this silently
-            # solves a different PDE. Fail loud rather than silently approximate; the per-point
-            # variable-coefficient diffusion (matrix form) is tracked in #1183.
-            if float(np.ptp(sigma_val)) > 1e-12:
-                import warnings
+        # Build the diffusion matrix.
+        if varying_sigma:
+            # Issue #1183: per-point variable-coefficient diffusion -- bake the field
+            # D(x) = sigma(x)^2/2 into a conservative finite-volume Laplacian (face-averaged
+            # D_{i+1/2}, mass-conserving) rather than collapsing sigma to its mean.
+            from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
-                warnings.warn(
-                    "Spatially varying volatility in strict-adjoint FP mode is approximated by "
-                    "its spatial mean (Issue #1183): the per-point matrix form is not yet "
-                    "implemented. Results differ from a true per-point diffusion.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            D = 0.5 * float(np.mean(sigma_val)) ** 2
+            d_field = diffusion_from_volatility(sigma_arr, kind="field")
+            diffusion_matrix = LaplacianOperator(
+                spacings=spacing, field_shape=shape, bc=bc, mass_conservative=True, coefficient_field=d_field
+            ).as_scipy_sparse()
         else:
-            D = 0.5 * float(sigma_val) ** 2
+            # Scalar (or uniform-array) sigma: scalar D times the (existing) Laplacian.
+            scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(sigma_val)
+            D = 0.5 * scalar_sigma**2
+            L_matrix = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc).as_scipy_sparse()
+            diffusion_matrix = D * L_matrix
 
-        # Build full system matrix: (I/dt + A_advection_T - D*Laplacian)
-        # Note: Laplacian has negative diagonal, so we SUBTRACT D*L
+        # Build full system matrix: (I/dt + A_advection_T - diffusion). The Laplacian has a
+        # negative diagonal, so the diffusion matrix is SUBTRACTED.
         identity = sparse.eye(N_total)
-        A_system = identity / dt + A_advection_T - D * L_matrix
+        A_system = identity / dt + A_advection_T - diffusion_matrix
 
         # Right-hand side
         b_rhs = M_current.ravel() / dt

@@ -1140,14 +1140,15 @@ class TestFPFDMSolverCallableDrift:
         assert np.all(M >= -1e-10)
 
 
-class TestVaryingSigmaExplicitDriftWarning:
-    """Issue #1183: the explicit-drift FP path collapses a spatially varying volatility to its
-    mean (scalar D). It must fail loud (warn) for a genuinely non-uniform sigma rather than
-    silently solve a different PDE than the per-point implicit path; a uniform array sigma
-    collapses exactly and must NOT warn."""
+class TestVaryingSigmaExplicitDriftPerPoint:
+    """Issue #1183: the explicit-drift FP path now solves a per-point variable-coefficient
+    diffusion (face-averaged D(x)=sigma(x)^2/2 in a conservative FV Laplacian) instead of
+    collapsing a spatially varying volatility to its mean. A non-uniform sigma is honored per
+    point (low-sigma regions under-diffuse) AND mass is conserved -- no warning. A uniform
+    array sigma uses the scalar path unchanged (also no warning)."""
 
     @staticmethod
-    def _solve(sigma_field):
+    def _solve(sigma_field, bump_center=0.25):
         n, nt = 41, 30
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
         H = SeparableHamiltonian(
@@ -1155,35 +1156,51 @@ class TestVaryingSigmaExplicitDriftWarning:
             coupling=lambda m: np.asarray(m) * 0.0,
             coupling_dm=lambda m: np.asarray(m) * 0.0,
         )
-        comps = MFGComponents(
-            m_initial=lambda x: np.exp(-((np.asarray(x) - 0.5) ** 2) / 0.02),
-            u_terminal=lambda x: np.asarray(x) * 0.0,
-            hamiltonian=H,
-        )
-        prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, sigma=0.1, components=comps)
         x = np.linspace(0.0, 1.0, n)
         dx = x[1] - x[0]
-        m0 = np.exp(-((x - 0.5) ** 2) / 0.02)
+
+        def m_init(xx):
+            return np.exp(-((np.asarray(xx) - bump_center) ** 2) / 0.01)
+
+        comps = MFGComponents(m_initial=m_init, u_terminal=lambda xx: np.asarray(xx) * 0.0, hamiltonian=H)
+        prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, sigma=0.1, components=comps)
+        m0 = m_init(x)
         m0 /= m0.sum() * dx
         # callable drift routes through the explicit path (signature (t, grid, density))
-        FPFDMSolver(prob).solve_fp_system(m0, drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma_field)
+        traj = FPFDMSolver(prob).solve_fp_system(
+            m0, drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma_field
+        )
+        return np.asarray(traj)[-1], dx
 
-    def test_non_uniform_sigma_warns(self):
+    def test_non_uniform_sigma_per_point_not_mean(self):
+        """A bump in the LOW-sigma region under-diffuses (stays more peaked) vs the mean-collapse,
+        and mass is conserved -- the per-point fidelity #1183 asks for. No interim warning."""
         n = 41
         x = np.linspace(0.0, 1.0, n)
-        sigma_field = np.where(x < 0.5, 0.05, 0.30)  # genuinely non-uniform
-        with pytest.warns(UserWarning, match="1183"):
-            self._solve(sigma_field)
-
-    def test_uniform_array_sigma_does_not_warn(self):
-        n = 41
-        sigma_field = np.full(n, 0.1)  # uniform array: mean-collapse is exact
+        sigma_field = np.where(x < 0.5, 0.05, 0.30)  # low-sigma left (the bump sits here), high-sigma right
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            self._solve(sigma_field)
+            m_perpoint, dx = self._solve(sigma_field, bump_center=0.25)
         assert not [w for w in caught if "1183" in str(w.message)], (
-            "uniform array sigma collapses exactly and must not raise the #1183 warning"
+            "the interim #1183 mean-collapse warning must be gone"
         )
+        m_meancollapse, _ = self._solve(float(np.mean(sigma_field)), bump_center=0.25)
+
+        assert abs(m_perpoint.sum() * dx - 1.0) < 1e-9, f"per-point diffusion leaked mass: {m_perpoint.sum() * dx:.8f}"
+        assert np.all(m_perpoint >= -1e-12), "per-point diffusion produced a negative density"
+        # The low-sigma bump diffuses LESS than the mean would -> a higher retained peak.
+        assert m_perpoint.max() > m_meancollapse.max() * 1.02, (
+            f"per-point did not under-diffuse the low-sigma bump: peak {m_perpoint.max():.4f} "
+            f"vs mean-collapse {m_meancollapse.max():.4f}"
+        )
+
+    def test_uniform_array_sigma_unchanged(self):
+        """A uniform array sigma uses the scalar path (no #1183 warning, mass conserved)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            m, dx = self._solve(np.full(41, 0.1))
+        assert not [w for w in caught if "1183" in str(w.message)]
+        assert abs(m.sum() * dx - 1.0) < 1e-9
 
 
 if __name__ == "__main__":

@@ -465,31 +465,10 @@ def solve_timestep_explicit_with_drift(
     For full FP no-flux BCs with advection, use no_flux_bc() which properly
     handles mass conservation at boundaries.
     """
-    # Get diffusion coefficient
-    if isinstance(sigma, np.ndarray):
-        # Issue #1183: the explicit-drift path uses a constant-coefficient LaplacianOperator,
-        # so a spatially varying sigma is collapsed to its mean (a scalar D). For a genuinely
-        # non-uniform sigma this silently solves a different PDE than the per-point implicit
-        # path (solve_timestep_full_nd). Fail loud rather than silently approximate; a true
-        # per-point variable-coefficient diffusion on this path is tracked in #1183.
-        if float(np.ptp(sigma)) > 1e-12:
-            import warnings
+    from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
-            warnings.warn(
-                "Spatially varying volatility on the explicit-drift FP path is approximated by "
-                "its spatial mean (Issue #1183): the per-point variable-coefficient diffusion is "
-                "not yet implemented here. Results differ from the per-point implicit path. Use an "
-                "array drift_field (implicit path) for per-point sigma fidelity.",
-                UserWarning,
-                stacklevel=2,
-            )
-        # For spatially varying, use scalar approximation (mean)
-        sigma_val = float(np.mean(sigma))
-    else:
-        sigma_val = float(sigma)
-
-    D = diffusion_from_volatility(sigma_val)  # Diffusion coefficient
     shape = M_current.shape
+    N_total = int(np.prod(shape))
 
     # Set default boundary conditions
     if boundary_conditions is None:
@@ -497,25 +476,35 @@ def solve_timestep_explicit_with_drift(
 
         boundary_conditions = no_flux_bc(dimension=ndim)
 
-    # Step 1: Implicit diffusion using LaplacianOperator (Issue #597 Milestone 2B)
-    # Issue #927: Use cached Laplacian if available (constant sigma across time steps)
-    if cached_laplacian is not None:
-        L_matrix = cached_laplacian
+    sigma_arr = np.asarray(sigma)
+    varying_sigma = sigma_arr.ndim > 0 and float(np.ptp(sigma_arr)) > 1e-12
+
+    # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
+    if varying_sigma:
+        # Issue #1183: per-point variable-coefficient diffusion. Bake the field D(x)=sigma(x)^2/2
+        # into a conservative finite-volume Laplacian (face-averaged D_{i+1/2}, 1ᵀL=0 preserved),
+        # so a non-uniform sigma is honored per point instead of collapsed to its mean.
+        d_field = diffusion_from_volatility(sigma_arr, kind="field")
+        L_matrix = LaplacianOperator(
+            spacings=list(spacing),
+            field_shape=shape,
+            bc=boundary_conditions,
+            mass_conservative=True,
+            coefficient_field=d_field,
+        ).as_scipy_sparse()
+        A_diffusion = sparse.eye(N_total) / dt - L_matrix
     else:
-        from mfgarchon.operators.differential.laplacian import LaplacianOperator
-
-        # mass_conservative=True: the implicit FP diffusion solve needs a column-conservative
-        # (1ᵀL = 0) no-flux stencil, else mass leaks at the walls (Issue #1184).
-        L_op = LaplacianOperator(
-            spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
-        )
-        L_matrix = L_op.as_scipy_sparse()
-
-    # Build implicit system matrix: (I/dt - D*Δ) m^{k+1} = m^k/dt
-    # Note: Laplacian has NEGATIVE diagonal, so we SUBTRACT
-    N_total = int(np.prod(shape))
-    identity = sparse.eye(N_total)
-    A_diffusion = identity / dt - D * L_matrix
+        # Scalar (or uniform-array) sigma: unit mass-conservative Laplacian scaled by the scalar D.
+        scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(sigma)
+        D = diffusion_from_volatility(scalar_sigma)
+        # Issue #927: reuse the cached unit Laplacian (constant sigma across time steps) if given.
+        if cached_laplacian is not None:
+            L_matrix = cached_laplacian
+        else:
+            L_matrix = LaplacianOperator(
+                spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
+            ).as_scipy_sparse()
+        A_diffusion = sparse.eye(N_total) / dt - D * L_matrix
 
     # RHS: m^k / dt
     # Note: No b_bc term needed - BCs are incorporated into L_matrix
