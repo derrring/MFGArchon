@@ -165,6 +165,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`UnstructuredMesh.get_boundary_conditions()` returned boundary-handler metadata, not a
+  `BoundaryConditions`** (coupled-FEM chain, seam 1). It returned `get_boundary_handler()` — e.g.
+  `{"type": "unstructured_mesh", "boundary_faces": None}` — which, as the higher-priority accessor
+  in the solver BC-resolution order, **shadowed the real problem-level `BoundaryConditions`** and
+  crashed the FEM `bc_adapter` with `'dict' object has no attribute 'segments'`. Now returns the
+  `BoundaryConditions` attached to the geometry, or `None` (callers then fall back to the
+  problem-level BC; `is_pure_neumann(None)` → natural Neumann). With this, the FEM solver receives
+  a real `BoundaryConditions` (when attached to the geometry — note `MFGProblem(boundary_conditions=)`
+  is dropped for mesh geometries, so attach to the geometry), and the **first coupled FEM MFG solve
+  through the real solver classes** runs (no-flux, mass-conserved — `test_fem_solver_path.py`). The
+  next links remain: the Dirichlet segment→facet resolver (#607) and `FixedPointIterator`
+  mesh-geometry support. Consolidated tests: removed `test_fem_coupled_mfg.py` (3 hand-rolled raw
+  `K`/`M` tests that bypassed the solver classes, misleadingly named "coupled") — fully subsumed by
+  `test_fem_solver_path.py` (real-class coupled) + `test_fem_mfg_solve.py` (forward/backward heat,
+  assembly).
+
 - **FEM solver path was broken at three seams** (FEM-readiness audit; Issues #773, #580). (1) The
   FP advection operator was assembled as the raw convective form `+C` (`C[i,j]=∫φ_i(v·∇φ_j)`),
   which is **not** mass-conserving — column sums `≈∫v·∇φ_j≠0`, giving ~20%+ mass drift on a

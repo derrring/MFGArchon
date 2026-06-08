@@ -1467,16 +1467,21 @@ class UnstructuredMesh(Geometry):
         Get boundary conditions for unstructured mesh.
 
         Returns:
-            Result of get_boundary_handler() if available, otherwise None.
+            The ``BoundaryConditions`` object attached to this geometry, or ``None`` if none is
+            attached (callers then fall back to the problem-level BC).
 
         Notes:
-            Mesh BCs are typically specified via boundary tags during mesh generation.
-            Use get_boundary_handler() for detailed BC configuration.
+            This previously returned ``get_boundary_handler()`` — boundary-HANDLER *metadata*
+            (e.g. ``{"type": "unstructured_mesh", "boundary_faces": None}``), not a
+            ``BoundaryConditions``. As the higher-priority accessor in the solver BC-resolution
+            order, that dict shadowed the real problem-level ``BoundaryConditions`` and broke the
+            FEM bc_adapter (which expects ``bc.segments``). Use ``get_boundary_handler()`` directly
+            for handler configuration; this method is strictly the BC accessor.
         """
-        try:
-            return self.get_boundary_handler()
-        except (AttributeError, NotImplementedError):
-            return None
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+
+        bc = getattr(self, "boundary_conditions", None)
+        return bc if isinstance(bc, BoundaryConditions) else None
 
     def get_collocation_points(self) -> NDArray:
         """
