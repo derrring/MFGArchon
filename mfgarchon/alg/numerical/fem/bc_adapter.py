@@ -158,7 +158,10 @@ def _find_segment_dofs(
     """
     boundary_name = getattr(segment, "boundary", None)
 
-    if boundary_name and boundary_name in mesh.boundaries:
+    # mesh.boundaries is None when no named regions were tagged (mesh_adapter tags axis-aligned
+    # walls x_min/x_max/... for box domains; #607). Guard it so an untagged mesh falls back
+    # cleanly instead of raising "argument of type 'NoneType' is not iterable".
+    if boundary_name and mesh.boundaries and boundary_name in mesh.boundaries:
         # Named boundary region
         facets = mesh.boundaries[boundary_name]
         dofs = basis.get_dofs(facets)
