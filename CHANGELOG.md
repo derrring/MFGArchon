@@ -152,6 +152,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FEM solver path was broken at three seams** (FEM-readiness audit; Issues #773, #580). (1) The
+  FP advection operator was assembled as the raw convective form `+C` (`C[i,j]=∫φ_i(v·∇φ_j)`),
+  which is **not** mass-conserving — column sums `≈∫v·∇φ_j≠0`, giving ~20%+ mass drift on a
+  non-divergence-free drift. Now assembled as `-C^T` (integration-by-parts form, zero column
+  sums since `Σφ_i=1`), matching the meshless-Galerkin sibling and the adjoint identity
+  `A_FP=A_HJB^T` (verified: `max|col sum|≈6e-17`). (2) `HJBFEMSolver`/`FPFEMSolver` inherited
+  `_scheme_family=GENERIC`, so the documented factory entry point `create_paired_solvers(..., FEM_P1)`
+  **raised** (duality VALIDATION_SKIPPED); both now carry `SchemeFamily.FEM`, which is registered as
+  a Type-A (exact-discrete-transpose) Galerkin family in the duality validator. (3) `Mesh2D`/`Mesh3D`
+  `generate_mesh()` now returns a pre-populated `mesh_data` as-is — a gmsh-free path for callers
+  that inject a mesh (e.g. via `skfem_to_meshdata`), since gmsh is not in the default install. Added
+  `tests/integration/test_fem_solver_path.py` exercising the real solver classes (the prior
+  `test_fem_coupled_mfg.py` hand-rolled raw `K`/`M` and never touched them). NOTE: coupled FEM
+  *through* `FixedPointIterator` still cannot run — the iterator requires a `CartesianGrid` while
+  FEM requires an unstructured mesh, and `fem/bc_adapter` expects a `BoundaryConditions` object
+  where the solver receives a `dict`; those two seams are the remaining coupled-FEM prerequisites.
+
 - **`BoundaryConditions.get_outward_normal` mis-fired on outer walls of Difference-style domains**
   (Issue #1114). It checked `domain_sdf` *first*, so for a domain that is an outer box minus an
   obstacle (both `domain_bounds` and `domain_sdf` set), a point on the outer wall received the

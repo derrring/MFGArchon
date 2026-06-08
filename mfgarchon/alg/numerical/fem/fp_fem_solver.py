@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -33,14 +34,19 @@ logger = get_logger(__name__)
 class FPFEMSolver(WeakFormFPSolver):
     """FEM (mesh + Lagrange) Fokker-Planck solver.
 
-    Mass conservation is guaranteed by the Galerkin weak form (the test space
-    contains constants). Forward time stepping is inherited from ``WeakFormFPSolver``.
+    Mass conservation holds because the assembled operator has zero column sums: the
+    diffusion stiffness already does (``sum_i K[i,j] = integral(grad(sum_i phi_i) . grad phi_j)
+    = 0`` since ``sum_i phi_i = 1``), and the advection block is assembled as ``-C^T`` (see
+    :meth:`_build_advection`) so its column sums vanish too. Forward time stepping is inherited
+    from ``WeakFormFPSolver``.
 
     Example:
         >>> from mfgarchon.alg.numerical.fem import FPFEMSolver
         >>> solver = FPFEMSolver(problem)
         >>> M = solver.solve_fp_system(m_initial, U_solution)
     """
+
+    _scheme_family = SchemeFamily.FEM
 
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
         mesh_data = problem.geometry.mesh_data
@@ -78,7 +84,17 @@ class FPFEMSolver(WeakFormFPSolver):
 
     # --- advection from drift via exact quadrature-point gradient of U --------
     def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
-        r"""Assemble $\int (v \cdot \nabla\phi_j)\,\phi_i\,dx$ with $v = -\text{coupling}\cdot\nabla U_n$.
+        r"""Assemble the mass-conserving FP advection block for drift $v = -\text{coupling}\cdot\nabla U_n$.
+
+        The raw convective form $C_{ij} = \int \phi_i\,(v\cdot\nabla\phi_j)\,dx$ (gradient on the
+        TRIAL function) does NOT conserve mass: its column sums are
+        $\sum_i C_{ij} = \int (v\cdot\nabla\phi_j)\,dx \ne 0$. Integrating $\text{div}(v\,m)$ by
+        parts moves the gradient onto the test function, giving the operator $-C^{\top}$, whose
+        column sums vanish ($\sum_i (-C^\top)_{ij} = -\int (v\cdot\nabla\phi_j)\sum_i\phi_i = 0$
+        since $\sum_i \phi_i = 1$). $-C^\top$ is also the adjoint-consistency identity
+        $A_{FP} = A_{HJB}^\top$, matching the meshless-Galerkin sibling (Issue #1131). Before this
+        fix (Issue #1114-adjacent / FEM survey) FEM returned the un-transposed $+C$, giving ~20%+
+        mass drift on a non-divergence-free drift.
 
         ``D`` (the current diffusion coefficient) is part of the base contract but unused by
         FEM, which adds no diffusion-scaled stabilization term."""
@@ -86,7 +102,7 @@ class FPFEMSolver(WeakFormFPSolver):
         from skfem import BilinearForm
 
         dim = self._skfem_mesh.p.shape[0]
-        coupling = getattr(self.problem, "coupling_coefficient", 0.5)
+        coupling = self.problem.coupling_coefficient
         du = self._basis.interpolate(U_n)
 
         @BilinearForm
@@ -97,7 +113,8 @@ class FPFEMSolver(WeakFormFPSolver):
                 result += v_d * u.grad[d]
             return result * v.value
 
-        return skfem.asm(advection_form, self._basis)
+        c_matrix = skfem.asm(advection_form, self._basis)
+        return (-c_matrix.T).tocsr()
 
 
 if __name__ == "__main__":
