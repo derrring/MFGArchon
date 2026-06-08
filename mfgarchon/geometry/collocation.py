@@ -1066,7 +1066,7 @@ def _optimize_mesh_ratio_interior(
         try:
             sdf = geometry.signed_distance(test_points)
             test_points = test_points[sdf < 0]
-        except (AttributeError, TypeError):
+        except AttributeError:
             pass
 
         if len(test_points) > 0:
@@ -1275,7 +1275,7 @@ def _lloyd_relaxation_interior_only(
                 boundary_dist = max(np.abs(sdf[i]), 1e-10)
                 force_mag = boundary_strength / (boundary_dist**2)
                 forces[i] -= grad_sdf[i] * force_mag * np.sign(sdf[i])
-        except (AttributeError, TypeError):
+        except AttributeError:
             # Box boundary fallback
             for dim in range(d):
                 lo, hi = bounds[dim]
@@ -1312,7 +1312,7 @@ def _lloyd_relaxation_interior_only(
                 grad_norm = np.maximum(grad_norm, 1e-10)
                 push_dist = 0.02 * target_spacing
                 current[outside] -= (sdf_new[outside, np.newaxis] + push_dist) * grad / grad_norm
-        except (AttributeError, TypeError):
+        except AttributeError:
             pass
 
         # Clamp to bounds
@@ -1391,7 +1391,7 @@ def _optimize_mesh_ratio(
         try:
             sdf = geometry.signed_distance(test_points)
             test_points = test_points[sdf < 0]
-        except (AttributeError, TypeError):
+        except AttributeError:
             pass
 
         if len(test_points) > 0:
@@ -1499,7 +1499,7 @@ def _lloyd_relaxation_pass(
                 boundary_dist = max(np.abs(sdf[i]), 1e-10)
                 force_mag = boundary_strength / (boundary_dist**2)
                 forces[i] -= grad_sdf[i] * force_mag * np.sign(sdf[i])
-        except (AttributeError, TypeError):
+        except AttributeError:
             # No SDF, use box boundary repulsion
             for dim in range(d):
                 lo, hi = bounds[dim]
@@ -1537,7 +1537,7 @@ def _lloyd_relaxation_pass(
                 grad_norm = np.maximum(grad_norm, 1e-10)
                 push_dist = 0.02 * target_spacing
                 current[outside] -= (sdf_new[outside, np.newaxis] + push_dist) * grad / grad_norm
-        except (AttributeError, TypeError):
+        except AttributeError:
             pass
 
         # Clamp to bounds
@@ -1591,7 +1591,7 @@ def _find_coverage_gaps(
         sdf = geometry.signed_distance(test_points)
         interior_mask = sdf < 0
         test_points = test_points[interior_mask]
-    except (AttributeError, TypeError):
+    except AttributeError:
         pass  # No SDF, use all test points
 
     if len(test_points) == 0:
@@ -1710,7 +1710,7 @@ def _enforce_max_fill_distance(
                 sdf = geometry.signed_distance(candidate.reshape(1, -1))[0]
                 if sdf >= -min_separation / 2:  # Too close to or outside boundary
                     continue
-            except (AttributeError, TypeError):
+            except AttributeError:
                 pass
 
             new_points.append(candidate)
@@ -1816,7 +1816,7 @@ def _enforce_separation(
                 logger.debug(
                     f"Removed {np.sum(too_close_mask)} interior points within {boundary_margin} of domain boundary"
                 )
-        except (AttributeError, TypeError):
+        except AttributeError:
             # Geometry doesn't support SDF, skip this step
             pass
 

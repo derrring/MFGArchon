@@ -127,6 +127,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`geometry/collocation.py` silently swallowed real `TypeError`s in SDF fallbacks**
+  (Issue #1069). Nine `except (AttributeError, TypeError): pass` blocks guard optional
+  `geometry.signed_distance(...)` calls in the mesh-optimization / interior-filter paths.
+  Catching `AttributeError` is the correct optional-capability signal (TensorProductGrid /
+  network geometries legitimately lack `signed_distance`), but also catching `TypeError`
+  masked genuine dtype/shape bugs inside geometries that *do* implement it. Narrowed all nine
+  to `except AttributeError` so the optional-capability fallback is preserved while real
+  failures surface (fail-fast). The four `_select_strategy` capability probes (already
+  `except AttributeError` + terminal `raise ValueError`) and the analytic→FD gradient fallback
+  are correct idiom and untouched.
+
 - **`@deprecated_parameter` false-positive warning + dead removal-readiness lister**. The
   decorator called `bound.apply_defaults()` and warned whenever the resolved value was
   non-`None`, so any deprecated parameter with a **non-`None` default** emitted a deprecation
