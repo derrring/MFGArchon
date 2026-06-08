@@ -127,6 +127,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Silent collapse of a spatially-varying diffusion tensor to a constant in the FDM tensor
+  path** (Issue #1079, partial). When `HJBFDMSolver` is given a spatially-varying *diagonal*
+  tensor `volatility_field` (shape `(*grid, d, d)`), it extracts the per-axis diagonal and
+  averages it to a single constant per axis — discretizing a constant-coefficient Laplacian and
+  silently dropping the spatial variation of `D(x)`. The existing #1169 warning only fired for
+  *non-diagonal* tensors, so this varying-diagonal reduction was silent. Added a warning that
+  fires only when the diagonal is actually spatially-varying; scalar / constant-tensor inputs
+  (incl. the paper EOC paths) are byte-identical (no new warning). The two other #1079 sub-sites
+  are **not** addressed here: the GFDM "tensor → trace" drop does not reproduce (`MFGProblem`
+  rejects an array `sigma` at construction, and a callable `sigma` is not trace-reduced), and the
+  `hjb_sl_adi` diagonal-vs-off-diagonal scaling mismatch needs a `sigma`-vs-`D` convention
+  decision — so #1079 stays open for the ADI convention item.
+
 - **`geometry/collocation.py` silently swallowed real `TypeError`s in SDF fallbacks**
   (Issue #1069). Nine `except (AttributeError, TypeError): pass` blocks guard optional
   `geometry.signed_distance(...)` calls in the mesh-optimization / interior-filter paths.

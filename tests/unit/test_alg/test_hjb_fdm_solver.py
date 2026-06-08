@@ -555,13 +555,46 @@ class TestHJBFDMSolverDiagonalTensor:
             # Issue #1079: the warning must convey the O(1) severity (dropping off-diagonal
             # sigma_ij is not a small correction), not merely "using diagonal approximation".
             assert any(
-                "o(1)" in str(warning.message).lower() or "1079" in str(warning.message)
-                for warning in tensor_warnings
+                "o(1)" in str(warning.message).lower() or "1079" in str(warning.message) for warning in tensor_warnings
             ), "Warning should state the off-diagonal drop is an O(1) error (Issue #1079)"
 
         # Solution should still be computed (fallback to diagonal)
         assert U_solution.shape == (Nt_points, Nx, Ny)
         assert not np.any(np.isnan(U_solution))
+
+    def test_spatially_varying_tensor_averaging_warning(self):
+        """Issue #1079: a spatially-varying *diagonal* tensor is averaged to constant per-axis
+        weights — previously silent. Must warn (and must NOT raise the non-diagonal warning)."""
+        domain = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[12, 9], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=4, sigma=0.1, components=_default_components_2d())
+        solver = HJBFDMSolver(problem, solver_type="newton")
+
+        Nx, Ny = domain.get_grid_shape()
+        Nt_points = problem.Nt_points
+        M_density = np.ones((Nt_points, Nx, Ny)) * 0.5
+        U_final = np.zeros((Nx, Ny))
+        U_prev = np.zeros((Nt_points, Nx, Ny))
+
+        # Spatially-varying DIAGONAL tensor field (Nx, Ny, 2, 2); off-diagonals zero,
+        # diagonal varies in x → forces the "average to constant" reduction.
+        field = np.zeros((Nx, Ny, 2, 2))
+        field[..., 0, 0] = 0.05 + 0.1 * np.linspace(0.0, 1.0, Nx)[:, None]
+        field[..., 1, 1] = 0.05
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=field)
+
+            averaging = [x for x in w if "averaged to constant" in str(x.message)]
+            assert len(averaging) > 0, "Should warn that a spatially-varying tensor is averaged to constant"
+            assert any("1079" in str(x.message) for x in averaging)
+            # The field is diagonal, so the non-diagonal-drop warning must NOT fire.
+            non_diag = [x for x in w if "non-diagonal" in str(x.message).lower()]
+            assert len(non_diag) == 0, "Diagonal field must not trigger the off-diagonal warning"
 
     def test_diagonal_tensor_is_diagonal_helper(self):
         """Test is_diagonal_tensor helper function."""

@@ -943,6 +943,18 @@ class HJBFDMSolver(BaseHJBSolver):
                 # Spatially-varying: extract diagonal, average to constant weights
                 sigma_diag = np.diagonal(Sigma_at_n, axis1=-2, axis2=-1)
                 if sigma_diag.ndim > 1:
+                    import warnings
+
+                    warnings.warn(
+                        "Spatially-varying diffusion tensor averaged to constant per-axis "
+                        "weights (grid mean): the FDM tensor path discretizes a "
+                        "constant-coefficient Laplacian, so spatial variation in D(x) is dropped "
+                        "(Issue #1079). Pass a scalar/constant sigma, or use a "
+                        "variable-coefficient FP path, if the variation is physically "
+                        "significant.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
                     sigma_diag = sigma_diag.reshape(-1, self.dimension).mean(axis=0)
 
             # Convective Hamiltonian via H_class (same pattern as scalar path)
