@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FP mass-conservation regression now covers P2** (Issue #470 follow-up). The FEM FP advection
+  operator is assembled as `-C^T`, whose column sums vanish by partition of unity
+  (`Σ_i φ_i = 1`) — an *order-agnostic* property. `test_fp_advection_is_mass_conserving` is now
+  parametrized over P1 and P2, pinning that the P2 path conserves mass exactly (verified
+  `max|col sum| ≈ 1e-16` at P2) so a future P2 assembly change cannot silently break it.
+
 - **Quadrilateral FEM solve path, P1 + P2** (Issue #470, smallest actionable slice). The FEM
   `element_map` had `(MeshQuad, 1) → ElementQuad1` but no order-2 entry, so a quad mesh at
   `order=2` raised `ValueError` even though `ElementQuad2` ships with skfem. Added

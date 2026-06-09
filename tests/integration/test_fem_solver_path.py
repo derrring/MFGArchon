@@ -77,19 +77,24 @@ class TestFEMSolverPath:
         assert hjb._scheme_family is SchemeFamily.FEM
         assert fp._scheme_family is SchemeFamily.FEM
 
-    def test_fp_advection_is_mass_conserving(self):
+    @pytest.mark.parametrize("order", [1, 2])
+    def test_fp_advection_is_mass_conserving(self, order):
         """The FP advection operator must have zero column sums (mass conservation). The raw
         convective form ``C[i,j] = ∫ φ_i (v·∇φ_j)`` does NOT (column sums ≈ ∫ v·∇φ_j); the
         operator is assembled as ``-C^T`` whose column sums vanish since ``Σ_i φ_i = 1``. A random
-        value function gives a non-divergence-free drift, so this fails on the prior ``+C``."""
+        value function gives a non-divergence-free drift, so this fails on the prior ``+C``.
+
+        Parametrized over P1 and P2: the ``-C^T`` mass-conservation property is *order-agnostic*
+        (partition of unity ``Σ_i φ_i = 1`` holds for any Lagrange order), so P2 must conserve
+        mass exactly as P1 does — a regression guard for the P2 FEM path (#470)."""
         from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 
         problem, _ = _fem_problem()
-        fp = FPFEMSolver(problem)
+        fp = FPFEMSolver(problem, order=order)
         u_n = np.random.RandomState(0).rand(fp._basis.N)
         advection = fp._build_advection(u_n)
         max_col_sum = float(np.abs(np.asarray(advection.sum(axis=0)).ravel()).max())
-        assert max_col_sum < 1e-12, f"FP advection not mass-conserving: max|col sum|={max_col_sum:.2e}"
+        assert max_col_sum < 1e-12, f"FP advection (P{order}) not mass-conserving: max|col sum|={max_col_sum:.2e}"
 
     def test_gmsh_free_mesh_injection_is_returned_as_is(self):
         """generate_mesh() returns a pre-populated mesh_data unchanged (gmsh-free injected-mesh
