@@ -220,5 +220,35 @@ class TestOutwardNormalSourceAgreement:
         assert abs(normal[0]) > 0.1 and abs(normal[1]) > 0.1
 
 
+class TestDiffusionOperatorSingleSource:
+    """Issue #1228: the tensor-diffusion operator has one owner. `operators.differential.diffusion`
+    (DiffusionOperator/apply_diffusion) now delegates its tensor path to the lower-level
+    `utils.numerical.tensor_calculus.diffusion`; this pins the two entry points to agree, so a
+    future private re-implementation in either is caught (the silent-divergence bug class)."""
+
+    def test_apply_diffusion_agrees_with_tensor_calculus(self):
+        import warnings
+
+        from mfgarchon.geometry.boundary import no_flux_bc
+        from mfgarchon.operators.differential.diffusion import apply_diffusion
+        from mfgarchon.utils.numerical.tensor_calculus import diffusion as tc_diffusion
+
+        rng = np.random.RandomState(0)
+        u2 = rng.rand(9, 8)
+        cases = [
+            ("2D scalar", u2, 0.2, [0.1, 0.12], None),
+            ("2D diag", u2, np.diag([0.1, 0.2]), [0.1, 0.12], None),
+            ("2D full", u2, np.array([[0.15, 0.03], [0.03, 0.2]]), [0.1, 0.12], None),
+            ("2D full no_flux", u2, np.array([[0.15, 0.03], [0.03, 0.2]]), [0.1, 0.12], no_flux_bc(dimension=2)),
+            ("3D full", rng.rand(6, 5, 4), np.diag([0.1, 0.15, 0.2]), [0.1, 0.12, 0.15], None),
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for name, u, coeff, sp, bc in cases:
+                a = np.asarray(apply_diffusion(u, coeff, sp, bc=bc))
+                b = np.asarray(tc_diffusion(u, coeff, sp, bc=bc))
+                np.testing.assert_array_equal(a, b, err_msg=name)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

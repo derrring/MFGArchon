@@ -72,6 +72,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-sourced the tensor-diffusion operator** (Issue #1228). `∇·(Σ∇u)` was implemented twice:
+  `operators/differential/diffusion.py` (`DiffusionOperator` private `_tensor_diffusion_1d/2d/nd`)
+  and `utils/numerical/tensor_calculus.py` (`diffusion`) — two independent copies, the repo's
+  dominant "parallel implementation, no single owner" bug class. Verified the two are **bit-identical**
+  (`max|Δ| = 0` across 1D/2D/3D, scalar / diagonal / full / spatially-varying tensors, and
+  periodic / no-flux / Dirichlet BCs), then routed `DiffusionOperator._apply_tensor_diffusion`
+  through the lower-level `tensor_calculus.diffusion` (layering: operators → utils) and deleted the
+  ~190 lines of private duplicate (incl. the now-dead `_pad_array`). Byte-identical, so the
+  paper-adjacent `fp_fdm_time_stepping` consumer is unchanged (87 diffusion/tensor/FP-FDM tests
+  pass). Added a single-source guard in `tests/unit/test_convention_agreement.py` pinning the two
+  diffusion entry points to agree. The scalar-isotropic path (`laplacian_with_bc`) is unchanged.
+
 - **Single-sourced the σ→D conversion in the weak-form / FEM family** (Issue #811 / #1192; FEM
   audit). The weak-form HJB and FP solvers had three inline `0.5 * sigma**2` copies
   (`weak_form_fp_solver._diffusion_coefficient`, `solve_fp_step_adjoint_mode`, and
