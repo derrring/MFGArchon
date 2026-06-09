@@ -235,6 +235,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-population K=1 converged to a non-fixed-point: BoundHamiltonian defeated the FP drift
+  dispatch** (Issue #1043 follow-up). After the FP-drift single-sourcing below, a K=1 multi-pop
+  solve *still* diverged from single-pop (`||F_FP|| ≈ 6.9`, 19% density / 44% U) — and the
+  multi-pop solution was **not a coupled fixed point** (`||F_HJB|| ≈ 0` but `||F_FP|| = O(1)`; a
+  Picard step from it moved M by 11%). Root cause: the iterator binds `H_bound =
+  H.bind_cross_density(...)`, a `BoundHamiltonian` wrapper that fails
+  `isinstance(SeparableHamiltonian)`, so `resolve_fp_drift_kwargs` took the *velocity* path while
+  single-pop (unbound H) took the *potential* path — two different (self-consistent-but-distinct)
+  fixed points. The wrapper's `optimal_control` delegates to the inner H, so a bound
+  smooth-separable H still has the momentum-only optimal control that makes `potential_field=U`
+  correct (cross-coupling enters via the HJB, not the FP drift). The resolver now unwraps
+  `H._inner` for the smoothness dispatch; K=1 multi-pop now matches single-pop **exactly** (`U`/`M`
+  diff `< 1e-4`, bounded by the Picard tolerance; was 116%/19% across the two stacked bugs).
+  No-op for single-pop (no `_inner` → byte-identical; Newton-Picard + convention guards pass).
+  Tightened `test_k1_matches_single_population_fp_convention` to assert the exact match.
+
 - **Multi-population FP drift now single-sourced with single-pop** (Issue #1043). The
   `MultiPopulationIterator` computed its own *node*-centered velocity (`np.gradient`) and always
   passed it as an explicit `drift_field`, while the single-population `FixedPointIterator`/

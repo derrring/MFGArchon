@@ -94,31 +94,33 @@ def test_single_population_byte_identical():
 
 
 def test_k1_matches_single_population_fp_convention():
-    """K=1 multi-pop must resolve FP drift the SAME way the single-pop FixedPointIterator does
-    (Issue #1043).
+    """A K=1 multi-pop solve must converge to the SAME fixed point as the single-pop
+    FixedPointIterator (Issue #1043).
 
-    The iterator previously computed its own *node*-centered velocity and always passed it as an
-    explicit ``drift_field``, diverging from single-pop, which resolves drift via
-    ``resolve_fp_drift_kwargs`` (``potential_field=U`` for smooth-separable H, face-centered
-    velocity otherwise). For a K=1 LQ problem the resulting density was ~116% off the single-pop
-    solve. Now both route through the shared resolver, so the K=1 density matches single-pop up to
-    the iterators' other (non-FP) differences (single-pop damps U+M and runs Anderson/source/BC
-    machinery; the multi-pop loop is a leaner Picard). The 0.30 threshold sits well below the
-    pre-fix 1.16 (a re-fork to a private velocity convention fails here) and above the post-fix
-    ~0.19 residual."""
+    Two stacked convention bugs made K=1 diverge from single-pop. (1) The iterator computed its
+    own *node*-centered velocity and always passed it as an explicit ``drift_field`` (~116% off);
+    routing through the shared ``resolve_fp_drift_kwargs`` fixed the convention. (2) The iterator
+    binds ``H_bound = H.bind_cross_density(...)`` — a ``BoundHamiltonian`` wrapper that fails
+    ``isinstance(SeparableHamiltonian)``, so the resolver took the *velocity* path while single-pop
+    (unbound H) took *potential*; the K=1 solve then converged to a point with ``||F_FP|| ~ O(1)``
+    that is **not** a coupled fixed point. Unwrapping the bound H for the smoothness dispatch fixed
+    it. With both fixes K=1 matches single-pop **exactly** (bounded only by the Picard tolerance),
+    so a tight threshold catches any reintroduction of either bug."""
     from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 
     prob = _make_problem(0, cross=0.0, K=1)
     sp = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob), relaxation=0.5).solve(
         max_iterations=120, tolerance=1e-6, verbose=False
     )
-    M_sp = sp[1]
+    U_sp, M_sp = sp[0], sp[1]
 
     mp = _solve(1, cross=0.0, max_iterations=200)
-    M_mp = np.asarray(mp.M[0])
+    U_mp, M_mp = np.asarray(mp.U[0]), np.asarray(mp.M[0])
 
+    u_diff = np.linalg.norm(U_mp - U_sp) / (np.linalg.norm(U_sp) + 1e-12)
     m_diff = np.linalg.norm(M_mp - M_sp) / (np.linalg.norm(M_sp) + 1e-12)
-    assert m_diff < 0.30, f"K=1 multi-pop density {m_diff * 100:.1f}% off single-pop (FP convention re-forked?)"
+    assert u_diff < 1e-4, f"K=1 multi-pop U {u_diff * 100:.3f}% off single-pop (FP convention re-forked?)"
+    assert m_diff < 1e-4, f"K=1 multi-pop density {m_diff * 100:.3f}% off single-pop (FP convention re-forked?)"
     # mass conservation preserved
     assert np.allclose(M_mp.sum(axis=-1), M_mp[0].sum(), rtol=1e-6)
 

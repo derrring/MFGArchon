@@ -514,10 +514,19 @@ def resolve_fp_drift_kwargs(
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
         H_class = h_class if h_class is not None else problem.hamiltonian_class
+        # Issue #1043: unwrap a cross-density-bound Hamiltonian (BoundHamiltonian, multi-pop) to
+        # its inner H for the smoothness dispatch. The wrapper delegates optimal_control to the
+        # inner H, so a bound smooth-separable H still has the momentum-only optimal control that
+        # makes potential_field=U correct (the cross-coupling enters via the HJB, not the FP
+        # drift). Without this, the wrapper fails `isinstance(SeparableHamiltonian)` and a K=1
+        # multi-population solve takes the velocity path while single-pop takes potential → the
+        # two converge to different fixed points (||F_FP|| ~ O(1)). For single-pop H_class has no
+        # `_inner`, so this is a no-op (byte-identical).
+        H_base = getattr(H_class, "_inner", H_class)
         use_velocity = (
             H_class is not None
             and "drift_field" in params
-            and not (isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth())
+            and not (isinstance(H_base, SeparableHamiltonian) and H_base.control_cost.is_smooth())
         )
         if use_velocity:
             drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class)
