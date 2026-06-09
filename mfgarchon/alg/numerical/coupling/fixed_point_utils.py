@@ -463,6 +463,8 @@ def resolve_fp_drift_kwargs(
     drift_field_override: object | None,
     U: np.ndarray,
     M: np.ndarray,
+    *,
+    h_class: object | None = None,
 ) -> tuple[dict, bool]:
     """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
 
@@ -487,6 +489,10 @@ def resolve_fp_drift_kwargs(
         drift_field_override: Caller-supplied drift override (array/callable), or ``None``.
         U: Current value function, shape ``(Nt+1, *spatial_shape)``.
         M: Current density, shape ``(Nt+1, *spatial_shape)`` (used only for non-smooth $H$).
+        h_class: Hamiltonian to use for the smoothness dispatch and velocity computation,
+            overriding ``problem.hamiltonian_class``. The multi-population iterator passes the
+            cross-density-bound Hamiltonian here (Issue #1043) so K populations resolve drift the
+            same way single-pop does; ``None`` uses ``problem.hamiltonian_class`` (single-pop).
 
     Returns:
         ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
@@ -507,7 +513,7 @@ def resolve_fp_drift_kwargs(
     else:
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
-        H_class = problem.hamiltonian_class
+        H_class = h_class if h_class is not None else problem.hamiltonian_class
         use_velocity = (
             H_class is not None
             and "drift_field" in params

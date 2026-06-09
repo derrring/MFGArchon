@@ -217,6 +217,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-population FP drift now single-sourced with single-pop** (Issue #1043). The
+  `MultiPopulationIterator` computed its own *node*-centered velocity (`np.gradient`) and always
+  passed it as an explicit `drift_field`, while the single-population `FixedPointIterator`/
+  `MFGResidual` resolve drift through `resolve_fp_drift_kwargs` — *face*-centered velocity (#919,
+  matched to the divergence-upwind stencil) for non-smooth H, or `potential_field=U` for
+  smooth-separable H. Two divergent conventions on parallel paths (the repo's dominant bug class):
+  feeding the *same* U through the same FP solver, the node-centered velocity gave a **~68%**
+  different density, and a **K=1** multi-population solve was **~116%** off the equivalent
+  single-population solve. The iterator now routes its continuous-domain FP drift through the
+  shared `resolve_fp_drift_kwargs` (new `h_class=` param threads the cross-density-bound
+  Hamiltonian so the velocity still sees other populations' density, #1157); the private
+  `_compute_velocity_field` copy is removed and the network branch (`spatial_dimension == 0`) is
+  preserved. K=1 now matches single-pop to **~19%** (residual is the iterators' other non-FP
+  differences — single-pop damps U+M and runs Anderson/source/BC machinery; the multi-pop loop is
+  a leaner Picard — not the drift convention). `resolve_fp_drift_kwargs(h_class=None)` is
+  byte-identical for single-pop. New `test_k1_matches_single_population_fp_convention`; 18 existing
+  multi-pop tests still pass. (`_compute_drift_field`, the separately-deprecated node-centered
+  sibling, keeps its own v0.25.0 removal timeline.)
+
 - **`NewtonMFGSolver` diverged ~99.5% from Picard** (Issue #1233). The Newton coupling residual
   `F = [HJB(M) - U, FP(U) - M]` was inconsistent with the Picard fixed point, so the two solvers
   converged to different roots. Two causes: **(1) stale FP drift convention** — `MFGResidual`
