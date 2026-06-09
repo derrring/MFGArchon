@@ -27,7 +27,6 @@ from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
-from mfgarchon.operators.stencils.finite_difference import gradient_nd
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.particle import (
     interpolate_grid_to_particles,
@@ -428,16 +427,31 @@ class FPParticleSolver(BaseFPSolver):
         use_backend: bool = False,
     ) -> list:
         """
-        Compute spatial gradient using stencils.
+        Compute the spatial gradient of the value function for the FP drift, BC-aware.
 
-        Uses gradient_nd (central differences, no BC handling).
-        BC handling for particles is done separately in _apply_boundary_conditions_nd.
+        Routes through ``geometry.get_gradient_operator(scheme="central")`` — the SAME BC-aware
+        operator the HJB uses — so non-periodic boundaries get ghost-padded / one-sided stencils.
+        Previously this used the periodic-wrap ``gradient_nd``, which at a non-periodic wall takes
+        ``(U[1] - U[N-1])/(2h)`` (wrapping to the far wall) → an O(1/h) **wrong-sign** drift that
+        pushes mass away from the wall (silent-divergence bug-hunt). Periodic BC reproduces the
+        wrap (results unchanged); the precomputed-drift path (``drift_is_precomputed=True``, e.g.
+        the GFDM→particle handoff) bypasses this gradient entirely.
 
-        Issue #625: Migrated from tensor_calculus.gradient_simple to stencils.gradient_nd
+        The operator uses the geometry's own grid spacing and BC; ``spacings`` is retained only for
+        its length (the spatial dimension) and matches the geometry spacing at every call site.
+
+        Issue #625: migrated tensor_calculus.gradient_simple → stencils.gradient_nd.
+        Bug-hunt: migrated periodic-wrap gradient_nd → BC-aware geometry operator.
         """
-        # Get array module (numpy or backend-specific like cupy)
-        xp = self.backend.array_module if use_backend and self.backend else np
-        return gradient_nd(U_array, spacings, xp=xp)
+        ndim = len(spacings)
+        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central")
+        on_backend = use_backend and self.backend is not None
+        # The geometry operator is numpy; round-trip through host for the backend/GPU path.
+        u_host = self.backend.to_numpy(U_array) if on_backend else np.asarray(U_array)
+        grads = [grad_ops[d](u_host) for d in range(ndim)]
+        if on_backend:
+            grads = [self.backend.from_numpy(g) for g in grads]
+        return grads
 
     # =========================================================================
     # DRY Helper Methods (Issue #635 cleanup)

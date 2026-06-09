@@ -542,25 +542,31 @@ class TestFPParticleSolverHelperMethods:
         assert np.all(np.isfinite(gradient))
         assert gradient.shape == U_array.shape
 
-    def test_compute_gradient_zero_dx(self):
-        """Test gradient computation with zero Dx."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
+    def test_compute_gradient_bc_aware_at_boundary(self):
+        """The drift gradient must be BC-aware at non-periodic walls (silent-divergence bug-hunt).
 
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        bounds = problem.geometry.get_bounds()
-
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        U_array = x_coords**2
-
-        gradients = solver._compute_gradient_nd(U_array, [0.0], use_backend=False)
-
-        # Should return list of gradient components (one per dimension)
-        assert isinstance(gradients, list)
-        assert len(gradients) == 1  # 1D case
-        # With zero spacing, gradient should be zeros
-        assert np.allclose(gradients[0], 0.0)
+        Previously ``_compute_gradient_nd`` used a periodic-wrap central difference regardless of
+        BC: at a no-flux wall it took ``(U[1] - U[N-1])/(2h)``, wrapping to the far wall — an
+        O(1/h) wrong-sign drift (e.g. ~-25 for U=x² at N=51, blowing up under refinement). It now
+        routes through the geometry's BC-aware operator (the same one the HJB uses), so the
+        boundary gradient is O(1)-bounded and shrinks under refinement, not the periodic garbage.
+        """
+        bounds_diff = []
+        for n_x in (26, 51, 101):
+            geometry = TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1)
+            )
+            problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
+            solver = FPParticleSolver(problem, num_particles=500)
+            dx = problem.geometry.get_grid_spacing()[0]
+            x_coords = np.linspace(0.0, 1.0, n_x)
+            g = solver._compute_gradient_nd(x_coords**2, [dx], use_backend=False)[0]
+            # O(1)-bounded at the wall (the periodic-wrap bug gave |g[0]| ~ 1/(2dx) -> blows up).
+            assert abs(g[0]) < 1.0, f"N={n_x}: |g[0]|={abs(g[0]):.2f} — periodic-wrap O(1/h) drift not fixed?"
+            assert np.all(np.isfinite(g))
+            bounds_diff.append(abs(g[0]))
+        # Boundary error shrinks under refinement (it would GROW ~1/h with the periodic-wrap bug).
+        assert bounds_diff[-1] < bounds_diff[0], f"boundary gradient not converging: {bounds_diff}"
 
     def test_normalize_density_none(self):
         """Test density normalization with NONE strategy."""

@@ -235,6 +235,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FP-particle drift gradient ignored boundary conditions: O(1/h) wrong-sign drift at
+  non-periodic walls** (silent-divergence bug-hunt). `FPParticleSolver._compute_gradient_nd`
+  computed `∇U` for the drift `α = -∇U/λ` via the **periodic-wrap** central difference
+  (`stencils.gradient_nd`) regardless of BC, while the HJB uses the BC-aware
+  `geometry.get_gradient_operator`. At a non-periodic wall the periodic stencil takes
+  `(U[1] − U[N-1])/(2h)` — wrapping to the *far* wall — giving an **O(1/h) wrong-sign** drift that
+  pushes mass away from the wall (verified: for `U=x²` on `[0,1]` no-flux at N=51, `g[0]=−24.99`
+  vs exact 0; end-to-end ~2.5× wrong wall density, ~15% mass misplaced). It now routes through the
+  same BC-aware operator the HJB uses, unifying the two gradient conventions (ghost-padded /
+  one-sided at non-periodic boundaries; periodic BC reproduces the wrap **byte-identically** —
+  verified `max|Δ|=0`). The GPU/backend path round-trips through host numpy for the operator. Not a
+  byte-identical paper path (those are FP-FDM / FP-GFDM); the precomputed-drift path
+  (`drift_is_precomputed=True`, e.g. the GFDM→particle handoff) bypasses this gradient entirely.
+  **FP-*particle* experiments on non-periodic domains were silently wrong at the boundary and
+  should be re-validated.** Replaced the obsolete `test_compute_gradient_zero_dx` (it pinned the
+  now-advisory passed-spacing behavior) with a boundary-BC-aware refinement regression test.
+
 - **Regime-switching / graph MFG iterators declared convergence on the value function only**
   (silent-divergence bug-hunt). `RegimeSwitchingIterator` and `GraphMFGSolver` gated
   `converged=True` on `max_k|U^k_{n+1} − U^k_n| < tol` with **no density term** — half of the
