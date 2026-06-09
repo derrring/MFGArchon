@@ -90,6 +90,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Robin / Periodic FEM boundary conditions now fail loud** (Issue #1237). `apply_bc_to_fem_system`
+  previously *warned and silently fell back to natural (Neumann) BC* for `BCType.ROBIN` — a
+  fail-silent anti-pattern that ran the wrong physics quietly — and warn-only (no fallback) for
+  `BCType.PERIODIC`. Both now raise `NotImplementedError` with a pointer to the use-an-FDM/GFDM-solver
+  workaround. A correct Robin FEM BC needs a diffusion-coefficient-scaled `FacetBasis` boundary term
+  threaded through the weak-form assembly (the adapter is coefficient-blind — it only sees the
+  already-assembled matrix); Periodic needs DOF identification across paired boundaries. Both are
+  tracked in #1237. Nothing exercised these stubs through the FEM path, so this only converts a silent
+  wrong-answer into a loud error. New parametrized fail-loud tests in `test_fem_solver_path.py`.
+
 - **Single-sourced the tensor-diffusion operator** (Issue #1228). `∇·(Σ∇u)` was implemented twice:
   `operators/differential/diffusion.py` (`DiffusionOperator` private `_tensor_diffusion_1d/2d/nd`)
   and `utils/numerical/tensor_calculus.py` (`diffusion`) — two independent copies, the repo's

@@ -8,8 +8,10 @@ Mapping:
     BCType.DIRICHLET → condense() with boundary DOFs and values
     BCType.NEUMANN   → natural BC (default in weak form, no action needed)
     BCType.NO_FLUX   → same as NEUMANN (zero normal derivative)
-    BCType.ROBIN     → boundary integral via FacetBasis (alpha*u + beta*du/dn = g)
-    BCType.PERIODIC  → DOF pairing (not yet implemented for FEM)
+    BCType.ROBIN     → NotImplementedError (needs a D-scaled FacetBasis boundary term threaded
+                       through weak-form assembly; not resolvable in this coefficient-blind
+                       adapter — Issue #1237)
+    BCType.PERIODIC  → NotImplementedError (needs DOF pairing across boundaries — Issue #1237)
 
 Issue #773: BC framework integration for FEM solvers
 """
@@ -40,7 +42,8 @@ def apply_bc_to_fem_system(
 
     For Dirichlet segments: condense the system (eliminate boundary DOFs).
     For Neumann/no-flux: no action (natural BC in weak form).
-    For Robin: add boundary integral terms (future).
+    For Robin/Periodic: raises ``NotImplementedError`` (Issue #1237) — fail loud rather than
+    silently degrade to Neumann.
 
     Args:
         A: System matrix (N_dof, N_dof)
@@ -74,22 +77,21 @@ def apply_bc_to_fem_system(
             pass
 
         elif segment.bc_type == BCType.ROBIN:
-            # Robin BC: alpha*u + beta*du/dn = g
-            # Requires FacetBasis boundary integral — future implementation
-            import warnings
-
-            warnings.warn(
-                f"Robin BC on segment '{segment.name}' not yet implemented for FEM. "
-                "Falling back to natural (Neumann) BC.",
-                stacklevel=2,
+            # Robin BC (alpha*u + beta*du/dn = g) needs a FacetBasis boundary term scaled by the
+            # diffusion coefficient D, which is assembled upstream (weak-form base class) and is
+            # NOT visible to this coefficient-blind adapter. Fail loud rather than silently
+            # degrade to Neumann (which would run the wrong physics quietly). See Issue #1237.
+            raise NotImplementedError(
+                f"Robin BC on segment '{segment.name}' is not implemented for the FEM solver path. "
+                "Correct Robin BC requires threading the diffusion coefficient / time factor into "
+                "the weak-form assembly (Issue #1237). Use Dirichlet or Neumann/no-flux here, or an "
+                "FDM/GFDM solver for Robin/reflecting boundaries."
             )
 
         elif segment.bc_type == BCType.PERIODIC:
-            import warnings
-
-            warnings.warn(
-                f"Periodic BC on segment '{segment.name}' not yet implemented for FEM.",
-                stacklevel=2,
+            raise NotImplementedError(
+                f"Periodic BC on segment '{segment.name}' is not implemented for the FEM solver "
+                "path (needs DOF identification across paired boundaries; see Issue #1237)."
             )
 
     if dirichlet_dofs:
