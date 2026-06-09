@@ -138,6 +138,29 @@ class TestFEMBoundaryConditionResolution:
         assert isinstance(fp._bc, BoundaryConditions)
         assert fp._is_pure_neumann()  # no-flux is natural/Neumann
 
+    @pytest.mark.parametrize("bc_type_name", ["ROBIN", "PERIODIC"])
+    def test_robin_periodic_fem_bc_fail_loud(self, bc_type_name):
+        """Robin/Periodic FEM BC must raise, not silently degrade to Neumann (Issue #1237).
+
+        The previous behavior warned and fell back to natural (Neumann) BC — a fail-silent
+        anti-pattern that ran the wrong physics quietly. Correct Robin/Periodic FEM needs a
+        D-scaled FacetBasis term / DOF pairing threaded through weak-form assembly, which the
+        coefficient-blind ``apply_bc_to_fem_system`` cannot do."""
+        from mfgarchon.alg.numerical.fem.assembly import assemble_stiffness, create_basis
+        from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system
+        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+        from mfgarchon.geometry.boundary.types import BCSegment, BCType
+
+        mesh = skfem.MeshTri.init_sqsymmetric().refined(1)
+        basis = create_basis(mesh, order=1)
+        A = assemble_stiffness(basis)
+        rhs = np.zeros(basis.N)
+        segment = BCSegment(name="wall", bc_type=getattr(BCType, bc_type_name), alpha=1.0, beta=1.0)
+        bc = BoundaryConditions(dimension=2, segments=[segment])
+
+        with pytest.raises(NotImplementedError, match="Issue #1237"):
+            apply_bc_to_fem_system(A, rhs, basis, bc)
+
     def test_coupled_fem_no_flux_runs_and_conserves_mass(self):
         """First coupled FEM MFG through the real solver classes (manual Picard — the standard
         FixedPointIterator is still grid-only, seam 3). No-flux ⇒ mass conserved, confirming the
