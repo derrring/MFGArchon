@@ -235,6 +235,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Regime-switching / graph MFG iterators declared convergence on the value function only**
+  (silent-divergence bug-hunt). `RegimeSwitchingIterator` and `GraphMFGSolver` gated
+  `converged=True` on `max_k|U^k_{n+1} − U^k_n| < tol` with **no density term** — half of the
+  canonical `(u, m)` criterion (`fixed_point_utils.check_convergence_criteria` requires both). When
+  a regime/node's value function stabilizes faster than its density (different timescales across
+  regimes, strong mass-transfer coupling), the iterator returned a solution whose density was still
+  evolving — reproduced for a two-volatility-regime problem: `solve()` reported converged at iter 12
+  with `error_U = 7e-5 < tol` but `error_M = 3.3·tol` (M reached tol only at iter 15). Both now gate
+  on `max(error_U, error_M)` (with an iteration-0 shape guard: the 1D initial density vs the 2D
+  trajectory makes the M-change undefined → treated as not-converged). Verified the fix still
+  converges (both U and M below tol, monotone) and the existing integration tests stay green.
+  Not on any byte-identical paper path (Phase-2 institutional-MFG features). Docstrings corrected
+  (tolerance was documented as U-only).
+
 - **Multi-population K=1 converged to a non-fixed-point: BoundHamiltonian defeated the FP drift
   dispatch** (Issue #1043 follow-up). After the FP-drift single-sourcing below, a K=1 multi-pop
   solve *still* diverged from single-pop (`||F_FP|| ≈ 6.9`, 19% density / 44% U) — and the

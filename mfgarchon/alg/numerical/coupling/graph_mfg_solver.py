@@ -88,7 +88,8 @@ class GraphMFGSolver(BaseCouplingIterator):
     max_iterations : int
         Maximum Picard iterations (default 50).
     tolerance : float
-        Convergence tolerance on max |v^k_{n+1} - v^k_n| (default 1e-5).
+        Convergence tolerance on max over nodes of both the value-function and the
+        density change, max(|v^k_{n+1} - v^k_n|, |m^k_{n+1} - m^k_n|) (default 1e-5).
     damping : float
         Damping factor for Picard update (default 0.5).
 
@@ -218,7 +219,24 @@ class GraphMFGSolver(BaseCouplingIterator):
                         Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms_expanded
 
             # --- Convergence check ---
-            error = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(N))
+            # Gate on BOTH the value function AND the density change (the canonical (u, m)
+            # criterion). Previously this checked only U, so a node whose density was still
+            # evolving while its value function had stabilized reported converged=True with a
+            # non-converged density (same one-field defect as RegimeSwitchingIterator).
+            error_U = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(N))
+            m_errors = []
+            m_comparable = True
+            for k in range(N):
+                if Ms_new[k] is None:
+                    m_comparable = False
+                    break
+                Ms_exp = self._expand_density(k, Ms[k])
+                if Ms_new[k].shape != Ms_exp.shape:
+                    m_comparable = False
+                    break
+                m_errors.append(np.max(np.abs(Ms_new[k] - Ms_exp)))
+            error_M = max(m_errors) if (m_comparable and m_errors) else float("inf")
+            error = max(error_U, error_M)
             error_history.append(error)
 
             Us_full = Us_new
