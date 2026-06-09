@@ -305,6 +305,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         obstacle_sdf: object | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
+        # DMP runtime guard (Issue #1074): warn when the solved drift exceeds the
+        # assembled-M-matrix threshold for joint_socp. Off by default (zero overhead,
+        # numerically byte-identical) — the assembled discrete-maximum-principle is only
+        # diagnostic, not enforced.
+        check_dmp: bool = False,
     ):
         """
         Initialize the GFDM HJB solver.
@@ -628,6 +633,12 @@ class HJBGFDMSolver(BaseHJBSolver):
             # coupling layer (using_resolved_bc); refresh at solve time (Issue #1118).
             self._bc_from_geometry = True
         self.interior_indices = np.setdiff1d(np.arange(self.n_points), self.boundary_indices)
+
+        # DMP runtime guard state (Issue #1074): lazily-computed critical drift and a
+        # warn-once latch. Active only when check_dmp=True (default off → no overhead).
+        self.check_dmp = check_dmp
+        self._dmp_alpha_crit: float | None = None
+        self._dmp_warned = False
 
         # Monotonicity scheme (single source of truth) — already set above (v0.18.0 rename)
         # self.monotonicity_scheme and self.qp_optimization_level both = resolved monotonicity_scheme
@@ -2285,6 +2296,42 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return jacobian
 
+    def _maybe_warn_dmp(self, u_current: np.ndarray) -> None:
+        """Warn (once) when the current drift exceeds the assembled-M-matrix threshold (Issue #1074).
+
+        Per-stencil joint_socp feasibility does NOT imply the assembled HJB iteration matrix
+        ``I/dt - D·L + α·D_grad`` is an M-matrix: the signed drift term flips an off-diagonal
+        positive once ``|α| > α_crit = D·min_edge(L_ij/‖D_grad_ij‖)`` (see
+        :func:`critical_drift_for_dmp`). So the discrete maximum principle holds only in the
+        diffusion-dominated regime. This is a *diagnostic* warning (numerically inert); active only
+        when ``check_dmp=True`` and the scheme is ``joint_socp``. The drift is computed from the
+        current iterate via the assembled gradient operator, consistent with the Jacobian.
+        """
+        if not self.check_dmp or self._dmp_warned or self.monotonicity_scheme != "joint_socp":
+            return
+        if self._D_grad is None or self._D_lap is None:
+            return
+        if self._dmp_alpha_crit is None:
+            from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import critical_drift_for_dmp
+
+            diffusion_coeff = diffusion_from_volatility(self._get_sigma_value(None))
+            self._dmp_alpha_crit = critical_drift_for_dmp(
+                self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
+            )
+        lambda_val = self._get_lambda_value()
+        grad = np.stack([self._D_grad[d] @ u_current for d in range(self.dimension)], axis=1)
+        max_alpha = float(np.max(np.linalg.norm(grad, axis=1)) / lambda_val)
+        if max_alpha > self._dmp_alpha_crit:
+            logger.warning(
+                "DMP not guaranteed (joint_socp, Issue #1074): max|drift| = %.3g exceeds the "
+                "assembled-M-matrix threshold alpha_crit = %.3g. Per-stencil SOCP feasibility does "
+                "not imply an assembled M-matrix once |drift| > alpha_crit (advection-dominated); the "
+                "discrete maximum principle holds only for |drift| <= alpha_crit.",
+                max_alpha,
+                self._dmp_alpha_crit,
+            )
+            self._dmp_warned = True
+
     def _compute_hjb_jacobian_sparse(
         self,
         u_current: np.ndarray,
@@ -3180,6 +3227,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                     break
 
                 jacobian_sparse = self._compute_hjb_jacobian_sparse(u_current, m_n_plus_1, time_idx, all_derivs)
+
+            # Issue #1074: diagnostic DMP guard (no-op unless check_dmp=True). Numerically inert.
+            self._maybe_warn_dmp(u_current)
 
             # Apply boundary conditions (sparse-aware).
             # `u_current` is needed so BC rows encode the Newton residual
