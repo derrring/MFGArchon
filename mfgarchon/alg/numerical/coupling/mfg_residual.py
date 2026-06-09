@@ -28,6 +28,8 @@ import numpy as np
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .fixed_point_utils import resolve_fp_drift_kwargs
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -176,36 +178,44 @@ class MFGResidual:
 
         return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
 
-    def compute_fp_output(self, U: NDArray) -> NDArray:
+    def compute_fp_output(self, U: NDArray, M: NDArray | None = None) -> NDArray:
         """
         Compute FP solver output for given value function.
 
+        Issue #1233: the drift/potential convention is single-sourced through
+        :func:`resolve_fp_drift_kwargs`, identical to the Picard ``FixedPointIterator``.
+        Previously this method always passed the value function as ``drift_field``,
+        which the v0.18.6 rename redefined as the *velocity* — so the Newton residual
+        was inconsistent with the Picard fixed point and the solvers diverged.
+
         Args:
             U: Current value function (Nt+1, *spatial_shape)
+            M: Current density (Nt+1, *spatial_shape), used only for non-smooth $H$ to
+                evaluate the density-dependent velocity. Defaults to the time-broadcast
+                initial density when not supplied.
 
         Returns:
             M_new: Density field from FP solve
         """
-        kwargs: dict[str, Any] = {}
-
-        if self._fp_sig_params is not None:
-            if "show_progress" in self._fp_sig_params:
-                kwargs["show_progress"] = False
-
-            # Determine drift
-            effective_drift = self.drift_field if self.drift_field is not None else U
-
-            if "drift_field" in self._fp_sig_params:
-                kwargs["drift_field"] = effective_drift
-                if "volatility_field" in self._fp_sig_params and self.volatility_field is not None:
-                    kwargs["volatility_field"] = self.volatility_field
-                return self.fp_solver.solve_fp_system(self.M_initial, **kwargs)
-            else:
-                # Legacy interface
-                return self.fp_solver.solve_fp_system(self.M_initial, effective_drift, **kwargs)
-        else:
-            # Basic call
+        if self._fp_sig_params is None:
             return self.fp_solver.solve_fp_system(self.M_initial, U)
+
+        params = self._fp_sig_params
+        kwargs: dict[str, Any] = {}
+        if "show_progress" in params:
+            kwargs["show_progress"] = False
+        if "volatility_field" in params and self.volatility_field is not None:
+            kwargs["volatility_field"] = self.volatility_field
+
+        if M is None:
+            M = np.broadcast_to(self.M_initial, self.solution_shape) if self.M_initial is not None else U
+
+        drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(self.problem, params, self.drift_field, U, M)
+        kwargs.update(drift_kwargs)
+
+        if use_positional_U:
+            return self.fp_solver.solve_fp_system(self.M_initial, U, **kwargs)
+        return self.fp_solver.solve_fp_system(self.M_initial, **kwargs)
 
     def compute_residual(
         self,
@@ -235,7 +245,7 @@ class MFGResidual:
 
         # Compute solver outputs
         U_new = self.compute_hjb_output(M, U)
-        M_new = self.compute_fp_output(U)
+        M_new = self.compute_fp_output(U, M)
 
         # Compute residuals (difference from fixed point)
         F_HJB = U_new - U

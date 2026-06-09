@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np  # noqa: TC002
+import numpy as np
 
 if TYPE_CHECKING:
     from mfgarchon.utils.solver_result import SolverResult
@@ -374,3 +374,151 @@ def preserve_terminal_condition(
     """
     U[-1] = U_terminal
     return U
+
+
+def compute_fp_velocity_field(
+    problem: object,
+    U: np.ndarray,
+    M: np.ndarray,
+    H_class: object,
+) -> np.ndarray:
+    """Compute the face-centered FP advection velocity $\\alpha^*$ from the value function.
+
+    Single-source for the velocity convention shared by the Picard
+    ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Evaluates
+    ``H.optimal_control`` at cell interfaces $x_{i+1/2}$ using the forward-difference
+    gradient $p_{i+1/2} = (U_{i+1} - U_i)/\\Delta x$ (Issue #919), which matches the
+    FDM divergence-upwind stencil exactly.
+
+    Args:
+        problem: MFG problem (provides ``geometry`` and ``dt``).
+        U: Value function, shape ``(Nt+1, *spatial_shape)``.
+        M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
+        H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
+
+    Returns:
+        Face-centered velocity $\\alpha^*$.
+        1D: shape ``(Nt, Nx-1)`` — velocity at each face $(i+1/2)$.
+        nD: shape ``(Nt, ndim, *spatial_shape)`` — node-centered (nD fallback).
+    """
+    geometry = problem.geometry
+    grid_spacing = geometry.get_grid_spacing()
+    dt = problem.dt
+    Nt = U.shape[0]
+    spatial_shape = U.shape[1:]
+    ndim = len(spatial_shape)
+
+    bounds = geometry.get_bounds()
+
+    if ndim == 1:
+        dx = grid_spacing[0]
+        Nx = spatial_shape[0]
+
+        # Face centers: x_{i+1/2}
+        x_nodes = np.linspace(bounds[0][0], bounds[1][0], Nx)
+        x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
+
+        # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
+        p_faces = np.diff(U, axis=-1) / dx  # (Nt, Nx-1)
+
+        # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2
+        m_faces = 0.5 * (M[:, :-1] + M[:, 1:])  # (Nt, Nx-1)
+
+        alpha_faces = np.zeros((Nt, Nx - 1))
+        x_arr = x_faces.reshape(-1, 1)
+        for n in range(Nt):
+            m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            p_n = p_faces[n].reshape(-1, 1)
+            alpha_faces[n] = H_class.optimal_control(x_arr, m_n, p_n, t=n * dt).ravel()
+
+        return alpha_faces
+    else:
+        # nD: node-centered fallback (face-centered nD deferred)
+        grad_components = []
+        for d in range(ndim):
+            grad_d = np.gradient(U, grid_spacing[d], axis=d + 1)
+            grad_components.append(grad_d)
+
+        coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
+        mesh = np.meshgrid(*coords, indexing="ij")
+        x_grid = np.stack(mesh, axis=-1)
+
+        alpha_field = np.zeros((Nt, ndim, *spatial_shape))
+        for n in range(Nt):
+            p_n = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1)
+            m_n = M[n] if n < M.shape[0] else M[-1]
+            alpha_n = H_class.optimal_control(x_grid, m_n, p_n, t=n * dt)
+            if alpha_n.ndim == ndim + 1:
+                alpha_field[n] = np.moveaxis(alpha_n, -1, 0)
+            else:
+                for d in range(ndim):
+                    alpha_field[n, d] = alpha_n
+
+        return alpha_field
+
+
+def resolve_fp_drift_kwargs(
+    problem: object,
+    fp_sig_params: set[str] | None,
+    drift_field_override: object | None,
+    U: np.ndarray,
+    M: np.ndarray,
+) -> tuple[dict, bool]:
+    """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
+
+    Single-source for the FP drift/potential convention shared by the Picard
+    ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Before this
+    helper existed the two code paths diverged: ``MFGResidual`` still passed the value
+    function as ``drift_field`` (which the v0.18.6 rename redefined as the *velocity*
+    $\\alpha^*$, not the potential), so the Newton residual was inconsistent with the
+    Picard fixed point and the two solvers converged to different roots.
+
+    Resolution rules (matching the FP-solver semantics post-v0.18.6):
+        - Explicit ``drift_field`` override → pass it through verbatim (velocity).
+        - Smooth separable $H$ → pass $U$ as ``potential_field`` (the FP solver derives
+          the velocity internally; ``potential_field`` is the deprecated-but-routing
+          U-potential entry point).
+        - Non-smooth $H$ → pass the face-centered velocity $\\alpha^*$ as ``drift_field``
+          (see :func:`compute_fp_velocity_field`).
+
+    Args:
+        problem: MFG problem (provides ``hamiltonian_class``, ``geometry``, ``dt``).
+        fp_sig_params: Parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
+        drift_field_override: Caller-supplied drift override (array/callable), or ``None``.
+        U: Current value function, shape ``(Nt+1, *spatial_shape)``.
+        M: Current density, shape ``(Nt+1, *spatial_shape)`` (used only for non-smooth $H$).
+
+    Returns:
+        ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
+        ``{"drift_field": ...}`` or ``{"potential_field": ...}`` to merge into the
+        solver kwargs, and ``use_positional_U`` is ``True`` iff the FP solver exposes
+        neither ``drift_field`` nor ``potential_field`` (legacy positional-U interface),
+        in which case the caller passes ``U`` positionally.
+    """
+    if fp_sig_params is None:
+        return {}, True
+
+    params = fp_sig_params
+    drift_kwargs: dict = {}
+
+    if drift_field_override is not None:
+        if "drift_field" in params:
+            drift_kwargs["drift_field"] = drift_field_override
+    else:
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+        H_class = problem.hamiltonian_class
+        use_velocity = (
+            H_class is not None
+            and "drift_field" in params
+            and not (isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth())
+        )
+        if use_velocity:
+            drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class)
+        elif "potential_field" in params:
+            drift_kwargs["potential_field"] = U
+        elif "drift_field" in params:
+            drift_kwargs["drift_field"] = U
+
+    use_positional_U = not ("drift_field" in params or "potential_field" in params)
+    return drift_kwargs, use_positional_U
