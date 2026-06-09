@@ -55,7 +55,9 @@ def create_basis(mesh: skfem.Mesh, order: int = 1) -> skfem.Basis:
         (skfem.MeshTet1, 1): skfem.ElementTetP1,
         (skfem.MeshTet1, 2): skfem.ElementTetP2,
         (skfem.MeshQuad, 1): skfem.ElementQuad1,
+        (skfem.MeshQuad, 2): skfem.ElementQuad2,
         (skfem.MeshQuad1, 1): skfem.ElementQuad1,
+        (skfem.MeshQuad1, 2): skfem.ElementQuad2,
         (skfem.MeshLine, 1): skfem.ElementLineP1,
         (skfem.MeshLine, 2): skfem.ElementLineP2,
         (skfem.MeshLine1, 1): skfem.ElementLineP1,
@@ -71,7 +73,7 @@ def create_basis(mesh: skfem.Mesh, order: int = 1) -> skfem.Basis:
     if element_cls is None:
         raise ValueError(
             f"No element for mesh type {type(mesh).__name__} with order {order}. "
-            f"Supported: P1 (order=1) and P2 (order=2) for Tri/Tet/Line."
+            f"Supported: P1 (order=1) and P2 (order=2) for Tri/Tet/Line/Quad."
         )
 
     return skfem.Basis(mesh, element_cls())
