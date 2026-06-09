@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quadrilateral FEM solve path, P1 + P2** (Issue #470, smallest actionable slice). The FEM
+  `element_map` had `(MeshQuad, 1) → ElementQuad1` but no order-2 entry, so a quad mesh at
+  `order=2` raised `ValueError` even though `ElementQuad2` ships with skfem. Added
+  `(MeshQuad, 2)` / `(MeshQuad1, 2) → ElementQuad2` and corrected the error text (it omitted
+  Quad despite Quad-P1 already working). The mesh-generation layer (`Mesh2D`/`Mesh3D`) still
+  emits only simplex meshes via gmsh — and **gmsh is not an installed dependency** — but the FEM
+  *solve* path is element-family-agnostic, so a quad mesh built gmsh-free via
+  `skfem.MeshQuad.init_tensor` now runs end-to-end (`mesh_adapter` round-trips `element_type='quad'`).
+  New `tests/integration/test_fem_quad_path.py`: quad round-trip + Poisson at P1 and P2 (manufactured
+  solution) + a P2-more-accurate-than-P1 check. gmsh-based Quad/Hex/Prism *generation* remains the
+  large, separately-blocked part of #470. FEM is a distinct scheme — no paper-path (FDM/GFDM) impact.
+
 - **`FixedPointIterator` supports unstructured-mesh geometry** (coupled-FEM chain, seam 3). The
   coupling iterator was grid-only — it required a `CartesianGrid` and used `get_grid_shape()` /
   `get_grid_spacing()`, so a FEM pair (which needs an unstructured mesh) could never run through
