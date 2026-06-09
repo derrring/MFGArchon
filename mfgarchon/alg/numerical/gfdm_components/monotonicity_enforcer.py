@@ -869,3 +869,102 @@ class MonotonicityEnforcer:
                 print(f"  Cache size:             {qp_cache.size} / {qp_cache.max_size}")
 
         print("=" * 80 + "\n")
+
+
+def verify_assembled_m_matrix(
+    matrix: Any,
+    interior_indices: np.ndarray | None = None,
+    atol: float = 1e-9,
+) -> dict[str, Any]:
+    r"""Verify the M-matrix property of the *assembled* HJB iteration matrix (Issue #1074).
+
+    The per-stencil SOCP checks (:meth:`MonotonicityEnforcer.check_m_matrix`) verify the raw
+    Laplacian weights at each collocation point. They do **not** imply that the assembled
+    Newton iteration matrix $J = I/\Delta t - D\,L + \alpha\cdot D_{\mathrm{grad}}$ is an
+    M-matrix: the signed drift term $\alpha\cdot D_{\mathrm{grad}}$ can flip an off-diagonal
+    positive once $|\alpha|$ is large relative to $D$ (a Péclet-like condition; see
+    :func:`critical_drift_for_dmp`). This checks the assembled system directly.
+
+    Args:
+        matrix: Assembled iteration matrix (any scipy sparse format).
+        interior_indices: Restrict the check to these rows. Boundary rows carry BC structure
+            that the solver applies separately and that is not expected to be M-matrix
+            pre-BC, so pass the solver's ``interior_indices`` to test the scheme's claim.
+        atol: Sign/zero tolerance.
+
+    Returns:
+        dict with ``is_m_matrix`` (bool) and the diagnostics ``n_bad_diag`` (non-positive
+        diagonals), ``n_positive_offdiag`` (wrong-sign off-diagonals), ``worst_positive_offdiag``
+        (max wrong-sign off-diagonal magnitude), ``worst_dominance_margin`` (max of
+        $\sum_{j\ne i}|J_{ij}| - J_{ii}$ over checked rows; $\le 0$ means weakly diagonally
+        dominant).
+    """
+    J = matrix.tocsr()
+    n = J.shape[0]
+    rows = np.arange(n) if interior_indices is None else np.asarray(interior_indices)
+
+    n_bad_diag = 0
+    n_positive_offdiag = 0
+    worst_positive_offdiag = 0.0
+    worst_dominance_margin = -np.inf
+    for i in rows:
+        row = J.getrow(i).toarray().ravel()
+        d_i = row[i]
+        off = row.copy()
+        off[i] = 0.0
+        if d_i <= atol:
+            n_bad_diag += 1
+        positive = off[off > atol]
+        if positive.size:
+            n_positive_offdiag += int(positive.size)
+            worst_positive_offdiag = max(worst_positive_offdiag, float(positive.max()))
+        worst_dominance_margin = max(worst_dominance_margin, float(np.abs(off).sum() - d_i))
+
+    is_m_matrix = n_bad_diag == 0 and n_positive_offdiag == 0 and worst_dominance_margin <= atol
+    return {
+        "is_m_matrix": is_m_matrix,
+        "n_bad_diag": n_bad_diag,
+        "n_positive_offdiag": n_positive_offdiag,
+        "worst_positive_offdiag": worst_positive_offdiag,
+        "worst_dominance_margin": worst_dominance_margin,
+    }
+
+
+def critical_drift_for_dmp(
+    d_lap: Any,
+    d_grad: list,
+    diffusion_coeff: float,
+    interior_indices: np.ndarray | None = None,
+    atol: float = 1e-12,
+) -> float:
+    r"""Largest drift magnitude $|\alpha|$ for which the assembled interior matrix keeps its
+    M-matrix off-diagonal sign (Issue #1074).
+
+    For interior off-diagonal $(i, j)$ the assembled entry is
+    $\sum_d \alpha_d (D_{\mathrm{grad}})_{d,ij} - D\,L_{ij}$. With $L_{ij} \ge 0$ (SOCP-monotone
+    Laplacian) the diffusion part is $\le 0$; the worst-case unit-$|\alpha|$ direction makes the
+    drift part $|\alpha|\,\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$ (Cauchy–Schwarz), so the sign
+    holds iff $|\alpha| \le D\,L_{ij}/\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$. The minimum over
+    edges is the critical drift. (The SOCP cone bound $\lVert D_{:,j}\rVert \le (C/h)L_j$ forces
+    the gradient support into the Laplacian support, so every drift-coupled edge has $L_{ij} > 0$
+    and the threshold is strictly positive.)
+
+    Returns ``inf`` when no edge constrains the sign (e.g. a zero gradient operator).
+    """
+    L = d_lap.tocsr()
+    grads = [g.tocsr() for g in d_grad]
+    n = L.shape[0]
+    rows = np.arange(n) if interior_indices is None else np.asarray(interior_indices)
+
+    alpha_crit = np.inf
+    for i in rows:
+        l_row = L.getrow(i).toarray().ravel()
+        g_rows = [g.getrow(i).toarray().ravel() for g in grads]
+        for j in np.nonzero(l_row > atol)[0]:
+            if j == i:
+                continue
+            g_norm = float(np.sqrt(sum(gr[j] ** 2 for gr in g_rows)))
+            if g_norm <= atol:
+                continue
+            alpha_crit = min(alpha_crit, diffusion_coeff * float(l_row[j]) / g_norm)
+    return alpha_crit

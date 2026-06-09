@@ -12,17 +12,23 @@ These are enforced by `solve_joint_socp_at_stencil` constraints (see
 for representative configurations. If the test fails, the paper claim has an
 empirical counter-example.
 
-The full assembled-matrix M-matrix property (Issue #1074 long-term ask)
-requires also bounding the advective contribution `(1/lambda)*D_grad*dt`
-against the diffusive contribution `(sigma**2/2)*L*dt`, which depends on
-the time-step. That's deferred — this test covers the part joint_socp
-itself guarantees.
+The full assembled-matrix M-matrix property (Issue #1074 long-term ask) is now
+also covered (tests at the bottom). Per-stencil SOCP feasibility does NOT imply
+the assembled HJB iteration matrix ``I/dt - D*L + alpha*D_grad`` is an M-matrix:
+the signed drift term flips an off-diagonal positive once
+``|alpha| > alpha_crit = D * min_edge(L_ij / ||D_grad_ij||)`` (a Peclet-like
+condition; ``critical_drift_for_dmp``). Note this off-diagonal *sign* condition is
+**dt-independent** — a smaller dt restores diagonal dominance but not the sign. So
+the discrete maximum principle holds only in the diffusion-dominated regime
+``|alpha| <= alpha_crit``; the runtime ``check_dmp`` guard warns when a solve
+exceeds it.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+import numpy as np
 
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -189,6 +195,120 @@ def test_socp_at_least_some_feasible():
     # baseline reports >85% at N>=75.
     assert n_feasible > 0, (
         f"sigma=1 low-Pe: 0/{total} stencils SOCP-feasible — joint_socp scheme producing no usable stencils"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1074 — ASSEMBLED-matrix M-matrix property (the long-term ask).
+# The per-stencil checks above do NOT imply the assembled HJB iteration matrix
+# (I/dt - D·L + α·D_grad) is an M-matrix. These characterize when it is.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sigma", [0.3, 0.5, 1.0])
+def test_assembled_m_matrix_holds_at_zero_drift(sigma):
+    """Issue #1074: at zero drift the assembled interior matrix (I/dt - D·L) IS an M-matrix.
+
+    This is the positive half — the SOCP-monotone Laplacian gives the diffusion-part discrete
+    maximum principle. (The 2 boundary rows carry BC structure applied separately and are
+    excluded via interior_indices.)"""
+    from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import verify_assembled_m_matrix
+
+    solver = _make_solver(sigma=sigma, n_x=21)
+    grad_u = np.zeros((solver.n_points, 1))
+    J = solver._compute_hjb_jacobian_vectorized(grad_u)
+    report = verify_assembled_m_matrix(J, interior_indices=solver.interior_indices)
+    assert report["is_m_matrix"], f"σ={sigma}: assembled interior matrix not M-matrix at zero drift: {report}"
+
+
+@pytest.mark.parametrize("sigma", [0.3, 0.5, 1.0])
+def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
+    """Issue #1074: per-stencil SOCP feasibility does NOT imply the assembled M-matrix.
+
+    A large enough drift flips an off-diagonal positive via the α·D_grad term (the empirical
+    counter-example to an *unconditional* DMP claim). Pinning this catches a future change that
+    silently claims unconditional DMP. The threshold is predicted by critical_drift_for_dmp."""
+    from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import (
+        critical_drift_for_dmp,
+        verify_assembled_m_matrix,
+    )
+    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+    solver = _make_solver(sigma=sigma, n_x=21)
+    solver._compute_hjb_jacobian_vectorized(np.zeros((solver.n_points, 1)))  # build operators
+    diffusion_coeff = diffusion_from_volatility(sigma)
+    alpha_crit = critical_drift_for_dmp(
+        solver._D_lap, solver._D_grad, diffusion_coeff, interior_indices=solver.interior_indices
+    )
+    assert alpha_crit > 0.0  # SOCP cone bound keeps the threshold strictly positive
+
+    # λ=1 ⇒ |α| = |grad|. Drift well past α_crit must break the assembled M-matrix.
+    strong = np.full((solver.n_points, 1), 5.0 * alpha_crit)
+    J = solver._compute_hjb_jacobian_vectorized(strong)
+    report = verify_assembled_m_matrix(J, interior_indices=solver.interior_indices)
+    assert not report["is_m_matrix"], f"σ={sigma}: expected M-matrix violation at |drift|=5·α_crit, got {report}"
+    assert report["n_positive_offdiag"] > 0
+
+
+def test_runtime_dmp_guard_warns_only_when_violated():
+    """Issue #1074 runtime guard: check_dmp=True warns when the drift exceeds α_crit; it is
+    silent below the threshold and a no-op when check_dmp=False (the default — numerically inert)."""
+    import logging
+
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(r.getMessage())
+    gfdm_logger = logging.getLogger("mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm")
+    gfdm_logger.addHandler(handler)
+    try:
+        solver = _make_solver_check_dmp(sigma=0.3, check_dmp=True)
+        solver._compute_hjb_jacobian_vectorized(np.zeros((solver.n_points, 1)))  # build operators + α_crit
+        x = np.linspace(0.0, 1.0, solver.n_points)
+
+        records.clear()
+        solver._maybe_warn_dmp(1e-4 * x)  # |drift| ≪ α_crit
+        assert not any("DMP" in m for m in records), "guard warned in the diffusion-dominated regime"
+
+        records.clear()
+        solver._dmp_warned = False
+        solver._maybe_warn_dmp(100.0 * x)  # |drift| ≫ α_crit
+        assert any("Issue #1074" in m for m in records), "guard did not warn under strong drift"
+
+        off = _make_solver_check_dmp(sigma=0.3, check_dmp=False)
+        off._compute_hjb_jacobian_vectorized(np.zeros((off.n_points, 1)))
+        records.clear()
+        off._maybe_warn_dmp(100.0 * x)
+        assert not any("DMP" in m for m in records), "guard fired with check_dmp=False (should be inert)"
+    finally:
+        gfdm_logger.removeHandler(handler)
+
+
+def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
+    """`_make_solver` variant exposing the check_dmp flag (Issue #1074 runtime guard)."""
+    from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    components = MFGComponents(
+        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: np.ones_like(np.asarray(m)),
+        ),
+    )
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=sigma, components=components)
+    x_coords = np.linspace(0.0, 1.0, n_x).reshape(-1, 1)
+    return HJBGFDMSolver(
+        problem,
+        x_coords,
+        delta=0.15,
+        monotonicity_scheme="joint_socp",
+        monotonicity_application="precompute",
+        check_dmp=check_dmp,
     )
 
 

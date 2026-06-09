@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Assembled-matrix DMP verification + runtime guard for joint_socp** (Issue #1074, paper-critical).
+  Per-stencil SOCP feasibility (already tested) does **not** imply the *assembled* HJB iteration
+  matrix `I/Δt − D·L + α·D_grad` is an M-matrix — the paper's discrete-maximum-principle claim.
+  Empirical finding (verify-by-artifact): the assembled interior matrix **is** an M-matrix at zero
+  drift for σ∈{0.3,0.5,1.0} (the SOCP-monotone Laplacian gives the diffusion-part DMP), but the
+  signed `α·D_grad` term **flips an off-diagonal positive** once `|α| > α_crit = D·min_edge(L_ij /
+  ‖D_grad_ij‖)` — a Péclet-like threshold. So **the DMP holds conditionally (diffusion-dominated),
+  not unconditionally**. Crucially this off-diagonal *sign* condition is **dt-independent** (a smaller
+  Δt restores diagonal dominance but not the sign). Added `verify_assembled_m_matrix(J,
+  interior_indices)` and `critical_drift_for_dmp(D_lap, D_grad, D)` to `gfdm_components/
+  monotonicity_enforcer.py`, and an **opt-in** `HJBGFDMSolver(check_dmp=True)` runtime guard that
+  warns once when a solve's drift exceeds `α_crit`. The guard is **numerically inert** — verified the
+  GFDM joint_socp solve is **byte-identical** with `check_dmp` False vs True (`max|Δ|=0`), and it
+  defaults off (zero overhead on the paper path). Characterization tests pin both halves (M-matrix at
+  zero drift; broken under strong drift) so a future unconditional-DMP claim fails loudly. The formal
+  per-stencil→assembled theorem and the paper-claim wording (scope to low-Péclet vs add gradient
+  upwinding) remain open for the author.
+
 - **FP mass-conservation regression now covers P2** (Issue #470 follow-up). The FEM FP advection
   operator is assembled as `-C^T`, whose column sums vanish by partition of unity
   (`Σ_i φ_i = 1`) — an *order-agnostic* property. `test_fp_advection_is_mass_conserving` is now
