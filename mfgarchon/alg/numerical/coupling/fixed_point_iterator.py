@@ -23,9 +23,11 @@ from mfgarchon.utils.solver_result import SolverResult
 from .base_mfg import BaseCouplingIterator
 from .fixed_point_utils import (
     check_convergence_criteria,
+    compute_fp_velocity_field,
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
+    resolve_fp_drift_kwargs,
 )
 
 logger = get_logger(__name__)
@@ -443,71 +445,11 @@ class FixedPointIterator(BaseCouplingIterator):
     def _compute_velocity_field(self, U, M, H_class):
         """Compute face-centered velocity α* via H.optimal_control.
 
-        Issue #919: evaluates H.optimal_control at cell interfaces (i+1/2),
-        using forward-difference gradient p_{i+1/2} = (U[i+1]-U[i])/dx.
-        This matches the FDM divergence-upwind stencil exactly.
-
-        Returns
-        -------
-        np.ndarray
-            Face-centered velocity α* at cell interfaces.
-            1D: shape (Nt, Nx-1) — velocity at each face (i+1/2).
-            nD: shape (Nt, ndim, *spatial_shape) — node-centered (nD fallback).
+        Issue #1233: single-sourced through
+        :func:`fixed_point_utils.compute_fp_velocity_field` (shared with the Newton
+        ``MFGResidual``). The face-centered convention (Issue #919) is unchanged.
         """
-        geometry = self.problem.geometry
-        grid_spacing = geometry.get_grid_spacing()
-        dt = self.problem.dt
-        Nt = U.shape[0]
-        spatial_shape = U.shape[1:]
-        ndim = len(spatial_shape)
-
-        bounds = geometry.get_bounds()
-
-        if ndim == 1:
-            dx = grid_spacing[0]
-            Nx = spatial_shape[0]
-
-            # Face centers: x_{i+1/2}
-            x_nodes = np.linspace(bounds[0][0], bounds[1][0], Nx)
-            x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
-
-            # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
-            p_faces = np.diff(U, axis=-1) / dx  # (Nt, Nx-1)
-
-            # Face density: m_{i+1/2} = (m[i] + m[i+1]) / 2
-            m_faces = 0.5 * (M[:, :-1] + M[:, 1:])  # (Nt, Nx-1)
-
-            alpha_faces = np.zeros((Nt, Nx - 1))
-            x_arr = x_faces.reshape(-1, 1)
-            for n in range(Nt):
-                m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
-                p_n = p_faces[n].reshape(-1, 1)
-                alpha_faces[n] = H_class.optimal_control(x_arr, m_n, p_n, t=n * dt).ravel()
-
-            return alpha_faces
-        else:
-            # nD: node-centered fallback (face-centered nD deferred)
-            grad_components = []
-            for d in range(ndim):
-                grad_d = np.gradient(U, grid_spacing[d], axis=d + 1)
-                grad_components.append(grad_d)
-
-            coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
-            mesh = np.meshgrid(*coords, indexing="ij")
-            x_grid = np.stack(mesh, axis=-1)
-
-            alpha_field = np.zeros((Nt, ndim, *spatial_shape))
-            for n in range(Nt):
-                p_n = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1)
-                m_n = M[n] if n < M.shape[0] else M[-1]
-                alpha_n = H_class.optimal_control(x_grid, m_n, p_n, t=n * dt)
-                if alpha_n.ndim == ndim + 1:
-                    alpha_field[n] = np.moveaxis(alpha_n, -1, 0)
-                else:
-                    for d in range(ndim):
-                        alpha_field[n, d] = alpha_n
-
-            return alpha_field
+        return compute_fp_velocity_field(self.problem, U, M, H_class)
 
     def solve(
         self,
@@ -760,32 +702,18 @@ class FixedPointIterator(BaseCouplingIterator):
                     source_term=fp_source,
                 )
 
-                # Drift/potential logic (FP-specific, not in _build_fp_kwargs)
+                # Drift/potential logic (FP-specific, not in _build_fp_kwargs).
+                # Issue #1233: single-sourced via resolve_fp_drift_kwargs, shared with
+                # the Newton MFGResidual so both coupling paths use one convention.
                 if self._fp_sig_params is not None:
-                    params = self._fp_sig_params
-                    if self.drift_field is not None:
-                        if "drift_field" in params:
-                            kwargs["drift_field"] = self.drift_field
-                    else:
-                        H_class = self.problem.hamiltonian_class
-                        from mfgarchon.core.hamiltonian import SeparableHamiltonian
-
-                        use_velocity = (
-                            H_class is not None
-                            and "drift_field" in params
-                            and not (isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth())
-                        )
-                        if use_velocity:
-                            kwargs["drift_field"] = self._compute_velocity_field(U_new, M_old, H_class)
-                        elif "potential_field" in params:
-                            kwargs["potential_field"] = U_new
-                        elif "drift_field" in params:
-                            kwargs["drift_field"] = U_new
-
-                    if "drift_field" in params or "potential_field" in params:
-                        M_new = self.fp_solver.solve_fp_system(M_initial, **kwargs)
-                    else:
+                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                        self.problem, self._fp_sig_params, self.drift_field, U_new, M_old
+                    )
+                    kwargs.update(drift_kwargs)
+                    if use_positional_U:
                         M_new = self.fp_solver.solve_fp_system(M_initial, U_new, **kwargs)
+                    else:
+                        M_new = self.fp_solver.solve_fp_system(M_initial, **kwargs)
                 else:
                     M_new = self.fp_solver.solve_fp_system(M_initial, U_new)
 

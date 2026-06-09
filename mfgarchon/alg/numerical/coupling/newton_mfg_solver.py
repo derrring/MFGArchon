@@ -75,11 +75,22 @@ class NewtonMFGSolver(BaseCouplingIterator):
         problem: MFG problem definition
         hjb_solver: HJB solver instance (must be trait-validated)
         fp_solver: FP solver instance (must be trait-validated)
-        picard_warmup: Number of Picard iterations before Newton (default: 3)
+        picard_warmup: Number of Picard iterations before Newton (default: 3). The
+            warmup must bring the iterate into the basin of the physical equilibrium:
+            Newton is a *local* root-finder and (even with line search) cannot escape a
+            basin, so a too-short warmup can converge to a spurious near-trivial fixed
+            point of the discrete MFG map. For stiff couplings increase this until the
+            warmup residual is well past its transient peak (Issue #1233).
         newton_tolerance: Convergence tolerance for Newton (default: 1e-6)
         newton_max_iterations: Maximum Newton iterations (default: 20)
         line_search: Enable backtracking line search (default: True)
-        use_jax_autodiff: Use JAX for Jacobian ('auto', True, False)
+        use_jax_autodiff: Use JAX autodiff for the Jacobian (default: False). The MFG
+            residual wraps the black-box numpy/scipy HJB and FP solvers, which JAX
+            cannot trace — autodiff therefore raises ``TracerArrayConversionError`` and
+            falls back to the finite-difference Jacobian. The FD-Jacobian path is the
+            supported one; ``'auto'``/``True`` are retained only for a hypothetical
+            JAX-traceable residual and will warn-and-fall-back with the standard solvers
+            (Issue #1233).
         volatility_field: Optional diffusion override
         drift_field: Optional drift override
 
@@ -100,7 +111,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         newton_tolerance: float = 1e-6,
         newton_max_iterations: int = 20,
         line_search: bool = True,
-        use_jax_autodiff: bool | str = "auto",
+        use_jax_autodiff: bool | str = False,
         volatility_field: float | NDArray | Any | None = None,
         drift_field: NDArray | Any | None = None,
     ):
@@ -170,7 +181,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             U_new = self.mfg_residual.compute_hjb_output(M_old, U_old)
 
             # FP solve: M_new = FP(U_new)
-            M_new = self.mfg_residual.compute_fp_output(U_new)
+            M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
 
             # Apply damping
             U = self.picard_damping * U_new + (1 - self.picard_damping) * U_old

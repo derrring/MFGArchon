@@ -218,12 +218,16 @@ class TestNewtonVsPicard:
         hjb_picard = HJBFDMSolver(comparison_problem)
         fp_picard = FPFDMSolver(comparison_problem)
 
-        # Newton solver
+        # Newton solver.
+        # Issue #1233: the warmup must reach the basin of the physical equilibrium —
+        # Newton is a local root-finder and a too-short warmup (e.g. 3) converges to a
+        # spurious near-trivial fixed point of the discrete MFG map. See the fast guards
+        # in test_newton_picard_agreement.py.
         newton_solver = NewtonMFGSolver(
             comparison_problem,
             hjb_newton,
             fp_newton,
-            picard_warmup=3,
+            picard_warmup=15,
             newton_max_iterations=10,
             line_search=True,
         )

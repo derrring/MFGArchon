@@ -189,6 +189,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`NewtonMFGSolver` diverged ~99.5% from Picard** (Issue #1233). The Newton coupling residual
+  `F = [HJB(M) - U, FP(U) - M]` was inconsistent with the Picard fixed point, so the two solvers
+  converged to different roots. Two causes: **(1) stale FP drift convention** — `MFGResidual`
+  passed the value function as `drift_field`, but the v0.18.6 rename redefined `drift_field` as
+  the *velocity* $\alpha^*$ (the old U-potential entry point became `potential_field`); the
+  Picard `FixedPointIterator` was updated (#896/#919) while `MFGResidual` was not, so
+  `||F_FP(Picard soln)||` was O(10) instead of ~0. The drift/potential resolution is now
+  **single-sourced** in `resolve_fp_drift_kwargs` + `compute_fp_velocity_field`
+  (`fixed_point_utils`), shared by both `FixedPointIterator` and `MFGResidual` — the
+  `FixedPointIterator` FDM path is **byte-identical** (verified `max|Δ|=0` on 1D-LQ `U`/`M`).
+  **(2) basin selection** — even with a consistent residual, a too-short Picard warmup (3) left
+  the iterate in the basin of a spurious near-trivial discrete fixed point; Newton (a local
+  root-finder, line search cannot escape a basin) locked onto it. Documented the warmup-basin
+  requirement; the comparison test now warms up adequately. Also **defaulted
+  `use_jax_autodiff=False`** for `NewtonMFGSolver`: the residual wraps black-box numpy/scipy
+  solvers that JAX cannot trace, so `'auto'` was a guaranteed `TracerArrayConversionError` +
+  FD-fallback warning on every run (the option is retained for a hypothetical jnp-native
+  residual). Added fast, non-`slow` guards (`tests/integration/test_newton_picard_agreement.py`):
+  the realistic-grid comparison is `slow` (skipped on PRs), which is why this stayed red on
+  `main` undetected. (`multi_population_iterator` keeps its own *node*-centered velocity copy —
+  a different convention — and is left as a tracked third copy, not folded in here.)
+
 - **FEM named-region BC silently unresolved: no facet boundary tags** (Issue #607; coupled-FEM
   chain, seam 2). `meshdata_to_skfem` produced a skfem mesh with `mesh.boundaries = None`, so a
   `BCSegment(boundary="x_min")` could not be resolved — the FEM `bc_adapter` either crashed
