@@ -286,7 +286,12 @@ class Mesh2D(_MeshGeneratorBase):
         If ``self.mesh_data`` is already populated (e.g. injected from a pre-built mesh via
         ``mfgarchon.alg.numerical.fem.mesh_adapter.skfem_to_meshdata``), it is returned as-is —
         a gmsh-free path for callers that supply their own mesh, and idempotent memoization
-        otherwise."""
+        otherwise.
+
+        Note: gmsh generation here emits **triangular (simplex)** elements only. The FEM solve
+        path also supports **quadrilateral** meshes (Issue #470), but quad generation is not
+        implemented — inject a pre-built quad mesh instead, e.g. ``skfem.MeshQuad.init_tensor``
+        → ``skfem_to_meshdata`` (gmsh-free)."""
         if self.mesh_data is not None:
             return self.mesh_data
         try:

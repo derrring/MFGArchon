@@ -93,6 +93,11 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     # --- Gradient recovery: mass-lumped L2 projection grad_d(u) = G_d @ u -----
     def _build_gradient_operators(self) -> None:
+        # Accuracy caveat: row-sum mass lumping (M_lumped = M.sum(axis=1)) keeps gradient recovery
+        # cheap and diagonal, and is exact-order for P1. For P2 it is suboptimal — the lumped
+        # projection can cap the recovered gradient below the full consistent-mass O(h^p) rate, so
+        # a P2 HJB solve may not realize the full P2 convergence order here. Replacing this with a
+        # full consistent-mass L2 projection is a deferred accuracy-vs-speed design decision.
         if self._G_grad is not None:
             return
         M_lumped = np.array(self._M.sum(axis=1)).ravel()

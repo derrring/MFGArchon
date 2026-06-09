@@ -369,7 +369,11 @@ class Mesh3D(_MeshGeneratorBase):
         """Generate 3D tetrahedral mesh.
 
         Returns a pre-populated ``self.mesh_data`` as-is if present (gmsh-free injected-mesh
-        path / idempotent memoization)."""
+        path / idempotent memoization).
+
+        Note: gmsh generation here emits **tetrahedral (simplex)** elements only. Non-simplex
+        meshes (e.g. hexahedral) for the FEM solve path (Issue #470) are not generated here —
+        inject a pre-built mesh instead, e.g. ``skfem.MeshHex.init_tensor`` → ``skfem_to_meshdata``."""
         if self.mesh_data is not None:
             return self.mesh_data
         try:
