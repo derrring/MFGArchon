@@ -85,7 +85,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
     max_iterations : int
         Maximum Picard iterations (default 50).
     tolerance : float
-        Convergence tolerance on max |v^k_{n+1} - v^k_n| (default 1e-5).
+        Convergence tolerance on max over regimes of both the value-function and the
+        density change, max(|v^k_{n+1} - v^k_n|, |m^k_{n+1} - m^k_n|) (default 1e-5).
     damping : float
         Damping factor for Picard update (default 0.5).
     update_scheme : Literal["jacobi", "gauss_seidel"]
@@ -271,7 +272,20 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms[k]
 
             # --- Convergence check ---
-            error = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(K))
+            # Gate on BOTH the value function AND the density change — the canonical (u, m)
+            # criterion (see fixed_point_utils.check_convergence_criteria). Previously this
+            # checked only U, so a regime whose density was still evolving while its value
+            # function had stabilized (different timescales across regimes) reported
+            # converged=True with a non-converged density (Issue #1043-class one-field defect).
+            error_U = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(K))
+            # On iteration 0 the initial Ms[k] is the 1D m_initial while Ms_new[k] is the 2D
+            # trajectory (the ndim guard above skips iter-0 M-damping), so the M-change is
+            # undefined → treat as not-converged.
+            if all(Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim for k in range(K)):
+                error_M = max(np.max(np.abs(Ms_new[k] - Ms[k])) for k in range(K))
+            else:
+                error_M = float("inf")
+            error = max(error_U, error_M)
             error_history.append(error)
 
             Us_full = Us_new
