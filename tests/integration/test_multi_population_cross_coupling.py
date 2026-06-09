@@ -93,6 +93,36 @@ def test_single_population_byte_identical():
     assert np.array_equal(np.asarray(c.M[0]), np.asarray(d.M[0]))
 
 
+def test_k1_matches_single_population_fp_convention():
+    """K=1 multi-pop must resolve FP drift the SAME way the single-pop FixedPointIterator does
+    (Issue #1043).
+
+    The iterator previously computed its own *node*-centered velocity and always passed it as an
+    explicit ``drift_field``, diverging from single-pop, which resolves drift via
+    ``resolve_fp_drift_kwargs`` (``potential_field=U`` for smooth-separable H, face-centered
+    velocity otherwise). For a K=1 LQ problem the resulting density was ~116% off the single-pop
+    solve. Now both route through the shared resolver, so the K=1 density matches single-pop up to
+    the iterators' other (non-FP) differences (single-pop damps U+M and runs Anderson/source/BC
+    machinery; the multi-pop loop is a leaner Picard). The 0.30 threshold sits well below the
+    pre-fix 1.16 (a re-fork to a private velocity convention fails here) and above the post-fix
+    ~0.19 residual."""
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+
+    prob = _make_problem(0, cross=0.0, K=1)
+    sp = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob), relaxation=0.5).solve(
+        max_iterations=120, tolerance=1e-6, verbose=False
+    )
+    M_sp = sp[1]
+
+    mp = _solve(1, cross=0.0, max_iterations=200)
+    M_mp = np.asarray(mp.M[0])
+
+    m_diff = np.linalg.norm(M_mp - M_sp) / (np.linalg.norm(M_sp) + 1e-12)
+    assert m_diff < 0.30, f"K=1 multi-pop density {m_diff * 100:.1f}% off single-pop (FP convention re-forked?)"
+    # mass conservation preserved
+    assert np.allclose(M_mp.sum(axis=-1), M_mp[0].sum(), rtol=1e-6)
+
+
 def test_nonfdm_backend_multipop_fails_loud():
     """A K>1 run on an HJB backend that does not thread the cross-density override must fail
     loud (the half-coupled silent-wrong equilibrium is the bug), not run silently."""

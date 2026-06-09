@@ -77,6 +77,17 @@ class MultiPopulationIterator:
         if len(fp_solvers) != K:
             raise ValueError(f"Need {K} FP solvers, got {len(fp_solvers)}")
 
+        # Issue #1043: cache each FP solver's solve_fp_system signature so the drift/potential
+        # convention can be resolved via the shared resolve_fp_drift_kwargs (same as single-pop).
+        import inspect
+
+        self._fp_sig_params: list[set[str] | None] = []
+        for fp in fp_solvers:
+            try:
+                self._fp_sig_params.append(set(inspect.signature(fp.solve_fp_system).parameters))
+            except (AttributeError, ValueError, TypeError):
+                self._fp_sig_params.append(None)
+
     @property
     def damping_factor(self) -> float:
         """Deprecated alias for `relaxation` (v0.19.2+). Removal in v0.25.0."""
@@ -168,19 +179,33 @@ class MultiPopulationIterator:
                 else:
                     U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
 
-            # Step 2: Solve K FP equations with drift from H_k
+            # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
+            # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population
+            # FixedPointIterator — so a K=1 multi-population solve matches single-pop. The
+            # cross-density-bound Hamiltonian is passed as h_class so the velocity (non-smooth H)
+            # sees the other populations' density (its optimal_control maps t→trajectory row n;
+            # Issue #1157). Network problems keep the U-as-drift path (FPNetworkSolver extracts
+            # rates internally).
+            from .fixed_point_utils import resolve_fp_drift_kwargs
+
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
                 m0_k = M[k][0]
                 H_k = prob_k.hamiltonian_class
-
-                # Use bound H for velocity computation (sees cross-pop density). dt is required
-                # because _compute_velocity_field calls optimal_control per timestep with t=n*dt,
-                # which BoundHamiltonian maps to trajectory row n (Issue #1157).
                 H_bound = H_k.bind_cross_density(m_all, dt=prob_k.dt) if hasattr(H_k, "bind_cross_density") else H_k
-                velocity = self._compute_velocity_field(U[k], M[k], H_bound, prob_k)
+                fp_k = self.fp_solvers[k]
 
-                M_new_k = self.fp_solvers[k].solve_fp_system(m0_k, drift_field=velocity, show_progress=False)
+                if getattr(prob_k, "spatial_dimension", None) == 0:
+                    M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False)
+                else:
+                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                        prob_k, self._fp_sig_params[k], None, U[k], M[k], h_class=H_bound
+                    )
+                    if use_positional_U:
+                        M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False)
+                    else:
+                        M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs)
+
                 M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
             # Check convergence
@@ -207,42 +232,6 @@ class MultiPopulationIterator:
             errors=errors,
             population_names=self.multi_problem.population_names,
         )
-
-    @staticmethod
-    def _compute_velocity_field(U, M, H_class, problem):
-        """Compute velocity α*(t, x) from H.optimal_control.
-
-        M is the own-population density (Nt+1, Nx). H_k accesses
-        cross-population density via _m_all_current (injected by iterator).
-
-        Dispatches on problem type:
-        - Network (spatial_dimension == 0): return U directly (FP network
-          solver handles drift extraction internally via H.optimal_control)
-        - Continuous 1D: compute α* via ∇U → H.optimal_control
-        """
-        spatial_dim = getattr(problem, "spatial_dimension", None)
-        if spatial_dim == 0:
-            # Network: pass U (FPNetworkSolver extracts rates internally)
-            return U
-
-        geometry = problem.geometry
-        grid_spacing = geometry.get_grid_spacing()
-        dx = grid_spacing[0]
-        dt = problem.dt
-        Nt = U.shape[0]
-        Nx = U.shape[-1]
-
-        grad_U = np.gradient(U, dx, axis=-1)
-        bounds = geometry.get_bounds()
-        x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx).reshape(-1, 1)
-
-        alpha_field = np.zeros_like(grad_U)
-        for n in range(Nt):
-            p = grad_U[n]
-            m_n = M[n] if n < M.shape[0] else M[-1]
-            alpha_field[n] = H_class.optimal_control(x_grid, m_n, p.reshape(-1, 1), t=n * dt).ravel()
-
-        return alpha_field
 
     @staticmethod
     def _compute_drift_field(U, M, H_class, problem):
