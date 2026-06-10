@@ -234,3 +234,44 @@ class TestRegimeSwitchingGetResults:
         )
         with pytest.raises(RuntimeError, match="No solution computed"):
             iterator.get_results()
+
+
+class TestRegimeSwitchingCrossTermSign:
+    """Inter-regime coupling sign (#1251, 2026-06-10 audit).
+
+    The DPP chain term ``sum_j Q[k,j](v^k - v^j)`` sits on the HJB LHS, and the HJB
+    solver subtracts the source (``Phi_U -= source_term``), so the source must equal
+    ``-cross``. A ``+cross`` source flips the inter-regime value coupling. The FP source
+    (``+inflow Q[j,k]m^j - outflow Q[k,j]m^k``) was already correct and must be unchanged.
+    """
+
+    def _iterator(self):
+        problems, config, hjbs, fps = _make_2regime_system()
+        return (
+            RegimeSwitchingIterator(problems=problems, regime_config=config, hjb_solvers=hjbs, fp_solvers=fps),
+            problems,
+            config.transition_matrix,
+        )
+
+    def test_hjb_source_is_negative_cross_term(self):
+        iterator, problems, Q = self._iterator()
+        Nt, N = problems[0].Nt, 5
+        x = np.linspace(0.0, 1.0, N)
+        v0, v1 = 2.0, 1.0
+        Us_full = [v0 * np.ones((Nt + 1, N)), v1 * np.ones((Nt + 1, N))]
+
+        src0 = iterator._make_hjb_source(0, 2, Q, Us_full, [None, None])
+        np.testing.assert_allclose(src0(0.0, x), -Q[0, 1] * (v0 - v1) * np.ones(N))
+
+        src1 = iterator._make_hjb_source(1, 2, Q, Us_full, [None, None])
+        np.testing.assert_allclose(src1(0.0, x), -Q[1, 0] * (v1 - v0) * np.ones(N))
+
+    def test_fp_source_sign_unchanged(self):
+        iterator, problems, Q = self._iterator()
+        Nt, N = problems[0].Nt, 5
+        x = np.linspace(0.0, 1.0, N)
+        m0, m1 = 0.7, 0.3
+        Ms = [m0 * np.ones((Nt + 1, N)), m1 * np.ones((Nt + 1, N))]
+
+        src0 = iterator._make_fp_source(0, 2, Q, Ms)
+        np.testing.assert_allclose(src0(0.0, x), (Q[1, 0] * m1 - Q[0, 1] * m0) * np.ones(N))
