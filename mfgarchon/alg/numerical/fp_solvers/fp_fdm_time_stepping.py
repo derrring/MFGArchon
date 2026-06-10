@@ -142,15 +142,28 @@ def _is_dirichlet_at_point(
     multi_idx: tuple[int, ...],
     shape: tuple[int, ...],
 ) -> bool:
-    """Check if boundary conditions specify Dirichlet at this point."""
+    """Check if boundary conditions specify Dirichlet at this point.
+
+    Issue #1258 fix (2026-06-10 audit): prior code returned True for ANY Dirichlet
+    segment in a mixed BC without checking which wall the point is on, causing every
+    boundary point to be treated as Dirichlet regardless of its actual wall type.
+    Fix: determine the wall(s) the grid point lies on from multi_idx/shape, then
+    query get_bc_type_at_boundary per wall using the BCSegment.boundary matching API.
+    """
     try:
         if boundary_conditions.is_uniform:
             return boundary_conditions.type == "dirichlet"
-        # Mixed BC: check per-segment
-        for seg in boundary_conditions.segments:
-            if seg.bc_type.value == "dirichlet":
-                # Check if this point matches the segment's boundary
-                return True
+        # Mixed BC: determine which wall(s) this grid point is on, then query per wall.
+        _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
+        ndim = len(shape)
+        for d in range(ndim):
+            name = _AXIS_NAMES.get(d, f"axis{d}")
+            if multi_idx[d] == 0:
+                if boundary_conditions.get_bc_type_at_boundary(f"{name}_min").value == "dirichlet":
+                    return True
+            if multi_idx[d] == shape[d] - 1:
+                if boundary_conditions.get_bc_type_at_boundary(f"{name}_max").value == "dirichlet":
+                    return True
     except (AttributeError, ValueError):
         pass
     return False
@@ -161,15 +174,30 @@ def _get_dirichlet_value_at_point(
     multi_idx: tuple[int, ...],
     shape: tuple[int, ...],
 ) -> float:
-    """Get Dirichlet BC value at a boundary point."""
+    """Get Dirichlet BC value at a boundary point.
+
+    Issue #1258 fix (2026-06-10 audit): for mixed BC, resolve the value from the
+    specific Dirichlet wall the grid point is on via get_bc_value_at_boundary, not
+    from the first Dirichlet segment regardless of wall (which would give wrong values
+    when multiple Dirichlet walls exist with different values).
+    """
     try:
         if boundary_conditions.is_uniform:
             seg = boundary_conditions.segments[0]
             return float(seg.value) if not callable(seg.value) else 0.0
-        # Mixed BC: find matching Dirichlet segment
-        for seg in boundary_conditions.segments:
-            if seg.bc_type.value == "dirichlet":
-                return float(seg.value) if not callable(seg.value) else 0.0
+        # Mixed BC: find the Dirichlet wall this grid point is on, return its value.
+        _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
+        ndim = len(shape)
+        for d in range(ndim):
+            name = _AXIS_NAMES.get(d, f"axis{d}")
+            if multi_idx[d] == 0:
+                wall = f"{name}_min"
+                if boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
+                    return float(boundary_conditions.get_bc_value_at_boundary(wall))
+            if multi_idx[d] == shape[d] - 1:
+                wall = f"{name}_max"
+                if boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
+                    return float(boundary_conditions.get_bc_value_at_boundary(wall))
     except (AttributeError, ValueError, IndexError):
         pass
     return 0.0
@@ -1195,11 +1223,22 @@ def solve_timestep_full_nd(
     # Right-hand side
     b_rhs = m_flat / dt
 
-    # Enforce Dirichlet RHS at boundary points (Issue #859)
-    if _get_bc_type(boundary_conditions) == "dirichlet":
+    # Enforce Dirichlet RHS at boundary points (Issue #859, extended for mixed BC #1258).
+    # Issue #1258 fix (2026-06-10 audit): _get_bc_type returns None for mixed BC, so the
+    # prior check `== "dirichlet"` never fired, leaving b_rhs[boundary] = m_current/dt and
+    # solving m_next[boundary] = m_current[boundary] (frozen at IC) instead of the prescribed
+    # Dirichlet value.  Now detect mixed BC with any Dirichlet segment and apply per point.
+    bc_type_str = _get_bc_type(boundary_conditions)
+    _has_dirichlet = bc_type_str == "dirichlet" or (
+        bc_type_str is None
+        and any(seg.bc_type.value == "dirichlet" for seg in getattr(boundary_conditions, "segments", []))
+    )
+    if _has_dirichlet:
         for idx in range(N_total):
             multi_idx = np.unravel_index(idx, shape)
-            if is_boundary_point(multi_idx, shape, ndim):
+            if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(
+                boundary_conditions, multi_idx, shape
+            ):
                 bc_value = _get_dirichlet_value_at_point(boundary_conditions, multi_idx, shape)
                 b_rhs[idx] = bc_value / dt
 
