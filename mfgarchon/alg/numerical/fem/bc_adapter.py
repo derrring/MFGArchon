@@ -94,6 +94,18 @@ def apply_bc_to_fem_system(
                 "path (needs DOF identification across paired boundaries; see Issue #1237)."
             )
 
+        else:
+            # Issue #1260: EXTRAPOLATION_LINEAR / EXTRAPOLATION_QUADRATIC (and any future BCType
+            # added without a matching branch) must fail loud rather than silently degrade to
+            # natural (Neumann) BC — the same design intent as Robin/Periodic above (#1241).
+            # 2026-06-10 audit.
+            raise NotImplementedError(
+                f"BC type '{segment.bc_type.value}' on segment '{segment.name}' is not implemented "
+                "for the FEM solver path. EXTRAPOLATION_LINEAR/QUADRATIC are ghost-cell FDM concepts "
+                "with no direct FEM counterpart. Use a Dirichlet or Neumann/no-flux BC for FEM, "
+                "or use an FDM/GFDM solver for extrapolation boundaries (Issue #1260)."
+            )
+
     if dirichlet_dofs:
         # Condense: eliminate Dirichlet DOFs from system
         dof_array = np.array(dirichlet_dofs, dtype=int)
