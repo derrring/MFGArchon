@@ -429,26 +429,61 @@ class FPParticleSolver(BaseFPSolver):
         """
         Compute the spatial gradient of the value function for the FP drift, BC-aware.
 
-        Routes through ``geometry.get_gradient_operator(scheme="central")`` — the SAME BC-aware
-        operator the HJB uses — so non-periodic boundaries get ghost-padded / one-sided stencils.
-        Previously this used the periodic-wrap ``gradient_nd``, which at a non-periodic wall takes
-        ``(U[1] - U[N-1])/(2h)`` (wrapping to the far wall) → an O(1/h) **wrong-sign** drift that
-        pushes mass away from the wall (silent-divergence bug-hunt). Periodic BC reproduces the
-        wrap (results unchanged); the precomputed-drift path (``drift_is_precomputed=True``, e.g.
-        the GFDM→particle handoff) bypasses this gradient entirely.
+        For TensorProductGrid geometries, routes through
+        ``geometry.get_gradient_operator(scheme="central", bc=<solver-BCs>)`` — the SAME
+        BC-aware operator the HJB uses — so non-periodic boundaries get ghost-padded /
+        one-sided stencils.  The solver's own ``self.boundary_conditions`` (priority-1 BC
+        source) is threaded into the operator so an override that differs from the
+        geometry's default BCs is respected.  Previously the geometry's built-in BCs were
+        always used, re-introducing the O(1/h) wall-drift error when the solver BCs
+        override differed (Issue #1255 A, 2026-06-10 audit).
 
-        The operator uses the geometry's own grid spacing and BC; ``spacings`` is retained only for
-        its length (the spatial dimension) and matches the geometry spacing at every call site.
+        For implicit geometries (Hyperrectangle, CSG torus, etc.) whose
+        ``get_gradient_operator`` does not accept ``scheme=``, fall back to the
+        periodic-wrap ``gradient_nd``.  For fully-periodic domains (torus) this
+        reproduces the pre-#1246 correct behavior.  For non-periodic implicit domains the
+        periodic wrap is the same fallback as the pre-#1246 path (particle BCs are
+        enforced separately; the grid-gradient is not wall-aware here).
+        (Issue #1255 B, 2026-06-10 audit)
+
+        Previously this used the periodic-wrap ``gradient_nd``, which at a non-periodic
+        wall takes ``(U[1] - U[N-1])/(2h)`` (wrapping to the far wall) → an O(1/h)
+        **wrong-sign** drift that pushes mass away from the wall (silent-divergence
+        bug-hunt). Periodic BC reproduces the wrap (results unchanged); the
+        precomputed-drift path (``drift_is_precomputed=True``, e.g. the GFDM→particle
+        handoff) bypasses this gradient entirely.
 
         Issue #625: migrated tensor_calculus.gradient_simple → stencils.gradient_nd.
         Bug-hunt: migrated periodic-wrap gradient_nd → BC-aware geometry operator.
+        Issue #1255 (A, B): thread solver BCs; guard implicit geometry path.
         """
+        from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+
         ndim = len(spacings)
-        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central")
         on_backend = use_backend and self.backend is not None
         # The geometry operator is numpy; round-trip through host for the backend/GPU path.
         u_host = self.backend.to_numpy(U_array) if on_backend else np.asarray(U_array)
-        grads = [grad_ops[d](u_host) for d in range(ndim)]
+
+        geom = self.problem.geometry
+        if isinstance(geom, TensorProductGrid):
+            # BC-aware path: thread the solver's resolved boundary_conditions so an
+            # override that differs from geometry's default BCs is respected.
+            # Issue #1255 (A), 2026-06-10 audit.
+            from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+
+            bc_override = self.boundary_conditions if isinstance(self.boundary_conditions, BoundaryConditions) else None
+            grad_ops = geom.get_gradient_operator(scheme="central", bc=bc_override)
+            grads = [grad_ops[d](u_host) for d in range(ndim)]
+        else:
+            # Implicit / meshfree geometry: get_gradient_operator may not accept
+            # scheme= and its placeholder raises NotImplementedError anyway.  Fall back
+            # to periodic-wrap gradient_nd — correct for torus, pre-#1246 compatible
+            # for other implicit domains.
+            # Issue #1255 (B), 2026-06-10 audit.
+            from mfgarchon.operators.stencils.finite_difference import gradient_nd
+
+            grads = gradient_nd(u_host, spacings)
+
         if on_backend:
             grads = [self.backend.from_numpy(g) for g in grads]
         return grads

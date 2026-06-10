@@ -941,7 +941,10 @@ class PreallocatedGhostBuffer:
 
         if bc.is_uniform:
             seg = bc.segments[0]
-            self._update_ghosts_uniform(seg.bc_type, seg.value, time)
+            # Issue #1255 (C), 2026-06-10 audit: pass seg.alpha/seg.beta so that
+            # uniform Robin(alpha, beta, value) is not silently treated as
+            # Robin(0, 1, value) (pure-Neumann special case).
+            self._update_ghosts_uniform(seg.bc_type, seg.value, time, seg.alpha, seg.beta)
         else:
             # Mixed BC requires more complex per-point updates
             self._update_ghosts_mixed(bc, time)
@@ -951,6 +954,8 @@ class PreallocatedGhostBuffer:
         bc_type: BCType,
         value: float | None,
         time: float,
+        alpha: float = 0.0,
+        beta: float = 1.0,
     ) -> None:
         """
         Update ghost cells for uniform BC (same type on all boundaries).
@@ -958,10 +963,17 @@ class PreallocatedGhostBuffer:
         Dispatches to appropriate reconstruction method based on self._order:
         - order <= 2: Linear reflection (simple mirror)
         - order > 2: Polynomial extrapolation (high-order schemes)
+
+        Args:
+            alpha: Robin coefficient on u  (alpha*u + beta*du/dn = value).
+                   Defaults to 0 (pure Neumann convention).  Issue #1255 (C).
+            beta:  Robin coefficient on du/dn. Defaults to 1. Issue #1255 (C).
         """
         # Dispatch based on order
         if self._order <= 2:
-            self._apply_linear_reflection(bc_type, value, time)
+            # Issue #1255 (C), 2026-06-10 audit: forward alpha/beta so the Robin
+            # branch in _apply_linear_reflection uses the full general formula.
+            self._apply_linear_reflection(bc_type, value, time, alpha, beta)
         else:
             self._apply_poly_extrapolation(bc_type, value, time)
 
@@ -970,12 +982,20 @@ class PreallocatedGhostBuffer:
         bc_type: BCType,
         value: float | None,
         time: float,
+        alpha: float = 0.0,
+        beta: float = 1.0,
     ) -> None:
         """
         Apply linear reflection for order <= 2 ghost cell reconstruction.
 
         This is the original implementation that works for FDM and simple
         Semi-Lagrangian schemes. Provides O(h^2) accuracy.
+
+        Args:
+            alpha: Robin coefficient on u  (alpha*u + beta*du/dn = value).
+                   Used only when bc_type == BCType.ROBIN. Defaults to 0.
+                   Issue #1255 (C), 2026-06-10 audit.
+            beta:  Robin coefficient on du/dn. Defaults to 1. Issue #1255 (C).
         """
         d = self._dimension
         g = self._ghost_depth
@@ -1059,41 +1079,53 @@ class PreallocatedGhostBuffer:
                         buf[tuple(hi_ghost)] += dx * v
 
         elif bc_type == BCType.ROBIN:
-            # Robin: alpha*u + beta*du/dn = g
-            # For uniform BC, we assume alpha=0, beta=1 (Neumann-like with non-zero flux)
-            # Cell-centered grids: ghost and interior are dx apart, not 2*dx.
-            # du/dn = (u_ghost - u_interior)/dx * sign, so:
-            # u_ghost = u_interior + dx*g*sign
-            # Note: For full Robin BC with arbitrary alpha/beta, use mixed BC API.
+            # Robin: alpha*u + beta*du/dn = g (cell-centered ghost formula).
+            # Issue #1255 (C), 2026-06-10 audit: use the same general formula as
+            # _apply_ghost_for_face (mixed-segment path, lines 1549-1582) instead of
+            # the prior hardcoded alpha=0/beta=1 (pure-Neumann special case).
+            #
+            # Cell-centred derivation (boundary at x_b midway between ghost x_g and
+            # interior x_i; spacing dx between cell centres):
+            #   u_b   = (u_g + u_i)/2
+            #   du/dn = (u_g - u_i)/dx * outward_sign
+            # Robin BC: alpha*(u_g+u_i)/2 + beta*(u_g-u_i)/dx*sign = g
+            # => u_g * (alpha/2 + beta*sign/dx) = g - u_i*(alpha/2 - beta*sign/dx)
             for axis in range(d):
-                # Get grid spacing for this axis
-                if self._grid_spacing is not None:
-                    dx = self._grid_spacing[axis]
-                else:
-                    dx = 1.0  # Fallback
+                dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
 
-                # Get adjacent interior values (at index g for low, -g-1 for high)
-                lo_interior = [slice(None)] * d
-                lo_interior[axis] = g  # Adjacent interior cell
-                u_lo_interior = buf[tuple(lo_interior)]
+                # Precompute per-wall (min/max) coefficients.
+                # Low wall: outward_sign = -1
+                coeff_ghost_lo = alpha / 2.0 - beta / dx
+                coeff_int_lo = alpha / 2.0 + beta / dx
+                # High wall: outward_sign = +1
+                coeff_ghost_hi = alpha / 2.0 + beta / dx
+                coeff_int_hi = alpha / 2.0 - beta / dx
 
-                hi_interior = [slice(None)] * d
-                hi_interior[axis] = -g - 1  # Adjacent interior cell
-                u_hi_interior = buf[tuple(hi_interior)]
+                # Get adjacent interior values (first/last interior cell).
+                lo_int_sl = [slice(None)] * d
+                lo_int_sl[axis] = g
+                u_lo_interior = buf[tuple(lo_int_sl)]
+
+                hi_int_sl = [slice(None)] * d
+                hi_int_sl[axis] = -g - 1
+                u_hi_interior = buf[tuple(hi_int_sl)]
 
                 for k in range(g):
-                    # Low boundary (outward normal = -1)
+                    # Low ghost (outward normal = -1)
                     lo_ghost = [slice(None)] * d
-                    lo_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    # u_ghost = u_interior + dx*g*(-1) = u_interior - dx*v
-                    buf[tuple(lo_ghost)] = u_lo_interior - dx * v
+                    lo_ghost[axis] = g - 1 - k
+                    if abs(coeff_ghost_lo) < 1e-12:
+                        buf[tuple(lo_ghost)] = u_lo_interior  # Degenerate: mirror
+                    else:
+                        buf[tuple(lo_ghost)] = (v - u_lo_interior * coeff_int_lo) / coeff_ghost_lo
 
-                for k in range(g):
-                    # High boundary (outward normal = +1)
+                    # High ghost (outward normal = +1)
                     hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
-                    # u_ghost = u_interior + dx*g*(+1) = u_interior + dx*v
-                    buf[tuple(hi_ghost)] = u_hi_interior + dx * v
+                    hi_ghost[axis] = -(g - k)
+                    if abs(coeff_ghost_hi) < 1e-12:
+                        buf[tuple(hi_ghost)] = u_hi_interior  # Degenerate: mirror
+                    else:
+                        buf[tuple(hi_ghost)] = (v - u_hi_interior * coeff_int_hi) / coeff_ghost_hi
 
     def _apply_poly_extrapolation(
         self,
