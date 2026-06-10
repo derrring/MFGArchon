@@ -31,6 +31,11 @@ pytest.importorskip("cvxpy")
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+from mfgarchon.core.hamiltonian import (
+    OptimizationSense,
+    QuadraticControlCost,
+    SeparableHamiltonian,
+)
 from mfgarchon.geometry import Hyperrectangle
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
@@ -442,6 +447,82 @@ def test_integrated_howard_requires_hamiltonian_class():
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(ValueError, match="hamiltonian_class"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+# ---------------------------------------------------------------------------
+# 7b. Integrated path: envelope gate fails loud on Hamiltonians Howard cannot
+#     model (2026-06-10 audit). Howard's policy evaluation hardcodes the
+#     unit-quadratic Lagrangian (1/2)|alpha|^2 and uses only alpha* = -dH/dp,
+#     so V(x,t), f(m), non-unit/non-quadratic control cost, and running_cost
+#     were silently dropped/mis-signed. Each must now raise NotImplementedError.
+# ---------------------------------------------------------------------------
+
+
+def _howard_gfdm_with_hamiltonian(hamiltonian_class, *, LX=4.0, Nt=20):
+    pts, bdry, geom = _make_1d_cloud(LX=LX, n_int=11)
+    problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=Nt, dimension=1)
+    problem.hamiltonian_class = hamiltonian_class
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
+    U_T = 0.5 * (pts[:, 0] - LX / 2) ** 2
+    return gfdm, U_T
+
+
+def test_integrated_howard_rejects_potential():
+    """A Hamiltonian potential V(x, t) is dropped by Howard's policy evaluation -> fail loud."""
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(lambda_=1.0),
+        potential=lambda x, t: 0.5 * float(np.sum(np.atleast_1d(x) ** 2)),
+    )
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
+    with pytest.raises(NotImplementedError, match="potential"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_coupling():
+    """A density coupling f(m) is dropped by Howard's policy evaluation -> fail loud."""
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(lambda_=1.0),
+        coupling=lambda m: m,
+    )
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
+    with pytest.raises(NotImplementedError, match="coupling"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_nonunit_control_cost():
+    """Non-unit control cost defeats the hardcoded (1/2)|alpha|^2 Lagrangian -> fail loud.
+
+    Regression for the gate reading problem.lambda_ (left at the 1.0 default here) instead of
+    the components Hamiltonian's actual control cost: the old gate passed and Howard solved the
+    wrong effective Hamiltonian; the fixed gate reads control_cost.lambda_ and raises.
+    """
+    H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=2.0))
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
+    assert gfdm.problem.lambda_ == 1.0  # the legacy gate's source is unit -> would have passed
+    with pytest.raises(NotImplementedError, match="control cost"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_maximize_sense():
+    """MAXIMIZE needs alpha* = +dH/dp; the wrapper hardcodes -dH/dp -> fail loud."""
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(lambda_=1.0, sense=OptimizationSense.MAXIMIZE),
+    )
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
+    with pytest.raises(NotImplementedError, match="MAXIMIZE"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_running_cost():
+    """running_cost enters Howard's Lagrangian slot with the wrong sign vs Newton -> fail loud."""
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(_LQHam())
+    n = U_T.shape[0]
+    with pytest.raises(NotImplementedError, match="running cost"):
+        gfdm.solve_hjb_system(
+            M_density=None,
+            U_terminal=U_T,
+            running_cost=lambda t_idx: 0.1 * np.ones(n),
+        )
 
 
 def _make_howard_gfdm_with_bc(bc, sigma=0.3, Nt=5):
