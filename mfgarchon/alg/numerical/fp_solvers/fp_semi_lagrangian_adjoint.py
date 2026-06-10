@@ -30,7 +30,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 from scipy.linalg import solve_banded
 
-from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
+    adi_diffusion_step,
+    solve_crank_nicolson_diffusion_1d,
+)
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
 )
@@ -221,6 +224,18 @@ class FPSLSolver(BaseFPSolver):
         bc_type = get_bc_type_string(self.boundary_conditions)
         return bc_type_to_geometric_operation(bc_type)
 
+    def _get_diffusion_bc_type(self) -> str:
+        """Return diffusion BC type for CN/ADI: 'periodic' or 'neumann'.
+
+        Issue #1257, 2026-06-10 audit: FP-SL diffusion sub-step must use the
+        same BC type as the advection sub-step so a periodic domain does not
+        acquire a spurious Neumann seam-flux.  Mirrors HJB-SL
+        _get_diffusion_bc_type() (hjb_semi_lagrangian.py:2238).
+        """
+        if self._get_bc_operation_type() == "periodic":
+            return "periodic"
+        return "neumann"
+
     @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
     @deprecated_parameter(param_name="diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="drift_field", since="v0.18.6", replacement="potential_field")
@@ -403,21 +418,22 @@ class FPSLSolver(BaseFPSolver):
         if self.interpolation_method != "linear":
             m_star = self._clip_nonneg(m_star)
 
-        # Step 2: Diffusion via Crank-Nicolson (Finite Volume formulation)
-        # ================================================================
-        # Issue #708: Use zero-flux (finite volume) boundary stencil for mass conservation.
-        #
-        # The standard ghost-point method (m[-1] = m[1]) is Strong Form and breaks
-        # mass conservation. The correct approach is Flux Form (finite volume):
-        #
-        # Physical interpretation:
-        #   - Boundary flux J_{-1/2} = 0 (zero-flux BC)
-        #   - Interior flux J_{i+1/2} = -D * (m[i+1] - m[i]) / dx
-        #   - dm[i]/dt = -(J_{i+1/2} - J_{i-1/2}) / dx
-        #
-        # This gives boundary stencil: L[0] = (m[1] - m[0])/dx^2
-        # The resulting matrix has column sums = 0, ensuring mass conservation.
-        #
+        # Step 2: Diffusion via Crank-Nicolson
+        # =====================================
+        # Issue #1257, 2026-06-10 audit: the diffusion BC must match the advection BC.
+        # On a periodic domain the advection step already wraps mass across the seam;
+        # pairing it with a Neumann/zero-flux diffusion sub-step produces an O(1) seam
+        # flux error every step and breaks adjoint consistency with HJB-SL (which
+        # threads _get_diffusion_bc_type into both its CN and ADI).  Use
+        # solve_crank_nicolson_diffusion_1d from hjb_sl_adi (which has both
+        # 'periodic' and 'neumann' branches) so the periodic case gets the
+        # Sherman-Morrison circulant solve instead of the zero-flux stencil.
+        diff_bc = self._get_diffusion_bc_type()
+        if diff_bc == "periodic":
+            return solve_crank_nicolson_diffusion_1d(m_star, dt, sigma, self.x_grid, bc_type="periodic")
+
+        # Neumann / zero-flux path (preserved from Issue #708: FV stencil for mass
+        # conservation; the standard ghost-point strong-form method breaks ∫m).
         D = diffusion_from_volatility(sigma)
         r = D * dt / (self.dx**2)
 
@@ -532,13 +548,19 @@ class FPSLSolver(BaseFPSolver):
 
         # Step 2: Diffusion via ADI
         # =========================
-        # Reuse the ADI diffusion from HJB-SL module
+        # Reuse the ADI diffusion from HJB-SL module.
+        # Issue #1257, 2026-06-10 audit: pass bc_type so that a periodic domain
+        # uses periodic ADI (Sherman-Morrison per axis) instead of defaulting to
+        # 'neumann', which would impose a zero-flux seam mis-matched to the
+        # periodic advection step above.  Mirrors HJB-SL _adi_diffusion_step
+        # (hjb_semi_lagrangian.py:2263).
         m_new = adi_diffusion_step(
             U_star=m_star,
             dt=dt,
             sigma=sigma,
             spacing=self.spacing,
             grid_shape=self.grid_shape,
+            bc_type=self._get_diffusion_bc_type(),
         )
 
         # Ensure non-negativity
