@@ -46,6 +46,7 @@ References
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
@@ -445,6 +446,22 @@ class HJBHowardSolver:
                 for i, (row, target) in bc_rows.items():
                     A_lil[i, :] = row
                     b[i] = target
+                # Issue #1254, 2026-06-10 audit: detect stencil-less interior points.
+                # boundary_idx = all points without an SOCP stencil.  When
+                # use_provider_bc_rows=True the provider must supply a BC row for every such
+                # point; a point absent from both socp_data and bc_rows is a geometrically
+                # interior node whose SOCP solve failed — Howard has no fallback, so its bare
+                # A[i,i]=1/dt row would silently freeze the value and pollute its neighbors.
+                uncovered = [int(i) for i in boundary_idx if i not in bc_rows]
+                if uncovered:
+                    raise RuntimeError(
+                        f"HJBHowardSolver (use_provider_bc_rows=True): "
+                        f"{len(uncovered)} point(s) in boundary_idx have no SOCP stencil "
+                        f"and no provider BC row (first few indices: {uncovered[:8]}). "
+                        "A bare A[i,i]=1/dt row would silently freeze those nodes. "
+                        "Howard has no Wendland-Taylor fallback; ensure the SOCP solve "
+                        "succeeds for all interior points (Issue #1254)."
+                    )
             else:
                 # Legacy self-contained scheme (homogeneous no-flux only).
                 for i in boundary_idx:
@@ -523,7 +540,23 @@ class HJBHowardSolver:
         elif np.isscalar(self._volatility_field_override):
             sigma = float(self._volatility_field_override)
         else:
-            sigma = float(np.asarray(self._volatility_field_override).flat[0])
+            # Issue #1254, 2026-06-10 audit: per-point/array sigma field — previously element 0
+            # was silently taken (flat[0]), giving a spatially-wrong scalar if the array has
+            # distinct per-point values.  Collapse to mean with a UserWarning, matching
+            # scalar_diffusion_from_volatility (utils/pde_coefficients.py) parity.
+            # Howard assembles one global scalar sigma; spatially-varying fields cannot be
+            # honored here.  Use an FDM/GFDM path with coefficient_field for true varying-D.
+            arr = np.asarray(self._volatility_field_override)
+            sigma = float(np.mean(arr))
+            warnings.warn(
+                "HJBHowardSolver assembles a single scalar sigma; the per-point "
+                f"volatility_field is collapsed to its mean (sigma = {sigma:.6g}, "
+                f"mean of {arr.size} values). Previously element 0 was silently used "
+                "(Issue #1254). For true varying-coefficient diffusion use an FDM/GFDM "
+                "path with coefficient_field.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         U = np.zeros((Nt + 1, n))
         U[Nt] = U_terminal.copy()

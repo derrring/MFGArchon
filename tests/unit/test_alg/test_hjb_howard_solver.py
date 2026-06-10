@@ -809,3 +809,124 @@ def test_howard_honors_resolved_robin_in_solution():
     u0 = np.asarray(U[0]).ravel()  # solved initial-time slice (terminal slice U[-1] is imposed)
     assert row_l @ u0 == pytest.approx(tgt_l, abs=1e-8), "Howard did not honor the left Robin row"
     assert row_r @ u0 == pytest.approx(tgt_r, abs=1e-8), "Howard did not honor the right Robin row"
+
+
+# ---------------------------------------------------------------------------
+# 10. Issue #1254 pinning tests (2026-06-10 audit)
+# ---------------------------------------------------------------------------
+
+
+def test_array_volatility_field_warns_and_uses_mean():
+    """(A) Issue #1254: array volatility_field must warn (UserWarning) and collapse to
+    mean, not silently take element 0.
+
+    Pinning: element 0 of the sigma array is set to 0.1 while the rest are 0.5
+    (mean ~0.471).  The fixed path must:
+    - emit a UserWarning matching "collapsed to its mean"
+    - produce a result byte-identical to scalar sigma=mean (not scalar sigma=flat[0])
+    """
+    pts, bdry, geom = _make_1d_cloud(LX=2.0, n_int=7)
+    problem = _MockProblem(geom, sigma=0.3, T=0.5, Nt=5, dimension=1)
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5)
+
+    n = len(pts)
+    U_T = 0.5 * (pts[:, 0] - 1.0) ** 2
+
+    # sigma array: element 0 deviates so flat[0] != mean.
+    sigma_arr = np.full(n, 0.5)
+    sigma_arr[0] = 0.1  # mean ≈ (0.1 + 0.5*(n-1)) / n
+
+    # The fixed path must warn.
+    with pytest.warns(UserWarning, match="collapsed to its mean"):
+        U_array = HJBHowardSolver(
+            problem,
+            stencil_provider=gfdm,
+            alpha_star=lambda x, p, m, t: -p,
+            discretisation="central",
+            volatility_field=sigma_arr,
+            max_iter=5,
+        ).solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    # Run with mean sigma (new correct behavior): no warning expected.
+    sigma_mean = float(np.mean(sigma_arr))
+    U_mean = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda x, p, m, t: -p,
+        discretisation="central",
+        volatility_field=sigma_mean,
+        max_iter=5,
+    ).solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    # Run with flat[0] sigma (the old buggy behavior).
+    sigma_flat0 = float(sigma_arr.flat[0])  # = 0.1
+    U_flat0 = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda x, p, m, t: -p,
+        discretisation="central",
+        volatility_field=sigma_flat0,
+        max_iter=5,
+    ).solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    # Confirm the two scalar runs produce distinguishably different results.
+    assert not np.allclose(U_mean, U_flat0, atol=1e-8), (
+        f"Test fixture broken: mean-sigma ({sigma_mean:.4f}) and flat[0]-sigma "
+        f"({sigma_flat0:.4f}) solutions are indistinguishable — cannot pin (A)."
+    )
+    # The array-volatility path must match the mean run, not the flat[0] run.
+    assert np.allclose(U_array, U_mean, atol=1e-10), (
+        "Array volatility_field: result should match mean-sigma scalar run but matches "
+        "flat[0]-sigma run instead — bug (A) Issue #1254 not fixed."
+    )
+
+
+def test_stencil_less_interior_with_provider_bc_rows_raises():
+    """(B) Issue #1254: when use_provider_bc_rows=True, a point in boundary_idx that is
+    not covered by bc_rows must raise RuntimeError (stencil-less interior guard).
+
+    Injects a phantom interior node (valid SOCP stencil) into boundary_idx to simulate
+    the SOCP-solve-failure scenario, then asserts the guard fires rather than silently
+    returning a frozen row.
+    """
+    pts, bdry, geom = _make_1d_cloud(LX=2.0, n_int=9)
+    problem = _MockProblem(geom, sigma=0.3, T=0.5, Nt=5, dimension=1)
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5)
+
+    n = len(pts)
+    U_T = 0.5 * (pts[:, 0] - 1.0) ** 2
+    dt = float(problem.T) / int(problem.Nt)
+
+    howard = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda x, p, m, t: -p,
+        discretisation="central",
+        use_provider_bc_rows=True,
+        max_iter=3,
+    )
+
+    # Force static build so we can inspect and modify it.
+    howard._static = howard._build_static()
+    static = howard._static
+
+    # Pick any interior node (has SOCP stencil, NOT in boundary_idx) to inject as phantom.
+    boundary_set = {int(i) for i in static["boundary_idx"]}
+    interior_nodes = [i for i in static["socp_data"] if i not in boundary_set]
+    assert len(interior_nodes) > 0, "Test fixture broken: no interior nodes with SOCP stencils"
+    phantom = interior_nodes[0]
+
+    # Inject phantom into boundary_idx to simulate stencil-less interior point.
+    static["boundary_idx"] = np.append(static["boundary_idx"], phantom)
+
+    # _howard_step must raise because phantom is in boundary_idx but not in bc_rows.
+    with pytest.raises(RuntimeError, match="no SOCP stencil and no provider BC row"):
+        howard._howard_step(
+            u_next=U_T.copy(),
+            m_n=np.zeros(n),
+            t_idx=0,
+            sigma=0.3,
+            dt=dt,
+            static=static,
+            alpha_init=None,
+        )
