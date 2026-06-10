@@ -27,7 +27,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc, robin_bc
 
 
 def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5):
@@ -75,6 +75,54 @@ class TestFPProductionConservation:
         # an M-matrix implicit step keeps a positive initial density positive
         M, _ = _zero_drift_density_evolution(periodic_bc(dimension=1))
         assert np.all(M[-1] > -1e-12), "production FP step produced a negative density"
+
+
+class TestNeumannBCImplicitFP:
+    """Issue #1250 pinning tests: uniform 'neumann' BC must conserve mass in implicit FDM.
+
+    Before the fix, neumann was routed to the interior handler (is_no_flux=False,
+    is_uniform=True → neither branch of the dispatch), producing a ghost-zero absorbing
+    wall row (+D/dx² diagonal, missing coupling → mass drains 3-7% / 5 steps).
+    After the fix, neumann routes to the same no-flux boundary handler as no_flux.
+    """
+
+    def test_mass_conserved_neumann_zero_value_zero_drift(self):
+        """neumann_bc(0) implicit step must conserve total mass to ~1e-10.
+
+        This is the primary pinning test for Issue #1250.  On the buggy code the
+        boundary rows are assembled as absorbing sinks and mass falls ~3% over 5 steps.
+        """
+        M, dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
+        mass = M.sum(axis=1) * dx
+        relerr = abs(mass[-1] - mass[0]) / mass[0]
+        assert relerr < 1e-10, (
+            f"neumann zero-drift mass not conserved (Issue #1250): relerr {relerr:.2e} "
+            f"(expected <1e-10; >3e-3 indicates the absorbing-wall bug is active)"
+        )
+
+    def test_neumann_matches_no_flux_implicit(self):
+        """neumann_bc(0) and no_flux_bc must produce byte-identical mass histories.
+
+        Both are homogeneous-Neumann; the operator paths already treat them identically
+        (laplacian.py:307, advection.py:316).  After the fix the implicit assembly must
+        as well.
+        """
+        M_nf, _dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
+        M_ne, _ = _zero_drift_density_evolution(neumann_bc(dimension=1))
+        max_diff = np.max(np.abs(M_nf - M_ne))
+        assert max_diff < 1e-14, (
+            f"neumann and no_flux produce different density histories (Issue #1250): "
+            f"max|diff|={max_diff:.2e} (should be 0 to floating-point)"
+        )
+
+    def test_robin_bc_fails_loud_implicit(self):
+        """Uniform 'robin' BC must raise NotImplementedError (not silently absorb mass).
+
+        Issue #1250: until a correct Robin stencil is implemented, failing loud is
+        correct (fail-fast doctrine); silently assembling an absorbing wall is not.
+        """
+        with pytest.raises(NotImplementedError, match="robin"):
+            _zero_drift_density_evolution(robin_bc(dimension=1))
 
 
 class TestConservativeAdvection:
