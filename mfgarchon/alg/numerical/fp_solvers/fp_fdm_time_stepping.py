@@ -996,9 +996,14 @@ def solve_timestep_tensor_explicit(
     else:
         raise TypeError(f"tensor_field must be np.ndarray or callable, got {type(tensor_field)}")
 
-    # Compute tensor diffusion term: div(Sigma * grad(m))
-    # Issue #625: Migrated from tensor_calculus to operators/differential
-    diffusion_term = apply_diffusion(M_current, Sigma, list(spacing), bc=boundary_conditions)
+    # Compute tensor diffusion term: div(D * grad(m)).
+    # Sigma is the SDE volatility; the diffusion operator needs the PDE diffusion tensor
+    # D = (1/2) Sigma Sigma^T (NAMING_CONVENTIONS "Volatility vs Diffusion", #811). The raw
+    # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
+    # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
+    # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
+    D_tensor = diffusion_from_volatility(Sigma, kind="tensor")
+    diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions)
 
     # Compute advection term: div(alpha * m)
     # Use upwind scheme from fp_fdm_advection module
