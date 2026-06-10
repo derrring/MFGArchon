@@ -2309,8 +2309,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         if not self.check_dmp or self._dmp_warned or self.monotonicity_scheme != "joint_socp":
             return
+        # Issue #1253 2026-06-10 audit: _D_grad/_D_lap are built lazily and are
+        # None on the joint_socp per-point Newton path (_compute_hjb_jacobian_sparse
+        # never calls _build_differentiation_matrices). Build them here so the guard
+        # actually runs on the real solve path, not just when the vectorized Jacobian
+        # path happened to pre-build them as a side effect.
         if self._D_grad is None or self._D_lap is None:
-            return
+            self._build_differentiation_matrices()
         if self._dmp_alpha_crit is None:
             from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import critical_drift_for_dmp
 
