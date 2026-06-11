@@ -203,17 +203,31 @@ class NumbaBackend(BaseBackend):
 
         @jit(**jit_options)
         def fpk_step_kernel(M, U, dt, dx, sigma):
+            # Issue #1282: pre-fix kernel reused U_x[i] for flux at i-1 and
+            # i+1, silently dropping the m*U_xx term.  Correct form builds
+            # F[j] = M[j] * (-U_x[j]) for all j first, then takes the
+            # central divergence (F[i+1] - F[i-1]) / (2*dx) — identical to
+            # the numpy/jax siblings.
             nx = M.shape[0]
             M_new = np.copy(M)
 
-            for i in range(1, nx - 1):
-                # Compute drift from optimal control
-                U_x = (U[i + 1] - U[i - 1]) / (2.0 * dx)
+            # Pass 1: build conservative flux F[j] = M[j] * a*(j)
+            # where a*(j) = -U_x[j] (quadratic cost).
+            # One-sided FD at boundaries; central FD in the interior.
+            flux = np.zeros(nx)
+            # boundary j=0
+            flux[0] = M[0] * (-(U[1] - U[0]) / dx)
+            # interior
+            for j in range(1, nx - 1):
+                U_x_j = (U[j + 1] - U[j - 1]) / (2.0 * dx)
+                flux[j] = M[j] * (-U_x_j)
+            # boundary j=nx-1
+            flux[nx - 1] = M[nx - 1] * (-(U[nx - 1] - U[nx - 2]) / dx)
 
-                # Flux computation
-                flux_left = M[i - 1] * (-U_x) if i > 0 else 0.0
-                flux_right = M[i + 1] * (-U_x) if i < nx - 1 else 0.0
-                flux_div = (flux_right - flux_left) / (2.0 * dx)
+            # Pass 2: central divergence and diffusion
+            for i in range(1, nx - 1):
+                # Conservative flux divergence (F[i+1] - F[i-1]) / (2*dx)
+                flux_div = (flux[i + 1] - flux[i - 1]) / (2.0 * dx)
 
                 # Diffusion term
                 M_xx = (M[i + 1] - 2.0 * M[i] + M[i - 1]) / (dx * dx)
