@@ -215,8 +215,19 @@ class MFGPINNSolver(PINNBase):
         """
         return {"u": self.forward_u(t, x), "m": self.forward_m(t, x)}
 
-    def compute_derivatives_u(self, t: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute derivatives of u(t,x)."""
+    def compute_derivatives_u(
+        self, t: torch.Tensor, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute derivatives of u(t,x).
+
+        Returns:
+            Tuple of (du/dt, du/dx, d^2u/dx^2).
+
+        Note:
+            Issue #1281 fix (2026-06-11 survey): u_xx added so compute_pde_residual
+            can include the -(sigma^2/2)*u_xx viscous term in the HJB residual.
+        """
         t_input = t.clone().detach().requires_grad_(True)
         x_input = x.clone().detach().requires_grad_(True)
 
@@ -230,7 +241,12 @@ class MFGPINNSolver(PINNBase):
             outputs=u, inputs=x_input, grad_outputs=torch.ones_like(u), create_graph=True, retain_graph=True
         )[0]
 
-        return u_t, u_x
+        # Second spatial derivative (for viscous term in HJB)
+        u_xx = torch.autograd.grad(
+            outputs=u_x, inputs=x_input, grad_outputs=torch.ones_like(u_x), create_graph=True, retain_graph=True
+        )[0]
+
+        return u_t, u_x, u_xx
 
     def compute_derivatives_m(
         self, t: torch.Tensor, x: torch.Tensor
@@ -270,15 +286,19 @@ class MFGPINNSolver(PINNBase):
         u = self.forward_u(t, x)
         m = self.forward_m(t, x)
 
-        # Compute derivatives
-        u_t, u_x = self.compute_derivatives_u(t, x)
+        # Compute derivatives (u_t, u_x, u_xx)
+        u_t, u_x, u_xx = self.compute_derivatives_u(t, x)
         m_t, m_x, m_xx = self.compute_derivatives_m(t, x)
 
         # Compute Hamiltonian
         H = self.compute_hamiltonian(u_x, x, m)
 
-        # HJB residual: ∂u/∂t + H(∇u, x, m) = 0
-        hjb_residual = u_t + H
+        # Viscous term: (sigma^2/2)*u_xx — Issue #1281 fix (2026-06-11 survey)
+        # Convention mirrors FP: fp_residual subtracts (sigma^2/2)*m_xx.
+        viscous_term = (self.sigma**2 / 2) * u_xx
+
+        # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
+        hjb_residual = u_t + H - viscous_term
 
         # For FP equation, we need the drift: b = -∇H_p = -∇u (for quadratic H)
         drift = -u_x
@@ -336,7 +356,7 @@ class MFGPINNSolver(PINNBase):
         # Example: Ensure consistency of optimal control
         _u = self.forward_u(t, x)
         _m = self.forward_m(t, x)
-        _, u_x = self.compute_derivatives_u(t, x)
+        _, u_x, _u_xx = self.compute_derivatives_u(t, x)
 
         # Optimal control should be α* = -∇u
         _optimal_control = -u_x
@@ -371,15 +391,15 @@ class MFGPINNSolver(PINNBase):
     def compute_boundary_loss(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """Compute boundary conditions for both u and m."""
         # HJB boundary condition: typically Neumann (∂u/∂x = 0)
-        _, u_x = self.compute_derivatives_u(t, x)
+        _, u_x, _u_xx = self.compute_derivatives_u(t, x)
         u_boundary_loss = torch.mean(u_x**2)
 
         # FP boundary condition: no-flux
         m = self.forward_m(t, x)
         _, m_x, _ = self.compute_derivatives_m(t, x)
-        _, u_x_boundary = self.compute_derivatives_u(t, x)
+        _, u_x_boundary, _u_xx_boundary = self.compute_derivatives_u(t, x)
 
-        # No-flux: m*(-u_x) + (σ²/2)*∂m/∂x = 0
+        # No-flux: m*(-u_x) + (sigma^2/2)*dm/dx = 0
         flux = m * (-u_x_boundary) + (self.sigma**2 / 2) * m_x
         m_boundary_loss = torch.mean(flux**2)
 
@@ -677,17 +697,19 @@ class MFGPINNSolver(PINNBase):
             torch.rand(n_test, 1, device=self.device, dtype=self.dtype) * (bounds[1][0] - bounds[0][0]) + bounds[0][0]
         )
 
+        # Issue #1281 fix (2026-06-11 survey): compute_pde_residual calls
+        # torch.autograd.grad internally; wrapping it in no_grad raises
+        # RuntimeError. Pull it outside no_grad; scalar .item() reads are safe.
+        pde_residuals = self.compute_pde_residual(t_test, x_test)
+        metrics["hjb_residual_mean"] = torch.mean(torch.abs(pde_residuals["hjb"])).item()
+        metrics["fp_residual_mean"] = torch.mean(torch.abs(pde_residuals["fp"])).item()
+
+        # Mass conservation also uses no_grad-compatible ops only.
+        mass_loss = self.compute_mass_conservation_loss(t_test, x_test)
+        metrics["mass_conservation_error"] = mass_loss.item()
+
+        # no_grad is safe for plain forward passes (no autograd.grad calls).
         with torch.no_grad():
-            # PDE residuals
-            pde_residuals = self.compute_pde_residual(t_test, x_test)
-            metrics["hjb_residual_mean"] = torch.mean(torch.abs(pde_residuals["hjb"])).item()
-            metrics["fp_residual_mean"] = torch.mean(torch.abs(pde_residuals["fp"])).item()
-
-            # Mass conservation
-            mass_loss = self.compute_mass_conservation_loss(t_test, x_test)
-            metrics["mass_conservation_error"] = mass_loss.item()
-
-            # Solution statistics
             u_values = self.forward_u(t_test, x_test)
             m_values = self.forward_m(t_test, x_test)
 
