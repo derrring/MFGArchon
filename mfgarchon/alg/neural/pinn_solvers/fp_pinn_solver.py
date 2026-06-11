@@ -102,19 +102,22 @@ class FPPINNSolver(PINNBase):
 
     def _initialize_networks(self) -> None:
         """Initialize neural network for density function m(t,x)."""
-        # Create network for density function m(t,x)
-        self.networks = create_mfg_networks(
-            architecture_type="standard",
-            separate_networks=False,  # Only need m_net for FP
+        # Issue #1314 (Refs #1290): prior code used architecture_type/separate_networks
+        # which are not parameters of create_mfg_networks (the function takes network_type
+        # and returns a single nn.Module, not a dict).  Build the {"m_net": ...} dict
+        # explicitly — FP needs m_net, not u_net.
+        m_net = create_mfg_networks(
+            network_type="feedforward",
             hidden_layers=self.config.hidden_layers,
-            activation=self.config.activation,
+            activation=self.config.activation
+            if self.config.activation in ("tanh", "relu", "sigmoid", "elu")
+            else "tanh",
             input_dim=2,  # (t, x)
             output_dim=1,  # scalar density function
+            problem_type="fp",
         )
-
-        # Rename to m_net for clarity
-        self.m_net = self.networks["u_net"]  # Using u_net structure for m
-        self.networks["m_net"] = self.networks.pop("u_net")
+        self.networks = {"m_net": m_net}
+        self.m_net = self.networks["m_net"]
 
     def get_value_function_gradient(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
