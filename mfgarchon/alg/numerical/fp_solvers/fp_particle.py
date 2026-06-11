@@ -117,10 +117,11 @@ class FPParticleSolver(BaseFPSolver):
 
     # Issue #1043: the default body is VALUE_FUNCTION — it takes the value function U via
     # `drift_field` and computes alpha = -coupling * grad(U) (see _solve_fp_system_cpu_1d/_nd).
-    # The 1D path is always VALUE_FUNCTION; `drift_is_precomputed=True` flips ONLY the nD path to
-    # VELOCITY (interpolate a precomputed alpha). The class trait records the default; the
-    # per-call exception lives in the drift_is_precomputed parameter. Previously this inherited
-    # the base VELOCITY default, which mislabeled the solver.
+    # The nD path honours `drift_is_precomputed=True` (VELOCITY mode: interpolate precomputed α).
+    # The 1D CPU/GPU paths do NOT honour it and raise NotImplementedError if it is set (Issue
+    # #1256 2026-06-10 audit).  The class trait records the default; the per-call exception lives
+    # in the drift_is_precomputed parameter.  Previously this inherited the base VELOCITY default,
+    # which mislabeled the solver.
     _drift_convention = DriftConvention.VALUE_FUNCTION
 
     @deprecated_parameter(param_name="mode", since="v0.17.0", replacement="density_mode")
@@ -1406,6 +1407,19 @@ class FPParticleSolver(BaseFPSolver):
 
             # Route based on dimension
             if dimension == 1:
+                # Issue #1256 2026-06-10 audit: the 1D CPU/GPU paths never read
+                # self._drift_is_precomputed — they always differentiate drift_field
+                # as the value function U.  Fail loud instead of silently wrong drift.
+                if self._drift_is_precomputed:
+                    raise NotImplementedError(
+                        "drift_is_precomputed=True is not supported for dimension=1. "
+                        "The 1D CPU/GPU paths always differentiate drift_field as the "
+                        "value function U; a precomputed velocity array would be "
+                        "silently differentiated producing wrong drift. "
+                        "For precomputed drift with 1D problems use a callable: "
+                        "drift_field=lambda t, x, m: alpha_array[t_index] (callable-drift "
+                        "path). Refs #1256."
+                    )
                 # 1D: Use existing optimized solvers with strategy selection
                 self.current_strategy = self.strategy_selector.select_strategy(
                     backend=self.backend if (self.backend is not None and self.backend.name != "numpy") else None,
@@ -1988,6 +2002,41 @@ class FPParticleSolver(BaseFPSolver):
         # For SDE: dX = drift*dt + σ*dW (volatility_field = σ)
         volatility_is_callable = callable(volatility_field)
         volatility_is_array = isinstance(volatility_field, np.ndarray)
+
+        # Issue #1256 2026-06-10 audit: reject array volatility_field shapes that are
+        # not valid spatial scalar fields.  The increment generator takes a scalar σ per
+        # particle; _interpolate_field_at_particles→interpolate_grid_to_particles has no
+        # shape-vs-grid validation and silently treats a (d,d) matrix as a d×d "grid",
+        # bilinearly smearing the four matrix entries as per-particle σ — silent garbage.
+        # A (d,) per-axis array fails later with a cryptic broadcast error.
+        if volatility_is_array:
+            vf_shape = volatility_field.shape
+            # Check for anisotropic noise matrix: (d,d) or (*grid_shape, d, d)
+            if vf_shape == (dimension, dimension) or (len(vf_shape) >= 3 and vf_shape[-2:] == (dimension, dimension)):
+                raise ValueError(
+                    f"volatility_field has shape {vf_shape}, which looks like an anisotropic "
+                    f"noise matrix Σ (dimension={dimension}). Anisotropic Σ is not supported "
+                    "in the particle path — the increment generator accepts scalar σ only. "
+                    "Pass a scalar float for constant isotropic volatility, a spatial array "
+                    f"of shape matching the grid {grid_shape} for spatially varying isotropic "
+                    "volatility, or a Callable sigma(t,x,m)->float."
+                )
+            # Reject (d,) per-axis array — ambiguous and unsupported
+            if vf_shape == (dimension,):
+                raise ValueError(
+                    f"volatility_field has shape {vf_shape}, which is ambiguous: it matches "
+                    f"neither a scalar σ nor the spatial grid shape {grid_shape}. "
+                    "Pass a scalar float for constant isotropic volatility, a spatial array "
+                    f"of shape {grid_shape} for spatially varying volatility, or a "
+                    "Callable sigma(t,x,m)->float."
+                )
+            # Require exact match with grid shape for spatial scalar fields
+            if vf_shape != grid_shape:
+                raise ValueError(
+                    f"volatility_field has shape {vf_shape} but the spatial grid shape is "
+                    f"{grid_shape}. For a spatially varying isotropic σ field, the array "
+                    "must match the grid shape exactly."
+                )
 
         if volatility_field is None:
             base_sigma = self.problem.sigma
