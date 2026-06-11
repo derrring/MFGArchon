@@ -97,17 +97,20 @@ class HJBPINNSolver(PINNBase):
 
     def _initialize_networks(self) -> None:
         """Initialize neural network for value function u(t,x)."""
-        # Create network for value function u(t,x)
-        self.networks = create_mfg_networks(
-            architecture_type="standard",
-            separate_networks=False,  # Only need u_net for HJB
+        # Issue #1290: prior code used architecture_type/separate_networks which
+        # are not parameters of create_mfg_networks (the function takes network_type
+        # and returns a single nn.Module, not a dict).  Build the dict explicitly.
+        u_net = create_mfg_networks(
+            network_type="feedforward",
             hidden_layers=self.config.hidden_layers,
-            activation=self.config.activation,
+            activation=self.config.activation
+            if self.config.activation in ("tanh", "relu", "sigmoid", "elu")
+            else "tanh",
             input_dim=2,  # (t, x)
             output_dim=1,  # scalar value function
+            problem_type="hjb",
         )
-
-        # Only keep the u_net
+        self.networks = {"u_net": u_net}
         self.u_net = self.networks["u_net"]
 
     def default_hamiltonian(self, u_x: torch.Tensor, x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:

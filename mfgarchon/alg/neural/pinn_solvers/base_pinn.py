@@ -232,10 +232,16 @@ class PINNBase(BaseNeuralSolver, ABC):
         if not TORCH_AVAILABLE:
             raise ImportError("PyTorch is required for PINN functionality. Install with: pip install torch torchvision")
 
-        # Initialize base solver
-        super().__init__(problem)
+        # Issue #1290: resolve config before super().__init__ so that
+        # BaseMFGSolver.__init__(problem, config) receives the config argument.
+        # Prior code called super().__init__(problem), omitting config entirely,
+        # which caused TypeError because BaseMFGSolver requires both positional args.
+        _pinn_config = config or PINNConfig()
 
-        self.config = config or PINNConfig()
+        # Initialize base solver — passes both required positional args
+        super().__init__(problem, _pinn_config)
+
+        self.config = _pinn_config
 
         # Set up computational device
         self.device = self._setup_device()
@@ -372,6 +378,47 @@ class PINNBase(BaseNeuralSolver, ABC):
                     raise ValueError(f"Unknown scheduler type: {self.config.scheduler_type}")
 
                 self.schedulers[name] = scheduler
+
+    # ------------------------------------------------------------------
+    # BaseNeuralSolver / BaseMFGSolver abstract method implementations
+    # Issue #1290: PINNBase left these unimplemented, making every
+    # PINNBase subclass abstract and non-instantiable.
+    # ------------------------------------------------------------------
+
+    def build_networks(self) -> None:
+        """
+        Implement BaseNeuralSolver interface; delegates to _initialize_networks.
+
+        PINNBase uses _initialize_networks() as its primary network-setup hook
+        (called during __init__).  This method exists for BaseNeuralSolver
+        compatibility; calling it re-initialises all networks.
+        """
+        self._initialize_networks()
+
+    def compute_loss(self, *args: Any, **kwargs: Any) -> dict[str, float]:
+        """
+        Implement BaseNeuralSolver interface; delegates to compute_total_loss.
+
+        Accepts the same positional and keyword arguments as compute_total_loss
+        and converts the torch.Tensor values to Python floats so the return
+        type matches the BaseNeuralSolver contract (dict[str, float]).
+
+        For full tensor results (needed during training), call
+        compute_total_loss() directly.
+        """
+        tensor_losses = self.compute_total_loss(*args, **kwargs)
+        return {k: float(v) for k, v in tensor_losses.items()}
+
+    def validate_solution(self) -> dict[str, float]:
+        """
+        Implement BaseMFGSolver interface; delegates to evaluate_convergence.
+
+        Returns PDE residual and loss metrics computed on a fresh sample of
+        test points drawn from the domain.
+        """
+        return self.evaluate_convergence()
+
+    # ------------------------------------------------------------------
 
     @abstractmethod
     def compute_pde_residual(self, t: torch.Tensor, x: torch.Tensor) -> dict[str, torch.Tensor]:
