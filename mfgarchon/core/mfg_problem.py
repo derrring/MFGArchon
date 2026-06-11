@@ -2647,11 +2647,19 @@ See: docs/migration/HAMILTONIAN_API.md"""
         # ─────────────────────────────────────────────────────────────────────
         # Create fixed-point iterator with selected/validated solvers
         # ─────────────────────────────────────────────────────────────────────
+        # Issue #1248: forward problem.volatility_field so both the HJB and FP
+        # solvers receive the full SDE volatility (array or callable). Without
+        # this, FixedPointIterator.volatility_field defaults to None, causing
+        # HJB to use problem.sigma (the mean-scalar placeholder) and silently
+        # solve a different PDE than the user specified. FP-FDM was fixed
+        # separately in PR #1277 to fall back to problem.volatility_field when
+        # None is passed, but HJB and other solvers still use problem.sigma.
         solver = FixedPointIterator(
             problem=self,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             config=config,
+            volatility_field=self.volatility_field,
         )
 
         return solver.solve(verbose=verbose)

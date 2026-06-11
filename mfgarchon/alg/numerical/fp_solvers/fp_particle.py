@@ -1404,9 +1404,38 @@ class FPParticleSolver(BaseFPSolver):
                     show_progress=show_progress,
                 )
             else:
-                # Already routed to callable drift above if drift is callable
-                # This handles array drift + varying volatility
-                effective_sigma = self.problem.sigma  # Fallback, actual handled in solver
+                # Issue #1248: ndarray drift + array/callable volatility_field.
+                # Previously fell back to self.problem.sigma (the mean-scalar
+                # placeholder), silently ignoring the supplied volatility.
+                # The ndarray-drift CPU/GPU paths consume sigma as a scalar
+                # (patched onto self.problem.sigma via the block below); collapse
+                # the array to its mean.  For a callable we cannot reduce to a
+                # scalar without evaluation — raise rather than silently drop.
+                if isinstance(volatility_field, np.ndarray):
+                    import warnings
+
+                    warnings.warn(
+                        "FPParticleSolver: ndarray volatility_field with ndarray drift_field "
+                        "is collapsed to mean(volatility_field) for the grid-drift particle "
+                        "path. For true spatially-varying volatility use a callable "
+                        "drift_field so the callable-drift path (which reads sigma "
+                        "per-particle) is used instead. Refs #1248.",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    effective_sigma = float(np.mean(volatility_field))
+                else:
+                    # callable volatility_field with ndarray drift_field: no scalar
+                    # reduction is possible without evaluating the callable.
+                    raise NotImplementedError(
+                        "FPParticleSolver does not support callable volatility_field "
+                        "combined with ndarray drift_field. The grid-drift particle "
+                        "path requires a scalar sigma; a callable cannot be collapsed "
+                        "to a scalar without domain knowledge. Pass a callable "
+                        "drift_field so both fields are evaluated per-particle on the "
+                        "callable-drift path, or replace the callable volatility with "
+                        "a scalar or spatial array (mean will be used). Refs #1248."
+                    )
         else:
             raise TypeError(
                 f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
