@@ -624,6 +624,15 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._dmp_alpha_crit: float | None = None
         self._dmp_warned = False
 
+        # Issue #1316: per-solve volatility_field override. None by default (explicit
+        # init for object-shape stability — see CLAUDE.md). When solve_hjb_system is
+        # called with volatility_field != None, this holds the spatial diffusion the
+        # coupling layer / FP solver is using; _get_sigma_value reads it INSTEAD of
+        # problem.sigma so HJB and FP stay convention-consistent. None -> byte-identical
+        # legacy path (problem.sigma). Set BEFORE the LLF block: _compute_llf_sigma_eff()
+        # below calls _get_sigma_value(None), which now reads this attribute.
+        self._volatility_field_override: float | np.ndarray | Callable | None = None
+
         # LLF augmented diffusion (Issue #1059, paper P2 branch of thm:discrete_comparison).
         # nu_i = max(0, C * l_H(i) * h_i - sigma^2/2)
         # sigma_eff_i = sqrt(sigma^2 + 2*nu_i)
@@ -2853,10 +2862,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             Numeric sigma value
 
-        Handles three cases:
-        1. problem.nu exists (legacy attribute)
-        2. problem.sigma is callable → evaluate at collocation point
-        3. problem.sigma is numeric → use directly (fallback: 1.0)
+        Handles, in precedence order:
+        1. LLF per-node augmentation (point_idx given)
+        2. volatility_field override (Issue #1316) — the per-solve spatial diffusion
+        3. problem.nu (legacy attribute)
+        4. problem.sigma is callable → evaluate at the point / center of domain
+        5. problem.sigma is numeric → use directly (fallback: 1.0)
         """
         # LLF per-node override: return sigma_eff_i when augmentation is active (Issue #1059).
         # Only applies when point_idx is not None (per-point path); the batch path (None)
@@ -2865,6 +2876,13 @@ class HJBGFDMSolver(BaseHJBSolver):
             if point_idx < len(self._llf_sigma_eff):
                 return float(self._llf_sigma_eff[point_idx])
 
+        # Issue #1316: the per-solve volatility_field override (the spatial diffusion
+        # the coupling layer / FP solver is using) is the authoritative diffusion source,
+        # replacing problem.sigma so HJB and FP stay convention-consistent. None (the
+        # default) falls through to the byte-identical legacy path below.
+        if self._volatility_field_override is not None:
+            return self._resolve_diffusion_source(self._volatility_field_override, point_idx)
+
         # Check for legacy "nu" attribute (optional)
         nu = getattr(self.problem, "nu", None)
         if nu is not None:
@@ -2872,16 +2890,39 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         sigma = getattr(self.problem, "sigma", None)
         if callable(sigma):
-            # Callable sigma: evaluate at current point if available
-            if point_idx is not None and point_idx < len(self.collocation_points):
-                x = self.collocation_points[point_idx]
-                return float(self.problem.sigma(x))
-            else:
-                # Fallback: use representative value (center of domain)
-                return 1.0
+            # Callable sigma: evaluate at the point (per-point path) or at the center
+            # of the domain (batch path). Issue #1316: the batch path previously returned
+            # a hardcoded 1.0 ("representative value" in name only), silently replacing
+            # callable sigma with sigma=1.0 (~2x diffusion error). Now an actual
+            # center-of-domain evaluation, matching the documented intent.
+            return self._resolve_diffusion_source(sigma, point_idx)
         else:
             # Numeric sigma: use directly (with fallback to default)
             return float(getattr(self.problem, "sigma", 1.0))
+
+    def _resolve_diffusion_source(self, source: float | np.ndarray | Callable, point_idx: int | None) -> float:
+        """Resolve a scalar / callable / per-point-array diffusion source to a scalar sigma.
+
+        - callable: evaluate at the collocation point (``point_idx`` given) or at the
+          domain center (mean of collocation points) on the batch path (``point_idx=None``).
+        - array (ndim >= 1): index by point (``point_idx`` given); on the batch path the
+          GFDM residual applies one global scalar, so collapse to the mean — matching
+          MFGProblem's own array->scalar (sigma = mean) convention.
+        - scalar: returned directly.
+        """
+        if callable(source):
+            if point_idx is not None and point_idx < len(self.collocation_points):
+                x = self.collocation_points[point_idx]
+            else:
+                # Center of domain (mean of collocation points), shape (d,).
+                x = self.collocation_points.mean(axis=0)
+            return float(source(x))
+        arr = np.asarray(source)
+        if arr.ndim >= 1:
+            if point_idx is not None and point_idx < len(arr):
+                return float(arr[point_idx])
+            return float(np.mean(arr))
+        return float(source)
 
     # Note: _check_monotonicity_violation moved to MonotonicityEnforcer component
     # Note: _check_m_matrix_property moved to MonotonicityEnforcer component
@@ -2949,6 +2990,13 @@ class HJBGFDMSolver(BaseHJBSolver):
             if U_coupling_prev is not None:
                 raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
             U_coupling_prev = U_from_prev_picard
+
+        # Issue #1316: install the per-solve volatility_field as the authoritative
+        # diffusion source for _get_sigma_value (consumed below via the residual /
+        # Jacobian / LLF paths). Set every call (not cleared at end) so there is no
+        # stale state and the default volatility_field=None restores the byte-identical
+        # legacy problem.sigma path.
+        self._volatility_field_override = volatility_field
 
         # Pick up any per-Picard resolved BC the coupling layer installed on the
         # geometry since construction (Issue #1118; matches FDM's per-solve re-read).

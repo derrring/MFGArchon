@@ -68,9 +68,15 @@ class TestSigmaToDiffusionAgreement:
         from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 
         # _get_sigma_value reads self.llf_augmentation / self._llf_sigma_eff (LLF augmentation,
-        # Issue #1059); a real solver always sets both in __init__. LLF off is the default sigma
-        # resolution path this convention guard exercises.
-        stub = SimpleNamespace(problem=SimpleNamespace(sigma=sigma), llf_augmentation=False, _llf_sigma_eff=None)
+        # Issue #1059) and self._volatility_field_override (Issue #1316); a real solver sets all
+        # three in __init__. LLF off + no override is the default sigma resolution path this
+        # convention guard exercises.
+        stub = SimpleNamespace(
+            problem=SimpleNamespace(sigma=sigma),
+            llf_augmentation=False,
+            _llf_sigma_eff=None,
+            _volatility_field_override=None,
+        )
         resolved = HJBGFDMSolver._get_sigma_value(stub, None)
         assert diffusion_from_volatility(resolved) == pytest.approx(0.5 * sigma * sigma, rel=1e-12)
 

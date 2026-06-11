@@ -916,6 +916,25 @@ class HJBWenoSolver(BaseHJBSolver):
                 raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
             U_coupling_prev = U_from_prev_picard
 
+        # Issue #1316: the WENO solver reads diffusion from problem.sigma at multiple
+        # scattered sites (the diffusion CFL bound and the diffusion update in each
+        # dimensional sweep), with no single sigma chokepoint to redirect. Honoring a
+        # volatility_field that differs from problem.sigma would require threading it
+        # through all of them; doing nothing would silently solve HJB with problem.sigma
+        # while FP uses the field, breaking the Picard correspondence. Fail loud instead
+        # of accept-and-ignore. A scalar field equal to problem.sigma is the iterator's
+        # redundant forwarding of problem.volatility_field (Issue #1248) and is a no-op.
+        if volatility_field is not None and not (
+            np.isscalar(volatility_field) and float(volatility_field) == float(self.problem.sigma)
+        ):
+            raise NotImplementedError(
+                "HJBWENOSolver cannot honor a volatility_field that differs from problem.sigma: "
+                "it reads diffusion from problem.sigma at multiple sites with no single chokepoint "
+                "(Issue #1316). A spatially-varying or mismatched field would make HJB solve a "
+                "different diffusion than FP, breaking the Picard fixed point. Use HJBGFDMSolver "
+                "(which consumes volatility_field) or set problem.sigma to match."
+            )
+
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
