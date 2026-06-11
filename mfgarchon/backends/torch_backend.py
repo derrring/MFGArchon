@@ -455,8 +455,9 @@ class TorchBackend(BaseBackend):
         M_grad2 = torch.gradient(M_grad, spacing=dx, dim=-1)[0]
         diffusion_term = diffusion_from_volatility_torch(sigma) * M_grad2
 
-        # Forward Euler step: M^{n+1} = M^n + dt * (div_term + diffusion_term)
-        M_new = M_tensor + dt * (div_term + diffusion_term)
+        # Forward Euler step: M^{n+1} = M^n + dt * (-div(flux) + diffusion)
+        # Issue #1282: sign was inverted (+ instead of -) on div_term.
+        M_new = M_tensor + dt * (-div_term + diffusion_term)
 
         # Ensure non-negativity and mass conservation
         M_new = torch.clamp(M_new, min=1e-12)
