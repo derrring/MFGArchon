@@ -293,6 +293,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         # numerically byte-identical) — the assembled discrete-maximum-principle is only
         # diagnostic, not enforced.
         check_dmp: bool = False,
+        # LLF (Local Lax-Friedrichs) augmented diffusion (Issue #1059, paper P2 branch).
+        # Adds per-node artificial viscosity nu_i to the diffusion term so that the
+        # local Peclet condition Pe_h(i) = l_H(i)*h_i / (sigma^2 + 2*nu_i) <= 1/(2C)
+        # is satisfied at every node, restoring the discrete comparison principle at
+        # high-Pe nodes where P1 (unaugmented) cannot satisfy the theorem hypothesis.
+        # Default OFF (byte-identical to current main when off).
+        # When on, requires llf_l_H: per-node |dH/dp| Lipschitz bound (fail-loud if None).
+        llf_augmentation: bool = False,
+        llf_cone_constant: float = 0.5,  # C in nu_i = max(0, C*l_H*h - sigma^2/2)
+        llf_l_H: float | np.ndarray | None = None,  # per-node Lipschitz bound |dH/dp|
     ):
         """
         Initialize the GFDM HJB solver.
@@ -409,6 +419,24 @@ class HJBGFDMSolver(BaseHJBSolver):
                 ``obstacle_sdf`` is provided.
             visibility_margin: Safety margin for obstacle proximity (default 0.0).
                 Stencil edges passing within this distance of an obstacle are filtered.
+            llf_augmentation: Enable Local Lax-Friedrichs (LLF) per-node artificial
+                diffusion (Issue #1059, paper P2 branch of thm:discrete_comparison).
+                When True, augments the diffusion coefficient at each node i by
+                ``nu_i = max(0, C * l_H(i) * h_i - sigma^2/2)``, so the effective
+                volatility is ``sigma_eff_i = sqrt(sigma^2 + 2*nu_i)``.  This restores
+                the discrete comparison principle at high-Pe nodes (``l_H(i)*h_i/sigma^2
+                >> 1``) where P1 (unaugmented) cannot satisfy the theorem hypothesis.
+                Default OFF (byte-identical to current main when off).
+                Requires ``llf_l_H`` to be provided (fail-loud otherwise).
+            llf_cone_constant: The constant C in ``nu_i = max(0, C*l_H(i)*h_i -
+                sigma^2/2)`` (default 0.5). Per the mfg-research prototype: C=0.5 gives
+                structural stability; C=1.0 is catastrophic (vicious Picard feedback).
+                See Issue #1059.
+            llf_l_H: Per-node Lipschitz bound ``l_H(i) = |dH/dp|(i)``.  May be a scalar
+                (broadcast to all nodes) or a shape ``(n_points,)`` array.  Design
+                options: (a) cone bound from stencil, (b) from ``dH/dp`` at previous
+                Picard iterate, (c) user-supplied (this parameter).  Fail-loud if
+                ``llf_augmentation=True`` and this is None.
         """
         super().__init__(problem)
 
@@ -595,6 +623,34 @@ class HJBGFDMSolver(BaseHJBSolver):
         self.check_dmp = check_dmp
         self._dmp_alpha_crit: float | None = None
         self._dmp_warned = False
+
+        # LLF augmented diffusion (Issue #1059, paper P2 branch of thm:discrete_comparison).
+        # nu_i = max(0, C * l_H(i) * h_i - sigma^2/2)
+        # sigma_eff_i = sqrt(sigma^2 + 2*nu_i)
+        # Stored attributes (None when llf_augmentation=False → zero overhead):
+        #   self._llf_l_H      : np.ndarray (n_points,) — per-node |dH/dp| Lipschitz bound
+        #   self._llf_sigma_eff: np.ndarray (n_points,) — per-node effective volatility
+        self.llf_augmentation: bool = llf_augmentation
+        self._llf_cone_constant: float = float(llf_cone_constant)
+        if llf_augmentation:
+            if llf_l_H is None:
+                raise ValueError(
+                    "llf_augmentation=True requires llf_l_H: the per-node |dH/dp| "
+                    "Lipschitz bound (scalar float or shape (n_points,) array). "
+                    "Provide llf_l_H=<value> to enable LLF augmented diffusion. "
+                    "See Issue #1059."
+                )
+            l_H_raw = np.asarray(llf_l_H, dtype=float)
+            # Scalar or shape (n_points,) — broadcast to full node array
+            self._llf_l_H: np.ndarray = np.broadcast_to(l_H_raw, (self.n_points,)).copy()
+            if np.any(self._llf_l_H < 0.0):
+                raise ValueError(
+                    f"llf_l_H must be non-negative at every node; got min={float(np.min(self._llf_l_H)):.3g} < 0."
+                )
+            self._llf_sigma_eff: np.ndarray = self._compute_llf_sigma_eff()
+        else:
+            self._llf_l_H = None  # type: ignore[assignment]
+            self._llf_sigma_eff = None  # type: ignore[assignment]
 
         # Monotonicity scheme (single source of truth) — already set above (v0.18.0 rename)
         # self.monotonicity_scheme and self.qp_optimization_level both = resolved monotonicity_scheme
@@ -2020,8 +2076,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
         # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
         # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
-        sigma = self._get_sigma_value(None)
-        diffusion_term = diffusion_from_volatility(sigma) * lap_u
+        #
+        # Issue #1059 LLF augmentation: use per-node sigma_eff_i when active.
+        if self.llf_augmentation and self._llf_sigma_eff is not None:
+            # Per-node effective diffusion: D_i = sigma_eff_i^2/2 (elementwise)
+            diffusion_term = diffusion_from_volatility(self._llf_sigma_eff, kind="field") * lap_u
+        else:
+            sigma = self._get_sigma_value(None)
+            diffusion_term = diffusion_from_volatility(sigma) * lap_u
 
         # HJB residual: -u_t + H - diffusion = 0
         residual = -u_t + H_total - diffusion_term
@@ -2060,6 +2122,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         dt = self.problem.T / self.problem.Nt
         u_t = (u_n_plus_1 - u_current) / dt
         # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
+        # Issue #1059 LLF: when active, assemble inline with per-node D_i = sigma_eff_i^2/2
+        # (assemble_hjb_residual only accepts scalar sigma; bypass it for the LLF path).
+        if self.llf_augmentation and self._llf_sigma_eff is not None:
+            from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
+
+            H = eval_H_batch(H_class, self.collocation_points, m_n_plus_1, grad_u, current_time)
+            if running_cost is not None:
+                H = H + running_cost
+            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
+            return -u_t + H - D_eff * lap_u
         sigma = self._get_sigma_value(None)
         return assemble_hjb_residual(
             H_class=H_class,
@@ -2101,6 +2173,20 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         dt = self.problem.T / self.problem.Nt
         # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
+        # Issue #1059 LLF: assemble_hjb_jacobian_diag only accepts scalar sigma;
+        # for the LLF path assemble inline with per-node D_i = sigma_eff_i^2/2.
+        if self.llf_augmentation and self._llf_sigma_eff is not None:
+            from scipy.sparse import diags, eye
+
+            from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch
+
+            dH_dp = eval_dH_dp_batch(H_class, self.collocation_points, m_n_plus_1, grad_u, current_time)
+            n = self._D_lap.shape[0]
+            jacobian = (1.0 / dt) * eye(n, format="csr")
+            for dim in range(dH_dp.shape[1]):
+                jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ self._D_grad[dim]
+            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
+            return jacobian - diags(D_eff, format="csr") @ self._D_lap
         sigma = self._get_sigma_value(None)
         return assemble_hjb_jacobian_diag(
             H_class=H_class,
@@ -2235,8 +2321,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
         # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
         # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
-        sigma = self._get_sigma_value(None)
-        diffusion_coeff = diffusion_from_volatility(sigma)
+        # Issue #1059 LLF: when active, use per-node D_i = sigma_eff_i^2/2.
+        if self.llf_augmentation and self._llf_sigma_eff is not None:
+            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
+        else:
+            sigma = self._get_sigma_value(None)
+            D_eff = None
+            diffusion_coeff = diffusion_from_volatility(sigma)
 
         # Time derivative term: (1/dt) * I
         jacobian = (1.0 / dt) * eye(n, format="csr")
@@ -2247,8 +2338,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             p_d = grad_u[:, dim] / lambda_val  # dH/dp_d = p_d / λ
             jacobian = jacobian + diags(p_d, format="csr") @ self._D_grad[dim]
 
-        # Diffusion term: -(σ²/2) * D_lap
-        jacobian = jacobian - diffusion_coeff * self._D_lap
+        # Diffusion term: -(D_i) * D_lap  [per-node for LLF, scalar otherwise]
+        if D_eff is not None:
+            jacobian = jacobian - diags(D_eff, format="csr") @ self._D_lap
+        else:
+            jacobian = jacobian - diffusion_coeff * self._D_lap
 
         return jacobian
 
@@ -2732,12 +2826,53 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
         return float(lambda_val)
 
+    def _compute_llf_sigma_eff(self) -> np.ndarray:
+        """Compute per-node effective sigma for LLF augmentation (Issue #1059, paper P2).
+
+        For each collocation node i:
+
+            nu_i = max(0, C * l_H(i) * h_i - sigma^2/2)
+            sigma_eff_i = sqrt(sigma^2 + 2 * nu_i)
+
+        where:
+          - sigma = problem volatility (scalar; callable not supported here, evaluated at None)
+          - C = self._llf_cone_constant (paper P2 cone constant, default 0.5)
+          - l_H(i) = self._llf_l_H[i] (user-supplied |dH/dp| Lipschitz bound)
+          - h_i = self.delta (conservative upper bound for local mesh size)
+
+        When nu_i = 0 at node i (Pe already small enough), sigma_eff_i = sigma exactly
+        (no augmentation at that node).  Called once at __init__ and stored in
+        self._llf_sigma_eff; not recomputed per Picard iteration (Issue #1059 stability
+        note: holding nu_i fixed avoids the runaway Picard feedback in the prototype).
+
+        Returns:
+            shape (n_points,) float64 array of per-node effective volatility values.
+        """
+        # Use scalar sigma from problem (callable sigma: evaluated with None, returns 1.0
+        # representative value — callable-sigma + LLF is an uncommon combination).
+        sigma = self._get_sigma_value(None)
+        D_base = 0.5 * sigma**2  # sigma^2/2, the base diffusion coefficient
+
+        # nu_i = max(0, C * l_H(i) * h_i - D_base)
+        # h_i approximated by self.delta (conservative upper bound; actual stencil
+        # distances are <= delta, so this may over-estimate nu_i slightly, never under).
+        nu_i = np.maximum(0.0, self._llf_cone_constant * self._llf_l_H * self.delta - D_base)
+
+        # sigma_eff_i = sqrt(sigma^2 + 2*nu_i)
+        return np.sqrt(sigma**2 + 2.0 * nu_i)
+
     def _get_sigma_value(self, point_idx: int | None = None) -> float:
         """
         Get diffusion coefficient value, handling both numeric and callable sigma.
 
+        When llf_augmentation=True and point_idx is not None, returns the per-node
+        effective sigma sqrt(sigma^2 + 2*nu_i) from LLF augmentation (Issue #1059).
+        When point_idx is None (batch path), returns the base scalar sigma regardless
+        of llf_augmentation (the batch path handles LLF separately via the
+        self._llf_sigma_eff array in _compute_hjb_residual_vectorized and related).
+
         Args:
-            point_idx: Collocation point index (for callable sigma evaluation)
+            point_idx: Collocation point index (for callable sigma evaluation or LLF lookup)
 
         Returns:
             Numeric sigma value
@@ -2747,6 +2882,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         2. problem.sigma is callable → evaluate at collocation point
         3. problem.sigma is numeric → use directly (fallback: 1.0)
         """
+        # LLF per-node override: return sigma_eff_i when augmentation is active (Issue #1059).
+        # Only applies when point_idx is not None (per-point path); the batch path (None)
+        # reads self._llf_sigma_eff directly.
+        if self.llf_augmentation and point_idx is not None and self._llf_sigma_eff is not None:
+            if point_idx < len(self._llf_sigma_eff):
+                return float(self._llf_sigma_eff[point_idx])
+
         # Check for legacy "nu" attribute (optional)
         nu = getattr(self.problem, "nu", None)
         if nu is not None:
