@@ -346,6 +346,10 @@ class DifferenceDomain(IntersectionDomain):
             domain1: Base domain (what we start with)
             domain2: Domain to subtract (the "hole")
 
+        Raises:
+            ValueError: If the navigable region (domain1 \\ domain2) is empty,
+                detected by sampling domain1 and finding all points inside domain2.
+
         Example:
             >>> # Square with circular obstacle removed
             >>> square = Hyperrectangle(np.array([[0, 1], [0, 1]]))
@@ -363,6 +367,22 @@ class DifferenceDomain(IntersectionDomain):
         # Store originals for repr
         self.domain1 = domain1
         self.domain2 = domain2
+
+        # Issue #1077 (c): detect empty navigable region at construction time.
+        # Sample a small fixed-seed batch from domain1; if ALL points fall inside
+        # domain2, the navigable region has zero measure and downstream rejection
+        # sampling would exhaust attempts without finding valid points.
+        # Using seed=0 makes the check deterministic; 128 samples is cheap and
+        # sufficient for the common case of an obstacle covering the entire base domain.
+        _n_check = 128
+        _check_pts = domain1.sample_uniform(_n_check, seed=0)
+        if np.all(domain2.contains(_check_pts)):
+            raise ValueError(
+                f"DifferenceDomain navigable region is empty: {_n_check} uniform "
+                "samples from the base domain are all inside the subtracted domain; "
+                "domain1 \\ domain2 has zero measure. "
+                "Issue #1077."
+            )
 
     def __repr__(self) -> str:
         """String representation."""

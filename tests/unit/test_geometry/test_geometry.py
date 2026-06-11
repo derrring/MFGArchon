@@ -378,6 +378,23 @@ class TestCSGOperations:
         # Verify all particles in base domain
         assert np.all((particles >= 0) & (particles <= 1))
 
+    def test_difference_domain_empty_raises(self):
+        """Issue #1077 (c): DifferenceDomain with empty navigable region must fail fast.
+
+        Previously constructed silently; rejection sampling downstream would then
+        exhaust all attempts and raise RuntimeError after wasted work.
+        """
+        # Case 1: rectangular obstacle larger than base domain
+        base = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+        obstacle_rect = Hyperrectangle(np.array([[-0.5, 1.5], [-0.5, 1.5]]))
+        with pytest.raises(ValueError, match="empty"):
+            DifferenceDomain(base, obstacle_rect)
+
+        # Case 2: spherical obstacle covering the entire base domain
+        obstacle_sphere = Hypersphere(center=[0.5, 0.5], radius=2.0)
+        with pytest.raises(ValueError, match="empty"):
+            DifferenceDomain(base, obstacle_sphere)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
