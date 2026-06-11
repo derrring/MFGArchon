@@ -286,12 +286,11 @@ class NumbaBackend(BaseBackend):
             return trapezoid(y, x=x, dx=dx, axis=axis)
 
     def diff(self, a, n=1, axis=-1):
-        if NUMBA_AVAILABLE and n == 1 and axis == -1:
-            # Use optimized finite difference
-            dx = 1.0  # Assume unit spacing
-            return self._finite_diff_1d(a, dx)
-        else:
-            return np.diff(a, n=n, axis=axis)
+        # Issue #1283: _finite_diff_1d is a *derivative* kernel (size-n), not a
+        # discrete difference (size-(n-1)).  Using it here violated the base-class
+        # contract (matching np.diff) and all other backends.  Delegate to np.diff
+        # unconditionally; _finite_diff_1d remains available for gradient use only.
+        return np.diff(a, n=n, axis=axis)
 
     def interp(self, x, xp, fp):
         return np.interp(x, xp, fp)
