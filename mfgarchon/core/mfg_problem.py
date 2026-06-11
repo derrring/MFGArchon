@@ -616,6 +616,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.solver_compatible = {}  # type: dict[str, bool]
         self.solver_recommendations = {}  # type: dict[str, str]
 
+        # Issue #1068: explicit None-init for BC fallback slot (ConditionsMixin.using_resolved_bc).
+        # Avoids hasattr() in the fallback path when geometry has no set_boundary_conditions().
+        self._temp_resolved_bc = None  # type: BoundaryConditions | None
+
         # Initialize legacy override attributes (Issue #543 - Step 2)
         # These support deprecated parameter API and will be removed in #544
         self._xmin_override = None

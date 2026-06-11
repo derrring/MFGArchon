@@ -148,6 +148,9 @@ class ControlCostBase(ABC):
         self._lambda = lam
         # Sign convention: MINIMIZE -> alpha = -dH/dp, MAXIMIZE -> alpha = +dH/dp
         self.sign = 1 if sense == OptimizationSense.MINIMIZE else -1
+        # Issue #1068: explicit None-init avoids hasattr() in regularize().
+        # Subclasses (_MoreauYosidaControlCost) override this with the original base.
+        self.base: ControlCostBase | None = None
 
     @property
     def lambda_(self) -> float:
@@ -295,9 +298,11 @@ class ControlCostBase(ABC):
         ControlCostBase
             Smooth version. Returns self if already natively smooth.
         """
-        if self.is_smooth() and not hasattr(self, "base"):
+        # Issue #1068: use explicit None-init instead of hasattr().
+        # self.base is None for plain costs; set to the original cost for wrappers.
+        if self.is_smooth() and self.base is None:
             return self
-        base = getattr(self, "base", self)
+        base = self.base if self.base is not None else self
         return _make_regularized(base, epsilon, method)
 
     # === VARIATIONAL / ADMM interface ===
@@ -1107,7 +1112,8 @@ class HamiltonianBase(MFGOperatorBase):
         """
         # Get ∂H/∂p from the class method
         dH_dp = self.dp(x, m, p, t)
-        dH_dp_scalar = float(dH_dp[0]) if hasattr(dH_dp, "__len__") else float(dH_dp)
+        # Issue #1068: use np.ndim() instead of hasattr(, "__len__") to detect arrays.
+        dH_dp_scalar = float(dH_dp[0]) if np.ndim(dH_dp) > 0 else float(dH_dp)
 
         if scheme == "central":
             # p ≈ (U[i+1] - U[i-1]) / (2dx)

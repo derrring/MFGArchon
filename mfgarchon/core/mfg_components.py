@@ -123,6 +123,7 @@ class MFGComponents:
         from mfgarchon.core.hamiltonian import (
             HamiltonianBase,
             LagrangianBase,
+            SeparableHamiltonian,
             SeparableLagrangian,
         )
 
@@ -150,7 +151,9 @@ class MFGComponents:
         elif self.lagrangian is not None and self.hamiltonian is None:
             # L only: derive H for PDE solvers
             if isinstance(self.lagrangian, LagrangianBase):
-                if hasattr(self.lagrangian, "as_hamiltonian"):
+                # Issue #1068: isinstance(SeparableLagrangian) replaces hasattr(, "as_hamiltonian").
+                # SeparableLagrangian is the only LagrangianBase subclass with as_hamiltonian().
+                if isinstance(self.lagrangian, SeparableLagrangian):
                     # SeparableLagrangian: analytic conversion, no DualHamiltonian
                     self.hamiltonian = self.lagrangian.as_hamiltonian()
                 else:
@@ -158,7 +161,9 @@ class MFGComponents:
                     self.hamiltonian = self.lagrangian.legendre_transform()
         elif self.hamiltonian is not None and self.lagrangian is None:
             # H only: derive L if separable (for ADMM/variational)
-            if hasattr(self.hamiltonian, "control_cost") and hasattr(self.hamiltonian, "_potential"):
+            # Issue #1068: isinstance(SeparableHamiltonian) replaces hasattr(, "control_cost")
+            # and hasattr(, "_potential"). Only SeparableHamiltonian carries both attributes.
+            if isinstance(self.hamiltonian, SeparableHamiltonian):
                 self._lagrangian_class = SeparableLagrangian(
                     control_cost=self.hamiltonian.control_cost,
                     potential=getattr(self.hamiltonian, "_potential", None),
@@ -637,7 +642,9 @@ class HamiltonianMixin:
         """
         # Issue #673: Get Jacobian from class-based Hamiltonian
         H_class = getattr(self.components, "_hamiltonian_class", None) if self.components else None
-        if H_class is not None and hasattr(H_class, "jacobian_fd"):
+        # Issue #1068: getattr with sentinel replaces hasattr() for optional-method check.
+        # Body remains pass: solver reads H.jacobian_fd() directly when it needs it.
+        if H_class is not None and getattr(H_class, "jacobian_fd", None) is not None:
             # Solver will use H.jacobian_fd() directly when needed
             # Return None here - let solver handle it with full context
             pass
@@ -691,6 +698,9 @@ class ConditionsMixin:
     m_init: np.ndarray
     u_fin: np.ndarray
     dimension: int
+    # Issue #1068: explicit None-init avoids hasattr() in using_resolved_bc().
+    # Must be initialized to None in MFGProblem.__init__; see mfg_problem.py.
+    _temp_resolved_bc: Any | None  # BoundaryConditions | None at runtime
 
     def _setup_custom_initial_density(self) -> None:
         """Setup custom initial density function m_0(x).
@@ -958,9 +968,10 @@ class ConditionsMixin:
                     self.geometry.set_boundary_conditions(resolved_bc)
 
             if not geometry_has_setter:
-                # Fallback: store resolved BC in a temporary attribute
-                # This is less clean but works for geometries without setter
-                original_bc = getattr(self, "_temp_resolved_bc", None)
+                # Fallback: store resolved BC in a temporary attribute.
+                # Issue #1068: _temp_resolved_bc is explicitly initialized to None in
+                # MFGProblem.__init__; no hasattr() needed.
+                original_bc = self._temp_resolved_bc
                 self._temp_resolved_bc = resolved_bc
 
             yield self
@@ -969,8 +980,7 @@ class ConditionsMixin:
             # Restore original BC
             if geometry_has_setter and self.geometry is not None:
                 self.geometry.set_boundary_conditions(original_bc)
-            elif hasattr(self, "_temp_resolved_bc"):
-                if original_bc is None:
-                    delattr(self, "_temp_resolved_bc")
-                else:
-                    self._temp_resolved_bc = original_bc
+            else:
+                # Issue #1068: _temp_resolved_bc is always present (None-init).
+                # Restore to prior value (None if it was never set).
+                self._temp_resolved_bc = original_bc
