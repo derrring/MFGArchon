@@ -3000,6 +3000,54 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Howard's policy-evaluation Lagrangian is hardcoded to (1/2)|alpha|^2; non-unit control cost "
                 "needs a running-cost correction (deferred, Issue #1118 PR2)."
             )
+        # Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2 and
+        # consumes ONLY alpha* = -dH/dp, so the backward sweep is faithful solely for a pure
+        # separable LQ Hamiltonian H = (1/2)|p|^2 (MINIMIZE) with no potential V(x, t) and no
+        # density coupling f(m). The pure-LQ test suite sits inside that envelope, which hid
+        # three silent-wrong-physics holes: V/f(m) dropped, running_cost entering with the
+        # opposite sign of the Newton H-additive convention, and the unit-cost gate above
+        # reading problem.lambda_ (never synced with the components Hamiltonian's control cost).
+        # Inspect the actual Hamiltonian components and fail loud on anything Howard does not
+        # model; full support is deferred. Found in the 2026-06-10 library audit; validated by
+        # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*.
+        control_cost = getattr(H_class, "control_cost", None)
+        if control_cost is not None:
+            from mfgarchon.core.hamiltonian import QuadraticControlCost
+
+            cc_lambda = getattr(control_cost, "lambda_", 1.0)
+            if not isinstance(control_cost, QuadraticControlCost) or abs(cc_lambda - 1.0) > 1e-12:
+                raise NotImplementedError(
+                    "inner_solver='howard' hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2, "
+                    f"but the Hamiltonian's control cost is {type(control_cost).__name__}"
+                    f"(lambda_={cc_lambda}). Non-unit / non-quadratic control cost needs "
+                    "control_cost.lagrangian() in the policy-evaluation RHS; use inner_solver='newton' "
+                    "(deferred, Issue #1118 PR2)."
+                )
+            if getattr(control_cost, "sign", 1) != 1:
+                raise NotImplementedError(
+                    "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
+                    "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
+                )
+        if getattr(H_class, "_potential", None) is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' ignores the Hamiltonian potential V(x, t): its policy "
+                "evaluation uses only alpha* = -dH/dp, so V never enters the HJB and the value "
+                "function silently decouples from it. Use inner_solver='newton' for problems with a "
+                "potential (deferred)."
+            )
+        if getattr(H_class, "_coupling", None) is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' ignores the density coupling f(m): its policy evaluation "
+                "uses only alpha* = -dH/dp, so f(m) never enters the HJB and the value function "
+                "silently decouples from the density. Use inner_solver='newton' for density-coupled "
+                "problems (deferred)."
+            )
+        if self._running_cost_fn is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' does not yet support a running cost: it would enter Howard's "
+                "Lagrangian-additive slot with the opposite sign of the Newton path's H-additive "
+                "convention (H_total = H + L). Use inner_solver='newton' with running_cost (deferred)."
+            )
         # BC parity (Issue #1118 PR2a): the howard path now consumes the provider's shared
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
