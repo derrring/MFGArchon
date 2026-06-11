@@ -110,15 +110,27 @@ class MFGPINNSolver(PINNBase):
 
     def _initialize_networks(self) -> None:
         """Initialize neural networks for both u(t,x) and m(t,x)."""
-        # Create separate networks for value function and density
-        self.networks = create_mfg_networks(
-            architecture_type="standard",
-            separate_networks=True,  # Need both u_net and m_net
+        # Issue #1290: prior code used architecture_type/separate_networks which
+        # are not parameters of create_mfg_networks (the function takes network_type
+        # and returns a single nn.Module, not a dict).  Build the dict explicitly.
+        _act = self.config.activation if self.config.activation in ("tanh", "relu", "sigmoid", "elu") else "tanh"
+        u_net = create_mfg_networks(
+            network_type="feedforward",
             hidden_layers=self.config.hidden_layers,
-            activation=self.config.activation,
+            activation=_act,
             input_dim=2,  # (t, x)
-            output_dim=1,  # scalar functions
+            output_dim=1,  # scalar value function
+            problem_type="hjb",
         )
+        m_net = create_mfg_networks(
+            network_type="feedforward",
+            hidden_layers=self.config.hidden_layers,
+            activation=_act,
+            input_dim=2,  # (t, x)
+            output_dim=1,  # scalar density function
+            problem_type="fp",
+        )
+        self.networks = {"u_net": u_net, "m_net": m_net}
 
         # Separate references for clarity
         self.u_net = self.networks["u_net"]
