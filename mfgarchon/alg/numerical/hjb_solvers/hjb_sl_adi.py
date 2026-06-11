@@ -11,9 +11,9 @@ Methods:
 - 1D: Crank-Nicolson (unconditionally stable)
 - nD: Peaceman-Rachford ADI splitting with optional full tensor support
 
-For full tensor diffusion (non-diagonal σ_ij):
+For full tensor diffusion (non-diagonal σ_ij, with D_ij = σ_ij/2):
     ADI handles diagonal terms implicitly, cross terms explicitly:
-    u^{n+1} = ADI_solve(u^n + dt * Σ_{i≠j} σ_ij ∂²u/∂x_i∂x_j)
+    u^{n+1} = ADI_solve(u^n + dt * Σ_{i<j} σ_ij ∂²u/∂x_i∂x_j)
 
 Module structure per issue #392:
     hjb_sl_adi.py - ADI diffusion methods for semi-Lagrangian solver
@@ -199,9 +199,9 @@ def adi_diffusion_step(
         Sweep x: (I - θα L_x) u^{1/2} = (I + (1-θ)α L_x) u^{n}
         Sweep y: (I - θα L_y) u^{n+1} = (I + (1-θ)α L_y) u^{1/2}
 
-    For full tensor diffusion (σ_ij):
+    For full tensor diffusion (σ_ij covariance, D_ij = σ_ij/2):
         ADI handles diagonal terms implicitly, cross terms explicitly:
-        u^{n+1} = ADI_solve(u^n + dt * Σ_{i≠j} σ_ij ∂²u/∂x_i∂x_j)
+        u^{n+1} = ADI_solve(u^n + dt * Σ_{i<j} σ_ij ∂²u/∂x_i∂x_j)
 
     Args:
         U_star: Intermediate solution after advection step, shape (N1, N2, ..., Nd)
@@ -278,15 +278,27 @@ def apply_cross_diffusion_explicit(
     """
     Apply cross-derivative diffusion terms explicitly.
 
-    For full tensor diffusion with off-diagonal terms σ_ij (i != j),
-    we need to add: dt * Σ_{i<j} 2*σ_ij * ∂²u/∂x_i∂x_j
+    For full tensor diffusion with off-diagonal entries sigma_ij of the covariance
+    matrix (sigma_tensor), the diagonal ADI step handles D_d = sigma_tensor[d,d]/2
+    for each direction d. The full operator expanded by symmetry is:
+
+        sum_{i,j} D_ij d^2u/dx_i dx_j
+        = sum_i (sigma_tensor[i,i]/2) d^2u/dx_i^2
+          + 2 * sum_{i<j} (sigma_tensor[i,j]/2) d^2u/dx_i dx_j
+        = (diagonal, handled by ADI)
+          + sum_{i<j} sigma_tensor[i,j] * d^2u/dx_i dx_j
+
+    So the explicit correction adds dt * sigma_tensor[i,j] * d^2u/dx_i dx_j per
+    off-diagonal pair (i<j). The factor of 2 from the symmetry expansion already
+    cancels the 1/2 from D_ij = sigma_tensor[i,j]/2; no extra factor of 2 here.
+    Issue #1261 fix, 2026-06-10 audit.
 
     Uses central differences for mixed partial derivatives:
-        ∂²u/∂x_i∂x_j ≈ (u_{i+1,j+1} - u_{i+1,j-1} - u_{i-1,j+1} + u_{i-1,j-1}) / (4*dx_i*dx_j)
+        d^2u/dx_i dx_j ~= (u_{+i,+j} - u_{+i,-j} - u_{-i,+j} + u_{-i,-j}) / (4*dx_i*dx_j)
 
     Args:
         U: Solution array, shape (N1, N2, ..., Nd)
-        sigma_tensor: Full diffusion tensor, shape (d, d)
+        sigma_tensor: Covariance (sigma*sigma^T) tensor, shape (d, d). D_ij = sigma_tensor[i,j]/2.
         dt: Time step size
         spacing: Grid spacing in each dimension
 
@@ -298,7 +310,10 @@ def apply_cross_diffusion_explicit(
 
     for i in range(d):
         for j in range(i + 1, d):
-            # Off-diagonal coefficient
+            # Off-diagonal covariance entry; D_ij = sigma_ij/2.
+            # The full-operator symmetry expansion gives coefficient sigma_ij per (i<j) pair
+            # (the factor-of-2 from symmetry and the 1/2 in D_ij cancel exactly).
+            # Issue #1261 fix, 2026-06-10 audit: was erroneously 2.0 * sigma_ij.
             sigma_ij = sigma_tensor[i, j]
             if abs(sigma_ij) < 1e-14:
                 continue
@@ -307,12 +322,10 @@ def apply_cross_diffusion_explicit(
             dx_j = spacing[j]
 
             # Compute mixed partial derivative using central differences
-            # Need to handle boundary carefully
             mixed_deriv = compute_mixed_derivative(U, i, j, dx_i, dx_j)
 
-            # Add explicit contribution: dt * σ_ij * ∂²u/∂x_i∂x_j
-            # Factor of 2 because we only loop over i < j but tensor has both (i,j) and (j,i)
-            U_new += dt * 2.0 * sigma_ij * mixed_deriv
+            # Add explicit contribution: dt * sigma_ij * d^2u/dx_i dx_j
+            U_new += dt * sigma_ij * mixed_deriv
 
     return U_new
 
