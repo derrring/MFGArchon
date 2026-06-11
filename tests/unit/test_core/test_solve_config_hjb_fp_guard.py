@@ -1,12 +1,16 @@
-"""solve(config=...) fails LOUD when config.hjb / config.fp can't be honored.
+"""solve(config=...) fails LOUD when a config.hjb / config.fp value can't be honored.
 
-In Safe/Auto mode, ``MFGProblem.solve`` builds solvers via ``create_paired_solvers``
-and currently only applies ``config.picard``. The composite ``config.hjb`` /
-``config.fp`` subtrees are not yet threaded into the factory (Issue #1155). Rather
-than silently ignore a user-supplied hjb/fp config (wrong-config-ignored), solve()
-raises ``NotImplementedError`` when a non-default hjb/fp config reaches the factory
-paths. Expert Mode (explicit hjb_solver/fp_solver) bypasses the guard, and a
-picard-only or fully-default config solves normally.
+In Safe/Auto mode, ``MFGProblem.solve`` builds solvers via the config translator
+(``hjb_config_to_kwargs`` / ``fp_config_to_kwargs``, Issue #1155, threaded by #1309).
+Consistent config subtrees are now honored; what fails loud is a config value that
+*conflicts* with the resolved scheme — e.g. ``config.hjb.method='gfdm'`` under a
+``FDM_UPWIND`` scheme — which raises ``NotImplementedError`` rather than silently
+ignoring the user's intent. Expert Mode (explicit hjb_solver/fp_solver) bypasses the
+translator, and a picard-only or fully-default config solves normally.
+
+These are the ``solve()``-level integration checks; the translator unit semantics
+(threading + per-field conflict/unmapped raises) are covered by
+``tests/unit/test_config/test_config_translator.py``.
 """
 
 from __future__ import annotations
@@ -37,19 +41,27 @@ def test_nondefault_hjb_config_raises_in_safe_mode():
         _problem().solve(scheme=NumericalScheme.FDM_UPWIND, config=cfg)
 
 
-def test_nondefault_fp_config_raises_in_auto_mode():
-    cfg = MFGSolverConfig(fp=FPConfig(method="fdm"))
+def test_conflicting_fp_config_raises_in_safe_mode():
+    """A config.fp.method conflicting with the resolved scheme fails loud through solve().
+
+    Post-#1309 a *consistent* fp config (e.g. method='fdm' under FDM_UPWIND) is threaded and
+    honored; only a genuine scheme/method conflict raises. FDM_UPWIND selects an FDM FP solver,
+    so fp.method='fem' conflicts. The hjb subtree is default here, so the fp guard is what fires.
+    """
+    cfg = MFGSolverConfig(fp=FPConfig(method="fem"))
     with pytest.raises(NotImplementedError, match=r"config\.fp.*#1155"):
-        _problem().solve(config=cfg)  # auto mode (no scheme/solvers)
-
-
-def test_both_nondefault_named_in_message():
-    cfg = MFGSolverConfig(hjb=HJBConfig(method="gfdm"), fp=FPConfig(method="fdm"))
-    with pytest.raises(NotImplementedError) as exc:
         _problem().solve(scheme=NumericalScheme.FDM_UPWIND, config=cfg)
-    msg = str(exc.value)
-    assert "config.hjb" in msg
-    assert "config.fp" in msg
+
+
+def test_consistent_fp_config_is_honored():
+    """A config.fp consistent with the scheme is threaded (no raise) — the #1309 behavior.
+
+    fp.method='fdm' matches the FDM_UPWIND FP solver class, so it is honored, not rejected. This
+    pins that the guard fires on conflict only, not on any non-default fp subtree (the old, now
+    superseded, not-yet-threaded behavior).
+    """
+    cfg = MFGSolverConfig(fp=FPConfig(method="fdm"))
+    _problem().solve(scheme=NumericalScheme.FDM_UPWIND, config=cfg, max_iterations=2)  # no raise
 
 
 def test_picard_only_config_does_not_raise():
