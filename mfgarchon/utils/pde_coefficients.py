@@ -74,6 +74,35 @@ def diffusion_from_volatility(
     raise ValueError(f"kind must be 'field' or 'tensor' (or None for scalar sigma), got {kind!r}.")
 
 
+def diffusion_from_volatility_torch(sigma: Any) -> Any:
+    r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
+
+    Mirrors the scalar contract of :func:`diffusion_from_volatility` (``D = 0.5 * sigma**2``)
+    but accepts any numeric type — plain Python floats, NumPy scalars, and PyTorch tensors —
+    preserving the autograd computation graph when ``sigma`` is a ``torch.Tensor``.
+
+    Issue #1189/#1193: single source of the sigma->D conversion for torch-based solvers
+    (PINNs, torch_backend).  A pure Python implementation (no explicit torch import) so this
+    module stays importable when PyTorch is absent; torch tensors are handled transparently
+    because ``*`` and ``**`` dispatch to tensor ops automatically.
+
+    :math:`D = \frac{1}{2}\sigma^2` — byte-identical to ``0.5 * sigma**2`` for all
+    IEEE-754 double-precision normal floats; the constant 0.5 is exactly representable,
+    so ``0.5 * x`` and ``x / 2`` coincide at the bit level.
+
+    Parameters
+    ----------
+    sigma : float, numpy scalar, or torch.Tensor
+        Volatility coefficient (SDE noise amplitude).
+
+    Returns
+    -------
+    Same type as input (float, numpy scalar, or torch.Tensor)
+        Diffusion coefficient ``D = 0.5 * sigma**2``.
+    """
+    return 0.5 * sigma**2
+
+
 def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any) -> float:
     """Single scalar PDE diffusion ``D`` for solvers that assemble ``D * K`` with a scalar ``D``
     (the weak-form / FEM family).

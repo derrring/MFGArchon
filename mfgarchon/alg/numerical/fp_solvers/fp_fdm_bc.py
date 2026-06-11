@@ -97,13 +97,13 @@ def add_boundary_no_flux_entries(
             u_minus = u_flat[flat_idx_minus]
             u_center = u_flat[flat_idx]
 
-            # Diffusion: D*(m_{i+1} - 2m_i + m_{i-1}) / dx^2
-            diagonal_value += sigma**2 / dx_sq
+            # Diffusion: -D*(m_{i+1} - 2m_i + m_{i-1}) / dx^2  where D = sigma^2/2
+            diagonal_value += 2 * D / dx_sq
 
-            coeff_plus = -(sigma**2) / (2 * dx_sq)
+            coeff_plus = -D / dx_sq
             coeff_plus += float(-coupling_coefficient * ppart(u_plus - u_center) / dx_sq)
 
-            coeff_minus = -(sigma**2) / (2 * dx_sq)
+            coeff_minus = -D / dx_sq
             coeff_minus += float(-coupling_coefficient * npart(u_center - u_minus) / dx_sq)
 
             row_indices.append(flat_idx)
