@@ -5,6 +5,7 @@ Tests parameter space exploration including combination generation,
 execution modes, result collection, and error handling.
 """
 
+import multiprocessing as mp
 import pickle
 import tempfile
 from pathlib import Path
@@ -12,6 +13,23 @@ from pathlib import Path
 import pytest
 
 from mfgarchon.workflow.parameter_sweep import ParameterSweep, SweepConfiguration
+
+# ---------------------------------------------------------------------------
+# Module-level helper for Issue #1080 spawn-compatibility test.
+#
+# Must be at MODULE level (not inside any function) so that spawned
+# ProcessPoolExecutor workers can import it via the module path
+# tests.unit.test_workflow.test_parameter_sweep._spawn_test_add.
+# spawn inherits sys.path from the parent process (Python multiprocessing
+# copies sys.path into the worker's preparation data), so this module is
+# importable in the worker when pytest has added the project root to sys.path.
+# ---------------------------------------------------------------------------
+
+
+def _spawn_test_add(x, y):
+    """Return {'sum': x + y}. Module-level for spawn-process importability."""
+    return {"sum": x + y}
+
 
 # ============================================================================
 # Test: SweepConfiguration
@@ -608,3 +626,55 @@ def test_parallel_processes_fails_loud_on_unpicklable_function_issue_1080():
     sweep = ParameterSweep({"x": [1, 2]})
     with pytest.raises(ValueError, match="not picklable"):
         sweep._execute_parallel_processes(lambda x: x)
+
+
+@pytest.mark.unit
+def test_spawn_context_end_to_end_issue_1080():
+    """Two-combination sweep runs to completion via the public execute() API using
+    an explicit spawn-context ProcessPoolExecutor.
+
+    This is the canonical end-to-end regression guard for Issue #1080.
+
+    What fails pre-fix (without the SweepConfiguration.mp_context field and its
+    use in _execute_parallel_processes):
+      - SweepConfiguration(**kwargs) raises TypeError (unexpected mp_context arg)
+      - OR ProcessPoolExecutor does not receive the explicit spawn context
+
+    What passes post-fix:
+      - SweepConfiguration accepts mp_context
+      - _execute_parallel_processes passes it to ProcessPoolExecutor
+      - ParameterSweep.__getstate__ drops the logger so the instance stays
+        picklable under spawn (relevant for Python versions where Logger handlers
+        hold non-picklable state)
+      - _spawn_test_add is module-level so spawned workers can import it
+
+    The sweep function ``_spawn_test_add`` is defined at module level in this file
+    (not inside any test function) so spawned workers can import it; Python's
+    multiprocessing copies sys.path into the worker's preparation data (via
+    get_preparation_data → sys_path), making this test module importable in the
+    child process.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = SweepConfiguration(
+            parameters={"x": [1, 2], "y": [3]},
+            execution_mode="parallel_processes",
+            max_workers=2,
+            save_intermediate=False,
+            output_dir=Path(tmpdir),
+            mp_context=mp.get_context("spawn"),  # explicit spawn — tests all platforms
+        )
+        sweep = ParameterSweep({"x": [1, 2], "y": [3]}, config=config)
+
+        # Verify the full worker payload pickles cleanly (critical regression check).
+        for i, params in enumerate(sweep.parameter_combinations):
+            args = (sweep, _spawn_test_add, params, i, {})
+            data = pickle.dumps(args)  # TypeError here if __getstate__ missing
+            pickle.loads(data)  # must round-trip cleanly
+
+        # Run through the public API with explicit spawn context.
+        results = sweep.execute(_spawn_test_add)
+
+    assert len(results) == 2, f"Expected 2 results, got {len(results)}: {sweep.failed_runs}"
+    assert all(r["status"] == "success" for r in results), results
+    sums = {r["sum"] for r in results}
+    assert sums == {1 + 3, 2 + 3}, f"Expected {{4, 5}}, got {sums}"
