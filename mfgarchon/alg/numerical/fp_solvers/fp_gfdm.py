@@ -529,10 +529,16 @@ class FPGFDMSolver(BaseFPSolver):
                 # Use upwind-stabilized divergence
                 advection = self._compute_upwind_divergence(drift, m_current)
             else:
-                # Compute div(m*α) via gradient: div(m*α) = α·∇m + m·div(α)
-                # Simplified: use product rule with gradient operator
-                grad_m = self.gfdm_operator.gradient(m_current)  # (N, d)
-                advection = np.sum(drift * grad_m, axis=1)  # α·∇m (gradient form)
+                # Conservative continuity form: advection = div(m*α) = sum_d d/dx_d (m * α_d).
+                # The previous code computed only `np.sum(drift * grad_m)` = α·∇m (transport form),
+                # silently dropping the m·div(α) term. For any α with nonzero divergence (e.g.
+                # α = -∇U with ΔU != 0, the standard MFG case) that term is O(1), so the default
+                # path returned a wrong-SHAPE density on every call; the renormalization below masks
+                # total-mass drift but not the shape error. Take the divergence of the flux
+                # F = m*α directly via the GFDM gradient — the same conservative flux form the
+                # upwind path (_compute_upwind_divergence) uses. (#1279, 2026-06-11 survey)
+                flux = m_current[:, np.newaxis] * drift  # (N, d): F_d = m * alpha_d
+                advection = sum(self.gfdm_operator.gradient(flux[:, d])[:, d] for d in range(drift.shape[1]))
 
             # Diffusion term: D * Laplacian(m)
             laplacian = self.gfdm_operator.laplacian(m_current)
