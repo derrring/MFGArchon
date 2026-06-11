@@ -110,6 +110,9 @@ def add_interior_entries_gradient_upwind(
     # Diagonal term (accumulates contributions from all dimensions)
     diagonal_value = 1.0 / dt
 
+    # Diffusion coefficient D = sigma^2/2 (Issue #1189: single source)
+    D = diffusion_from_volatility(sigma)
+
     # For each dimension, add advection + diffusion contributions
     for d in range(ndim):
         dx = spacing[d]
@@ -153,12 +156,12 @@ def add_interior_entries_gradient_upwind(
         u_center = u_flat[flat_idx]
 
         # Diffusion contribution (centered differences)
-        # -σ²/(2dx²) * (m_{i+1} - 2m_i + m_{i-1})
-        diagonal_value += sigma**2 / dx_sq
+        # -D * (m_{i+1} - 2m_i + m_{i-1}) / dx^2  where D = sigma^2/2
+        diagonal_value += 2 * D / dx_sq
 
         if has_plus or is_periodic:
-            # Coupling to m_{i+1,j}
-            coeff_plus = -(sigma**2) / (2 * dx_sq)
+            # Coupling to m_{i+1,j}: diffusion -D/dx^2
+            coeff_plus = -D / dx_sq
 
             # Add advection upwind term
             # For advection: -d/dx(m*v) where v = -coupling_coefficient * dU/dx
@@ -173,8 +176,8 @@ def add_interior_entries_gradient_upwind(
             diagonal_value += float(coupling_coefficient * ppart(u_plus - u_center) / dx_sq)
 
         if has_minus or is_periodic:
-            # Coupling to m_{i-1,j}
-            coeff_minus = -(sigma**2) / (2 * dx_sq)
+            # Coupling to m_{i-1,j}: diffusion -D/dx^2
+            coeff_minus = -D / dx_sq
 
             # Add advection upwind term
             # Upwind: use npart for negative velocity contribution
@@ -251,13 +254,13 @@ def add_boundary_no_flux_entries_gradient_upwind(
             u_minus = u_flat[flat_idx_minus]
             u_center = u_flat[flat_idx]
 
-            # Diffusion: D*(m_{i+1} - 2m_i + m_{i-1}) / dx²
-            diagonal_value += sigma**2 / dx_sq
+            # Diffusion: -D*(m_{i+1} - 2m_i + m_{i-1}) / dx^2  where D = sigma^2/2
+            diagonal_value += 2 * D / dx_sq
 
-            coeff_plus = -(sigma**2) / (2 * dx_sq)
+            coeff_plus = -D / dx_sq
             coeff_plus += float(-coupling_coefficient * ppart(u_plus - u_center) / dx_sq)
 
-            coeff_minus = -(sigma**2) / (2 * dx_sq)
+            coeff_minus = -D / dx_sq
             coeff_minus += float(-coupling_coefficient * npart(u_center - u_minus) / dx_sq)
 
             row_indices.append(flat_idx)

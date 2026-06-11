@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
 
 from .base_backend import BaseBackend
 
@@ -448,11 +449,11 @@ class TorchBackend(BaseBackend):
         flux = M_tensor * drift
         div_term = torch.gradient(flux, spacing=dx, dim=-1)[0]
 
-        # Compute diffusion term: (σ²/2) * d²M/dx²
+        # Compute diffusion term: D * d²M/dx²  where D = σ²/2 (Issue #1189: route through D)
         sigma = problem_params.get("diffusion", 0.1)
         M_grad = torch.gradient(M_tensor, spacing=dx, dim=-1)[0]
         M_grad2 = torch.gradient(M_grad, spacing=dx, dim=-1)[0]
-        diffusion_term = 0.5 * sigma**2 * M_grad2
+        diffusion_term = diffusion_from_volatility_torch(sigma) * M_grad2
 
         # Forward Euler step: M^{n+1} = M^n + dt * (div_term + diffusion_term)
         M_new = M_tensor + dt * (div_term + diffusion_term)

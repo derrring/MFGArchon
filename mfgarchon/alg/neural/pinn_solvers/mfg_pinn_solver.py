@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 import numpy as np
 
 from mfgarchon.alg.neural.nn import create_mfg_networks
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
 
 from .base_pinn import PINNBase, PINNConfig
 
@@ -293,9 +294,9 @@ class MFGPINNSolver(PINNBase):
         # Compute Hamiltonian
         H = self.compute_hamiltonian(u_x, x, m)
 
-        # Viscous term: (sigma^2/2)*u_xx — Issue #1281 fix (2026-06-11 survey)
-        # Convention mirrors FP: fp_residual subtracts (sigma^2/2)*m_xx.
-        viscous_term = (self.sigma**2 / 2) * u_xx
+        # Viscous term: D*u_xx where D = sigma^2/2 — Issue #1281 fix (2026-06-11 survey)
+        # Convention mirrors FP: fp_residual subtracts D*m_xx. Issue #1189: route through D.
+        viscous_term = diffusion_from_volatility_torch(self.sigma) * u_xx
 
         # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
         hjb_residual = u_t + H - viscous_term
@@ -328,8 +329,8 @@ class MFGPINNSolver(PINNBase):
         # Divergence: div(m * b) = b * ∂m/∂x + m * ∂b/∂x
         divergence_term = drift * m_x + m * drift_x
 
-        # Diffusion term
-        diffusion_term = (self.sigma**2 / 2) * m_xx
+        # Diffusion term: D*m_xx where D = sigma^2/2 (Issue #1189: route through D)
+        diffusion_term = diffusion_from_volatility_torch(self.sigma) * m_xx
 
         # FP residual: ∂m/∂t - div(m*b) - (σ²/2)Δm = 0
         fp_residual = m_t - divergence_term - diffusion_term
@@ -399,8 +400,8 @@ class MFGPINNSolver(PINNBase):
         _, m_x, _ = self.compute_derivatives_m(t, x)
         _, u_x_boundary, _u_xx_boundary = self.compute_derivatives_u(t, x)
 
-        # No-flux: m*(-u_x) + (sigma^2/2)*dm/dx = 0
-        flux = m * (-u_x_boundary) + (self.sigma**2 / 2) * m_x
+        # No-flux: m*(-u_x) + D*dm/dx = 0  where D = sigma^2/2 (Issue #1189)
+        flux = m * (-u_x_boundary) + diffusion_from_volatility_torch(self.sigma) * m_x
         m_boundary_loss = torch.mean(flux**2)
 
         return u_boundary_loss + m_boundary_loss

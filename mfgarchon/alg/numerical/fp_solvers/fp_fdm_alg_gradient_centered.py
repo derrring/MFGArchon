@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -96,6 +98,9 @@ def add_interior_entries_gradient_centered(
     # Diagonal term (accumulates contributions from all dimensions)
     diagonal_value = 1.0 / dt
 
+    # Diffusion coefficient D = sigma^2/2 (Issue #1189: single source)
+    D = diffusion_from_volatility(sigma)
+
     # Check for periodic BC
     # Issue #543 Phase 2: Replace hasattr with try/except
     try:
@@ -142,12 +147,12 @@ def add_interior_entries_gradient_centered(
         velocity_d = -coupling_coefficient * (u_plus - u_minus) / (2 * dx)
 
         # Diffusion contribution (centered differences) - same as upwind
-        # -σ²/(2dx²) * (m_{i+1} - 2m_i + m_{i-1})
-        diagonal_value += sigma**2 / dx_sq
+        # -D * (m_{i+1} - 2m_i + m_{i-1}) / dx^2  where D = sigma^2/2
+        diagonal_value += 2 * D / dx_sq
 
         if has_plus or is_periodic:
-            # Diffusion: coupling to m_{i+1}
-            coeff_plus = -(sigma**2) / (2 * dx_sq)
+            # Diffusion: coupling to m_{i+1}: -D/dx^2
+            coeff_plus = -D / dx_sq
 
             # Advection (CENTERED): v * (m_{i+1} - m_{i-1}) / (2dx)
             # Contribution to m_{i+1}: v / (2dx)
@@ -158,8 +163,8 @@ def add_interior_entries_gradient_centered(
             data_values.append(coeff_plus)
 
         if has_minus or is_periodic:
-            # Diffusion: coupling to m_{i-1}
-            coeff_minus = -(sigma**2) / (2 * dx_sq)
+            # Diffusion: coupling to m_{i-1}: -D/dx^2
+            coeff_minus = -D / dx_sq
 
             # Advection (CENTERED): v * (m_{i+1} - m_{i-1}) / (2dx)
             # Contribution to m_{i-1}: -v / (2dx)
@@ -201,6 +206,9 @@ def add_boundary_no_flux_entries_gradient_centered(
     # Diagonal term
     diagonal_value = 1.0 / dt
 
+    # Diffusion coefficient D = sigma^2/2 (Issue #1189: single source)
+    D = diffusion_from_volatility(sigma)
+
     for d in range(ndim):
         dx = spacing[d]
         dx_sq = dx * dx
@@ -220,9 +228,9 @@ def add_boundary_no_flux_entries_gradient_centered(
 
                 # Diffusion: Neumann BC via ghost point reflection
                 # No-flux: dm/dx = 0 → m_{-1} = m_1, so Laplacian = 2(m_1 - m_0)/dx²
-                # Issue #668 fix: coefficient is σ²/dx², not σ²/(2*dx²)
-                diagonal_value += sigma**2 / dx_sq
-                coeff_plus = -(sigma**2) / dx_sq
+                # Coefficient is 2D/dx² = σ²/dx² (Issue #668 fix; Issue #1189: route through D)
+                diagonal_value += 2 * D / dx_sq
+                coeff_plus = -2 * D / dx_sq
 
                 row_indices.append(flat_idx)
                 col_indices.append(flat_idx_plus)
@@ -236,9 +244,9 @@ def add_boundary_no_flux_entries_gradient_centered(
 
                 # Diffusion: Neumann BC via ghost point reflection
                 # No-flux: dm/dx = 0 → m_{N+1} = m_{N-1}, so Laplacian = 2(m_{N-1} - m_N)/dx²
-                # Issue #668 fix: coefficient is σ²/dx², not σ²/(2*dx²)
-                diagonal_value += sigma**2 / dx_sq
-                coeff_minus = -(sigma**2) / dx_sq
+                # Coefficient is 2D/dx² = σ²/dx² (Issue #668 fix; Issue #1189: route through D)
+                diagonal_value += 2 * D / dx_sq
+                coeff_minus = -2 * D / dx_sq
 
                 row_indices.append(flat_idx)
                 col_indices.append(flat_idx_minus)
@@ -258,11 +266,11 @@ def add_boundary_no_flux_entries_gradient_centered(
 
             velocity_d = -coupling_coefficient * (u_plus - u_minus) / (2 * dx)
 
-            # Diffusion
-            diagonal_value += sigma**2 / dx_sq
+            # Diffusion: -D * (m_{i+1} - 2m_i + m_{i-1}) / dx^2  where D = sigma^2/2
+            diagonal_value += 2 * D / dx_sq
 
-            coeff_plus = -(sigma**2) / (2 * dx_sq) + velocity_d / (2 * dx)
-            coeff_minus = -(sigma**2) / (2 * dx_sq) - velocity_d / (2 * dx)
+            coeff_plus = -D / dx_sq + velocity_d / (2 * dx)
+            coeff_minus = -D / dx_sq - velocity_d / (2 * dx)
 
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_plus)

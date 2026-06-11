@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 import numpy as np
 
 from mfgarchon.alg.neural.nn import create_mfg_networks
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
 
 from .base_pinn import PINNBase, PINNConfig
 
@@ -285,8 +286,8 @@ class FPPINNSolver(PINNBase):
         # Divergence term: div(m * b) = b * ∂m/∂x + m * ∂b/∂x
         divergence_term = drift * m_x + m * drift_x
 
-        # Diffusion term: (σ²/2) * Δm = (σ²/2) * ∂²m/∂x²
-        diffusion_term = (self.sigma**2 / 2) * m_xx
+        # Diffusion term: D * Δm  where D = σ²/2 (Issue #1189: route through single source)
+        diffusion_term = diffusion_from_volatility_torch(self.sigma) * m_xx
 
         # FP equation residual: ∂m/∂t - div(m*b) - (σ²/2)Δm = 0
         fp_residual = m_t - divergence_term - diffusion_term
@@ -392,8 +393,8 @@ class FPPINNSolver(PINNBase):
         u_x = self.get_value_function_gradient(t, x)
         drift = self.compute_drift(u_x, x, m)
 
-        # No-flux condition: j = m*b + (σ²/2)*∂m/∂x = 0
-        flux = m * drift + (self.sigma**2 / 2) * m_x
+        # No-flux condition: j = m*b + D*∂m/∂x = 0  where D = σ²/2 (Issue #1189)
+        flux = m * drift + diffusion_from_volatility_torch(self.sigma) * m_x
 
         boundary_loss = torch.mean(flux**2)
 
