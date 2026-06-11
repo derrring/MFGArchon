@@ -323,6 +323,12 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         grid_spacing = self.problem.geometry.get_grid_spacing()[0]
         time_step = self.problem.dt
 
+        # Issue #1285: M_initial / U_terminal are needed by both the warm-start
+        # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
+        # unconditionally so the warm-start branch does not hit NameError.
+        # BlockIterator does the same (block_iterators.py:485).
+        M_initial, U_terminal = self._get_initial_and_terminal_conditions(shape)
+
         # Initialize arrays (cold start or warm start)
         warm_start = self.get_warm_start_data()
         if warm_start is not None:
@@ -335,10 +341,6 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             else:
                 self.U = np.zeros((num_time_steps, *shape))
                 self.M = np.zeros((num_time_steps, *shape))
-
-            # Get initial density and terminal condition
-            # Issue #543 Phase 2: Use centralized helper (eliminates 8 hasattr checks)
-            M_initial, U_terminal = self._get_initial_and_terminal_conditions(shape)
 
             if num_time_steps > 0:
                 if len(shape) == 1:
