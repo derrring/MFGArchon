@@ -310,20 +310,26 @@ class FPGFDMSolver(BaseFPSolver):
                 if r_norm < 1e-12:
                     continue  # Skip coincident points
 
-                # Streamline alignment: cos θ = (α · r) / (||α|| · ||r||)
-                cos_theta = np.dot(drift_i, r_ij) / (drift_norm * r_norm)
-
-                # Upwind weight modification
-                if self.upwind_scheme == "exponential":
-                    # Scharfetter-Gummel style: exp(β cos θ)
-                    # Upstream (cos<0): weight < 1
-                    # Downstream (cos>0): weight > 1
-                    weight_factor = np.exp(self.upwind_strength * cos_theta)
-                elif self.upwind_scheme == "linear":
-                    # Linear bias: 1 + β*cos θ
-                    weight_factor = 1.0 + self.upwind_strength * cos_theta
-                else:
+                # Issue #1286, 2026-06-11 survey: guard zero-drift — when ||α||≈0
+                # the streamline direction is undefined; dividing by drift_norm
+                # produces nan.  Fall back to symmetric (unbiased) weight=1.
+                if drift_norm < 1e-12:
                     weight_factor = 1.0
+                else:
+                    # Streamline alignment: cos θ = (α · r) / (||α|| · ||r||)
+                    cos_theta = np.dot(drift_i, r_ij) / (drift_norm * r_norm)
+
+                    # Upwind weight modification
+                    if self.upwind_scheme == "exponential":
+                        # Scharfetter-Gummel style: exp(β cos θ)
+                        # Upstream (cos<0): weight < 1
+                        # Downstream (cos>0): weight > 1
+                        weight_factor = np.exp(self.upwind_strength * cos_theta)
+                    elif self.upwind_scheme == "linear":
+                        # Linear bias: 1 + β*cos θ
+                        weight_factor = 1.0 + self.upwind_strength * cos_theta
+                    else:
+                        weight_factor = 1.0
 
                 upwind_weights.append(weight_factor)
                 neighbor_points.append(j)
