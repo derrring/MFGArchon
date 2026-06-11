@@ -1,24 +1,18 @@
-"""Equivalence tests for v0.18.0 monotonicity_scheme rename.
+"""Tests for monotonicity_scheme / monotonicity_application canonical API.
 
-mfgarchon CLAUDE.md deprecation policy requires:
-  - Immediate redirection: old API calls new API internally
-  - Equivalence test: old API == new API give identical behavior
-
-This module verifies that for each of the four legacy
-`qp_optimization_level` values, the corresponding new
-(`monotonicity_scheme`, `monotonicity_application`) tuple produces
-identical solver state (same scheme/application/method-name and
-same Laplacian/gradient stencil weights).
-
-Issue #XXXX. Removal blocker: equivalence_test → check_internal_deprecation.py.
+v0.18.0 introduced the two-axis API replacing qp_optimization_level=.
+v0.25.0 (Issue #1070) removed qp_optimization_level= from the constructor
+signature; passing it now raises TypeError. These tests verify the canonical
+API works correctly and that the removed parameter is no longer accepted.
 """
 
 from __future__ import annotations
 
 import warnings
 
-import numpy as np
 import pytest
+
+import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -60,7 +54,6 @@ def _problem_2d_quasi_uniform():
     if pts.ndim == 1:
         pts = np.atleast_2d(pts).T
     bdry = []
-    n = pts.shape[0]
     for i, p in enumerate(pts):
         if min(p[0], 1.0 - p[0], p[1], 1.0 - p[1]) < 1e-9:
             bdry.append(i)
@@ -90,13 +83,13 @@ def setup():
 
 @pytest.mark.parametrize("legacy_value", list(LEGACY_TO_NEW.keys()))
 def test_scheme_application_match(setup, legacy_value):
-    """For each legacy value, verify new (scheme, application) produces identical
-    self.monotonicity_scheme, self.monotonicity_application, and self.qp_optimization_level."""
+    """For each canonical (scheme, application) pair, verify the solver stores the
+    expected self.monotonicity_scheme, self.monotonicity_application, and the
+    internal self.qp_optimization_level attribute."""
     problem, pts, bdry = setup
     new_scheme, new_app = LEGACY_TO_NEW[legacy_value]
 
-    # New API
-    s_new = HJBGFDMSolver(
+    s = HJBGFDMSolver(
         problem,
         collocation_points=pts,
         boundary_indices=bdry,
@@ -105,37 +98,26 @@ def test_scheme_application_match(setup, legacy_value):
         monotonicity_application=new_app,
     )
 
-    # Legacy API
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        s_old = HJBGFDMSolver(
-            problem,
-            collocation_points=pts,
-            boundary_indices=bdry,
-            delta=0.3,
-            qp_optimization_level=legacy_value,
-        )
-
-    assert s_new.monotonicity_scheme == s_old.monotonicity_scheme, (
-        f"scheme mismatch for legacy={legacy_value}: new={s_new.monotonicity_scheme}, old={s_old.monotonicity_scheme}"
-    )
-    assert s_new.monotonicity_application == s_old.monotonicity_application, (
-        f"application mismatch for legacy={legacy_value}: new={s_new.monotonicity_application}, old={s_old.monotonicity_application}"
-    )
-    assert s_new.qp_optimization_level == s_old.qp_optimization_level, (
-        f"legacy alias mismatch for legacy={legacy_value}"
-    )
-    assert s_new.hjb_method_name == s_old.hjb_method_name, f"method_name mismatch for legacy={legacy_value}"
+    assert s.monotonicity_scheme == new_scheme, f"scheme mismatch for {legacy_value}"
+    # Check internal qp_optimization_level attribute (set from scheme, not from the
+    # removed parameter — this is an internal implementation detail, not public API).
+    if new_scheme == "none":
+        assert s.qp_optimization_level == "none"
+    elif new_scheme == "qp_m_matrix" and new_app == "adaptive":
+        assert s.qp_optimization_level == "auto"
+    elif new_scheme == "qp_m_matrix":
+        assert s.qp_optimization_level == new_app
+    assert s.hjb_method_name is not None, "hjb_method_name should be set"
 
 
 @pytest.mark.parametrize("legacy_value", list(LEGACY_TO_NEW.keys()))
-def test_stencil_weights_identical(setup, legacy_value):
-    """Beyond config equivalence, verify that the actual Laplacian and gradient
-    stencil weights are bit-identical between old and new API."""
+def test_stencil_weights_canonical(setup, legacy_value):
+    """Verify that canonical (scheme, application) constructs a solver with valid
+    stencil weights (behavioral guard for the new API path)."""
     problem, pts, bdry = setup
     new_scheme, new_app = LEGACY_TO_NEW[legacy_value]
 
-    s_new = HJBGFDMSolver(
+    s = HJBGFDMSolver(
         problem,
         collocation_points=pts,
         boundary_indices=bdry,
@@ -143,48 +125,23 @@ def test_stencil_weights_identical(setup, legacy_value):
         monotonicity_scheme=new_scheme,
         monotonicity_application=new_app,
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        s_old = HJBGFDMSolver(
-            problem,
-            collocation_points=pts,
-            boundary_indices=bdry,
-            delta=0.3,
-            qp_optimization_level=legacy_value,
-        )
 
-    op_new = s_new._gfdm_operator
-    op_old = s_old._gfdm_operator
+    op = s._gfdm_operator
     n_pts = pts.shape[0]
     for i in range(n_pts):
-        w_new = op_new.get_derivative_weights(i)
-        w_old = op_old.get_derivative_weights(i)
-        if w_new is None and w_old is None:
+        w = op.get_derivative_weights(i)
+        if w is None:
             continue
-        assert (w_new is None) == (w_old is None), f"mismatch at i={i}: weights None status differs"
-        np.testing.assert_array_equal(
-            w_new["neighbor_indices"],
-            w_old["neighbor_indices"],
-            err_msg=f"neighbor_indices mismatch at i={i} for legacy={legacy_value}",
-        )
-        np.testing.assert_allclose(
-            w_new["lap_weights"],
-            w_old["lap_weights"],
-            rtol=1e-12,
-            err_msg=f"lap_weights mismatch at i={i} for legacy={legacy_value}",
-        )
-        np.testing.assert_allclose(
-            w_new["grad_weights"],
-            w_old["grad_weights"],
-            rtol=1e-12,
-            err_msg=f"grad_weights mismatch at i={i} for legacy={legacy_value}",
-        )
+        assert "neighbor_indices" in w
+        assert "lap_weights" in w
+        assert "grad_weights" in w
 
 
 def test_mutual_exclusion(setup):
-    """Passing both new and legacy params must raise ValueError."""
+    """v0.25.0: qp_optimization_level= no longer in the signature; passing it (even
+    alongside monotonicity_scheme=) raises TypeError (unexpected kwarg)."""
     problem, pts, bdry = setup
-    with pytest.raises(ValueError, match="Specify at most one"):
+    with pytest.raises(TypeError, match="qp_optimization_level"):
         HJBGFDMSolver(
             problem,
             collocation_points=pts,
@@ -240,28 +197,17 @@ def test_default_application_per_scheme(setup):
     assert s.monotonicity_application == "precompute"
 
 
-def test_legacy_emits_deprecation_warning(setup):
-    """Using qp_optimization_level= must emit a DeprecationWarning naming the
-    replacement parameter."""
+def test_removed_qp_optimization_level_raises_type_error(setup):
+    """v0.25.0 removal (Issue #1070): qp_optimization_level= is no longer in the
+    __init__ signature; passing it raises TypeError, not DeprecationWarning."""
     problem, pts, bdry = setup
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with pytest.raises(TypeError, match="qp_optimization_level"):
         HJBGFDMSolver(
             problem,
             collocation_points=pts,
             boundary_indices=bdry,
             delta=0.3,
             qp_optimization_level="auto",
-        )
-        dep = [
-            w
-            for w in caught
-            if issubclass(w.category, DeprecationWarning)
-            and "qp_optimization_level" in str(w.message)
-            and "monotonicity_scheme" in str(w.message)
-        ]
-        assert len(dep) >= 1, (
-            f"Expected DeprecationWarning naming qp_optimization_level + monotonicity_scheme; got: {[str(w.message) for w in caught]}"
         )
 
 
@@ -371,4 +317,4 @@ def test_joint_socp_unsupported_application_warns(setup):
             adaptive_neighborhoods=True,
         )
     fb = [w for w in caught if "joint_socp" in str(w.message) and "precompute" in str(w.message)]
-    assert len(fb) >= 1, f"Expected fallback warning when joint_socp + non-precompute application is requested"
+    assert len(fb) >= 1, "Expected fallback warning when joint_socp + non-precompute application is requested"

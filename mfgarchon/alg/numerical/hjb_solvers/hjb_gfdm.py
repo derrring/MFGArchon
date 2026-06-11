@@ -32,7 +32,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
-from mfgarchon.utils.deprecation import deprecated_parameter, deprecated_value
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
@@ -198,12 +198,21 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             Configured HJBGFDMSolver instance
         """
+        # Translate QPConfig.optimization_level to the v0.18.0 canonical axes
+        # (qp_optimization_level was removed from __init__ in v0.25.0, Issue #1070).
+        _qp_level_to_scheme: dict[str, tuple[str, str | None]] = {
+            "none": ("none", None),
+            "auto": ("qp_m_matrix", "adaptive"),
+            "always": ("qp_m_matrix", "always"),
+        }
+        _mono_scheme, _mono_app = _qp_level_to_scheme.get(config.qp.optimization_level, ("none", None))
         kwargs: dict[str, Any] = {
             "delta": config.delta,
             "taylor_order": config.taylor_order,
             "weight_function": config.weight_function,
             "weight_scale": config.weight_scale,
-            "qp_optimization_level": config.qp.optimization_level,
+            "monotonicity_scheme": _mono_scheme,
+            "monotonicity_application": _mono_app,
             "qp_solver": config.qp.solver,
             "qp_warm_start": config.qp.warm_start,
             "qp_constraint_mode": config.qp.constraint_mode,
@@ -223,27 +232,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         kwargs.update(extra)
         return cls(problem, collocation_points, **kwargs)
 
-    @deprecated_value(
-        param_name="qp_optimization_level",
-        deprecated_values={"smart": "auto", "tuned": "auto", "basic": "auto"},
-        since="v0.17.0",
-    )
-    @deprecated_parameter(
-        param_name="qp_optimization_level",
-        since="v0.18.0",
-        replacement="monotonicity_scheme",
-        removal_blockers=["internal_usage", "equivalence_test", "migration_docs"],
-    )
-    @deprecated_parameter(
-        param_name="NiterNewton",
-        since="v0.17.0",
-        replacement="max_newton_iterations",
-    )
-    @deprecated_parameter(
-        param_name="l2errBoundNewton",
-        since="v0.17.0",
-        replacement="newton_tolerance",
-    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -261,9 +249,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         # 'howard' requires monotonicity_scheme='joint_socp' + monotonicity_application=
         # 'precompute', unit control cost, and a homogeneous no-flux BC (validated in solve).
         inner_solver: str = "newton",
-        # Deprecated parameters for backward compatibility
-        NiterNewton: int | None = None,
-        l2errBoundNewton: float | None = None,
         boundary_indices: np.ndarray | None = None,
         boundary_conditions: dict | BoundaryConditions | None = None,
         # Monotonicity construction (renamed from qp_optimization_level v0.18.0; Issue #XXXX).
@@ -273,8 +258,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         # See docstring for full semantics.
         monotonicity_scheme: str | None = None,
         monotonicity_application: str | None = None,
-        # Deprecated alias bundling both axes — will be removed v0.25.0
-        qp_optimization_level: str | None = None,
         qp_usage_target: float = 0.1,  # Unused, kept for backward compatibility
         qp_solver: str = "osqp",  # "osqp" or "scipy"
         qp_warm_start: bool = True,  # Enable QP warm-starting
@@ -322,13 +305,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             weight_function: Weight function type ("wendland", "cubic_spline", "gaussian", "inverse_distance", "uniform")
             weight_scale: Scale parameter for weight function
             max_newton_iterations: Maximum Newton iterations (new parameter name)
-            newton_tolerance: Newton convergence tolerance (new parameter name)
-            NiterNewton: DEPRECATED - use max_newton_iterations
-            l2errBoundNewton: DEPRECATED - use newton_tolerance
+            newton_tolerance: Newton convergence tolerance.
             boundary_indices: Indices of boundary collocation points
             boundary_conditions: Dictionary or BoundaryConditions object specifying boundary conditions
-            use_monotone_constraints: DEPRECATED - Use qp_optimization_level instead.
-                If explicitly set to True, will override qp_optimization_level.
             monotonicity_scheme: Which monotonicity construction to enforce on the GFDM
                 Laplacian (and, for joint_socp, the per-edge cone on the gradient stencil):
                 - "none": no constraints (fastest; no monotonicity guarantee).
@@ -337,23 +316,17 @@ class HJBGFDMSolver(BaseHJBSolver):
                 - "joint_socp": (Phase 1B follow-up) joint SOCP — M-matrix on $-\\Delta_h$
                   + per-edge cone $\\|D_{ij}\\|_2 \\leq C h_i L_{ij}$, closing the discrete
                   comparison principle (audit-major contribution).
-                Default: "none".
-                Renamed from `qp_optimization_level` in v0.18.0; legacy bundle still
-                accepted as deprecated alias.
+                Default: "none". (Renamed from qp_optimization_level in v0.18.0.)
             monotonicity_application: When the chosen scheme is enforced (only
                 meaningful for non-"none" schemes):
                 - "adaptive": only at nodes where the unconstrained weights violate
-                  the constraint (= legacy "auto"; recommended for qp_m_matrix).
+                  the constraint (recommended for qp_m_matrix).
                 - "always": at every node, every solve.
                 - "precompute": cache feasible weights at construction; reuse for all
                   Picard iterations / time steps. Recommended for joint_socp.
                 Default (None): use scheme-recommended default — "adaptive" for
                 qp_m_matrix, "precompute" for joint_socp.
-            qp_optimization_level: DEPRECATED alias bundling (scheme + application). Will be
-                removed in v0.25.0. Mappings: "none"→(none, —), "auto"→(qp_m_matrix, adaptive),
-                "always"→(qp_m_matrix, always), "precompute"→(qp_m_matrix, precompute).
-                Pass `monotonicity_scheme=` and `monotonicity_application=` instead.
-            qp_usage_target: Deprecated parameter, kept for backward compatibility
+            qp_usage_target: Unused parameter, kept for backward compatibility
             qp_solver: QP solver backend (default "osqp"):
                 - "osqp": Use OSQP solver (fast convex QP, 5-10× faster than scipy)
                 - "scipy": Use scipy.optimize.minimize (SLSQP or L-BFGS-B)
@@ -469,21 +442,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         #   joint_socp  → "precompute"   (audit-major default; weights cached at construction)
         #   none        → ignored
         #
-        # Legacy `qp_optimization_level` bundles both axes via these mappings:
-        #   "none"       → (none, ignored)
-        #   "auto"       → (qp_m_matrix, adaptive)
-        #   "always"     → (qp_m_matrix, always)
-        #   "precompute" → (qp_m_matrix, precompute)
-        #
-        # Mutual exclusion: pass either the new (scheme + application) or the legacy alias,
-        # not both.
-        if (
-            monotonicity_scheme is not None or monotonicity_application is not None
-        ) and qp_optimization_level is not None:
-            raise ValueError(
-                "Specify at most one of: (monotonicity_scheme=, monotonicity_application=) "
-                "or qp_optimization_level=. The latter is the deprecated alias (v0.18.0)."
-            )
+        # v0.25.0 (Issue #1070): qp_optimization_level= parameter removed; pass
+        # monotonicity_scheme= and monotonicity_application= directly.
 
         # Issue #1034: warn when user defaults to "none" (bare Wendland-Taylor LSQ).
         # This default produces a method whose M-matrix structure is not enforced;
@@ -492,7 +452,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # with KL=0.098 and 11 spurious modes — see Issue #1034 for full evidence).
         # Validated in mfg-research/.../exp08_towel_2d_validation/_preflight_1d/
         # post_mortem_1d_tob_debug.md.
-        if monotonicity_scheme is None and monotonicity_application is None and qp_optimization_level is None:
+        if monotonicity_scheme is None and monotonicity_application is None:
             import warnings as _w
 
             _w.warn(
@@ -512,7 +472,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
 
         if monotonicity_scheme is not None or monotonicity_application is not None:
-            # New API path
             scheme = monotonicity_scheme if monotonicity_scheme is not None else "none"
             valid_schemes = ("none", "qp_m_matrix", "joint_socp")
             if scheme not in valid_schemes:
@@ -532,16 +491,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             else:
                 application = monotonicity_application
         else:
-            # Legacy path
-            legacy = qp_optimization_level if qp_optimization_level is not None else "none"
-            mapping = {
-                "none": ("none", "ignored"),
-                "auto": ("qp_m_matrix", "adaptive"),
-                "always": ("qp_m_matrix", "always"),
-                "precompute": ("qp_m_matrix", "precompute"),
-            }
-            # Unknown legacy value passes through for solver-internal handling.
-            scheme, application = mapping.get(legacy, ("qp_m_matrix", legacy))
+            # Default: no monotonicity constraints
+            scheme = "none"
+            application = "ignored"
 
         # Canonical storage
         self.monotonicity_scheme = scheme
@@ -590,15 +542,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             self.hjb_method_name = f"GFDM-{self.qp_optimization_level}"
 
-        # Handle backward compatibility (warnings issued by @deprecated_parameter decorators)
-        if NiterNewton is not None:
-            if max_newton_iterations is None:
-                max_newton_iterations = NiterNewton
-
-        if l2errBoundNewton is not None:
-            if newton_tolerance is None:
-                newton_tolerance = l2errBoundNewton
-
         # Set defaults if still None
         if max_newton_iterations is None:
             max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS
@@ -614,7 +557,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         self.weight_function = weight_function
         self.weight_scale = weight_scale
 
-        # Newton parameters (store with new names)
+        # Newton parameters (canonical names; v0.25.0 removed NiterNewton/l2errBoundNewton)
         self.max_newton_iterations = max_newton_iterations
         self.newton_tolerance = newton_tolerance
 
@@ -622,10 +565,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         if inner_solver not in ("newton", "howard"):
             raise ValueError(f"inner_solver must be 'newton' or 'howard', got {inner_solver!r}")
         self.inner_solver = inner_solver
-
-        # Keep old names for backward compatibility (without warnings when accessed)
-        self.NiterNewton = max_newton_iterations
-        self.l2errBoundNewton = newton_tolerance
 
         # Boundary condition parameters
         # Auto-detect boundary indices if not provided (Issue #542 fix)
