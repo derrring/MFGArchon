@@ -261,6 +261,71 @@ class BaseHJBSolver(BaseNumericalSolver):
         }
         return type_mapping.get(class_name)
 
+    # === Hamiltonian single source of truth (Issue #1071) ===
+
+    def _hamiltonian_control_cost(self):
+        """Control-cost component of the problem's Hamiltonian -- the #1071 single source.
+
+        The Hamiltonian class (``problem.hamiltonian_class``) is the canonical source of
+        the control-cost weight ``lambda`` and the optimal control ``alpha* = -dH/dp``.
+        This returns its ``ControlCostBase`` component, which exposes ``.lambda_``,
+        ``.optimal_control(p)``, ``.dp(p)`` and ``.evaluate(p)``.
+
+        Fail loud when the problem carries no Hamiltonian class (or a Hamiltonian without a
+        control-cost component): there is then no canonical control cost to read, and a
+        solver must not silently fall back to a scalar placeholder (Issue #1071, the root
+        of the #1247 Howard lambda desync).
+        """
+        H_class = getattr(self.problem, "hamiltonian_class", None)
+        if H_class is None:
+            raise ValueError(
+                f"{type(self).__name__}: problem.hamiltonian_class is None; cannot derive the "
+                "control-cost lambda / optimal control from the Hamiltonian single source "
+                "(Issue #1071)."
+            )
+        control_cost = getattr(H_class, "control_cost", None)
+        if control_cost is None:
+            raise ValueError(
+                f"{type(self).__name__}: the Hamiltonian {type(H_class).__name__} exposes no "
+                "control_cost component; cannot derive lambda / optimal control (Issue #1071)."
+            )
+        return control_cost
+
+    def _control_cost_lambda(self) -> float:
+        """Control-cost weight ``lambda`` from the Hamiltonian single source (Issue #1071).
+
+        Prefers the Hamiltonian's control cost (``hamiltonian_class.control_cost.lambda_``)
+        -- the canonical source of ``alpha* = -p/lambda``. Falls back to ``problem.lambda_``
+        ONLY when the problem carries no Hamiltonian class (the legacy LQ fast path, where
+        ``problem.lambda_`` is then the sole available source).
+
+        This redirect removes the silent desync where a solver read ``problem.lambda_``
+        while the components Hamiltonian's control cost said otherwise -- the root of the
+        #1247 Howard defects. For the matched ``lambda=1`` paper case the two agree, so the
+        golden byte-identity gate is preserved.
+        """
+        H_class = getattr(self.problem, "hamiltonian_class", None)
+        if H_class is not None:
+            control_cost = getattr(H_class, "control_cost", None)
+            if control_cost is not None:
+                lambda_val = float(control_cost.lambda_)
+                if lambda_val <= 0:
+                    raise ValueError(
+                        f"Control cost lambda must be positive, got {lambda_val} from "
+                        f"{type(H_class).__name__}.control_cost (Issue #1071)."
+                    )
+                return lambda_val
+        # Legacy fallback: no Hamiltonian class -- problem.lambda_ is the only source.
+        lambda_val = getattr(self.problem, "lambda_", 1.0)
+        if lambda_val is None:
+            lambda_val = 1.0
+        if lambda_val <= 0:
+            raise ValueError(
+                f"Control cost parameter lambda_ must be positive, got {lambda_val}. "
+                "Set problem.lambda_ to a positive value."
+            )
+        return float(lambda_val)
+
     # Implementation of BaseMFGSolver abstract methods
     def solve(self) -> np.ndarray:
         """

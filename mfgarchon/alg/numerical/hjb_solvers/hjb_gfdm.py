@@ -2027,7 +2027,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Two modes supported:
         # - additive:       H = |p|²/(2λ) + V + γm (standard separable form)
         # - multiplicative: H = (1 + γ|Ω|m)|p|²/(2λ) + V (velocity reduction by congestion)
-        lambda_val = self._get_lambda_value()
+        lambda_val = self._control_cost_lambda()
         gamma_val = getattr(self.problem, "gamma", 0.0)
 
         # |grad_u|^2 for all points
@@ -2315,7 +2315,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         n = self.n_points
         d = self.dimension
         dt = self.problem.T / self.problem.Nt
-        lambda_val = self._get_lambda_value()
+        lambda_val = self._control_cost_lambda()
         # Issue #1073: use _get_sigma_value (returns σ) instead of confusing
         # `getattr(problem, "diffusion") or getattr(problem, "sigma")` chain.
         # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
@@ -2373,7 +2373,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             self._dmp_alpha_crit = critical_drift_for_dmp(
                 self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
             )
-        lambda_val = self._get_lambda_value()
+        lambda_val = self._control_cost_lambda()
         grad = np.stack([self._D_grad[d] @ u_current for d in range(self.dimension)], axis=1)
         max_alpha = float(np.max(np.linalg.norm(grad, axis=1)) / lambda_val)
         if max_alpha > self._dmp_alpha_crit:
@@ -2802,30 +2802,6 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return new_row, rhs
 
-    def _get_lambda_value(self) -> float:
-        """
-        Get control cost parameter lambda with validation.
-
-        Returns:
-            Positive lambda value
-
-        Raises:
-            ValueError: If lambda <= 0
-
-        Notes:
-            Lambda appears in the Hamiltonian as H = |p|²/(2λ) + ...
-            Division by lambda requires λ > 0.
-        """
-        lambda_val = getattr(self.problem, "lambda_", 1.0)
-        if lambda_val is None:
-            lambda_val = 1.0
-        if lambda_val <= 0:
-            raise ValueError(
-                f"Control cost parameter lambda_ must be positive, got {lambda_val}. "
-                f"Set problem.lambda_ to a positive value."
-            )
-        return float(lambda_val)
-
     def _compute_llf_sigma_eff(self) -> np.ndarray:
         """Compute per-node effective sigma for LLF augmentation (Issue #1059, paper P2).
 
@@ -3096,7 +3072,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "inner_solver='howard' requires problem.hamiltonian_class to derive the optimal "
                 "control alpha* = -dH/dp; the legacy no-Hamiltonian LQ path is unsupported."
             )
-        lambda_val = self._get_lambda_value()
+        # Issue #1071: derive lambda from the Hamiltonian's control cost (the single source),
+        # NOT from problem.lambda_ — the placeholder read that powered the #1247 desync.
+        lambda_val = self._control_cost_lambda()
         if abs(lambda_val - 1.0) > 1e-12:
             raise NotImplementedError(
                 f"inner_solver='howard' currently assumes unit control cost (lambda_=1), got {lambda_val}. "
@@ -3109,7 +3087,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # density coupling f(m). The pure-LQ test suite sits inside that envelope, which hid
         # three silent-wrong-physics holes: V/f(m) dropped, running_cost entering with the
         # opposite sign of the Newton H-additive convention, and the unit-cost gate above
-        # reading problem.lambda_ (never synced with the components Hamiltonian's control cost).
+        # reading problem.lambda_ (the #1247 desync, now fixed: the gate derives lambda from
+        # the Hamiltonian's control cost via _control_cost_lambda(), Issue #1071).
         # Inspect the actual Hamiltonian components and fail loud on anything Howard does not
         # model; full support is deferred. Found in the 2026-06-10 library audit; validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*.
