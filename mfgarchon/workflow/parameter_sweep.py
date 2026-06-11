@@ -42,6 +42,19 @@ class SweepConfiguration:
     timeout_per_run: float | None = None
     retry_failed: bool = True
     max_retries: int = 3
+    mp_context: Any = None
+    """Multiprocessing context passed to ``ProcessPoolExecutor`` for
+    ``parallel_processes`` mode.
+
+    ``None`` (default) uses the platform default start method (fork on
+    Linux, spawn on macOS/Windows).  Pass ``multiprocessing.get_context('spawn')``
+    to force spawn on all platforms — required for deterministic portability
+    testing and for environments that initialize CUDA/JAX before forking.
+
+    Issue #1080: the spawn start method pickles every worker argument, so the
+    sweep function and the ``ParameterSweep`` instance must both be picklable.
+    ``ParameterSweep.__getstate__`` drops the logger for this purpose.
+    """
 
     def __post_init__(self):
         if self.max_workers is None:
@@ -264,7 +277,10 @@ class ParameterSweep:
                     "(or 'sequential') to sweep in-process without pickling."
                 ) from e
 
-        with ProcessPoolExecutor(max_workers=self.config.max_workers) as executor:
+        # Issue #1080: pass the caller-supplied mp_context so users can force
+        # spawn on Linux (e.g. to test portability or avoid CUDA/JAX fork issues)
+        # without changing the system-wide start method.  None → platform default.
+        with ProcessPoolExecutor(max_workers=self.config.max_workers, mp_context=self.config.mp_context) as executor:
             # Prepare arguments for each worker — include self for pickling
             worker_args = [(self, function, params, i, kwargs) for i, params in enumerate(self.parameter_combinations)]
 
