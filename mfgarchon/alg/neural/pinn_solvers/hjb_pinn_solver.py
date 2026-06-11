@@ -195,7 +195,7 @@ class HJBPINNSolver(PINNBase):
 
         return u
 
-    def compute_derivatives(self, t: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_derivatives(self, t: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute derivatives of u(t,x) using automatic differentiation.
 
@@ -204,7 +204,11 @@ class HJBPINNSolver(PINNBase):
             x: Spatial coordinates [N, 1]
 
         Returns:
-            Tuple of (∂u/∂t, ∇u) where ∇u includes spatial derivatives
+            Tuple of (du/dt, du/dx, d^2u/dx^2) — u_xx required for viscous HJB term.
+
+        Note:
+            Issue #1281 fix (2026-06-11 survey): u_xx was missing; HJB residual
+            lacked the -(sigma^2/2)*u_xx viscous term, making sigma>0 incorrect.
         """
         # Enable gradient computation
         t_input = t.clone().detach().requires_grad_(True)
@@ -222,11 +226,17 @@ class HJBPINNSolver(PINNBase):
             outputs=u, inputs=x_input, grad_outputs=torch.ones_like(u), create_graph=True, retain_graph=True
         )[0]
 
-        return u_t, u_x
+        # Second spatial derivative (for viscous term in HJB)
+        u_xx = torch.autograd.grad(
+            outputs=u_x, inputs=x_input, grad_outputs=torch.ones_like(u_x), create_graph=True, retain_graph=True
+        )[0]
+
+        return u_t, u_x, u_xx
 
     def compute_pde_residual(self, t: torch.Tensor, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        Compute HJB equation residual: ∂u/∂t + H(∇u, x, m) = 0
+        Compute HJB equation residual:
+        du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
 
         Args:
             t: Time coordinates [N, 1]
@@ -234,9 +244,14 @@ class HJBPINNSolver(PINNBase):
 
         Returns:
             Dictionary with HJB residual
+
+        Note:
+            Issue #1281 fix (2026-06-11 survey): added -(sigma^2/2)*u_xx viscous
+            term; convention mirrors FP diffusion sign (fp_residual subtracts
+            (sigma^2/2)*m_xx). HJB residual now sigma-dependent for sigma>0.
         """
-        # Compute derivatives
-        u_t, u_x = self.compute_derivatives(t, x)
+        # Compute derivatives (u_t, u_x, u_xx)
+        u_t, u_x, u_xx = self.compute_derivatives(t, x)
 
         # Get population density
         m = self.get_density(t, x)
@@ -244,8 +259,11 @@ class HJBPINNSolver(PINNBase):
         # Compute Hamiltonian
         H = self.compute_hamiltonian(u_x, x, m)
 
-        # HJB equation residual: ∂u/∂t + H(∇u, x, m) = 0
-        hjb_residual = u_t + H
+        # Viscous term: (sigma^2/2) * u_xx  (matches FP diffusion convention)
+        viscous_term = (self.sigma**2 / 2) * u_xx
+
+        # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
+        hjb_residual = u_t + H - viscous_term
 
         return {"hjb": hjb_residual}
 
@@ -297,8 +315,8 @@ class HJBPINNSolver(PINNBase):
         # Default: Homogeneous Neumann boundary conditions (∂u/∂x = 0)
         # This is common for MFG problems on bounded domains
 
-        # Compute spatial derivative at boundary
-        _, u_x = self.compute_derivatives(t, x)
+        # Compute spatial derivative at boundary (u_xx not needed here)
+        _, u_x, _u_xx = self.compute_derivatives(t, x)
 
         # Neumann BC: ∂u/∂n = 0 (normal derivative = 0)
         boundary_loss = torch.mean(u_x**2)
@@ -409,7 +427,7 @@ class HJBPINNSolver(PINNBase):
         Returns:
             Optimal control [N, spatial_dim]
         """
-        _, u_x = self.compute_derivatives(t, x)
+        _, u_x, _u_xx = self.compute_derivatives(t, x)
 
         # For quadratic cost, optimal control is α* = -∇u
         optimal_control = -u_x
