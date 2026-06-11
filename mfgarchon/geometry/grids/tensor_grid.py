@@ -1515,6 +1515,7 @@ class TensorProductGrid(
         order: int = 2,
         scheme: str = "central",
         time: float = 0.0,
+        bc: BoundaryConditions | None = None,
     ):
         """
         Return discrete gradient operator(s) for this grid.
@@ -1526,6 +1527,10 @@ class TensorProductGrid(
             order: Discretization order (not used yet, reserved for future)
             scheme: Difference scheme ("central", "upwind", "one_sided")
             time: Time for time-dependent boundary conditions (default 0.0)
+            bc: Boundary conditions to use (None uses grid's default BC).  Mirrors the
+                ``bc=`` parameter of ``get_laplacian_operator`` so callers with a
+                solver-level BC override can thread it in without mutating the grid.
+                Issue #1255 (A), 2026-06-10 audit.
 
         Returns:
             If direction is None:
@@ -1542,8 +1547,10 @@ class TensorProductGrid(
         """
         from mfgarchon.operators import PartialDerivOperator
 
-        # Use grid's BC
-        bc = self.get_boundary_conditions()
+        # Use caller-supplied BC if provided, otherwise fall back to grid's own BC.
+        # Matches the pattern of get_laplacian_operator (tensor_grid.py:1474).
+        # Issue #1255 (A), 2026-06-10 audit.
+        bc = bc if bc is not None else self.get_boundary_conditions()
 
         # Create operator(s)
         if direction is not None:
