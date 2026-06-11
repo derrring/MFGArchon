@@ -357,3 +357,137 @@ class TestUniformRobinGhostAlphaBeta:
             f"Mixed path padded:\n{buf_mixed.padded}\n"
             "Uniform and mixed Robin paths must produce identical ghost values."
         )
+
+
+# ===========================================================================
+# (D2) End-to-end: real Hyperrectangle torus, no TypeError, finite density
+# ===========================================================================
+
+
+class TestHyperrectangleTorusEndToEnd:
+    """
+    Issue #1255 (D2 / B): end-to-end pinning test using a *real*
+    Hyperrectangle with periodic_dims — not a mock.
+
+    The prior tests in TestImplicitGeometryGradientNoTypeError bypass
+    FPParticleSolver.__init__ via object.__new__ and use a mock geometry.
+    This class exercises the full constructor + solve pipeline so that any
+    regression to the buggy ``geometry.get_gradient_operator(scheme="central")``
+    call is caught at the integration level.
+
+    Buggy path (pre-#1275): _compute_gradient_nd always called
+      ``self.problem.geometry.get_gradient_operator(scheme="central")``
+      ImplicitGeometry.get_gradient_operator() accepts no kwargs →
+      ``TypeError: get_gradient_operator() got an unexpected keyword argument 'scheme'``
+
+    Fixed path (current): isinstance guard routes Hyperrectangle/implicit
+    geometries to gradient_nd (periodic-wrap), which is correct for torus
+    and reproduces pre-#1246 behavior.
+
+    Refs #1255 (D2), 2026-06-11 audit.
+    """
+
+    def _make_torus_problem(self, dim: int):
+        """Return (problem, M_initial) for a fully-periodic Hyperrectangle torus."""
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_components import MFGComponents
+        from mfgarchon.core.mfg_problem import MFGProblem
+        from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+        bounds = np.array([[0.0, 1.0]] * dim)
+        torus = Hyperrectangle(bounds=bounds, periodic_dims=tuple(range(dim)))
+        hamiltonian = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        components = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=hamiltonian,
+        )
+        problem = MFGProblem(
+            geometry=torus,
+            T=0.1,
+            Nt=3,
+            sigma=0.1,
+            coupling_coefficient=0.5,
+            components=components,
+        )
+        return problem
+
+    def _make_solver_and_m_initial(self, dim: int):
+        from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+        problem = self._make_torus_problem(dim)
+        solver = FPParticleSolver(problem, num_particles=50)
+        params = solver._get_grid_params()
+        grid_shape = params["grid_shape"]
+        M_initial = np.ones(grid_shape) / float(np.prod(grid_shape))
+        return solver, M_initial
+
+    def test_2d_torus_zero_drift_no_type_error(self):
+        """
+        FPParticleSolver on a 2-D fully-periodic Hyperrectangle torus with
+        drift_field=None must not raise TypeError and must return finite density.
+
+        Buggy code: get_gradient_operator(scheme="central") on Hyperrectangle
+        → TypeError (no kwargs accepted).
+        Fixed code: isinstance guard routes to gradient_nd fallback.
+
+        Refs #1255 (D2), 2026-06-11.
+        """
+        solver, M_initial = self._make_solver_and_m_initial(dim=2)
+        assert solver.boundary_conditions == "periodic", (
+            f"Torus solver should have periodic sentinel, got {solver.boundary_conditions!r}"
+        )
+
+        # Must not raise TypeError (or any exception)
+        result = solver.solve_fp_system(drift_field=None, M_initial=M_initial)
+
+        result_arr = np.asarray(result)
+        assert np.all(np.isfinite(result_arr)), (
+            f"Density contains non-finite values: "
+            f"nan={np.sum(np.isnan(result_arr))}, inf={np.sum(np.isinf(result_arr))}"
+        )
+        assert result_arr.shape[0] > 0, "Result has no time steps"
+        # Density must be non-negative
+        assert np.all(result_arr >= -1e-12), "Density has significant negative values"
+
+    def test_1d_torus_zero_drift_no_type_error(self):
+        """
+        Same regression guard for the 1-D fully-periodic Hyperrectangle torus.
+        The 1-D path routes to _solve_fp_system_cpu, which also calls
+        _compute_gradient_nd; the isinstance guard must protect this path too.
+
+        Refs #1255 (D2), 2026-06-11.
+        """
+        solver, M_initial = self._make_solver_and_m_initial(dim=1)
+        assert solver.boundary_conditions == "periodic"
+
+        result = solver.solve_fp_system(drift_field=None, M_initial=M_initial)
+
+        result_arr = np.asarray(result)
+        assert np.all(np.isfinite(result_arr)), "1D torus density contains non-finite values"
+
+    def test_2d_torus_gradient_nd_fallback_is_zero_for_uniform_u(self):
+        """
+        For a uniform (constant) U = 0 field on a torus, the gradient must be
+        identically zero.  This verifies the gradient_nd fallback computes the
+        correct periodic-wrap derivative, not the TensorProductGrid operator.
+
+        Refs #1255 (D2), 2026-06-11.
+        """
+        solver, _ = self._make_solver_and_m_initial(dim=2)
+        params = solver._get_grid_params()
+        spacings = params["spacings"]
+        grid_shape = params["grid_shape"]
+
+        U_zero = np.zeros(grid_shape)
+        grads = solver._compute_gradient_nd(U_zero, spacings, use_backend=False)
+
+        assert len(grads) == 2, f"Expected 2 gradient components, got {len(grads)}"
+        for d, g in enumerate(grads):
+            assert np.allclose(g, 0.0), (
+                f"Gradient component {d} is not zero for uniform U=0: max={np.max(np.abs(g)):.2e}"
+            )
