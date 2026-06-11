@@ -604,9 +604,10 @@ def test_create_grid_sweep():
 def test_create_random_sweep_basic():
     """Test create_random_sweep factory function.
 
-    Note: create_random_sweep generates n_samples for EACH parameter independently,
-    then creates Cartesian product. So with 2 parameters and n_samples=20,
-    it creates 20 × 20 = 400 combinations.
+    Issue #1284 / 2026-06-11 survey: the previous implementation generated
+    n_samples values PER parameter then took the Cartesian product, yielding
+    n_samples**k combinations for k parameters.  The correct behaviour is
+    exactly n_samples independent joint draws (one value per parameter per draw).
     """
     params = {"x": (0.0, 1.0), "y": (5.0, 10.0)}
     n_samples = 20
@@ -614,8 +615,8 @@ def test_create_random_sweep_basic():
     sweep = create_random_sweep(params, n_samples=n_samples)
 
     assert isinstance(sweep, ParameterSweep)
-    # Total combinations = n_samples^num_parameters (Cartesian product)
-    assert sweep.total_combinations == n_samples * n_samples  # 20 * 20 = 400
+    # Total combinations == n_samples (paired draws, not Cartesian product).
+    assert sweep.total_combinations == n_samples
 
 
 @pytest.mark.unit

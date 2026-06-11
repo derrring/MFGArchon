@@ -23,6 +23,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.config import MFGSolverConfig
 from mfgarchon.utils.deprecation import deprecated
+from mfgarchon.utils.mfg_logging.logger import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
@@ -131,7 +134,18 @@ class SolverFactory:
         if "num_particles" in kwargs:
             updated_config.fp.particle.num_particles = kwargs["num_particles"]
         if "delta" in kwargs:
-            updated_config.hjb.gfdm.delta = kwargs["delta"]
+            # Issue #1284 / 2026-06-11 survey: guard the gfdm sub-config.
+            # When hjb.method == 'fdm' (the default), gfdm is None and
+            # accessing .delta raises AttributeError.  Only set delta when
+            # the GFDM sub-config is present.
+            if updated_config.hjb.gfdm is not None:
+                updated_config.hjb.gfdm.delta = kwargs["delta"]
+            else:
+                logger.warning(
+                    "Ignoring 'delta' kwarg: hjb.gfdm sub-config is None "
+                    "(hjb.method=%r is not 'gfdm'). Set hjb.method='gfdm' first.",
+                    updated_config.hjb.method,
+                )
 
         return updated_config
 

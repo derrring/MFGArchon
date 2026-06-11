@@ -267,6 +267,8 @@ def test_create_from_config_dict_simple(factory):
         "hamiltonian": {"type": "separable", "control_cost": 1.0, "coupling_coefficient": 1.0},
         "domain": {"xmin": 0.0, "xmax": 1.0, "Nx": 20},
         "time": {"T": 1.0, "Nt": 10},
+        # 'solver' section is required (Issue #1284 / 2026-06-11 survey: fail-loud fix).
+        "solver": {"sigma": 0.5, "coupling_coefficient": 1.0},
         "functions": {
             "m_initial": "lambda x: np.exp(-10 * (x - 0.5)**2)",
             "u_final": "lambda x: 0.5 * x**2",
