@@ -7,12 +7,29 @@ These utilities are used by both legacy and config-aware fixed-point iterator im
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
     from mfgarchon.utils.solver_result import SolverResult
+
+
+def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
+    """Return the parameter names of ``fp_solver.solve_fp_system`` (or ``None``).
+
+    Mirrors :meth:`BaseCouplingIterator._init_solver_signatures` for iterators that hold a
+    *list* of per-subsystem FP solvers (regime-switching, graph MFG) and therefore cache one
+    signature set per solver rather than a single shared one. The cached set is the
+    ``fp_sig_params`` argument of :func:`resolve_fp_drift_kwargs`, which decides whether the
+    value function is routed via ``potential_field`` (smooth separable $H$, FP derives the
+    velocity) or ``drift_field`` (Issue #1315).
+    """
+    try:
+        return set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
+    except (AttributeError, ValueError):
+        return None
 
 
 def initialize_cold_start(
