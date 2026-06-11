@@ -29,6 +29,7 @@ from .fixed_point_utils import (
     preserve_terminal_condition,
     resolve_fp_drift_kwargs,
 )
+from .graph_coupling import _get_time_slice
 
 logger = get_logger(__name__)
 
@@ -233,15 +234,21 @@ class FixedPointIterator(BaseCouplingIterator):
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
-    def _compose_hjb_source(self, m_current: np.ndarray) -> Callable | None:
+    def _compose_hjb_source(self, m_current: np.ndarray, u_current: np.ndarray) -> Callable | None:
         """Compose problem-level source terms into a solver-level source_term callable.
 
         Reads source_term_hjb, nonlocal_operator, and obstacle from MFGProblem,
-        binds spatial grid and current density, returns a (v, t) -> array closure
-        compatible with BaseHJBSolver.solve_hjb_system(source_term=...).
+        binds spatial grid, current density, and current value function, returns
+        a (t, x) -> array closure compatible with
+        BaseHJBSolver.solve_hjb_system(source_term=...).
 
         Issue #921/#922: Bridges problem-level signature (x, m, v, t) to
         solver-level signature (t, x) by closure binding.
+        Issue #1259 fix (2026-06-10 audit): nonlocal_operator term was computed
+        in has_nonlocal but never applied inside the closure.  Added explicit
+        branch that extracts the time slice of the previous-iterate value function
+        and applies J[v] with the same sign convention used by graph_mfg_solver
+        (s += nonlocal_operator @ v_t).
 
         Returns:
             Callable or None if no source terms are active.
@@ -256,10 +263,8 @@ class FixedPointIterator(BaseCouplingIterator):
 
         def composed(t: float, x: np.ndarray) -> np.ndarray:
             # Note: HJB solver calls source_term(t, x_grid) -> array.
-            # We need v (current value function) for nonlocal_operator,
-            # but the HJB solver evaluates source_term *before* solving.
-            # For the current time step, we use the previous iterate's U.
-            # This is consistent with explicit treatment of source terms.
+            # The nonlocal and source terms use the previous iterate's U
+            # (explicit treatment), consistent with graph_mfg_solver.py:306.
             terms: list[np.ndarray] = []
             if has_source:
                 terms.append(problem.source_term_hjb(x, m_current, np.zeros_like(m_current), t))
@@ -270,6 +275,12 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Note: this is evaluated with v=0 here; for proper penalty,
                 # PenaltyHJBSolver wrapper (#924) should be used instead.
                 terms.append((1.0 / eps) * np.maximum(0.0, psi.ravel()))
+            if has_nonlocal:
+                # Issue #1259 fix (2026-06-10 audit): apply J[v] using the
+                # previous iterate's value function at time t (explicit
+                # treatment), matching the convention in graph_mfg_solver.py:306.
+                v_t = _get_time_slice(u_current, t, problem.dt)
+                terms.append(problem.nonlocal_operator @ v_t)
             return sum(terms) if terms else np.zeros(x.shape[0])
 
         return composed
@@ -680,7 +691,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Issue #614: Use hierarchical subtask for inner solver visibility
                 # Issue #625: Resolve BC providers before HJB solve
                 # Issue #922: Compose source terms from problem fields
-                hjb_source = self._compose_hjb_source(M_old)
+                # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate
+                hjb_source = self._compose_hjb_source(M_old, U_old)
 
                 # Issue #934: Context routing handles progress automatically —
                 # solver's create_progress_bar detects parent HierarchicalProgress
