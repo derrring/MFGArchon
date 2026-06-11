@@ -93,15 +93,27 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     # --- Gradient recovery: mass-lumped L2 projection grad_d(u) = G_d @ u -----
     def _build_gradient_operators(self) -> None:
-        # Accuracy caveat: row-sum mass lumping (M_lumped = M.sum(axis=1)) keeps gradient recovery
-        # cheap and diagonal, and is exact-order for P1. For P2 it is suboptimal — the lumped
-        # projection can cap the recovered gradient below the full consistent-mass O(h^p) rate, so
-        # a P2 HJB solve may not realize the full P2 convergence order here. Replacing this with a
-        # full consistent-mass L2 projection is a deferred accuracy-vs-speed design decision.
+        # Row-sum mass lumping (M_lumped = M.sum(axis=1)) keeps gradient recovery cheap and
+        # diagonal, and is exact-order for P1 (every row sum is a positive fraction of the element
+        # measure). It is INVALID for P2+ Lagrange: the vertex shape function integrates to ~0 over
+        # a triangle (int lambda(2 lambda - 1) = 0) and to a NEGATIVE value over a tetrahedron, so
+        # the consistent-mass row sum at every vertex DOF is ~0 or < 0. The old clamp
+        # (M_lumped < 1e-15 -> 1e-15) then turned that into 1e-15, and 1/1e-15 = 1e15 multiplied the
+        # recovered vertex gradient into garbage (recovered grad of u = x came out ~1e-3 or ~-6e12
+        # at P2 vertices), silently feeding nonsense into H(grad u). Fail loud instead; a
+        # consistent-mass L2 projection (grad = M^{-1} R) is the fix for P2+ (#1252, 2026-06-10 audit).
         if self._G_grad is not None:
             return
         M_lumped = np.array(self._M.sum(axis=1)).ravel()
-        M_lumped[M_lumped < 1e-15] = 1e-15
+        m_min, m_max = float(M_lumped.min()), float(M_lumped.max())
+        if m_min < 1e-12 * m_max:
+            raise NotImplementedError(
+                "Row-sum mass lumping for nodal gradient recovery requires strictly positive lumped "
+                f"masses, but the minimum row sum is {m_min:.3e} (max {m_max:.3e}). This is the P2+ "
+                "Lagrange case (vertex shape functions integrate to ~0 / negative), where lumping "
+                "yields garbage gradients in H(grad u). Use P1 elements, or implement a "
+                "consistent-mass L2 projection grad = M^{-1} R for higher-order elements (#1252)."
+            )
         self._M_lumped_inv = 1.0 / M_lumped
         self._G_grad = [(sparse.diags(self._M_lumped_inv) @ R_d).tocsr() for R_d in self._R_grad]
 
