@@ -90,6 +90,32 @@ class MFGResidual:
         self.volatility_field = volatility_field
         self.drift_field = drift_field
 
+        # Issue #1285: Newton residual does not compose source_term_hjb,
+        # source_term_fp, nonlocal_operator, or obstacle — it silently solves
+        # a different variational problem than Picard when any of those fields
+        # is set.  Fail loud until these terms are wired.
+        # Use FixedPointIterator instead; it correctly composes all four via
+        # _compose_hjb_source / _compose_fp_source.  Refs #1285 #1043.
+        _unsupported_fields = [
+            name
+            for name, val in [
+                ("source_term_hjb", problem.source_term_hjb),
+                ("source_term_fp", problem.source_term_fp),
+                ("nonlocal_operator", problem.nonlocal_operator),
+                ("obstacle", problem.obstacle),
+            ]
+            if val is not None
+        ]
+        if _unsupported_fields:
+            raise NotImplementedError(
+                f"MFGResidual (Newton path) does not support problem fields: "
+                f"{_unsupported_fields}. "
+                "These terms are silently ignored, causing Newton to converge "
+                "to a wrong equilibrium. "
+                "Use FixedPointIterator instead, which correctly composes "
+                "all four terms. Refs #1285 #1043."
+            )
+
         # Cache problem dimensions
         self.num_time_steps = problem.Nt + 1
         self.spatial_shape = tuple(problem.geometry.get_grid_shape())
