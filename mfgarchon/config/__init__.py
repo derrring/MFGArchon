@@ -65,6 +65,16 @@ from .mfg_methods import (
     WENOConfig,
 )
 
+# Config → solver kwargs translator (Issue #1155)
+from .translator import (
+    backend_config_to_kwargs,
+    check_logging_config,
+    fp_config_to_kwargs,
+    hjb_config_to_kwargs,
+    picard_config_to_iterator_kwargs,
+    translate_solver_config,
+)
+
 # =============================================================================
 # OPTIONAL: OmegaConf-based configuration management
 # =============================================================================
@@ -119,6 +129,13 @@ __all__ = [
     "load_solver_config",
     "save_solver_config",
     "validate_yaml_config",
+    # Translator (Issue #1155)
+    "hjb_config_to_kwargs",
+    "fp_config_to_kwargs",
+    "picard_config_to_iterator_kwargs",
+    "backend_config_to_kwargs",
+    "check_logging_config",
+    "translate_solver_config",
     # MFG solver config
     "MFGSolverConfig",
     # Array validation

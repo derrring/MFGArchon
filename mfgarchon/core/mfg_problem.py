@@ -2446,12 +2446,12 @@ See: docs/migration/HAMILTONIAN_API.md"""
             tolerance: Convergence tolerance (default: from config or 1e-6)
             verbose: Show solver progress (default: from config or True)
             config: Optional MFGSolverConfig for advanced configuration.
-                Only ``config.picard`` is applied in Safe/Auto mode (explicit
-                max_iterations/tolerance/verbose override it). ``config.hjb`` /
-                ``config.fp`` are NOT yet threaded into factory-built solvers
-                (Issue #1155); passing non-default hjb/fp values raises rather than
-                silently ignoring them. Use Expert Mode (hjb_solver/fp_solver) for
-                full HJB/FP control.
+                ``config.picard`` drives iteration parameters (max_iterations,
+                tolerance, relaxation, anderson_memory).  ``config.hjb`` /
+                ``config.fp`` non-default fields are translated to solver
+                constructor kwargs (Issue #1155).  Fields with no mapping raise
+                NotImplementedError (fail-loud, Refs #1155).  Use Expert Mode
+                (hjb_solver/fp_solver) to bypass the translator entirely.
             scheme: NumericalScheme for Safe Mode (FDM_UPWIND, SL_LINEAR, GFDM, etc.)
             hjb_solver: Pre-initialized HJB solver for Expert Mode
             fp_solver: Pre-initialized FP solver for Expert Mode
@@ -2541,31 +2541,6 @@ See: docs/migration/HAMILTONIAN_API.md"""
                 "  • Auto Mode: problem.solve() [no scheme/solver params]"
             )
 
-        # config.hjb / config.fp are not yet threaded into factory-built solvers
-        # (Issue #1155): the composite HJB/FP configs do not map cleanly to the
-        # per-solver constructor kwargs. Fail loud rather than silently ignore a
-        # user-supplied hjb/fp config in the factory paths (Safe/Auto mode). Expert
-        # Mode builds the solvers directly, so config.hjb/.fp are irrelevant there.
-        if not expert_mode:
-            from mfgarchon.config.mfg_methods import FPConfig, HJBConfig
-
-            unhonored = [
-                name
-                for name, sub, default in (
-                    ("config.hjb", config.hjb, HJBConfig()),
-                    ("config.fp", config.fp, FPConfig()),
-                )
-                if sub != default
-            ]
-            if unhonored:
-                raise NotImplementedError(
-                    f"{' and '.join(unhonored)} cannot be applied in "
-                    f"{'Safe' if safe_mode else 'Auto'} mode yet: the composite HJB/FP config "
-                    "does not map to the factory's per-solver settings (Issue #1155). Only "
-                    "config.picard is honored here. For full HJB/FP control now, use Expert "
-                    "Mode: solve(hjb_solver=..., fp_solver=...)."
-                )
-
         # ─────────────────────────────────────────────────────────────────────
         # Safe Mode: Automatic dual pairing via scheme selection
         # ─────────────────────────────────────────────────────────────────────
@@ -2581,10 +2556,20 @@ See: docs/migration/HAMILTONIAN_API.md"""
                         f"Unknown scheme string: {scheme!r}. Valid schemes: {[s.value for s in NumericalScheme]}"
                     ) from None
 
+            # Issue #1155: translate config.hjb / config.fp to solver kwargs.
+            # Non-default fields that have clear mappings are threaded; unknown /
+            # unsupported non-default fields raise NotImplementedError (fail-loud).
+            from mfgarchon.config.translator import fp_config_to_kwargs, hjb_config_to_kwargs
+
+            _hjb_ctor_kw = hjb_config_to_kwargs(config.hjb, scheme)
+            _fp_ctor_kw = fp_config_to_kwargs(config.fp, scheme)
+
             # Create validated dual pair (Phase 2 factory)
             hjb_solver, fp_solver = create_paired_solvers(
                 problem=self,
                 scheme=scheme,
+                hjb_config=_hjb_ctor_kw,
+                fp_config=_fp_ctor_kw,
                 validate_duality=True,  # Guaranteed dual by construction
             )
 
@@ -2632,9 +2617,17 @@ See: docs/migration/HAMILTONIAN_API.md"""
             # For now, get_recommended_scheme() returns FDM_UPWIND as safe default
             recommended_scheme = get_recommended_scheme(self)
 
+            # Issue #1155: translate config.hjb / config.fp to solver kwargs.
+            from mfgarchon.config.translator import fp_config_to_kwargs, hjb_config_to_kwargs
+
+            _hjb_ctor_kw = hjb_config_to_kwargs(config.hjb, recommended_scheme)
+            _fp_ctor_kw = fp_config_to_kwargs(config.fp, recommended_scheme)
+
             hjb_solver, fp_solver = create_paired_solvers(
                 problem=self,
                 scheme=recommended_scheme,
+                hjb_config=_hjb_ctor_kw,
+                fp_config=_fp_ctor_kw,
                 validate_duality=True,
             )
 
@@ -2654,12 +2647,26 @@ See: docs/migration/HAMILTONIAN_API.md"""
         # solve a different PDE than the user specified. FP-FDM was fixed
         # separately in PR #1277 to fall back to problem.volatility_field when
         # None is passed, but HJB and other solvers still use problem.sigma.
+        #
+        # Issue #1155: thread anderson_memory and backend from config to iterator.
+        from mfgarchon.config.translator import (
+            backend_config_to_kwargs,
+            check_logging_config,
+            picard_config_to_iterator_kwargs,
+        )
+
+        _iterator_extra_kw = picard_config_to_iterator_kwargs(config.picard)
+        _backend_kw = backend_config_to_kwargs(config.backend)
+        check_logging_config(config.logging)
+
         solver = FixedPointIterator(
             problem=self,
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             config=config,
             volatility_field=self.volatility_field,
+            **_iterator_extra_kw,
+            **_backend_kw,
         )
 
         return solver.solve(verbose=verbose)
