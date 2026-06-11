@@ -1280,7 +1280,12 @@ class TestLinearReflectionNeumannFlux:
         u = np.sin(np.linspace(0.0, 1.0, 11))
         for v in (0.5, -1.3):
             gh = self._ghosts(neumann_bc(dimension=1, value=v), u, dx=dx)
-            dudn_low = (gh[1] - gh[0]) / dx  # (u_interior - u_ghost)/dx, low outward = -x
+            # du/dn is the OUTWARD-normal derivative: low wall outward = -x, so
+            # du/dn = (u_ghost - u_interior)/dx (Issue #1262, 2026-06-10 audit). The previous
+            # (u_interior - u_ghost)/dx computed -du/dn; that sign error cancelled the old
+            # ghost-sign bug (u_g = u_i - dx*v), so this test passed against incorrect ghosts.
+            # With the corrected ghost (u_g = u_i + dx*v) the low-wall du/dn is +v.
+            dudn_low = (gh[0] - gh[1]) / dx  # (u_ghost - u_interior)/dx, low outward = -x
             dudn_high = (gh[-1] - gh[-2]) / dx  # (u_ghost - u_interior)/dx, high outward = +x
             assert abs(dudn_low - v) < 1e-12, f"low du/dn={dudn_low} != {v}"
             assert abs(dudn_high - v) < 1e-12, f"high du/dn={dudn_high} != {v}"

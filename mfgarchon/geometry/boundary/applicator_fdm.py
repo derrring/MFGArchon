@@ -1032,9 +1032,14 @@ class PreallocatedGhostBuffer:
             #
             # Issue #1186 sibling: for BCType.NEUMANN with a NONZERO prescribed flux du/dn = v,
             # add the linear flux offset on top of the mirror (the mirror alone silently dropped
-            # it). Sign matches the Robin branch below: -dx*v at the low wall (outward normal -1),
-            # +dx*v at the high wall (+1). v == 0 (and NO_FLUX / REFLECTING, definitionally
-            # zero-flux) leaves the pure mirror -> byte-identical.
+            # it). du/dn = v means du/dx = -v at the low wall (outward normal -x) and du/dx = +v
+            # at the high wall (outward normal +x). Both walls: ghost = interior + dx*v.
+            # Derivation (cell-centred, boundary at x=0):
+            #   du/dx|_0 approx (u_interior - u_ghost)/dx, so ghost = interior - dx*(du/dx)
+            #   Low wall: ghost = interior - dx*(-v) = interior + dx*v  [Issue #1262, 2026-06-10 audit]
+            #   High wall: ghost = interior + dx*v  (outward normal +x, du/dx = v)
+            # v == 0 (and NO_FLUX / REFLECTING, definitionally zero-flux) leaves the pure
+            # mirror -> byte-identical.
             apply_flux = bc_type == BCType.NEUMANN and v != 0.0
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
@@ -1046,7 +1051,7 @@ class PreallocatedGhostBuffer:
                     lo_interior[axis] = g + k  # Adjacent interior cells from g up
                     buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
                     if apply_flux:
-                        buf[tuple(lo_ghost)] -= dx * v
+                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)
 
                 # High boundary: ghost mirrors adjacent interior
                 for k in range(g):
