@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -41,7 +43,7 @@ if TYPE_CHECKING:
 def compute_normal_from_bounds(
     point: NDArray[np.floating],
     bounds: list[tuple[float, float]] | NDArray[np.floating],
-    tol: float = 1e-10,
+    tol: float = ONWALL_TOL,
 ) -> NDArray[np.floating]:
     """
     Compute outward normal vector for a point on hyperrectangle boundary.
@@ -262,7 +264,7 @@ def create_ghost_stencil(
     # Interior means: (x - boundary_point) · normal < 0
     offsets = neighbor_points - boundary_point
     normal_components = offsets @ normal
-    interior_mask = normal_components < -1e-10
+    interior_mask = normal_components < -ONWALL_TOL
 
     # Get interior neighbors
     interior_points = neighbor_points[interior_mask]
