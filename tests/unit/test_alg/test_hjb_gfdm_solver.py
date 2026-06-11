@@ -89,21 +89,23 @@ class TestHJBGFDMSolverInitialization:
         assert solver.max_newton_iterations == 50
         assert solver.newton_tolerance == 1e-8
 
-    def test_deprecated_parameters(self, standard_problem):
-        """Test backward compatibility with deprecated parameter names."""
+    def test_removed_deprecated_parameters_raise(self, standard_problem):
+        """v0.25.0 removal (Issue #1070): NiterNewton= and l2errBoundNewton= no longer
+        exist in the signature — passing them raises TypeError."""
         problem = standard_problem
         bounds = problem.geometry.get_bounds()
         (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
         x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
         collocation_points = x_coords.reshape(-1, 1)
 
-        with pytest.warns(DeprecationWarning, match="Parameter.*deprecated"):
-            solver = HJBGFDMSolver(problem, collocation_points, NiterNewton=40, l2errBoundNewton=1e-5)
+        with pytest.raises(TypeError, match="NiterNewton"):
+            HJBGFDMSolver(problem, collocation_points, NiterNewton=40)
 
-        assert solver.max_newton_iterations == 40
-        assert solver.newton_tolerance == 1e-5
-        assert solver.NiterNewton == 40
-        assert solver.l2errBoundNewton == 1e-5
+        with pytest.raises(TypeError, match="l2errBoundNewton"):
+            HJBGFDMSolver(problem, collocation_points, l2errBoundNewton=1e-5)
+
+        with pytest.raises(TypeError, match="qp_optimization_level"):
+            HJBGFDMSolver(problem, collocation_points, qp_optimization_level="auto")
 
     def test_qp_optimization_levels(self, standard_problem):
         """Test different QP optimization levels."""
