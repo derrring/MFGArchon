@@ -578,19 +578,38 @@ def create_random_sweep(parameters: dict[str, tuple], n_samples: int = 100) -> P
 
     Args:
         parameters: Dict of parameter_name -> (min_value, max_value)
-        n_samples: Number of random samples to generate
+        n_samples: Number of random samples to generate.  Each call produces
+            exactly n_samples independent joint draws (one value per parameter
+            per draw).  The previous implementation generated n_samples values
+            PER parameter then took the Cartesian product, yielding
+            n_samples**k combinations for k parameters.
+            Issue #1284 / 2026-06-11 survey.
     """
-    random_params = {}
+    param_names = list(parameters.keys())
+    samples_per_param: dict[str, list] = {}
 
     for param_name, (min_val, max_val) in parameters.items():
         if isinstance(min_val, int) and isinstance(max_val, int):
             # Integer parameters
-            random_params[param_name] = np.random.randint(min_val, max_val + 1, size=n_samples).tolist()
+            samples_per_param[param_name] = np.random.randint(min_val, max_val + 1, size=n_samples).tolist()
         else:
             # Float parameters
-            random_params[param_name] = np.random.uniform(min_val, max_val, size=n_samples).tolist()
+            samples_per_param[param_name] = np.random.uniform(min_val, max_val, size=n_samples).tolist()
 
-    return ParameterSweep(random_params)
+    # Zip per-parameter draws into n_samples joint tuples.
+    # Passing samples_per_param directly to ParameterSweep would trigger the
+    # Cartesian product in _generate_combinations, giving n_samples**k entries.
+    # Issue #1284 / 2026-06-11 survey.
+    combinations = [{name: samples_per_param[name][i] for name in param_names} for i in range(n_samples)]
+
+    # Build a single-point dummy so ParameterSweep initializes all infrastructure
+    # (config, logger) with minimal cost, then override with the paired combos.
+    dummy_params = {name: [samples_per_param[name][0]] for name in param_names}
+    sweep = ParameterSweep(dummy_params)
+    sweep.parameters = samples_per_param
+    sweep.parameter_combinations = combinations
+    sweep.total_combinations = n_samples
+    return sweep
 
 
 def create_adaptive_sweep(

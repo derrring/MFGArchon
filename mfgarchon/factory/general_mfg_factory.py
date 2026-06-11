@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import threading
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -18,6 +19,7 @@ import numpy as np
 from mfgarchon.config.omegaconf_manager import OmegaConfManager
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry import BoundaryConditions
+from mfgarchon.geometry.boundary.conditions import uniform_bc as _bc_from_type
 from mfgarchon.utils.mfg_logging.logger import get_logger
 
 if TYPE_CHECKING:
@@ -206,14 +208,33 @@ class GeneralMFGFactory:
         # Extract configurations
         domain_config = config.get("domain", {"xmin": 0.0, "xmax": 1.0, "Nx": 51})
         time_config = config.get("time", {"T": 1.0, "Nt": 51})
-        solver_config = config.get("solver", {"sigma": 1.0, "coupling_coefficient": 0.5})
+
+        # Issue #1284 / 2026-06-11 survey: fail loud when 'solver' section is absent.
+        # The previous code silently injected sigma=1.0, masking misconfigured callers.
+        if "solver" not in config:
+            raise ValueError(
+                "Configuration is missing the required 'solver' section.\n"
+                "A silent sigma=1.0 default is NOT injected — provide it explicitly.\n"
+                "Example:\n"
+                "  solver:\n"
+                "    sigma: 0.5\n"
+                "    coupling_coefficient: 1.0"
+            )
+        solver_config = config["solver"]
 
         # Extract other components
         boundary_conditions = None
         if "boundary_conditions" in config:
             bc_config = config["boundary_conditions"]
-            if isinstance(bc_config, dict):
-                boundary_conditions = BoundaryConditions(**bc_config)
+            if isinstance(bc_config, BoundaryConditions):
+                # Already a proper BoundaryConditions object — pass through.
+                boundary_conditions = bc_config
+            elif isinstance(bc_config, Mapping):
+                # BoundaryConditions 'type' is a @property, not a constructor param.
+                # Use _bc_from_type (uniform_bc) to build from a type string.
+                # Issue #1284 / 2026-06-11 survey.
+                bc_type_str = str(bc_config.get("type", "periodic"))
+                boundary_conditions = _bc_from_type(bc_type_str)
             else:
                 boundary_conditions = bc_config
 
