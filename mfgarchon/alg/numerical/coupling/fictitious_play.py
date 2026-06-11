@@ -48,6 +48,7 @@ from .fixed_point_utils import (
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
+    resolve_fp_drift_kwargs,
 )
 
 if TYPE_CHECKING:
@@ -387,17 +388,24 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             hjb_kwargs = self._build_hjb_kwargs(volatility_field=self.volatility_field)
             U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **hjb_kwargs)
 
-            # 2. Solve FP forward with new U
-            effective_drift = self.drift_field if self.drift_field is not None else U_new
-            fp_kwargs = self._build_fp_kwargs(
-                drift_field=effective_drift,
-                volatility_field=self.volatility_field,
-            )
-            if self._fp_sig_params is not None and (
-                "drift_field" in self._fp_sig_params or "potential_field" in self._fp_sig_params
-            ):
-                M_candidate = self.fp_solver.solve_fp_system(M_initial, **fp_kwargs)
+            # 2. Solve FP forward with new U.
+            # Issue #1043 Phase 2: route through single-source convention, same as
+            # FixedPointIterator.solve() (fixed_point_iterator.py:720-728).
+            # Previously FictitiousPlay called _build_fp_kwargs(drift_field=U_new) which
+            # silently passed the value function U as the velocity alpha* to FPFDMSolver
+            # (wrong physics: FPFDMSolver treats drift_field as alpha, not potential).
+            fp_kwargs = self._build_fp_kwargs(volatility_field=self.volatility_field)
+            if self._fp_sig_params is not None:
+                drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                    self.problem, self._fp_sig_params, self.drift_field, U_new, M_old
+                )
+                fp_kwargs.update(drift_kwargs)
+                if use_positional_U:
+                    M_candidate = self.fp_solver.solve_fp_system(M_initial, U_new, **fp_kwargs)
+                else:
+                    M_candidate = self.fp_solver.solve_fp_system(M_initial, **fp_kwargs)
             else:
+                effective_drift = self.drift_field if self.drift_field is not None else U_new
                 M_candidate = self.fp_solver.solve_fp_system(M_initial, effective_drift, **fp_kwargs)
 
             # 3. Fictitious Play update: average M with decaying learning rate

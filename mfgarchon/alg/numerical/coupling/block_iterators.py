@@ -48,6 +48,7 @@ from .fixed_point_utils import (
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
+    resolve_fp_drift_kwargs,
 )
 
 if TYPE_CHECKING:
@@ -272,21 +273,38 @@ class BlockIterator(BaseCouplingIterator):
         kwargs = self._build_hjb_kwargs(volatility_field=self.volatility_field)
         return self.hjb_solver.solve_hjb_system(M, U_terminal, U_prev, **kwargs)
 
-    def _solve_fp(self, M_initial: NDArray, U: NDArray) -> NDArray:
-        """Solve FP equation with given value function."""
+    def _solve_fp(self, M_initial: NDArray, U: NDArray, M_current: NDArray | None = None) -> NDArray:
+        """Solve FP equation with given value function.
+
+        Args:
+            M_initial: Initial density m_0 for the FP forward solve.
+            U: Value function (potential or velocity source, resolved by convention).
+            M_current: Current density estimate at this iteration.  Used only for
+                non-smooth Hamiltonians where the optimal control alpha* depends on m
+                (via ``compute_fp_velocity_field``).  If ``None``, falls back to
+                ``M_initial`` (safe default for smooth-separable H).
+        """
         # Issue #622: Use adjoint mode if enabled
         if self.adjoint_mode != "off":
             return self._solve_fp_strict_adjoint(M_initial, U)
 
+        _M_curr = M_current if M_current is not None else M_initial
+
         if self._fp_sig_params is not None:
-            effective_drift = self.drift_field if self.drift_field is not None else U
             kwargs = self._build_fp_kwargs(volatility_field=self.volatility_field)
-            # Issue #919: prefer potential_field over drift_field
-            if "potential_field" in self._fp_sig_params:
-                kwargs["potential_field"] = effective_drift
-            elif "drift_field" in self._fp_sig_params:
-                kwargs["drift_field"] = effective_drift
-            return self.fp_solver.solve_fp_system(M_initial, **kwargs)
+            # Issue #1043 Phase 2: route through single-source convention, same as
+            # FixedPointIterator.solve() (fixed_point_iterator.py:720-728).
+            # Previously used a sig-probe heuristic (Issue #919) that put U directly
+            # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
+            # incorrect for solvers where drift_field is alpha* (e.g. FPGFDMSolver).
+            drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                self.problem, self._fp_sig_params, self.drift_field, U, _M_curr
+            )
+            kwargs.update(drift_kwargs)
+            if use_positional_U:
+                return self.fp_solver.solve_fp_system(M_initial, U, **kwargs)
+            else:
+                return self.fp_solver.solve_fp_system(M_initial, **kwargs)
         else:
             return self.fp_solver.solve_fp_system(M_initial, U)
 
@@ -427,7 +445,7 @@ class BlockIterator(BaseCouplingIterator):
         """
         # Both solves use OLD values (can be parallelized)
         U_new = self._solve_hjb(M_old, U_terminal, U_old)
-        M_new = self._solve_fp(M_initial, U_old)  # Uses U_old, not U_new
+        M_new = self._solve_fp(M_initial, U_old, M_current=M_old)  # Uses U_old, not U_new
 
         return U_new, M_new
 
@@ -450,7 +468,7 @@ class BlockIterator(BaseCouplingIterator):
         U_new = self._solve_hjb(M_old, U_terminal, U_old)
 
         # Then solve FP with NEW U (sequential dependency)
-        M_new = self._solve_fp(M_initial, U_new)  # Uses U_new
+        M_new = self._solve_fp(M_initial, U_new, M_current=M_old)  # Uses U_new
 
         return U_new, M_new
 
