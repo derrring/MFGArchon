@@ -231,8 +231,17 @@ def adi_diffusion_step(
         sigma_tensor = np.asarray(sigma)
         sigma_vec = np.sqrt(np.diag(sigma_tensor))  # Diagonal part for ADI
     else:
-        # Fallback to scalar
-        sigma_vec = np.full(dimension, 0.1)
+        # Issue #1286, 2026-06-11 survey: fail-fast — never silently default sigma.
+        # A wrong sigma type causes adi_diffusion_step to solve a different PDE.
+        sigma_type = type(sigma).__name__
+        sigma_shape = getattr(sigma, "shape", "N/A")
+        raise ValueError(
+            f"adi_diffusion_step: unsupported sigma type '{sigma_type}' "
+            f"(shape={sigma_shape}). "
+            f"Expected: scalar (int/float), 1-D array of length {dimension} "
+            f"(diagonal per-direction), or 2-D array (full tensor). "
+            f"Silently falling back to sigma=0.1 was removed (Issue #1286)."
+        )
 
     # Ensure U_star is shaped correctly
     if U_star.ndim == 1:
