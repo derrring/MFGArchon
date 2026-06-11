@@ -11,7 +11,11 @@ Issue #773 (FEM); Issue #1131 Phase 2 (factored onto WeakFormHJBSolver).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+from scipy import sparse
+from scipy.sparse.linalg import factorized
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
@@ -54,6 +58,10 @@ class HJBFEMSolver(WeakFormHJBSolver):
         from .assembly import create_basis
 
         self._basis = create_basis(self._skfem_mesh, order=order)
+        # P2+ gradient-recovery attributes: set before super().__init__ so that
+        # _build_gradient_operators (called lazily on first solve) sees them defined.
+        self._use_consistent_mass: bool = False
+        self._M_lu: Any | None = None  # scipy factorized(M) callable, P2+ only (#1252)
         super().__init__(problem, FEMDiscretization(self._basis))
         self.hjb_method_name = "FEM"
         self.order = order
@@ -65,6 +73,71 @@ class HJBFEMSolver(WeakFormHJBSolver):
     def basis(self):
         """scikit-fem Basis object."""
         return self._basis
+
+    # --- P2+ consistent-mass gradient recovery (#1252) -----------------------
+    def _build_gradient_operators(self) -> None:
+        """Override: use consistent-mass L2 projection for P2+ Lagrange elements.
+
+        Row-sum mass lumping (``WeakFormHJBSolver._build_gradient_operators``) is exact-
+        order for P1 (all lumped masses strictly positive), but is invalid for P2+: the
+        vertex shape function ``lambda(2 lambda - 1)`` integrates to 0 over a triangle
+        and to a negative value over a tetrahedron, so the consistent-mass row sum at
+        every vertex DOF is ~0 or < 0. The old clamp ``<1e-15 -> 1e-15`` turned invalid
+        masses into 1e-15, yielding 1/1e-15 = 1e15 scale factors that corrupted the
+        recovered vertex gradient (Tri: ~1e-3; Tet: ~-6e12 instead of 1.0).
+
+        Fix (P2+): build a sparse LU factorisation of the consistent mass matrix M and
+        solve ``M g_d = R_d u`` at each gradient evaluation via the precomputed factor.
+        For P1 (all lumped masses positive): fall through to the cheap diagonal path in
+        the base class. The meshless-Galerkin path (P1/MLS bases) is unaffected because
+        it does not call this override.
+        """
+        if self._G_grad is not None:
+            return
+        M_lumped = np.asarray(self._M.sum(axis=1)).ravel()
+        m_min, m_max = float(M_lumped.min()), float(M_lumped.max())
+        if m_min < 1e-12 * m_max:
+            # P2+: build LU once; gradient evaluations will call factorized(M)(R_d @ u).
+            self._M_lu = factorized(self._M.tocsc())
+            # _G_grad must be non-None to signal "operators built" (base-class guard).
+            # Entries are None (sentinels); _apply_gradient_operator uses _M_lu + _R_grad.
+            self._G_grad = [None] * len(self._R_grad)
+            self._use_consistent_mass = True
+            self._M_lumped_inv = None
+            logger.info(
+                "P2+ FEM: consistent-mass L2 projection for nodal gradient recovery "
+                f"(min lumped mass {m_min:.3e}, max {m_max:.3e}; Issue #1252)"
+            )
+        else:
+            super()._build_gradient_operators()
+
+    def _apply_gradient_operator(self, d: int, u: NDArray) -> NDArray:
+        """P2+ override: solve M g_d = R_d u via precomputed LU (#1252).
+
+        For P1 the base-class lumped-diagonal path is used (self._use_consistent_mass
+        is False). The meshless-Galerkin path never calls this override.
+        """
+        if self._use_consistent_mass:
+            return self._M_lu(self._R_grad[d] @ u)
+        return super()._apply_gradient_operator(d, u)
+
+    def _hamiltonian_jacobian_term(self, dH_dp_d: NDArray, d: int) -> sparse.csr_matrix:
+        """P2+ override: inexact Newton Jacobian for the consistent-mass path (#1252).
+
+        The exact Jacobian term is ``M @ diag(dH/dp_d) @ M^{-1} @ R_d``. Forming
+        ``M^{-1} @ R_d`` as a dense matrix is O(N^2) — prohibitive for production meshes.
+
+        Approximation used here: ``diag(dH/dp_d) @ R_d`` (drops the ``M @ ... @ M^{-1}``
+        wrapping). This is an inexact Jacobian; Newton converges to the correct residual-
+        zero solution because the residual ``F(U) = ... + M H(M^{-1} R_d U)`` uses the
+        full consistent-mass gradient. The Jacobian approximation only reduces the
+        convergence rate from quadratic to superlinear (#1252 design note).
+
+        For P1: the base-class exact term ``M @ diag(dH/dp_d) @ G_d`` is used.
+        """
+        if self._use_consistent_mass:
+            return sparse.diags(dH_dp_d) @ self._R_grad[d]
+        return super()._hamiltonian_jacobian_term(dH_dp_d, d)
 
     # --- scikit-fem boundary-condition strategy -------------------------------
     def _is_pure_neumann(self) -> bool:
