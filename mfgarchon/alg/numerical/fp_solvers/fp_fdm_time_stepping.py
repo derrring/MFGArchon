@@ -1114,6 +1114,20 @@ def solve_timestep_full_nd(
     col_indices: list[int] = []
     data_values: list[float] = []
 
+    # Issue #1250 2026-06-10 audit: pre-validate BC type before the per-point loop.
+    # Uniform 'robin' has no correct implicit stencil here; silently routing it to the
+    # interior handler produces an absorbing wall (ghost-zero, +D/dx² row-sum).  Fail
+    # loud once rather than silently corrupting every boundary row.
+    _bc_is_uniform = getattr(boundary_conditions, "is_uniform", None)
+    if _bc_is_uniform:
+        _bc_type_str = boundary_conditions.type  # safe: is_uniform True → .type won't raise
+        if _bc_type_str == "robin":
+            raise NotImplementedError(
+                "Implicit FDM FP assembly does not support uniform 'robin' boundary conditions; "
+                "the boundary stencil for Robin BC is not implemented on this path. "
+                "Use 'no_flux' or 'neumann' for zero-flux (reflecting) walls. (Issue #1250)"
+            )
+
     # Build matrix by iterating over all grid points
     for flat_idx in range(N_total):
         # Convert flat index to multi-index (i, j, k, ...)
@@ -1130,8 +1144,14 @@ def solve_timestep_full_nd(
         is_boundary = is_boundary_point(multi_idx, shape, ndim)
 
         # Determine BC type (Issue #859: explicit legacy handling, fail on unknown)
+        # Issue #1250 2026-06-10 audit: uniform 'neumann' is homogeneous-Neumann, identical
+        # to 'no_flux' for the FP equation; the operator paths already treat them identically
+        # (laplacian.py:307, advection.py:316).  Route to the same no-flux boundary handler.
         try:
-            is_no_flux = boundary_conditions.is_uniform and boundary_conditions.type == "no_flux"
+            is_no_flux = boundary_conditions.is_uniform and boundary_conditions.type in (
+                "no_flux",
+                "neumann",
+            )
             is_uniform = boundary_conditions.is_uniform
         except AttributeError:
             # Legacy BoundaryConditions1D from fdm_bc_1d: has .type string but no .is_uniform
