@@ -533,10 +533,21 @@ class FPFDMSolver(BaseFPSolver):
         # Issue #717: volatility_field is the SDE volatility σ or Σ
         # The solver computes D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix) internally
         if volatility_field is None:
-            # Use problem.sigma (backward compatible)
-            effective_sigma = self.problem.sigma
-            is_tensor = False
-        elif isinstance(volatility_field, (int, float)):
+            # Issue #1248 (2026-06-10 audit): with no explicit override, use the problem's
+            # full SDE volatility (scalar / per-point array / callable), routed through the
+            # same detection below. The old `effective_sigma = self.problem.sigma` used the
+            # placeholder scalar that MFGProblem stores for non-scalar volatility (an array is
+            # collapsed to its mean, a callable to 1.0), so problem.solve() / the coupled loop
+            # silently solved a different PDE than the user specified.
+            volatility_field = self.problem.volatility_field
+
+        if volatility_field is None:
+            # Defensive: a problem with neither sigma nor volatility_field is malformed.
+            raise ValueError(
+                "No volatility specified: problem.volatility_field is None and no volatility_field "
+                "override was passed to solve_fp_system."
+            )
+        if isinstance(volatility_field, (int, float)):
             # Constant isotropic volatility
             effective_sigma = float(volatility_field)
             is_tensor = False
