@@ -119,7 +119,24 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     def _nodal_gradient(self, u: NDArray) -> NDArray:
         self._build_gradient_operators()
-        return np.column_stack([G_d @ u for G_d in self._G_grad])
+        return np.column_stack([self._apply_gradient_operator(d, u) for d in range(len(self._R_grad))])
+
+    def _apply_gradient_operator(self, d: int, u: NDArray) -> NDArray:
+        """Apply the d-th gradient operator to u (i.e. compute G_d @ u = grad_d u).
+
+        Default: lumped-mass L2 projection stored in ``self._G_grad[d]``. Subclasses
+        override this for non-lumped recovery (e.g. P2 FEM consistent-mass path, #1252).
+        """
+        return self._G_grad[d] @ u
+
+    def _hamiltonian_jacobian_term(self, dH_dp_d: NDArray, d: int) -> sparse.csr_matrix:
+        """Build the d-th Jacobian term for the Hamiltonian coupling: M @ diag(dH/dp_d) @ G_d.
+
+        Default: exact term using the lumped-mass gradient operator stored in
+        ``self._G_grad[d]``. Subclasses may return an inexact but sparse approximation,
+        as long as the residual F(U) = 0 fixed point is correct (#1252).
+        """
+        return self._M @ sparse.diags(dH_dp_d) @ self._G_grad[d]
 
     def _solve_timestep_newton(
         self,
@@ -166,7 +183,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         delta_norm = np.inf
         for k in range(max_iterations):
-            p_nodal = np.column_stack([G_d @ U_current for G_d in self._G_grad])  # (N, dim)
+            p_nodal = np.column_stack([self._apply_gradient_operator(d, U_current) for d in range(dim)])  # (N, dim)
 
             H_vals = np.asarray(H_class(x_grid, m_n, p_nodal, t=t), dtype=float).ravel()
             dH_dp = np.asarray(H_class.dp(x_grid, m_n, p_nodal, t=t), dtype=float)
@@ -193,7 +210,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
             if S_stab is not None:
                 J = J + S_stab
             for d in range(dim):
-                J = J + self._M @ sparse.diags(dH_dp[:, d]) @ self._G_grad[d]
+                J = J + self._hamiltonian_jacobian_term(dH_dp[:, d], d)
 
             if condense:
                 residual[d_dofs] = 0.0
