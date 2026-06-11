@@ -281,7 +281,8 @@ class HybridParticleStrategy(ParticleStrategy):
 
         if num_particles < gpu_threshold:
             # Small problem: Use CPU (avoids GPU transfer overhead)
-            cpu_strategy = CPUParticleStrategy(self.backend)
+            # Issue #1283: CPUParticleStrategy has no __init__; passing args raises TypeError.
+            cpu_strategy = CPUParticleStrategy()
             return cpu_strategy.solve(
                 m_initial,
                 U_drift,
@@ -296,7 +297,8 @@ class HybridParticleStrategy(ParticleStrategy):
             # Large problem: Use full GPU (benefits from parallelism)
             if self.backend is None:
                 # No GPU available, fall back to CPU
-                cpu_strategy = CPUParticleStrategy(None)
+                # Issue #1283: CPUParticleStrategy has no __init__; passing args raises TypeError.
+                cpu_strategy = CPUParticleStrategy()
                 return cpu_strategy.solve(
                     m_initial,
                     U_drift,

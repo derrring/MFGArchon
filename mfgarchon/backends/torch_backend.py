@@ -92,7 +92,7 @@ class TorchBackend(BaseBackend):
     - MFG-specific optimized kernels
     """
 
-    def __init__(self, device: str = "auto", precision: str = "float32", **kwargs):
+    def __init__(self, device: str = "auto", precision: str = "float64", **kwargs):
         """
         Initialize PyTorch backend.
 
@@ -121,13 +121,15 @@ class TorchBackend(BaseBackend):
         self.torch_device = self._select_device(self.device)
         self.device_type = self.torch_device.type
 
-        # Set precision
+        # Set precision.
+        # Issue #1283: torch.set_default_dtype() is a process-global side effect —
+        # constructing any TorchBackend would mutate dtype for all subsequent
+        # torch.tensor() calls in the process.  Use self.torch_dtype explicitly
+        # on all tensor construction instead; never touch the global default.
         if self.precision == "float32":
             self.torch_dtype = torch.float32
-            torch.set_default_dtype(torch.float32)
         elif self.precision == "float64":
             self.torch_dtype = torch.float64
-            torch.set_default_dtype(torch.float64)
         else:
             raise ValueError(f"Unsupported precision: {self.precision}")
 
