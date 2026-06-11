@@ -769,6 +769,42 @@ class TestFPFDMSolverTensorDiffusion:
         masses = np.sum(M, axis=(1, 2)) * domain.spacing[0] * domain.spacing[1]
         assert np.allclose(masses, 1.0, atol=0.1)
 
+    def test_isotropic_tensor_matches_scalar_diffusion(self):
+        """Isotropic volatility Sigma = sigma*I must give D = sigma^2/2, like the scalar path.
+
+        Regression for #1249 (2026-06-10 audit): the tensor path applied the raw Sigma as the
+        diffusion tensor (D = sigma instead of D = sigma^2/2), ~6.7x overdiffusion at sigma=0.3.
+        Pure diffusion, zero drift: the tensor run with Sigma = sigma*I and the scalar run with
+        problem.sigma = sigma both encode D = sigma^2/2, so their densities must match within
+        the (small) cross-scheme discretization gap, NOT differ by the 6.7x raw-Sigma factor.
+        """
+        sigma = 0.3
+        domain = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=sigma, components=_default_components_2d())
+        solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=1))
+
+        Nt = problem.Nt + 1
+        Nx, Ny = domain.num_points[0], domain.num_points[1]
+        x_coords, y_coords = domain.coordinates
+        X, Y = np.meshgrid(x_coords, y_coords, indexing="ij")
+        m0 = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2) / (2 * 0.1**2))
+        m0 /= np.sum(m0) * domain.spacing[0] * domain.spacing[1]
+        U = np.zeros((Nt, Nx, Ny))
+
+        M_scalar = solver.solve_fp_system(m0, potential_field=U)  # scalar workhorse, D = sigma^2/2
+        M_tensor = solver.solve_fp_system(
+            m0, potential_field=U, tensor_diffusion_field=sigma * np.eye(2)
+        )  # tensor path; D must also be sigma^2/2
+
+        peak = np.max(np.abs(M_scalar[-1]))
+        rel = np.max(np.abs(M_tensor[-1] - M_scalar[-1])) / peak
+        assert rel < 0.1, (
+            f"isotropic tensor diffusion magnitude mismatch rel={rel:.3f}; the raw-Sigma bug "
+            f"applies D=sigma instead of sigma^2/2 (~6.7x overdiffusion -> ~0.5 relative)."
+        )
+
     def test_full_tensor_with_cross_diffusion(self):
         """Test full anisotropic tensor with off-diagonal terms."""
         domain = TensorProductGrid(
