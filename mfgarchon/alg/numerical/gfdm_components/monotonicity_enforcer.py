@@ -941,15 +941,20 @@ def critical_drift_for_dmp(
     M-matrix off-diagonal sign (Issue #1074).
 
     For interior off-diagonal $(i, j)$ the assembled entry is
-    $\sum_d \alpha_d (D_{\mathrm{grad}})_{d,ij} - D\,L_{ij}$. With $L_{ij} \ge 0$ (SOCP-monotone
-    Laplacian) the diffusion part is $\le 0$; the worst-case unit-$|\alpha|$ direction makes the
-    drift part $|\alpha|\,\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$ (Cauchy–Schwarz), so the sign
-    holds iff $|\alpha| \le D\,L_{ij}/\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$. The minimum over
-    edges is the critical drift. (The SOCP cone bound $\lVert D_{:,j}\rVert \le (C/h)L_j$ forces
-    the gradient support into the Laplacian support, so every drift-coupled edge has $L_{ij} > 0$
-    and the threshold is strictly positive.)
+    $\sum_d \alpha_d (D_{\mathrm{grad}})_{d,ij} - D\,L_{ij}$. The worst-case unit-$|\alpha|$
+    direction makes the drift part $|\alpha|\,\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$
+    (Cauchy-Schwarz), so the M-matrix sign holds iff
+    $|\alpha| \le D\,L_{ij}/\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$.
+
+    When $L_{ij} \le 0$ (relaxed-SOCP slack row; Issue #1253) and $\lVert D_{:,j}\rVert > 0$,
+    the right-hand side is $\le 0$: the off-diagonal entry is already non-negative at zero
+    drift, so $\alpha_{\mathrm{crit}}$ collapses to 0 (or below) for that edge. The
+    iteration therefore covers **all** edges with nonzero gradient weight, treating
+    $L_{ij} \le atol$ edges as immediate-violation contributors.
 
     Returns ``inf`` when no edge constrains the sign (e.g. a zero gradient operator).
+    Returns a value $\le 0$ when any assembled off-diagonal is already non-negative at zero
+    drift (assembled matrix non-M regardless of advection).
     """
     L = d_lap.tocsr()
     grads = [g.tocsr() for g in d_grad]
@@ -960,11 +965,15 @@ def critical_drift_for_dmp(
     for i in rows:
         l_row = L.getrow(i).toarray().ravel()
         g_rows = [g.getrow(i).toarray().ravel() for g in grads]
-        for j in np.nonzero(l_row > atol)[0]:
+        # Issue #1253 2026-06-10 audit: iterate over ALL off-diagonal edges with
+        # nonzero gradient weight, not only those with L_ij > atol. A negative L_ij
+        # (relaxed-SOCP slack) means D*L_ij < 0, so the assembled off-diagonal entry
+        # alpha*D_grad_ij - D*L_ij > 0 at zero drift → alpha_crit → 0 or negative.
+        # Iterating only l_row > atol silently drops these edges and over-estimates
+        # alpha_crit (false-negative DMP warning).
+        g_norms = np.sqrt(sum(gr**2 for gr in g_rows))  # vectorized over all n columns
+        for j in np.nonzero(g_norms > atol)[0]:
             if j == i:
                 continue
-            g_norm = float(np.sqrt(sum(gr[j] ** 2 for gr in g_rows)))
-            if g_norm <= atol:
-                continue
-            alpha_crit = min(alpha_crit, diffusion_coeff * float(l_row[j]) / g_norm)
+            alpha_crit = min(alpha_crit, diffusion_coeff * float(l_row[j]) / float(g_norms[j]))
     return alpha_crit

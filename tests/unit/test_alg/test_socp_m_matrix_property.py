@@ -312,5 +312,107 @@ def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
     )
 
 
+# ---------------------------------------------------------------------------
+# Issue #1253 — DMP guard dead on joint_socp solve path; alpha_crit over-estimated
+# ---------------------------------------------------------------------------
+
+
+def test_dmp_guard_fires_on_real_solve_path():
+    """Issue #1253 2026-06-10: _maybe_warn_dmp must fire on the normal Newton solve path.
+
+    Before the fix: _D_grad is None on the joint_socp/precompute per-point path because
+    _compute_hjb_jacobian_sparse never calls _build_differentiation_matrices; the guard
+    silently returned. After the fix: _build_differentiation_matrices() is called lazily
+    inside _maybe_warn_dmp so the guard actually runs.
+
+    Pinning condition: a joint_socp solve with check_dmp=True in advection-dominated
+    1D regime (small sigma, steep u_terminal) must emit the DMP warning via
+    solve_hjb_system(), WITHOUT any manual pre-build of _D_grad.
+    """
+    import logging
+
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Capture()
+    gfdm_logger = logging.getLogger("mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm")
+    gfdm_logger.addHandler(handler)
+    try:
+        # Small sigma → small alpha_crit (D = sigma^2/2 ≈ 0.005).
+        # Steep u_terminal → large grad_u → max_alpha ≫ alpha_crit from first Newton step.
+        n_x = 21
+        solver = _make_solver_check_dmp(sigma=0.1, check_dmp=True, n_x=n_x)
+
+        # Verify operators have NOT been pre-built (this is the bug condition: guard
+        # would silently return without the fix).
+        assert solver._D_grad is None, "_D_grad must be None before solve to test the real path"
+
+        n_pts = solver.n_points
+        x_vals = solver.collocation_points[:, 0]
+        # Steep linear terminal: gradient ≈ 10, far exceeds alpha_crit ≈ D/h ≈ 0.005/0.05 ≈ 0.1
+        u_terminal = 10.0 * x_vals
+
+        m_density = np.ones((solver.problem.Nt + 1, n_pts))  # uniform density, no coupling effect
+
+        # Run through the REAL solve path. _solve_timestep → per-point branch
+        # → _maybe_warn_dmp is called with _D_grad=None (pre-fix: silent return).
+        solver.solve_hjb_system(
+            M_density=m_density,
+            U_terminal=u_terminal,
+        )
+
+        assert any("DMP" in m or "Issue #1074" in m for m in records), (
+            "DMP warning must fire when drift > alpha_crit on the real solve path "
+            "(Issue #1253: guard was silently skipped when _D_grad=None)"
+        )
+    finally:
+        gfdm_logger.removeHandler(handler)
+
+
+def test_critical_drift_includes_negative_lap_edges():
+    """Issue #1253 2026-06-10: critical_drift_for_dmp must include edges where L_ij <= 0
+    but gradient weight is nonzero (relaxed-SOCP slack rows).
+
+    When L_ij < 0 and D_grad_ij ≠ 0, the assembled off-diagonal D*L_ij term is
+    negative → the entry is positive at zero drift → alpha_crit must be ≤ 0.
+    The old code iterated only l_row > atol and returned a positive finite threshold,
+    producing a false-negative DMP warning.
+    """
+    from scipy.sparse import csr_matrix
+
+    from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import critical_drift_for_dmp
+
+    # Hand-crafted 3-point system: interior point i=1, neighbors j=0, j=2.
+    # L[1,0]=−0.1 (negative, relaxed-SOCP slack), L[1,2]=0.5, L[1,1] adjusted for row sum=0.
+    # D_grad[1,0]=1.0, D_grad[1,2]=1.0 (nonzero gradient on both edges).
+    n = 3
+    L_data = np.zeros((n, n))
+    L_data[1, 0] = -0.1  # negative off-diagonal — relaxed SOCP slack
+    L_data[1, 2] = 0.5
+    L_data[1, 1] = -L_data[1, 0] - L_data[1, 2]  # row sum = 0
+
+    G_data = np.zeros((n, n))
+    G_data[1, 0] = 1.0
+    G_data[1, 2] = 1.0
+    G_data[1, 1] = -G_data[1, 0] - G_data[1, 2]
+
+    d_lap = csr_matrix(L_data)
+    d_grad = [csr_matrix(G_data)]
+    diffusion_coeff = 1.0
+    interior = np.array([1])
+
+    alpha_crit = critical_drift_for_dmp(d_lap, d_grad, diffusion_coeff, interior_indices=interior)
+
+    # Before fix: iterates only L_ij > atol → j=2 only → alpha_crit = 1.0*0.5/1.0 = 0.5
+    # After fix: includes j=0 (L_ij=-0.1, g_norm=1.0) → alpha_crit = 1.0*(-0.1)/1.0 = -0.1
+    assert alpha_crit <= 0.0, (
+        f"alpha_crit={alpha_crit:.4f}: negative-L edge (L=-0.1, g=1.0) must drive alpha_crit <= 0; "
+        "old code returned +0.5, masking a pre-existing M-matrix violation (Issue #1253)"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
