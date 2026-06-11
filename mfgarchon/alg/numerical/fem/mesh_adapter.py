@@ -168,13 +168,20 @@ def _apply_boundary_tags(mesh: skfem.Mesh, mesh_data: MeshData) -> None:
     if mesh_data.boundary_tags is None or len(mesh_data.boundary_tags) == 0:
         return
 
+    # Issue #1260: mesh.boundaries is a read-only property backed by mesh._boundaries, which is
+    # None on a freshly constructed MeshTri/MeshLine/MeshTet (skfem 12.0.1).  Item-assignment on
+    # None raises TypeError; initialize the backing field to an empty dict before use.
+    # 2026-06-10 audit.
+    if mesh._boundaries is None:
+        mesh._boundaries = {}
+
     unique_tags = np.unique(mesh_data.boundary_tags)
     for tag in unique_tags:
         if tag == 0:
             continue  # Skip default/untagged
         mask = mesh_data.boundary_tags == tag
         facet_indices = np.where(mask)[0]
-        mesh.boundaries[f"region_{tag}"] = facet_indices
+        mesh._boundaries[f"region_{tag}"] = facet_indices
 
 
 if __name__ == "__main__":
