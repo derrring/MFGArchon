@@ -439,6 +439,23 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         super().__init__(problem)
 
+        # Issue #1079: GFDM only supports scalar sigma. A full (d,d) tensor stored in
+        # problem.volatility_field would silently collapse to a scalar mean in
+        # MFGProblem.sigma, then be used as if it were a correct isotropic coefficient.
+        # The GFDM Laplacian stencil target (e_lap in joint_socp.py) has zero weight on
+        # the cross-derivative column, so D_ij d^2u/dx_i dx_j (i!=j) terms are never
+        # discretized. Fail loud at construction rather than returning a silently wrong
+        # solution (fail-fast per CLAUDE.md).
+        _vf = getattr(self.problem, "volatility_field", None)
+        if isinstance(_vf, np.ndarray) and _vf.ndim == 2:
+            raise NotImplementedError(
+                "HJBGFDMSolver does not support full-tensor (d,d) sigma. "
+                "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
+                "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
+                "terms are silently dropped (Issue #1079). Pass scalar sigma or a "
+                "1-D per-axis diagonal array instead."
+            )
+
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---
         #
         # Two orthogonal axes:
