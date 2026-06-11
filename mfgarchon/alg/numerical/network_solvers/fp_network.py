@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 
 
 class FPNetworkSolver(BaseFPSolver):
-    # Issue #1043: consumes the value function U (via the still-misnamed `drift_field` param,
-    # rename deferred — its body differentiates U); marked VALUE_FUNCTION for the contract trait.
+    # Issue #1043 Phase 2: consumes the value function U via `potential_field`
+    # (renamed from the old `drift_field`; marked VALUE_FUNCTION for the contract trait).
     _drift_convention = DriftConvention.VALUE_FUNCTION
     """
     Fokker-Planck solver for Mean Field Games on networks.
@@ -129,35 +129,41 @@ class FPNetworkSolver(BaseFPSolver):
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
     @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
+    @deprecated_parameter(param_name="drift_field", since="v0.21.0", replacement="potential_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
-        drift_field: np.ndarray | Callable | None = None,
+        potential_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
-        # Deprecated parameter name for backward compatibility
+        # Deprecated parameter names for backward compatibility
         m_initial_condition: np.ndarray | None = None,
+        drift_field: np.ndarray | Callable | None = None,
     ) -> np.ndarray:
         """
         Solve FP system on network with unified drift and diffusion API.
 
         Args:
-            M_initial: Initial density m₀(i)
-            m_initial_condition: DEPRECATED, use M_initial
-            drift_field: Drift field specification (optional):
-                - None: Zero drift (pure diffusion on network)
-                - np.ndarray: Precomputed drift (e.g., -∇U/λ for MFG)
-                - Callable: Function α(t, x, m) -> drift (Phase 2)
+            M_initial: Initial density m_0(i).
+            m_initial_condition: DEPRECATED since v0.17.0 — use M_initial.
+            potential_field: Value function U(t, i) specification (optional):
+                - None: Zero drift (pure diffusion on network).
+                - np.ndarray: Value function array, shape (Nt+1, num_nodes).
+                  The solver differentiates U internally to compute drift.
+                - Callable: Function U(t, i) -> value (Phase 2, not yet supported).
+            drift_field: DEPRECATED since v0.21.0 — use potential_field.
+                Accepted U under the old drift_field name (U-semantic). The rename
+                mirrors the weak-form rename from PR #1205 (Issue #1043 Phase 2).
             volatility_field: Diffusion specification (optional):
-                - None: Use self.diffusion_coefficient (backward compatible)
-                - float: Constant diffusion on network
-                - np.ndarray/Callable: Phase 2
-            show_progress: Whether to display progress bar for timesteps
+                - None: Use self.diffusion_coefficient (backward compatible).
+                - float: Constant diffusion on network.
+                - np.ndarray/Callable: Phase 2 (not yet supported).
+            show_progress: Whether to display progress bar for timesteps.
 
         Returns:
-            (Nt+1, num_nodes) density evolution
+            (Nt+1, num_nodes) density evolution.
         """
-        # Handle deprecated parameter redirect
+        # Handle deprecated m_initial_condition redirect
         if m_initial_condition is not None:
             if M_initial is not None:
                 raise ValueError(
@@ -166,28 +172,40 @@ class FPNetworkSolver(BaseFPSolver):
                 )
             M_initial = m_initial_condition
 
+        # Handle deprecated drift_field redirect (Issue #1043 Phase 2).
+        # FPNetworkSolver's drift_field was U-semantic (value function), not alpha*;
+        # rename to potential_field to make this explicit.
+        if drift_field is not None:
+            if potential_field is not None:
+                raise ValueError(
+                    "Cannot specify both potential_field and drift_field. "
+                    "Use potential_field (drift_field is deprecated since v0.21.0)."
+                )
+            potential_field = drift_field
+
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")
 
-        # Handle drift_field parameter
-        if drift_field is None:
+        # Handle potential_field parameter (U-semantic: value function that the
+        # solver differentiates internally to compute the drift velocity).
+        if potential_field is None:
             # Zero drift (pure diffusion): create zero U field for internal use
             # Use n_time_points = problem.Nt + 1 for consistency
             n_time_points = self.network_problem.Nt + 1
             effective_U = np.zeros((n_time_points, self.num_nodes))
-        elif isinstance(drift_field, np.ndarray):
-            # Precomputed drift field (including MFG drift = -∇U/λ)
-            effective_U = drift_field
-        elif callable(drift_field):
-            # Custom drift function - Phase 2
+        elif isinstance(potential_field, np.ndarray):
+            # Precomputed value function field
+            effective_U = potential_field
+        elif callable(potential_field):
+            # Custom potential function - Phase 2
             raise NotImplementedError(
-                "FPNetworkSolver does not yet support callable drift_field. "
-                "Pass precomputed drift as np.ndarray. "
-                "Support for callable drift coming in Phase 2."
+                "FPNetworkSolver does not yet support callable potential_field. "
+                "Pass precomputed value function as np.ndarray. "
+                "Support for callable potential_field coming in Phase 2."
             )
         else:
-            raise TypeError(f"drift_field must be None, np.ndarray, or Callable, got {type(drift_field)}")
+            raise TypeError(f"potential_field must be None, np.ndarray, or Callable, got {type(potential_field)}")
 
         # Handle volatility_field parameter
         if volatility_field is None:
