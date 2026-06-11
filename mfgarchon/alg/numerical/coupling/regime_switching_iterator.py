@@ -178,7 +178,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                         u_j = Us_full[j]
                     u_k_n = Us_full[k][n] if n < Us_full[k].shape[0] else Us_full[k][-1]
                     u_j_n = u_j[n] if n < u_j.shape[0] else u_j[-1]
-                    s += Q[k, j] * (u_k_n - u_j_n)
+                    # The DPP chain term sum_j Q[k,j](v^k - v^j) sits on the HJB LHS
+                    # (-v^k_t + H^k - (sigma^2/2)Lap + cross = 0). The HJB solver subtracts
+                    # the source (Phi_U -= source_term, base_hjb), so source = -cross. Passing
+                    # +cross flipped the inter-regime coupling sign (2026-06-10 audit, #1251);
+                    # the FP source below already carries the correct +inflow/-outflow sign.
+                    s -= Q[k, j] * (u_k_n - u_j_n)
             return s
 
         return source
