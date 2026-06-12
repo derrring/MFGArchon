@@ -155,6 +155,15 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
 
+    def _robin_operator_terms(self, D: float):
+        """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass
+        ``D*(alpha/beta)*int_dOmega phi_i phi_j`` (folded into ``M/dt + D*K``) and load
+        ``D*(1/beta)*int_dOmega g phi_i`` (added to each RHS), assembled over the Robin facets
+        via ``skfem.FacetBasis``. ``(None, None)`` when no Robin segment is present."""
+        from .bc_adapter import assemble_robin_terms
+
+        return assemble_robin_terms(self._basis, self._bc, D)
+
 
 if __name__ == "__main__":
     """Smoke test: assemble on a unit-square mesh and check matrix shapes."""

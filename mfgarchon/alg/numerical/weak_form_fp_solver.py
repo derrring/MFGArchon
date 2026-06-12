@@ -80,6 +80,19 @@ class WeakFormFPSolver(BaseFPSolver):
         ``rhs_extra`` is ``None`` for the homogeneous absorbing case."""
         return None, None
 
+    def _robin_operator_terms(self, D: float):
+        """Optional Robin boundary operator augmentation ``alpha*m + beta*dm/dn = g``.
+
+        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K`` and each
+        timestep RHS, or ``(None, None)`` for no Robin BC. The FP Robin term is the ADJOINT of
+        the HJB one: it is the boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j`` from
+        integrating the FP DIFFUSION operator ``-D*Delta m`` by parts, which is symmetric, so its
+        transpose equals itself and ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
+        Default no-op; only the FEM solver overrides this (the meshless absorbing-Nitsche path is
+        unperturbed). The advection-flux boundary coupling for an inhomogeneous Robin OUTFLOW is a
+        distinct total-flux BC and is out of scope (Issue #1237)."""
+        return None, None
+
     # --- Advection from drift (subclass-supplied) -----------------------------
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         r"""Advection matrix for drift $v = -\text{coupling}\cdot\nabla U_n$ in divergence form.
@@ -130,11 +143,18 @@ class WeakFormFPSolver(BaseFPSolver):
         weak_bc = A_extra is not None
         if weak_bc:
             A_base = A_base + A_extra
+        # Robin operator augmentation (Issue #1237): adjoint of the HJB Robin term (symmetric
+        # boundary mass, so A_FP = A_HJB^T is preserved). No-op for non-Robin problems.
+        A_robin, rhs_robin = self._robin_operator_terms(D)
+        if A_robin is not None:
+            A_base = A_base + A_robin
         pure_neumann = self._is_pure_neumann()
 
         clip_warned = False
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
+            if rhs_robin is not None:
+                rhs = rhs + rhs_robin
 
             if potential_field is not None:
                 U_n = potential_field[n] if potential_field.ndim > 1 else potential_field
@@ -193,5 +213,12 @@ class WeakFormFPSolver(BaseFPSolver):
 
         A_system = self._M / dt + A_advection_T + D * self._K
         rhs = (self._M / dt) @ M_current.ravel()
+        # Robin operator augmentation (Issue #1237): same symmetric boundary mass + load as the
+        # forward FP path, so the adjoint timestep carries the Robin BC consistently. No-op otherwise.
+        A_robin, rhs_robin = self._robin_operator_terms(D)
+        if A_robin is not None:
+            A_system = A_system + A_robin
+        if rhs_robin is not None:
+            rhs = rhs + rhs_robin
         M_next = spsolve(A_system, rhs)
         return np.maximum(M_next, 0.0).reshape(M_current.shape)
