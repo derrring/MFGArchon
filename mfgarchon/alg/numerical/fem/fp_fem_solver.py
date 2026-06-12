@@ -82,6 +82,18 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
 
+    def _robin_operator_terms(self, D: float):
+        """Robin boundary operator augmentation, adjoint of the HJB term (Issue #1237).
+
+        The FP Robin term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j``
+        from integrating the FP diffusion operator ``-D*Delta m`` by parts, plus the boundary load
+        ``D*(1/beta)*int_dOmega g phi_i``. Because the boundary mass is symmetric, this is identical
+        to the HJB Robin term, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
+        Assembled via ``skfem.FacetBasis``; ``(None, None)`` when no Robin segment is present."""
+        from .bc_adapter import assemble_robin_terms
+
+        return assemble_robin_terms(self._basis, self._bc, D)
+
     # --- advection from drift via exact quadrature-point gradient of U --------
     def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
         r"""Assemble the mass-conserving FP advection block for drift $v = -\text{coupling}\cdot\nabla U_n$.

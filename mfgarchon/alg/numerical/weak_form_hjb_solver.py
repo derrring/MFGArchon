@@ -81,6 +81,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
         terms (its MLS basis is non-interpolatory, so condensation is invalid)."""
         return None, None
 
+    def _robin_operator_terms(self, D: float):
+        """Optional Robin boundary operator augmentation ``alpha*u + beta*du/dn = g``.
+
+        Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K``
+        and each timestep RHS, or ``(None, None)`` for no Robin BC. Unlike ``_weak_bc_terms``
+        (Nitsche, which SKIPS condensation), this term COEXISTS with Dirichlet condensation:
+        the Robin dofs stay free (the operator term carries the BC) while any Dirichlet dofs
+        still condense. Default no-op: only the FEM solver overrides this (with the D-scaled
+        boundary mass + load); the meshless Nitsche path is unperturbed (Issue #1237)."""
+        return None, None
+
     def _stabilization_terms(self, u: NDArray, D: float):
         """Optional symmetric stabilization operator added to BOTH the Newton residual
         (as ``S @ u``) and the Newton Jacobian (as ``S``), recomputed each Newton iterate.
@@ -163,9 +174,14 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         A_extra, rhs_extra = self._weak_bc_terms(D)
         weak_bc = A_extra is not None
+        # Robin operator augmentation (Issue #1237): the boundary mass enters the Jacobian
+        # (and the residual via A_robin @ U); the boundary load enters the residual as -rhs_robin.
+        A_robin, rhs_robin = self._robin_operator_terms(D)
         J_fixed = self._M / dt + D * self._K
         if weak_bc:
             J_fixed = J_fixed + A_extra
+        if A_robin is not None:
+            J_fixed = J_fixed + A_robin
 
         pure_neumann = self._is_pure_neumann()
         condense = not pure_neumann and not weak_bc
@@ -197,6 +213,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 residual = residual + A_extra @ U_current
                 if rhs_extra is not None:
                     residual = residual - rhs_extra
+            if A_robin is not None:
+                residual = residual + A_robin @ U_current
+                if rhs_robin is not None:
+                    residual = residual - rhs_robin
 
             # Optional symmetric stabilization (e.g. streamline diffusion) for the
             # canonical HJB residual -u_t + H - (sigma^2/2) Delta u = 0; recomputed each
@@ -288,6 +308,12 @@ class WeakFormHJBSolver(BaseHJBSolver):
         weak_bc = A_extra is not None
         if weak_bc:
             A_system = A_system + A_extra
+        # Robin operator augmentation (Issue #1237): D-scaled boundary mass folded into the
+        # implicit operator; rhs_robin (boundary load) added to each timestep RHS below. No-op
+        # for non-Robin problems, so the natural/Dirichlet paths stay byte-identical.
+        A_robin, rhs_robin = self._robin_operator_terms(D)
+        if A_robin is not None:
+            A_system = A_system + A_robin
         H_class = self.problem.hamiltonian_class
 
         for n in range(Nt - 1, -1, -1):
@@ -311,6 +337,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
                         H_class(self._disc.dof_coordinates, M_density[n], p_prev, t=n * dt), dtype=float
                     ).ravel()
                     rhs += self._M @ H_values
+                if rhs_robin is not None:
+                    rhs = rhs + rhs_robin
 
                 if weak_bc:
                     if rhs_extra is not None:
