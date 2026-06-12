@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch, resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -449,8 +449,11 @@ class TorchBackend(BaseBackend):
         flux = M_tensor * drift
         div_term = torch.gradient(flux, spacing=dx, dim=-1)[0]
 
-        # Compute diffusion term: D * d²M/dx²  where D = σ²/2 (Issue #1189: route through D)
-        sigma = problem_params.get("diffusion", 0.1)
+        # Compute diffusion term: D * d²M/dx²  where D = σ²/2 (Issue #1189: route through D).
+        # Issue #1282: read the volatility through the single-source resolver (canonical
+        # "sigma" key; legacy "diffusion" key holds the volatility despite the name, default
+        # preserves the prior 0.1 no-key behavior).
+        sigma = resolve_volatility(problem_params, legacy_key="diffusion", legacy_is_squared=False, default=0.1)
         M_grad = torch.gradient(M_tensor, spacing=dx, dim=-1)[0]
         M_grad2 = torch.gradient(M_grad, spacing=dx, dim=-1)[0]
         diffusion_term = diffusion_from_volatility_torch(sigma) * M_grad2

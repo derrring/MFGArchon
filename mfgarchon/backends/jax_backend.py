@@ -42,6 +42,7 @@ else:
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -248,14 +249,16 @@ class JAXBackend(BaseBackend):
         div_flux = div_flux.at[0].set((flux[1] - flux[0]) / dx)
         div_flux = div_flux.at[-1].set((flux[-1] - flux[-2]) / dx)
 
-        # Diffusion term
-        sigma_sq = problem_params.get("sigma_sq", 0.01)
+        # Diffusion term.  Issue #1282: read the volatility through the single-source
+        # resolver (canonical "sigma" key; legacy "sigma_sq" holds sigma**2, default
+        # preserves the prior sqrt(0.01)=0.1 no-key behavior), then D = sigma**2/2.
+        sigma = resolve_volatility(problem_params, legacy_key="sigma_sq", legacy_is_squared=True, default=0.1)
         d2M_dx2 = jnp.zeros_like(M)
         d2M_dx2 = d2M_dx2.at[1:-1].set((M[2:] - 2 * M[1:-1] + M[:-2]) / (dx**2))
         d2M_dx2 = d2M_dx2.at[0].set(d2M_dx2[1])
         d2M_dx2 = d2M_dx2.at[-1].set(d2M_dx2[-2])
 
-        diffusion = 0.5 * sigma_sq * d2M_dx2
+        diffusion = 0.5 * sigma * sigma * d2M_dx2
 
         # Time step
         M_new = M + dt * (-div_flux + diffusion)

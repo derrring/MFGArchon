@@ -13,6 +13,7 @@ import warnings
 import numpy as np
 
 from mfgarchon.utils.numerical.integration import trapezoid
+from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -332,7 +333,9 @@ class NumbaBackend(BaseBackend):
     # MFG-Specific Operations
     def compute_hamiltonian(self, x, p, m, problem_params):
         """Compute Hamiltonian using optimized kernel."""
-        sigma = problem_params.get("sigma", 1.0)
+        # Issue #1282: numba already uses the canonical "sigma" key; route through the
+        # single-source resolver (no legacy key) so all four backends share one lookup.
+        sigma = resolve_volatility(problem_params, default=1.0)
 
         if NUMBA_AVAILABLE:
             # Use JIT-compiled kernel for performance
@@ -350,7 +353,9 @@ class NumbaBackend(BaseBackend):
 
     def hjb_step(self, U, M, dt, dx, problem_params):
         """Single Hamilton-Jacobi-Bellman time step."""
-        sigma = problem_params.get("sigma", 1.0)
+        # Issue #1282: numba already uses the canonical "sigma" key; route through the
+        # single-source resolver (no legacy key) so all four backends share one lookup.
+        sigma = resolve_volatility(problem_params, default=1.0)
 
         if NUMBA_AVAILABLE:
             return self._hjb_step_kernel(U, M, dt, dx, sigma)
@@ -372,7 +377,9 @@ class NumbaBackend(BaseBackend):
 
     def fpk_step(self, M, U, dt, dx, problem_params):
         """Single Fokker-Planck-Kolmogorov time step."""
-        sigma = problem_params.get("sigma", 1.0)
+        # Issue #1282: numba already uses the canonical "sigma" key; route through the
+        # single-source resolver (no legacy key) so all four backends share one lookup.
+        sigma = resolve_volatility(problem_params, default=1.0)
 
         if NUMBA_AVAILABLE:
             return self._fpk_step_kernel(M, U, dt, dx, sigma)
