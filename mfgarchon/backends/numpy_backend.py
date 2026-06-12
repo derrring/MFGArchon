@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from mfgarchon.utils.numerical.integration import trapezoid
+from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -182,15 +183,17 @@ class NumPyBackend(BaseBackend):
         div_flux[0] = (flux[1] - flux[0]) / dx
         div_flux[-1] = (flux[-1] - flux[-2]) / dx
 
-        # Diffusion term: σ²/2 * ∇²M
-        sigma_sq = problem_params.get("sigma_sq", 0.01)
+        # Diffusion term: σ²/2 * ∇²M.  Issue #1282: read the volatility through the
+        # single-source resolver (canonical "sigma" key; legacy "sigma_sq" holds sigma**2,
+        # default preserves the prior sqrt(0.01)=0.1 no-key behavior), then D = sigma**2/2.
+        sigma = resolve_volatility(problem_params, legacy_key="sigma_sq", legacy_is_squared=True, default=0.1)
         d2M_dx2 = np.zeros_like(M)
         d2M_dx2[1:-1] = (M[2:] - 2 * M[1:-1] + M[:-2]) / (dx**2)
         # Zero Neumann boundary conditions for diffusion
         d2M_dx2[0] = d2M_dx2[1]
         d2M_dx2[-1] = d2M_dx2[-2]
 
-        diffusion = 0.5 * sigma_sq * d2M_dx2
+        diffusion = 0.5 * sigma * sigma * d2M_dx2
 
         # Time step: M^{n+1} = M^n + dt * (-∇·J + diffusion)
         M_new = M + dt * (-div_flux + diffusion)

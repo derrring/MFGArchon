@@ -7,6 +7,7 @@ eliminating code duplication across HJB, FP, and coupling solvers.
 
 from __future__ import annotations
 
+import warnings
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -103,6 +104,80 @@ def diffusion_from_volatility_torch(sigma: Any) -> Any:
     return 0.5 * sigma**2
 
 
+_VOLATILITY_LEGACY_KEY_WARNED: set[str] = set()
+
+
+def resolve_volatility(
+    problem_params: dict[str, Any],
+    *,
+    legacy_key: str | None = None,
+    legacy_is_squared: bool = False,
+    default: float,
+) -> Any:
+    r"""Resolve the SDE volatility ``sigma`` from a backend ``problem_params`` dict.
+
+    Single source for the diffusion-coefficient lookup shared by the four computational
+    backends (numpy / jax / torch / numba). Before this resolver the backends read the
+    coefficient under **three different keys with three different semantics and defaults**
+    -- numba ``"sigma"`` (default 1.0), numpy/jax ``"sigma_sq"`` (``sigma**2``, default 0.01),
+    torch ``"diffusion"`` (the volatility despite the name, default 0.1) -- so a single
+    ``problem_params`` dict could not be ported across backends without remapping
+    (Issue #1282 item 3; coordinate with Issue #1189's ``"sigma"`` canonicalization).
+
+    Resolution order (canonical first):
+
+    1. ``problem_params["sigma"]`` -- the canonical SDE volatility key
+       (``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion"). Returned verbatim; the caller
+       computes ``D = sigma**2 / 2``. No warning.
+    2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
+       given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``
+       (the numpy/jax ``"sigma_sq"`` key), so ``sqrt`` is applied; ``legacy_is_squared=False``
+       means the stored value is already ``sigma`` (the torch ``"diffusion"`` key). Emits a
+       **one-time** ``DeprecationWarning`` (per legacy key, per process) naming the canonical
+       ``"sigma"`` key.
+    3. ``default`` -- the backend's historical no-key default, so callers that omit the
+       parameter see no behavior change.
+
+    Returns ``sigma`` (not ``D``); each backend applies its own ``sigma -> D`` conversion
+    (``0.5 * sigma**2`` for numpy/jax/numba, :func:`diffusion_from_volatility_torch` for torch)
+    so the autograd / JIT computation graph is preserved. The square root uses ``value ** 0.5``
+    rather than ``np.sqrt`` so torch tensors and jax tracers pass through their own dispatch
+    unchanged.
+
+    Parameters
+    ----------
+    problem_params : dict
+        Backend problem-parameter dict.
+    legacy_key : str | None
+        The backend's historical dict key, or ``None`` (numba, already canonical).
+    legacy_is_squared : bool
+        ``True`` if ``problem_params[legacy_key]`` stores ``sigma**2`` (numpy/jax ``"sigma_sq"``).
+    default : float
+        Volatility used when neither the canonical nor the legacy key is present. Required
+        (keyword-only) so each backend explicitly preserves its prior no-key default.
+
+    Returns
+    -------
+    sigma : float | torch.Tensor | jax.Array
+        The SDE volatility (same type as the stored value on the legacy/canonical path).
+    """
+    if "sigma" in problem_params:
+        return problem_params["sigma"]
+    if legacy_key is not None and legacy_key in problem_params:
+        if legacy_key not in _VOLATILITY_LEGACY_KEY_WARNED:
+            _VOLATILITY_LEGACY_KEY_WARNED.add(legacy_key)
+            warnings.warn(
+                f"problem_params key {legacy_key!r} is deprecated; use the canonical 'sigma' "
+                f"key holding the SDE volatility (D = sigma**2/2) for cross-backend portability "
+                f"(Issue #1282).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        value = problem_params[legacy_key]
+        return value**0.5 if legacy_is_squared else value
+    return default
+
+
 def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any) -> float:
     """Single scalar PDE diffusion ``D`` for solvers that assemble ``D * K`` with a scalar ``D``
     (the weak-form / FEM family).
@@ -124,8 +199,6 @@ def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any)
         return float(diffusion_from_volatility(fallback_sigma))
     if np.ndim(volatility_field) == 0:
         return float(diffusion_from_volatility(float(volatility_field)))
-    import warnings
-
     warnings.warn(
         "Weak-form/FEM solver uses a single scalar diffusion D; the spatially-varying volatility "
         "field is collapsed to its mean (D = mean(sigma)^2 / 2). For a true varying-coefficient "
