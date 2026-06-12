@@ -26,6 +26,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    fp_solver_sig_params,
+    resolve_fp_drift_kwargs,
+)
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 
 if TYPE_CHECKING:
@@ -123,6 +127,11 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._coupling = coupling
         self._hjb = hjb_solvers
         self._fp = fp_solvers
+        # Issue #1315: cache each per-node FP solver's solve_fp_system signature so the FP step
+        # can route the value function through the drift-convention dispatcher
+        # (resolve_fp_drift_kwargs), exactly as the single-solver iterators do via
+        # _init_solver_signatures. One set per node because nodes may use different FP solvers.
+        self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
         self._max_iter = max_iterations
         self._tol = tolerance
         self._damping = damping
@@ -202,11 +211,26 @@ class GraphMFGSolver(BaseCouplingIterator):
                 fp_source = self._compose_fp_source(k, Us_new, Ms_expanded, raw_coupling)
 
                 m0_k = Ms[k][0] if isinstance(Ms[k], np.ndarray) and Ms[k].ndim == 2 else Ms[k]
-                M_k = self._fp[k].solve_fp_system(
-                    m0_k,
-                    drift_field=Us_new[k],
-                    source_term=fp_source,
-                )
+                # Issue #1315 (Refs #1043): route the value function through the
+                # drift-convention dispatcher instead of passing U as drift_field. After the
+                # v0.18.6 rename drift_field is the velocity alpha*, not the U-potential; for a
+                # smooth separable H the FP solver must receive U via potential_field and derive
+                # the velocity internally. Passing drift_field=U is silent-wrong-equilibrium.
+                # Mirrors FixedPointIterator.solve() / fictitious_play (#1299), per-node: each
+                # node has its own problem (Hamiltonian/geometry) and FP solver signature.
+                fp_kwargs: dict[str, Any] = {"source_term": fp_source}
+                fp_sig_params_k = self._fp_sig_params_k[k]
+                if fp_sig_params_k is not None:
+                    drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+                        self._problems[k], fp_sig_params_k, None, Us_new[k], Ms_expanded[k]
+                    )
+                    fp_kwargs.update(drift_kwargs)
+                    if use_positional_U:
+                        M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
+                    else:
+                        M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                else:
+                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
                 Ms_new[k] = M_k
 
             # --- Damping ---

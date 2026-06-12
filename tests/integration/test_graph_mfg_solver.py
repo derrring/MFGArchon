@@ -357,3 +357,47 @@ class TestIssue1006Regression:
         composed_val = composed(0.2, x)
         raw_val = raw(0.2, x)
         np.testing.assert_allclose(composed_val - raw_val, -2.0, atol=1e-10)
+
+
+class TestIssue1315FPDriftConvention:
+    """FP drift-convention routing (#1315, Refs #1043).
+
+    After the v0.18.6 rename ``drift_field`` is the velocity ``alpha*``, not the value
+    function. For a smooth separable ``H`` each per-node FP solver must receive ``U`` via
+    ``potential_field`` and derive ``alpha*`` itself; passing ``U`` as ``drift_field`` bypasses
+    ``resolve_fp_drift_kwargs`` and converges to a wrong equilibrium. This pins the per-node FP
+    solve to route ``U`` via ``potential_field``.
+    """
+
+    def test_fp_receives_U_via_potential_field_not_drift(self):
+        problems, coupling, hjbs, fps = _make_3node_system()
+        solver = GraphMFGSolver(
+            problems=problems,
+            coupling=coupling,
+            hjb_solvers=hjbs,
+            fp_solvers=fps,
+            max_iterations=1,
+        )
+
+        captured: list[tuple[int, list[str]]] = []
+        for k, fp in enumerate(fps):
+            original = fp.solve_fp_system
+
+            def spy(*args, _original=original, _k=k, **kwargs):
+                captured.append((_k, sorted(kwargs)))
+                return _original(*args, **kwargs)
+
+            fp.solve_fp_system = spy
+
+        solver.solve()
+
+        assert captured, "FP solver was never called"
+        for k, keys in captured:
+            assert "potential_field" in keys, (
+                f"node {k}: value function not routed via potential_field (kwargs={keys}); "
+                "#1315 drift-convention bypass reopened"
+            )
+            assert "drift_field" not in keys, (
+                f"node {k}: value function wrongly passed as drift_field (velocity alpha*); "
+                "#1315 silent-wrong-equilibrium"
+            )

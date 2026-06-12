@@ -275,3 +275,48 @@ class TestRegimeSwitchingCrossTermSign:
 
         src0 = iterator._make_fp_source(0, 2, Q, Ms)
         np.testing.assert_allclose(src0(0.0, x), (Q[1, 0] * m1 - Q[0, 1] * m0) * np.ones(N))
+
+
+class TestRegimeFPDriftConvention:
+    """FP drift-convention routing (#1315, Refs #1043).
+
+    After the v0.18.6 rename ``drift_field`` is the velocity ``alpha*``, not the value
+    function. For a smooth separable ``H`` the FP solver must receive ``U`` via
+    ``potential_field`` and derive ``alpha*`` itself; passing ``U`` as ``drift_field`` bypasses
+    ``resolve_fp_drift_kwargs`` and converges to a wrong equilibrium (silent-wrong-physics).
+    This pins the per-regime FP solve to route ``U`` via ``potential_field`` so the bypass
+    cannot silently reopen.
+    """
+
+    def test_fp_receives_U_via_potential_field_not_drift(self):
+        problems, config, hjbs, fps = _make_2regime_system()
+        iterator = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=config,
+            hjb_solvers=hjbs,
+            fp_solvers=fps,
+            max_iterations=1,
+        )
+
+        captured: list[tuple[int, list[str]]] = []
+        for k, fp in enumerate(fps):
+            original = fp.solve_fp_system
+
+            def spy(*args, _original=original, _k=k, **kwargs):
+                captured.append((_k, sorted(kwargs)))
+                return _original(*args, **kwargs)
+
+            fp.solve_fp_system = spy
+
+        iterator.solve()
+
+        assert captured, "FP solver was never called"
+        for k, keys in captured:
+            assert "potential_field" in keys, (
+                f"regime {k}: value function not routed via potential_field (kwargs={keys}); "
+                "#1315 drift-convention bypass reopened"
+            )
+            assert "drift_field" not in keys, (
+                f"regime {k}: value function wrongly passed as drift_field (velocity alpha*); "
+                "#1315 silent-wrong-equilibrium"
+            )
