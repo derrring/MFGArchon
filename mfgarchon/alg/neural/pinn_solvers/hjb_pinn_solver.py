@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 import numpy as np
 
 from mfgarchon.alg.neural.nn import create_mfg_networks
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
 
 from .base_pinn import PINNBase, PINNConfig
 
@@ -263,7 +264,10 @@ class HJBPINNSolver(PINNBase):
         H = self.compute_hamiltonian(u_x, x, m)
 
         # Viscous term: (sigma^2/2) * u_xx  (matches FP diffusion convention)
-        viscous_term = (self.sigma**2 / 2) * u_xx
+        # Issue #1193: route sigma->D through the single-source converter
+        # (D = sigma^2/2) instead of an inline literal, mirroring the sibling
+        # PINN solvers (fp_pinn_solver.py, mfg_pinn_solver.py).
+        viscous_term = diffusion_from_volatility_torch(self.sigma) * u_xx
 
         # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
         hjb_residual = u_t + H - viscous_term
