@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mfgarchon.config import MFGSolverConfig
+from mfgarchon.config import FPConfig, MFGSolverConfig
 from mfgarchon.factory.solver_factory import (
     SolverFactory,
     SolverFactoryConfig,
@@ -141,6 +141,30 @@ def test_update_config_with_kwargs_particles():
     )
 
     assert updated.fp.particle.num_particles == 8000
+
+
+@pytest.mark.unit
+def test_update_config_with_kwargs_num_particles_non_particle_fp():
+    """Issue #1317: num_particles kwarg must not raise when fp.method has no
+    particle sub-config.
+
+    When ``fp.method`` is e.g. 'fdm'/'fem'/'network', ``fp.particle`` is None.
+    The factory must guard the assignment (mirroring the hjb.gfdm/delta guard)
+    and log a warning instead of raising ``AttributeError``.
+    """
+    base_config = MFGSolverConfig(fp=FPConfig(method="fdm"))
+    # Precondition that triggers the bug: no particle sub-config present.
+    assert base_config.fp.particle is None
+
+    with patch("mfgarchon.factory.solver_factory.logger") as mock_logger:
+        updated = SolverFactory._update_config_with_kwargs(
+            base_config,
+            num_particles=8000,
+        )
+
+    # Did not raise; particle sub-config stays None and a warning is logged.
+    assert updated.fp.particle is None
+    mock_logger.warning.assert_called_once()
 
 
 @pytest.mark.unit

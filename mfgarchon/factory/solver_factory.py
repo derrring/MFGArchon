@@ -132,7 +132,19 @@ class SolverFactory:
 
         # Particle-specific updates
         if "num_particles" in kwargs:
-            updated_config.fp.particle.num_particles = kwargs["num_particles"]
+            # Issue #1317: guard the particle sub-config.
+            # When fp.method != 'particle' (e.g. 'fdm'/'fem'/'network'),
+            # particle is None and accessing .num_particles raises
+            # AttributeError.  Only set num_particles when the particle
+            # sub-config is present.
+            if updated_config.fp.particle is not None:
+                updated_config.fp.particle.num_particles = kwargs["num_particles"]
+            else:
+                logger.warning(
+                    "Ignoring 'num_particles' kwarg: fp.particle sub-config is None "
+                    "(fp.method=%r is not 'particle'). Set fp.method='particle' first.",
+                    updated_config.fp.method,
+                )
         if "delta" in kwargs:
             # Issue #1284 / 2026-06-11 survey: guard the gfdm sub-config.
             # When hjb.method == 'fdm' (the default), gfdm is None and
