@@ -267,7 +267,13 @@ class FixedPointIterator(BaseCouplingIterator):
             # (explicit treatment), consistent with graph_mfg_solver.py:306.
             terms: list[np.ndarray] = []
             if has_source:
-                terms.append(problem.source_term_hjb(x, m_current, np.zeros_like(m_current), t))
+                # Issue #1285: evaluate the problem-level source (delta F / delta m) at the
+                # density SLICE for time t, not the whole (Nt+1, Nx) array. Otherwise a
+                # time-dependent source (e.g. lions_correction F[m]) silently falls back to the
+                # terminal slice m[-1] for every t. Mirrors the nonlocal branch below and
+                # graph_mfg_solver.py (_get_time_slice).
+                m_t = _get_time_slice(m_current, t, problem.dt)
+                terms.append(problem.source_term_hjb(x, m_t, np.zeros_like(m_t), t))
             if has_obstacle:
                 psi = problem.obstacle(x)
                 # Penalty parameter: large but finite, consistent with Rev 4 design
@@ -300,7 +306,10 @@ class FixedPointIterator(BaseCouplingIterator):
             return None
 
         def composed(t: float, x: np.ndarray) -> np.ndarray:
-            return problem.source_term_fp(x, m_current, v_current, t)
+            # Issue #1285: slice density and value function at time t (see _compose_hjb_source).
+            m_t = _get_time_slice(m_current, t, problem.dt)
+            v_t = _get_time_slice(v_current, t, problem.dt)
+            return problem.source_term_fp(x, m_t, v_t, t)
 
         return composed
 
