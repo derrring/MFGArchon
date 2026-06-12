@@ -117,13 +117,6 @@ def _tiny_config():
     return PINNConfig(hidden_layers=[8, 8], device="cpu")
 
 
-class _ParabolaNet(nn.Module):
-    """u(t, x) = x^2 so that u_t = 0, u_x = 2x, u_xx = 2 (constant)."""
-
-    def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        return inp[:, 1:2] ** 2
-
-
 def test_residual_viscous_coefficient_equals_converter():
     """Recover D(sigma) from the solver's HJB residual and assert it equals
     diffusion_from_volatility_torch(sigma) exactly.
@@ -134,6 +127,15 @@ def test_residual_viscous_coefficient_equals_converter():
     """
     from mfgarchon.alg.neural.pinn_solvers.hjb_pinn_solver import HJBPINNSolver
     from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch
+
+    # Defined inside the (torch-guarded) test, not at module level: a module-level
+    # `nn.Module` subclass would execute at pytest COLLECTION and raise NameError on a
+    # CI runner without the optional torch dependency, erroring the whole suite.
+    class _ParabolaNet(nn.Module):
+        """u(t, x) = x^2 so that u_t = 0, u_x = 2x, u_xx = 2 (constant)."""
+
+        def forward(self, inp: torch.Tensor) -> torch.Tensor:
+            return inp[:, 1:2] ** 2
 
     solver = HJBPINNSolver(_make_problem(), config=_tiny_config())
     # Deterministic, sigma-independent u and density so only the viscous term
