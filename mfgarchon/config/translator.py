@@ -113,6 +113,10 @@ def hjb_config_to_kwargs(
     # Top-level fields: method, accuracy_order, boundary_conditions
     # ------------------------------------------------------------------
     if hjb_cfg.method != default_hjb.method:
+        # Each scheme maps to the HJBConfig.method literal whose solver it builds.
+        # FVM_{UPWIND,MUSCL} pair the upwind HJB-FDM solver (method "fdm").
+        # MESHLESS_GALERKIN has no HJBConfig.method literal analog and is absent here
+        # on purpose -> handled by the unmapped-scheme fallback below.
         _scheme_method = {
             NumericalScheme.FDM_UPWIND: "fdm",
             NumericalScheme.FDM_CENTERED: "fdm",
@@ -121,9 +125,20 @@ def hjb_config_to_kwargs(
             NumericalScheme.GFDM: "gfdm",
             NumericalScheme.FEM_P1: "fem",
             NumericalScheme.FEM_P2: "fem",
+            NumericalScheme.FVM_UPWIND: "fdm",
+            NumericalScheme.FVM_MUSCL: "fdm",
         }
         expected = _scheme_method.get(scheme)
-        if expected is not None and hjb_cfg.method != expected:
+        if expected is None:
+            # No HJBConfig.method literal corresponds to this scheme, so a non-default
+            # method cannot be reconciled with it. Fail loud rather than silently
+            # discarding the user's intent (the scheme selects the solver class). Refs #1155.
+            raise NotImplementedError(
+                f"config.hjb.method={hjb_cfg.method!r} is non-default but "
+                f"scheme={scheme.value} has no HJBConfig.method analog to validate "
+                "against (the scheme selects the HJB solver class directly). Refs #1155."
+            )
+        if hjb_cfg.method != expected:
             raise NotImplementedError(
                 f"config.hjb.method={hjb_cfg.method!r} conflicts with "
                 f"scheme={scheme.value} (expected method {expected!r}). "
@@ -350,17 +365,30 @@ def fp_config_to_kwargs(
     # ------------------------------------------------------------------
     # method field: validate scheme consistency
     # ------------------------------------------------------------------
+    # Each scheme maps to the FPConfig.method literal whose FP solver it builds.
+    # SL_{LINEAR,CUBIC} (FPSLSolver), FVM_{UPWIND,MUSCL} (FPFVMSolver) and
+    # MESHLESS_GALERKIN (MeshlessGalerkinFPSolver) have NO FPConfig.method literal
+    # analog (no "sl"/"fvm"/"meshless" member), so they are absent here on purpose ->
+    # a non-default fp.method under them fails loud via the unmapped-scheme fallback.
     _scheme_fp_method: dict[NumericalScheme, str] = {
         NumericalScheme.FDM_UPWIND: "fdm",
         NumericalScheme.FDM_CENTERED: "fdm",
         NumericalScheme.GFDM: "gfdm",
         NumericalScheme.FEM_P1: "fem",
         NumericalScheme.FEM_P2: "fem",
-        # SL → FPSLSolver has no analog in FPConfig.method literals
     }
     if fp_cfg.method != default_fp.method:
         expected = _scheme_fp_method.get(scheme)
-        if expected is not None and fp_cfg.method != expected:
+        if expected is None:
+            # No FPConfig.method literal corresponds to this scheme, so a non-default
+            # method cannot be reconciled with it. Fail loud rather than silently
+            # discarding the user's intent (the scheme selects the FP solver class). Refs #1155.
+            raise NotImplementedError(
+                f"config.fp.method={fp_cfg.method!r} is non-default but "
+                f"scheme={scheme.value} has no FPConfig.method analog to validate "
+                "against (the scheme selects the FP solver class directly). Refs #1155."
+            )
+        if fp_cfg.method != expected:
             raise NotImplementedError(
                 f"config.fp.method={fp_cfg.method!r} conflicts with "
                 f"scheme={scheme.value} (expected method {expected!r}). "
