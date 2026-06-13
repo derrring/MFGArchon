@@ -270,6 +270,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GFDM ill-conditioning threshold `COND_THRESHOLD` tightened 1e12 → 1e8** (Issue #1084).
+  `TaylorOperator._validate_stencils` warned only above κ(A)=1e12, where the least-squares
+  stencil weights retain just ~4 reliable float64 digits (reliable digits ≈ 16 − log₁₀κ) — a
+  stencil claiming O(h²) could carry near-garbage weights below its own truncation error. The new
+  1e8 guard keeps ~8 reliable digits, with headroom over both the O(h²) truncation error at
+  realistic grids (h~1e-2..1e-3 → ~4..6 digits) and a `newton_tolerance=1e-6` downstream solve.
+  Warn-only (validity gate unchanged); empirically the GFDM suite realizes κ ≤ ~1.6e4 (median ~19)
+  across 120 operators, so no working stencil is affected (suite green, zero new warnings).
+
 - **FP-particle drift gradient ignored boundary conditions: O(1/h) wrong-sign drift at
   non-periodic walls** (silent-divergence bug-hunt). `FPParticleSolver._compute_gradient_nd`
   computed `∇U` for the drift `α = -∇U/λ` via the **periodic-wrap** central difference

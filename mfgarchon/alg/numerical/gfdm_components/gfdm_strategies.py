@@ -77,8 +77,17 @@ REGULARIZATION = 1e-12
 # Pseudoinverse rcond parameter
 PINV_RCOND = 1e-10
 
-# Condition number threshold for "ill-conditioned" warning
-COND_THRESHOLD = 1e12
+# Condition number threshold for "ill-conditioned" warning (Issue #1084).
+# Float64 has unit roundoff u ~ 1.1e-16 (~16 decimal digits). For a linear
+# (least-squares Taylor) system the solved weights lose ~log10(kappa) digits:
+# reliable_digits ~ 16 - log10(kappa). The previous 1e12 left only ~4 reliable
+# digits, so a stencil claiming O(h^2) could carry near-garbage weights below the
+# truncation error. 1e8 keeps ~8 reliable digits: clear headroom over both the
+# O(h^2) truncation error at realistic grids (h~1e-2..1e-3 -> ~4..6 digits) and a
+# newton_tolerance=1e-6 downstream solve. Empirically the GFDM test suite realizes
+# cond <= ~1.6e4 (median ~19) across 120 operators, so this guard fires only on
+# pathological (anisotropic / near-boundary) clouds, not on working stencils.
+COND_THRESHOLD = 1e8
 
 # PHS singularity epsilon (added to r for r^m)
 PHS_EPSILON = 1e-14
@@ -724,7 +733,8 @@ class TaylorOperator(DifferentialOperator):
             weight_threshold: Neighbors with weight < threshold * max_weight
                 are considered ineffective. Default 0.01 (1% of max).
             cond_threshold: Condition numbers above this are considered
-                ill-conditioned. Default 1e12.
+                ill-conditioned. Default 1e8 (~8 reliable float64 digits in
+                the solved stencil weights; see COND_THRESHOLD, Issue #1084).
 
         Returns:
             True if all stencils are valid, False if any are degenerate or
