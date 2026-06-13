@@ -164,6 +164,13 @@ class NumericalScheme(Enum):
     # Type A (meshfree): discrete duality via Galerkin weak form on MLS (Issue #1131)
     MESHLESS_GALERKIN = "meshless_galerkin"
 
+    # Conservative finite-volume FP schemes (Issue #422). Mass-exact by construction (flux
+    # telescoping -> column sums = 0), so no renormalization is needed. FP-only: paired with the
+    # upwind HJB-FDM solver (there is no HJB-FVM partner yet), so the family-match duality check
+    # is intentionally relaxed in the factory.
+    FVM_UPWIND = "fvm_upwind"  # 1st-order upwind flux
+    FVM_MUSCL = "fvm_muscl"  # 2nd-order MUSCL flux (minmod limiter)
+
     def __str__(self) -> str:
         """Human-readable string representation."""
         return self.value
@@ -189,6 +196,10 @@ class NumericalScheme(Enum):
             self.FEM_P1,
             self.FEM_P2,
             self.MESHLESS_GALERKIN,
+            # FVM is mass-exact by construction (flux telescoping), so it needs no
+            # post-hoc renormalization -- classified with the conservative schemes.
+            self.FVM_UPWIND,
+            self.FVM_MUSCL,
         }
 
     def requires_renormalization(self) -> bool:

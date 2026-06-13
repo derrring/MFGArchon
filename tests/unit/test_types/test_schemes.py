@@ -40,11 +40,13 @@ class TestNumericalSchemeEnum:
     def test_enum_iteration(self):
         """Test that enum can be iterated."""
         schemes = list(NumericalScheme)
-        assert len(schemes) == 8
+        assert len(schemes) == 10
         assert NumericalScheme.FDM_UPWIND in schemes
         assert NumericalScheme.FEM_P1 in schemes
         assert NumericalScheme.GFDM in schemes
         assert NumericalScheme.MESHLESS_GALERKIN in schemes
+        assert NumericalScheme.FVM_UPWIND in schemes
+        assert NumericalScheme.FVM_MUSCL in schemes
 
 
 class TestDiscreteDuality:
@@ -69,9 +71,9 @@ class TestDiscreteDuality:
         assert NumericalScheme.MESHLESS_GALERKIN.is_discrete_dual()
 
     def test_discrete_dual_count(self):
-        """Test that exactly 7 schemes have discrete duality (FDM, SL, FEM, MESHLESS_GALERKIN)."""
+        """Test that exactly 9 schemes have discrete duality (FDM, SL, FEM, MESHLESS_GALERKIN, FVM)."""
         discrete_schemes = [s for s in NumericalScheme if s.is_discrete_dual()]
-        assert len(discrete_schemes) == 7
+        assert len(discrete_schemes) == 9
 
     def test_continuous_dual_count(self):
         """Test that exactly 1 scheme has continuous duality."""
@@ -201,7 +203,7 @@ class TestEnumUsagePatterns:
     def test_enum_list_comprehension(self):
         """Test enum usage in list comprehension."""
         production_schemes = [s for s in NumericalScheme if not s.is_experimental]
-        assert len(production_schemes) == 7
+        assert len(production_schemes) == 9
         assert NumericalScheme.SL_CUBIC not in production_schemes
 
 

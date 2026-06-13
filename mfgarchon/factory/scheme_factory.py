@@ -103,11 +103,23 @@ def create_paired_solvers(
     elif scheme == NumericalScheme.MESHLESS_GALERKIN:
         hjb_solver, fp_solver = _create_meshless_galerkin_pair(problem, hjb_config, fp_config)
 
+    elif scheme in (NumericalScheme.FVM_UPWIND, NumericalScheme.FVM_MUSCL):
+        hjb_solver, fp_solver = _create_fvm_pair(problem, scheme, hjb_config, fp_config)
+
     else:
         raise NotImplementedError(
             f"Scheme {scheme.value} is defined but not yet implemented in factory. "
-            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, GFDM, FEM_P1, FEM_P2"
+            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, GFDM, FEM_P1, FEM_P2, "
+            f"FVM_UPWIND, FVM_MUSCL"
         )
+
+    # FVM is an FP-only conservative scheme with no HJB-FVM partner yet: it is paired with the
+    # upwind HJB-FDM solver (the FVM advection is the higher-order extension of, and continuous-
+    # dual to, the upwind FDM stencil). The strict same-family duality check would flag this
+    # intentional cross-family pairing as NOT_DUAL, so it is skipped for FVM (mass conservation
+    # is structural, not adjoint-renormalization-based). Issue #422.
+    if scheme in (NumericalScheme.FVM_UPWIND, NumericalScheme.FVM_MUSCL):
+        validate_duality = False
 
     # Validate duality
     if validate_duality:
@@ -178,6 +190,41 @@ def _create_fdm_pair(
     # Create solvers
     hjb_solver = HJBFDMSolver(problem, **hjb_config)
     fp_solver = FPFDMSolver(problem, **fp_config)
+
+    return hjb_solver, fp_solver
+
+
+def _create_fvm_pair(
+    problem: MFGProblem,
+    scheme: NumericalScheme,
+    hjb_config: dict[str, Any],
+    fp_config: dict[str, Any],
+) -> tuple[BaseHJBSolver, BaseFPSolver]:
+    """Create the finite-volume FP pair (Issue #422).
+
+    The FVM is a conservative FP-only solver (mass-exact by flux telescoping). It has no
+    HJB-FVM partner yet, so it is paired with the upwind HJB-FDM solver: the FVM advection is
+    the higher-order extension of the divergence-upwind FDM stencil and is continuous-dual to
+    the upwind HJB gradient. ``FVM_UPWIND`` selects 1st-order upwind reconstruction;
+    ``FVM_MUSCL`` selects 2nd-order minmod-limited MUSCL.
+
+    Args:
+        problem: MFG problem
+        scheme: FVM_UPWIND or FVM_MUSCL
+        hjb_config: HJB solver config
+        fp_config: FP solver config
+
+    Returns:
+        (HJBFDMSolver, FPFVMSolver) tuple
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFVMSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    reconstruction = "upwind" if scheme == NumericalScheme.FVM_UPWIND else "muscl"
+    fp_config.setdefault("reconstruction", reconstruction)
+
+    hjb_solver = HJBFDMSolver(problem, **hjb_config)
+    fp_solver = FPFVMSolver(problem, **fp_config)
 
     return hjb_solver, fp_solver
 

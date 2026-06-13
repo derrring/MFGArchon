@@ -24,6 +24,7 @@ from .coupling import (
 from .fp_solvers import (
     BaseFPSolver,
     FPFDMSolver,
+    FPFVMSolver,
     FPNetworkSolver,  # Re-exported for backward compat (now in network_solvers)
     FPParticleSolver,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "BaseNumericalSolver",
     # FP Solvers (grid-based)
     "FPFDMSolver",
+    "FPFVMSolver",
     "FPParticleSolver",
     # HJB Solvers (grid-based)
     "HJBFDMSolver",
