@@ -3161,6 +3161,20 @@ class HJBGFDMSolver(BaseHJBSolver):
                     "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
                     "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
                 )
+        # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
+        # H = |p|^2/(2*lambda*c(m)) + V(x, t) + f(m). The control-cost gate above does NOT catch
+        # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
+        # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
+        # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
+        # (hjb_howard.py _howard_step RHS) with no c(m) factor, so the value function silently
+        # decouples from the congestion. Gate on the factor directly. Fail loud.
+        if getattr(H_class, "_congestion_factor", None) is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' does not support multiplicative kinetic congestion c(m) "
+                "(CongestionHamiltonian): Howard hardcodes the unit-quadratic Lagrangian "
+                "(1/2)|alpha|^2 with no c(m) factor, so the value function silently decouples from "
+                "the congestion. Use inner_solver='newton' (deferred, Issue #1071/#1118 PR2)."
+            )
         # BC parity (Issue #1118 PR2a): the howard path now consumes the provider's shared
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
