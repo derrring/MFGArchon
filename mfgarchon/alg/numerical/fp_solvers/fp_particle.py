@@ -35,9 +35,9 @@ from mfgarchon.utils.numerical.particle import (
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_particle_bc import apply_boundary_conditions as _apply_bc
-from .fp_particle_bc import enforce_obstacle_boundary as _enforce_obstacle
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
 from .fp_particle_bc import needs_segment_aware_bc as _needs_segment_bc
+from .fp_particle_bc import project_to_navigable_or_defer as _project_to_navigable
 from .fp_particle_density import generate_brownian_increment as _gen_brownian
 from .fp_particle_density import normalize_density as _normalize
 from .particle_result import FPParticleResult
@@ -922,11 +922,14 @@ class FPParticleSolver(BaseFPSolver):
         """
         return _get_topology(self.boundary_conditions, dimension)
 
-    def _enforce_obstacle_boundary(self, particles: np.ndarray) -> np.ndarray:
+    def _project_obstacle_violations(self, particles: np.ndarray) -> np.ndarray:
         """
-        Enforce obstacle boundaries via implicit domain geometry (Issue #533).
+        Project obstacle-interior violations back to the navigable region;
+        defer outer-boundary violations to the caller's BC (Issue #533, #1067).
 
-        Delegates to unified enforce_obstacle_boundary() from fp_particle_bc module.
+        Delegates to unified project_to_navigable_or_defer() from fp_particle_bc.
+        Particles past the outer bounding box are left for the segment-aware BC
+        layer; only obstacle-interior violations are projected here.
 
         Parameters
         ----------
@@ -938,7 +941,7 @@ class FPParticleSolver(BaseFPSolver):
         particles : np.ndarray
             Updated particle positions with obstacle violations corrected
         """
-        return _enforce_obstacle(particles, self._implicit_domain)
+        return _project_to_navigable(particles, self._implicit_domain)
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
         """
@@ -1828,7 +1831,7 @@ class FPParticleSolver(BaseFPSolver):
             new_particles = particles_t + drift * Dt + dW
 
             # Enforce obstacle boundaries if implicit domain is set (Issue #533)
-            new_particles = self._enforce_obstacle_boundary(new_particles)
+            new_particles = self._project_obstacle_violations(new_particles)
 
             # Apply boundary conditions
             if use_segment_aware_bc:
@@ -2356,7 +2359,7 @@ class FPParticleSolver(BaseFPSolver):
             new_particles = particles_t + drift * Dt + dW
 
             # Enforce obstacle boundaries if implicit domain is set (Issue #533)
-            new_particles = self._enforce_obstacle_boundary(new_particles)
+            new_particles = self._project_obstacle_violations(new_particles)
 
             # Apply boundary conditions — Issue #1042 fix: route to segment-aware
             # path when BC has Dirichlet (absorbing) segments, mirroring grid-drift.

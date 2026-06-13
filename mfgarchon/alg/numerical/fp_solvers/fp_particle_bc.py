@@ -13,7 +13,7 @@ Usage:
     from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import (
         get_topology_per_dimension,
         apply_boundary_conditions,
-        enforce_obstacle_boundary,
+        project_to_navigable_or_defer,
         needs_segment_aware_bc,
     )
 """
@@ -291,12 +291,18 @@ def apply_boundary_conditions(
 # =============================================================================
 
 
-def enforce_obstacle_boundary(
+def project_to_navigable_or_defer(
     particles: np.ndarray,
     implicit_domain: ImplicitDomain | None,
 ) -> np.ndarray:
     """
-    Enforce obstacle boundaries via implicit domain geometry (dimension-agnostic).
+    Project obstacle-interior violations back to the navigable region; defer
+    outer-boundary violations to the caller's outer-BC layer (dimension-agnostic).
+
+    Particles past the outer bounding box are LEFT untouched for the caller's
+    outer-BC layer (segment-aware BC, topology, etc.); only particles that
+    entered an obstacle interior are corrected here. The name reflects this
+    conditional contract (Issue #1067): it is NOT comprehensive enforcement.
 
     If an implicit domain with obstacles is defined, particles that have
     entered obstacle regions (domain.contains() returns False AND inside outer
@@ -331,7 +337,7 @@ def enforce_obstacle_boundary(
     --------
     >>> from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
     >>> domain = DifferenceDomain(Hyperrectangle(...), Hypersphere(center=[0.5, 0.5], radius=0.1))
-    >>> particles = enforce_obstacle_boundary(particles, domain)
+    >>> particles = project_to_navigable_or_defer(particles, domain)
     """
     if implicit_domain is None:
         return particles
@@ -531,8 +537,8 @@ if __name__ == "__main__":
 
     # Test 8: Obstacle boundary (None domain - should pass through)
     particles_obs = np.array([[0.5, 0.5], [0.3, 0.3]])
-    result_obs = enforce_obstacle_boundary(particles_obs, None)
+    result_obs = project_to_navigable_or_defer(particles_obs, None)
     assert np.allclose(result_obs, particles_obs)
-    print("  enforce_obstacle_boundary (None domain): OK")
+    print("  project_to_navigable_or_defer (None domain): OK")
 
     print("\nAll smoke tests passed!")
