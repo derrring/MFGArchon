@@ -3,9 +3,14 @@ Pinning tests for Issue #1256: FPParticleSolver volatile-field shape validation
 and drift_is_precomputed on 1D paths.
 
 (A) Anisotropic (d,d) volatility matrix routed through spatial interpolator -> silent garbage.
-    Fix: validate array shape vs grid; raise ValueError for (d,d), (d,), or shape mismatch.
+    Part 1 fix (Issue #1256): the nD CPU path now IMPLEMENTS anisotropic Σ via the
+    per-particle increment ΔX = Σ(x_p) @ dW_p (constant (d,d) and spatial (*grid,d,d)).
+    Shape validation still rejects (d,), wrong-grid spatial fields, and mismatched
+    matrix-trailing arrays. Quantitative covariance validation lives in
+    test_fp_particle_anisotropic_sigma_1256.py.
 (B) drift_is_precomputed=True silently ignored on 1D CPU/GPU paths (always differentiates U).
-    Fix: raise NotImplementedError when drift_is_precomputed=True and dimension==1.
+    Still deferred (Refs #1256): raise NotImplementedError when drift_is_precomputed=True
+    and dimension==1.
 """
 
 from __future__ import annotations
@@ -76,16 +81,17 @@ def _2d_problem():
 
 
 class TestIssue1256VolatilityShapeValidation:
-    """Bug (A): (d,d) anisotropic Sigma must be rejected with a clear error, not interpolated."""
+    """Bug (A) Part 1: (d,d) anisotropic Sigma is now SUPPORTED on the nD CPU path;
+    only genuinely-unsupported array shapes still raise."""
 
-    def test_2d_diagonal_sigma_matrix_raises_valueerror(self):
+    def test_2d_diagonal_sigma_matrix_now_supported(self):
         """
-        Pinning test for Issue #1256 bug A.
+        Issue #1256 Part 1: a (d,d) anisotropic Σ on the nD CPU path is implemented.
 
         volatility_field=np.diag([s1, s2]) is a (2,2) matrix passed to a 2D problem.
-        Before the fix: silently treated as a 2x2 spatial grid; matrix entries bilinearly
-        smeared as per-particle scalar sigma — silent garbage.
-        After the fix: raises ValueError with a message about anisotropic unsupported.
+        Before Part 1 (#1274): raised ValueError (fail-loud placeholder).
+        After Part 1: runs the per-particle ΔX = Σ @ dW increment and returns a finite
+        density. (Quantitative covariance correctness is in the dedicated validation file.)
         """
         problem = _2d_problem()
         assert problem.dimension == 2, "problem must be 2D for this test"
@@ -101,11 +107,38 @@ class TestIssue1256VolatilityShapeValidation:
 
         anisotropic_sigma = np.diag([0.1, 0.2])  # shape (2,2) — anisotropic noise matrix
 
-        with pytest.raises(ValueError, match="anisotropic"):
+        result = solver.solve_fp_system(
+            M_initial=m0,
+            drift_field=zero_drift,
+            volatility_field=anisotropic_sigma,
+            show_progress=False,
+        )
+        assert result.ndim == 3  # (time, Nx, Ny)
+        assert result.shape[1:] == grid_shape
+        assert np.all(np.isfinite(result))
+
+    def test_mismatched_matrix_trailing_array_raises_valueerror(self):
+        """
+        A matrix-trailing array whose leading dims do not match the grid is unsupported.
+
+        E.g. (3, 3, 2, 2) on a (10, 10) grid: trailing (2,2) is a Σ matrix but the leading
+        (3,3) is neither the grid nor empty. Must fail loud (not silently interpolated).
+        """
+        problem = _2d_problem()
+        solver = FPParticleSolver(problem, num_particles=50)
+        grid_shape = problem.geometry.get_grid_shape()
+        m0 = np.ones(grid_shape) / np.prod(grid_shape)
+
+        def zero_drift(t, x, m):
+            return np.zeros_like(x)
+
+        bad = np.zeros((3, 3, 2, 2))  # leading (3,3) != grid (10,10)
+
+        with pytest.raises(ValueError, match="leading dims"):
             solver.solve_fp_system(
                 M_initial=m0,
                 drift_field=zero_drift,
-                volatility_field=anisotropic_sigma,
+                volatility_field=bad,
                 show_progress=False,
             )
 
