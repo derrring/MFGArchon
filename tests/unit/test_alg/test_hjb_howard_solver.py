@@ -32,6 +32,7 @@ pytest.importorskip("cvxpy")
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.core.hamiltonian import (
+    CongestionHamiltonian,
     OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
@@ -489,6 +490,32 @@ def test_integrated_howard_rejects_maximize_sense():
     )
     gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
     with pytest.raises(NotImplementedError, match="MAXIMIZE"):
+        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
+def test_integrated_howard_rejects_congestion_hamiltonian():
+    """CongestionHamiltonian's multiplicative kinetic factor c(m) defeats Howard's hardcoded
+    unit-quadratic (1/2)|alpha|^2 Lagrangian -> fail loud.
+
+    The congestion factor lives in `_congestion_factor`, OUTSIDE control_cost: here the control
+    cost is a plain unit-quadratic QuadraticControlCost(1.0) (lambda=1, MINIMIZE) and the
+    additive V/f(m) slots are None, so this Hamiltonian passes EVERY prior gate
+    (control-cost/sense and the V/f(m) wiring). Without the dedicated congestion gate, Howard
+    would hardcode H = |p|^2/(2*lambda*c(m)) as (1/2)|alpha|^2 and silently solve the wrong
+    (uncongested) value function. The dedicated gate reads `_congestion_factor` and raises.
+    """
+    H = CongestionHamiltonian(
+        control_cost=QuadraticControlCost(lambda_=1.0),
+        congestion_factor=lambda m: 2.0,
+    )
+    # Confirm the trap: all prior gates' sources are benign.
+    assert H._congestion_factor is not None
+    assert H._potential is None
+    assert H._coupling is None
+    assert isinstance(H.control_cost, QuadraticControlCost)
+    assert H.control_cost.lambda_ == 1.0
+    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
+    with pytest.raises(NotImplementedError, match="congestion"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
