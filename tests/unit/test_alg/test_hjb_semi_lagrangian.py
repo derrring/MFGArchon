@@ -942,6 +942,102 @@ class TestStochasticCharacteristicSL:
         assert max_diff < 5e-3, f"Stochastic and ADI diverge on smooth Gaussian: max diff = {max_diff:.3e}"
 
 
+class TestStochasticSLUnificationPinning:
+    """Issue #1050: pin the unified `_stochastic_sl_step` to the pre-merge 1D algorithm.
+
+    `_stochastic_sl_step_1d` and `_stochastic_sl_step_nd` were merged into one
+    dimension-agnostic `_stochastic_sl_step`. The merge must be byte-identical
+    for 1D (orchestrator gate). This reconstructs the former 1D algorithm
+    independently and asserts exact equality, so a future regression that
+    silently changes the 1D path (e.g. swapping numpy.interp for RGI, or the
+    FDM final-BC applicator for the Interpolation one) fails loudly here.
+    """
+
+    @staticmethod
+    def _legacy_1d_step(solver, U_next, M_next, time_idx, dt):
+        """The pre-#1050 `_stochastic_sl_step_1d`, inlined as the reference."""
+        from scipy.interpolate import PchipInterpolator
+
+        from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+        from mfgarchon.geometry.boundary.bc_utils import (
+            bc_type_to_geometric_operation,
+            get_bc_type_string,
+        )
+
+        Nx = len(U_next)
+        sigma = solver.problem.sigma
+        sqrt_dt = float(np.sqrt(dt))
+        diffusion_offset = sigma * sqrt_dt
+        grad_u = solver._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
+        x_drift = solver.x_grid - grad_u * dt
+        y_plus = x_drift + diffusion_offset
+        y_minus = x_drift - diffusion_offset
+        bc = solver.get_boundary_conditions()
+        bc_op = bc_type_to_geometric_operation(get_bc_type_string(bc))
+        bounds = solver.problem.geometry.get_bounds()
+        xmin, xmax = bounds[0][0], bounds[1][0]
+        if bc_op == "reflect":
+            y_plus = reflect_into_domain(y_plus, xmin, xmax)
+            y_minus = reflect_into_domain(y_minus, xmin, xmax)
+        elif bc_op == "wrap":
+            L = xmax - xmin
+            y_plus = xmin + (y_plus - xmin) % L
+            y_minus = xmin + (y_minus - xmin) % L
+        if solver.interpolation_method == "linear":
+            u_plus = np.interp(y_plus, solver.x_grid, U_next)
+            u_minus = np.interp(y_minus, solver.x_grid, U_next)
+        else:
+            interp_fn = PchipInterpolator(solver.x_grid, U_next, extrapolate=False)
+            u_plus = interp_fn(y_plus)
+            u_minus = interp_fn(y_minus)
+        u_avg = 0.5 * (u_plus + u_minus)
+        x_batch = solver.x_grid.reshape(-1, 1)
+        p_batch = grad_u.reshape(-1, 1)
+        H_class = solver.problem.hamiltonian_class
+        if H_class is not None:
+            H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
+        else:
+            H_values = np.zeros(Nx)
+        U_current = u_avg - dt * H_values
+        if bc:
+            U_current = solver.bc_applicator.enforce_values(
+                U_current, boundary_conditions=bc, spacing=(solver.dx,), time=time_idx * dt
+            )
+        return U_current
+
+    @pytest.mark.parametrize("method", ["linear", "cubic"])
+    def test_1d_step_byte_identical_to_legacy(self, method):
+        import warnings as _w
+
+        geometry = TensorProductGrid(
+            dimension=1,
+            bounds=[(0.0, 1.0)],
+            Nx_points=[51],
+            boundary_conditions=no_flux_bc(dimension=1),
+        )
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, diffusion=0.045, components=_default_components())
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            solver = HJBSemiLagrangianSolver(
+                problem,
+                interpolation_method=method,
+                diffusion_method="stochastic",
+                check_cfl=False,
+            )
+
+        x_grid = solver.x_grid
+        # Non-trivial U (curvature) and varying M so interpolation + Hamiltonian
+        # both contribute; time_idx mid-horizon.
+        U_next = np.sin(3.0 * x_grid) + 0.2 * np.cos(7.0 * x_grid)
+        M_next = 1.0 + 0.1 * np.cos(2.0 * np.pi * x_grid)
+        time_idx, dt = 25, problem.T / problem.Nt
+
+        got = solver._stochastic_sl_step(U_next.copy(), M_next.copy(), time_idx, dt)
+        ref = self._legacy_1d_step(solver, U_next.copy(), M_next.copy(), time_idx, dt)
+        np.testing.assert_array_equal(got, ref)
+
+
 class TestStochasticCharacteristicSL_nD:
     """Issue #1054: nD stochastic SL companion fixes (analogous to 1D #1033/#1048/#1049)."""
 
@@ -1004,7 +1100,7 @@ class TestStochasticCharacteristicSL_nD:
         )
         U_terminal = np.zeros(tuple(grid.Nx_points))
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
-        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert U_step.shape == tuple(grid.Nx_points)
         assert np.isfinite(U_step).all()
 
@@ -1021,7 +1117,7 @@ class TestStochasticCharacteristicSL_nD:
             )
         U_terminal = np.zeros(tuple(grid.Nx_points))
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
-        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert np.isfinite(U_step).all()
 
     def test_2d_reflect_bc_no_extrapolation(self):
@@ -1041,7 +1137,7 @@ class TestStochasticCharacteristicSL_nD:
             (Nx, Nx),
         ).astype(float)
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
-        U_step = solver._stochastic_sl_step_nd(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
+        U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert np.isfinite(U_step).all()
 
 
