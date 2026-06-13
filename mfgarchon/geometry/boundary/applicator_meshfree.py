@@ -356,8 +356,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         if not np.any(on_boundary):
             return field
 
-        # Get BC type (uniform BC for now)
-        bc_type = boundary_conditions.default_bc
+        # Get BC type (uniform BC for now; fails loud if default_bc unset, Issue #1100)
+        bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply")
 
         if bc_type == BCType.DIRICHLET:
             # Get Dirichlet value
@@ -440,7 +440,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             >>> bc = neumann_bc(dimension=2)  # Zero-flux = reflecting
             >>> particles_updated = applicator.apply_particles(particles, bc)
         """
-        bc_type = boundary_conditions.default_bc
+        # Fails loud if default_bc unset (Issue #1100)
+        bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply_particles")
 
         if bc_type == BCType.NEUMANN:
             # Zero-flux Neumann → reflecting BC for particles

@@ -448,8 +448,9 @@ class TestMixedBCFromRegions:
 
         bc = mixed_bc_from_regions(geometry, bc_config)
 
-        # Should use default values
-        assert bc.default_bc == BCType.PERIODIC
+        # Issue #1100: no "default" segment -> factory falls back to safe NO_FLUX
+        # (was PERIODIC). The point of this test is that a default is optional.
+        assert bc.default_bc == BCType.NO_FLUX
         assert bc.default_value == 0.0
 
     def test_preserves_segment_fields(self):
@@ -496,7 +497,8 @@ class TestMixedBoundaryConditions:
         mixed_bc = MixedBoundaryConditions(dimension=2)
         assert mixed_bc.dimension == 2
         assert len(mixed_bc.segments) == 0
-        assert mixed_bc.default_bc == BCType.PERIODIC
+        # Issue #1100: default_bc is None ("unspecified"), no longer implicit PERIODIC.
+        assert mixed_bc.default_bc is None
         assert mixed_bc.default_value == 0.0
 
     def test_segment_sorting_by_priority(self):
@@ -735,6 +737,9 @@ class TestDimensionAgnosticism:
             dimension=3,
             segments=[segment],
             domain_bounds=np.array([[0.0, 10.0], [0.0, 10.0], [0.0, 10.0]]),
+            # Issue #1100: fall-through default must be explicit now. This test
+            # exercises the default-segment dispatch, so set it explicitly.
+            default_bc=BCType.PERIODIC,
         )
 
         # Point in outlet region
@@ -742,10 +747,10 @@ class TestDimensionAgnosticism:
         bc = mixed_bc.get_bc_at_point(outlet_point, "x_max")
         assert bc.bc_type == BCType.DIRICHLET
 
-        # Point outside outlet region
+        # Point outside outlet region -> falls through to the explicit default
         wall_point = np.array([9.5, 2.0, 5.0])
         bc_wall = mixed_bc.get_bc_at_point(wall_point, "x_max")
-        assert bc_wall.bc_type == BCType.PERIODIC  # default
+        assert bc_wall.bc_type == BCType.PERIODIC  # explicit default
 
 
 class TestSDFBasedBC:

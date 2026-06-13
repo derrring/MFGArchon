@@ -185,7 +185,12 @@ class FPGFDMSolver(BaseFPSolver):
         # Map BoundaryConditions to string for GFDMOperator
         if bc is not None:
             try:
-                default_bc = bc.default_bc
+                # Fails loud (ValueError) if default_bc unset; Issue #1100.
+                # AttributeError only for legacy objects lacking the unified interface.
+                default_bc = bc._resolve_default_bc("FPGFDMSolver._resolve_boundary_type")
+            except AttributeError:
+                default_bc = None
+            if default_bc is not None:
                 if default_bc == BCType.NO_FLUX:
                     return "no_flux"
                 elif default_bc == BCType.NEUMANN:
@@ -194,8 +199,6 @@ class FPGFDMSolver(BaseFPSolver):
                     return "periodic"  # GFDMOperator may support this in future
                 # Other BC types not yet supported by GFDMOperator
                 return None
-            except AttributeError:
-                pass
 
         # Priority: Legacy boundary_type string
         return boundary_type_str

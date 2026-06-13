@@ -403,10 +403,14 @@ class BaseOptimizationSolver(BaseMFGSolver):
 
             constraints.append(constraint)
 
-        # If no segments, create constraint from default BC if available
+        # If no segments, create constraint from default BC.
+        # Issue #1100: a unified BoundaryConditions with default_bc unset (None)
+        # is fully unspecified here -> fail loud rather than silently apply a default.
         if not constraints:
-            bc_type = getattr(bc, "default_bc", None)
-            if bc_type is not None:
+            from mfgarchon.geometry.boundary import BoundaryConditions
+
+            if isinstance(bc, BoundaryConditions):
+                bc_type = bc._resolve_default_bc("BaseOptimizationSolver.get_domain_constraints")
                 constraint = {
                     "region": "all",
                     "value": getattr(bc, "value", 0.0),
@@ -414,6 +418,7 @@ class BaseOptimizationSolver(BaseMFGSolver):
                     "type": "eq" if bc_type == BCType.DIRICHLET else "grad",
                 }
                 constraints.append(constraint)
+            # else: legacy/non-unified BC object carries no default constraint
 
         return constraints
 
@@ -576,9 +581,14 @@ class BaseRLSolver(BaseMFGSolver):
         # Map BC type to environment behavior
         bc = self.get_boundary_conditions()
         if bc is not None:
-            from mfgarchon.geometry.boundary import BCType
+            from mfgarchon.geometry.boundary import BCType, BoundaryConditions
 
-            bc_type = getattr(bc, "default_bc", None)
+            # Issue #1100: a unified BoundaryConditions with default_bc unset (None)
+            # would previously map to "wrap" (silent PERIODIC). Fail loud instead.
+            if isinstance(bc, BoundaryConditions):
+                bc_type = bc._resolve_default_bc("BaseRLSolver.get_environment_boundary_config")
+            else:
+                bc_type = getattr(bc, "default_bc", None)
 
             if bc_type == BCType.PERIODIC:
                 config["boundary_mode"] = "wrap"

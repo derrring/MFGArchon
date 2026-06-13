@@ -62,7 +62,12 @@ class BoundaryConditions:
         dimension: Spatial dimension of the problem (1, 2, 3, ...) or None for lazy binding.
             When None, dimension will be inferred when BC is attached to a Geometry.
         segments: List of BC segments (ordered by priority)
-        default_bc: Default BC type when no segment matches
+        default_bc: Fallback BC type for points/segments that match no explicit
+            segment. ``None`` (the default) means *unspecified*: resolving a
+            fall-through point then raises instead of silently applying a default
+            (Issue #1100 — PERIODIC is never applied unless explicitly requested).
+            Set explicitly (e.g. ``BCType.NO_FLUX``) when segments may not cover
+            every boundary point.
         default_value: Default BC value when no segment matches
         domain_bounds: Domain bounds array of shape (dimension, 2) for rectangular domains
         domain_sdf: Signed distance function for general/Lipschitz domains
@@ -91,7 +96,9 @@ class BoundaryConditions:
 
     dimension: int | None = None
     segments: list[BCSegment] = field(default_factory=list)
-    default_bc: BCType = BCType.PERIODIC
+    # Issue #1100: None = "unspecified" (no silent PERIODIC fallback). Resolving a
+    # fall-through point with default_bc is None fails loud via _resolve_default_bc.
+    default_bc: BCType | None = None
     default_value: float = 0.0
 
     # Rectangular domain specification
@@ -286,6 +293,32 @@ class BoundaryConditions:
             raise ValueError("bc_type property only valid for uniform BCs. For mixed BCs, access segments directly.")
         return self.segments[0].bc_type
 
+    def _resolve_default_bc(self, context: str) -> BCType:
+        """Return ``default_bc`` for a fall-through point, or fail loud if unset.
+
+        Issue #1100: ``default_bc`` is ``None`` when the user never specified a
+        fallback. A point/segment that matches no explicit BC segment falls
+        through to ``default_bc``; silently substituting a default (historically
+        ``PERIODIC``) is wrong physics, so resolution raises here instead of
+        guessing. PERIODIC is applied only when the user sets it explicitly.
+
+        Args:
+            context: Caller name, surfaced in the error for debuggability.
+
+        Returns:
+            The explicitly-set default ``BCType``.
+
+        Raises:
+            ValueError: If ``default_bc`` is ``None`` (unspecified).
+        """
+        if self.default_bc is None:
+            raise ValueError(
+                f"{context}: point/segment matched no BC and default_bc was not "
+                "specified on BoundaryConditions; set default_bc=BCType.NO_FLUX / "
+                "PERIODIC / DIRICHLET explicitly (Issue #1100)."
+            )
+        return self.default_bc
+
     def get_bc_at_point(
         self,
         point: np.ndarray,
@@ -329,10 +362,10 @@ class BoundaryConditions:
             ):
                 return segment
 
-        # No match - return default BC as a segment
+        # No match - return default BC as a segment (fails loud if default_bc unset)
         return BCSegment(
             name="default",
-            bc_type=self.default_bc,
+            bc_type=self._resolve_default_bc("get_bc_at_point"),
             value=self.default_value,
             priority=-1,
         )
@@ -376,8 +409,8 @@ class BoundaryConditions:
             if segment.boundary == boundary:
                 return segment.bc_type
 
-        # No match - return default BC type
-        return self.default_bc
+        # No match - return default BC type (fails loud if default_bc unset)
+        return self._resolve_default_bc("get_bc_type_at_boundary")
 
     def get_bc_value_at_boundary(self, boundary: str, time: float = 0.0, point: np.ndarray | None = None) -> float:
         """
@@ -792,18 +825,19 @@ class BoundaryConditions:
                 has_min_coverage = any(_seg_covers_face(seg, target_min) for seg in self.segments)
                 has_max_coverage = any(_seg_covers_face(seg, target_max) for seg in self.segments)
 
-                # If no explicit segment coverage, default BC will be used
+                # If no explicit segment coverage, default BC will be used.
+                # Issue #1100: default_bc may be None (unspecified) -> flag that
+                # resolution will fail loud at those points rather than crashing here.
                 face_label_min = target_min.to_string()
                 face_label_max = target_max.to_string()
+                default_desc = self.default_bc.value if self.default_bc is not None else "unspecified (will raise)"
                 if not has_min_coverage:
                     warnings.append(
-                        f"No explicit BC segment for {face_label_min} boundary. "
-                        f"Default BC ({self.default_bc.value}) will be used."
+                        f"No explicit BC segment for {face_label_min} boundary. Default BC ({default_desc}) will be used."
                     )
                 if not has_max_coverage:
                     warnings.append(
-                        f"No explicit BC segment for {face_label_max} boundary. "
-                        f"Default BC ({self.default_bc.value}) will be used."
+                        f"No explicit BC segment for {face_label_max} boundary. Default BC ({default_desc}) will be used."
                     )
 
         is_valid = len(warnings) == 0
@@ -821,7 +855,9 @@ class BoundaryConditions:
         lines = [f"BoundaryConditions({dim_str}, mixed, {domain_type}):"]
         for segment in self.segments:
             lines.append(f"  - {segment}")
-        lines.append(f"  - Default: {self.default_bc.value} = {self.default_value}")
+        # Issue #1100: default_bc may be None (unspecified) -> guard .value access.
+        default_desc = self.default_bc.value if self.default_bc is not None else "unspecified"
+        lines.append(f"  - Default: {default_desc} = {self.default_value}")
         if self.corner_strategy != "priority":
             lines.append(f"  - Corner handling: {self.corner_strategy}")
         return "\n".join(lines)
@@ -1093,11 +1129,15 @@ def mixed_bc_from_regions(
     bounds = getattr(geometry, "bounds", None)
     domain_bounds = np.array(bounds) if bounds is not None else None
 
-    # Create BoundaryConditions object
+    # Create BoundaryConditions object.
+    # Issue #1100: when no explicit "default" segment is supplied, fall back to
+    # NO_FLUX (safe, mass-conserving, non-surprising) rather than the historical
+    # PERIODIC. PERIODIC is applied only when the caller passes a default segment
+    # whose bc_type is PERIODIC (the explicit path below).
     return BoundaryConditions(
         dimension=dimension,
         segments=segments,
-        default_bc=default_segment.bc_type if default_segment else BCType.PERIODIC,
+        default_bc=default_segment.bc_type if default_segment else BCType.NO_FLUX,
         default_value=default_segment.value if default_segment else 0.0,
         domain_bounds=domain_bounds,
     )

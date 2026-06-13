@@ -242,6 +242,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (BREAKING)
 
+- **`BoundaryConditions.default_bc` no longer silently defaults to `PERIODIC`** (Issue #1100).
+  The dataclass field is now `default_bc: BCType | None = None` ("unspecified"). Previously any
+  boundary point that matched no segment (coverage gap, geometric-tolerance edge) silently fell back
+  to periodic wrapping — wrong physics for the non-periodic 2D geometries that dominate real use, and
+  the proximate cause of silent zero-Jacobian rows (#1098). Now, resolving an unmatched point with
+  `default_bc` unset raises a clear `ValueError` ("...matched no BC and default_bc was not specified
+  ...; set default_bc=BCType.NO_FLUX / PERIODIC / DIRICHLET explicitly (Issue #1100)") at the point→BC
+  resolution sites (`BoundaryConditions.get_bc_at_point` / `get_bc_type_at_boundary` via the new
+  `_resolve_default_bc` helper, and the implicit/meshfree applicators, `fp_gfdm`, and
+  `base_solver` constraint/env-config builders). **Migration**: pass `default_bc=BCType.NO_FLUX`
+  (safe, mass-conserving) — or `BCType.PERIODIC` if you genuinely want wrapping — whenever your
+  segments may not cover every boundary point; the `*_bc()` factories (`no_flux_bc`, `periodic_bc`,
+  …) already set `default_bc` explicitly and are unaffected. The `mixed_bc_from_regions` factory's
+  no-`"default"`-segment fallback changed from `PERIODIC` to `NO_FLUX`. Global-property reads
+  (`__str__`, `validate()`, `validate_boundary_conditions`) treat `None` as "not specified" and do
+  not crash. Explicit-BC paths (no-flux / Dirichlet / explicit-periodic) are byte-identical.
+
 - **Deprecated `fdm_bc_1d` 1D BC factory functions** `periodic_bc`, `dirichlet_bc`, `neumann_bc`,
   `no_flux_bc`, `robin_bc` (deprecated since v0.14.0 — past the 3-minor-version removal window at
   v0.19.8). They were dead code: every live import resolves the same names from the geometry-first
