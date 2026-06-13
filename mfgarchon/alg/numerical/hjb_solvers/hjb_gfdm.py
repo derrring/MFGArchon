@@ -28,6 +28,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     assemble_hjb_jacobian_diag,
     assemble_hjb_residual,
     eval_dH_dp_batch,
+    eval_H_batch,
 )
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
@@ -3102,10 +3103,15 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         Howard has no Armijo line search, so it avoids the MIN_ALPHA stall the per-point Newton
         path hits on advection-dominant / no-flux-BC regimes (#1118). Operates in collocation
-        space; the caller handles grid<->collocation mapping. PR1 scope: requires joint_socp+
-        precompute stencils, a Hamiltonian exposing dp(), unit control cost, and a HOMOGENEOUS
-        no-flux BC (Howard hardcodes Dirichlet b=0 and approximates Neumann by nearest interior,
-        so nonzero-Dirichlet/Neumann, Robin, and BCValueProviders are deferred to PR2).
+        space; the caller handles grid<->collocation mapping. Requires joint_socp+precompute
+        stencils and a Hamiltonian exposing dp().
+
+        Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(x, t) and density
+        coupling f(m), plus any caller-supplied running cost, are wired into Howard's
+        running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
+        HJB ``-d_t u + (1/2)|grad u|^2 + V(x) + f(m) - (sigma^2/2) Lap u = 0``. Still deferred
+        (fail-loud below): non-unit control cost lambda, non-quadratic control cost, and the
+        MAXIMIZE sense (the Lagrangian-scaling work tracked alongside #1071).
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 
@@ -3130,16 +3136,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "needs a running-cost correction (deferred, Issue #1118 PR2)."
             )
         # Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2 and
-        # consumes ONLY alpha* = -dH/dp, so the backward sweep is faithful solely for a pure
-        # separable LQ Hamiltonian H = (1/2)|p|^2 (MINIMIZE) with no potential V(x, t) and no
-        # density coupling f(m). The pure-LQ test suite sits inside that envelope, which hid
-        # three silent-wrong-physics holes: V/f(m) dropped, running_cost entering with the
-        # opposite sign of the Newton H-additive convention, and the unit-cost gate above
-        # reading problem.lambda_ (the #1247 desync, now fixed: the gate derives lambda from
-        # the Hamiltonian's control cost via _control_cost_lambda(), Issue #1071).
-        # Inspect the actual Hamiltonian components and fail loud on anything Howard does not
-        # model; full support is deferred. Found in the 2026-06-10 library audit; validated by
-        # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*.
+        # derives alpha* = -dH/dp, so the control term is faithful only for a unit-quadratic
+        # MINIMIZE control cost H_control = (1/2)|p|^2. The potential V(x, t), the density
+        # coupling f(m), and any caller running cost ARE now wired (Issue #1247, below); what
+        # remains unmodelled — non-unit / non-quadratic control cost and the MAXIMIZE sense —
+        # is the Lagrangian-scaling work deferred alongside #1071. Fail loud on those cases;
+        # validated by tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*.
         control_cost = getattr(H_class, "control_cost", None)
         if control_cost is not None:
             from mfgarchon.core.hamiltonian import QuadraticControlCost
@@ -3158,26 +3160,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
                     "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
                 )
-        if getattr(H_class, "_potential", None) is not None:
-            raise NotImplementedError(
-                "inner_solver='howard' ignores the Hamiltonian potential V(x, t): its policy "
-                "evaluation uses only alpha* = -dH/dp, so V never enters the HJB and the value "
-                "function silently decouples from it. Use inner_solver='newton' for problems with a "
-                "potential (deferred)."
-            )
-        if getattr(H_class, "_coupling", None) is not None:
-            raise NotImplementedError(
-                "inner_solver='howard' ignores the density coupling f(m): its policy evaluation "
-                "uses only alpha* = -dH/dp, so f(m) never enters the HJB and the value function "
-                "silently decouples from the density. Use inner_solver='newton' for density-coupled "
-                "problems (deferred)."
-            )
-        if self._running_cost_fn is not None:
-            raise NotImplementedError(
-                "inner_solver='howard' does not yet support a running cost: it would enter Howard's "
-                "Lagrangian-additive slot with the opposite sign of the Newton path's H-additive "
-                "convention (H_total = H + L). Use inner_solver='newton' with running_cost (deferred)."
-            )
         # BC parity (Issue #1118 PR2a): the howard path now consumes the provider's shared
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
@@ -3231,11 +3213,56 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
             return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
 
+        # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
+        # — potential V(x, t), density coupling f(m^n) — and any caller running cost L_user
+        # into Howard's running_cost slot, so Howard solves the full non-LQ HJB.
+        #
+        #   SIGN of rc_t (load-bearing). Howard's converged policy-evaluation equation is
+        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 - (sigma^2/2) Lap u^n - rc_t = 0
+        #   (substitute alpha* = -grad u^n into b = u^{n+1}/dt + (1/2)|alpha|^2 + rc_t and the
+        #   advection operator A_adv u = alpha . grad u; see hjb_howard.py:_howard_step). The
+        #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + L_user - D Lap u = 0
+        #   with H = (1/2)|grad u|^2 + V + f(m)) is
+        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + L_user - (sigma^2/2) Lap u^n = 0.
+        #   Matching the two forces rc_t = -(V + f(m) + L_user): Howard's slot is the Legendre
+        #   dual side, which carries the H-additive terms with a FLIPPED sign. Resolved
+        #   EMPIRICALLY (not by reasoning alone) by the Howard-vs-Newton agreement gate
+        #   test_integrated_howard_matches_newton_nonlq: with Newton as ground truth, s=-1 gives
+        #   max-rel-error ~1e-5..5e-4 across V-only / f(m)-only / V+f, while s=+1 gives ~2.0
+        #   (a different, wrong value function). The negated user running cost also corrects the
+        #   #1247 Defect 2 sign flip (it previously entered Howard's slot un-negated).
+        potential = getattr(H_class, "_potential", None)
+        coupling = getattr(H_class, "_coupling", None)
+        user_rc = self._running_cost_fn
+        has_H_extra = potential is not None or coupling is not None
+
+        howard_running_cost = None
+        if has_H_extra or user_rc is not None:
+            colloc_pts = self.collocation_points
+            p_zero = np.zeros((self.n_points, self.dimension))
+
+            def howard_running_cost(t_idx):
+                rc = np.zeros(self.n_points)
+                if has_H_extra:
+                    # V(x, t) + f(m^n) via the SAME eval_H_batch the Newton residual uses
+                    # (single source). At p=0 the gate-enforced unit-quadratic control cost
+                    # gives H_control(0)=0, so eval_H_batch(..., p=0, ...) == V(x, t) + f(m^n).
+                    rc = (
+                        rc
+                        + np.asarray(
+                            eval_H_batch(H_class, colloc_pts, M_collocation[t_idx], p_zero, t_idx * dt),
+                            dtype=float,
+                        ).ravel()
+                    )
+                if user_rc is not None:
+                    rc = rc + np.asarray(user_rc(t_idx), dtype=float).ravel()
+                return -rc  # rc_t = -(V + f(m) + L_user); see SIGN note above.
+
         howard = HJBHowardSolver(
             self.problem,
             stencil_provider=self,
             alpha_star=alpha_star,
-            running_cost=self._running_cost_fn,
+            running_cost=howard_running_cost,
             discretisation="central" if self.dimension == 1 else "upwind_projection",
             use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
         )
