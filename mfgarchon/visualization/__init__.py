@@ -15,8 +15,11 @@ from .convergence_plots import (
     plot_multi_error_history,
     plot_wasserstein_history,
 )
+from .vtk_export import export_mesh_solution_vtk, export_time_series_vtk
 
 __all__ = [
+    "export_mesh_solution_vtk",
+    "export_time_series_vtk",
     "plot_convergence_rate",
     "plot_convergence_summary",
     "plot_distribution_evolution",
