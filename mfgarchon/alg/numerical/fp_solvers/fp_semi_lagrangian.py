@@ -538,7 +538,9 @@ if __name__ == "__main__":
     # Create problem with Neumann BC
     left_bc = BCSegment(name="left", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min")
     right_bc = BCSegment(name="right", bc_type=BCType.NEUMANN, value=0.0, boundary="x_max")
-    bc = BoundaryConditions(segments=[left_bc, right_bc])
+    bc = BoundaryConditions(
+        segments=[left_bc, right_bc], default_bc=BCType.NO_FLUX
+    )  # Issue #1100: explicit (was implicit PERIODIC)
 
     domain = TensorProductGrid(bounds=[(X_MIN, X_MAX)], Nx_points=[N + 1], boundary_conditions=bc)
 

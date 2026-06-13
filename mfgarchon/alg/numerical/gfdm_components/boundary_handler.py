@@ -308,11 +308,23 @@ class BoundaryHandler:
         bc_type = self._bc_property_getter("type", None)
 
         if bc_type is None:
-            # Try to infer from BC object
-            try:
-                bc_type = self.boundary_conditions.default_bc.value.lower()
-            except AttributeError:
-                # No BC specified - return None
+            # `.type` is undefined for mixed BC (multiple segments), so
+            # _bc_property_getter returned None. Infer a legacy global "type" hint.
+            # Issue #1100: default_bc may now be None (unspecified). Resolution
+            # order: explicit default_bc -> "mixed" sentinel if the BC carries
+            # segments (it IS specified; per-point dispatch enforces each point)
+            # -> None only when there is genuinely no BC at all. The "mixed"
+            # sentinel is never consumed as a uniform type: every enforcement path
+            # routes mixed BC through use_per_point_bc / _get_bc_type_for_point.
+            from mfgarchon.geometry.boundary import BCType
+
+            default_bc = getattr(self.boundary_conditions, "default_bc", None)
+            if isinstance(default_bc, BCType):
+                bc_type = default_bc.value.lower()
+            elif getattr(self.boundary_conditions, "segments", None):
+                bc_type = "mixed"
+            else:
+                # No global type, no explicit default, no segments -> unspecified.
                 return None
 
         if isinstance(bc_type, str):

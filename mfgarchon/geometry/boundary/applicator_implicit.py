@@ -133,8 +133,8 @@ class ImplicitApplicator(MeshfreeApplicator):
         boundary_points = points[boundary_mask]
         normals = self._compute_boundary_normals(boundary_points)
 
-        # Apply BC based on type
-        bc_type = boundary_conditions.default_bc
+        # Apply BC based on type (fails loud if default_bc unset; Issue #1100)
+        bc_type = boundary_conditions._resolve_default_bc("ImplicitBoundaryApplicator.apply")
         bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time)
 
         if bc_type == BCType.DIRICHLET:

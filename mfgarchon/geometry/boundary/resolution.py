@@ -429,7 +429,10 @@ def to_boundary_conditions(
         )
         segments.append(seg)
 
-    return BoundaryConditions(segments=segments, dimension=dimension)
+    # Issue #1100: explicit NO_FLUX fallback for any boundary the resolved
+    # segments do not cover (matches the empty-resolved no_flux_bc default above);
+    # avoids the removed implicit PERIODIC default.
+    return BoundaryConditions(segments=segments, dimension=dimension, default_bc=BCType.NO_FLUX)
 
 
 # =============================================================================

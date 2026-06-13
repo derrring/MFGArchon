@@ -1153,8 +1153,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         For mixed BC where the point was *not* pre-classified, this method
         raises ``ValueError`` rather than silently falling back to
-        ``self.boundary_conditions.default_bc`` (which defaults to PERIODIC
-        — historically the source of silent zero Jacobian rows). The
+        ``self.boundary_conditions.default_bc`` (historically defaulted to
+        PERIODIC — the source of silent zero Jacobian rows; Issue #1100 removed
+        that implicit default so it is now ``None``/fail-loud). The
         pre-classification at __init__ already raised on unmatched points
         with full diagnostic; reaching here means the boundary_indices set
         was mutated after __init__, which is a programmer error.
@@ -1241,10 +1242,10 @@ class HJBGFDMSolver(BaseHJBSolver):
           from the face — not from any SDF gradient).
 
         Raises if any boundary point cannot be classified to a face or matched
-        to a segment. This converts a class of latent failures — silent
-        ``default_bc=PERIODIC`` fallback plus zero Jacobian rows discovered
-        80 Newton iterations later — into a loud, diagnosable construction-
-        time error.
+        to a segment. This converts a class of latent failures — the historical
+        silent ``default_bc=PERIODIC`` fallback (removed in Issue #1100) plus
+        zero Jacobian rows discovered 80 Newton iterations later — into a loud,
+        diagnosable construction-time error.
 
         Only runs for mixed-BC setups; uniform BC keeps the global-type fast
         path. Skipped entirely if ``len(self.boundary_indices) == 0``.
