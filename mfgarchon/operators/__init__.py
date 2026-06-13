@@ -5,6 +5,7 @@ This module provides mathematical operators for PDE solving:
 
 Organization:
     differential/     - Differential operators (gradient, laplacian, divergence, advection)
+    integro_diff/     - Integro-differential (non-local PDE) operators: Levy jumps, graphon
     interpolation/    - Interpolation and projection operators
     stencils/         - Low-level finite difference stencils
     reconstruction/   - High-order reconstruction strategies (WENO, ENO)

@@ -60,7 +60,7 @@ class LevyIntegroDiffOperator(LinearOperator):
 
     Example
     -------
-    >>> from mfgarchon.operators.nonlocal import LevyIntegroDiffOperator, GaussianJumps
+    >>> from mfgarchon.operators.integro_diff import LevyIntegroDiffOperator, GaussianJumps
     >>> x = np.linspace(0, 1, 101)
     >>> J = LevyIntegroDiffOperator(x, GaussianJumps(mu=0, sigma=0.1))
     >>> v = np.sin(np.pi * x)

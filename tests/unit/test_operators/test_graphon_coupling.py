@@ -6,8 +6,8 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.operators.nonlocal_ops.graphon_coupling import GraphonCouplingOperator
-from mfgarchon.operators.nonlocal_ops.graphon_kernels import (
+from mfgarchon.operators.integro_diff.graphon_coupling import GraphonCouplingOperator
+from mfgarchon.operators.integro_diff.graphon_kernels import (
     ConstantGraphon,
     GeometricGraphon,
     GraphonKernel,
