@@ -1332,167 +1332,104 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if dt is None:
             dt = self.dt
 
-        if self.dimension == 1:
-            return self._stochastic_sl_step_1d(U_next, M_next, time_idx, dt)
-        else:
-            return self._stochastic_sl_step_nd(U_next, M_next, time_idx, dt)
+        return self._stochastic_sl_step(U_next, M_next, time_idx, dt)
 
-    def _stochastic_sl_step_1d(
+    def _stochastic_sl_step(
         self,
         U_next: np.ndarray,
         M_next: np.ndarray,
         time_idx: int,
         dt: float,
     ) -> np.ndarray:
-        """1D stochastic SL step. See _solve_timestep_stochastic_sl."""
-        Nx = len(U_next)
-        sigma = self.problem.sigma  # SDE volatility (Sigma in mfg_problem.py:39)
-        sqrt_dt = float(np.sqrt(dt))
-        diffusion_offset = sigma * sqrt_dt
+        """Dimension-agnostic stochastic SL step (Carlini-Silva 2014).
 
-        # Optimal control alpha* = -p where p = nabla u^{n+1}
-        # (existing code uses x_dep = x - p*dt, i.e., assumes alpha* = -p)
-        grad_u = self._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
+        Issue #1050: unifies the former ``_stochastic_sl_step_1d`` and
+        ``_stochastic_sl_step_nd`` into one method handling d ∈ {1, 2, 3, ...}.
+        One Brownian-quadrature step: ``2*d`` departures per node (a
+        ``±σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``),
+        interpolate ``u^{n+1}`` at each foot, average over the ``2*d``
+        directions, subtract ``dt·H``.
 
-        # Two stochastic departures per node
-        x_drift = self.x_grid - grad_u * dt
-        y_plus = x_drift + diffusion_offset
-        y_minus = x_drift - diffusion_offset
+        The shared structure (drift + Brownian departures, boundary fold,
+        averaging, batch Hamiltonian) is written once, so the 1D fixes
+        #1033/#1048/#1049 and the nD fixes #1054 now live in a single path.
+        The merge is byte-identical to both former methods (Issue #1050
+        verification: 1D/nD, shaped/flat, linear/cubic, time-dependent H).
 
-        # Boundary handling — Issue #1048 fix: properly REFLECT characteristic feet
-        # for Neumann BC instead of clamping. Clamping collapsed all out-of-bounds
-        # feet onto the boundary node, biasing toward the wall value and breaking
-        # upwind property near the boundary.
-        bc = self.get_boundary_conditions()
-        bc_type_str = get_bc_type_string(bc)
-        bc_op = bc_type_to_geometric_operation(bc_type_str)
-        bounds = self.problem.geometry.get_bounds()
-        xmin, xmax = bounds[0][0], bounds[1][0]
-        if bc_op == "reflect":
-            # Issue #1048 fix used a center-flip (missing the leading "L -"), which
-            # mirrored every foot about the domain midpoint; reflect_into_domain is the
-            # correct boundary fold (identity in-bounds).
-            y_plus = reflect_into_domain(y_plus, xmin, xmax)
-            y_minus = reflect_into_domain(y_minus, xmin, xmax)
-        elif bc_op == "wrap":
-            L = xmax - xmin
-            y_plus = xmin + (y_plus - xmin) % L
-            y_minus = xmin + (y_minus - xmin) % L
+        Two backend choices stay dimension-dependent — not because the
+        algorithm differs, but because collapsing them changes the numerics
+        (verified non-byte-identical):
 
-        # Issue #1033 + #1049: dispatch interpolation by configured method.
-        # - "linear": canonical Carlini-Silva 2014 (Q1, monotone, proof applies)
-        # - "cubic":  monotone-preserving Hermite (PchipInterpolator) — replaces
-        #             non-monotone CubicSpline that blew up on stiff problems
-        # - "quintic": fall back to PchipInterpolator (cubic, monotone) here in 1D;
-        #             user gets the warning at __init__ that this is outside the proof.
-        if self.interpolation_method == "linear":
-            u_plus = np.interp(y_plus, self.x_grid, U_next)
-            u_minus = np.interp(y_minus, self.x_grid, U_next)
-        else:
-            # Issue #1033 fix: PchipInterpolator (monotone Hermite) replaces
-            # CubicSpline (non-monotone, blew up on stiff problems). The reflect/
-            # wrap branch above keeps all feet inside [xmin, xmax], so disabling
-            # extrapolation is safe — any out-of-range query indicates a real bug
-            # upstream and should propagate as nan, not be silently masked.
-            from scipy.interpolate import PchipInterpolator
+        - **Interpolation backend**: 1D uses ``numpy.interp`` (linear) /
+          ``PchipInterpolator`` (cubic), which *clamp* out-of-bounds feet to
+          the endpoint value; nD uses ``RegularGridInterpolator``, which
+          *extrapolates* (``fill_value=None``). Under reflect/wrap BC every
+          foot is in-bounds and the two agree to ~1 ULP; they diverge only for
+          ``clamp`` BC (Dirichlet/none), where clamp vs. extrapolation are
+          genuinely different policies. The per-dimension backend is kept so
+          each stays byte-identical to its pre-#1050 behavior.
+        - **Final BC enforcement**: 1D uses ``FDMApplicator`` (Neumann
+          2nd-order extrapolation); nD uses ``InterpolationApplicator`` (via
+          ``_enforce_boundary_conditions``). These give materially different
+          boundary values (O(1e-1)); the split predates #1050 and pervades the
+          SL solver (the ADI path has the same fork). Reconciling it is a
+          separate concern, out of scope for this refactor.
 
-            interp_fn = PchipInterpolator(self.x_grid, U_next, extrapolate=False)
-            u_plus = interp_fn(y_plus)
-            u_minus = interp_fn(y_minus)
-
-        # CS update: average over Brownian directions, subtract dt*H
-        u_avg = 0.5 * (u_plus + u_minus)
-
-        x_batch = self.x_grid.reshape(-1, 1)
-        p_batch = grad_u.reshape(-1, 1)
-        H_class = self.problem.hamiltonian_class
-        if H_class is not None:
-            H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
-        else:
-            H_values = np.zeros(Nx)
-
-        U_current = u_avg - dt * H_values
-
-        # Enforce BC on the result
-        if bc:
-            time = time_idx * dt
-            U_current = self.bc_applicator.enforce_values(
-                U_current, boundary_conditions=bc, spacing=(self.dx,), time=time
-            )
-
-        return U_current
-
-    def _stochastic_sl_step_nd(
-        self,
-        U_next: np.ndarray,
-        M_next: np.ndarray,
-        time_idx: int,
-        dt: float,
-    ) -> np.ndarray:
-        """nD stochastic SL step (Carlini-Silva 2014, axis-aligned Brownian).
-
-        Brownian quadrature: 2*d departures per node (one pair per axis).
-        Mirrors the 1D path's three correctness fixes:
-          - Issue #1033: monotone-preserving cubic — RegularGridInterpolator
-            method="cubic" / "quintic" is non-monotone; route through "pchip"
-            (scipy ≥ 1.10 monotone Hermite, tensor-product) for stochastic.
-          - Issue #1048: reflect/wrap characteristic feet at Neumann/periodic
-            boundaries (per-axis), not silent extrapolation by RGI.
-          - Issue #1049: linear is allowed alongside stochastic (canonical CS).
+        See ``_solve_timestep_stochastic_sl`` for the scheme references.
         """
-        from scipy.interpolate import RegularGridInterpolator
+        from scipy.interpolate import PchipInterpolator, RegularGridInterpolator
 
-        # Reshape to grid form (matches the Strang-splitting nD path)
-        if U_next.ndim == 1:
-            total_points = U_next.size
-            expected_full = int(np.prod(self._grid_shape))
-            if total_points == expected_full:
-                grid_shape = tuple(self._grid_shape)
-            else:
-                grid_shape = tuple(n - 1 for n in self._grid_shape)
-            U_next_shaped = U_next.reshape(grid_shape)
-            M_next_shaped = M_next.reshape(grid_shape)
+        d = self.dimension
+        sqrt_dt = float(np.sqrt(dt))
+
+        # --- Grid coordinates, shaped fields, grid shape (dim-agnostic) ---
+        if d == 1:
+            # 1D stores direct arrays (self.grid is None); the coordinate tuple
+            # is just (x_grid,) and fields are already flat.
+            grid_coords = (self.x_grid,)
+            U_shaped = U_next
+            M_shaped = M_next
+            grid_shape = U_next.shape
+            flat_input = False
         else:
-            U_next_shaped = U_next
-            M_next_shaped = M_next
-            grid_shape = U_next_shaped.shape
+            # Reshape to grid form (matches the Strang-splitting nD path)
+            if U_next.ndim == 1:
+                total_points = U_next.size
+                expected_full = int(np.prod(self._grid_shape))
+                if total_points == expected_full:
+                    grid_shape = tuple(self._grid_shape)
+                else:
+                    grid_shape = tuple(n - 1 for n in self._grid_shape)
+                U_shaped = U_next.reshape(grid_shape)
+                M_shaped = M_next.reshape(grid_shape)
+                flat_input = True
+            else:
+                U_shaped = U_next
+                M_shaped = M_next
+                grid_shape = U_shaped.shape
+                flat_input = False
+            grid_coords = tuple(self.grid.coordinates)
 
+        # --- Diagonal volatility σ_ax (SDE volatility, mfg_problem.py:39) ---
         sigma = self.problem.sigma
         if isinstance(sigma, np.ndarray):
             sigma_diag = np.asarray(sigma, dtype=float).ravel()
-            if sigma_diag.size != self.dimension:
+            if sigma_diag.size != d:
                 raise ValueError(
-                    f"Diagonal sigma must have {self.dimension} entries, "
-                    f"got {sigma_diag.size}. Full-tensor sigma not yet "
-                    f"supported by stochastic SL."
+                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
+                    f"Full-tensor sigma not yet supported by stochastic SL."
                 )
         else:
-            sigma_diag = np.full(self.dimension, float(sigma))
-        sqrt_dt = float(np.sqrt(dt))
-        d = self.dimension
+            sigma_diag = np.full(d, float(sigma))
 
-        grad_components = self._compute_gradient(U_next_shaped, check_cfl=True, t_idx=time_idx, m_density=M_next_shaped)
+        # Optimal control α* = -p where p = ∇u^{n+1}; drift foot x_drift = x − p·dt.
+        grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped)
+        grad_components = (grad,) if d == 1 else grad
 
-        # Issue #1054 fix: build interpolator once, dispatch monotone method.
-        # "cubic"/"quintic" → "pchip" (monotone Hermite, tensor-product).
-        # "linear" → "linear" (canonical Carlini-Silva, monotone).
-        if self.interpolation_method == "linear":
-            interp_method = "linear"
-        elif self.interpolation_method in ("cubic", "quintic"):
-            interp_method = "pchip"
-        else:
-            interp_method = "linear"
-
-        grid_coords = tuple(self.grid.coordinates)
-        interp_fn = RegularGridInterpolator(
-            grid_coords,
-            U_next_shaped,
-            method=interp_method,
-            bounds_error=False,
-            fill_value=None,
-        )
-
-        # Issue #1054 fix: per-axis BC handling (reflect/wrap) on Brownian feet.
+        # --- Boundary fold for the Brownian feet ---
+        # Issue #1048 (1D) / #1054 (nD): REFLECT feet for Neumann BC (not clamp),
+        # wrap for periodic. reflect_into_domain is the correct per-axis fold
+        # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
         bc_type_str = get_bc_type_string(bc)
         bc_op = bc_type_to_geometric_operation(bc_type_str)
@@ -1501,15 +1438,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         x_max = np.asarray(bounds[1], dtype=float)
         L_axis = x_max - x_min
 
-        # Pre-build all departure points (2*d per node), batch-interpolate.
+        # --- Build the 2*d departures per node (one ± pair per axis) ---
         n_total = int(np.prod(grid_shape))
-        # x_drift_flat[i, ax] = x_current[ax] − dt * p[ax] for node i
         mesh = np.meshgrid(*grid_coords, indexing="ij")
+        # x_drift_flat[i, ax] = x_current[ax] − dt · p[ax] for node i
         x_drift_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
         for ax in range(d):
             x_drift_flat[:, ax] -= grad_components[ax].ravel() * dt
 
-        # Build (2*d*N_total, d) departure array
         all_departures = np.empty((2 * d * n_total, d), dtype=float)
         for ax in range(d):
             offset = np.zeros(d)
@@ -1518,36 +1454,61 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
 
-        # Apply BC vectorized (per-axis broadcast)
         if bc_op == "reflect":
-            # Issue #1054: same center-flip bug as #1048 (missing "L -"); use the
-            # correct per-axis boundary fold.
             all_departures = reflect_into_domain(all_departures, x_min, x_max)
         elif bc_op == "wrap":
             all_departures = x_min + (all_departures - x_min) % L_axis
 
-        # Single batch interpolation
-        all_u = interp_fn(all_departures)
+        # --- Interpolate u^{n+1} at every foot (dim-dependent backend, see docstring) ---
+        # Issue #1033/#1054: monotone dispatch — cubic/quintic → PCHIP (monotone
+        # Hermite) to avoid the non-monotone CubicSpline blow-up; linear is the
+        # canonical Carlini-Silva interpolant (Issue #1049).
+        if self.interpolation_method == "linear":
+            interp_method = "linear"
+        elif self.interpolation_method in ("cubic", "quintic"):
+            interp_method = "pchip"
+        else:
+            interp_method = "linear"
 
-        # u_avg per node = mean over 2*d departures (factor 1/(2d), matches the
-        # original loop's `interp_acc / d` after the inner `0.5 * (u_plus + u_minus)`)
+        if d == 1:
+            # numpy.interp / PchipInterpolator preserve the 1D clamp-at-boundary
+            # semantics. extrapolate=False propagates nan for an out-of-range query,
+            # which (after the reflect/wrap fold) would signal a real upstream bug.
+            if interp_method == "linear":
+                all_u = np.interp(all_departures[:, 0], self.x_grid, U_next)
+            else:
+                all_u = PchipInterpolator(self.x_grid, U_next, extrapolate=False)(all_departures[:, 0])
+        else:
+            interp_fn = RegularGridInterpolator(
+                grid_coords, U_shaped, method=interp_method, bounds_error=False, fill_value=None
+            )
+            all_u = interp_fn(all_departures)
+
+        # Average over the 2*d Brownian directions
         u_avg = all_u.reshape(2 * d, n_total).mean(axis=0).reshape(grid_shape)
 
-        # Hamiltonian — kept per-point (matches existing implementation)
-        U_current_shaped = np.zeros_like(U_next_shaped)
-        for multi_idx in np.ndindex(grid_shape):
-            x_current = np.array([grid_coords[ax][multi_idx[ax]] for ax in range(d)])
-            m_current = M_next_shaped[multi_idx]
-            p_optimal = np.array([grad_components[ax][multi_idx] for ax in range(d)])
-            H_value = self._evaluate_hamiltonian(x_current, p_optimal, m_current, time_idx)
-            U_current_shaped[multi_idx] = u_avg[multi_idx] - dt * H_value
+        # --- Hamiltonian (single-source batch eval, Issue #1071) ---
+        x_batch = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        p_batch = np.stack([grad_components[ax].ravel() for ax in range(d)], axis=1)
+        H_class = self.problem.hamiltonian_class
+        if H_class is not None:
+            H_values = eval_H_batch(H_class, x_batch, M_shaped.ravel(), p_batch, time_idx * dt).ravel()
+            H_values = H_values.reshape(grid_shape)
+        else:
+            H_values = np.zeros(grid_shape)
 
-        # Enforce BC on the result
-        U_current_shaped = self._enforce_boundary_conditions(U_current_shaped)
+        U_current = u_avg - dt * H_values
 
-        if U_next.ndim == 1:
-            return U_current_shaped.ravel()
-        return U_current_shaped
+        # --- Enforce BC on the result (dim-dependent applicator, see docstring) ---
+        if d == 1:
+            if bc:
+                U_current = self.bc_applicator.enforce_values(
+                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time_idx * dt
+                )
+            return U_current
+
+        U_current = self._enforce_boundary_conditions(U_current)
+        return U_current.ravel() if flat_input else U_current
 
     # === L-based DPP formulation (Issue #909) ===
 
