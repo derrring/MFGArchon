@@ -27,6 +27,7 @@ from mfgarchon.alg.numerical.network_solvers import FPNetworkSolver
 
 from .base_fp import BaseFPSolver
 from .fp_fdm import FPFDMSolver
+from .fp_fvm import FPFVMSolver
 from .fp_gfdm import FPGFDMSolver
 from .fp_particle import FPParticleSolver, KDEMethod, KDENormalization
 
@@ -44,6 +45,7 @@ from .particle_result import FPParticleResult
 __all__ = [
     "BaseFPSolver",
     "FPFDMSolver",
+    "FPFVMSolver",  # Issue #422 - conservative finite-volume FP solver
     "FPGFDMSolver",
     "FPNetworkSolver",  # Backward compat - prefer network_solvers import
     "FPParticleSolver",

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Conservative Finite Volume Method (FVM) Fokker-Planck solver** (Issue #422). New
+  `FPFVMSolver` (`mfgarchon/alg/numerical/fp_solvers/fp_fvm.py` + `fp_fvm_flux.py`) evolves cell
+  averages on a structured `TensorProductGrid` (1D + 2D) with a shared interface-velocity flux,
+  so mass conserves to machine precision (~1e-15) by flux telescoping — the higher-order
+  extension of the divergence-upwind FDM stencil. Reconstructions: 1st-order `upwind` and
+  2nd-order `muscl` (minmod-limited, TVD → positivity + O(dx²)). Time stepping is IMEX by Strang
+  splitting (CFL-bounded explicit advection + backward-Euler implicit conservative diffusion).
+  Interface velocity comes from `drift_field` (velocity, averaged to faces) or `potential_field`
+  (value function U → `α = -coupling·∇U`, the MFG-coupling entry point). Boundary conditions:
+  no-flux and periodic (exact conservation); Dirichlet for the diffusion operator only. Registered
+  as `NumericalScheme.FVM_UPWIND` / `FVM_MUSCL` and wired into `create_paired_solvers` (paired
+  with the upwind HJB-FDM solver), so `problem.solve(scheme=NumericalScheme.FVM_MUSCL)` dispatches
+  to it. Verified gates: mass drift ~1e-15 (1D/2D, free + advective-diffusive); MUSCL positivity
+  (min density 0 on an advected top-hat); convergence slope ≈1.87 (MUSCL) vs ≈0.92 (upwind);
+  FVM-vs-FDM max-diff shrinking under refinement (8.9e-4 → 2.4e-4). Deferred: corner handling
+  (#663), 3D, WENO/PPM, unstructured meshes, varying/tensor/callable volatility, Dirichlet
+  advection inflow.
+
 - **Assembled-matrix DMP verification + runtime guard for joint_socp** (Issue #1074, paper-critical).
   Per-stencil SOCP feasibility (already tested) does **not** imply the *assembled* HJB iteration
   matrix `I/Δt − D·L + α·D_grad` is an M-matrix — the paper's discrete-maximum-principle claim.
