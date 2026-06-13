@@ -827,7 +827,6 @@ class MFGPINNSolver(PINNBase):
             "solver_type": "MFG_PINN",
             "device": str(self.device),
             "config": self.config,
-            "training_strategy": self.config.training_strategy,
         }
 
         return results
