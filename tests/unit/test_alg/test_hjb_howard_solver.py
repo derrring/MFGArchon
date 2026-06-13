@@ -450,11 +450,12 @@ def test_integrated_howard_requires_hamiltonian_class():
 
 
 # ---------------------------------------------------------------------------
-# 7b. Integrated path: envelope gate fails loud on Hamiltonians Howard cannot
-#     model (2026-06-10 audit). Howard's policy evaluation hardcodes the
-#     unit-quadratic Lagrangian (1/2)|alpha|^2 and uses only alpha* = -dH/dp,
-#     so V(x,t), f(m), non-unit/non-quadratic control cost, and running_cost
-#     were silently dropped/mis-signed. Each must now raise NotImplementedError.
+# 7b. Integrated path: envelope gate. Issue #1247 (#1118 PR2) wired the
+#     potential V(x, t), density coupling f(m), and caller running_cost into
+#     Howard's running_cost slot (correctness gate in section 7c). What stays
+#     fail-loud is the Lagrangian-scaling work deferred alongside #1071:
+#     non-unit / non-quadratic control cost and the MAXIMIZE sense. Each must
+#     raise NotImplementedError.
 # ---------------------------------------------------------------------------
 
 
@@ -465,28 +466,6 @@ def _howard_gfdm_with_hamiltonian(hamiltonian_class, *, LX=4.0, Nt=20):
     gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
     U_T = 0.5 * (pts[:, 0] - LX / 2) ** 2
     return gfdm, U_T
-
-
-def test_integrated_howard_rejects_potential():
-    """A Hamiltonian potential V(x, t) is dropped by Howard's policy evaluation -> fail loud."""
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=1.0),
-        potential=lambda x, t: 0.5 * float(np.sum(np.atleast_1d(x) ** 2)),
-    )
-    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
-    with pytest.raises(NotImplementedError, match="potential"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
-
-
-def test_integrated_howard_rejects_coupling():
-    """A density coupling f(m) is dropped by Howard's policy evaluation -> fail loud."""
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=1.0),
-        coupling=lambda m: m,
-    )
-    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
-    with pytest.raises(NotImplementedError, match="coupling"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
 def test_integrated_howard_rejects_nonunit_control_cost():
@@ -513,16 +492,116 @@ def test_integrated_howard_rejects_maximize_sense():
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
-def test_integrated_howard_rejects_running_cost():
-    """running_cost enters Howard's Lagrangian slot with the wrong sign vs Newton -> fail loud."""
-    gfdm, U_T = _howard_gfdm_with_hamiltonian(_LQHam())
-    n = U_T.shape[0]
-    with pytest.raises(NotImplementedError, match="running cost"):
-        gfdm.solve_hjb_system(
-            M_density=None,
-            U_terminal=U_T,
-            running_cost=lambda t_idx: 0.1 * np.ones(n),
+# ---------------------------------------------------------------------------
+# 7c. Correctness gate (Issue #1247 / #1118 PR2): Howard MUST agree with Newton
+#     on a non-LQ separable Hamiltonian (potential V(x) and/or density coupling
+#     f(m)). Newton is the ground truth — its per-point residual evaluates the
+#     full H = (1/2)|p|^2 + V + f(m) (problem.H), so a wrong rc_t sign in Howard
+#     makes it converge to a different value function. This is the gate that
+#     RESOLVED the rc_t sign: with s=-1 (rc_t = -(V+f(m))) the max-rel-error is
+#     ~1e-5..5e-4 across all three cases; with the flipped s=+1 it is ~2.0. The
+#     zero terminal cost keeps the pure-LQ baseline exact (Newton==Howard for
+#     V=f=0), so the residual error isolates the V/f wiring, not |grad u|^2
+#     stiffness (the #1118 regime where Newton itself stalls).
+# ---------------------------------------------------------------------------
+
+
+class _SeparableMockProblem(_MockProblem):
+    """Mock whose per-point ``H`` delegates to the SeparableHamiltonian, so the Newton
+    per-point path (``problem.H``) and the Howard path (``hamiltonian_class``) evaluate the
+    IDENTICAL H = (1/2)|p|^2 + V(x) + f(m). Without this, the base ``_MockProblem.H`` drops
+    V and f(m) and could not serve as a non-LQ ground truth."""
+
+    def __init__(self, geometry, hamiltonian, **kw):
+        super().__init__(geometry, **kw)
+        self.hamiltonian_class = hamiltonian
+
+    def H(self, i, m_at_x, derivs=None, x_position=None, t=0.0):
+        p = np.atleast_1d(np.asarray(derivs.grad, dtype=float))
+        x = np.atleast_1d(np.asarray(x_position, dtype=float))
+        return float(self.hamiltonian_class(x, m_at_x, p, t))
+
+
+def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4, Nt=12):
+    pts, bdry, geom = _make_1d_cloud(LX=LX, n_int=n_int)
+    problem = _SeparableMockProblem(geom, hamiltonian, sigma=sigma, T=1.0, Nt=Nt, dimension=1)
+    bc = BoundaryConditions(
+        segments=[BCSegment(name=f"x_{end}", bc_type=BCType.NO_FLUX, boundary=f"x_{end}") for end in ("min", "max")],
+        dimension=1,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gfdm = HJBGFDMSolver(
+            problem,
+            collocation_points=pts,
+            boundary_indices=bdry,
+            delta=1.5,
+            k_neighbors=7,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            collocation_geometry=geom,
+            adaptive_neighborhoods=False,
+            boundary_conditions=bc,
+            monotonicity_scheme="joint_socp",
+            monotonicity_application="precompute",
+            inner_solver=inner_solver,
         )
+    return gfdm, pts
+
+
+def _v_quadratic(x, t):
+    """Repulsive bowl V(x) = 2(x-0.5)^2 (time-independent: Newton's per-point H call passes no t)."""
+    x = np.asarray(x, dtype=float)
+    return 2.0 * (x[..., 0] - 0.5) ** 2
+
+
+@pytest.mark.parametrize(
+    ("potential", "coupling", "case"),
+    [
+        (_v_quadratic, None, "V-only"),
+        (None, lambda m: 0.5 * np.asarray(m), "f(m)-only"),
+        (_v_quadratic, lambda m: 0.5 * np.asarray(m), "V+f(m)"),
+    ],
+)
+def test_integrated_howard_matches_newton_nonlq(potential, coupling, case):
+    """Issue #1247 correctness gate + rc_t sign resolver.
+
+    Howard (inner_solver='howard') must match Newton (inner_solver='newton') on a non-LQ
+    separable Hamiltonian once V(x)/f(m) are wired into Howard's running_cost slot. The
+    relative tolerance 2e-2 PASSES for the resolved sign rc_t = -(V+f(m)) (observed
+    max-rel-error <~5e-4 for all three cases) and FAILS for the flipped sign rc_t = +(V+f(m))
+    (observed ~2.0). Zero terminal cost makes the pure-LQ baseline exact so the residual is
+    the V/f-wiring error, not |grad u|^2 stiffness."""
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(lambda_=1.0),
+        potential=potential,
+        coupling=coupling,
+    )
+    gfdm_h, pts = _make_nonlq_solver(H, "howard")
+    gfdm_n, _ = _make_nonlq_solver(H, "newton")
+
+    n = pts.shape[0]
+    x = pts[:, 0]
+    x_c = 0.5
+    U_T = np.zeros(n)  # zero terminal cost: pure-LQ baseline is exact (Newton==Howard for V=f=0)
+    Nt = gfdm_h.problem.Nt
+    m_profile = 0.5 + np.exp(-((x - x_c) ** 2) / (2 * 0.15**2))
+    M = np.tile(m_profile, (Nt + 1, 1))
+
+    U_howard = gfdm_h.solve_hjb_system(M_density=M, U_terminal=U_T)
+    U_newton = gfdm_n.solve_hjb_system(M_density=M, U_terminal=U_T)
+
+    assert np.all(np.isfinite(U_howard)), f"[{case}] Howard produced non-finite U"
+    assert np.all(np.isfinite(U_newton)), f"[{case}] Newton produced non-finite U"
+
+    denom = max(float(np.max(np.abs(U_newton))), 1e-12)
+    max_rel_err = float(np.max(np.abs(U_howard - U_newton))) / denom
+    assert max_rel_err < 2e-2, (
+        f"[{case}] Howard disagrees with Newton: max-rel-error={max_rel_err:.4e}. The wired "
+        f"V(x)/f(m) running_cost (rc_t = -(V+f(m))) should match Newton to discretization "
+        f"tolerance; a large error indicates a dropped term or a flipped rc_t sign (Issue #1247)."
+    )
 
 
 def _make_howard_gfdm_with_bc(bc, sigma=0.3, Nt=5):
