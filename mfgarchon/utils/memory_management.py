@@ -224,9 +224,15 @@ def memory_monitored(
 
             finally:
                 if cleanup_on_exit:
-                    # Cleanup temporary variables
-                    if hasattr(self, "_temp_arrays"):
-                        monitor.cleanup_arrays(*self._temp_arrays)
+                    # Cleanup temporary variables. The decorated method may belong
+                    # to any class, so `_temp_arrays` is an optional attribute on a
+                    # foreign instance (the decorator owns no __init__ to declare it).
+                    # Use the getattr-with-default pattern per CLAUDE.md rather than
+                    # hasattr duck-typing or a bare attribute access that would raise
+                    # for instances that never define it.
+                    temp_arrays = getattr(self, "_temp_arrays", None)
+                    if temp_arrays is not None:
+                        monitor.cleanup_arrays(*temp_arrays)
 
                     # Force garbage collection
                     gc.collect()

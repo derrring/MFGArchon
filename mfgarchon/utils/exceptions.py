@@ -357,7 +357,7 @@ def _generate_stability_suggestions(instability_type: str, problematic_values: d
 
 def validate_solver_state(solver, operation_name: str):
     """Validate that solver has been run before accessing results."""
-    if not hasattr(solver, "_solution_computed") or not solver._solution_computed:
+    if not getattr(solver, "_solution_computed", False):
         raise SolutionNotAvailableError(
             operation_attempted=operation_name,
             solver_name=getattr(solver, "__class__", type(solver)).__name__,
