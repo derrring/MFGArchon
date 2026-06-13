@@ -144,6 +144,48 @@ class TestHJBConfigToKwargs:
         with pytest.raises(NotImplementedError, match="Refs #1155"):
             hjb_config_to_kwargs(cfg, NumericalScheme.FDM_UPWIND)
 
+    # ------------------------------------------------------------------
+    # Schemes previously missing from the HJB scheme->method map (Refs #1155):
+    # FVM_UPWIND / FVM_MUSCL / SL_CUBIC must reject a contradictory non-default
+    # method, and MESHLESS_GALERKIN (no method analog) must fail loud rather than
+    # silently discard a non-default method.
+    # ------------------------------------------------------------------
+
+    def test_method_fvm_upwind_conflict_raises(self):
+        """Non-default hjb.method with FVM_UPWIND (analog 'fdm') raises NotImplementedError."""
+        cfg = HJBConfig(method="gfdm")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            hjb_config_to_kwargs(cfg, NumericalScheme.FVM_UPWIND)
+
+    def test_method_fvm_muscl_conflict_raises(self):
+        """Non-default hjb.method with FVM_MUSCL (analog 'fdm') raises NotImplementedError."""
+        cfg = HJBConfig(method="semi_lagrangian")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            hjb_config_to_kwargs(cfg, NumericalScheme.FVM_MUSCL)
+
+    def test_method_sl_cubic_conflict_raises(self):
+        """Non-default hjb.method contradicting SL_CUBIC (analog 'semi_lagrangian') raises."""
+        cfg = HJBConfig(method="gfdm")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            hjb_config_to_kwargs(cfg, NumericalScheme.SL_CUBIC)
+
+    def test_method_meshless_galerkin_nondefault_raises(self):
+        """MESHLESS_GALERKIN has no HJBConfig.method analog: any non-default method fails loud."""
+        cfg = HJBConfig(method="gfdm")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            hjb_config_to_kwargs(cfg, NumericalScheme.MESHLESS_GALERKIN)
+
+    def test_method_fvm_consistent_fdm_accepted(self):
+        """FVM pairs HJB=FDM; the consistent method ('fdm') is accepted, no kwargs."""
+        cfg = HJBConfig(method="fdm")
+        assert hjb_config_to_kwargs(cfg, NumericalScheme.FVM_UPWIND) == {}
+
+    def test_method_sl_cubic_consistent_accepted(self):
+        """SL_CUBIC analog is 'semi_lagrangian'; the consistent method is accepted."""
+        cfg = HJBConfig(method="semi_lagrangian")
+        # No conflict raised; a matching method adds no kwarg.
+        assert hjb_config_to_kwargs(cfg, NumericalScheme.SL_CUBIC) == {}
+
 
 class TestFPConfigToKwargs:
     """Unit tests for fp_config_to_kwargs."""
@@ -194,6 +236,34 @@ class TestFPConfigToKwargs:
         cfg = FPConfig(method="fem")
         with pytest.raises(NotImplementedError, match="Refs #1155"):
             fp_config_to_kwargs(cfg, NumericalScheme.GFDM)
+
+    # ------------------------------------------------------------------
+    # Schemes with no FPConfig.method literal analog (FPSLSolver / FPFVMSolver /
+    # MeshlessGalerkinFPSolver). A non-default fp.method under them must fail loud
+    # rather than be silently discarded (Refs #1155).
+    # ------------------------------------------------------------------
+
+    def test_fp_method_fvm_upwind_nondefault_raises(self):
+        """Non-default fp.method with FVM_UPWIND (no 'fvm' analog) raises NotImplementedError."""
+        cfg = FPConfig(method="fdm")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            fp_config_to_kwargs(cfg, NumericalScheme.FVM_UPWIND)
+
+    def test_fp_method_sl_cubic_nondefault_raises(self):
+        """Non-default fp.method with SL_CUBIC (no 'sl' analog) raises NotImplementedError."""
+        cfg = FPConfig(method="fdm")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            fp_config_to_kwargs(cfg, NumericalScheme.SL_CUBIC)
+
+    def test_fp_method_meshless_galerkin_nondefault_raises(self):
+        """Non-default fp.method with MESHLESS_GALERKIN (no analog) raises NotImplementedError."""
+        cfg = FPConfig(method="fem")
+        with pytest.raises(NotImplementedError, match="Refs #1155"):
+            fp_config_to_kwargs(cfg, NumericalScheme.MESHLESS_GALERKIN)
+
+    def test_fp_default_method_unmapped_scheme_no_raise(self):
+        """Default fp.method ('particle') under an unmapped scheme is skipped (no raise)."""
+        assert fp_config_to_kwargs(FPConfig(), NumericalScheme.FVM_UPWIND) == {}
 
 
 class TestPicardConfigToIteratorKwargs:
