@@ -54,12 +54,13 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.utils.functional_calculus import FunctionalDerivative, FunctionalOnMeasures
 
 
 def create_lions_source(
-    energy_functional: FunctionalOnMeasures,
-    functional_derivative: FunctionalDerivative,
+    energy_functional: FunctionalOnMeasures | EnergyFunctional,
+    functional_derivative: FunctionalDerivative | None = None,
 ) -> Callable[[NDArray, NDArray, NDArray, float], NDArray]:
     """Create a source_term_hjb from a measure-dependent energy functional.
 
@@ -67,13 +68,29 @@ def create_lions_source(
     source_term_hjb interface by computing delta F / delta m[m](x)
     at each Picard iteration.
 
+    Two paths, selected from the first argument:
+
+    1. **Analytic** (Issue #1023, Phase 2): if ``energy_functional`` is an
+       :class:`~mfgarchon.operators.interaction.energy_functionals.EnergyFunctional`
+       (provides ``.lions_derivative``), its exact derivative is used and the FD
+       path is skipped. ``functional_derivative`` is then ignored.
+    2. **Finite difference** (original path): if ``energy_functional`` is a plain
+       ``F[m] -> float`` callable, ``functional_derivative`` is required and
+       ``delta F / delta m`` is approximated by finite differences.
+
+    The two paths are equivalent for an ``EnergyFunctional`` whose analytic
+    derivative matches the FD gradient of its ``.energy`` (verified by tests),
+    so this extension is backward-compatible.
+
     Args:
-        energy_functional: F[m] -> float. The coupling energy functional
-            that depends on the full measure (not just local density).
-            Takes a density array m (shape (Nx,)) and returns a scalar.
-        functional_derivative: FunctionalDerivative instance for computing
-            delta F / delta m. Can be FiniteDifferenceFunctionalDerivative
-            or ParticleApproximationFunctionalDerivative.
+        energy_functional: Either an ``EnergyFunctional`` (analytic path) or a
+            plain ``F[m] -> float`` callable depending on the full measure
+            (FD path). Density arrays have shape (Nx,).
+        functional_derivative: FunctionalDerivative instance for the FD path
+            (FiniteDifferenceFunctionalDerivative or
+            ParticleApproximationFunctionalDerivative). Required only when
+            ``energy_functional`` is a plain callable; ignored for an
+            ``EnergyFunctional``.
 
     Returns:
         source_term_hjb(x, m, v, t) -> NDArray compatible with
@@ -96,6 +113,29 @@ def create_lions_source(
         >>> m = np.ones(50) / 50
         >>> result = source(np.linspace(0, 1, 50), m, np.zeros(50), 0.0)
     """
+    # Analytic path: EnergyFunctional carries its own exact Lions derivative.
+    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
+
+    if isinstance(energy_functional, EnergyFunctional):
+        analytic = energy_functional
+
+        def source_term_hjb_analytic(
+            x: NDArray,
+            m: NDArray,
+            v: NDArray,
+            t: float,
+        ) -> NDArray:
+            """Evaluate the analytic Lions correction delta F / delta m[m](x)."""
+            m_flat = m[-1].ravel() if m.ndim == 2 else m.ravel()
+            return np.asarray(analytic.lions_derivative(m_flat)).ravel()
+
+        return source_term_hjb_analytic
+
+    if functional_derivative is None:
+        raise ValueError(
+            "functional_derivative is required when energy_functional is a plain "
+            "callable (FD path); pass an EnergyFunctional to use the analytic path"
+        )
 
     def source_term_hjb(
         x: NDArray,

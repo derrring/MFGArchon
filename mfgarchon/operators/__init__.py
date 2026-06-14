@@ -6,9 +6,16 @@ This module provides mathematical operators for PDE solving:
 Organization:
     differential/     - Differential operators (gradient, laplacian, divergence, advection)
     integro_diff/     - Integro-differential (non-local PDE) operators: Levy jumps, graphon
+    interaction/      - Spatial agent-agent game coupling: convolution F[m]=K*m,
+                        kernel zoo, energy functionals with analytic Lions derivatives
     interpolation/    - Interpolation and projection operators
     stencils/         - Low-level finite difference stencils
     reconstruction/   - High-order reconstruction strategies (WENO, ENO)
+
+Non-local taxonomy (two distinct subpackages):
+    integro_diff/  - non-local *PDE structure* (jump-diffusion, graphon networks)
+    interaction/   - non-local *game coupling* F[m](x) = integral K(x-y) m(y) dy
+                     (Issue #1023; towel-on-the-beach ring/bimodal equilibria)
 
 Conceptual Hierarchy:
     Stencils (fixed coefficients) -> Reconstruction (adaptive) -> Differential Operators
