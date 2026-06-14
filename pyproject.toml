@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.19.8"  # v0.19.8: Howard BC parity (#1118 PR2) + multi-pop HJB coupling (#1157) + coupled-MMS test
+version = "0.20.0"  # v0.20.0: interaction operators (#1023) + hex FEM (#470) + CS semi-Lagrangian (#1058) + FVM-FP (#422) + solver demote (#1342) + ~50 fixes
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
