@@ -64,33 +64,24 @@ from .convergence_metrics import (
     DistributionComparator,
     MomentConvergenceMonitor,
     RollingConvergenceMonitor,
-    # Backward compatibility
-    StochasticConvergenceMonitor,
     calculate_error,
     calculate_l2_convergence_metrics,
     # Factory
     create_moment_monitor,
     create_rolling_monitor,
-    create_stochastic_monitor,
 )
 
 # =============================================================================
 # MFG-SPECIFIC IMPORTS (convergence_monitors.py)
 # =============================================================================
 from .convergence_monitors import (
-    AdaptiveConvergenceWrapper,
-    AdvancedConvergenceMonitor,
     ConvergenceWrapper,
     # Core monitors
     DistributionConvergenceMonitor,
-    # Backward compatibility
-    OscillationDetector,
-    ParticleMethodDetector,
     SolverTypeDetector,
     # Internal (exposed for testing)
     _ErrorHistoryTracker,
     adaptive_convergence,
-    create_default_monitor,
     # Factory and decorators
     create_distribution_monitor,
     test_particle_detection,
@@ -126,12 +117,4 @@ __all__ = [
     "FPConvergenceChecker",
     "MFGConvergenceChecker",
     "compute_norm",
-    # Backward compatibility aliases (deprecated)
-    "StochasticConvergenceMonitor",  # -> RollingConvergenceMonitor
-    "create_stochastic_monitor",  # -> create_rolling_monitor
-    "OscillationDetector",  # -> _ErrorHistoryTracker
-    "AdvancedConvergenceMonitor",  # -> DistributionConvergenceMonitor
-    "ParticleMethodDetector",  # -> SolverTypeDetector
-    "AdaptiveConvergenceWrapper",  # -> ConvergenceWrapper
-    "create_default_monitor",  # -> create_distribution_monitor
 ]

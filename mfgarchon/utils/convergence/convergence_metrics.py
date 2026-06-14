@@ -22,8 +22,6 @@ from typing import Any, Literal
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated, deprecated_alias
-
 # =============================================================================
 # DISTRIBUTION COMPARISON UTILITIES
 # =============================================================================
@@ -729,24 +727,3 @@ def create_moment_monitor(
         window_size=window_size,
         **kwargs,
     )
-
-
-# =============================================================================
-# BACKWARD COMPATIBILITY ALIASES (with deprecation warnings)
-# =============================================================================
-
-
-StochasticConvergenceMonitor = deprecated_alias(
-    "StochasticConvergenceMonitor", RollingConvergenceMonitor, since="v0.17.0"
-)
-
-
-@deprecated(since="v0.17.0", replacement="Use create_rolling_monitor() instead.")
-def create_stochastic_monitor(*args, **kwargs) -> RollingConvergenceMonitor:
-    """
-    Deprecated alias for create_rolling_monitor.
-
-    .. deprecated:: 0.17.0
-        Use :func:`create_rolling_monitor` instead.
-    """
-    return create_rolling_monitor(*args, **kwargs)

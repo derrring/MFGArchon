@@ -4,11 +4,11 @@ Unit tests for mfgarchon/utils/numerical/convergence.py
 
 Tests comprehensive convergence monitoring system including:
 - DistributionComparator (Wasserstein, KL divergence, moments)
-- OscillationDetector (stabilization detection)
-- StochasticConvergenceMonitor (confidence intervals, relative error)
-- AdvancedConvergenceMonitor (multi-criteria convergence)
-- ParticleMethodDetector (automatic method detection)
-- AdaptiveConvergenceWrapper (decorator/wrapper pattern)
+- _ErrorHistoryTracker (stabilization detection)
+- RollingConvergenceMonitor (confidence intervals, relative error)
+- DistributionConvergenceMonitor (multi-criteria convergence)
+- SolverTypeDetector (automatic method detection)
+- ConvergenceWrapper (decorator/wrapper pattern)
 - Utility functions (factory functions, metrics)
 
 Coverage target: mfgarchon/utils/numerical/convergence.py (411 lines, 14% -> 70%+)
@@ -20,20 +20,45 @@ import numpy as np
 
 # Use the new import path (old path mfgarchon.utils.numerical.convergence is deprecated)
 from mfgarchon.utils.convergence import (
-    # Deprecated aliases (for testing backward compatibility)
-    AdaptiveConvergenceWrapper,
-    AdvancedConvergenceMonitor,
     # Canonical class names
+    ConvergenceWrapper,
     DistributionComparator,
     DistributionConvergenceMonitor,
-    OscillationDetector,
-    ParticleMethodDetector,
     RollingConvergenceMonitor,
-    StochasticConvergenceMonitor,
+    SolverTypeDetector,
+    _ErrorHistoryTracker,
     calculate_l2_convergence_metrics,
-    create_default_monitor,
-    create_stochastic_monitor,
+    create_distribution_monitor,
+    create_rolling_monitor,
 )
+
+# =============================================================================
+# Removed-pin: monitoring-family deprecated aliases (removed v0.20.0)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "removed_name",
+    [
+        "OscillationDetector",  # -> _ErrorHistoryTracker
+        "AdvancedConvergenceMonitor",  # -> DistributionConvergenceMonitor
+        "ParticleMethodDetector",  # -> SolverTypeDetector
+        "AdaptiveConvergenceWrapper",  # -> ConvergenceWrapper
+        "StochasticConvergenceMonitor",  # -> RollingConvergenceMonitor
+        "create_default_monitor",  # -> create_distribution_monitor
+        "create_stochastic_monitor",  # -> create_rolling_monitor
+    ],
+)
+def test_removed_monitoring_aliases_no_longer_importable(removed_name):
+    """The deprecated monitoring-family aliases were removed; importing them must fail."""
+    import mfgarchon.utils.convergence as conv
+
+    assert not hasattr(conv, removed_name)
+    assert removed_name not in conv.__all__
+    with pytest.raises(ImportError):
+        exec(f"from mfgarchon.utils.convergence import {removed_name}")
+
 
 # =============================================================================
 # Test DistributionComparator
@@ -155,14 +180,14 @@ def test_distribution_comparator_statistical_moments_zero_variance():
 
 
 # =============================================================================
-# Test OscillationDetector
+# Test _ErrorHistoryTracker
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_oscillation_detector_initialization():
-    """Test OscillationDetector initialization."""
-    detector = OscillationDetector(history_length=20)
+    """Test _ErrorHistoryTracker initialization."""
+    detector = _ErrorHistoryTracker(history_length=20)
 
     assert detector.history_length == 20
     assert len(detector.error_history) == 0
@@ -171,7 +196,7 @@ def test_oscillation_detector_initialization():
 @pytest.mark.unit
 def test_oscillation_detector_add_samples():
     """Test adding samples to detector."""
-    detector = OscillationDetector(history_length=5)
+    detector = _ErrorHistoryTracker(history_length=5)
 
     for i in range(10):
         detector.add_sample(float(i))
@@ -184,7 +209,7 @@ def test_oscillation_detector_add_samples():
 @pytest.mark.unit
 def test_oscillation_detector_insufficient_history():
     """Test is_below_threshold returns false with insufficient history."""
-    detector = OscillationDetector(history_length=10)
+    detector = _ErrorHistoryTracker(history_length=10)
 
     for _i in range(5):
         detector.add_sample(0.1)
@@ -199,7 +224,7 @@ def test_oscillation_detector_insufficient_history():
 @pytest.mark.unit
 def test_oscillation_detector_stabilized():
     """Test detection of stabilized errors (below thresholds)."""
-    detector = OscillationDetector(history_length=10)
+    detector = _ErrorHistoryTracker(history_length=10)
 
     # Add 10 samples with small variation
     for i in range(10):
@@ -216,7 +241,7 @@ def test_oscillation_detector_stabilized():
 @pytest.mark.unit
 def test_oscillation_detector_not_stabilized_magnitude():
     """Test detection of high magnitude error."""
-    detector = OscillationDetector(history_length=10)
+    detector = _ErrorHistoryTracker(history_length=10)
 
     for _i in range(10):
         detector.add_sample(0.5)  # High error
@@ -230,7 +255,7 @@ def test_oscillation_detector_not_stabilized_magnitude():
 @pytest.mark.unit
 def test_oscillation_detector_not_stabilized_oscillation():
     """Test detection of high oscillation (high std)."""
-    detector = OscillationDetector(history_length=10)
+    detector = _ErrorHistoryTracker(history_length=10)
 
     # Oscillating errors
     for i in range(10):
@@ -244,14 +269,14 @@ def test_oscillation_detector_not_stabilized_oscillation():
 
 
 # =============================================================================
-# Test StochasticConvergenceMonitor
+# Test RollingConvergenceMonitor
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_initialization():
-    """Test StochasticConvergenceMonitor initialization."""
-    monitor = StochasticConvergenceMonitor(window_size=10, median_tolerance=1e-4, quantile=0.9)
+    """Test RollingConvergenceMonitor initialization."""
+    monitor = RollingConvergenceMonitor(window_size=10, median_tolerance=1e-4, quantile=0.9)
 
     assert monitor.window_size == 10
     assert monitor.median_tolerance == 1e-4
@@ -261,7 +286,7 @@ def test_stochastic_convergence_monitor_initialization():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_add_iteration():
     """Test adding iterations to stochastic monitor."""
-    monitor = StochasticConvergenceMonitor(window_size=5)
+    monitor = RollingConvergenceMonitor(window_size=5)
 
     for i in range(10):
         monitor.add_iteration(float(i) * 0.1, float(i) * 0.05)
@@ -275,7 +300,7 @@ def test_stochastic_convergence_monitor_add_iteration():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_get_statistics():
     """Test statistics computation."""
-    monitor = StochasticConvergenceMonitor(window_size=20)
+    monitor = RollingConvergenceMonitor(window_size=20)
 
     # Add iterations
     np.random.seed(42)
@@ -294,7 +319,7 @@ def test_stochastic_convergence_monitor_get_statistics():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_no_data():
     """Test statistics with no data."""
-    monitor = StochasticConvergenceMonitor()
+    monitor = RollingConvergenceMonitor()
 
     stats = monitor.get_statistics()
 
@@ -304,7 +329,7 @@ def test_stochastic_convergence_monitor_no_data():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_check_convergence():
     """Test convergence checking."""
-    monitor = StochasticConvergenceMonitor(window_size=10, median_tolerance=0.01, min_iterations=5)
+    monitor = RollingConvergenceMonitor(window_size=10, median_tolerance=0.01, min_iterations=5)
 
     # Add iterations with decreasing errors
     for i in range(15):
@@ -321,7 +346,7 @@ def test_stochastic_convergence_monitor_check_convergence():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_insufficient_iterations():
     """Test convergence check with insufficient iterations."""
-    monitor = StochasticConvergenceMonitor(min_iterations=10)
+    monitor = RollingConvergenceMonitor(min_iterations=10)
 
     for _i in range(5):
         monitor.add_iteration(0.001, 0.001)
@@ -332,14 +357,14 @@ def test_stochastic_convergence_monitor_insufficient_iterations():
 
 
 # =============================================================================
-# Test AdvancedConvergenceMonitor
+# Test DistributionConvergenceMonitor
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_advanced_convergence_monitor_initialization():
-    """Test AdvancedConvergenceMonitor initialization."""
-    monitor = AdvancedConvergenceMonitor(
+    """Test DistributionConvergenceMonitor initialization."""
+    monitor = DistributionConvergenceMonitor(
         wasserstein_tol=1e-4,
         kl_divergence_tol=1e-3,
         u_magnitude_tol=1e-3,
@@ -355,7 +380,7 @@ def test_advanced_convergence_monitor_initialization():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_update_basic():
     """Test basic update with value function convergence."""
-    monitor = AdvancedConvergenceMonitor(u_magnitude_tol=1e-3)
+    monitor = DistributionConvergenceMonitor(u_magnitude_tol=1e-3)
 
     u_prev = np.ones((10, 10)) * 1.0
     u_curr = np.ones((10, 10)) * 1.001  # Small change
@@ -372,7 +397,7 @@ def test_advanced_convergence_monitor_update_basic():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_convergence_detection():
     """Test convergence detection with small changes."""
-    monitor = AdvancedConvergenceMonitor(u_magnitude_tol=1e-2, u_stability_tol=1e-3, history_length=5)
+    monitor = DistributionConvergenceMonitor(u_magnitude_tol=1e-2, u_stability_tol=1e-3, history_length=5)
 
     u = np.ones((10, 10))
     m = np.ones((10, 10)) * 0.5
@@ -392,7 +417,7 @@ def test_advanced_convergence_monitor_convergence_detection():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_multi_dimensional():
     """Test monitor handles multi-dimensional arrays."""
-    monitor = AdvancedConvergenceMonitor()
+    monitor = DistributionConvergenceMonitor()
 
     u_prev = np.random.rand(20, 20)
     u_curr = u_prev + np.random.rand(20, 20) * 0.001
@@ -409,7 +434,7 @@ def test_advanced_convergence_monitor_multi_dimensional():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_wasserstein_computation():
     """Test Wasserstein distance computation."""
-    monitor = AdvancedConvergenceMonitor(wasserstein_tol=1e-4)
+    monitor = DistributionConvergenceMonitor(wasserstein_tol=1e-4)
 
     # 1D distributions
     x = np.linspace(0, 1, 50)
@@ -432,14 +457,14 @@ def test_advanced_convergence_monitor_wasserstein_computation():
 
 
 # =============================================================================
-# Test ParticleMethodDetector
+# Test SolverTypeDetector
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_particle_method_detector_basic():
-    """Test ParticleMethodDetector can be instantiated."""
-    detector = ParticleMethodDetector()
+    """Test SolverTypeDetector can be instantiated."""
+    detector = SolverTypeDetector()
 
     assert detector is not None
 
@@ -454,7 +479,7 @@ def test_particle_method_detector_mock_solver():
             self.num_particles = 100
 
     mock_solver = MockParticleSolver()
-    has_particles, detection_info = ParticleMethodDetector.detect_particle_methods(mock_solver)
+    has_particles, detection_info = SolverTypeDetector.detect_particle_methods(mock_solver)
 
     assert isinstance(has_particles, bool)
     assert "confidence" in detection_info
@@ -462,13 +487,13 @@ def test_particle_method_detector_mock_solver():
 
 
 # =============================================================================
-# Test AdaptiveConvergenceWrapper
+# Test ConvergenceWrapper
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_adaptive_convergence_wrapper_initialization():
-    """Test AdaptiveConvergenceWrapper initialization."""
+    """Test ConvergenceWrapper initialization."""
 
     class MockSolver:
         def __init__(self):
@@ -477,7 +502,7 @@ def test_adaptive_convergence_wrapper_initialization():
             self.x_grid = np.linspace(0, 1, 10)
 
     mock_solver = MockSolver()
-    wrapper = AdaptiveConvergenceWrapper(mock_solver, classical_tol=1e-4, verbose=False)
+    wrapper = ConvergenceWrapper(mock_solver, classical_tol=1e-4, verbose=False)
 
     # Wrapper wraps the solver internally
     assert wrapper._wrapped_solver is mock_solver
@@ -494,7 +519,7 @@ def test_adaptive_convergence_wrapper_particle_detection():
             self.num_particles = 100
 
     mock_solver = MockParticleSolver()
-    wrapper = AdaptiveConvergenceWrapper(mock_solver, verbose=False)
+    wrapper = ConvergenceWrapper(mock_solver, verbose=False)
 
     # Wrapper wraps the solver internally
     assert wrapper._wrapped_solver is mock_solver
@@ -506,24 +531,20 @@ def test_adaptive_convergence_wrapper_particle_detection():
 
 
 @pytest.mark.unit
-def test_create_default_monitor():
-    """Test create_default_monitor factory function (deprecated)."""
-    # Note: create_default_monitor is deprecated, returns DistributionConvergenceMonitor
-    monitor = create_default_monitor(wasserstein_tol=1e-5, u_magnitude_tol=1e-3, history_length=20)
+def test_create_distribution_monitor():
+    """Test create_distribution_monitor factory function."""
+    monitor = create_distribution_monitor(wasserstein_tol=1e-5, u_magnitude_tol=1e-3, history_length=20)
 
-    # Check for canonical type (AdvancedConvergenceMonitor is now a subclass)
     assert isinstance(monitor, DistributionConvergenceMonitor)
     assert monitor.wasserstein_tol == 1e-5
     assert monitor.u_magnitude_tol == 1e-3
 
 
 @pytest.mark.unit
-def test_create_stochastic_monitor():
-    """Test create_stochastic_monitor factory function (deprecated)."""
-    # Note: create_stochastic_monitor is deprecated, returns RollingConvergenceMonitor
-    monitor = create_stochastic_monitor(median_tolerance=1e-5, window_size=30, quantile=0.95)
+def test_create_rolling_monitor():
+    """Test create_rolling_monitor factory function."""
+    monitor = create_rolling_monitor(median_tolerance=1e-5, window_size=30, quantile=0.95)
 
-    # Check for canonical type (StochasticConvergenceMonitor is now a subclass)
     assert isinstance(monitor, RollingConvergenceMonitor)
     assert monitor.median_tolerance == 1e-5
     assert monitor.window_size == 30
@@ -589,7 +610,7 @@ def test_calculate_l2_convergence_metrics_large_change():
 def test_integration_convergence_workflow():
     """Test full convergence monitoring workflow."""
     # Create monitor
-    monitor = create_default_monitor(u_magnitude_tol=1e-3, history_length=5)
+    monitor = create_distribution_monitor(u_magnitude_tol=1e-3, history_length=5)
 
     # Simulate iterative solver
     x = np.linspace(0, 1, 50)
@@ -615,7 +636,7 @@ def test_integration_convergence_workflow():
 @pytest.mark.unit
 def test_integration_stochastic_convergence():
     """Test stochastic convergence monitoring."""
-    monitor = create_stochastic_monitor(median_tolerance=0.01, window_size=10, min_iterations=5)
+    monitor = create_rolling_monitor(median_tolerance=0.01, window_size=10, min_iterations=5)
 
     # Simulate stochastic errors converging
     np.random.seed(42)
@@ -660,7 +681,7 @@ def test_integration_distribution_comparison_pipeline():
 @pytest.mark.unit
 def test_edge_case_empty_history():
     """Test monitors handle empty history gracefully."""
-    detector = OscillationDetector(history_length=10)
+    detector = _ErrorHistoryTracker(history_length=10)
 
     is_stable, diagnostics = detector.is_below_threshold(mean_threshold=1.0, std_threshold=0.1)
 
@@ -716,14 +737,14 @@ def test_edge_case_large_arrays():
 
 
 # =============================================================================
-# Additional tests for StochasticConvergenceMonitor
+# Additional tests for RollingConvergenceMonitor
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_is_stagnating():
     """Test stagnation detection in stochastic monitor."""
-    monitor = StochasticConvergenceMonitor(window_size=5)
+    monitor = RollingConvergenceMonitor(window_size=5)
 
     # Add similar errors (stagnating)
     for _ in range(5):
@@ -735,7 +756,7 @@ def test_stochastic_convergence_monitor_is_stagnating():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_not_stagnating():
     """Test non-stagnating convergence."""
-    monitor = StochasticConvergenceMonitor(window_size=5)
+    monitor = RollingConvergenceMonitor(window_size=5)
 
     # Add decreasing errors (not stagnating)
     for i in range(5):
@@ -747,7 +768,7 @@ def test_stochastic_convergence_monitor_not_stagnating():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_quantile_tolerance():
     """Test custom quantile tolerance."""
-    monitor = StochasticConvergenceMonitor(
+    monitor = RollingConvergenceMonitor(
         window_size=5,
         median_tolerance=1e-4,
         quantile=0.95,
@@ -765,14 +786,14 @@ def test_stochastic_convergence_monitor_quantile_tolerance():
 
 
 # =============================================================================
-# Additional tests for AdvancedConvergenceMonitor
+# Additional tests for DistributionConvergenceMonitor
 # =============================================================================
 
 
 @pytest.mark.unit
 def test_advanced_convergence_monitor_get_convergence_summary():
     """Test convergence summary generation."""
-    monitor = AdvancedConvergenceMonitor()
+    monitor = DistributionConvergenceMonitor()
 
     # Simulate convergence iterations
     x_grid = np.linspace(0, 1, 50)
@@ -795,7 +816,7 @@ def test_advanced_convergence_monitor_get_convergence_summary():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_no_data():
     """Test convergence summary with no data."""
-    monitor = AdvancedConvergenceMonitor()
+    monitor = DistributionConvergenceMonitor()
 
     summary = monitor.get_convergence_summary()
 
@@ -805,7 +826,7 @@ def test_advanced_convergence_monitor_no_data():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_get_plot_data_no_history():
     """Test getting plot data with no convergence history."""
-    monitor = AdvancedConvergenceMonitor()
+    monitor = DistributionConvergenceMonitor()
 
     # Should return empty data structure
     data = monitor.get_plot_data()
@@ -818,7 +839,7 @@ def test_advanced_convergence_monitor_get_plot_data_no_history():
 @pytest.mark.unit
 def test_advanced_convergence_monitor_convergence_criteria_all_pass():
     """Test all convergence criteria passing."""
-    monitor = AdvancedConvergenceMonitor(
+    monitor = DistributionConvergenceMonitor(
         wasserstein_tol=1e-3,
         u_magnitude_tol=1e-2,
         u_stability_tol=1e-3,
@@ -839,7 +860,7 @@ def test_advanced_convergence_monitor_convergence_criteria_all_pass():
 
 
 # =============================================================================
-# Additional tests for ParticleMethodDetector
+# Additional tests for SolverTypeDetector
 # =============================================================================
 
 
@@ -855,7 +876,7 @@ def test_particle_method_detector_comprehensive():
     solver.update_particles = lambda: None
     solver.__class__.__name__ = "ParticleCollocationSolver"
 
-    has_particles, info = ParticleMethodDetector.detect_particle_methods(solver)
+    has_particles, info = SolverTypeDetector.detect_particle_methods(solver)
 
     assert has_particles
     assert info["confidence"] > 0.5
@@ -875,7 +896,7 @@ def test_particle_method_detector_grid_based_solver():
     # Ensure no particle attributes
     solver.spec = ["Nx", "Nt", "grid"]  # Only grid-based attributes
 
-    has_particles, info = ParticleMethodDetector.detect_particle_methods(solver)
+    has_particles, info = SolverTypeDetector.detect_particle_methods(solver)
 
     # The detector should have low confidence or no detection
     # Since confidence can vary based on Mock behavior, check it's not strongly detected
@@ -895,14 +916,14 @@ def test_particle_method_detector_fp_solver_inspection():
     fp_solver.__class__.__name__ = "ParticleFPSolver"
     solver.fp_solver = fp_solver
 
-    has_particles, info = ParticleMethodDetector.detect_particle_methods(solver)
+    has_particles, info = SolverTypeDetector.detect_particle_methods(solver)
 
     assert has_particles
     assert "fp_solver:ParticleFPSolver" in info["particle_components"]
 
 
 # =============================================================================
-# Additional tests for AdaptiveConvergenceWrapper
+# Additional tests for ConvergenceWrapper
 # =============================================================================
 
 
@@ -915,7 +936,7 @@ def test_adaptive_convergence_wrapper_classical_mode():
     solver.__class__.__name__ = "GridBasedSolver"
     solver.solve = Mock(return_value=(np.ones((10, 10)), np.ones((10, 10)), {}))
 
-    wrapper = AdaptiveConvergenceWrapper(solver, classical_tol=1e-3, force_particle_mode=False, verbose=False)
+    wrapper = ConvergenceWrapper(solver, classical_tol=1e-3, force_particle_mode=False, verbose=False)
 
     assert wrapper.get_convergence_mode() == "classical"
     assert wrapper._particle_mode is False
@@ -929,7 +950,7 @@ def test_adaptive_convergence_wrapper_forced_particle_mode():
     solver = Mock()
     solver.__class__.__name__ = "GridBasedSolver"
 
-    wrapper = AdaptiveConvergenceWrapper(solver, force_particle_mode=True, verbose=False)
+    wrapper = ConvergenceWrapper(solver, force_particle_mode=True, verbose=False)
 
     assert wrapper.get_convergence_mode() == "particle_aware"
     assert wrapper._particle_mode is True
@@ -943,7 +964,7 @@ def test_adaptive_convergence_wrapper_get_detection_info():
     solver = Mock()
     solver.__class__.__name__ = "TestSolver"
 
-    wrapper = AdaptiveConvergenceWrapper(solver, verbose=False)
+    wrapper = ConvergenceWrapper(solver, verbose=False)
     info = wrapper.get_detection_info()
 
     assert isinstance(info, dict)
@@ -1041,8 +1062,8 @@ def test_adaptive_convergence_decorator_with_parameters():
 
 @pytest.mark.unit
 def test_integration_advanced_monitor_full_workflow():
-    """Test complete AdvancedConvergenceMonitor workflow."""
-    monitor = AdvancedConvergenceMonitor(
+    """Test complete DistributionConvergenceMonitor workflow."""
+    monitor = DistributionConvergenceMonitor(
         wasserstein_tol=1e-4,
         u_magnitude_tol=1e-3,
         u_stability_tol=1e-4,
@@ -1075,7 +1096,7 @@ def test_integration_advanced_monitor_full_workflow():
 @pytest.mark.unit
 def test_integration_stochastic_monitor_with_noise():
     """Test stochastic monitor handles noisy convergence."""
-    monitor = StochasticConvergenceMonitor(
+    monitor = RollingConvergenceMonitor(
         window_size=10,
         median_tolerance=1e-4,
         quantile=0.9,

@@ -11,8 +11,6 @@ from __future__ import annotations
 import functools
 from enum import Flag, auto
 
-from mfgarchon.utils.deprecation import deprecated_parameter
-
 from .progress import IterationProgress, SolverTimer, time_solver_operation
 
 
@@ -47,15 +45,12 @@ class SolverMonitoringOptions(Flag):
         >>> @enhanced_solver_method(options=SolverMonitoringOptions.PROGRESS | SolverMonitoringOptions.TIMING)
         ... def solve(self):
         ...     ...
-
-    Backward compatibility:
-        Old boolean parameters are still supported with deprecation warnings.
     """
 
     NONE = 0
-    CONVERGENCE = auto()  # monitor_convergence=True
-    PROGRESS = auto()  # auto_progress=True
-    TIMING = auto()  # timing=True
+    CONVERGENCE = auto()
+    PROGRESS = auto()
+    TIMING = auto()
     ALL = CONVERGENCE | PROGRESS | TIMING
 
 
@@ -158,31 +153,18 @@ def with_progress_monitoring(
     return decorator
 
 
-@deprecated_parameter(
-    param_name="monitor_convergence", since="v0.17.0", replacement="options=SolverMonitoringOptions.CONVERGENCE"
-)
-@deprecated_parameter(
-    param_name="auto_progress", since="v0.17.0", replacement="options=SolverMonitoringOptions.PROGRESS"
-)
-@deprecated_parameter(param_name="timing", since="v0.17.0", replacement="options=SolverMonitoringOptions.TIMING")
 def enhanced_solver_method(
     options: SolverMonitoringOptions | None = None,
-    *,
-    monitor_convergence: bool | None = None,
-    auto_progress: bool | None = None,
-    timing: bool | None = None,
 ):
     """
     Comprehensive decorator for enhancing solver methods with modern features.
 
     Args:
-        options: Solver monitoring options (Flag enum). Recommended over boolean parameters.
-        monitor_convergence: DEPRECATED. Use options=SolverMonitoringOptions.CONVERGENCE
-        auto_progress: DEPRECATED. Use options=SolverMonitoringOptions.PROGRESS
-        timing: DEPRECATED. Use options=SolverMonitoringOptions.TIMING
+        options: Solver monitoring options (Flag enum). Defaults to
+            SolverMonitoringOptions.ALL when omitted.
 
     Examples:
-        >>> # New API (recommended)
+        >>> # Progress and timing
         >>> @enhanced_solver_method(options=SolverMonitoringOptions.PROGRESS | SolverMonitoringOptions.TIMING)
         ... def solve(self):
         ...     ...
@@ -191,24 +173,9 @@ def enhanced_solver_method(
         >>> @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
         ... def solve(self):
         ...     ...
-        >>>
-        >>> # Old API (deprecated but still works)
-        >>> @enhanced_solver_method(auto_progress=True, timing=True)
-        ... def solve(self):
-        ...     ...
     """
-    # Handle backward compatibility -- convert old API to new
-    if monitor_convergence is not None or auto_progress is not None or timing is not None:
-        flags = SolverMonitoringOptions.NONE
-        if monitor_convergence:
-            flags |= SolverMonitoringOptions.CONVERGENCE
-        if auto_progress:
-            flags |= SolverMonitoringOptions.PROGRESS
-        if timing:
-            flags |= SolverMonitoringOptions.TIMING
-        options = flags
-    elif options is None:
-        # Default: all features enabled for backward compatibility
+    if options is None:
+        # Default: all features enabled
         options = SolverMonitoringOptions.ALL
 
     def decorator(solve_method):

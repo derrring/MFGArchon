@@ -13,7 +13,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry.boundary import neumann_bc
-from mfgarchon.utils.convergence import create_stochastic_monitor
+from mfgarchon.utils.convergence import create_rolling_monitor
 
 
 def setup_problem():
@@ -51,7 +51,7 @@ def run_hybrid_solver_with_monitoring(problem, bc, max_iterations=100, verbose=T
     hjb_solver = HJBFDMSolver(problem)
 
     # Create stochastic convergence monitor
-    stochastic_monitor = create_stochastic_monitor(
+    stochastic_monitor = create_rolling_monitor(
         window_size=10,
         median_tolerance=1e-4,
         quantile=0.9,
