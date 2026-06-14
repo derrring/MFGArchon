@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (since v0.17). Passing any removed name now raises `TypeError`. The v0.18+ deprecations
   (`damping_factor` → `relaxation`, since v0.19.2; `tensor_volatility_field` → `volatility_field`,
   since v0.18.7) are retained.
+- **Removed the Tier-2 FP-solver parameter renames `m_initial_condition` and `diffusion_field`** (PR #1356)
+  (deprecated v0.17.0, removed at v0.20 — 3 minor versions past the deprecation window). On the FP
+  solvers' `solve_fp_system` (`FPFDMSolver`, `FPParticleSolver`, `FPGFDMSolver`, `FPSLSolver`,
+  `FPSLAdjointSolver`) and the `BaseFPSolver` abstract interface, use `M_initial` instead of
+  `m_initial_condition` and `volatility_field` instead of `diffusion_field`; passing an old name
+  now raises `TypeError`. (`FPGFDMSolver` only deprecated `diffusion_field` — `m_initial_condition`
+  is its current first positional parameter and is unchanged.) Internal helpers
+  (`solve_fp_nd_full_system`, `FPFDMSolver._solve_fp_1d`) keep `m_initial_condition` /
+  `diffusion_field` as their own non-deprecated parameter names. The `tensor_diffusion_field` and
+  `volatility_matrix` aliases (also v0.17.0) are intentionally retained: `volatility_field` has no
+  equivalent yet for their callable-tensor routing, so they are not removal-ready. The
+  `MFGProblem.diffusion_field` property and the `FPNetworkSolver` `m_initial_condition` deprecation
+  are out of scope.
 
 ## [0.20.0] - 2026-06-14
 

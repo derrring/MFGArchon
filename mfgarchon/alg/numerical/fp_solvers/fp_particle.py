@@ -1241,8 +1241,6 @@ class FPParticleSolver(BaseFPSolver):
         else:
             return m_density_estimated  # Return raw KDE output on grid
 
-    @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
-    @deprecated_parameter(param_name="diffusion_field", since="v0.17.0", replacement="volatility_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -1253,8 +1251,6 @@ class FPParticleSolver(BaseFPSolver):
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
         # Deprecated parameter names for backward compatibility
-        m_initial_condition: np.ndarray | None = None,
-        diffusion_field: float | np.ndarray | Callable | None = None,  # DEPRECATED
         potential_field: np.ndarray | None = None,  # DEPRECATED: use drift_field
     ) -> np.ndarray:
         """
@@ -1267,7 +1263,6 @@ class FPParticleSolver(BaseFPSolver):
 
         Args:
             M_initial: Initial density m0(x) on grid. Required unless initial_particles provided.
-            m_initial_condition: DEPRECATED, use M_initial
             drift_field: Drift field specification (optional):
                 - None: Zero drift (pure diffusion)
                 - np.ndarray: If drift_is_precomputed=False (default), this is U(t,x) and gradient will be computed.
@@ -1291,7 +1286,6 @@ class FPParticleSolver(BaseFPSolver):
                 the nD CPU path (drift_field None for pure diffusion, or a callable drift);
                 an anisotropic Σ with an ndarray (grid) drift_field is unsupported and raises.
                 Note: This is the SDE noise coefficient, NOT the PDE diffusion D = σ²/2.
-            diffusion_field: DEPRECATED, use volatility_field instead.
             initial_particles: Pre-sampled initial particles, shape (num_particles, dimension).
                               If provided, M_initial is not required (meshfree initialization).
                               Useful with density_mode="query_only" for fully meshfree workflow.
@@ -1303,24 +1297,6 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             M_solution: Density evolution on grid, shape (Nt+1, *grid_shape)
         """
-        # Handle deprecated parameter name
-        if m_initial_condition is not None:
-            if M_initial is not None:
-                raise ValueError(
-                    "Cannot specify both M_initial and m_initial_condition. "
-                    "Use M_initial (m_initial_condition is deprecated)."
-                )
-            M_initial = m_initial_condition
-
-        # Handle deprecated diffusion_field parameter
-        if diffusion_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and diffusion_field. "
-                    "Use volatility_field (diffusion_field is deprecated)."
-                )
-            volatility_field = diffusion_field
-
         # Handle deprecated potential_field -> drift_field
         if potential_field is not None:
             if drift_field is not None:

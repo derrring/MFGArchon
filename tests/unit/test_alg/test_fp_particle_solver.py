@@ -959,5 +959,34 @@ class TestFPParticlePreserveIndices:
             )
 
 
+class TestFPParticleSolverRemovedDeprecatedParams:
+    """Pin removal of the Tier-2 (<=v0.17) FP-solver param renames on FPParticleSolver.
+
+    ``m_initial_condition`` -> ``M_initial`` and ``diffusion_field`` -> ``volatility_field``
+    were deprecated in v0.17.0 and removed at v0.20. Passing the old names must now raise
+    ``TypeError`` (unexpected keyword argument). The ``__init__`` density/KDE param
+    deprecations (mode / external_particles / normalize_kde_*) are a separate family and
+    are out of scope here.
+    """
+
+    @staticmethod
+    def _solver():
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
+        return FPParticleSolver(problem, num_particles=200)
+
+    def test_m_initial_condition_removed(self):
+        solver = self._solver()
+        m0 = np.ones(31) / 31
+        with pytest.raises(TypeError, match="m_initial_condition"):
+            solver.solve_fp_system(m_initial_condition=m0)
+
+    def test_diffusion_field_removed(self):
+        solver = self._solver()
+        m0 = np.ones(31) / 31
+        with pytest.raises(TypeError, match="diffusion_field"):
+            solver.solve_fp_system(m0, diffusion_field=0.5)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

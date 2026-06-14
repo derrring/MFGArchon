@@ -184,8 +184,6 @@ class BaseFPSolver(BaseNumericalSolver):
         volatility_field: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
-        # Deprecated parameter (Issue #717)
-        diffusion_field: float | np.ndarray | Callable | None = None,
         # MMS verification support
         source_term: Callable[[float, np.ndarray], np.ndarray] | None = None,
     ) -> np.ndarray:
@@ -200,7 +198,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
             where:
             - α(t,x,m): drift field (controlled by drift_field)
-            - D(t,x,m): diffusion tensor (controlled by diffusion_field)
+            - D(t,x,m): diffusion tensor (controlled by volatility_field)
 
         Equation Types Supported:
             1. Advection-diffusion (D>0, α≠0): Standard MFG, transport with diffusion
@@ -228,8 +226,8 @@ class BaseFPSolver(BaseNumericalSolver):
             Note: volatility_field is the SDE noise coefficient σ or Σ. Internally
             converted to diffusion D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix).
 
-            DEPRECATED: diffusion_field, tensor_diffusion_field, volatility_matrix
-            are all deprecated. Use volatility_field with appropriate shape.
+            DEPRECATED: tensor_diffusion_field and volatility_matrix (on FPFDMSolver)
+            are deprecated. Use volatility_field with appropriate shape.
 
         Args:
             m_initial_condition: Initial density M(0,x) at t=0
@@ -247,8 +245,6 @@ class BaseFPSolver(BaseNumericalSolver):
                 - np.ndarray: Spatially varying volatility
                 - Callable: Function σ(t, x, m) -> volatility
                 Default: None
-
-            diffusion_field: DEPRECATED. Use volatility_field instead.
 
             source_term: Source term for MMS verification (optional):
                 - None: No source term (default, standard PDE)

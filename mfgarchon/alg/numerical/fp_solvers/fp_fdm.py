@@ -282,8 +282,6 @@ class FPFDMSolver(BaseFPSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
-    @deprecated_parameter(param_name="diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="tensor_diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="volatility_matrix", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="velocity_field", since="v0.18.6", replacement="drift_field")
@@ -296,8 +294,6 @@ class FPFDMSolver(BaseFPSolver):
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         # Deprecated parameter names for backward compatibility
-        m_initial_condition: np.ndarray | None = None,
-        diffusion_field: float | np.ndarray | Callable | None = None,  # Issue #717: deprecated
         tensor_diffusion_field: np.ndarray | Callable | None = None,  # Issue #717: deprecated
         volatility_matrix: np.ndarray | Callable | None = None,  # Deprecated: use volatility_field
         # Deprecated: velocity_field renamed to drift_field (v0.18.6)
@@ -317,8 +313,6 @@ class FPFDMSolver(BaseFPSolver):
         ----------
         M_initial : np.ndarray
             Initial density m₀(x). Shape: (Nx+1,) for 1D or (N1-1, N2-1, ...) for nD
-        m_initial_condition : np.ndarray
-            DEPRECATED, use M_initial
         drift_field : np.ndarray or callable, optional
             Drift velocity specification (Issue #573):
             - None: Zero drift (pure diffusion)
@@ -340,7 +334,6 @@ class FPFDMSolver(BaseFPSolver):
             - (*shape, d, d) array: Spatially varying Σ(x) → D(x) = Σ(x)Σ(x)ᵀ/2
             - Callable: State-dependent σ(t, x, m) or Σ(t, x, m)
             Default: None
-        diffusion_field : DEPRECATED, use volatility_field
         tensor_diffusion_field : DEPRECATED, use volatility_field with (d,d) array
         volatility_matrix : DEPRECATED, use volatility_field with (d,d) array
         show_progress : bool
@@ -361,34 +354,34 @@ class FPFDMSolver(BaseFPSolver):
         >>> drift = -problem.compute_gradient(U_hjb) / problem.control_cost
         >>> M = solver.solve_fp_system(m0, drift_field=drift)
 
-        Custom diffusion coefficient:
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, diffusion_field=0.5)
+        Custom volatility coefficient:
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.5)
 
-        Spatially varying diffusion (higher at boundaries):
+        Spatially varying volatility (higher at boundaries):
         >>> Nx = problem.geometry.get_grid_shape()[0]
         >>> x_grid = np.linspace(0, 1, Nx)
-        >>> diffusion_array = 0.1 + 0.2 * np.abs(x_grid - 0.5)
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, diffusion_field=diffusion_array)
+        >>> volatility_array = 0.1 + 0.2 * np.abs(x_grid - 0.5)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=volatility_array)
 
-        Spatiotemporal diffusion (time and space dependent):
+        Spatiotemporal volatility (time and space dependent):
         >>> Nt, Nx = problem.Nt + 1, problem.geometry.get_grid_shape()[0]
-        >>> diffusion_field = np.zeros((Nt, Nx))
+        >>> volatility_field = np.zeros((Nt, Nx))
         >>> for t in range(Nt):
-        ...     diffusion_field[t, :] = 0.1 * (1 + 0.5 * t / Nt)  # Increasing over time
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, diffusion_field=diffusion_field)
+        ...     volatility_field[t, :] = 0.1 * (1 + 0.5 * t / Nt)  # Increasing over time
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=volatility_field)
 
-        State-dependent diffusion (porous medium equation):
+        State-dependent volatility (porous medium equation):
         >>> def porous_medium(t, x, m):
-        ...     return 0.1 * m  # Diffusion proportional to density
-        >>> M = solver.solve_fp_system(m0, diffusion_field=porous_medium)
+        ...     return 0.1 * m  # Volatility proportional to density
+        >>> M = solver.solve_fp_system(m0, volatility_field=porous_medium)
 
-        Density-dependent diffusion with drift:
+        Density-dependent volatility with drift:
         >>> def crowd_diffusion(t, x, m):
-        ...     return 0.05 + 0.15 * (1 - m / np.max(m))  # Lower diffusion in crowds
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, diffusion_field=crowd_diffusion)
+        ...     return 0.05 + 0.15 * (1 - m / np.max(m))  # Lower volatility in crowds
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=crowd_diffusion)
 
-        Pure advection (zero diffusion):
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, diffusion_field=0.0)
+        Pure advection (zero volatility):
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.0)
 
         Anisotropic volatility (unified API):
         >>> # Diagonal volatility: faster horizontal diffusion
@@ -431,15 +424,6 @@ class FPFDMSolver(BaseFPSolver):
         >>> alpha_quartic = -np.sign(grad_U) * np.abs(grad_U) ** (1/3)  # α* = -(∇U)^(1/3)
         >>> M = solver.solve_fp_system(m0, drift_field=alpha_quartic)
         """
-        # Handle deprecated parameter name
-        if m_initial_condition is not None:
-            if M_initial is not None:
-                raise ValueError(
-                    "Cannot specify both M_initial and m_initial_condition. "
-                    "Use M_initial (m_initial_condition is deprecated)."
-                )
-            M_initial = m_initial_condition
-
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")
@@ -499,15 +483,6 @@ class FPFDMSolver(BaseFPSolver):
             else:
                 grid_shape = self.problem.geometry.get_grid_shape()
                 effective_U = np.zeros((Nt, *grid_shape))
-
-        # Issue #717: Handle deprecated parameter names
-        if diffusion_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and diffusion_field. "
-                    "Use volatility_field (diffusion_field is deprecated)."
-                )
-            volatility_field = diffusion_field
 
         # Handle deprecated tensor_diffusion_field → volatility_field
         # Track if input came from tensor-specific parameter (for callable routing)

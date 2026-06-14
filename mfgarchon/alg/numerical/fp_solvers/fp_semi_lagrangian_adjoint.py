@@ -236,8 +236,6 @@ class FPSLSolver(BaseFPSolver):
             return "periodic"
         return "neumann"
 
-    @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
-    @deprecated_parameter(param_name="diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="drift_field", since="v0.18.6", replacement="potential_field")
     def solve_fp_system(
         self,
@@ -246,8 +244,6 @@ class FPSLSolver(BaseFPSolver):
         volatility_field: float | np.ndarray | None = None,
         show_progress: bool | None = None,
         # Deprecated parameters
-        m_initial_condition: np.ndarray | None = None,
-        diffusion_field: float | np.ndarray | None = None,
         drift_field: np.ndarray | None = None,  # Deprecated: renamed to potential_field
     ) -> np.ndarray:
         """
@@ -266,18 +262,11 @@ class FPSLSolver(BaseFPSolver):
             drift_field: DEPRECATED. Renamed to potential_field.
             volatility_field: Optional volatility coefficient σ (SDE noise) override.
                 Note: Internally converted to diffusion D = σ²/2 for FP equation.
-            diffusion_field: DEPRECATED. Use volatility_field instead.
             show_progress: Show progress bar during solve
 
         Returns:
             Density evolution M(t,x). Shape: (Nt+1, Nx)
         """
-        # Handle deprecated parameter
-        if m_initial_condition is not None:
-            if M_initial is not None:
-                raise ValueError("Cannot specify both M_initial and m_initial_condition")
-            M_initial = m_initial_condition
-
         if M_initial is None:
             raise ValueError("M_initial is required")
 
@@ -291,15 +280,6 @@ class FPSLSolver(BaseFPSolver):
             raise ValueError(
                 "potential_field (value function U) is required for Adjoint SL FP. Pass the U solution from HJB solver."
             )
-
-        # Handle deprecated diffusion_field parameter (Issue #717)
-        if diffusion_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and diffusion_field. "
-                    "Use volatility_field (diffusion_field is deprecated)."
-                )
-            volatility_field = diffusion_field
 
         # Handle volatility (Issue #717: unified API)
         if volatility_field is None:
