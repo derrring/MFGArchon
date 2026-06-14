@@ -115,35 +115,29 @@ class TestFPParticleSolverInitialization:
 
         assert solver.kde_normalization == KDENormalization.NONE
 
-    def test_deprecated_normalize_kde_output_false(self):
-        """Test backward compatibility with deprecated normalize_kde_output=False."""
+    def test_removed_normalize_kde_output(self):
+        """`normalize_kde_output` (-> kde_normalization) removed: unexpected keyword."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.warns(DeprecationWarning, match="normalize_kde_output.*deprecated"):
-            solver = FPParticleSolver(problem, normalize_kde_output=False)
+        with pytest.raises(TypeError, match="unexpected keyword argument 'normalize_kde_output'"):
+            FPParticleSolver(problem, normalize_kde_output=False)
 
-        assert solver.kde_normalization == KDENormalization.NONE
-
-    def test_deprecated_normalize_only_initial_true(self):
-        """Test backward compatibility with deprecated normalize_only_initial=True."""
+    def test_removed_normalize_only_initial(self):
+        """`normalize_only_initial` (-> kde_normalization) removed: unexpected keyword."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.warns(DeprecationWarning, match="normalize_only_initial.*deprecated"):
-            solver = FPParticleSolver(problem, normalize_only_initial=True)
+        with pytest.raises(TypeError, match="unexpected keyword argument 'normalize_only_initial'"):
+            FPParticleSolver(problem, normalize_only_initial=True)
 
+    def test_kde_normalization_new_name_initial_only(self):
+        """New name `kde_normalization` covers the INITIAL_ONLY strategy."""
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
+
+        solver = FPParticleSolver(problem, kde_normalization="initial_only")
         assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
-
-    def test_deprecated_both_parameters(self):
-        """Test backward compatibility with both deprecated parameters."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            solver = FPParticleSolver(problem, normalize_kde_output=True, normalize_only_initial=False)
-
-        assert solver.kde_normalization == KDENormalization.ALL
 
     def test_custom_boundary_conditions(self):
         """Test initialization with custom boundary conditions."""

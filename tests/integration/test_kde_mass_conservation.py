@@ -42,12 +42,12 @@ def test_kde_normalization():
 
     bc = no_flux_bc(dimension=1)
 
-    print("Test 1: With normalize_kde_output=False (current)")
+    print('Test 1: With kde_normalization="none" (current)')
     solver1 = ParticleFPSolver(
         problem=problem,
         num_particles=200,
         kde_bandwidth="scott",
-        normalize_kde_output=False,  # This is the issue!
+        kde_normalization="none",  # This is the issue!
         boundary_conditions=bc,
     )
 
@@ -62,12 +62,12 @@ def test_kde_normalization():
     print(f"  Final mass: {mass1[-1]:.6f}")
     print(f"  Mass loss: {mass1[0] - mass1[-1]:.6f} ({(mass1[0] - mass1[-1]) / mass1[0] * 100:.2f}%)")
 
-    print("\nTest 2: With normalize_kde_output=True (should be better)")
+    print('\nTest 2: With kde_normalization="all" (should be better)')
     solver2 = ParticleFPSolver(
         problem=problem,
         num_particles=200,
         kde_bandwidth="scott",
-        normalize_kde_output=True,  # This should help!
+        kde_normalization="all",  # This should help!
         boundary_conditions=bc,
     )
 
@@ -83,7 +83,7 @@ def test_kde_normalization():
         problem=problem,
         num_particles=200,
         kde_bandwidth=0.05,  # Fixed bandwidth
-        normalize_kde_output=True,
+        kde_normalization="all",
         boundary_conditions=bc,
     )
 

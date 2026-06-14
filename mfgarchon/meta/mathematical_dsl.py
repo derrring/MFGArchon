@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated_parameter
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -198,8 +196,6 @@ class MFGSystemBuilder:
         self.parameters[name] = value
         return self
 
-    @deprecated_parameter(param_name="nx", since="v0.17.0", replacement="Nx")
-    @deprecated_parameter(param_name="nt", since="v0.17.0", replacement="Nt")
     def domain(
         self,
         xmin: float,
@@ -207,9 +203,6 @@ class MFGSystemBuilder:
         tmax: float,
         Nx: int | None = None,
         Nt: int | None = None,
-        # Deprecated parameters (lowercase)
-        nx: int | None = None,
-        nt: int | None = None,
     ) -> MFGSystemBuilder:
         """
         Define computational domain.
@@ -220,19 +213,10 @@ class MFGSystemBuilder:
             tmax: Final time
             Nx: Number of spatial grid points (preferred, default: 100)
             Nt: Number of temporal grid points (preferred, default: 50)
-            nx: DEPRECATED - Use Nx instead
-            nt: DEPRECATED - Use Nt instead
 
         Returns:
             Self for method chaining
         """
-        # Handle deprecated lowercase parameters (redirect to new names)
-        if nx is not None and Nx is None:
-            Nx = nx
-
-        if nt is not None and Nt is None:
-            Nt = nt
-
         # Set defaults if not provided
         if Nx is None:
             Nx = 100

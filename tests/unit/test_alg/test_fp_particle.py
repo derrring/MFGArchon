@@ -125,45 +125,31 @@ class TestKDENormalization:
         assert solver.kde_normalization == KDENormalization.NONE
 
 
-class TestDeprecatedParameters:
-    """Test deprecated parameters raise appropriate warnings/errors."""
+class TestRemovedParameters:
+    """Pin that past-window deprecated kwargs are gone (fail loud as TypeError)."""
 
-    def test_collocation_mode_raises_error(self):
-        """Test that mode='collocation' raises ValueError."""
+    def test_mode_removed(self):
+        """`mode` (-> density_mode) removed: passing it is an unexpected keyword."""
         problem = Simple2DMFGProblem()
 
-        with pytest.raises(ValueError, match="Collocation mode has been removed"):
-            FPParticleSolver(problem, mode="collocation")
+        with pytest.raises(TypeError, match="unexpected keyword argument 'mode'"):
+            FPParticleSolver(problem, mode="hybrid")
 
-    def test_error_suggests_fpgfdmsolver(self):
-        """Test that error message suggests FPGFDMSolver."""
-        problem = Simple2DMFGProblem()
-
-        with pytest.raises(ValueError, match="FPGFDMSolver"):
-            FPParticleSolver(problem, mode="collocation")
-
-    def test_hybrid_mode_accepted(self):
-        """Test that mode='hybrid' is accepted for backward compatibility."""
-        problem = Simple2DMFGProblem()
-
-        # Should not raise
-        solver = FPParticleSolver(problem, mode="hybrid", num_particles=100)
-        assert solver.num_particles == 100
-
-    def test_external_particles_warns(self):
-        """Test that external_particles raises deprecation warning."""
+    def test_external_particles_removed(self):
+        """`external_particles` (-> num_particles) removed: unexpected keyword."""
         problem = Simple2DMFGProblem()
         points = np.random.rand(50, 2)
 
-        with pytest.warns(DeprecationWarning, match="external_particles"):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'external_particles'"):
             FPParticleSolver(problem, num_particles=100, external_particles=points)
 
-    def test_unknown_mode_raises_error(self):
-        """Test that unknown mode raises ValueError."""
+    def test_density_mode_new_name_accepted(self):
+        """New name `density_mode` works (replacement for removed `mode`)."""
         problem = Simple2DMFGProblem()
 
-        with pytest.raises(ValueError, match="Unknown mode"):
-            FPParticleSolver(problem, mode="unknown")
+        solver = FPParticleSolver(problem, density_mode="hybrid", num_particles=100)
+        assert solver.num_particles == 100
+        assert solver.density_mode == "hybrid"
 
 
 class TestBoundaryConditionRequirements:

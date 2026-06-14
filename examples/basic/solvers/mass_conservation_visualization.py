@@ -60,7 +60,7 @@ def main():
     fp_solver = FPParticleSolver(
         problem,
         num_particles=500,  # Reduced from 1000
-        normalize_kde_output=True,
+        kde_normalization="all",
         boundary_conditions=bc,
     )
     hjb_solver = HJBFDMSolver(problem)

@@ -197,7 +197,7 @@ class TestMassConservation1D:
         fp_solver_1 = FPParticleSolver(
             problem,
             num_particles=5000,
-            normalize_kde_output=True,
+            kde_normalization="all",
             boundary_conditions=boundary_conditions,
         )
         hjb_solver_1 = HJBFDMSolver(problem)
@@ -212,7 +212,7 @@ class TestMassConservation1D:
         fp_solver_2 = FPParticleSolver(
             problem,
             num_particles=5000,
-            normalize_kde_output=True,
+            kde_normalization="all",
             boundary_conditions=boundary_conditions,
         )
         collocation_points = problem.xSpace.reshape(-1, 1)
@@ -265,7 +265,7 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=num_particles,
-            normalize_kde_output=True,
+            kde_normalization="all",
             boundary_conditions=boundary_conditions,
         )
 
@@ -330,7 +330,7 @@ class TestMassConservation1D:
             fp_solver = FPParticleSolver(
                 problem,
                 num_particles=5000,
-                normalize_kde_output=True,
+                kde_normalization="all",
                 boundary_conditions=boundary_conditions,
             )
             hjb_solver = HJBFDMSolver(problem)

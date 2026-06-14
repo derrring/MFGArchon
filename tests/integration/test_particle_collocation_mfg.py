@@ -201,21 +201,14 @@ class TestFPGFDMSolver:
             solver.solve_fp_system(m0_wrong, U_correct, show_progress=False)
 
 
-class TestCollocationModeDeprecation:
-    """Test that deprecated collocation mode raises helpful error."""
+class TestCollocationModeRemoved:
+    """Pin that the past-window `mode` kwarg (and collocation handling) is gone."""
 
-    def test_collocation_mode_raises_error(self):
-        """Test that collocation mode raises ValueError with migration guide."""
+    def test_mode_kwarg_removed(self):
+        """`mode` removed (-> density_mode): passing it is an unexpected keyword."""
         problem = SimpleLQMFG2D()
 
-        with pytest.raises(ValueError, match="Collocation mode has been removed"):
-            FPParticleSolver(problem, mode="collocation")
-
-    def test_error_message_suggests_fpgfdmsolver(self):
-        """Test that error message suggests FPGFDMSolver."""
-        problem = SimpleLQMFG2D()
-
-        with pytest.raises(ValueError, match="FPGFDMSolver"):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'mode'"):
             FPParticleSolver(problem, mode="collocation")
 
 

@@ -64,7 +64,7 @@ from mfgarchon.utils.performance_optimization import SparseMatrixOptimizer
 
 optimizer = SparseMatrixOptimizer()
 # Automatically uses Numba if available for parallel operations
-laplacian = optimizer.create_laplacian_3d(nx=200, ny=200, nz=200)
+laplacian = optimizer.create_laplacian_3d(Nx=200, Ny=200, Nz=200)
 solution = optimizer.solve_sparse_system(laplacian, rhs, method="cg")
 ```
 

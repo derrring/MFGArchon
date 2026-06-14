@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   13× (Nx=101) to 40× (Nx=401), growing with grid size. nD (vector control, L-BFGS-B per node) is
   unchanged.
 
+### Removed (BREAKING)
+
+- **Lowercase grid parameters removed** (deprecated v0.17.0, past 3-minor-version
+  window at v0.20.0). `MFGSystemBuilder.domain()` no longer accepts `nx`/`nt` and
+  `SparseMatrixOptimizer.create_laplacian_3d()` no longer accepts `nx`/`ny`/`nz`.
+  Use the capitalized `Nx`/`Ny`/`Nz`/`Nt` names. Passing the old names now raises
+  `TypeError`.
+- **Mesh-IO `format_type` parameter removed** (deprecated v0.17.12, past window at
+  v0.20.0). `Mesh1D.export_mesh()` and `Mesh3D.export_mesh()` no longer accept
+  `format_type`; use `file_format`. Passing the old name now raises `TypeError`.
+- **FP-particle solver legacy parameters removed** (deprecated v0.17.0, past window
+  at v0.20.0). `FPParticleSolver.__init__` no longer accepts `mode` (use
+  `density_mode`), `external_particles` (use `num_particles`), or
+  `normalize_kde_output`/`normalize_only_initial` (use `kde_normalization`).
+  Passing the old names now raises `TypeError`. The already-broken
+  `particle_collocation_dual_mode_demo.py` example (relied on the removed
+  collocation mode and the absent `ParticleMode` symbol) was deleted.
+
 ## [0.20.0] - 2026-06-14
 
 ### Added

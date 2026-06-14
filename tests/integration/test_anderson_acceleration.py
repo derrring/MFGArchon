@@ -61,7 +61,7 @@ def run_solver(use_anderson: bool = False, backend: str | None = None):
     fp_solver = FPParticleSolver(
         problem,
         num_particles=500,
-        normalize_kde_output=True,
+        kde_normalization="all",
         boundary_conditions=bc,
     )
     hjb_solver = HJBFDMSolver(problem)
