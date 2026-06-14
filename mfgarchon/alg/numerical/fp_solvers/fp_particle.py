@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
