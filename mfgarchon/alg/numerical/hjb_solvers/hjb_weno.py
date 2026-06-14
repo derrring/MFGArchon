@@ -44,7 +44,6 @@ import numpy as np
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
@@ -870,19 +869,12 @@ class HJBWenoSolver(BaseHJBSolver):
 
         return max(dt_stable, 1e-10)  # Ensure positive time step
 
-    @deprecated_parameter(param_name="M_density_evolution_from_FP", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="U_final_condition_at_T", since="v0.17.0", replacement="U_terminal")
-    @deprecated_parameter(param_name="U_from_prev_picard", since="v0.17.0", replacement="U_coupling_prev")
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
-        # Deprecated parameter names for backward compatibility
-        M_density_evolution_from_FP: np.ndarray | None = None,
-        U_final_condition_at_T: np.ndarray | None = None,
-        U_from_prev_picard: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Solve the complete HJB system using WENO spatial discretization.
@@ -900,22 +892,6 @@ class HJBWenoSolver(BaseHJBSolver):
         Returns:
             U_solved: Complete solution u(t,x) over time domain
         """
-        # Handle deprecated parameter names (warnings handled by @deprecated_parameter decorators)
-        if M_density_evolution_from_FP is not None:
-            if M_density is not None:
-                raise ValueError("Cannot specify both 'M_density' and deprecated 'M_density_evolution_from_FP'")
-            M_density = M_density_evolution_from_FP
-
-        if U_final_condition_at_T is not None:
-            if U_terminal is not None:
-                raise ValueError("Cannot specify both 'U_terminal' and deprecated 'U_final_condition_at_T'")
-            U_terminal = U_final_condition_at_T
-
-        if U_from_prev_picard is not None:
-            if U_coupling_prev is not None:
-                raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
-            U_coupling_prev = U_from_prev_picard
-
         # Issue #1316: the WENO solver reads diffusion from problem.sigma at multiple
         # scattered sites (the diffusion CFL bound and the diffusion update in each
         # dimensional sweep), with no single sigma chokepoint to redirect. Honoring a

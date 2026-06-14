@@ -9,7 +9,6 @@ import scipy.sparse as sparse
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -99,18 +98,12 @@ def _compute_gradient_array_1d(
     return grad
 
 
-@deprecated_parameter(
-    param_name="bc_values",
-    since="v0.17.0",
-    replacement="Robin BC segments via AdjointConsistentProvider",
-)
 def _compute_laplacian_1d(
     U_array: np.ndarray,
     Dx: float,
     bc: BoundaryConditions | None = None,
     domain_bounds: np.ndarray | None = None,
     time: float = 0.0,
-    bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
 ) -> np.ndarray:
     """
     Compute Laplacian for entire 1D array using BC-aware computation.
@@ -126,7 +119,6 @@ def _compute_laplacian_1d(
         bc: Boundary conditions. If None, uses periodic BC.
         domain_bounds: Unused (kept for backward compatibility)
         time: Current time for time-dependent BCs
-        bc_values: DEPRECATED. Per-boundary BC values (Issue #574).
 
     Returns:
         Laplacian array of shape (Nx,) with d^2u/dx^2 at each point
@@ -134,9 +126,6 @@ def _compute_laplacian_1d(
     Nx = len(U_array)
     if Nx <= 1 or abs(Dx) < 1e-14:
         return np.zeros(Nx)
-
-    # Issue #574: bc_values parameter deprecated — Robin BC framework handles this
-    # Warning now handled by @deprecated_parameter decorator
 
     # Delegate to unified stencil infrastructure (Issue #639)
     return laplacian_with_bc(U_array, [Dx], bc=bc, time=time)
@@ -673,7 +662,6 @@ def compute_hjb_residual(
                 bc=bc,
                 domain_bounds=domain_bounds,
                 time=current_time,
-                bc_values=bc_values,  # Issue #574
             )
         if has_nan_or_inf(U_xx, backend):
             if backend is not None:
@@ -1103,16 +1091,6 @@ def newton_hjb_step(
     return U_n_next_newton_iterate, l2_error_of_step
 
 
-@deprecated_parameter(
-    param_name="NiterNewton",
-    since="v0.17.0",
-    replacement="max_newton_iterations",
-)
-@deprecated_parameter(
-    param_name="l2errBoundNewton",
-    since="v0.17.0",
-    replacement="newton_tolerance",
-)
 def solve_hjb_timestep_newton(
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new[n+1] in notebook
     U_k_n_from_prev_picard: np.ndarray,  # U_k[n] in notebook
@@ -1121,9 +1099,6 @@ def solve_hjb_timestep_newton(
     max_newton_iterations: int | None = None,
     newton_tolerance: float | None = None,
     t_idx_n: int | None = None,  # time index for U_n being solved
-    # Deprecated parameters for backward compatibility
-    NiterNewton: int | None = None,
-    l2errBoundNewton: float | None = None,
     backend: BaseBackend | None = None,
     sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
     use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
@@ -1145,19 +1120,8 @@ def solve_hjb_timestep_newton(
         max_newton_iterations: Maximum Newton iterations (new parameter name)
         newton_tolerance: Newton convergence tolerance (new parameter name)
         t_idx_n: Time index for current solution
-        NiterNewton: DEPRECATED - use max_newton_iterations
-        l2errBoundNewton: DEPRECATED - use newton_tolerance
         bc_values: Per-boundary BC values (Issue #574)
     """
-    # Handle backward compatibility (warnings handled by @deprecated_parameter decorators)
-    if NiterNewton is not None:
-        if max_newton_iterations is None:
-            max_newton_iterations = NiterNewton
-
-    if l2errBoundNewton is not None:
-        if newton_tolerance is None:
-            newton_tolerance = l2errBoundNewton
-
     # Set defaults if still None
     if max_newton_iterations is None:
         max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS
@@ -1312,16 +1276,6 @@ def solve_hjb_timestep_newton(
     return U_n_current_newton_iterate
 
 
-@deprecated_parameter(
-    param_name="NiterNewton",
-    since="v0.17.0",
-    replacement="max_newton_iterations",
-)
-@deprecated_parameter(
-    param_name="l2errBoundNewton",
-    since="v0.17.0",
-    replacement="newton_tolerance",
-)
 def solve_hjb_system_backward(
     M_density_from_prev_picard: np.ndarray,  # M_k in notebook
     U_final_condition_at_T: np.ndarray,
@@ -1329,9 +1283,6 @@ def solve_hjb_system_backward(
     problem: MFGProblem,
     max_newton_iterations: int | None = None,
     newton_tolerance: float | None = None,
-    # Deprecated parameters for backward compatibility
-    NiterNewton: int | None = None,
-    l2errBoundNewton: float | None = None,
     backend: BaseBackend | None = None,
     volatility_field: float | np.ndarray | None = None,  # Diffusion field
     use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
@@ -1351,21 +1302,10 @@ def solve_hjb_system_backward(
         problem: MFG problem instance
         max_newton_iterations: Maximum Newton iterations (new parameter name)
         newton_tolerance: Newton convergence tolerance (new parameter name)
-        NiterNewton: DEPRECATED - use max_newton_iterations
-        l2errBoundNewton: DEPRECATED - use newton_tolerance
         bc_values: Per-boundary Neumann BC values (Issue #574):
             {"x_min": gradient_left, "x_max": gradient_right}
             For adjoint-consistent BC. Default: None (standard BC with 0 gradient).
     """
-    # Handle backward compatibility (warnings handled by @deprecated_parameter decorators)
-    if NiterNewton is not None:
-        if max_newton_iterations is None:
-            max_newton_iterations = NiterNewton
-
-    if l2errBoundNewton is not None:
-        if newton_tolerance is None:
-            newton_tolerance = l2errBoundNewton
-
     # Set defaults if still None
     if max_newton_iterations is None:
         max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS

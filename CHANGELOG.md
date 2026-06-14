@@ -39,6 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Passing the old names now raises `TypeError`. The already-broken
   `particle_collocation_dual_mode_demo.py` example (relied on the removed
   collocation mode and the absent `ParticleMode` symbol) was deleted.
+- **Removed Tier-2 HJB-solver parameter deprecations (≤ v0.17)** (PR #1355). The legacy keyword
+  aliases on the HJB solvers' `solve_hjb_system` methods are gone; pass the canonical names:
+  `M_density_evolution` / `M_density_evolution_from_FP` → `M_density`,
+  `U_final_condition` / `U_final_condition_at_T` → `U_terminal`,
+  `U_from_prev_picard` → `U_coupling_prev`. Affects `HJBFDMSolver`, `HJBGFDMSolver`,
+  `HJBSemiLagrangianSolver`, `HJBWenoSolver`, and the network solvers (`NetworkHJBSolver`,
+  `NetworkPolicyIterationHJBSolver`). The deprecated `bc_values=` kwarg (adjoint-consistent BC is
+  handled via `BCValueProvider` in `BoundaryConditions`) is removed from
+  `HJBFDMSolver.solve_hjb_system` and from the internal `_compute_laplacian_1d` helper. The
+  deprecated Newton-parameter aliases `NiterNewton` → `max_newton_iterations` and
+  `l2errBoundNewton` → `newton_tolerance` are removed from `HJBFDMSolver.__init__` (since v0.16) and
+  from the `base_hjb` module functions `solve_hjb_timestep_newton` / `solve_hjb_system_backward`
+  (since v0.17). Passing any removed name now raises `TypeError`. The v0.18+ deprecations
+  (`damping_factor` → `relaxation`, since v0.19.2; `tensor_volatility_field` → `volatility_field`,
+  since v0.18.7) are retained.
 
 ## [0.20.0] - 2026-06-14
 
