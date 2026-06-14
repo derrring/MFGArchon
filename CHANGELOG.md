@@ -240,6 +240,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracked in #1183 (it needs an operator that matches the existing conservative no-flux
   discretization).
 
+### Deprecated
+
+- **`mfgarchon.operators.nonlocal_ops` renamed to `mfgarchon.operators.integro_diff`**
+  (Issue #1024). The subpackage held two unrelated notions of "non-local": Lévy
+  integro-differential operators (non-local *PDE structure*) and graphon coupling, which
+  collided in name with the *game-coupling* non-local operators in `operators/interaction/`
+  (#1023). "Integro-differential" is the standard literature term (Jakobsen-Karlsen,
+  Barles-Imbert) and is unambiguous. The old path is retained as a deprecation shim that
+  re-exports the public API, aliases the submodules (`levy_integro_diff`, `levy_measures`,
+  `graphon_coupling`, `graphon_kernels`) so existing dotted imports keep resolving, and emits
+  a `DeprecationWarning` on import. An equivalence test asserts both paths return identical
+  class objects. Shim removal scheduled for v0.22.0. Update imports:
+  `from mfgarchon.operators.integro_diff import ...`.
+
 ### Removed (BREAKING)
 
 - **`BoundaryConditions.default_bc` no longer silently defaults to `PERIODIC`** (Issue #1100).

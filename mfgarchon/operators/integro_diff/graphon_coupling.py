@@ -65,7 +65,7 @@ class GraphonCouplingOperator(LinearOperator):
 
     Example
     -------
-    >>> from mfgarchon.operators.nonlocal_ops.graphon_kernels import ConstantGraphon
+    >>> from mfgarchon.operators.integro_diff.graphon_kernels import ConstantGraphon
     >>> x = np.linspace(0, 1, 101)
     >>> W_op = GraphonCouplingOperator(x, ConstantGraphon(p=0.5))
     >>> f = np.ones(101)

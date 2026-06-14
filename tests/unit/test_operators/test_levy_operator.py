@@ -1,7 +1,7 @@
 """Tests for Lévy integro-differential operator.
 
 Tests LevyIntegroDiffOperator, GaussianJumps, CompoundPoissonJumps
-from mfgarchon.operators.nonlocal_ops.
+from mfgarchon.operators.integro_diff.
 
 Covers:
 - Basic evaluation (J[v] produces finite, correct-shape output)
@@ -17,8 +17,8 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.operators.nonlocal_ops.levy_integro_diff import LevyIntegroDiffOperator
-from mfgarchon.operators.nonlocal_ops.levy_measures import (
+from mfgarchon.operators.integro_diff.levy_integro_diff import LevyIntegroDiffOperator
+from mfgarchon.operators.integro_diff.levy_measures import (
     CompoundPoissonJumps,
     GaussianJumps,
 )
