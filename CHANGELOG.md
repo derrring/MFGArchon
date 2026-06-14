@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Vectorized the semi-Lagrangian canonical Carlini-Silva per-point optimization** (PR #PRNUM).
+- **Vectorized the semi-Lagrangian canonical Carlini-Silva per-point optimization** (PR #1353).
   `HJBSemiLagrangianSolver._canonical_cs_step` (`diffusion_method="canonical_cs"`, Issue #1058) in
   1D previously minimized the per-node DPP objective `phi(alpha)` with a Python loop calling
   `scipy.optimize.minimize_scalar` (Brent) once per grid node. The loop is replaced by a single
