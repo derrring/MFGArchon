@@ -113,7 +113,7 @@ def solve_with_stochastic_monitoring(seed=42, max_iterations=100, tolerance=1e-4
     fp_solver = FPParticleSolver(
         problem,
         num_particles=1000,
-        normalize_kde_output=True,
+        kde_normalization="all",
         boundary_conditions=bc,
     )
 

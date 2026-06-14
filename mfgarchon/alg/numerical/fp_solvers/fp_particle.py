@@ -124,10 +124,6 @@ class FPParticleSolver(BaseFPSolver):
     # which mislabeled the solver.
     _drift_convention = DriftConvention.VALUE_FUNCTION
 
-    @deprecated_parameter(param_name="mode", since="v0.17.0", replacement="density_mode")
-    @deprecated_parameter(param_name="external_particles", since="v0.17.0", replacement="num_particles")
-    @deprecated_parameter(param_name="normalize_kde_output", since="v0.17.0", replacement="kde_normalization")
-    @deprecated_parameter(param_name="normalize_only_initial", since="v0.17.0", replacement="kde_normalization")
     def __init__(
         self,
         problem: MFGProblem,
@@ -141,35 +137,8 @@ class FPParticleSolver(BaseFPSolver):
         implicit_domain: ImplicitDomain | None = None,
         backend: str | None = None,
         preserve_indices: bool = False,
-        # Deprecated parameters (backward compatibility)
-        mode: str | None = None,
-        external_particles: Any = None,
-        normalize_kde_output: bool | None = None,
-        normalize_only_initial: bool | None = None,
     ) -> None:
         super().__init__(problem)
-
-        # Handle deprecated 'mode' parameter
-        if mode is not None:
-            if mode == "collocation":
-                raise ValueError(
-                    "Collocation mode has been removed from FPParticleSolver. "
-                    "Use FPGFDMSolver for GFDM-based FP solving."
-                )
-            elif mode not in ("hybrid", "grid_only", "query_only"):
-                raise ValueError(f"Unknown mode '{mode}'. Valid modes: 'hybrid', 'grid_only', 'query_only'")
-            # Map old 'mode' to new 'density_mode' (hybrid was the old name)
-            density_mode = mode
-
-        # Handle deprecated normalization parameters
-        if normalize_kde_output is not None or normalize_only_initial is not None:
-            # Map old parameters to new enum
-            if normalize_kde_output is False:
-                kde_normalization = KDENormalization.NONE
-            elif normalize_only_initial is True:
-                kde_normalization = KDENormalization.INITIAL_ONLY
-            else:
-                kde_normalization = KDENormalization.ALL
 
         self.num_particles = num_particles
         self.fp_method_name = "Particle"
@@ -1234,7 +1203,7 @@ class FPParticleSolver(BaseFPSolver):
                 elif Nx == 1:
                     m_density_estimated[closest_idx] = 1.0
 
-            # Normalization logic will apply below if self.normalize_kde_output is True
+            # Normalization logic will apply below per self.kde_normalization strategy
         else:
             try:
                 # Issue #709: Use CPU path with boundary-corrected KDE
@@ -2580,7 +2549,7 @@ if __name__ == "__main__":
     )
     problem_2d = MFGProblem(geometry=geometry_2d, Nt=10, T=0.5, sigma=0.1, components=components)
 
-    solver_2d = FPParticleSolver(problem_2d, num_particles=500, mode="hybrid")
+    solver_2d = FPParticleSolver(problem_2d, num_particles=500, density_mode="hybrid")
 
     # Create 2D test arrays
     # U_test_2d has shape (n_time_points, *spatial) = (Nt + 1, *spatial)

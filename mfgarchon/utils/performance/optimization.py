@@ -19,8 +19,6 @@ import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix, lil_matrix
 from scipy.sparse import linalg as sp_linalg
 
-from mfgarchon.utils.deprecation import deprecated_parameter
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -145,9 +143,6 @@ class SparseMatrixOptimizer:
     """Sparse matrix operations optimized for MFG problems."""
 
     @staticmethod
-    @deprecated_parameter(param_name="nx", since="v0.17.0", replacement="Nx")
-    @deprecated_parameter(param_name="ny", since="v0.17.0", replacement="Ny")
-    @deprecated_parameter(param_name="nz", since="v0.17.0", replacement="Nz")
     def create_laplacian_3d(
         Nx: int | None = None,
         Ny: int | None = None,
@@ -155,10 +150,6 @@ class SparseMatrixOptimizer:
         dx: float = 0.01,
         dy: float = 0.01,
         dz: float = 0.01,
-        # Deprecated parameters (lowercase)
-        nx: int | None = None,
-        ny: int | None = None,
-        nz: int | None = None,
     ) -> csr_matrix:
         """
         Create 3D discrete Laplacian operator using sparse matrices.
@@ -170,27 +161,11 @@ class SparseMatrixOptimizer:
             dx: Grid spacing in x direction
             dy: Grid spacing in y direction
             dz: Grid spacing in z direction
-            nx: DEPRECATED - Use Nx instead
-            ny: DEPRECATED - Use Ny instead
-            nz: DEPRECATED - Use Nz instead
 
         Returns:
             Sparse Laplacian matrix
         """
-        # Handle deprecated lowercase parameters
-        if nx is not None:
-            if Nx is None:
-                Nx = nx
-
-        if ny is not None:
-            if Ny is None:
-                Ny = ny
-
-        if nz is not None:
-            if Nz is None:
-                Nz = nz
-
-        # Require at least one set of parameters
+        # Require all grid dimensions
         if Nx is None or Ny is None or Nz is None:
             raise ValueError("Grid dimensions Nx, Ny, Nz must be provided")
 

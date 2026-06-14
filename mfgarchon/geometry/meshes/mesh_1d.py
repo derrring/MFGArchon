@@ -13,7 +13,6 @@ import numpy as np
 
 from mfgarchon.geometry.base import UnstructuredMesh
 from mfgarchon.geometry.meshes.mesh_data import MeshData
-from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -186,22 +185,13 @@ class Mesh1D(UnstructuredMesh):
         if spacing is not None:
             self.mesh_spacing = spacing
 
-    @deprecated_parameter(
-        param_name="format_type",
-        since="v0.17.12",
-        replacement="file_format",
-    )
-    def export_mesh(self, file_format: str = "", filename: str = "", format_type: str | None = None) -> None:
+    def export_mesh(self, file_format: str = "", filename: str = "") -> None:
         """Export mesh in specified format.
 
         Args:
             file_format: Meshio file format string (e.g. "vtk", "gmsh")
             filename: Output file path
-            format_type: Deprecated, use ``file_format`` instead.
         """
-        if format_type is not None:
-            file_format = format_type
-
         if self.mesh_data is None:
             self.generate_mesh()
 

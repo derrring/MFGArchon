@@ -62,7 +62,7 @@ def run_solver(name: str, use_anderson: bool, damping_factor: float, anderson_be
     fp_solver = FPParticleSolver(
         problem,
         num_particles=500,
-        normalize_kde_output=True,
+        kde_normalization="all",
         boundary_conditions=bc,
     )
     hjb_solver = HJBFDMSolver(problem)
