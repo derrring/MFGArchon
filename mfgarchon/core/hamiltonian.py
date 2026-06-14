@@ -2024,6 +2024,11 @@ class SeparableHamiltonian(HamiltonianBase):
     Verified by exp08/09 Stage A/B/C runners — they attract density to ``x_c``
     using ``-C₁ * (x - x_c)**2``.
 
+    Related: the dual ``MFGProblem(source_term_hjb=...)`` channel carries the
+    OPPOSITE sign — it enters the HJB right-hand side and is cost-signed (a
+    positive source repels). See Issue #1057 gotchas G-002/G-003 and the
+    ``MFGProblem`` "Sign conventions" docstring note.
+
     Parameters
     ----------
     control_cost : ControlCostBase

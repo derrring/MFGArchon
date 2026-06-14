@@ -143,6 +143,26 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     - get_boundary_conditions(): Boundary condition accessor
     - _setup_custom_initial_density(): Initial density setup
     - _setup_custom_final_value(): Final value setup
+
+    Sign conventions (Issue #1057, gotcha G-003)
+    --------------------------------------------
+    Two channels add a scalar field to the HJB equation, and they carry
+    OPPOSITE signs -- a recurring source of confusion:
+
+    - ``SeparableHamiltonian(potential=V)`` adds ``V(x, t)`` *inside* the
+      Hamiltonian ``H`` on the left-hand side. It is **reward-signed**: agents
+      are attracted to where ``V`` is largest (gotcha G-001; see the
+      ``SeparableHamiltonian`` docstring). Write an attractive well at ``x_c``
+      as an inverted parabola ``V = -0.5 * C * (x - x_c)**2``.
+    - ``MFGProblem(source_term_hjb=S)`` adds ``S`` on the *right-hand side* of
+      the canonical HJB ``-u_t + H - (sigma^2/2) Lap u = S``. The residual
+      subtracts it (``Phi_U -= source_term`` in base_hjb.py), so it is
+      **cost-signed**: a positive ``S`` repels agents (gotcha G-002; see the
+      ``source_term_hjb`` note in ``__init__``).
+
+    Shared root: the project's "potential as reward" convention. Because the
+    potential lives inside ``H`` while the source lives on the RHS, achieving
+    the same effect through the two channels requires inputs of OPPOSITE sign.
     """
 
     # Type annotations for geometry attributes (Phase 6 of Issue #435)
@@ -565,6 +585,28 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # source_term_hjb/fp: Callable(x, m, v, t) -> array (problem-level signature)
         # nonlocal_operator: LinearOperator for integro-differential terms J[v]
         # obstacle: Callable(x) -> array for variational inequality v >= Psi(x)
+        #
+        # Sign convention (Issue #1057, gotcha G-002)
+        # -------------------------------------------
+        # source_term_hjb enters the canonical HJB on the RIGHT-hand side:
+        #     -u_t + H(x, m, Du) - (sigma^2/2) Lap u = S_hjb
+        # The residual assembly SUBTRACTS it from H (base_hjb.py: `Phi_U -=
+        # source_term`, lines 728 batch-path and 772 per-point-path; canonical
+        # form + `F(u) = (u - u_next)/dt + H - S = 0` documented at
+        # base_hjb.py:410 and base_hjb.py:437):
+        #     F(u) = (u - u_next)/dt - (sigma^2/2) Lap u + H - S_hjb = 0
+        # Consequence for the sign a user must pass:
+        #   - A POSITIVE source_term_hjb raises the value / cost-to-go u, so it
+        #     acts as a COST: agents are repelled from regions of large S_hjb.
+        #   - A NEGATIVE source_term_hjb acts as a reward (attractive).
+        # This is the OPPOSITE sign to `potential` in SeparableHamiltonian,
+        # which sits inside H on the LHS and is reward-signed (gotcha G-001).
+        # For a repulsive congestion coupling F[m] (penalize crowding), write
+        #     source_term_hjb = +gamma * dF/dm   (positive where crowded).
+        # The callback receives the density SLICE m(t, .) at time t (Issue
+        # #1285; see fixed_point_iterator._compose_hjb_source), not the full
+        # (Nt+1, Nx) trajectory. See the MFGProblem class docstring
+        # "Sign conventions" note (G-003) for the unified picture.
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
         self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
         self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
