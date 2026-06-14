@@ -109,8 +109,8 @@ def create_paired_solvers(
     else:
         raise NotImplementedError(
             f"Scheme {scheme.value} is defined but not yet implemented in factory. "
-            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, GFDM, FEM_P1, FEM_P2, "
-            f"FVM_UPWIND, FVM_MUSCL"
+            f"Available schemes: FDM_UPWIND, FDM_CENTERED, SL_LINEAR, SL_CUBIC, GFDM, "
+            f"FEM_P1, FEM_P2, MESHLESS_GALERKIN, FVM_UPWIND, FVM_MUSCL"
         )
 
     # FVM is an FP-only conservative scheme with no HJB-FVM partner yet: it is paired with the

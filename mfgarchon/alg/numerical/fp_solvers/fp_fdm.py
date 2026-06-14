@@ -265,7 +265,9 @@ class FPFDMSolver(BaseFPSolver):
             dt = self.problem.dt
             dx = self.problem.geometry.get_grid_spacing()[0]
             sigma = volatility_field if isinstance(volatility_field, (int, float)) else self.problem.sigma
-            cfl_diffusive = sigma**2 * dt / dx**2
+            # Diffusive CFL uses the PDE diffusion coefficient D = sigma^2/2 (single source:
+            # diffusion_from_volatility, applied at D = 0.5 * sigma**2 below), not the bare sigma^2.
+            cfl_diffusive = 0.5 * sigma**2 * dt / dx**2
             if cfl_diffusive > 0.5:
                 log_fn = logger.debug if getattr(self, "_cfl_logged", False) else logger.info
                 log_fn(

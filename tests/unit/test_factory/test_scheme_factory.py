@@ -6,6 +6,8 @@ Tests create_paired_solvers() function with all scheme variants.
 Issue #673: Updated to class-based Hamiltonian API.
 """
 
+import pytest
+
 import numpy as np
 
 from mfgarchon import MFGProblem
@@ -260,6 +262,26 @@ class TestCreatePairedSolversValidation:
         hjb, fp = create_paired_solvers(problem, NumericalScheme.SL_CUBIC)
         assert hjb is not None
         assert fp is not None
+
+    def test_unrouted_scheme_message_lists_every_routed_scheme(self):
+        """Pin the NotImplementedError 'Available schemes' message to the routed set.
+
+        Every NumericalScheme member is routed in the if-elif chain, so an unhandled
+        scheme cannot occur with the real enum. Use a sentinel with a `.value` attribute
+        to fall through to the else branch, then assert the message advertises all routed
+        schemes (regression guard: SL_CUBIC and MESHLESS_GALERKIN were previously omitted).
+        """
+        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+
+        class _FakeScheme:
+            value = "not_a_real_scheme"
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            create_paired_solvers(problem, _FakeScheme())
+
+        message = str(exc_info.value)
+        for member in NumericalScheme:
+            assert member.name in message, f"{member.name} missing from 'Available schemes' message"
 
 
 class TestGetRecommendedScheme:

@@ -1275,5 +1275,54 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         assert abs(m.sum() * dx - 1.0) < 1e-9
 
 
+class TestFPFDMSolverCFLDiagnostic:
+    """Pin the CFL diffusive diagnostic to the D = sigma^2/2 convention."""
+
+    def test_cfl_diffusive_uses_D_equals_half_sigma_squared(self, standard_problem):
+        """The logged diffusive CFL must use D = sigma^2/2, not the bare sigma^2.
+
+        Regression guard: the diagnostic previously computed sigma^2 * dt / dx^2, a 2x
+        overstatement relative to the diffusion coefficient D = 0.5 * sigma^2 actually
+        assembled by the solver (single source: diffusion_from_volatility / D = 0.5*sigma**2).
+        Capture the log record's formatting arg and pin it to the halved value.
+        """
+        import logging
+
+        from mfgarchon.alg.numerical.fp_solvers import fp_fdm as fp_fdm_module
+
+        solver = FPFDMSolver(standard_problem)
+
+        sigma = standard_problem.sigma
+        dt = standard_problem.dt
+        dx = standard_problem.geometry.get_grid_spacing()[0]
+        expected = 0.5 * sigma**2 * dt / dx**2
+        # Sanity: this configuration must exceed the 0.5 threshold so the diagnostic logs.
+        assert expected > 0.5
+
+        records: list[logging.LogRecord] = []
+
+        class _Collector(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        module_logger = fp_fdm_module.logger
+        handler = _Collector()
+        old_level = module_logger.level
+        module_logger.addHandler(handler)
+        module_logger.setLevel(logging.DEBUG)
+        try:
+            solver._log_cfl_diagnostic()
+        finally:
+            module_logger.removeHandler(handler)
+            module_logger.setLevel(old_level)
+
+        cfl_records = [r for r in records if "CFL diagnostic" in r.msg]
+        assert cfl_records, "CFL diagnostic did not log for an above-threshold configuration"
+        logged_cfl = cfl_records[0].args[0]
+        assert logged_cfl == pytest.approx(expected)
+        # Explicitly pin the 2x: the old (bare sigma^2) value must be rejected.
+        assert logged_cfl != pytest.approx(sigma**2 * dt / dx**2)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
