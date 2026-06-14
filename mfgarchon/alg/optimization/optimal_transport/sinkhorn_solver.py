@@ -77,9 +77,20 @@ class SinkhornSolverResult:
     entropic_cost: float = 0.0
 
 
+def _experimental_unavailable(detail: str) -> NotImplementedError:
+    """Build the Issue #1342 'experimental, not in this release' error."""
+    return NotImplementedError(
+        f"SinkhornMFGSolver is EXPERIMENTAL and not available in this release "
+        f"(Issue #1342): {detail}. Its solve logic exists but is unvalidated; "
+        f"track #1342 for completion."
+    )
+
+
 class SinkhornMFGSolver(BaseOptimizationSolver):
     """
     Sinkhorn algorithm-based solver for Mean Field Games.
+
+    **Experimental — not production-ready (Issue #1342).**
 
     This solver uses entropic regularized optimal transport with the Sinkhorn
     algorithm to efficiently solve MFG problems. The entropic regularization
@@ -106,6 +117,13 @@ class SinkhornMFGSolver(BaseOptimizationSolver):
         **kwargs: Any,
     ):
         """Initialize Sinkhorn MFG solver."""
+        # Issue #1342: EXPERIMENTAL solver demoted for v1.0 — block construction with a
+        # clear, actionable error. The original setup/solve implementation is preserved
+        # below (currently unreachable) for future completion under #1342.
+        raise _experimental_unavailable(
+            "construction is intentionally blocked because the required solver hooks "
+            "(compute_objective, compute_gradient, validate_solution) are not implemented"
+        )
         super().__init__(problem, **kwargs)
         self.config = config or SinkhornSolverConfig()
         self.logger = get_logger(__name__)
@@ -116,6 +134,19 @@ class SinkhornMFGSolver(BaseOptimizationSolver):
         # Setup discretization and transport kernel
         self._setup_discretization()
         self._setup_transport_kernel()
+
+    # Issue #1342: abstract-method stubs. Overriding the abstract hooks makes the
+    # class concrete so construction reaches the clear __init__ guard above instead
+    # of the cryptic "Can't instantiate abstract class" TypeError. They remain
+    # unimplemented (experimental) and raise the same actionable error.
+    def compute_objective(self, variables: Any) -> float:
+        raise _experimental_unavailable("the compute_objective hook is not implemented")
+
+    def compute_gradient(self, variables: Any) -> Any:
+        raise _experimental_unavailable("the compute_gradient hook is not implemented")
+
+    def validate_solution(self) -> dict[str, float]:
+        raise _experimental_unavailable("the validate_solution hook is not implemented")
 
     def _check_dependencies(self) -> None:
         """Check required dependencies."""

@@ -42,9 +42,20 @@ if TYPE_CHECKING:
 JAX_AVAILABLE = importlib.util.find_spec("jax") is not None
 
 
+def _experimental_unavailable(detail: str) -> NotImplementedError:
+    """Build the Issue #1342 'experimental, not in this release' error."""
+    return NotImplementedError(
+        f"VariationalMFGSolver is EXPERIMENTAL and not available in this release "
+        f"(Issue #1342): {detail}. Its solve logic exists but is unvalidated; "
+        f"track #1342 for completion."
+    )
+
+
 class VariationalMFGSolver(BaseVariationalSolver):
     """
     Direct variational solver for Lagrangian MFG problems.
+
+    **Experimental — not production-ready (Issue #1342).**
 
     This solver treats the MFG problem as a constrained optimization problem
     and uses gradient-based methods to find the optimal density evolution.
@@ -74,6 +85,14 @@ class VariationalMFGSolver(BaseVariationalSolver):
             use_jax: Use JAX for automatic differentiation (auto-detect if None)
             constraint_tolerance: Tolerance for constraint satisfaction
         """
+        # Issue #1342: EXPERIMENTAL solver demoted for v1.0 — block construction with a
+        # clear, actionable error BEFORE super().__init__ (which also reaches an
+        # unimplemented problem.geometry path). The original implementation is preserved
+        # below (currently unreachable) for future completion under #1342.
+        raise _experimental_unavailable(
+            "construction is intentionally blocked because the required solver hooks "
+            "(compute_objective, compute_gradient, validate_solution) are not implemented"
+        )
         super().__init__(problem)
         self.solver_name = "VariationalMFG"
 
@@ -100,6 +119,19 @@ class VariationalMFGSolver(BaseVariationalSolver):
         logger.info(f"  Optimization method: {optimization_method}")
         logger.info(f"  Penalty weight: {penalty_weight}")
         logger.info(f"  JAX acceleration: {self.use_jax}")
+
+    # Issue #1342: abstract-method stubs. Overriding the abstract hooks makes the
+    # class concrete so construction reaches the clear __init__ guard above instead
+    # of the cryptic "Can't instantiate abstract class" TypeError. They remain
+    # unimplemented (experimental) and raise the same actionable error.
+    def compute_objective(self, variables: Any) -> float:
+        raise _experimental_unavailable("the compute_objective hook is not implemented")
+
+    def compute_gradient(self, variables: Any) -> Any:
+        raise _experimental_unavailable("the compute_gradient hook is not implemented")
+
+    def validate_solution(self) -> dict[str, float]:
+        raise _experimental_unavailable("the validate_solution hook is not implemented")
 
     def solve(
         self,
