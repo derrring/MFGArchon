@@ -147,7 +147,15 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             diffusion_method: Method for handling diffusion term (default: 'adi')
                 - 'adi': ADI (Alternating Direction Implicit) splitting (default)
                 - 'explicit': Explicit Laplacian (simple, requires small dt)
-                - 'stochastic': Stochastic characteristic with Brownian motion (high-dim friendly)
+                - 'stochastic': Stochastic characteristic with Brownian motion (high-dim friendly).
+                  Explicit-alpha* (alpha* = -grad u^{n+1} at the grid node).
+                - 'canonical_cs': Canonical Carlini-Silva 2014 SL with the IMPLICIT-alpha* DPP
+                  fixed point (Issue #1058). Per grid point, alpha* is the minimizer of the DPP
+                  objective (NOT the at-grid gradient), so it is consistent with the departure
+                  point it induces -- the hypothesis under which CS 2014 prove unconditional
+                  stability for monotone (Q1/linear) interpolation. Requires
+                  interpolation_method='linear'. Per-point optimization (slower) in exchange for
+                  unconditional stability; targets reflecting/no-flux boundaries.
                 - 'none': No diffusion (for testing or zero-diffusion problems)
             use_rbf_fallback: Use RBF interpolation as fallback for boundary cases
             rbf_kernel: RBF kernel function
@@ -225,6 +233,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "more stable than `CubicSpline` but still outside the formal proof.",
                 UserWarning,
                 stacklevel=2,
+            )
+
+        # Issue #1058: canonical Carlini-Silva SL with implicit-alpha* DPP fixed point.
+        # CS 2014's stability proof requires monotone (Q1/linear) interpolation; cubic/quintic
+        # are non-monotone and outside the proof (Issue #1033/#1049). Fail fast rather than
+        # silently running an unproven combination.
+        if self.diffusion_method == "canonical_cs" and self.interpolation_method != "linear":
+            raise ValueError(
+                f"diffusion_method='canonical_cs' requires interpolation_method='linear' "
+                f"(monotone Q1), got '{self.interpolation_method}'. The Carlini-Silva 2014 "
+                f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
 
         # Gradient clipping statistics tracking
@@ -877,9 +896,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             m_idx = min(n + 1, Nt_points - 1)
             u_prev_idx = min(n, Nt_points - 1)
 
-            # Compute CFL and determine substeps needed for this time step
-            # DPP path doesn't use characteristics, so CFL substepping is not needed
-            if self._use_dpp:
+            # Compute CFL and determine substeps needed for this time step.
+            # DPP and canonical-CS paths don't trace explicit characteristics (the per-point
+            # optimization / DPP fixed point is unconditionally stable, Issue #1058), so CFL
+            # substepping is neither needed nor applied -- this is what lets canonical_cs use
+            # a large dt directly.
+            if self._use_dpp or self.diffusion_method == "canonical_cs":
                 cfl, n_substeps, dt_substep = 0.0, 1, self.dt
             else:
                 cfl, n_substeps, dt_substep = self._compute_cfl_and_substeps(U_solution[n + 1], self.dt)
@@ -965,6 +987,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Value function at current time step (same shape as U_next)
         """
+        # Issue #1058: canonical Carlini-Silva SL with implicit-alpha* DPP fixed point.
+        # Dispatched first so an explicit diffusion_method='canonical_cs' request is honored
+        # regardless of whether a Lagrangian-driven DPP path would also apply.
+        if self.diffusion_method == "canonical_cs":
+            return self._solve_timestep_canonical_cs(U_next, M_next, time_idx, dt=self.dt)
+
         # Issue #909: L-based DPP path for non-smooth Lagrangians
         if self._use_dpp:
             return self._solve_timestep_dpp(U_next, M_next, time_idx)
@@ -1171,6 +1199,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Value function at current time step
         """
+        # Issue #1058: canonical Carlini-Silva SL with implicit-alpha* DPP fixed point.
+        if self.diffusion_method == "canonical_cs":
+            return self._solve_timestep_canonical_cs(U_next, M_next, time_idx, dt=dt)
+
         # Issue #909: L-based DPP path for non-smooth Lagrangians
         if self._use_dpp:
             return self._solve_timestep_dpp(U_next, M_next, time_idx, dt=dt)
@@ -1508,6 +1540,215 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return U_current
 
         U_current = self._enforce_boundary_conditions(U_current)
+        return U_current.ravel() if flat_input else U_current
+
+    # === Canonical Carlini-Silva SL with implicit-alpha* DPP (Issue #1058) ===
+
+    def _solve_timestep_canonical_cs(
+        self,
+        U_next: np.ndarray,
+        M_next: np.ndarray,
+        time_idx: int,
+        dt: float | None = None,
+    ) -> np.ndarray:
+        r"""Canonical Carlini-Silva (2014) SL step with the implicit-$\alpha^*$ DPP fixed point.
+
+        Unlike ``diffusion_method="stochastic"`` (explicit $\alpha^* = -\nabla u^{n+1}(x_i)$,
+        the gradient at the *grid* node), this path solves the **implicit** dynamic-programming
+        principle: at each node $x_i$ the optimal control is the per-point minimizer of the DPP
+        objective, so $\alpha^*$ is consistent with the departure point it induces. This is the
+        hypothesis under which CS 2014 prove unconditional stability and convergence for monotone
+        (Q1/linear) interpolation; the explicit at-grid gradient is an approximation that
+        diverges from it on stiff problems (Issue #1058).
+
+        For the standard separable Hamiltonian $H(x,p,m) = \tfrac12 |p|^2 + h(x,m)$ (unit
+        control weight; $h(x,m) = H(x,m,p{=}0,t)$ is the potential + coupling part, obtained
+        single-source via ``eval_H_batch`` at $p=0$), the per-node objective is
+
+        .. math::
+            \varphi(\alpha) = \tfrac{\mathrm{d}t}{2}\,|\alpha|^2 - \mathrm{d}t\, h(x_i, m_i)
+              + \frac{1}{2d} \sum_{k=1}^{d}
+                \bigl[ I_h u^{n+1}(y_k^+) + I_h u^{n+1}(y_k^-) \bigr],
+
+        with stochastic departures
+        $y_k^\pm = x_i + \alpha\,\mathrm{d}t \pm \sigma_k\sqrt{\mathrm{d}t}\,e_k$ (folded into
+        the domain by the boundary operation), $I_h$ the linear (monotone Q1) interpolant of
+        $u^{n+1}$, and $u^n(x_i) = \min_\alpha \varphi(\alpha) = \varphi(\alpha^*)$. $\alpha^*$
+        is *implicit* because the departure points -- hence $I_h$ -- depend on $\alpha$. The
+        $- \mathrm{d}t\,h$ sign (rather than $+$) follows from the cost-to-go backward
+        convention $\partial_t u = H - \tfrac{\sigma^2}{2}\Delta u$ used throughout this solver:
+        the running Lagrangian is $L = \tfrac12|\alpha|^2 - h$ (Legendre dual of $H$).
+
+        The minimization is per node (``scipy.optimize.minimize_scalar`` Brent in 1D,
+        ``scipy.optimize.minimize`` L-BFGS-B in nD) -- the cost CS trade for unconditional
+        stability. Diffusion enters through the $2d$ Brownian departures (added variance
+        $\sigma^2\mathrm{d}t$ per step), so no operator-splitting diffusion solve is used
+        (``_apply_diffusion`` is bypassed, as for ``"stochastic"``). The scheme targets
+        reflecting / no-flux (Neumann) boundaries (the CS 2014 setting); the reflected
+        departures realize zero-flux without a separate boundary enforcement pass.
+
+        Issue #1058. Canonical CS implicit-alpha*; validated in
+        mfg-research/.../exp08_towel_2d_validation/_preflight_1d/cs_sl_canonical_implicit_1d.py
+        (KL=3.3e-2 on 1D Towel-on-Beach, 4x faster than FDM).
+
+        References:
+            Carlini, E., & Silva, F. J. (2014). A semi-Lagrangian scheme for a degenerate
+            second order MFG system. ESAIM: M2AN 49(6), 1567-1604.
+
+        Args:
+            U_next: Value function at the next time step (shape ``(Nx,)`` for 1D, grid shape or
+                flattened for nD).
+            M_next: Density at the next time step (matching shape).
+            time_idx: Current time index (used in the Hamiltonian evaluation).
+            dt: Time step. Defaults to ``self.dt``; pass explicitly for substepping.
+
+        Returns:
+            Value function at the current time step, same shape as ``U_next``.
+        """
+        if dt is None:
+            dt = self.dt
+        return self._canonical_cs_step(U_next, M_next, time_idx, dt)
+
+    def _canonical_cs_step(
+        self,
+        U_next: np.ndarray,
+        M_next: np.ndarray,
+        time_idx: int,
+        dt: float,
+    ) -> np.ndarray:
+        """Per-node implicit-alpha* DPP minimization (see ``_solve_timestep_canonical_cs``).
+
+        Reuses the stochastic-SL departure-point machinery (diagonal volatility, boundary fold)
+        but replaces the explicit ``alpha* = -grad u`` drift with a per-node minimizer of the
+        DPP objective ``phi(alpha)``. 1D uses Brent (``minimize_scalar``); nD uses L-BFGS-B
+        (``minimize``) over the control vector.
+        """
+        from scipy.interpolate import RegularGridInterpolator, interp1d
+
+        d = self.dimension
+        sqrt_dt = float(np.sqrt(dt))
+        t_n = time_idx * dt
+
+        # Boundary fold for the stochastic departures (reflect = no-flux/Neumann, the CS
+        # setting; wrap = periodic; clamp otherwise). Shared with the stochastic SL path.
+        bc = self.get_boundary_conditions()
+        bc_op = bc_type_to_geometric_operation(get_bc_type_string(bc))
+        bounds = self.problem.geometry.get_bounds()
+        x_min = np.asarray(bounds[0], dtype=float)
+        x_max = np.asarray(bounds[1], dtype=float)
+        span = x_max - x_min
+
+        def _fold(points: np.ndarray) -> np.ndarray:
+            """Fold departure coordinates (``(..., d)``) back into ``[x_min, x_max]``."""
+            if bc_op == "reflect":
+                return reflect_into_domain(points, x_min, x_max)
+            if bc_op == "wrap":
+                return x_min + (points - x_min) % span
+            return np.clip(points, x_min, x_max)
+
+        # Diagonal volatility sigma_ax (SDE volatility), as in the stochastic SL path.
+        sigma = self.problem.sigma
+        if isinstance(sigma, np.ndarray):
+            sigma_diag = np.asarray(sigma, dtype=float).ravel()
+            if sigma_diag.size != d:
+                raise ValueError(
+                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
+                    f"Full-tensor sigma not supported by canonical CS SL."
+                )
+        else:
+            sigma_diag = np.full(d, float(sigma))
+
+        H_class = self.problem.hamiltonian_class
+        # Allow up to 4x natural-traversal speed (scale-invariant heuristic, per the
+        # validated prototype): alpha is bounded by 4 * domain_length / T per axis.
+        alpha_bound = 4.0 * span / float(self.problem.T)
+
+        if d == 1:
+            Nx = len(U_next)
+            diff_off = float(sigma_diag[0]) * sqrt_dt
+            bound = float(alpha_bound[0])
+
+            # h_i = H(x_i, m_i, p=0, t_n): potential + coupling, single-source via H_class.
+            if H_class is not None:
+                x_batch = self.x_grid.reshape(-1, 1)
+                p_zero = np.zeros((Nx, 1))
+                h = eval_H_batch(H_class, x_batch, M_next, p_zero, t_n).ravel()
+            else:
+                h = np.zeros(Nx)
+
+            # Build the monotone (Q1/linear) interpolant once per backward step.
+            interp_fn = interp1d(self.x_grid, U_next, kind="linear", bounds_error=False, fill_value="extrapolate")
+
+            U_current = np.empty(Nx)
+            for i in range(Nx):
+                x_i = float(self.x_grid[i])
+                h_i = float(h[i])
+
+                def phi(alpha: float, _xi: float = x_i, _hi: float = h_i) -> float:
+                    y_drift = _xi + alpha * dt
+                    feet = _fold(np.array([[y_drift + diff_off], [y_drift - diff_off]]))
+                    u_pm = interp_fn(feet[:, 0])
+                    return 0.5 * dt * alpha * alpha - dt * _hi + 0.5 * float(u_pm[0] + u_pm[1])
+
+                res = minimize_scalar(phi, bounds=(-bound, bound), method="bounded", options={"xatol": self.tolerance})
+                # u^n(x_i) = phi(alpha*) (the DPP value at the implicit optimizer).
+                U_current[i] = float(res.fun)
+
+            return U_current
+
+        # --- nD: per-node vector minimization over the control alpha in R^d ---
+        if U_next.ndim == 1:
+            total_points = U_next.size
+            expected_full = int(np.prod(self._grid_shape))
+            grid_shape = (
+                tuple(self._grid_shape) if total_points == expected_full else tuple(n - 1 for n in self._grid_shape)
+            )
+            U_shaped = U_next.reshape(grid_shape)
+            M_shaped = M_next.reshape(grid_shape)
+            flat_input = True
+        else:
+            U_shaped = U_next
+            M_shaped = M_next
+            grid_shape = U_shaped.shape
+            flat_input = False
+
+        grid_coords = tuple(self.grid.coordinates)
+        interp_fn = RegularGridInterpolator(grid_coords, U_shaped, method="linear", bounds_error=False, fill_value=None)
+
+        # The 2*d departure offsets: +/- sigma_ax * sqrt(dt) along each axis -> (2d, d).
+        axis_offsets = np.diag(sigma_diag * sqrt_dt)  # (d, d), row k = offset along axis k
+        depart_offsets = np.concatenate([axis_offsets, -axis_offsets], axis=0)  # (2d, d)
+
+        # h batch over all nodes: h(x_i, m_i) = H(x_i, m_i, p=0, t_n).
+        mesh = np.meshgrid(*grid_coords, indexing="ij")
+        x_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)  # (n_total, d)
+        if H_class is not None:
+            p_zero = np.zeros((x_flat.shape[0], d))
+            h_flat = eval_H_batch(H_class, x_flat, M_shaped.ravel(), p_zero, t_n).ravel()
+        else:
+            h_flat = np.zeros(x_flat.shape[0])
+
+        box = [(-float(alpha_bound[ax]), float(alpha_bound[ax])) for ax in range(d)]
+        U_current = np.empty(grid_shape)
+        for flat_i, multi_idx in enumerate(np.ndindex(grid_shape)):
+            x_i = x_flat[flat_i]
+            h_i = float(h_flat[flat_i])
+
+            def phi_nd(alpha_vec: np.ndarray, _xi: np.ndarray = x_i, _hi: float = h_i) -> float:
+                drift = _xi + np.asarray(alpha_vec) * dt  # (d,)
+                feet = _fold(drift[None, :] + depart_offsets)  # (2d, d)
+                u_pm = interp_fn(feet)  # (2d,)
+                return 0.5 * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
+
+            res = minimize(
+                phi_nd,
+                np.zeros(d),
+                bounds=box,
+                method="L-BFGS-B",
+                options={"ftol": self.tolerance, "maxiter": 100},
+            )
+            U_current[multi_idx] = float(res.fun)
+
         return U_current.ravel() if flat_input else U_current
 
     # === L-based DPP formulation (Issue #909) ===
@@ -2279,6 +2520,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "_apply_diffusion should not be called when diffusion_method='stochastic'. "
                 "The Carlini-Silva 2014 SL update incorporates diffusion via 2d "
                 "stochastic departure points, replacing the operator-splitting "
+                "diffusion step. Check dispatch in _solve_timestep_semi_lagrangian."
+            )
+
+        elif self.diffusion_method == "canonical_cs":
+            # Issue #1058: canonical CS (implicit-alpha* DPP) bakes diffusion into the
+            # per-point DPP minimization via 2d stochastic departure points, just like
+            # 'stochastic'. Reaching this branch indicates broken dispatch.
+            raise NotImplementedError(
+                "_apply_diffusion should not be called when diffusion_method='canonical_cs'. "
+                "The canonical Carlini-Silva 2014 SL update (implicit-alpha* DPP) incorporates "
+                "diffusion via 2d stochastic departure points, replacing the operator-splitting "
                 "diffusion step. Check dispatch in _solve_timestep_semi_lagrangian."
             )
 
