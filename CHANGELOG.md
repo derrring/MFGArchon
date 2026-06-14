@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Vectorized the semi-Lagrangian canonical Carlini-Silva per-point optimization** (PR #PRNUM).
+  `HJBSemiLagrangianSolver._canonical_cs_step` (`diffusion_method="canonical_cs"`, Issue #1058) in
+  1D previously minimized the per-node DPP objective `phi(alpha)` with a Python loop calling
+  `scipy.optimize.minimize_scalar` (Brent) once per grid node. The loop is replaced by a single
+  fixed-iteration **vectorized golden-section search** that solves all nodes' independent 1D
+  bounded minimizations simultaneously via array ops (one batched interpolation per iteration
+  instead of `Nx` separate scalar solves). Iteration count is set to reach the same bracket
+  tolerance (`self.tolerance`) as the Brent call it replaces. This changes the optimizer (not
+  byte-identical), but accuracy is preserved: the canonical-CS gates pass unchanged and the
+  Hopf-Lax analytic L2 error is identical to 7 significant figures. Measured 1D solve speedup of
+  13× (Nx=101) to 40× (Nx=401), growing with grid size. nD (vector control, L-BFGS-B per node) is
+  unchanged.
+
 ## [0.20.0] - 2026-06-14
 
 ### Added

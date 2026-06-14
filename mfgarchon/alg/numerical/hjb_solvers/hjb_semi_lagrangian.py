@@ -1579,9 +1579,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         convention $\partial_t u = H - \tfrac{\sigma^2}{2}\Delta u$ used throughout this solver:
         the running Lagrangian is $L = \tfrac12|\alpha|^2 - h$ (Legendre dual of $H$).
 
-        The minimization is per node (``scipy.optimize.minimize_scalar`` Brent in 1D,
-        ``scipy.optimize.minimize`` L-BFGS-B in nD) -- the cost CS trade for unconditional
-        stability. Diffusion enters through the $2d$ Brownian departures (added variance
+        The minimization is over the control at each node (1D: a vectorized fixed-iteration
+        golden-section search solving all nodes' independent 1D problems at once;
+        nD: ``scipy.optimize.minimize`` L-BFGS-B per node) -- the cost CS trade for
+        unconditional stability. Diffusion enters through the $2d$ Brownian departures (added variance
         $\sigma^2\mathrm{d}t$ per step), so no operator-splitting diffusion solve is used
         (``_apply_diffusion`` is bypassed, as for ``"stochastic"``). The scheme targets
         reflecting / no-flux (Neumann) boundaries (the CS 2014 setting); the reflected
@@ -1620,8 +1621,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         Reuses the stochastic-SL departure-point machinery (diagonal volatility, boundary fold)
         but replaces the explicit ``alpha* = -grad u`` drift with a per-node minimizer of the
-        DPP objective ``phi(alpha)``. 1D uses Brent (``minimize_scalar``); nD uses L-BFGS-B
-        (``minimize``) over the control vector.
+        DPP objective ``phi(alpha)``. 1D uses a vectorized fixed-iteration golden-section search
+        that minimizes all nodes' independent 1D problems simultaneously; nD uses L-BFGS-B
+        (``minimize``) per node over the control vector.
         """
         from scipy.interpolate import RegularGridInterpolator, interp1d
 
@@ -1679,22 +1681,49 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Build the monotone (Q1/linear) interpolant once per backward step.
             interp_fn = interp1d(self.x_grid, U_next, kind="linear", bounds_error=False, fill_value="extrapolate")
 
-            U_current = np.empty(Nx)
-            for i in range(Nx):
-                x_i = float(self.x_grid[i])
-                h_i = float(h[i])
+            # Vectorized per-node DPP minimization. All Nx nodes solve the SAME 1D objective
+            # phi_i(alpha) up to the per-node offset (x_i, h_i); the prior per-point
+            # ``minimize_scalar`` (Brent) loop is replaced by one fixed-iteration
+            # golden-section search carried over the whole alpha array, so each iteration is a
+            # single batched interpolation of all nodes' feet instead of Nx separate scipy
+            # calls. phi is unimodal in the same sense Brent assumes (convex 0.5*dt*alpha^2
+            # term plus the monotone Q1 interpolant of u^{n+1}); golden section localizes the
+            # minimizer with the same bracket tolerance as Brent's ``xatol``.
+            def phi_vec(alpha: np.ndarray) -> np.ndarray:
+                """phi over all nodes for a per-node control array (shape (Nx,))."""
+                y_drift = self.x_grid + alpha * dt
+                feet_plus = _fold((y_drift + diff_off).reshape(-1, 1)).ravel()
+                feet_minus = _fold((y_drift - diff_off).reshape(-1, 1)).ravel()
+                u_pm = 0.5 * (interp_fn(feet_plus) + interp_fn(feet_minus))
+                return 0.5 * dt * alpha * alpha - dt * h + u_pm
 
-                def phi(alpha: float, _xi: float = x_i, _hi: float = h_i) -> float:
-                    y_drift = _xi + alpha * dt
-                    feet = _fold(np.array([[y_drift + diff_off], [y_drift - diff_off]]))
-                    u_pm = interp_fn(feet[:, 0])
-                    return 0.5 * dt * alpha * alpha - dt * _hi + 0.5 * float(u_pm[0] + u_pm[1])
+            invphi = (np.sqrt(5.0) - 1.0) / 2.0  # 0.618...
+            invphi2 = 1.0 - invphi  # 0.382...
+            a = np.full(Nx, -bound)
+            b = np.full(Nx, bound)
+            # Iterations to shrink the bracket from width 2*bound to xatol=self.tolerance,
+            # matching the convergence target of the Brent call this replaces.
+            width0 = 2.0 * bound
+            n_iter = max(1, int(np.ceil(np.log(self.tolerance / width0) / np.log(invphi))))
+            x1 = a + invphi2 * (b - a)
+            x2 = a + invphi * (b - a)
+            f1 = phi_vec(x1)
+            f2 = phi_vec(x2)
+            for _ in range(n_iter):
+                mask = f1 < f2  # min in [a, x2]; else min in [x1, b]
+                new_a = np.where(mask, a, x1)
+                new_b = np.where(mask, x2, b)
+                new_x1 = np.where(mask, new_a + invphi2 * (new_b - new_a), x2)
+                new_x2 = np.where(mask, x1, new_a + invphi * (new_b - new_a))
+                # One new interior point per node (the other is carried with its value).
+                eval_point = np.where(mask, new_x1, new_x2)
+                f_eval = phi_vec(eval_point)
+                new_f1 = np.where(mask, f_eval, f2)
+                new_f2 = np.where(mask, f1, f_eval)
+                a, b, x1, x2, f1, f2 = new_a, new_b, new_x1, new_x2, new_f1, new_f2
 
-                res = minimize_scalar(phi, bounds=(-bound, bound), method="bounded", options={"xatol": self.tolerance})
-                # u^n(x_i) = phi(alpha*) (the DPP value at the implicit optimizer).
-                U_current[i] = float(res.fun)
-
-            return U_current
+            # u^n(x_i) = phi(alpha*): the lowest evaluated DPP value at the implicit optimizer.
+            return np.minimum(f1, f2)
 
         # --- nD: per-node vector minimization over the control alpha in R^d ---
         if U_next.ndim == 1:
