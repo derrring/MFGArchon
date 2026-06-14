@@ -159,7 +159,7 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     needs: import-validation
-    timeout-minutes: 40  # Increased for comprehensive test suite (1450+ tests)
+    timeout-minutes: 45  # Comprehensive serial test suite (~4770 tests; see PR step budget below)
 
     strategy:
       fail-fast: true  # Stop on first failure
@@ -188,7 +188,7 @@ jobs:
 
     - name: Run tests with coverage (skip slow tests on PRs)
       if: github.event_name != 'release'
-      timeout-minutes: 30
+      timeout-minutes: 38  # serial suite (~4770 tests) under coverage; grew past the old 30-min budget
       run: |
         # Note: test_backends/ and test_visualization/ excluded due to platform-specific failures
         # (MPS device tests on non-Mac, legacy plotting issues)
