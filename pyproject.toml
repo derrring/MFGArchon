@@ -128,6 +128,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark",
+    "pytest-xdist>=3.5",
     "ruff>=0.6.0",
     "mypy>=1.5",
     "pre-commit>=2.0",
@@ -234,6 +235,7 @@ module = [
     "texttable.*",
     "cvxpy.*",
     "osqp.*",
+    "yaml.*",
 ]
 ignore_missing_imports = true
 
