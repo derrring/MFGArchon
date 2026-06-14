@@ -161,6 +161,7 @@ def _solve_terminal_density(problem, g, iters=3):
 class TestGate4RingEquilibrium:
     """Non-local repulsion depletes the centre and spreads density outward."""
 
+    @pytest.mark.slow  # coupled FixedPointIterator solve; deselected on PR-CI (30-min budget)
     def test_central_depletion_and_outward_spread(self):
         prob_attract, g = _ring_problem(grid_only=True)
         m_attract = _solve_terminal_density(prob_attract, g)
