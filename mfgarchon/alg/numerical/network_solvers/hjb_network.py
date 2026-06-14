@@ -29,7 +29,6 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
-from mfgarchon.utils.deprecation import deprecated_parameter
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
@@ -98,21 +97,12 @@ class NetworkHJBSolver(BaseHJBSolver):
         for i in range(self.num_nodes):
             self.gradient_ops[i] = self.network_problem.get_node_neighbors(i)
 
-    @deprecated_parameter(param_name="M_density_evolution_from_FP", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="M_density_evolution", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="U_final_condition_at_T", since="v0.17.0", replacement="U_terminal")
-    @deprecated_parameter(param_name="U_from_prev_picard", since="v0.17.0", replacement="U_coupling_prev")
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
-        # Deprecated parameter names for backward compatibility
-        M_density_evolution_from_FP: np.ndarray | None = None,
-        U_final_condition_at_T: np.ndarray | None = None,
-        U_from_prev_picard: np.ndarray | None = None,
-        M_density_evolution: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Solve HJB system on network with given density evolution.
@@ -122,47 +112,10 @@ class NetworkHJBSolver(BaseHJBSolver):
             U_terminal: Terminal condition u(T, i)
             U_coupling_prev: Previous Picard iterate for coupling
             volatility_field: Diffusion coefficient (not yet used in network solver)
-            M_density_evolution_from_FP: DEPRECATED, use M_density
-            U_final_condition_at_T: DEPRECATED, use U_terminal
-            U_from_prev_picard: DEPRECATED, use U_coupling_prev
-            M_density_evolution: DEPRECATED, use M_density
 
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
-        # Handle deprecated parameter redirects
-        if M_density_evolution_from_FP is not None:
-            if M_density is not None:
-                raise ValueError(
-                    "Cannot specify both M_density and M_density_evolution_from_FP. "
-                    "Use M_density (M_density_evolution_from_FP is deprecated)."
-                )
-            M_density = M_density_evolution_from_FP
-
-        if M_density_evolution is not None:
-            if M_density is not None:
-                raise ValueError(
-                    "Cannot specify both M_density and M_density_evolution. "
-                    "Use M_density (M_density_evolution is deprecated)."
-                )
-            M_density = M_density_evolution
-
-        if U_final_condition_at_T is not None:
-            if U_terminal is not None:
-                raise ValueError(
-                    "Cannot specify both U_terminal and U_final_condition_at_T. "
-                    "Use U_terminal (U_final_condition_at_T is deprecated)."
-                )
-            U_terminal = U_final_condition_at_T
-
-        if U_from_prev_picard is not None:
-            if U_coupling_prev is not None:
-                raise ValueError(
-                    "Cannot specify both U_coupling_prev and U_from_prev_picard. "
-                    "Use U_coupling_prev (U_from_prev_picard is deprecated)."
-                )
-            U_coupling_prev = U_from_prev_picard
-
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -285,56 +238,14 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         # Current policy (action for each node)
         self.current_policy: dict[int, int] = {}
 
-    @deprecated_parameter(param_name="M_density_evolution_from_FP", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="M_density_evolution", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="U_final_condition_at_T", since="v0.17.0", replacement="U_terminal")
-    @deprecated_parameter(param_name="U_from_prev_picard", since="v0.17.0", replacement="U_coupling_prev")
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
-        # Deprecated parameter names for backward compatibility
-        M_density_evolution_from_FP: np.ndarray | None = None,
-        U_final_condition_at_T: np.ndarray | None = None,
-        U_from_prev_picard: np.ndarray | None = None,
-        M_density_evolution: np.ndarray | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration."""
-        # Handle deprecated parameter redirects
-        if M_density_evolution_from_FP is not None:
-            if M_density is not None:
-                raise ValueError(
-                    "Cannot specify both M_density and M_density_evolution_from_FP. "
-                    "Use M_density (M_density_evolution_from_FP is deprecated)."
-                )
-            M_density = M_density_evolution_from_FP
-
-        if M_density_evolution is not None:
-            if M_density is not None:
-                raise ValueError(
-                    "Cannot specify both M_density and M_density_evolution. "
-                    "Use M_density (M_density_evolution is deprecated)."
-                )
-            M_density = M_density_evolution
-
-        if U_final_condition_at_T is not None:
-            if U_terminal is not None:
-                raise ValueError(
-                    "Cannot specify both U_terminal and U_final_condition_at_T. "
-                    "Use U_terminal (U_final_condition_at_T is deprecated)."
-                )
-            U_terminal = U_final_condition_at_T
-
-        if U_from_prev_picard is not None:
-            if U_coupling_prev is not None:
-                raise ValueError(
-                    "Cannot specify both U_coupling_prev and U_from_prev_picard. "
-                    "Use U_coupling_prev (U_from_prev_picard is deprecated)."
-                )
-            U_coupling_prev = U_from_prev_picard
-
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")

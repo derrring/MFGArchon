@@ -136,16 +136,6 @@ class HJBFDMSolver(BaseHJBSolver):
     _honors_multipop_hamiltonian_override = True
 
     @deprecated_parameter(
-        param_name="NiterNewton",
-        since="v0.16.0",
-        replacement="max_newton_iterations",
-    )
-    @deprecated_parameter(
-        param_name="l2errBoundNewton",
-        since="v0.16.0",
-        replacement="newton_tolerance",
-    )
-    @deprecated_parameter(
         param_name="damping_factor",
         since="v0.19.2",
         replacement="relaxation",
@@ -160,9 +150,7 @@ class HJBFDMSolver(BaseHJBSolver):
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
         on_newton_failure: NewtonFailurePolicy = "raise",
-        # Deprecated parameters (decorator handles warnings)
-        NiterNewton: int | None = None,
-        l2errBoundNewton: float | None = None,
+        # Deprecated parameter (decorator handles warnings)
         damping_factor: float | None = None,
         backend: str | None = None,
     ):
@@ -207,11 +195,7 @@ class HJBFDMSolver(BaseHJBSolver):
         self.advection_scheme = advection_scheme
         self.use_upwind = advection_scheme == "gradient_upwind"
 
-        # Redirect deprecated parameters (decorator handles warnings)
-        if NiterNewton is not None:
-            max_newton_iterations = max_newton_iterations or NiterNewton
-        if l2errBoundNewton is not None:
-            newton_tolerance = newton_tolerance or l2errBoundNewton
+        # Redirect deprecated parameter (decorator handles warnings)
         if damping_factor is not None:
             relaxation = damping_factor
 
@@ -354,36 +338,6 @@ class HJBFDMSolver(BaseHJBSolver):
             pass  # Not enough info to compute CFL — skip silently
 
     @deprecated_parameter(
-        param_name="M_density_evolution",
-        since="v0.17.0",
-        replacement="M_density",
-    )
-    @deprecated_parameter(
-        param_name="M_density_evolution_from_FP",
-        since="v0.17.0",
-        replacement="M_density",
-    )
-    @deprecated_parameter(
-        param_name="U_final_condition",
-        since="v0.17.0",
-        replacement="U_terminal",
-    )
-    @deprecated_parameter(
-        param_name="U_final_condition_at_T",
-        since="v0.17.0",
-        replacement="U_terminal",
-    )
-    @deprecated_parameter(
-        param_name="U_from_prev_picard",
-        since="v0.17.0",
-        replacement="U_coupling_prev",
-    )
-    @deprecated_parameter(
-        param_name="bc_values",
-        since="v0.17.0",
-        replacement="BCValueProvider in BoundaryConditions",
-    )
-    @deprecated_parameter(
         param_name="tensor_volatility_field",
         since="v0.18.7",
         replacement="volatility_field (pass (d,d) array or callable returning (d,d))",
@@ -395,17 +349,10 @@ class HJBFDMSolver(BaseHJBSolver):
         U_coupling_prev: NDArray | None = None,
         volatility_field: float | NDArray | None = None,
         tensor_volatility_field: NDArray | None = None,
-        bc_values: dict[str, float] | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         show_progress: bool | None = None,  # Issue #934
         # MMS verification support
         source_term: Callable | None = None,
-        # Deprecated parameter names for backward compatibility (decorators handle warnings)
-        M_density_evolution_from_FP: NDArray | None = None,
-        U_final_condition_at_T: NDArray | None = None,
-        U_from_prev_picard: NDArray | None = None,
-        M_density_evolution: NDArray | None = None,
-        U_final_condition: NDArray | None = None,
         *,
         hamiltonian_override=None,  # Issue #1157: multi-population cross-density bound H
     ) -> NDArray:
@@ -420,8 +367,6 @@ class HJBFDMSolver(BaseHJBSolver):
             U_coupling_prev: Previous coupling iteration estimate
             volatility_field: Diffusion coefficient (None uses problem.sigma)
             tensor_volatility_field: Tensor diffusion (Phase 3.0, not yet fully implemented)
-            bc_values: DEPRECATED. No longer used (kept for backward compatibility).
-                Adjoint-consistent BC is handled via BCValueProvider in BoundaryConditions.
 
         Note:
             For adjoint-consistent BC, use AdjointConsistentProvider in BCSegment.value
@@ -429,32 +374,6 @@ class HJBFDMSolver(BaseHJBSolver):
             providers each iteration via problem.using_resolved_bc(state).
             See mfgarchon/geometry/boundary/providers.py for details.
         """
-        # Handle deprecated parameter names (decorators handle warnings, keep redirect logic)
-        if M_density_evolution is not None:
-            if M_density is not None or M_density_evolution_from_FP is not None:
-                raise ValueError("Cannot specify M_density_evolution with M_density or M_density_evolution_from_FP")
-            M_density = M_density_evolution
-
-        if M_density_evolution_from_FP is not None:
-            if M_density is not None:
-                raise ValueError("Cannot specify both 'M_density' and deprecated 'M_density_evolution_from_FP'")
-            M_density = M_density_evolution_from_FP
-
-        if U_final_condition is not None:
-            if U_terminal is not None or U_final_condition_at_T is not None:
-                raise ValueError("Cannot specify U_final_condition with U_terminal or U_final_condition_at_T")
-            U_terminal = U_final_condition
-
-        if U_final_condition_at_T is not None:
-            if U_terminal is not None:
-                raise ValueError("Cannot specify both 'U_terminal' and deprecated 'U_final_condition_at_T'")
-            U_terminal = U_final_condition_at_T
-
-        if U_from_prev_picard is not None:
-            if U_coupling_prev is not None:
-                raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
-            U_coupling_prev = U_from_prev_picard
-
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -1439,9 +1358,9 @@ if __name__ == "__main__":
     U_prev = np.zeros((problem_1d.Nt + 1, problem_1d.Nx + 1))
 
     U_solution = solver_1d.solve_hjb_system(
-        M_density_evolution_from_FP=M_test,
-        U_final_condition_at_T=U_final,
-        U_from_prev_picard=U_prev,
+        M_density=M_test,
+        U_terminal=U_final,
+        U_coupling_prev=U_prev,
     )
 
     assert U_solution.shape == (problem_1d.Nt + 1, problem_1d.Nx + 1)

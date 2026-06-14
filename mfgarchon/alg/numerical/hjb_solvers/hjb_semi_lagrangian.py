@@ -33,7 +33,6 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     get_bc_type_string,
 )
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
 
@@ -783,19 +782,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Use InterpolationApplicator for dimension-agnostic BC enforcement
         return self.interp_bc_applicator.enforce_values(U, bc, time=time)
 
-    @deprecated_parameter(param_name="M_density_evolution_from_FP", since="v0.17.0", replacement="M_density")
-    @deprecated_parameter(param_name="U_final_condition_at_T", since="v0.17.0", replacement="U_terminal")
-    @deprecated_parameter(param_name="U_from_prev_picard", since="v0.17.0", replacement="U_coupling_prev")
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
-        # Deprecated parameter names for backward compatibility
-        M_density_evolution_from_FP: np.ndarray | None = None,
-        U_final_condition_at_T: np.ndarray | None = None,
-        U_from_prev_picard: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system using semi-Lagrangian method.
@@ -819,22 +811,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
-        # Handle deprecated parameter names (warnings issued by @deprecated_parameter decorator)
-        if M_density_evolution_from_FP is not None:
-            if M_density is not None:
-                raise ValueError("Cannot specify both 'M_density' and deprecated 'M_density_evolution_from_FP'")
-            M_density = M_density_evolution_from_FP
-
-        if U_final_condition_at_T is not None:
-            if U_terminal is not None:
-                raise ValueError("Cannot specify both 'U_terminal' and deprecated 'U_final_condition_at_T'")
-            U_terminal = U_final_condition_at_T
-
-        if U_from_prev_picard is not None:
-            if U_coupling_prev is not None:
-                raise ValueError("Cannot specify both 'U_coupling_prev' and deprecated 'U_from_prev_picard'")
-            U_coupling_prev = U_from_prev_picard
-
         # Issue #1316: the semi-Lagrangian solver reads diffusion from problem.sigma at
         # multiple scattered sites (the advection-diffusion split, ADI, Crank-Nicolson),
         # with no single sigma chokepoint to redirect. Honoring a volatility_field that

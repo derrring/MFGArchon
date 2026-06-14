@@ -78,54 +78,21 @@ class TestHJBFDMSolverInitialization:
         assert solver.max_newton_iterations == 50
         assert solver.newton_tolerance == 1e-8
 
-    def test_deprecated_parameters_niter(self):
-        """Test backward compatibility with deprecated NiterNewton parameter."""
+    def test_removed_NiterNewton_raises(self):
+        """v0.16 deprecation removed: NiterNewton= no longer in __init__ signature -> TypeError."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.warns(DeprecationWarning, match="Parameter.*NiterNewton.*deprecated"):
-            solver = HJBFDMSolver(problem, NiterNewton=40)
+        with pytest.raises(TypeError, match="NiterNewton"):
+            HJBFDMSolver(problem, NiterNewton=40)
 
-        assert solver.max_newton_iterations == 40
-
-    def test_deprecated_parameters_tolerance(self):
-        """Test backward compatibility with deprecated l2errBoundNewton parameter."""
+    def test_removed_l2errBoundNewton_raises(self):
+        """v0.16 deprecation removed: l2errBoundNewton= no longer in __init__ signature -> TypeError."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        with pytest.warns(DeprecationWarning, match="Parameter.*l2errBoundNewton.*deprecated"):
-            solver = HJBFDMSolver(problem, l2errBoundNewton=1e-5)
-
-        assert solver.newton_tolerance == 1e-5
-
-    def test_both_deprecated_parameters(self):
-        """Test backward compatibility with both deprecated parameters."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        with pytest.warns(DeprecationWarning, match="Parameter.*deprecated"):
-            solver = HJBFDMSolver(
-                problem,
-                NiterNewton=25,
-                l2errBoundNewton=1e-7,
-            )
-
-        assert solver.max_newton_iterations == 25
-        assert solver.newton_tolerance == 1e-7
-
-    def test_new_overrides_deprecated(self):
-        """Test that new parameters override deprecated ones."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        with pytest.warns(DeprecationWarning, match="Parameter.*NiterNewton.*deprecated"):
-            solver = HJBFDMSolver(
-                problem,
-                max_newton_iterations=60,
-                NiterNewton=25,  # Should be ignored
-            )
-
-        assert solver.max_newton_iterations == 60
+        with pytest.raises(TypeError, match="l2errBoundNewton"):
+            HJBFDMSolver(problem, l2errBoundNewton=1e-5)
 
     def test_invalid_max_iterations(self):
         """Test that invalid max_newton_iterations raises error."""
@@ -219,6 +186,33 @@ class TestHJBFDMSolverInitialization:
 
         with pytest.raises(ValueError, match="Invalid advection_scheme"):
             HJBFDMSolver(problem, advection_scheme="divergence_upwind")  # FP scheme
+
+
+class TestRemovedSolveHJBSystemKwargs:
+    """v0.17 deprecations removed: solve_hjb_system no longer accepts the legacy
+    density/terminal/coupling kwarg names or bc_values -> TypeError (unexpected kwarg)."""
+
+    @pytest.fixture(scope="class")
+    def solver(self):
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, components=_default_components())
+        return HJBFDMSolver(problem)
+
+    @pytest.mark.parametrize(
+        "kwarg",
+        [
+            "M_density_evolution_from_FP",
+            "M_density_evolution",
+            "U_final_condition_at_T",
+            "U_final_condition",
+            "U_from_prev_picard",
+            "bc_values",
+        ],
+    )
+    def test_removed_kwarg_raises_type_error(self, solver, kwarg):
+        """Each removed legacy kwarg now raises TypeError when passed to solve_hjb_system."""
+        with pytest.raises(TypeError, match=kwarg):
+            solver.solve_hjb_system(**{kwarg: None})
 
 
 class TestHJBFDMSolverSolveHJBSystem:
