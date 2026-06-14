@@ -45,11 +45,24 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 logger = get_logger(__name__)
+
+
+def _experimental_unavailable(detail: str) -> NotImplementedError:
+    """Build the Issue #1342 'experimental, not in this release' error."""
+    return NotImplementedError(
+        f"MFGDGMSolver is EXPERIMENTAL and not available in this release "
+        f"(Issue #1342): {detail}. Its solve logic exists but is unvalidated; "
+        f"track #1342 for completion."
+    )
+
+
 if TORCH_AVAILABLE:
 
     class MFGDGMSolver(BaseDGMSolver):
         """
         Deep Galerkin Method solver for Mean Field Games.
+
+        **Experimental — not production-ready (Issue #1342).**
 
         This solver uses neural network function approximation to solve
         high-dimensional MFG systems that are computationally intractable
@@ -82,6 +95,13 @@ if TORCH_AVAILABLE:
                 config: DGM configuration
                 **kwargs: Additional solver arguments
             """
+            # Issue #1342: EXPERIMENTAL solver demoted for v1.0 — block construction with a
+            # clear, actionable error. The original setup/solve implementation is preserved
+            # below (currently unreachable) for future completion under #1342.
+            raise _experimental_unavailable(
+                "construction is intentionally blocked because the required neural hooks "
+                "(build_networks, compute_loss, train_step, validate_solution) are not implemented"
+            )
             super().__init__(problem, config, **kwargs)
 
             # Setup device
@@ -90,6 +110,22 @@ if TORCH_AVAILABLE:
 
             # Log training setup
             self._log_training_setup()
+
+        # Issue #1342: abstract-method stubs. Overriding the abstract neural hooks
+        # makes the class concrete so construction reaches the clear __init__ guard
+        # above instead of the cryptic "Can't instantiate abstract class" TypeError.
+        # They remain unimplemented (experimental) and raise the same actionable error.
+        def build_networks(self) -> None:
+            raise _experimental_unavailable("the build_networks hook is not implemented")
+
+        def compute_loss(self, *args: Any, **kwargs: Any) -> dict[str, float]:
+            raise _experimental_unavailable("the compute_loss hook is not implemented")
+
+        def train_step(self) -> dict[str, float]:
+            raise _experimental_unavailable("the train_step hook is not implemented")
+
+        def validate_solution(self) -> dict[str, float]:
+            raise _experimental_unavailable("the validate_solution hook is not implemented")
 
         def _setup_neural_networks(self) -> None:
             """Setup neural networks for value and density approximation."""

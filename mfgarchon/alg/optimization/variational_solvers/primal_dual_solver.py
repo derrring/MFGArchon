@@ -45,9 +45,20 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 
+def _experimental_unavailable(detail: str) -> NotImplementedError:
+    """Build the Issue #1342 'experimental, not in this release' error."""
+    return NotImplementedError(
+        f"PrimalDualMFGSolver is EXPERIMENTAL and not available in this release "
+        f"(Issue #1342): {detail}. Its solve logic exists but is unvalidated; "
+        f"track #1342 for completion."
+    )
+
+
 class PrimalDualMFGSolver(BaseVariationalSolver):
     """
     Primal-dual solver for constrained Lagrangian MFG problems.
+
+    **Experimental — not production-ready (Issue #1342).**
 
     Uses augmented Lagrangian method with automatic dual variable updates:
     L(m,v,λ,μ) = J[m,v] + ⟨λ, constraints⟩ + ρ/2 ||constraints||²
@@ -79,6 +90,14 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
             use_adaptive_penalty: Automatically adjust penalty parameter
             constraint_tolerance: Tolerance for constraint satisfaction
         """
+        # Issue #1342: EXPERIMENTAL solver demoted for v1.0 — block construction with a
+        # clear, actionable error BEFORE super().__init__ (which also reaches an
+        # unimplemented problem.geometry path). The original implementation is preserved
+        # below (currently unreachable) for future completion under #1342.
+        raise _experimental_unavailable(
+            "construction is intentionally blocked because the required solver hooks "
+            "(compute_objective, compute_gradient, validate_solution) are not implemented"
+        )
         super().__init__(problem)
         self.solver_name = "PrimalDualMFG"
 
@@ -107,6 +126,19 @@ class PrimalDualMFGSolver(BaseVariationalSolver):
         logger.info(f"  Dual update: {dual_update_method}")
         logger.info(f"  Initial penalty: {augmented_penalty}")
         logger.info(f"  Adaptive penalty: {use_adaptive_penalty}")
+
+    # Issue #1342: abstract-method stubs. Overriding the abstract hooks makes the
+    # class concrete so construction reaches the clear __init__ guard above instead
+    # of the cryptic "Can't instantiate abstract class" TypeError. They remain
+    # unimplemented (experimental) and raise the same actionable error.
+    def compute_objective(self, variables: Any) -> float:
+        raise _experimental_unavailable("the compute_objective hook is not implemented")
+
+    def compute_gradient(self, variables: Any) -> Any:
+        raise _experimental_unavailable("the compute_gradient hook is not implemented")
+
+    def validate_solution(self) -> dict[str, float]:
+        raise _experimental_unavailable("the validate_solution hook is not implemented")
 
     def solve(  # type: ignore[override]
         self,

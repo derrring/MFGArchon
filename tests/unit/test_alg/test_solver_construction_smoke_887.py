@@ -1,15 +1,14 @@
 """
-Construction + basic-solve smoke tests for the optimisation / DGM solver
-families (Phase B of issue #887).
+Construction smoke tests for the optimisation / DGM solver families
+(Phase B of issue #887; demote pinned by issue #1342).
 
 Background
 ----------
 #887 lists several "concrete" solver classes that had zero dedicated test
 coverage.  The PINN family (HJB/FP/MFG PINN) is already covered by
-``test_pinn_all_solvers_construct_1314.py`` and ``test_pinn_init_chain_1290.py``
-— those construct tests previously surfaced the #1290 / #1314 ``__init__``
-crashes.  This file adds the same kind of cheap construction gate for the
-*remaining* untested solver families:
+``test_pinn_all_solvers_construct_1314.py`` and ``test_pinn_init_chain_1290.py``.
+This file adds the same kind of cheap construction gate for the *remaining*
+untested solver families:
 
   * ``SinkhornMFGSolver``      (optimal transport)
   * ``WassersteinMFGSolver``   (optimal transport)
@@ -18,43 +17,42 @@ crashes.  This file adds the same kind of cheap construction gate for the
   * ``MFGDGMSolver``           (Deep Galerkin Method; the concrete
                                 ``BaseDGMSolver`` subclass)
 
-NEWLY-SURFACED BUG (xfail below)
---------------------------------
-Every one of these classes is currently **un-instantiable**.  The
-"Phase 1: Algorithm Reorganization Foundation" refactor (commit ``c8f12ad9``,
-2025-09-29) added ``@abstractmethod`` hooks on the shared base classes:
+DEMOTE TO EXPERIMENTAL (#1342)
+------------------------------
+The "Phase 1: Algorithm Reorganization Foundation" refactor (commit
+``c8f12ad9``, 2025-09-29) added ``@abstractmethod`` hooks on the shared base
+classes:
 
   * ``BaseMFGSolver.validate_solution``
   * ``BaseOptimizationSolver.compute_objective`` / ``compute_gradient``
   * ``BaseNeuralSolver.build_networks`` / ``compute_loss`` / ``train_step``
 
 The optimisation and DGM subclasses were never updated to implement them, so
-``SolverCls(problem)`` raises::
+for ~9 months ``SolverCls(problem)`` raised the cryptic::
 
     TypeError: Can't instantiate abstract class <Solver> without an
-    implementation for abstract methods 'compute_gradient',
-    'compute_objective', 'validate_solution'
+    implementation for abstract methods ...
 
-(`MFGDGMSolver` is missing ``build_networks``/``compute_loss``/``train_step``/
-``validate_solution`` instead.)  These solvers have full ``solve()`` bodies,
-configs and result dataclasses, so they are clearly *intended* to be concrete
-— the abstract-method gap is a latent bug, not a deliberate design.
+These five solvers have full ``solve()`` bodies but the hooks are unimplemented
+and there is no reference to validate them, so the v1.0 decision (#1342) is to
+**demote them to clearly-experimental**, not to complete them.  Each now:
 
-The construction tests below are therefore marked ``xfail(strict=True,
-raises=TypeError)``: they pass (as XFAIL) today, pin the exact current failure,
-and will flip to a hard failure the moment a solver is made constructible —
-forcing the stale ``xfail`` to be removed and a real solve smoke test to be
-added.
+  * carries a "**Experimental — not production-ready (Issue #1342).**" docstring;
+  * overrides the missing abstract hooks with stubs raising a clear
+    ``NotImplementedError`` (so the class is concrete, not abstract); and
+  * guards ``__init__`` so construction fails LOUD AND CLEAR with the same
+    actionable "experimental ... #1342" message instead of the bare TypeError.
 
-A secondary defect is masked by the abstract-class TypeError and will only
-surface once the abstract methods are implemented: ``BaseVariationalSolver``
-reads ``problem.geometry.get_grid_shape()`` / ``get_grid_spacing()``, but
-``VariationalMFGProblem`` exposes ``xmin/xmax/Nx/x/dx`` and has no ``geometry``
-attribute.  The variational construction tests pass the intended
-``VariationalMFGProblem`` so the gate keeps failing until *both* defects are
-fixed.
+The tests below pin that clean demote: they assert construction raises a
+``NotImplementedError`` mentioning "experimental" and "#1342".  They flip to a
+hard failure the moment a solver is re-broken (bare TypeError) OR completed
+(constructs successfully) — either of which should be a deliberate, reviewed
+change that updates this pin.
 
-Refs #887 (Phase B; full numerical-correctness coverage remains).
+None of the five are wired into the production factory / ``NumericalScheme``
+dispatch; they are import-only experimental classes.
+
+Refs #887, #1342.
 """
 
 from __future__ import annotations
@@ -71,6 +69,23 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 pytestmark = pytest.mark.unit
+
+
+# ---------------------------------------------------------------------------
+# Shared assertion
+# ---------------------------------------------------------------------------
+
+
+def _assert_experimental_1342(excinfo: pytest.ExceptionInfo) -> None:
+    """The demote must surface a clear, actionable #1342 message.
+
+    Guards against regressing to the bare ``Can't instantiate abstract class``
+    TypeError (caught by ``raises=NotImplementedError``) and against a vague
+    message that omits the issue reference or the experimental status.
+    """
+    message = str(excinfo.value)
+    assert "#1342" in message, f"message must reference issue #1342, got: {message!r}"
+    assert "experimental" in message.lower(), f"message must say 'experimental', got: {message!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -108,45 +123,31 @@ def _make_variational_problem():
 # Optimal-transport solvers (POT-backed)
 # ---------------------------------------------------------------------------
 
-_ABSTRACT_OPT_REASON = (
-    "NEWLY-SURFACED BUG (#887): {cls} is abstract — BaseMFGSolver."
-    "validate_solution and BaseOptimizationSolver.compute_objective/"
-    "compute_gradient (added by the 2025-09-29 c8f12ad9 reorg) are never "
-    "implemented, so construction raises TypeError. Remove this xfail once the "
-    "abstract methods are implemented and add a real solve smoke test."
-)
 
-
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=_ABSTRACT_OPT_REASON.format(cls="SinkhornMFGSolver"),
-)
-def test_sinkhorn_mfg_solver_constructs():
-    """Tiny-grid construction of the Sinkhorn optimal-transport solver."""
+def test_sinkhorn_mfg_solver_experimental():
+    """Sinkhorn OT solver is demoted: construction raises a clear #1342 error."""
     from mfgarchon.alg.optimization.optimal_transport.sinkhorn_solver import (
         SinkhornMFGSolver,
         SinkhornSolverConfig,
     )
 
     config = SinkhornSolverConfig(num_time_steps=4, num_spatial_points=8)
-    SinkhornMFGSolver(_make_mfg_problem(), config=config)
+    with pytest.raises(NotImplementedError) as excinfo:
+        SinkhornMFGSolver(_make_mfg_problem(), config=config)
+    _assert_experimental_1342(excinfo)
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=_ABSTRACT_OPT_REASON.format(cls="WassersteinMFGSolver"),
-)
-def test_wasserstein_mfg_solver_constructs():
-    """Tiny-grid construction of the Wasserstein optimal-transport solver."""
+def test_wasserstein_mfg_solver_experimental():
+    """Wasserstein OT solver is demoted: construction raises a clear #1342 error."""
     from mfgarchon.alg.optimization.optimal_transport.wasserstein_solver import (
         WassersteinMFGSolver,
         WassersteinSolverConfig,
     )
 
     config = WassersteinSolverConfig(num_time_steps=4, num_spatial_points=8)
-    WassersteinMFGSolver(_make_mfg_problem(), config=config)
+    with pytest.raises(NotImplementedError) as excinfo:
+        WassersteinMFGSolver(_make_mfg_problem(), config=config)
+    _assert_experimental_1342(excinfo)
 
 
 # ---------------------------------------------------------------------------
@@ -154,28 +155,22 @@ def test_wasserstein_mfg_solver_constructs():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=_ABSTRACT_OPT_REASON.format(cls="VariationalMFGSolver"),
-)
-def test_variational_mfg_solver_constructs():
-    """Tiny construction of the direct variational solver."""
+def test_variational_mfg_solver_experimental():
+    """Direct variational solver is demoted: construction raises a clear #1342 error."""
     from mfgarchon.alg.optimization.variational_solvers import VariationalMFGSolver
 
-    VariationalMFGSolver(_make_variational_problem())
+    with pytest.raises(NotImplementedError) as excinfo:
+        VariationalMFGSolver(_make_variational_problem())
+    _assert_experimental_1342(excinfo)
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=_ABSTRACT_OPT_REASON.format(cls="PrimalDualMFGSolver"),
-)
-def test_primal_dual_mfg_solver_constructs():
-    """Tiny construction of the primal-dual variational solver."""
+def test_primal_dual_mfg_solver_experimental():
+    """Primal-dual variational solver is demoted: construction raises a clear #1342 error."""
     from mfgarchon.alg.optimization.variational_solvers import PrimalDualMFGSolver
 
-    PrimalDualMFGSolver(_make_variational_problem())
+    with pytest.raises(NotImplementedError) as excinfo:
+        PrimalDualMFGSolver(_make_variational_problem())
+    _assert_experimental_1342(excinfo)
 
 
 # ---------------------------------------------------------------------------
@@ -185,22 +180,12 @@ def test_primal_dual_mfg_solver_constructs():
 
 @pytest.mark.optional_torch
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=(
-        "NEWLY-SURFACED BUG (#887): MFGDGMSolver (the concrete BaseDGMSolver "
-        "subclass) is abstract — BaseNeuralSolver.build_networks/compute_loss/"
-        "train_step and BaseMFGSolver.validate_solution (added by the "
-        "2025-09-29 c8f12ad9 reorg) are never implemented, so construction "
-        "raises TypeError. Remove this xfail once the abstract methods are "
-        "implemented and add a real solve smoke test."
-    ),
-)
-def test_mfg_dgm_solver_constructs():
-    """Tiny construction of the Deep Galerkin Method MFG solver."""
+def test_mfg_dgm_solver_experimental():
+    """Deep Galerkin Method MFG solver is demoted: construction raises a clear #1342 error."""
     from mfgarchon.alg.neural.dgm.base_dgm import DGMConfig
     from mfgarchon.alg.neural.dgm.mfg_dgm_solver import MFGDGMSolver
 
     config = DGMConfig(hidden_layers=[8, 8])
-    MFGDGMSolver(_make_mfg_problem(), config=config)
+    with pytest.raises(NotImplementedError) as excinfo:
+        MFGDGMSolver(_make_mfg_problem(), config=config)
+    _assert_experimental_1342(excinfo)
