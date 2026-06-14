@@ -13,6 +13,19 @@ The cone closes the comparison-principle proof for the central GFDM scheme
 via per-edge absorption. Reference: forthcoming paper §sec:error_structure
 (Theorem `thm:joint_socp_feasibility`, Lemma `lem:wendland_stencil_ratio`).
 
+Scope of the guarantee (Issue #1074):
+    These constraints are enforced PER STENCIL — each collocation row's
+    off-diagonal Laplacian weights satisfy the sign/dominance constraints
+    in isolation. This does NOT in general guarantee that the ASSEMBLED HJB
+    iteration matrix (I/dt - D*L + alpha*D_grad) is an M-matrix: the signed
+    drift term alpha*D_grad can flip an off-diagonal positive once |alpha|
+    is large relative to the diffusion D (a Peclet-like condition). The
+    discrete maximum principle for the assembled system is therefore NOT
+    a-priori guaranteed by per-stencil feasibility. Use
+    `monotonicity_enforcer.verify_assembled_m_matrix(...)` (and the
+    `critical_drift_for_dmp(...)` threshold) to check the assembled M-matrix
+    / DMP property for a specific problem and discretization.
+
 Solver: cvxpy + CLARABEL.
 
 Implementation history: this module ports the audit-major

@@ -327,6 +327,16 @@ class HJBGFDMSolver(BaseHJBSolver):
                 - "joint_socp": (Phase 1B follow-up) joint SOCP — M-matrix on $-\\Delta_h$
                   + per-edge cone $\\|D_{ij}\\|_2 \\leq C h_i L_{ij}$, closing the discrete
                   comparison principle (audit-major contribution).
+                  Scope (Issue #1074): joint_socp enforces the M-matrix property PER
+                  STENCIL (each row's off-diagonals satisfy the sign/dominance
+                  constraints). This does NOT in general guarantee that the ASSEMBLED
+                  HJB iteration matrix $I/dt - D L + \\alpha D_{grad}$ is an M-matrix:
+                  the signed drift term can flip an off-diagonal positive at high
+                  Peclet, so the discrete maximum principle is not a-priori guaranteed
+                  by per-stencil feasibility. Use ``check_dmp=True`` (runtime warning)
+                  or ``monotonicity_enforcer.verify_assembled_m_matrix(...)`` to check
+                  the assembled M-matrix / DMP property for a specific problem and
+                  discretization.
                 Default: "none". (Renamed from qp_optimization_level in v0.18.0.)
             monotonicity_application: When the chosen scheme is enforced (only
                 meaningful for non-"none" schemes):
