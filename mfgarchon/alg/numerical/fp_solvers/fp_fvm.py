@@ -127,6 +127,17 @@ class FPFVMSolver(BaseFPSolver):
         self.boundary_conditions = self._resolve_boundary_conditions(boundary_conditions)
         self._bc_types = self._resolve_bc_types(self.boundary_conditions, self.dimension)
 
+        # Fail loud at construction (not at solve-time): the advective flux closure has no
+        # Dirichlet inflow handling (deferred, Issue #422 scope; the diffusion operator alone
+        # supports Dirichlet). Without this guard the solver would only raise from
+        # ``fp_fvm_flux.axis_flux_divergence`` once an advected solve is attempted.
+        from mfgarchon.geometry.boundary import BCType
+
+        if any(seg.bc_type == BCType.DIRICHLET for seg in self.boundary_conditions.segments):
+            raise NotImplementedError(
+                "FP FVM (v1) does not support Dirichlet BC (Issue #422 scope); use no_flux/neumann/periodic."
+            )
+
     # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
