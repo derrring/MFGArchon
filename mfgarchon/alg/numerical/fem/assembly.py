@@ -58,6 +58,8 @@ def create_basis(mesh: skfem.Mesh, order: int = 1) -> skfem.Basis:
         (skfem.MeshQuad, 2): skfem.ElementQuad2,
         (skfem.MeshQuad1, 1): skfem.ElementQuad1,
         (skfem.MeshQuad1, 2): skfem.ElementQuad2,
+        (skfem.MeshHex, 1): skfem.ElementHex1,  # Issue #470: 3D tensor-product family
+        (skfem.MeshHex, 2): skfem.ElementHex2,
         (skfem.MeshLine, 1): skfem.ElementLineP1,
         (skfem.MeshLine, 2): skfem.ElementLineP2,
         (skfem.MeshLine1, 1): skfem.ElementLineP1,
@@ -73,7 +75,7 @@ def create_basis(mesh: skfem.Mesh, order: int = 1) -> skfem.Basis:
     if element_cls is None:
         raise ValueError(
             f"No element for mesh type {type(mesh).__name__} with order {order}. "
-            f"Supported: P1 (order=1) and P2 (order=2) for Tri/Tet/Line/Quad."
+            f"Supported: P1 (order=1) and P2 (order=2) for Tri/Tet/Line/Quad/Hex."
         )
 
     return skfem.Basis(mesh, element_cls())

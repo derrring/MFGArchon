@@ -9,6 +9,36 @@ The key difference is array layout:
     MeshData:  vertices (N, dim), elements (M, nodes_per_elem)
     skfem:     nodes (dim, N),    elements (nodes_per_elem, M)
 
+Supported element families (Issue #470): line, triangle, quad (2D), tetrahedron,
+hexahedron (3D). The family is fixed by ``MeshData.element_type`` (forward) or the
+skfem mesh class (reverse). P1 and P2 Lagrange variants of each family map to the
+same ``element_type`` string; the polynomial order is chosen later in
+``assembly.create_basis``.
+
+Bring-your-own-mesh (no in-process gmsh dependency)
+---------------------------------------------------
+Complex unstructured meshes do not need an in-process mesh generator. mfgarchon
+relies on skfem's element families plus its mesh I/O, so the supported paths are:
+
+1. Structured / tensor-product meshes, gmsh-free::
+
+       import skfem, numpy as np
+       xs = np.linspace(0.0, 1.0, n)
+       mesh = skfem.MeshHex.init_tensor(xs, xs, xs)   # or MeshTet/MeshQuad/MeshTri
+       mesh_data = skfem_to_meshdata(mesh)            # -> MeshData -> FEM solve
+
+2. External mesher (gmsh, Cubit, ...) -> meshio file -> skfem (recommended for
+   complex unstructured geometry)::
+
+       # Generate `domain.msh` (or .vtk/.xdmf/...) in *any* external mesher.
+       mesh = skfem.Mesh.load("domain.msh")           # skfem reads via meshio
+       mesh_data = skfem_to_meshdata(mesh)            # -> MeshData -> FEM solve
+
+   ``skfem.Mesh.load`` uses meshio (already a dependency), so any meshio-supported
+   format works. This keeps gmsh an *out-of-process* tool: mfgarchon never imports
+   it. meshio's tetra/hexahedron cell names map onto the families above. Prism /
+   pyramid / mixed-element meshes are out of scope (see notes below and Issue #470).
+
 Issue #773 Phase 1: Core integration
 """
 
@@ -39,7 +69,7 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
         mesh_data: MFGarchon mesh with vertices, elements, and element_type.
 
     Returns:
-        scikit-fem Mesh object (MeshTri, MeshTet, MeshQuad, or MeshLine).
+        scikit-fem Mesh object (MeshTri, MeshTet, MeshQuad, MeshHex, or MeshLine).
 
     Raises:
         ValueError: If element_type is not supported.
@@ -55,6 +85,7 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
         "triangle": skfem.MeshTri,
         "tetrahedron": skfem.MeshTet,
         "quad": skfem.MeshQuad,
+        "hexahedron": skfem.MeshHex,  # Issue #470: 3D tensor-product family
         "line": skfem.MeshLine,
     }
 
@@ -119,6 +150,17 @@ def skfem_to_meshdata(mesh: skfem.Mesh) -> MeshData:
 
     # Map skfem mesh type to element string
     skfem = _import_skfem()
+    # Issue #470: hexahedron is the 3D tensor-product family. In skfem 12.0.1
+    # ``MeshHex is MeshHex1`` (linear), and ``MeshHex2`` (P2-geometry) subclasses it,
+    # so the ``MeshHex`` isinstance test below already catches both; ``MeshHex2`` is
+    # listed for parity with the explicit P1/P2 entries of the other families.
+    #
+    # Prism / wedge (skfem.MeshWedge1) is intentionally NOT mapped here. Its
+    # points+cells round-trip, but two issues block a clean mapping (deferred to a
+    # follow-up, see Issue #470): (1) skfem stores the wedge's triangular faces as
+    # degenerate 4-node quad facets (e.g. ``[0, 0, 2, 3]``), so ``boundary_faces``
+    # are lossy; (2) meshio's cell name is ``"wedge"``, not ``"prism"``, so the
+    # round-trip name through ``MeshData.to_meshio`` needs a maintainer decision.
     type_map = {
         skfem.MeshTri: "triangle",
         skfem.MeshTri1: "triangle",
@@ -126,6 +168,8 @@ def skfem_to_meshdata(mesh: skfem.Mesh) -> MeshData:
         skfem.MeshTet1: "tetrahedron",
         skfem.MeshQuad: "quad",
         skfem.MeshQuad1: "quad",
+        skfem.MeshHex: "hexahedron",
+        skfem.MeshHex2: "hexahedron",
         skfem.MeshLine: "line",
         skfem.MeshLine1: "line",
     }
