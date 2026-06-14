@@ -137,6 +137,17 @@ solver = create_accurate_solver(
 ```
 **Best for**: High-dimensional problems (d ≥ 4)
 
+#### Coupled-Newton Solver (`NewtonMFGSolver`)
+
+```python
+from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
+
+solver = NewtonMFGSolver(problem, hjb_solver, fp_solver)
+U, M, info = solver.solve()
+```
+
+⚠️ **Performance caveat**: `NewtonMFGSolver` is research-grade for d ≥ 2 / Nx > ~50 — it is **~135x slower** than the fixed-point (Picard) coupler in 2D and scales poorly with dimension and grid size. Prefer the fixed-point (Picard) coupler (`create_standard_solver`, Tier 2) or Howard for production coupled solves. Newton is appropriate for small 1D problems or research on the coupled-Newton method.
+
 ## Decision Tree
 
 ```

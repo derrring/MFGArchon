@@ -63,6 +63,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
         - Automatic Jacobian (finite diff or JAX)
         - Line search for globalization
 
+    Performance / solver selection:
+        NewtonMFGSolver is research-grade for d>=2 / Nx>~50 — it is ~135x slower
+        than the fixed-point (Picard) coupler in 2D and scales poorly with
+        dimension and grid size; prefer ``FixedPointIterator`` (Picard) or Howard
+        for production coupled solves. Newton is appropriate for small 1D problems
+        or research on the coupled-Newton method.
+
     Required Geometry Traits (Issue #596 Phase 2.3):
         This coupling solver requires trait-validated HJB and FP component solvers:
         - HJB solver must use geometry with SupportsGradient trait
