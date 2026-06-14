@@ -29,7 +29,6 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
-from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -389,15 +388,12 @@ class FPGFDMSolver(BaseFPSolver):
 
         return divergence
 
-    @deprecated_parameter(param_name="diffusion_field", since="v0.17.0", replacement="volatility_field")
     def solve_fp_system(
         self,
         m_initial_condition: np.ndarray,
         drift_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
-        # Deprecated parameter
-        diffusion_field: float | np.ndarray | Callable | None = None,
     ) -> np.ndarray:
         """
         Solve FP system on collocation points using GFDM.
@@ -421,7 +417,6 @@ class FPGFDMSolver(BaseFPSolver):
             volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.sigma.
                             Currently only scalar volatility supported.
                             Note: Internally converted to diffusion D = σ²/2 for FP equation.
-            diffusion_field: DEPRECATED. Use volatility_field instead.
             show_progress: Display progress bar (not yet implemented)
 
         Returns:
@@ -452,15 +447,6 @@ class FPGFDMSolver(BaseFPSolver):
         # Time discretization
         n_time_points = self.problem.Nt + 1
         dt = self.problem.T / self.problem.Nt
-
-        # Handle deprecated diffusion_field parameter (Issue #717)
-        if diffusion_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and diffusion_field. "
-                    "Use volatility_field (diffusion_field is deprecated)."
-                )
-            volatility_field = diffusion_field
 
         # Volatility coefficient (Issue #717: unified API)
         if volatility_field is None:

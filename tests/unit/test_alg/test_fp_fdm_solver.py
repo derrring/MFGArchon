@@ -1069,6 +1069,32 @@ class TestFPFDMSolverTensorDiffusion:
         assert np.allclose(masses, 1.0, atol=0.1)
 
 
+class TestFPFDMSolverRemovedDeprecatedParams:
+    """Pin removal of the Tier-2 (<=v0.17) FP-solver param renames.
+
+    ``m_initial_condition`` -> ``M_initial`` and ``diffusion_field`` -> ``volatility_field``
+    were deprecated in v0.17.0 and removed at v0.20 (3 minor versions past). Passing the old
+    names must now raise ``TypeError`` (unexpected keyword argument), not silently alias.
+    New-name coverage is retained by the rest of this module (positional ``M_initial`` and
+    ``volatility_field=``). The ``tensor_diffusion_field`` / ``volatility_matrix`` aliases are
+    intentionally NOT removed (no callable-tensor equivalent on ``volatility_field`` yet).
+    """
+
+    def test_m_initial_condition_removed(self, standard_problem):
+        solver = FPFDMSolver(standard_problem)
+        (Nx_points,) = standard_problem.geometry.get_grid_shape()
+        m0 = np.ones(Nx_points) / Nx_points
+        with pytest.raises(TypeError, match="m_initial_condition"):
+            solver.solve_fp_system(m_initial_condition=m0)
+
+    def test_diffusion_field_removed(self, standard_problem):
+        solver = FPFDMSolver(standard_problem)
+        (Nx_points,) = standard_problem.geometry.get_grid_shape()
+        m0 = np.ones(Nx_points) / Nx_points
+        with pytest.raises(TypeError, match="diffusion_field"):
+            solver.solve_fp_system(m0, diffusion_field=0.5)
+
+
 class TestFPFDMSolverCallableDrift:
     """Test callable (state-dependent) drift_field support (Phase 2 - Issue #487)."""
 
