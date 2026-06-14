@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-14
+
 ### Added
+
+- **Spatial interaction operators for non-local MFG coupling** (Issue #1023, PR #1348). New
+  `mfgarchon/operators/interaction/`: a `RadialKernel` ABC with `GaussianKernel` / `TentKernel` /
+  `WendlandKernel` (compact-support C²) / `DipoleKernel` / `PowerLawKernel`; a
+  `ConvolutionCouplingOperator` computing `(K * m)(x)` via FFT (`scipy.signal.fftconvolve`,
+  O(N log N)) with a direct-quadrature O(N²) fallback for validation (1D + 2D, periodic and
+  non-periodic); and an `EnergyFunctional` protocol with `QuadraticInteractionEnergy` /
+  `PotentialEnergy` / `CombinedEnergy`, each exposing an analytic `lions_derivative()`
+  (the functional derivative `δℱ/δm = K * m`). `create_lions_source` recognizes an
+  `EnergyFunctional` and uses its analytic derivative as the HJB source. Verified gates:
+  FFT-vs-direct agreement 1.7e-16; `lions_derivative` vs finite-difference `δℱ/δm` 2.4e-9;
+  Lions-bridge identity 2.2e-16; ring-equilibrium center depletion 2.3× under repulsive
+  non-local coupling.
+
+- **Hexahedral FEM element family** (Issue #470, PR #1347). The FEM `mesh_adapter` round-trips
+  `element_type='hexahedron'` → skfem `MeshHex`, and `assembly` adds `(MeshHex, 1) → ElementHex1`
+  and `(MeshHex, 2) → ElementHex2`, so a 3D hexahedral mesh (built gmsh-free via
+  `MeshHex.init_tensor`) runs the FEM solve path at P1 and P2. gmsh-based mesh *generation*
+  remains separately blocked (gmsh is not an installed dependency).
 
 - **Conservative Finite Volume Method (FVM) Fokker-Planck solver** (Issue #422). New
   `FPFVMSolver` (`mfgarchon/alg/numerical/fp_solvers/fp_fvm.py` + `fp_fvm_flux.py`) evolves cell
@@ -125,6 +146,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `0.5*sigma**2` sites tracked in #1189 (byte-identical migration).
 
 ### Changed
+
+- **Five un-instantiable solvers demoted to clearly-experimental** (Issue #1342, PR #1351).
+  `SinkhornMFGSolver`, `WassersteinMFGSolver`, `VariationalMFGSolver`, `PrimalDualMFGSolver`, and
+  `MFGDGMSolver` were missing required abstract-method implementations (broken since 2025-09-29)
+  and raised a cryptic `Can't instantiate abstract class` error. They now raise a clear
+  `NotImplementedError` naming them experimental and referencing #1342, are excluded from the
+  production factory / `NumericalScheme` dispatch, and are documented experimental. Their solve
+  logic is preserved but unvalidated; completing it remains open (#1342).
+
+- **Solver-selection performance guidance** (PR #1349). `NewtonMFGSolver` is documented as
+  research-grade for d ≥ 2 — ~135× slower than the fixed-point (Picard) coupler in 2D and scaling
+  poorly with dimension and grid size; prefer `FixedPointIterator` or Howard for production
+  coupled solves.
 
 - **Robin / Periodic FEM boundary conditions now fail loud** (Issue #1237). `apply_bc_to_fem_system`
   previously *warned and silently fell back to natural (Neumann) BC* for `BCType.ROBIN` — a
