@@ -128,9 +128,28 @@ def test_neumann_nonzero_flux():
     print(f"  ✓ Right: u_ghost = {u_ghost} (expected {expected})")
 
 
-@pytest.mark.xfail(reason="Pre-existing bug: Robin ghost cell test has wrong expected value formula")
 def test_robin():
-    """Test Robin ghost cell formula."""
+    """Test Robin ghost cell formula.
+
+    Cell-centered grid: the boundary lies at the cell face, with the ghost
+    cell center and the first interior cell center straddling it exactly ``dx``
+    apart (each ``dx/2`` from the face). Robin BC ``alpha*u + beta*du/dn = g``
+    discretizes as
+
+        value at face   u_face   = (u_ghost + u_interior) / 2
+        normal deriv    du/dn    = (u_ghost - u_interior) / dx   (cells dx apart)
+
+    giving ``alpha*(u_ghost+u_interior)/2 + beta*(u_ghost-u_interior)/dx = g``,
+    i.e. ``u_ghost*(alpha/2 + beta/dx) = g - u_interior*(alpha/2 - beta/dx)``.
+
+    The ``beta/dx`` factor (not ``beta/(2*dx)``) is required for consistency with
+    the ``(u_ghost+u_interior)/2`` value term, which commits to the face-midpoint
+    geometry where the two cells are ``dx`` apart. This matches the Dirichlet
+    sibling (``2*g - u_interior`` from the same face-midpoint average) and the
+    production fix in commit 0ae5515a. The previous expected formula used
+    ``beta/(2*dx)`` (the stale pre-fix factor), which xfailed against the
+    corrected production code (Refs #1237).
+    """
     print("\nTesting Robin...")
 
     applicator = TestApplicator(dimension=1, grid_type=GridType.CELL_CENTERED)
@@ -141,10 +160,10 @@ def test_robin():
     g = 1.0
     dx = 0.1
 
-    # Robin: u_ghost = (g - u_interior * (alpha/2 - beta/(2*dx))) / (alpha/2 + beta/(2*dx))
+    # Robin: u_ghost = (g - u_interior * (alpha/2 - beta/dx)) / (alpha/2 + beta/dx)
     u_ghost = applicator._compute_ghost_robin(u_interior, alpha, beta, g, dx, side="left")
-    coeff_ghost = alpha / 2.0 + beta / (2.0 * dx)
-    coeff_interior = alpha / 2.0 - beta / (2.0 * dx)
+    coeff_ghost = alpha / 2.0 + beta / dx
+    coeff_interior = alpha / 2.0 - beta / dx
     expected = (g - u_interior * coeff_interior) / coeff_ghost
     assert np.isclose(u_ghost, expected), f"Expected {expected}, got {u_ghost}"
     print(f"  ✓ u_ghost = {u_ghost} (expected {expected})")
