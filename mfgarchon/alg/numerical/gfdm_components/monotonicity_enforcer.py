@@ -878,12 +878,19 @@ def verify_assembled_m_matrix(
 ) -> dict[str, Any]:
     r"""Verify the M-matrix property of the *assembled* HJB iteration matrix (Issue #1074).
 
-    The per-stencil SOCP checks (:meth:`MonotonicityEnforcer.check_m_matrix`) verify the raw
-    Laplacian weights at each collocation point. They do **not** imply that the assembled
-    Newton iteration matrix $J = I/\Delta t - D\,L + \alpha\cdot D_{\mathrm{grad}}$ is an
-    M-matrix: the signed drift term $\alpha\cdot D_{\mathrm{grad}}$ can flip an off-diagonal
-    positive once $|\alpha|$ is large relative to $D$ (a Péclet-like condition; see
-    :func:`critical_drift_for_dmp`). This checks the assembled system directly.
+    This routine exists *precisely because* per-stencil SOCP feasibility is not the same as
+    the assembled-matrix M-matrix property (Issue #1074). The per-stencil SOCP checks
+    (:meth:`MonotonicityEnforcer.check_m_matrix`) verify the raw Laplacian weights at each
+    collocation point. They do **not** imply that the assembled Newton iteration matrix
+    $J = I/\Delta t - D\,L + \alpha\cdot D_{\mathrm{grad}}$ is an M-matrix: the signed drift
+    term $\alpha\cdot D_{\mathrm{grad}}$ can flip an off-diagonal positive once $|\alpha|$ is
+    large relative to $D$ (a Péclet-like condition; see :func:`critical_drift_for_dmp`). This
+    checks the assembled system directly.
+
+    The ``joint_socp`` scheme therefore does not provide an a-priori discrete-maximum-principle
+    (DMP) guarantee for the assembled system. The DMP claim for a *given* problem and
+    discretization should be backed by running this check (the scoped claim): a passing
+    ``is_m_matrix`` result certifies the assembled M-matrix / DMP property for that specific run.
 
     Args:
         matrix: Assembled iteration matrix (any scipy sparse format).
