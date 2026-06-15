@@ -192,7 +192,7 @@ with solver_progress(max_iterations=50, "HJB Solver") as progress:
 from mfgarchon.utils.solver_decorators import enhanced_solver_method
 
 class MySolver:
-    @enhanced_solver_method(auto_progress=True, timing=True)
+    @enhanced_solver_method(options=SolverMonitoringOptions.PROGRESS | SolverMonitoringOptions.TIMING)
     def solve(self, max_iterations=100, verbose=True):
         # Solver implementation
         # Progress tracking and timing added automatically
@@ -398,7 +398,7 @@ class MyAdvancedSolver(SolverProgressMixin):
         self.enable_progress(True)
         self.enable_timing(True)
     
-    @enhanced_solver_method(monitor_convergence=True, auto_progress=True)
+    @enhanced_solver_method(options=SolverMonitoringOptions.CONVERGENCE | SolverMonitoringOptions.PROGRESS)
     def solve(self, **kwargs):
         # Implementation automatically gets progress bars and timing
         return self._solve_implementation(**kwargs)

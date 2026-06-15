@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   13× (Nx=101) to 40× (Nx=401), growing with grid size. nD (vector control, L-BFGS-B per node) is
   unchanged.
 
+- **CI: blocking mypy gate on `mfgarchon/config` + parallel test runs** (PR #1358). Added a
+  blocking CI step running `mypy mfgarchon/config --follow-imports=silent` (0 errors — the
+  `config` subpackage is now type-clean and gated against regressions). Enabled `pytest-xdist`
+  (`-n auto`) for the PR test suite after confirming it reproduces the serial result exactly
+  (no test-isolation failures); `pytest-xdist>=3.5` added to the `dev` extra.
+
 ### Removed (BREAKING)
 
 - **Lowercase grid parameters removed** (deprecated v0.17.0, past 3-minor-version
@@ -67,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   equivalent yet for their callable-tensor routing, so they are not removal-ready. The
   `MFGProblem.diffusion_field` property and the `FPNetworkSolver` `m_initial_condition` deprecation
   are out of scope.
+- **Removed Tier-2 monitoring-family deprecations** (PR #1357). The deprecated boolean kwargs
+  `monitor_convergence` / `auto_progress` / `timing` on the `enhanced_solver_method` decorator are
+  removed — pass an `options=` flag instead, e.g.
+  `options=SolverMonitoringOptions.CONVERGENCE | SolverMonitoringOptions.PROGRESS`. The deprecated
+  convergence-monitor factories `create_default_monitor` / `create_stochastic_monitor` are removed;
+  use `create_rolling_monitor` / `create_distribution_monitor`. Passing the old names now raises.
 
 ## [0.20.0] - 2026-06-14
 
