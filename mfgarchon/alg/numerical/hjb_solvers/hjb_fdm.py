@@ -428,12 +428,28 @@ class HJBFDMSolver(BaseHJBSolver):
                 with suppress(AttributeError):
                     logger.debug(f"[DEBUG Issue #542] BC has {len(bc.segments)} segments")
 
-            # Issue #1157: when a cross-density bound Hamiltonian is supplied, force the batch
-            # Hamiltonian path (backend=None) — the per-point problem.H() fallback receives only
-            # a scalar own-population density and cannot express cross-population coupling. The
-            # batch path is numerically equivalent to the per-point path (Issue #789), so this
-            # changes nothing for single-population solves (override None => self.backend).
-            effective_backend = None if hamiltonian_override is not None else self.backend
+            # Route the 1D NumPy path onto the single-sourced batch assembly (backend=None).
+            #
+            # Issue #1157: a cross-density bound Hamiltonian forces backend=None — the per-point
+            # problem.H() fallback receives only a scalar own-population density and cannot
+            # express cross-population coupling.
+            #
+            # Issue #1071 (phase 2b): the DEFAULT single-population NumPy solve also routes
+            # through backend=None. With a NumPyBackend present, base_hjb takes the per-point
+            # fallback: a per-node problem.H() residual and a central FINITE-DIFFERENCE Jacobian
+            # of problem.H(). That FD Jacobian is noisy at the Godunov upwind kinks and stalls
+            # Newton short of tolerance. backend=None instead consumes the single-source batch
+            # residual (Hamiltonian.evaluate_H) + the ANALYTIC Jacobian (Hamiltonian.evaluate_dp,
+            # which itself FD's H when a custom Hamiltonian provides no analytic dp), so the
+            # residual never computes ∂H/∂p and the Jacobian never recomputes H (Issue #1071
+            # residual/Jacobian split). This retires the per-point FD-of-residual Jacobian as the
+            # default: it is more accurate, not merely different (validated vs the backward-heat
+            # MMS analytic truth in the #1071 phase-2b PR — L2/Linf error is <= the FD path on
+            # every checked sigma/Nx, with no regression). The per-point FD fallback in base_hjb
+            # is NOT removed — it remains the path for non-NumPy backends (torch/jax/numba), whose
+            # device tensors the batch NumPy path cannot consume.
+            uses_batch_path = hamiltonian_override is not None or self.backend.name == "numpy"
+            effective_backend = None if uses_batch_path else self.backend
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(

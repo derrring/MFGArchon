@@ -722,7 +722,10 @@ def compute_hjb_residual(
 
         return Phi_U
 
-    # Fallback: per-point loop for backend != None or missing precomputed_grad
+    # Per-point residual fallback (NON-DEFAULT since Issue #1071 phase 2b): reached only for a
+    # non-NumPy backend (torch/jax/numba device tensors the batch path cannot consume) or when no
+    # precomputed_grad is available. The default single-population NumPy path routes through
+    # backend=None (HJBFDMSolver, Issue #1071) and takes the batch evaluate_H branch above.
     for i in range(Nx):
         # Backend compatibility - tensor to scalar conversion (Issue #543 acceptable)
         phi_val = Phi_U[i].item() if hasattr(Phi_U[i], "item") else float(Phi_U[i])
@@ -873,7 +876,11 @@ def compute_hjb_jacobian(
             J_L += dH_dp * (-half_inv_dx)
             J_U += dH_dp * half_inv_dx
     else:
-        # Fallback: per-point numerical FD Jacobian for backend or no H_class
+        # Per-point numerical FD Jacobian fallback (NON-DEFAULT since Issue #1071 phase 2b):
+        # a central finite difference of problem.H(), noisy at Godunov upwind kinks. Reached only
+        # for a non-NumPy backend or a missing H_class. The default single-population NumPy path
+        # routes through backend=None (HJBFDMSolver, Issue #1071) and takes the analytic
+        # evaluate_dp Jacobian branch above (more accurate; validated vs the backward-heat MMS).
         for i in range(Nx):
             U_perturbed_p_i = U_n_np.copy()
             U_perturbed_p_i[i] += eps
