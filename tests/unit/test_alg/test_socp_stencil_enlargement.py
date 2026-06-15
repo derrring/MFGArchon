@@ -341,5 +341,143 @@ def test_solver_enlargement_end_to_end_runtime_consistent():
         assert derivs  # non-empty dict, no matmul-size error
 
 
+# ---------------------------------------------------------------------------
+# Obstacle visibility: enlargement must not re-add cross-wall neighbors
+# (Issue #1106 defect surfaced by adversarial review). The base neighborhoods
+# are post-filtered by `filter_visible_neighbors`; distance-only enlargement can
+# re-add an occluded across-wall neighbor that the base filter removed, silently
+# re-opening the #1102 cross-wall coupling on internal-obstacle / narrow-channel
+# problems. With obstacle_sdf threaded in, enlargement applies the SAME filter.
+# The synthetic rng clouds above have no obstacle, so they cannot catch this —
+# these tests use a real thin-wall geometry at production-ish k / delta.
+# ---------------------------------------------------------------------------
+
+
+def _thin_wall_cloud(seed: int = 5, n: int = 300):
+    """2D cloud split by a thin internal wall (y in [4.85, 5.15], gaps at the x
+    ends). Points just above/below the wall are near in Euclidean distance but
+    occluded — the narrow-channel geometry where distance-only enlargement would
+    re-add a cross-wall neighbor. Returns (points, interior_indices, obstacle_sdf).
+    """
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    rng = np.random.default_rng(seed)
+    wall = Hyperrectangle(np.array([[1.0, 9.0], [4.85, 5.15]]))
+    pts = rng.uniform(0.0, 10.0, size=(n, 2))
+    pts = pts[wall.signed_distance(pts) > 0.02]  # drop points inside the wall
+    interior = np.array([i for i in range(len(pts)) if 0.8 < pts[i, 0] < 9.2 and 0.8 < pts[i, 1] < 9.2])
+    return pts, interior, wall.signed_distance
+
+
+def _visibility_filtered_knn(pts, k, obstacle_sdf):
+    """Base neighborhoods = k-NN POST-FILTERED by line-of-sight visibility, exactly
+    as NeighborhoodBuilder builds them when obstacle_sdf is set (center included)."""
+    from mfgarchon.geometry.visibility import filter_visible_neighbors
+
+    tree = cKDTree(pts)
+    nbh = {}
+    for i in range(len(pts)):
+        _, idx = tree.query(pts[i], k=k)
+        others = np.atleast_1d(idx)
+        others = others[others != i]
+        if len(others):
+            others = others[filter_visible_neighbors(pts[i], pts[others], obstacle_sdf)]
+        nbh[i] = {"indices": np.concatenate([[i], others]).astype(int)}
+    return nbh
+
+
+def _count_cross_obstacle_neighbors(stencils, pts, obstacle_sdf):
+    """Stored stencil edges (center -> neighbor) occluded by the obstacle — i.e.
+    edges the base visibility filter would have removed. The invariant under test
+    is that this is zero once obstacle_sdf is threaded into enlargement."""
+    from mfgarchon.geometry.visibility import filter_visible_neighbors
+
+    n_bad = 0
+    for i, sd in stencils.stencils.items():
+        nbr = np.asarray(sd.neighbor_indices)
+        others = nbr[nbr != i]
+        if len(others) == 0:
+            continue
+        n_bad += int(np.sum(~filter_visible_neighbors(pts[i], pts[others], obstacle_sdf)))
+    return n_bad
+
+
+def _obstacle_stencils(enlarge, obstacle_sdf, pts, interior, nbh):
+    return PrecomputedJointSocpStencils(
+        points=pts,
+        interior_indices=interior,
+        delta=2.0,
+        neighborhoods=nbh,
+        cone_constant_C=8.0,
+        eps_pos=0.0,
+        cone_constant_C_max=8.0,
+        use_relaxed_fallback=False,
+        max_stencil_enlargements=enlarge,
+        enlargement_step=2,
+        obstacle_sdf=obstacle_sdf,
+    )
+
+
+@pytest.fixture(scope="module")
+def wall_stencils():
+    """Build the thin-wall base + (blind / obstacle-aware) enlarged stencils once
+    (the SOCP precompute is the expensive part)."""
+    pts, interior, sdf = _thin_wall_cloud()
+    nbh = _visibility_filtered_knn(pts, k=7, obstacle_sdf=sdf)
+    base = _obstacle_stencils(0, sdf, pts, interior, nbh)
+    blind = _obstacle_stencils(3, None, pts, interior, nbh)  # obstacle_sdf=None => distance-only
+    aware = _obstacle_stencils(3, sdf, pts, interior, nbh)
+    return {"pts": pts, "interior": interior, "sdf": sdf, "base": base, "blind": blind, "aware": aware}
+
+
+def test_visibility_filtered_base_has_no_cross_wall_edges(wall_stencils):
+    """Sanity: the visibility-filtered base stencils contain no cross-wall edge, so
+    any cross-wall edge in an enlarged stencil is attributable to enlargement
+    (isolates the bug surface). The base must also be genuinely infeasible
+    (wall-starved), otherwise enlargement never triggers."""
+    base, pts, sdf = wall_stencils["base"], wall_stencils["pts"], wall_stencils["sdf"]
+    assert base.stats["n_interior"] > 0
+    assert base.stats["n_infeasible"] > 0, "wall-starved base stencils must be genuinely infeasible"
+    assert _count_cross_obstacle_neighbors(base, pts, sdf) == 0
+
+
+def test_distance_only_enlargement_readds_cross_wall_neighbors(wall_stencils):
+    """BASELINE (bug surface): with obstacle_sdf NOT threaded into enlargement,
+    distance-only candidate selection re-adds occluded across-wall points the base
+    filter removed. Without this baseline the fix test below would be vacuous."""
+    blind, pts, sdf = wall_stencils["blind"], wall_stencils["pts"], wall_stencils["sdf"]
+    assert blind.stats["n_enlarged"] > 0
+    assert _count_cross_obstacle_neighbors(blind, pts, sdf) > 0, (
+        "fixture must exercise the defect: distance-only enlargement should re-add cross-wall neighbors"
+    )
+
+
+def test_enlargement_respects_obstacle_visibility(wall_stencils):
+    """FIX (Issue #1106 defect): with obstacle_sdf threaded in, no enlarged stencil
+    contains a neighbor whose line of sight crosses the obstacle — every enlarged
+    neighbor is visibility-consistent with the base filter — while enlargement still
+    fires (it adds line-of-sight-visible next-nearest points instead)."""
+    aware, pts, sdf = wall_stencils["aware"], wall_stencils["pts"], wall_stencils["sdf"]
+    assert aware.stats["n_enlarged"] > 0, "obstacle-aware enlargement must still recover starved stencils"
+    assert _count_cross_obstacle_neighbors(aware, pts, sdf) == 0, (
+        "obstacle-aware enlargement must not add any cross-obstacle neighbor"
+    )
+
+
+def test_obstacle_sdf_none_matches_default_when_no_obstacle():
+    """The new obstacle_sdf param is inert when None: passing obstacle_sdf=None
+    produces the exact same enlarged stencils as not passing it (the common,
+    obstacle-free case is unchanged). Uses the small synthetic cloud for speed."""
+    pts, interior = _irregular_cloud()
+    nbh = _knn_neighborhoods(pts, k=7)
+    explicit_none = _make_stencils(pts, interior, nbh, enlarge=3, relaxed=True, obstacle_sdf=None)
+    default = _make_stencils(pts, interior, nbh, enlarge=3, relaxed=True)
+    assert set(explicit_none.stencils) == set(default.stencils)
+    for i in default.stencils:
+        np.testing.assert_array_equal(default.stencils[i].neighbor_indices, explicit_none.stencils[i].neighbor_indices)
+        np.testing.assert_array_equal(default.stencils[i].L, explicit_none.stencils[i].L)
+        np.testing.assert_array_equal(default.stencils[i].D, explicit_none.stencils[i].D)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

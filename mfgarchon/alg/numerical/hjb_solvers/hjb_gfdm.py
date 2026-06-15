@@ -1045,6 +1045,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # (Issue #1106). Default 0 (OFF) — paper / default path unchanged.
                 max_stencil_enlargements=self._socp_max_stencil_enlargements,
                 enlargement_step=self._socp_enlargement_step,
+                # Same obstacle visibility filter the base neighborhoods were
+                # post-filtered with (Issue #1124 / #1102): enlargement must not
+                # re-add a cross-wall / cross-obstacle neighbor that the base
+                # filter removed. None (no obstacle) => enlargement unchanged.
+                obstacle_sdf=obstacle_sdf,
+                visibility_samples=visibility_samples,
+                visibility_margin=visibility_margin,
             )
             stats = self._joint_socp_stencils.stats
             relax_C_msg = (

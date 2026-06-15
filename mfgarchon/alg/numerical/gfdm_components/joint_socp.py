@@ -37,9 +37,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial import cKDTree
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
     import cvxpy as cp
@@ -512,6 +516,25 @@ class PrecomputedJointSocpStencils:
     enlargement_step : int
         Number of next-nearest cloud points added per enlargement step
         (Issue #1106). Default 2.
+    obstacle_sdf : Callable | None
+        Signed-distance function of the obstacle region, same convention and
+        object as passed to ``HJBGFDMSolver`` / ``NeighborhoodBuilder``
+        (``obstacle_sdf(x) < 0`` means x is INSIDE the obstacle). When provided,
+        adaptive enlargement (Issue #1106) applies the SAME line-of-sight filter
+        (``geometry.visibility.filter_visible_neighbors``) to its candidate
+        next-nearest points that the base neighborhoods were post-filtered with.
+        This prevents enlargement from re-adding a cross-wall / cross-obstacle
+        neighbor that the base visibility filter removed — which would silently
+        re-open the #1102 cross-wall coupling (wrong physics) on problems with an
+        internal obstacle or narrow channel. None (default) => no visibility
+        constraint on enlargement (the common, obstacle-free case is unchanged).
+        Only consulted when ``max_stencil_enlargements > 0``.
+    visibility_samples : int
+        Interior samples per candidate edge for the obstacle line-of-sight test
+        during enlargement. Mirrors ``NeighborhoodBuilder``. Default 10.
+    visibility_margin : float
+        Safety margin for obstacle proximity during the enlargement visibility
+        test. Mirrors ``NeighborhoodBuilder``. Default 0.0.
 
     Attributes
     ----------
@@ -542,6 +565,9 @@ class PrecomputedJointSocpStencils:
         lambda_C: float = 1.0e4,
         max_stencil_enlargements: int = 0,
         enlargement_step: int = 2,
+        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        visibility_samples: int = 10,
+        visibility_margin: float = 0.0,
     ):
         if not _CVXPY_AVAILABLE:
             raise ImportError("cvxpy is required for joint SOCP. Install with: pip install cvxpy")
@@ -581,6 +607,14 @@ class PrecomputedJointSocpStencils:
         if self._max_enlargements > 0 and self._enlargement_step < 1:
             raise ValueError(f"enlargement_step must be >= 1 when enlargement is enabled, got {enlargement_step}")
         self._kdtree = cKDTree(self._points) if self._max_enlargements > 0 else None
+        # Obstacle visibility for enlargement candidates (Issue #1106 defect fix).
+        # The base neighborhoods were already post-filtered by
+        # `filter_visible_neighbors`; enlargement must apply the same filter so it
+        # never re-adds a cross-wall / cross-obstacle neighbor (re-opening the
+        # #1102 cross-wall coupling). None => no obstacle => enlargement unchanged.
+        self._obstacle_sdf = obstacle_sdf
+        self._visibility_samples = int(visibility_samples)
+        self._visibility_margin = float(visibility_margin)
         self._dimension = self._points.shape[1] if self._points.ndim == 2 else 1
 
         if self._dimension not in (1, 2):
@@ -655,13 +689,39 @@ class PrecomputedJointSocpStencils:
         position, new indices appended), or ``None`` if the cloud has no further
         points to add. New neighbors inject Taylor degrees of freedom so the SOCP
         feasible set can become non-empty for a geometrically starved stencil.
+
+        Obstacle visibility (Issue #1106 defect fix): when ``obstacle_sdf`` was
+        supplied, candidate next-nearest points whose line of sight to the center
+        is occluded by the obstacle are discarded BEFORE selecting the additions —
+        the same ``filter_visible_neighbors`` filter the base neighborhoods were
+        post-filtered with. Enlargement therefore never re-adds a cross-wall /
+        cross-obstacle neighbor that the base filter removed (which would silently
+        re-open the #1102 cross-wall coupling). If no visible candidate remains,
+        returns ``None`` so the stencil falls through to the relaxed fallback on
+        its original (visibility-consistent) base stencil rather than adopting an
+        occluded neighbor.
         """
         existing = {int(x) for x in cur_nbr}
         n_total = len(self._points)
-        k_query = min(n_total, len(cur_nbr) + self._enlargement_step + self._ENLARGE_POOL)
+        # Widen the candidate window when an obstacle filter is active: visibility
+        # may discard many of the nearest points, so query a larger pool to still
+        # find `enlargement_step` line-of-sight-visible additions.
+        pool = self._ENLARGE_POOL * (4 if self._obstacle_sdf is not None else 1)
+        k_query = min(n_total, len(cur_nbr) + self._enlargement_step + pool)
         _, idxs = self._kdtree.query(self._points[center_global], k=k_query)
         idxs = np.atleast_1d(np.asarray(idxs))
         new = [int(j) for j in idxs if 0 <= int(j) < n_total and int(j) not in existing]
+        if self._obstacle_sdf is not None and new:
+            from mfgarchon.geometry.visibility import filter_visible_neighbors
+
+            vis_mask = filter_visible_neighbors(
+                self._points[center_global],
+                self._points[new],
+                self._obstacle_sdf,
+                n_samples=self._visibility_samples,
+                margin=self._visibility_margin,
+            )
+            new = [j for j, visible in zip(new, vis_mask, strict=True) if visible]
         if not new:
             return None
         add = new[: self._enlargement_step]
