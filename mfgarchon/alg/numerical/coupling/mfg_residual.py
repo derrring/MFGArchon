@@ -29,6 +29,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .fixed_point_utils import resolve_fp_drift_kwargs
+from .source_composition import compose_fp_source, compose_hjb_source
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -50,6 +51,28 @@ class MFGResidual:
 
     The residual measures deviation from this fixed point:
         F(U, M) = [HJB_solve(M) - U, FP_solve(U) - M]
+
+    Source / nonlocal / obstacle terms (Issue #1361):
+        ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
+        ``obstacle`` are composed via the single-source helpers
+        :func:`source_composition.compose_hjb_source` /
+        :func:`source_composition.compose_fp_source` — the *same* copy the Picard
+        ``FixedPointIterator`` consumes (no private second copy; that was the bug
+        class behind #1259 and #1285).
+
+        Design choice (option A): the source is composed from the ``(U, M)``
+        **arguments** of :meth:`compute_hjb_output` / :meth:`compute_fp_output`,
+        not frozen at an outer iterate. The finite-difference Jacobian
+        (``NewtonMFGSolver`` drives ``NewtonSolver`` with an FD Jacobian) then
+        differentiates through the source dependence automatically — no separate
+        analytic Jacobian term is needed. At convergence ``U = U_new`` and
+        ``M = M_new``, so the residual root coincides with the Picard fixed point
+        including the source/nonlocal/obstacle terms.
+
+        Obstacle handling matches the Picard path exactly: the approximate
+        ``v = 0`` penalty ``(1/eps) * max(0, psi)`` (see ``compose_hjb_source``).
+        Proper handling is the ``PenaltyHJBSolver`` wrapper (#924); both coupling
+        paths use the same approximation so they do not silently diverge.
 
     Attributes:
         problem: MFG problem definition
@@ -89,32 +112,6 @@ class MFGResidual:
         self.fp_solver = fp_solver
         self.volatility_field = volatility_field
         self.drift_field = drift_field
-
-        # Issue #1285: Newton residual does not compose source_term_hjb,
-        # source_term_fp, nonlocal_operator, or obstacle — it silently solves
-        # a different variational problem than Picard when any of those fields
-        # is set.  Fail loud until these terms are wired.
-        # Use FixedPointIterator instead; it correctly composes all four via
-        # _compose_hjb_source / _compose_fp_source.  Refs #1285 #1043.
-        _unsupported_fields = [
-            name
-            for name, val in [
-                ("source_term_hjb", problem.source_term_hjb),
-                ("source_term_fp", problem.source_term_fp),
-                ("nonlocal_operator", problem.nonlocal_operator),
-                ("obstacle", problem.obstacle),
-            ]
-            if val is not None
-        ]
-        if _unsupported_fields:
-            raise NotImplementedError(
-                f"MFGResidual (Newton path) does not support problem fields: "
-                f"{_unsupported_fields}. "
-                "These terms are silently ignored, causing Newton to converge "
-                "to a wrong equilibrium. "
-                "Use FixedPointIterator instead, which correctly composes "
-                "all four terms. Refs #1285 #1043."
-            )
 
         # Cache problem dimensions
         self.num_time_steps = problem.Nt + 1
@@ -187,6 +184,14 @@ class MFGResidual:
         """
         Compute HJB solver output for given density.
 
+        Issue #1361: composes ``source_term_hjb`` / ``nonlocal_operator`` /
+        ``obstacle`` from the ``(M, U_prev)`` arguments via the single-source
+        :func:`source_composition.compose_hjb_source` (shared with Picard) and
+        passes it as ``source_term=`` when the solver accepts it. Composing from
+        the arguments (option A) lets the finite-difference Jacobian differentiate
+        through the source dependence; at convergence this matches the Picard
+        fixed point.
+
         Args:
             M: Current density field (Nt+1, *spatial_shape)
             U_prev: Previous value function (for Newton linearization)
@@ -201,6 +206,10 @@ class MFGResidual:
                 kwargs["show_progress"] = False
             if "volatility_field" in self._hjb_sig_params and self.volatility_field is not None:
                 kwargs["volatility_field"] = self.volatility_field
+            if "source_term" in self._hjb_sig_params:
+                hjb_source = compose_hjb_source(self.problem, M, U_prev)
+                if hjb_source is not None:
+                    kwargs["source_term"] = hjb_source
 
         return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
 
@@ -214,10 +223,15 @@ class MFGResidual:
         which the v0.18.6 rename redefined as the *velocity* — so the Newton residual
         was inconsistent with the Picard fixed point and the solvers diverged.
 
+        Issue #1361: composes ``source_term_fp`` from the ``(M, U)`` arguments via
+        the single-source :func:`source_composition.compose_fp_source` (shared with
+        Picard) and passes it as ``source_term=`` when the solver accepts it.
+
         Args:
             U: Current value function (Nt+1, *spatial_shape)
-            M: Current density (Nt+1, *spatial_shape), used only for non-smooth $H$ to
-                evaluate the density-dependent velocity. Defaults to the time-broadcast
+            M: Current density (Nt+1, *spatial_shape), used both for non-smooth $H$
+                to evaluate the density-dependent velocity and for the time-``t``
+                density slice of ``source_term_fp``. Defaults to the time-broadcast
                 initial density when not supplied.
 
         Returns:
@@ -235,6 +249,11 @@ class MFGResidual:
 
         if M is None:
             M = np.broadcast_to(self.M_initial, self.solution_shape) if self.M_initial is not None else U
+
+        if "source_term" in params:
+            fp_source = compose_fp_source(self.problem, M, U)
+            if fp_source is not None:
+                kwargs["source_term"] = fp_source
 
         drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(self.problem, params, self.drift_field, U, M)
         kwargs.update(drift_kwargs)
