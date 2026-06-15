@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (BREAKING)
 
+- **Removed the deprecated legacy 1D-geometry read-properties on `MFGProblem`** (PR #1360, Tier-3a
+  of the geometry-first unification, ADR #417 / #435). The computed properties `xmin`, `xmax`, `Lx`,
+  `Nx`, `dx`, `xSpace`, `_grid` (getters + setters, deprecated since v0.17.0) and their `_*_override`
+  backing slots are removed; accessing them now raises `AttributeError`. Use the geometry-first API:
+  `problem.geometry.get_bounds()[0][0]`/`[1][0]` (xmin/xmax), `get_grid_spacing()[0]` (dx),
+  `get_spatial_grid()` (xSpace), `num_spatial_points - 1` (Nx, the number of intervals),
+  `problem.geometry` (_grid). The unused `xmin`/`xmax`/`Nx`/`dx`/`xSpace` declarations on the
+  `GridProblem`/`DirectAccessProblem` typing Protocols are also removed. The legacy
+  `MFGProblem(xmin=, xmax=, Nx=, Lx=)` **constructor** parameters are retained (still deprecated) —
+  removing them (Tier-3b) requires migrating ~70 active construction sites and is tracked in #1363.
 - **Lowercase grid parameters removed** (deprecated v0.17.0, past 3-minor-version
   window at v0.20.0). `MFGSystemBuilder.domain()` no longer accepts `nx`/`nt` and
   `SparseMatrixOptimizer.create_laplacian_3d()` no longer accepts `nx`/`ny`/`nz`.
