@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.20.2"  # v0.20.2: roadmap batch — JAX downgrade warning (#1072), honest O(h²) (#1084), SOCP adaptive enlargement (#1106), coupled-Newton source/nonlocal/obstacle (#1361)
+version = "0.20.3"  # v0.20.3: complete legacy 1D-geometry removal Tier-3b/3c (#1363) + Hamiltonian single-source contract pilot (#1071)
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
