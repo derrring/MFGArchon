@@ -135,6 +135,12 @@ class GeneralMFGFactory:
             xmin = problem_kwargs.pop("xmin", 0.0)
             lx = problem_kwargs.pop("Lx", None)
             xmax = problem_kwargs.pop("xmax", xmin + lx if lx is not None else 1.0)
+            if "Nx" not in problem_kwargs:
+                raise ValueError(
+                    "Legacy 1D domain spec requires 'Nx' (number of intervals); "
+                    f"got domain keys {sorted(domain_config.keys())}. Provide 'Nx', "
+                    "or use the geometry-first API (geometry=/spatial_bounds=)."
+                )
             nx = problem_kwargs.pop("Nx")  # intervals
             problem_kwargs["geometry"] = TensorProductGrid(
                 bounds=[(xmin, xmax)],

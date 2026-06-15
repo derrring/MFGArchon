@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Post-audit hygiene** (session quality audit). Three low-severity consistency
+  fixes plus a CHANGELOG cleanup:
+  - `GeneralMFGFactory.create_from_hamiltonian` now raises a clear `ValueError`
+    naming the missing `Nx` when a legacy 1D `domain_config` supplies
+    `xmin`/`xmax`/`Lx` but omits `Nx`, instead of a bare `KeyError` (Issue #1363).
+  - Renamed the two `solve_hjb_system` holdouts (`BaseHJBSolver` abstract
+    signature, `PenaltyHJBSolver`) from the removed parameter names
+    `M_density_evolution_from_FP` / `U_final_condition_at_T` / `U_from_prev_picard`
+    to the canonical `M_density` / `U_terminal` / `U_coupling_prev`, matching every
+    concrete solver and the [0.20.1] removal (Issue #1355). The penalty solver
+    forwards positionally, so the inner solve is unchanged.
+  - `create_lions_source` / `create_nonlocal_source` now raise `ValueError` on a
+    2-D `(Nt+1, Nx)` density instead of silently using the terminal slice `m[-1]`;
+    the composed source pipeline time-slices before calling, so a per-time source
+    must receive a 1-D spatial slice (a 2-D array is a caller error that
+    reintroduced the Issue #1285 wrong-slice behavior).
+  - Merged a duplicate `### Fixed` subsection under `[0.20.0]` into one block
+    (Keep a Changelog compliance).
+
 ## [0.20.3] - 2026-06-15
 
 ### Added
@@ -814,8 +835,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reachable via `solve_fp_system(drift_field=<callable>)` or any tensor/anisotropic
   `volatility_field`. Fixed to pass the in-scope `boundary_conditions`; regression test
   asserts a leftward drift on a no-flux domain leaves the far-right (near-wall) region empty.
-
-### Fixed
 
 - **nD ADI diffusion now applies the full prescribed diffusion** (Issue #1178). The
   semi-Lagrangian `adi_diffusion_step` split the time step across dimensions

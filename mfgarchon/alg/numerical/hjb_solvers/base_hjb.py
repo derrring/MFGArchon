@@ -386,9 +386,9 @@ class BaseHJBSolver(BaseNumericalSolver):
     @abstractmethod
     def solve_hjb_system(
         self,
-        M_density_evolution_from_FP: np.ndarray,
-        U_final_condition_at_T: np.ndarray,
-        U_from_prev_picard: np.ndarray,
+        M_density: np.ndarray,
+        U_terminal: np.ndarray,
+        U_coupling_prev: np.ndarray,
         volatility_field: float | np.ndarray | None = None,
         source_term: Callable | None = None,
     ) -> np.ndarray:
@@ -410,11 +410,11 @@ class BaseHJBSolver(BaseNumericalSolver):
         - Common Noise Lions derivative correction (Layer 2)
 
         Args:
-            M_density_evolution_from_FP: Density field m(t,x) from Fokker-Planck equation
+            M_density: Density field m(t,x) from Fokker-Planck equation
                                         For MFG: from previous Picard iteration
                                         For standalone: uniform density
-            U_final_condition_at_T: Terminal condition u(T,x) at final time
-            U_from_prev_picard: Value function from previous Picard iteration
+            U_terminal: Terminal condition u(T,x) at final time
+            U_coupling_prev: Value function from previous Picard iteration
                                For MFG: actual previous iterate U^{k-1}
                                For standalone: initial guess (zeros, terminal condition, etc.)
             volatility_field: Diffusion coefficient specification (optional):
