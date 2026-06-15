@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (BREAKING)
+
+- **Legacy 1D-geometry `MFGProblem` construct/write surfaces** (PR #1375, Refs #1363) — completes the
+  geometry-first migration begun in #1360 (Tier-3a). Removed the `xmin=`/`xmax=`/`Nx=`/`Lx=`
+  **constructor** kwargs (deprecated v0.17.1), the `_init_1d_legacy`/`_init_nd` manual grid-construction
+  methods (v0.17.0), and the `get_u_final`/`get_u_fin` value-function aliases (v0.17.6). Construct 1D
+  problems geometry-first: `MFGProblem(geometry=TensorProductGrid(bounds=[(xmin, xmax)],
+  Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)), T=…, Nt=…, sigma=…)` — note `Nx`
+  counts **intervals**, so `Nx_points = Nx + 1`. Because `__init__` takes `**kwargs`, the removed
+  kwargs now raise `ValueError` (pointing at the geometry-first API) rather than being silently
+  swallowed; the removed methods/aliases raise `AttributeError`. The `spatial_bounds=` n-D path and the
+  no-arg default are unaffected. ~99 construction sites migrated; the Picard / fictitious-play couplers
+  now read terminal data via `get_u_terminal()` (which also removed a latent silent-`zeros`
+  terminal-condition fallback). With this, the legacy 1D-geometry API is fully removed (Tier-1→3c).
+
 ## [0.20.2] - 2026-06-15
 
 ### Added
