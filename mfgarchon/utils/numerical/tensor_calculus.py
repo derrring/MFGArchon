@@ -108,7 +108,7 @@ def gradient(
         Difference scheme:
         - "central": Second-order central differences (default)
         - "upwind": Godunov upwind (monotone, first-order)
-        - "one_sided": Forward at left, backward at right
+        - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
     bc : BoundaryConditions, optional
         Boundary conditions. If None, uses periodic (np.roll).
     backend : ArrayBackend, optional
@@ -701,22 +701,27 @@ def _gradient_upwind(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
 
 
 def _fix_boundaries_one_sided(grad: NDArray, u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Replace boundary values with one-sided differences."""
+    """Replace boundary values with second-order one-sided differences.
+
+    Mirrors ``operators.stencils.finite_difference.fix_boundaries_one_sided``
+    (single source of truth for the one-sided boundary convention). Uses 3-point
+    O(h^2) stencils so a central-interior gradient stays O(h^2) at the edges
+    (Issue #1084); falls back to first-order when the axis has only 2 points.
+    """
     ndim = u.ndim
+    n = u.shape[axis]
 
-    # Left boundary: forward difference
-    left_slice = [slice(None)] * ndim
-    left_slice[axis] = 0
-    next_slice = [slice(None)] * ndim
-    next_slice[axis] = 1
-    grad[tuple(left_slice)] = (u[tuple(next_slice)] - u[tuple(left_slice)]) / h
+    def _at(idx: int) -> tuple:
+        s = [slice(None)] * ndim
+        s[axis] = idx
+        return tuple(s)
 
-    # Right boundary: backward difference
-    right_slice = [slice(None)] * ndim
-    right_slice[axis] = -1
-    prev_slice = [slice(None)] * ndim
-    prev_slice[axis] = -2
-    grad[tuple(right_slice)] = (u[tuple(right_slice)] - u[tuple(prev_slice)]) / h
+    if n >= 3:
+        grad[_at(0)] = (-3.0 * u[_at(0)] + 4.0 * u[_at(1)] - u[_at(2)]) / (2.0 * h)
+        grad[_at(-1)] = (3.0 * u[_at(-1)] - 4.0 * u[_at(-2)] + u[_at(-3)]) / (2.0 * h)
+    else:
+        grad[_at(0)] = (u[_at(1)] - u[_at(0)]) / h
+        grad[_at(-1)] = (u[_at(-1)] - u[_at(-2)]) / h
 
     return grad
 

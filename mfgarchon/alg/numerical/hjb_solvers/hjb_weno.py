@@ -423,12 +423,15 @@ class HJBWenoSolver(BaseHJBSolver):
             ]
         )
 
-        # Negative reconstruction coefficients (right-to-left bias)
+        # Negative reconstruction coefficients (right-to-left bias).
+        # Each row is dotted (in _weno_reconstruction) against the reversed
+        # sub-stencil slice, so the value ordering below matches that dot:
+        # the k-th comment lists values in the same order as the coefficients.
         self.c_minus = np.array(
             [
-                [-1 / 6, 5 / 6, 1 / 3],  # S₀: u_{i+1}, u_i, u_{i-1}
-                [1 / 3, 5 / 6, -1 / 6],  # S₁: u_i, u_{i-1}, u_{i-2}
-                [1 / 3, -7 / 6, 11 / 6],  # S₂: u_{i-1}, u_{i-2}, u_{i-3}
+                [-1 / 6, 5 / 6, 1 / 3],  # S₀: u_i, u_{i-1}, u_{i-2}
+                [1 / 3, 5 / 6, -1 / 6],  # S₁: u_{i+1}, u_i, u_{i-1}
+                [1 / 3, -7 / 6, 11 / 6],  # S₂: u_{i+2}, u_{i+1}, u_i
             ]
         )
 
