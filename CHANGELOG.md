@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coupled-Newton coupler solves source/nonlocal/obstacle problems** (PR #1372, Refs #1361). The
+  `MFGResidual` / `NewtonMFGSolver` path now solves MFG problems with `source_term_hjb`,
+  `source_term_fp`, `nonlocal_operator`, or `obstacle` (previously it raised). The source is composed
+  from the `(U, M)` residual arguments so the finite-difference Jacobian differentiates through it,
+  and the Newton path converges to the same equilibrium as the Picard `FixedPointIterator` (verified
+  to ~1e-10). (refs #1259, #1285, #924)
 - **GFDM `joint_socp`: SOCP-infeasibility-triggered adaptive stencil enlargement** (PR #1370, Refs
   #1106). When a stencil is still infeasible after C-bisection, `PrecomputedJointSocpStencils` adds
   next-nearest neighbors (Taylor degrees of freedom) and retries the SOCP, capped by
@@ -25,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Source/nonlocal/obstacle composition is single-sourced** (PR #1372, Refs #1361). The composition
+  logic now lives in one module, `coupling/source_composition.py` (`compose_hjb_source` /
+  `compose_fp_source`), consumed by both `FixedPointIterator` (now thin delegates) and `MFGResidual`,
+  with a byte-equality pinning test — closing the parallel-private-copy class behind #1259/#1285. The
+  `MFGResidual` #1285 fail-loud guard is removed (the path now solves these problems). Obstacle uses
+  the same approximate `v=0` penalty in both couplers (`PenaltyHJBSolver` #924 remains the proper route).
 - **JAX backend warns on high-order-scheme downgrade** (PR #1367, Refs #1072). Selecting the JAX
   backend with a high-order scheme (WENO/upwind/…) now emits a one-time warning — JAX implements
   only 2nd-order central differences, so results differ from the NumPy high-order path. Interim
