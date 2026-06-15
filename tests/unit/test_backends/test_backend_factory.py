@@ -359,6 +359,7 @@ class TestModuleExports:
             "get_available_backends",
             "get_backend_info",
             "register_backend",
+            "warn_if_jax_scheme_downgraded",  # Issue #1072 interim warning helper
         }
         assert set(backends_module.__all__) == expected
 

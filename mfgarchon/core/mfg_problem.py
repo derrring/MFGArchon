@@ -2405,6 +2405,11 @@ See: docs/migration/HAMILTONIAN_API.md"""
         safe_mode = scheme is not None
         expert_mode = hjb_solver is not None or fp_solver is not None
 
+        # Scheme actually used to build the solver pair (None in Expert Mode, where
+        # the user injects solvers and no scheme is resolvable). Used for the
+        # Issue #1072 JAX-backend downgrade warning below.
+        _effective_scheme: Any = None
+
         # Mode Validation: Cannot mix modes
         if safe_mode and expert_mode:
             raise ValueError(
@@ -2429,6 +2434,8 @@ See: docs/migration/HAMILTONIAN_API.md"""
                     raise ValueError(
                         f"Unknown scheme string: {scheme!r}. Valid schemes: {[s.value for s in NumericalScheme]}"
                     ) from None
+
+            _effective_scheme = scheme
 
             # Issue #1155: translate config.hjb / config.fp to solver kwargs.
             # Non-default fields that have clear mappings are threaded; unknown /
@@ -2490,6 +2497,7 @@ See: docs/migration/HAMILTONIAN_API.md"""
             # Phase 3 TODO: Implement geometry introspection
             # For now, get_recommended_scheme() returns FDM_UPWIND as safe default
             recommended_scheme = get_recommended_scheme(self)
+            _effective_scheme = recommended_scheme
 
             # Issue #1155: translate config.hjb / config.fp to solver kwargs.
             from mfgarchon.config.translator import fp_config_to_kwargs, hjb_config_to_kwargs
@@ -2532,6 +2540,14 @@ See: docs/migration/HAMILTONIAN_API.md"""
         _iterator_extra_kw = picard_config_to_iterator_kwargs(config.picard)
         _backend_kw = backend_config_to_kwargs(config.backend)
         check_logging_config(config.logging)
+
+        # Issue #1072 (interim): the JAX backend ghost-implements only 2nd-order
+        # central differences, so pairing it with a high-order scheme silently
+        # solves different math than the NumPy path. Warn once at the seam where
+        # both the backend and the resolved scheme are known.
+        from mfgarchon.backends import warn_if_jax_scheme_downgraded
+
+        warn_if_jax_scheme_downgraded(_backend_kw.get("backend"), _effective_scheme)
 
         solver = FixedPointIterator(
             problem=self,
