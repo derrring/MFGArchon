@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in 2nd-order one-sided FDM boundary stencils** (PR #1368, Refs #1084). `scheme="one_sided"`
+  on the finite-difference gradient produces genuinely O(h²) boundary derivatives (verified EOC
+  ≈ 2.13); the default `scheme="central"` path is unchanged, so no existing solver path shifts.
+
+### Changed
+
+- **JAX backend warns on high-order-scheme downgrade** (PR #1367, Refs #1072). Selecting the JAX
+  backend with a high-order scheme (WENO/upwind/…) now emits a one-time warning — JAX implements
+  only 2nd-order central differences, so results differ from the NumPy high-order path. Interim
+  guard (no behavior change to the solve); full JAX high-order support remains open in #1072.
+- **Honest accuracy claims for GFDM/FDM/WENO** (PR #1368, Refs #1084). The GFDM ill-conditioning
+  threshold (`COND_THRESHOLD=1e12`) is documented as warn-only (≈4 reliable float64 digits at the
+  cap; pass a stricter `cond_threshold` for tighter control), and the WENO5 `c_minus` docstring was
+  corrected to match the implemented reversed-stencil window. No numerical change.
+
 ## [0.20.1] - 2026-06-15
 
 ### Changed
