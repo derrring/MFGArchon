@@ -36,7 +36,7 @@ def benchmark_particle_solver(Nx: int, Nt: int, N_particles: int, device: str = 
     )
 
     # Initial condition: Gaussian
-    x = problem.xSpace
+    x = problem.geometry.get_spatial_grid()
     m_initial = np.exp(-((x - 0.5) ** 2) / 0.1)
     dx = problem.geometry.get_grid_spacing()[0]
     Nx_points = problem.geometry.get_grid_shape()[0]

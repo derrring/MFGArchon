@@ -58,7 +58,7 @@ def main():
     # Create visualization
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
 
-    x = problem.xSpace
+    x = problem.geometry.get_spatial_grid()
     t = problem.tSpace
 
     # 1. Density evolution

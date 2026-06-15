@@ -89,7 +89,7 @@ class TestLegacy1DMode:
         bounds = problem.geometry.get_bounds()
         assert bounds[0][0] == 0
         assert bounds[1][0] == 2.0
-        assert problem.Lx == 2.0  # Lx is computed from xmax - xmin
+        assert bounds[1][0] - bounds[0][0] == 2.0  # domain length (formerly Lx)
 
     def test_1d_solver_compatibility(self):
         """Test solver compatibility for 1D problems."""

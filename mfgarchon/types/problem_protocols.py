@@ -154,13 +154,6 @@ class GridProblem(Protocol):
         - CollocationProblem: Alternative interface for meshfree methods
     """
 
-    # Spatial grid structure
-    xmin: float
-    xmax: float
-    Nx: int
-    dx: float  # Lowercase (official naming convention)
-    xSpace: NDArray
-
     # Temporal structure
     T: float
     Nt: int
@@ -263,9 +256,7 @@ class DirectAccessProblem(Protocol):
 
     sigma: float
     coupling_coefficient: float
-    dx: float  # Lowercase (official naming convention)
     dt: float  # Lowercase (official naming convention)
-    xSpace: NDArray
 
 
 # Type aliases for convenience

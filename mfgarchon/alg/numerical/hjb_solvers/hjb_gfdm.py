@@ -1390,16 +1390,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                     pass
         except AttributeError:
             pass
-        # Fallback to legacy xmin/xmax
-        try:
-            xmin = self.problem.xmin
-            xmax = self.problem.xmax
-            return [(float(xmin), float(xmax))]
-        except AttributeError:
-            return None
+        return None
 
     def _get_domain_bounds(self) -> list[tuple[float, float]]:
-        """Get domain bounds from geometry or legacy xmin/xmax attributes.
+        """Get domain bounds from geometry, falling back to the collocation cloud extent.
 
         Returns:
             List of (min, max) tuples for each dimension.
@@ -1424,14 +1418,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     return list(geom.bounds)
                 except AttributeError:
                     pass
-        except AttributeError:
-            pass
-
-        # Fallback to legacy 1D xmin/xmax
-        try:
-            xmin = self.problem.xmin
-            xmax = self.problem.xmax
-            return [(float(xmin), float(xmax))]
         except AttributeError:
             pass
 
@@ -3712,7 +3698,7 @@ if __name__ == "__main__":
     problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=10, sigma=0.1)
 
     # Use problem grid points as collocation points to avoid index mismatch
-    collocation_points = problem_1d.xSpace.reshape(-1, 1)
+    collocation_points = problem_1d.geometry.get_spatial_grid().reshape(-1, 1)
 
     solver_1d = HJBGFDMSolver(
         problem_1d,
@@ -3724,7 +3710,7 @@ if __name__ == "__main__":
 
     # Test solver initialization
     assert solver_1d.dimension == 1
-    assert solver_1d.n_points == problem_1d.Nx + 1
+    assert solver_1d.n_points == problem_1d.geometry.num_spatial_points
     assert solver_1d.delta == 0.15
     assert solver_1d.taylor_order == 2
     assert solver_1d.hjb_method_name == "GFDM"

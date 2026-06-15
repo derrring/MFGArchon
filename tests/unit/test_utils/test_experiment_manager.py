@@ -106,6 +106,7 @@ def create_mock_problem():
     geometry.get_grid_shape.return_value = (11,)  # Nx+1 points
     geometry.get_grid_spacing.return_value = (0.1,)  # dx
     geometry.get_bounds.return_value = ((0.0,), (1.0,))  # (xmin, xmax)
+    geometry.get_spatial_grid.return_value = np.linspace(0.0, 1.0, 11)  # 11 space points
     problem.geometry = geometry
 
     return problem

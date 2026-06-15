@@ -139,9 +139,10 @@ def test_mfg_problem_default_initialization():
     problem = create_test_problem()
 
     # Domain parameters (default_geometry uses Nx=11, so 10 intervals)
-    assert problem.xmin == 0.0
-    assert problem.xmax == 1.0
-    assert problem.Lx == 1.0
+    bounds = problem.geometry.get_bounds()
+    assert bounds[0][0] == 0.0
+    assert bounds[1][0] == 1.0
+    assert problem._get_domain_length() == 1.0
     assert problem.geometry.get_grid_shape()[0] == 11  # 11 points
 
     # Time parameters
@@ -166,9 +167,10 @@ def test_mfg_problem_custom_domain():
     geometry = default_geometry(bounds=[(-1.0, 2.0)], Nx_points=[101])  # Nx=100 intervals
     problem = create_test_problem(geometry=geometry)
 
-    assert problem.xmin == -1.0
-    assert problem.xmax == 2.0
-    assert problem.Lx == 3.0
+    bounds = problem.geometry.get_bounds()
+    assert bounds[0][0] == -1.0
+    assert bounds[1][0] == 2.0
+    assert problem._get_domain_length() == 3.0
     assert problem.geometry.get_grid_shape()[0] - 1 == 100  # Nx intervals
     assert problem.geometry.get_grid_spacing()[0] == pytest.approx(3.0 / 100)
     assert problem.geometry.get_grid_shape()[0] == 101  # Nx+1 points
@@ -202,10 +204,11 @@ def test_mfg_problem_spatial_grid():
     problem = create_test_problem(geometry=geometry)
 
     assert problem.geometry.get_grid_shape()[0] == 11  # Nx+1 points
-    assert problem.xSpace[0] == 0.0
-    assert problem.xSpace[-1] == 1.0
+    x_grid = problem.geometry.get_spatial_grid()
+    assert x_grid[0] == 0.0
+    assert x_grid[-1] == 1.0
     # Check uniform spacing
-    spacing = np.diff(problem.xSpace)
+    spacing = np.diff(x_grid)
     assert np.allclose(spacing, spacing[0])
 
 
@@ -292,7 +295,7 @@ def test_mfg_problem_with_custom_potential():
     assert problem.is_custom is True
     assert problem.components is not None
     # Check potential was set using custom function
-    expected = problem.xSpace**2
+    expected = problem.geometry.get_spatial_grid() ** 2
     # Flatten both arrays for comparison (problem stores as 2D column vector)
     assert np.allclose(np.ravel(problem.f_potential), np.ravel(expected))
 
@@ -316,7 +319,7 @@ def test_mfg_problem_with_custom_initial_density():
 
     assert problem.is_custom is True
     # Check initial density was set using custom function and normalized
-    expected_unnormalized = np.exp(-10 * (problem.xSpace - 0.5) ** 2)
+    expected_unnormalized = np.exp(-10 * (problem.geometry.get_spatial_grid() - 0.5) ** 2)
     # Normalize expected (same way as in MFGProblem.__init__)
     integral = np.sum(expected_unnormalized) * problem.geometry.get_grid_spacing()[0]
     expected = expected_unnormalized / integral
@@ -343,7 +346,7 @@ def test_mfg_problem_with_custom_final_value():
 
     assert problem.is_custom is True
     # Check final value was set using custom function
-    expected = np.sin(problem.xSpace * np.pi)
+    expected = np.sin(problem.geometry.get_spatial_grid() * np.pi)
     # Flatten both arrays for comparison (problem stores as 2D column vector)
     assert np.allclose(np.ravel(problem.u_terminal), np.ravel(expected))
 
@@ -856,6 +859,23 @@ def test_dual_geometry_legacy_mode_compatibility():
     assert problem.fp_geometry is not None
     assert problem.hjb_geometry is problem.fp_geometry  # Unified mode
     assert problem.geometry_projector is None  # No projector for unified mode
+
+
+@pytest.mark.unit
+def test_legacy_1d_geometry_properties_removed():
+    """Removed in v0.20.0: the deprecated 1D geometry read-properties raise AttributeError.
+
+    Tier-3 removal of the legacy 1D geometry surface (deprecated since v0.17.0,
+    Issue #435). Use the geometry-first API instead:
+      xmin -> geometry.get_bounds()[0][0]; xmax -> geometry.get_bounds()[1][0];
+      Lx -> bounds[1][0] - bounds[0][0]; Nx -> geometry.num_spatial_points - 1;
+      dx -> geometry.get_grid_spacing()[0]; xSpace -> geometry.get_spatial_grid();
+      _grid -> geometry.
+    """
+    problem = create_test_problem()
+    for attr in ("xmin", "xmax", "Lx", "Nx", "dx", "xSpace", "_grid"):
+        with pytest.raises(AttributeError):
+            getattr(problem, attr)
 
 
 # ===================================================================

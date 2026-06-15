@@ -1343,6 +1343,7 @@ if __name__ == "__main__":
 
     geometry_1d = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31])
     problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, sigma=0.1)
+    n_pts = problem_1d.geometry.num_spatial_points  # number of spatial grid points (Nx + 1)
     solver_1d = HJBFDMSolver(problem_1d, solver_type="newton")
 
     # Test solver initialization
@@ -1353,9 +1354,9 @@ if __name__ == "__main__":
     # Test solve_hjb_system
     import numpy as np
 
-    M_test = np.ones((problem_1d.Nt + 1, problem_1d.Nx + 1)) * 0.5
-    U_final = np.zeros(problem_1d.Nx + 1)
-    U_prev = np.zeros((problem_1d.Nt + 1, problem_1d.Nx + 1))
+    M_test = np.ones((problem_1d.Nt + 1, n_pts)) * 0.5
+    U_final = np.zeros(n_pts)
+    U_prev = np.zeros((problem_1d.Nt + 1, n_pts))
 
     U_solution = solver_1d.solve_hjb_system(
         M_density=M_test,
@@ -1363,7 +1364,7 @@ if __name__ == "__main__":
         U_coupling_prev=U_prev,
     )
 
-    assert U_solution.shape == (problem_1d.Nt + 1, problem_1d.Nx + 1)
+    assert U_solution.shape == (problem_1d.Nt + 1, n_pts)
     assert not np.any(np.isnan(U_solution))
     assert not np.any(np.isinf(U_solution))
 
@@ -1378,7 +1379,7 @@ if __name__ == "__main__":
     import scipy.sparse as sparse
 
     assert sparse.issparse(A_hjb), "build_advection_matrix should return sparse matrix"
-    assert A_hjb.shape == (problem_1d.Nx + 1, problem_1d.Nx + 1), f"Matrix shape mismatch: {A_hjb.shape}"
+    assert A_hjb.shape == (n_pts, n_pts), f"Matrix shape mismatch: {A_hjb.shape}"
     assert not np.any(np.isnan(A_hjb.data)), "Matrix contains NaN"
     assert not np.any(np.isinf(A_hjb.data)), "Matrix contains Inf"
 

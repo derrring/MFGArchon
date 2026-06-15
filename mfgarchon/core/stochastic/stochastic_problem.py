@@ -277,6 +277,9 @@ class StochasticMFGProblem(MFGProblem):
             problem_type="conditional_mfg",
         )
 
+        # Spatial grid (geometry-first API); captured by the closures below.
+        x_grid = self.geometry.get_spatial_grid()
+
         # Create wrapper functions that incorporate noise path
         # These must match the MFGComponents API signature
         def conditional_H(x_idx, m_at_x, p_values, t_idx, x_position=None, current_time=None, problem=None):
@@ -284,7 +287,7 @@ class StochasticMFGProblem(MFGProblem):
             import numpy as np
 
             # Get scalar values from grid-based inputs
-            x = x_position if x_position is not None else self.xSpace[x_idx]
+            x = x_position if x_position is not None else x_grid[x_idx]
             t = current_time if current_time is not None else t_idx * self.dt
             m = m_at_x
 
@@ -307,7 +310,7 @@ class StochasticMFGProblem(MFGProblem):
             import numpy as np
 
             # Get scalar values
-            x = x_position if x_position is not None else self.xSpace[x_idx]
+            x = x_position if x_position is not None else x_grid[x_idx]
             t = current_time if current_time is not None else t_idx * self.dt
             m = m_at_x
 
@@ -345,9 +348,7 @@ class StochasticMFGProblem(MFGProblem):
 
         # Create conditional problem
         conditional_problem = MFGProblem(
-            xmin=self.xmin,
-            xmax=self.xmax,
-            Nx=self.Nx,
+            geometry=self.geometry,
             T=self.T,
             Nt=self.Nt,
             sigma=self.sigma,
@@ -359,9 +360,10 @@ class StochasticMFGProblem(MFGProblem):
     def __repr__(self) -> str:
         """String representation of stochastic MFG problem."""
         noise_info = "None" if self.noise_process is None else str(self.noise_process)
+        b = self.geometry.get_bounds()
         return (
             f"StochasticMFGProblem(\n"
-            f"  domain=[{self.xmin}, {self.xmax}], Nx={self.Nx},\n"
+            f"  domain=[{b[0][0]}, {b[1][0]}], Nx={self.geometry.num_spatial_points - 1},\n"
             f"  time=[0, {self.T}], Nt={self.Nt},\n"
             f"  sigma={self.sigma},\n"
             f"  noise_process={noise_info}\n"
