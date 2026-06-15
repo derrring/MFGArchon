@@ -130,21 +130,14 @@ class TestSolverMonitoringOptions:
         assert result["converged"] is True
         assert "execution_time" not in result
 
-    def test_backward_compatibility_deprecation_warning(self):
-        """Test deprecated boolean parameters trigger warnings."""
-        import warnings
+    def test_deprecated_boolean_parameters_removed(self):
+        """Removed-pin: deprecated boolean kwargs (monitor_convergence/auto_progress/timing)
+        were removed in v0.20.0; passing them now raises TypeError."""
+        with pytest.raises(TypeError):
+            enhanced_solver_method(auto_progress=True, timing=True)
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            @enhanced_solver_method(auto_progress=True, timing=True)
-            def solve(self, max_iterations=10, verbose=False, **kwargs):
-                return {"converged": True}
-
-            # Each deprecated parameter triggers its own warning
-            assert len(w) >= 1
-            assert all(issubclass(warning.category, DeprecationWarning) for warning in w)
-            assert any("deprecated" in str(warning.message).lower() for warning in w)
+        with pytest.raises(TypeError):
+            enhanced_solver_method(monitor_convergence=True)
 
 
 class TestWithProgressMonitoring:
@@ -267,7 +260,7 @@ class TestEnhancedSolverMethod:
     def test_enhanced_with_all_features(self):
         """Test enhanced decorator with all features enabled."""
 
-        @enhanced_solver_method(monitor_convergence=True, auto_progress=True, timing=True)
+        @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
             time.sleep(0.01)
             return {"converged": True}
@@ -281,7 +274,7 @@ class TestEnhancedSolverMethod:
     def test_enhanced_progress_only(self):
         """Test enhanced decorator with only progress enabled."""
 
-        @enhanced_solver_method(monitor_convergence=False, auto_progress=True, timing=False)
+        @enhanced_solver_method(options=SolverMonitoringOptions.PROGRESS)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
             return {"converged": True}
 
@@ -294,7 +287,7 @@ class TestEnhancedSolverMethod:
     def test_enhanced_timing_only(self):
         """Test enhanced decorator with only timing enabled."""
 
-        @enhanced_solver_method(monitor_convergence=False, auto_progress=False, timing=True)
+        @enhanced_solver_method(options=SolverMonitoringOptions.TIMING)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
             time.sleep(0.01)
             return {"converged": True}
@@ -309,7 +302,7 @@ class TestEnhancedSolverMethod:
     def test_enhanced_no_features(self):
         """Test enhanced decorator with all features disabled."""
 
-        @enhanced_solver_method(monitor_convergence=False, auto_progress=False, timing=False)
+        @enhanced_solver_method(options=SolverMonitoringOptions.NONE)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
             return {"converged": True}
 
@@ -557,7 +550,7 @@ class TestDecoratorIntegration:
     def test_multiple_decorators(self):
         """Test applying multiple decorators to same method."""
 
-        @enhanced_solver_method(auto_progress=False, timing=True)
+        @enhanced_solver_method(options=SolverMonitoringOptions.TIMING)
         @with_progress_monitoring(show_progress=False, show_timing=False)
         def solve(self, max_iterations=10, verbose=False, **kwargs):
             time.sleep(0.01)
@@ -573,7 +566,7 @@ class TestDecoratorIntegration:
         """Test decorator on method of class with mixin."""
 
         class MixedSolver(SolverProgressMixin):
-            @enhanced_solver_method(auto_progress=False, timing=True)
+            @enhanced_solver_method(options=SolverMonitoringOptions.TIMING)
             def solve(self, max_iterations=10, verbose=False, **kwargs):
                 time.sleep(0.01)
                 return {"converged": True}
@@ -593,7 +586,7 @@ class TestDecoratorIntegration:
                 super().__init__()
                 self.max_iterations = 50
 
-            @enhanced_solver_method(monitor_convergence=True, auto_progress=True, timing=True)
+            @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
             def solve(self, max_iterations=None, tolerance=1e-6, verbose=True, **kwargs):
                 iterations = max_iterations or self.max_iterations
                 error = 1.0

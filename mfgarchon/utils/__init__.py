@@ -38,9 +38,6 @@ from .adjoint_validation import (
 from .aux_func import npart, ppart
 from .callable_adapter import CallableSignature, adapt_ic_callable
 from .convergence import (
-    # Backward compatibility aliases (deprecated)
-    AdaptiveConvergenceWrapper,
-    AdvancedConvergenceMonitor,
     # NEW: Convergence checkers
     ConvergenceChecker,
     # New names (preferred)
@@ -51,19 +48,14 @@ from .convergence import (
     FPConvergenceChecker,
     HJBConvergenceChecker,
     MFGConvergenceChecker,
-    OscillationDetector,
-    ParticleMethodDetector,
     RollingConvergenceMonitor,
     SolverTypeDetector,
-    StochasticConvergenceMonitor,
     adaptive_convergence,
     calculate_error,
     calculate_l2_convergence_metrics,
     compute_norm,
-    create_default_monitor,
     create_distribution_monitor,
     create_rolling_monitor,
-    create_stochastic_monitor,
     test_particle_detection,
     wrap_solver_with_adaptive_convergence,
 )
@@ -312,11 +304,6 @@ __all__ = [
     "calculate_l2_convergence_metrics",
     "create_distribution_monitor",
     "create_rolling_monitor",
-    # Convergence monitoring (deprecated aliases)
-    "AdaptiveConvergenceWrapper",
-    "AdvancedConvergenceMonitor",
-    "StochasticConvergenceMonitor",
-    "create_stochastic_monitor",
     # Convergence checkers (Protocol-based)
     "ConvergenceChecker",
     "HJBConvergenceChecker",
@@ -355,8 +342,6 @@ __all__ = [
     "MFGSolverError",
     "MFGSolverResult",
     "NumericalInstabilityError",
-    "OscillationDetector",
-    "ParticleMethodDetector",
     "SolutionNotAvailableError",
     "SolverResult",
     "SparseMatrixBuilder",
@@ -367,7 +352,6 @@ __all__ = [
     "check_numerical_stability",
     "configure_logging",
     "configure_research_logging",
-    "create_default_monitor",
     "create_solver_result",
     "estimate_sparsity",
     # Integration utilities
