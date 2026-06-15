@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GFDM `joint_socp`: SOCP-infeasibility-triggered adaptive stencil enlargement** (PR #1370, Refs
+  #1106). When a stencil is still infeasible after C-bisection, `PrecomputedJointSocpStencils` adds
+  next-nearest neighbors (Taylor degrees of freedom) and retries the SOCP, capped by
+  `HJBGFDMSolver(socp_max_stencil_enlargements=…, socp_enlargement_step=…)`. This recovers
+  geometrically-infeasible wall/corner/obstacle-adjacent stencils that C-bisection and penalty
+  pressure cannot. Enlargement candidates respect obstacle visibility (`filter_visible_neighbors`),
+  so it never re-adds cross-wall neighbors the base filter removed. Default OFF (`0`) → paper/default
+  path is byte-identical; the enlarged set is consumed via the SOCP single-source `neighbor_indices`
+  contract on all HJB-GFDM assembly paths (no operator/FP/BC cascade). Documented hook for the
+  #1107 (3rd-order Taylor) / #1108 (M-matrix-only) exact fallbacks.
 - **Opt-in 2nd-order one-sided FDM boundary stencils** (PR #1368, Refs #1084). `scheme="one_sided"`
   on the finite-difference gradient produces genuinely O(h²) boundary derivatives (verified EOC
   ≈ 2.13); the default `scheme="central"` path is unchanged, so no existing solver path shifts.
