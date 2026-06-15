@@ -214,7 +214,7 @@ def visualize_stochastic_convergence(result, masses, problem, monitor):
     # Extract arrays
     U = result.u
     M = result.m
-    x = problem.xSpace
+    x = problem.geometry.get_spatial_grid()
     t = problem.tSpace
 
     # 1. Value function

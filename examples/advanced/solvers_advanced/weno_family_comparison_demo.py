@@ -107,8 +107,9 @@ def run_weno_variant_comparison() -> dict[str, dict]:
         try:
             # Simple solve for comparison
             # Note: Using a basic iteration for comparison
-            u_current = getattr(problem, "_custom_initial_u", np.ones(problem.Nx))
-            m_current = np.ones(problem.Nx) / problem.Nx  # Normalized initial density
+            nx = problem.geometry.num_spatial_points - 1  # number of intervals
+            u_current = getattr(problem, "_custom_initial_u", np.ones(nx))
+            m_current = np.ones(nx) / nx  # Normalized initial density
 
             dt = problem.T / problem.Nt
 

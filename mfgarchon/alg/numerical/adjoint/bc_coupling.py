@@ -151,7 +151,7 @@ def create_adjoint_consistent_bc_1d(
         >>> m_current = solve_fp(U_prev)
         >>> hjb_bc = create_adjoint_consistent_bc_1d(
         ...     m_current=m_current[-1, :],  # Final time slice
-        ...     dx=problem.dx,
+        ...     dx=problem.geometry.get_grid_spacing()[0],
         ...     sigma=problem.sigma,
         ...     domain_bounds=problem.geometry.domain_bounds,
         ... )

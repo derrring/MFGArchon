@@ -225,7 +225,7 @@ def visualize_results(U, M, convergence_info, masses, problem, mass_analysis):
     fig = plt.figure(figsize=(16, 10))
     gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
 
-    x = problem.xSpace
+    x = problem.geometry.get_spatial_grid()
     t = problem.tSpace
 
     # 1. Value function

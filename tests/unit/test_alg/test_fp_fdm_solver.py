@@ -363,31 +363,12 @@ class TestFPFDMSolverEdgeCases:
         # With very small Dt, solution should remain close to initial condition
         assert np.allclose(m_result[1, :], m_result[0, :], rtol=0.1)
 
-    def test_zero_spatial_step(self, standard_problem):
-        """Test behavior when Dx is extremely small (but Nx > 1)."""
-        # Note: This test modifies problem.dx which is derived from geometry.
-        # For a proper test, create a new problem with tiny domain or many points.
-        # This test maintains legacy behavior for backward compatibility testing.
-        standard_problem.dx = 1e-20  # Very small spatial step (legacy attribute)
-        solver = FPFDMSolver(standard_problem)
-
-        (Nx_points,) = standard_problem.geometry.get_grid_shape()
-        Nt_points = standard_problem.Nt + 1
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        m_result = solver.solve_fp_system(m_initial, U_solution)
-
-        # With very small Dx, solution should remain close to initial condition
-        assert np.allclose(m_result[1, :], m_result[0, :], rtol=0.1)
-
-        # Removed: test_single_spatial_point — tested degenerate Nx=1 case via
-        # legacy problem.Nx mutation. Not physically meaningful for PDEs. (#833)
-
-        # With no spatial variation, the solution should remain constant
-        assert m_result.shape == (Nt_points, Nx_points)
-        assert np.all(np.isfinite(m_result))
+    # Removed: test_zero_spatial_step — set the legacy problem.dx attribute, which the
+    # FP solver never read (spacing comes from geometry.get_grid_spacing()); the
+    # deprecated dx property was removed in v0.20.0 (Issue #435 Tier-3). A genuine
+    # tiny-spacing test would need a dedicated tiny-domain geometry.
+    # Removed: test_single_spatial_point — tested degenerate Nx=1 case via
+    # legacy problem.Nx mutation. Not physically meaningful for PDEs. (#833)
 
 
 class TestFPFDMSolverMassConservation:
