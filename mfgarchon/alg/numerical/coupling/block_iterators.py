@@ -234,7 +234,7 @@ class BlockIterator(BaseCouplingIterator):
 
     def _initialize_conditions(self, shape: tuple[int, ...]) -> tuple[NDArray, NDArray]:
         """Initialize initial density and terminal value from problem."""
-        # Try get_m_init() / get_u_fin() methods (preferred)
+        # Try get_m_initial() / get_u_terminal() methods (preferred)
         try:
             M_initial = self.problem.get_m_initial()
             if M_initial.shape != shape:

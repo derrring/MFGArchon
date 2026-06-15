@@ -27,6 +27,8 @@ from mfgarchon.alg.numerical.stochastic import CommonNoiseMFGSolver
 from mfgarchon.core.stochastic import OrnsteinUhlenbeckProcess, StochasticMFGProblem
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 from mfgarchon.workflow.parameter_sweep import ParameterSweep, SweepConfiguration
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # Configure logging
 configure_research_logging("parallel_benchmark", level="INFO")
@@ -43,7 +45,13 @@ def mfg_solve_function(Nx, Nt, sigma):
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.factory import create_fast_solver
 
-    problem = MFGProblem(Nx=Nx, Nt=Nt, sigma=sigma)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=Nt,
+        sigma=sigma,
+    )
     solver = create_fast_solver(problem)
     result = solver.solve()
 

@@ -19,6 +19,8 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_node_problem(coupling_strength: float = 1.0, sigma: float = 0.3) -> MFGProblem:
@@ -34,9 +36,9 @@ def _make_node_problem(coupling_strength: float = 1.0, sigma: float = 0.3) -> MF
         m_initial=lambda x: 1.0,
     )
     return MFGProblem(
-        Nx=21,
-        xmin=0.0,
-        xmax=1.0,
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[21 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=0.5,
         Nt=10,
         sigma=sigma,
@@ -262,9 +264,9 @@ class TestIssue1006Regression:
         # Node 1: T=1.0, Nt=10 -> dt=0.1 (different!)
         H = p_ok.components.hamiltonian
         p_bad = MFGProblem(
-            Nx=21,
-            xmin=0.0,
-            xmax=1.0,
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[21 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             T=1.0,
             Nt=10,
             sigma=0.3,

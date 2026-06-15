@@ -20,6 +20,8 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_problem(Nx: int = 51, source_term_hjb=None) -> MFGProblem:
@@ -35,9 +37,9 @@ def _make_problem(Nx: int = 51, source_term_hjb=None) -> MFGProblem:
         m_initial=lambda x: 1.0,
     )
     return MFGProblem(
-        Nx=Nx,
-        xmin=0.0,
-        xmax=1.0,
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=0.5,
         Nt=10,
         sigma=0.3,

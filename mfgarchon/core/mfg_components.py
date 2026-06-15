@@ -888,7 +888,7 @@ class ConditionsMixin:
                 "  grid = TensorProductGrid(..., boundary_conditions=bc)\n"
                 "  problem = MFGProblem(geometry=grid, ...)\n\n"
                 "Legacy BC support via components will be removed in v1.0.0. "
-                "See docs/migration/GEOMETRY_PARAMETER_MIGRATION.md",
+                "See docs/user/GEOMETRY_FIRST_API_GUIDE.md",
                 DeprecationWarning,
                 stacklevel=2,
             )

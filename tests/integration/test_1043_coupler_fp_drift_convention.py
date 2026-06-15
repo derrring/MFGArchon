@@ -82,7 +82,7 @@ def _realistic_U(problem: MFGProblem, fp_solver: FPFDMSolver, hjb_solver: HJBFDM
     grid_shape = tuple(problem.geometry.get_grid_shape())
     M0 = problem.get_m_init()
     M = np.tile(M0, (Nt, 1))
-    U_terminal = problem.get_u_fin()
+    U_terminal = problem.get_u_terminal()
     U_prev = np.zeros((Nt, *grid_shape))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

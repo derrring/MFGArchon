@@ -520,11 +520,17 @@ class VariationalMFGProblem:
             description=f"Hamiltonian formulation of {self.components.description}",
         )
 
-        # Create MFG problem
+        # Create MFG problem (Issue #1363: geometry-first API)
+        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry.boundary import no_flux_bc
+
+        geometry = TensorProductGrid(
+            bounds=[(self.xmin, self.xmax)],
+            Nx_points=[self.Nx + 1],  # Nx intervals -> Nx + 1 grid points
+            boundary_conditions=no_flux_bc(dimension=1),
+        )
         return MFGProblem(
-            xmin=self.xmin,
-            xmax=self.xmax,
-            Nx=self.Nx,
+            geometry=geometry,
             T=self.T,
             Nt=self.Nt,
             sigma=self.sigma,

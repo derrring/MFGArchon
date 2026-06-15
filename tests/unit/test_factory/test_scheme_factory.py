@@ -17,6 +17,8 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.factory import create_paired_solvers, get_recommended_scheme
 from mfgarchon.types import NumericalScheme
 from mfgarchon.utils import DualityStatus, check_solver_duality
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _default_hamiltonian():
@@ -42,7 +44,14 @@ class TestCreatePairedSolversFDM:
 
     def test_fdm_upwind_creates_dual_pair(self):
         """Test that FDM_UPWIND creates valid dual pair."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -65,7 +74,14 @@ class TestCreatePairedSolversFDM:
         Note: Changed from gradient_upwind to divergence_upwind in Issue #382
         because gradient_upwind has boundary flux bugs.
         """
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         _, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -75,7 +91,14 @@ class TestCreatePairedSolversFDM:
 
     def test_fdm_centered_creates_dual_pair(self):
         """Test that FDM_CENTERED creates valid dual pair."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_CENTERED)
 
@@ -92,7 +115,14 @@ class TestCreatePairedSolversFDM:
 
     def test_fdm_custom_config(self):
         """Test FDM pairing with custom configs."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Override FP advection scheme
         _, fp = create_paired_solvers(
@@ -110,7 +140,14 @@ class TestCreatePairedSolversSL:
 
     def test_sl_linear_creates_dual_pair(self):
         """Test that SL_LINEAR creates valid dual pair."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, fp = create_paired_solvers(problem, NumericalScheme.SL_LINEAR)
 
@@ -129,7 +166,14 @@ class TestCreatePairedSolversSL:
 
     def test_sl_linear_default_interpolation(self):
         """Test that SL_LINEAR sets linear interpolation for HJB."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, _ = create_paired_solvers(problem, NumericalScheme.SL_LINEAR)
 
@@ -138,7 +182,14 @@ class TestCreatePairedSolversSL:
 
     def test_sl_cubic_creates_dual_pair(self):
         """Test that SL_CUBIC creates valid dual pair."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, fp = create_paired_solvers(problem, NumericalScheme.SL_CUBIC)
 
@@ -154,7 +205,14 @@ class TestCreatePairedSolversSL:
 
     def test_sl_uses_adjoint_solver_not_backward(self):
         """Test that SL pairing uses FPSLSolver (forward SL) for duality."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         _, fp = create_paired_solvers(problem, NumericalScheme.SL_LINEAR)
 
@@ -170,7 +228,14 @@ class TestCreatePairedSolversGFDM:
 
     def test_gfdm_creates_dual_pair(self):
         """Test that GFDM creates valid dual pair."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # GFDM requires collocation points
         points = np.linspace(0, 1, 15)[:, None]  # 1D points
@@ -198,7 +263,14 @@ class TestCreatePairedSolversGFDM:
 
     def test_gfdm_delta_threading(self):
         """Test that delta parameter is threaded between HJB and FP."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
         points = np.linspace(0, 1, 15)[:, None]
 
         # Specify delta only for HJB
@@ -215,7 +287,14 @@ class TestCreatePairedSolversGFDM:
 
     def test_gfdm_collocation_threading(self):
         """Test that collocation_points are threaded if specified for one solver."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
         points = np.linspace(0, 1, 15)[:, None]
 
         # Specify points only for HJB
@@ -234,7 +313,14 @@ class TestCreatePairedSolversValidation:
 
     def test_validation_enabled_by_default(self):
         """Test that duality validation is enabled by default."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Should not raise (FDM is valid)
         hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
@@ -244,7 +330,14 @@ class TestCreatePairedSolversValidation:
 
     def test_validation_can_be_disabled(self):
         """Test that validation can be disabled with validate_duality=False."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Should work even with validation disabled
         hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND, validate_duality=False)
@@ -254,7 +347,14 @@ class TestCreatePairedSolversValidation:
 
     def test_unimplemented_scheme_raises_error(self):
         """Test that unimplemented schemes raise NotImplementedError."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # SL_CUBIC is defined but cubic FP adjoint not implemented
         # For now it creates the pair but with a note in docstring
@@ -271,7 +371,14 @@ class TestCreatePairedSolversValidation:
         to fall through to the else branch, then assert the message advertises all routed
         schemes (regression guard: SL_CUBIC and MESHLESS_GALERKIN were previously omitted).
         """
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         class _FakeScheme:
             value = "not_a_real_scheme"
@@ -289,7 +396,14 @@ class TestGetRecommendedScheme:
 
     def test_returns_fdm_upwind_by_default(self):
         """Test that default recommendation is FDM_UPWIND."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         scheme = get_recommended_scheme(problem)
 
@@ -301,7 +415,14 @@ class TestConfigThreading:
 
     def test_hjb_config_passed_to_hjb_solver(self):
         """Test that hjb_config parameters are passed through."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Verify solver was created with empty config (config passing tested in other tests)
         hjb, _ = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND, hjb_config={})
@@ -311,7 +432,14 @@ class TestConfigThreading:
 
     def test_fp_config_passed_to_fp_solver(self):
         """Test that fp_config parameters are passed through."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         _, fp = create_paired_solvers(
             problem,
@@ -323,7 +451,14 @@ class TestConfigThreading:
 
     def test_empty_configs_use_defaults(self):
         """Test that omitting configs uses solver defaults."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -337,7 +472,14 @@ class TestReturnTypes:
 
     def test_returns_tuple_of_two_solvers(self):
         """Test that function always returns (hjb, fp) tuple."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         result = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -350,7 +492,14 @@ class TestReturnTypes:
 
     def test_hjb_has_scheme_family_trait(self):
         """Test that returned HJB solver has _scheme_family trait."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb, _ = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -359,7 +508,14 @@ class TestReturnTypes:
 
     def test_fp_has_scheme_family_trait(self):
         """Test that returned FP solver has _scheme_family trait."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         _, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
 
@@ -371,7 +527,14 @@ if __name__ == "__main__":
     # Smoke test - run basic checks
     print("Running scheme factory smoke tests...")
 
-    problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=10,
+        T=1.0,
+        components=_default_components(),
+    )
 
     # Test FDM pairing
     hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)

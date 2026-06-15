@@ -16,6 +16,8 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_problem(**extra_kwargs):
@@ -31,7 +33,9 @@ def _make_problem(**extra_kwargs):
         hamiltonian=hamiltonian,
     )
     return MFGProblem(
-        Nx=[30],
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[30 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         Nt=10,
         T=1.0,
         components=components,
@@ -154,7 +158,14 @@ def _make_parity_problem(**extra):
         u_terminal=lambda x: 0.0,
         hamiltonian=hamiltonian,
     )
-    return MFGProblem(Nx=[8], Nt=4, T=0.15, sigma=0.4, components=components, **extra)
+    return MFGProblem(
+        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[8 + 1], boundary_conditions=no_flux_bc(dimension=1)),
+        Nt=4,
+        T=0.15,
+        sigma=0.4,
+        components=components,
+        **extra,
+    )
 
 
 def _solve_picard(problem):

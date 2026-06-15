@@ -123,6 +123,25 @@ class GeneralMFGFactory:
         if solver_config:
             problem_kwargs.update(solver_config)
 
+        # Issue #1363: translate the legacy 1D domain spec (xmin/xmax/Nx/Lx) into
+        # the geometry-first API. Configs that already provide geometry= or
+        # spatial_bounds= are passed through unchanged.
+        if not ({"geometry", "spatial_bounds"} & problem_kwargs.keys()) and (
+            {"xmin", "xmax", "Nx", "Lx"} & problem_kwargs.keys()
+        ):
+            from mfgarchon.geometry import TensorProductGrid
+            from mfgarchon.geometry.boundary import no_flux_bc
+
+            xmin = problem_kwargs.pop("xmin", 0.0)
+            lx = problem_kwargs.pop("Lx", None)
+            xmax = problem_kwargs.pop("xmax", xmin + lx if lx is not None else 1.0)
+            nx = problem_kwargs.pop("Nx")  # intervals
+            problem_kwargs["geometry"] = TensorProductGrid(
+                bounds=[(xmin, xmax)],
+                Nx_points=[nx + 1],  # Nx intervals -> Nx + 1 grid points
+                boundary_conditions=no_flux_bc(dimension=1),
+            )
+
         problem_kwargs["components"] = components
 
         return MFGProblem(**problem_kwargs)

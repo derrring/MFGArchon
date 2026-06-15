@@ -28,6 +28,8 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # Configure logging for research session
 configure_research_logging("weno_family_comparison", level="INFO")
@@ -42,13 +44,13 @@ def create_challenging_mfg_problem() -> MFGProblem:
     - High congestion (nonlinear effects)
     """
     problem = MFGProblem(
-        xmin=0.0,
-        xmax=1.0,
-        Nx=128,  # Fine grid for high resolution
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[128 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=1.0,
         Nt=200,
-        sigma=0.05,  # Low diffusion -> sharp features
-        coupling_coefficient=2.0,  # High congestion -> nonlinear effects
+        sigma=0.05,
+        coupling_coefficient=2.0,
     )
 
     # Create sharp initial condition with discontinuous derivative

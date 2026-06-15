@@ -85,7 +85,8 @@ class SolverFactory:
         if problem is None:
             raise ValueError(
                 "Problem cannot be None. Please provide a valid MFGProblem instance.\n"
-                "Example: problem = MFGProblem(Nx=50, Nt=100, T=1.0)"
+                "Example: problem = MFGProblem("
+                "geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51]), Nt=100, T=1.0)"
             )
 
         # Validate solver type with helpful suggestions
@@ -243,8 +244,10 @@ def create_solver(
 
     Example:
         >>> from mfgarchon import MFGProblem
+        >>> from mfgarchon.geometry import TensorProductGrid
         >>> from mfgarchon.types import NumericalScheme
-        >>> problem = MFGProblem(Nx=50, Nt=20, T=1.0)
+        >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51])
+        >>> problem = MFGProblem(geometry=grid, Nt=20, T=1.0)
         >>> result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)  # Preferred
 
     Note:

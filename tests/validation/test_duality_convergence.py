@@ -34,6 +34,8 @@ from mfgarchon import MFGProblem
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.types import NumericalScheme
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _default_hamiltonian():
@@ -62,7 +64,9 @@ class TestDualityConvergence:
         """Test that FDM dual pair achieves good convergence."""
         # Create problem with known solution characteristics
         problem = MFGProblem(
-            Nx=[40],
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             Nt=20,
             T=1.0,
             sigma=0.1,
@@ -94,7 +98,9 @@ class TestDualityConvergence:
         """Test that FDM_CENTERED achieves second-order convergence."""
         # Centered differences are O(h^2) in space
         problem = MFGProblem(
-            Nx=[40],
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             Nt=20,
             T=1.0,
             sigma=0.1,
@@ -119,8 +125,10 @@ class TestDualityConvergence:
 
         for Nx in mesh_sizes:
             problem = MFGProblem(
-                Nx=[Nx],
-                Nt=Nx // 2,  # Keep CFL condition reasonable
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                Nt=Nx // 2,
                 T=1.0,
                 sigma=0.1,
                 components=_default_components(),
@@ -152,7 +160,14 @@ class TestDualityConvergence:
         from mfgarchon.factory import create_paired_solvers
         from mfgarchon.utils import check_solver_duality
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Create pair via Safe Mode factory
         hjb, fp = create_paired_solvers(
@@ -172,7 +187,14 @@ class TestDualityConvergence:
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
         from mfgarchon.utils import check_solver_duality
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Create dual pair
         hjb_fdm = HJBFDMSolver(problem)
@@ -204,8 +226,10 @@ class TestConvergenceRate:
 
         for Nx in mesh_sizes:
             problem = MFGProblem(
-                Nx=[Nx],
-                Nt=Nx,  # Match time steps to space steps
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                Nt=Nx,
                 T=1.0,
                 sigma=0.1,
                 components=_default_components(),
@@ -238,7 +262,9 @@ class TestNumericalStability:
     def test_fdm_upwind_stable(self):
         """Test that upwind FDM is stable (monotone)."""
         problem = MFGProblem(
-            Nx=[40],
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             Nt=20,
             T=1.0,
             sigma=0.1,
@@ -261,7 +287,9 @@ class TestNumericalStability:
     def test_centered_fdm_may_oscillate(self):
         """Test that centered FDM runs (may have mild oscillations)."""
         problem = MFGProblem(
-            Nx=[40],
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             Nt=20,
             T=1.0,
             sigma=0.1,
@@ -288,7 +316,14 @@ if __name__ == "__main__":
 
     # Test 1: Verify dual pairing
     print("Test 1: Safe Mode duality guarantee")
-    problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=10,
+        T=1.0,
+        components=_default_components(),
+    )
     hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
     result = check_solver_duality(hjb, fp)
     assert result.is_valid_pairing()
@@ -298,7 +333,15 @@ if __name__ == "__main__":
 
     # Test 2: Verify convergence
     print("\nTest 2: Convergence with dual pair")
-    problem = MFGProblem(Nx=[40], Nt=20, T=1.0, sigma=0.1, components=_default_components())
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=20,
+        T=1.0,
+        sigma=0.1,
+        components=_default_components(),
+    )
     solve_result = problem.solve(
         scheme=NumericalScheme.FDM_UPWIND,
         max_iterations=30,

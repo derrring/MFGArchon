@@ -14,6 +14,8 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.mfg_solvers.fixed_point_iterator import FixedPointIterator
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry.boundary import neumann_bc
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def main():
@@ -24,7 +26,15 @@ def main():
 
     # Setup
     np.random.seed(42)
-    problem = MFGProblem(xmin=0.0, xmax=1.0, Nx=51, T=1.0, Nt=51, sigma=1.0, coupling_coefficient=0.5)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[51 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=1.0,
+        Nt=51,
+        sigma=1.0,
+        coupling_coefficient=0.5,
+    )
     bc = neumann_bc(dimension=1, value=0.0)
 
     fp_solver = FPParticleSolver(problem, num_particles=1000, normalize_kde_output=True, boundary_conditions=bc)

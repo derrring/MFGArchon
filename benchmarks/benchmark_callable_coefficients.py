@@ -20,6 +20,8 @@ from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def benchmark_scalar_diffusion(Nx=100, Nt=100, num_runs=3):
@@ -33,7 +35,14 @@ def benchmark_scalar_diffusion(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         hjb_solver = HJBFDMSolver(problem)
@@ -60,7 +69,14 @@ def benchmark_array_diffusion_spatial(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         # Create spatially varying diffusion
@@ -91,7 +107,14 @@ def benchmark_array_diffusion_spatiotemporal(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         # Create spatiotemporal diffusion
@@ -127,7 +150,14 @@ def benchmark_callable_diffusion_scalar(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         hjb_solver = HJBFDMSolver(problem)
@@ -159,7 +189,14 @@ def benchmark_callable_diffusion_porous_medium(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         hjb_solver = HJBFDMSolver(problem)
@@ -192,7 +229,14 @@ def benchmark_callable_diffusion_crowd_dynamics(Nx=100, Nt=100, num_runs=3):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             problem = MFGProblem(
-                xmin=0.0, xmax=1.0, Nx=Nx, T=1.0, Nt=Nt, sigma=0.1, drift_weight=1.0, coupling_lambda=1.0
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                T=1.0,
+                Nt=Nt,
+                sigma=0.1,
+                drift_weight=1.0,
+                coupling_lambda=1.0,
             )
 
         hjb_solver = HJBFDMSolver(problem)

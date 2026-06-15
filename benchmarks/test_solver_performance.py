@@ -25,6 +25,8 @@ import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.mfg_solvers import ParticleCollocationSolver
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 # Test problem fixtures
@@ -32,11 +34,11 @@ from mfgarchon.alg.numerical.mfg_solvers import ParticleCollocationSolver
 def small_problem():
     """Small problem for quick regression testing (suitable for CI)."""
     return MFGProblem(
-        xmin=0.0,
-        xmax=1.0,
-        Nx=20,  # Small grid
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=1.0,
-        Nt=30,  # Small time steps
+        Nt=30,
         sigma=0.12,
         coupling_coefficient=0.02,
     )
@@ -46,11 +48,11 @@ def small_problem():
 def medium_problem():
     """Medium problem for comprehensive benchmarking."""
     return MFGProblem(
-        xmin=0.0,
-        xmax=1.0,
-        Nx=40,  # Medium grid
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=1.0,
-        Nt=50,  # Medium time steps
+        Nt=50,
         sigma=0.12,
         coupling_coefficient=0.02,
     )
@@ -120,7 +122,12 @@ def test_solver_creation_overhead(benchmark):
     Measures the time to create solver instances, which should be
     negligible compared to solve time.
     """
-    problem = MFGProblem(Nx=20, Nt=30)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=30,
+    )
     bounds = problem.geometry.get_bounds()
     Nx_points = problem.geometry.get_grid_shape()[0]
     x_collocation = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
@@ -147,9 +154,9 @@ def test_problem_creation_overhead(benchmark):
 
     def create_problem():
         return MFGProblem(
-            xmin=0.0,
-            xmax=1.0,
-            Nx=40,
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             T=1.0,
             Nt=50,
             sigma=0.12,

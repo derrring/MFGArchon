@@ -196,19 +196,19 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             (M_initial, U_terminal): Initial density and terminal value function
 
         Priority order:
-            1. get_m_init() / get_u_fin() methods (preferred modern API)
-            2. m_init / u_fin attributes (legacy direct access)
+            1. get_m_init() / get_u_terminal() methods (preferred modern API)
+            2. m_initial / u_terminal attributes (Issue #670 unified naming)
             3. get_initial_m() / get_final_u() methods (alternate modern API)
             4. initial_density() / terminal_cost() callables (functional API)
         """
-        # Priority 1: get_m_init() / get_u_fin() methods
+        # Priority 1: get_m_init() / get_u_terminal() methods
         try:
             M_initial = self.problem.get_m_init()
             if M_initial.shape != shape:
                 M_initial = M_initial.reshape(shape)
 
             try:
-                U_terminal = self.problem.get_u_fin()
+                U_terminal = self.problem.get_u_terminal()
             except AttributeError:
                 # No terminal condition - use zeros
                 U_terminal = np.zeros(shape)
@@ -256,8 +256,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         except AttributeError as e:
             raise ValueError(
                 "Problem must provide initial/terminal conditions via one of:\n"
-                "  1. get_m_init()/get_u_fin() methods (preferred)\n"
-                "  2. m_init/u_fin attributes\n"
+                "  1. get_m_init()/get_u_terminal() methods (preferred)\n"
+                "  2. m_initial/u_terminal attributes\n"
                 "  3. get_initial_m()/get_final_u() methods\n"
                 "  4. initial_density()/terminal_cost() callables"
             ) from e

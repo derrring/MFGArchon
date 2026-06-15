@@ -14,6 +14,8 @@ from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver, KDENormalizatio
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _default_hamiltonian():
@@ -53,14 +55,13 @@ class Simple2DMFGProblem(MFGProblem):
 
     def __init__(self):
         super().__init__(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             T=1.0,
             Nt=10,
-            Nx=20,
-            Lx=1.0,
-            xmin=0.0,
             sigma=0.1,
             coupling_coefficient=0.5,
-            dimension=2,
             components=_default_components_2d(),
         )
 

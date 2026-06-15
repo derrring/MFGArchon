@@ -9,7 +9,9 @@
 
 The geometry-first API is the **recommended way** to construct MFG problems in MFGArchon. Instead of manually specifying grid parameters in `MFGProblem`, you first create a geometry object and pass it to `MFGProblem`.
 
-As of v0.16.0, `MFGProblem.geometry` is **always non-None** after initialization, and all spatial information is derived from the geometry object. Legacy attributes (`xmin`, `xmax`, `Nx`, `dx`, etc.) emit `DeprecationWarning` when accessed.
+As of v0.16.0, `MFGProblem.geometry` is **always non-None** after initialization, and all spatial information is derived from the geometry object.
+
+> **Removed (BREAKING):** The legacy 1D read-properties (`xmin`, `xmax`, `Nx`, `Lx`, `dx`, `xSpace`) were removed in v0.20.1 (Issue #1360), and the legacy 1D constructor kwargs (`xmin=`, `xmax=`, `Nx=`, `Lx=`) plus the `get_u_final` / `get_u_fin` aliases were removed in the following minor release (Issue #1363). Passing a removed kwarg now raises `ValueError`; accessing a removed attribute or alias raises `AttributeError`. Use the geometry-first API below.
 
 ## Key Benefits
 
@@ -77,12 +79,22 @@ domain.create_grid(Nx=101)
 problem = MFGProblem(geometry=domain, T=1.0, Nt=100, sigma=0.1)
 ```
 
-**Old API** (deprecated):
+**Removed API** (raises `ValueError` since Issue #1363):
 ```python
-problem = MFGProblem(
-    xmin=[0.0], xmax=[1.0], Nx=[101],
-    T=1.0, Nt=100, sigma=0.1
+# NO LONGER SUPPORTED -- raises ValueError pointing to the geometry-first API:
+#   problem = MFGProblem(xmin=[0.0], xmax=[1.0], Nx=[101], T=1.0, Nt=100, sigma=0.1)
+#
+# Replace with a TensorProductGrid. NOTE the off-by-one: Nx counts intervals,
+# TensorProductGrid takes Nx_points = Nx + 1 grid points.
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
+
+grid = TensorProductGrid(
+    bounds=[(0.0, 1.0)],
+    Nx_points=[102],  # Nx=101 intervals -> 102 points
+    boundary_conditions=no_flux_bc(dimension=1),
 )
+problem = MFGProblem(geometry=grid, T=1.0, Nt=100, sigma=0.1)
 ```
 
 ### 3. Implicit Domains (Meshfree)
@@ -207,10 +219,10 @@ elif problem.is_implicit:
     pass
 ```
 
-**Deprecated pattern** - Legacy attributes emit warnings:
+**Removed pattern** - Legacy attributes raise `AttributeError` (Issue #1360):
 
 ```python
-# These emit DeprecationWarning (will be removed in v1.0.0)
+# These were removed in v0.20.1 -- accessing them raises AttributeError.
 x_min = problem.xmin      # Use problem.geometry.get_bounds()[0][0] instead
 x_max = problem.xmax      # Use problem.geometry.get_bounds()[1][0] instead
 grid_size = problem.Nx    # Use problem.geometry.num_spatial_points - 1 instead
@@ -373,10 +385,16 @@ domain2 = Hypersphere(center=[2, 0], radius=0.5)
 ## FAQ
 
 **Q: Do I need to update my code immediately?**
-A: No. Old API continues to work with deprecation warnings through v0.99.x.
+A: The legacy 1D geometry surfaces (`xmin`/`xmax`/`Nx`/`Lx` read-properties and
+constructor kwargs, and the `get_u_final`/`get_u_fin` aliases) have been removed
+(Issues #1360, #1363) after their 3-minor-version deprecation window. Code that
+still uses them now raises; migrate to the geometry-first API shown above. Other
+deprecated surfaces continue to emit `DeprecationWarning`.
 
 **Q: Will my old code break?**
-A: No. 100% backward compatibility maintained until v1.0.0.
+A: Code using the removed 1D geometry kwargs/attributes/aliases will raise. The
+`spatial_bounds=` / `spatial_discretization=` n-D grid path and the no-argument
+default still work.
 
 **Q: What if I need manual grid construction?**
 A: Use `TensorProductGrid` - it provides the same flexibility with better type safety.

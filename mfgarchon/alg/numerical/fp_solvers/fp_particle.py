@@ -336,8 +336,7 @@ class FPParticleSolver(BaseFPSolver):
         except AttributeError as e:
             # Geometry is always available after MFGProblem initialization
             raise ValueError(
-                "FPParticleSolver requires a geometry object. "
-                "Create MFGProblem with geometry=TensorProductGrid(...) or with Nx=... parameter."
+                "FPParticleSolver requires a geometry object. Create MFGProblem with geometry=TensorProductGrid(...)."
             ) from e
 
         # Compute derived quantities

@@ -67,7 +67,15 @@ class TestLegacy1DMode:
 
     def test_basic_1d_problem(self):
         """Test basic 1D problem creation."""
-        problem = MFGProblem(xmin=0, xmax=1, Nx=100, T=1.0, Nt=50, sigma=0.1, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0, 1)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            T=1.0,
+            Nt=50,
+            sigma=0.1,
+            components=_default_components(),
+        )
 
         assert problem.dimension == 1
         assert problem.domain_type == "grid"
@@ -83,7 +91,15 @@ class TestLegacy1DMode:
         """Test 1D problem with Lx parameter (alternative to xmin/xmax)."""
         # Note: Lx alias is specified in design but not yet implemented
         # For now, test the standard xmin/xmax interface
-        problem = MFGProblem(xmin=0, xmax=2.0, Nx=100, T=1.0, Nt=50, sigma=0.1, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0, 2.0)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            T=1.0,
+            Nt=50,
+            sigma=0.1,
+            components=_default_components(),
+        )
 
         assert problem.dimension == 1
         bounds = problem.geometry.get_bounds()
@@ -93,7 +109,15 @@ class TestLegacy1DMode:
 
     def test_1d_solver_compatibility(self):
         """Test solver compatibility for 1D problems."""
-        problem = MFGProblem(xmin=0, xmax=1, Nx=100, T=1.0, Nt=50, sigma=0.1, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0, 1)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            T=1.0,
+            Nt=50,
+            sigma=0.1,
+            components=_default_components(),
+        )
 
         assert "fdm" in problem.solver_compatible
         assert "semi_lagrangian" in problem.solver_compatible

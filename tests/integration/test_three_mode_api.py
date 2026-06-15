@@ -14,6 +14,8 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.types import NumericalScheme
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _default_hamiltonian():
@@ -39,7 +41,14 @@ class TestSafeMode:
 
     def test_safe_mode_fdm_upwind(self):
         """Test Safe Mode with FDM_UPWIND scheme."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Safe Mode: Specify scheme
         result = problem.solve(
@@ -55,7 +64,14 @@ class TestSafeMode:
 
     def test_safe_mode_fdm_centered(self):
         """Test Safe Mode with FDM_CENTERED scheme."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         result = problem.solve(
             scheme=NumericalScheme.FDM_CENTERED,
@@ -70,7 +86,14 @@ class TestSafeMode:
     @pytest.mark.skip(reason="Pre-existing bug in SL solver (NaN/Inf issue), unrelated to #580")
     def test_safe_mode_sl_linear(self):
         """Test Safe Mode with SL_LINEAR scheme."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         result = problem.solve(
             scheme=NumericalScheme.SL_LINEAR,
@@ -84,7 +107,14 @@ class TestSafeMode:
 
     def test_safe_mode_string_scheme(self):
         """Test Safe Mode with string scheme name."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Should accept string and convert to enum
         result = problem.solve(
@@ -97,7 +127,14 @@ class TestSafeMode:
 
     def test_safe_mode_invalid_string_scheme(self):
         """Test Safe Mode with invalid string scheme."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         with pytest.raises(ValueError, match="Unknown scheme string"):
             problem.solve(scheme="invalid_scheme", max_iterations=5, verbose=False)
@@ -108,7 +145,14 @@ class TestExpertMode:
 
     def test_expert_mode_matching_fdm_solvers(self):
         """Test Expert Mode with matching FDM solvers."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Create matching FDM solvers
         hjb = HJBFDMSolver(problem)
@@ -130,7 +174,14 @@ class TestExpertMode:
         """Test Expert Mode with mismatched solvers emits warning."""
         from mfgarchon.alg.numerical.fp_solvers import FPSLSolver
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Create mismatched solvers (FDM HJB with SL FP)
         # These have compatible grids but different scheme families
@@ -157,7 +208,14 @@ class TestExpertMode:
 
     def test_expert_mode_partial_injection_raises_error(self):
         """Test Expert Mode with only one solver raises error."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb = HJBFDMSolver(problem)
 
@@ -176,7 +234,14 @@ class TestAutoMode:
 
     def test_auto_mode_default_behavior(self):
         """Test Auto Mode selects default scheme."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Auto Mode: No scheme or solvers specified
         result = problem.solve(max_iterations=5, verbose=False)
@@ -195,7 +260,14 @@ class TestAutoMode:
         logger = get_logger("mfgarchon.core.mfg_problem")
         logger.setLevel(logging.INFO)
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         with caplog.at_level(logging.INFO, logger="mfgarchon.core.mfg_problem"):
             result = problem.solve(max_iterations=5, verbose=True)
@@ -218,7 +290,14 @@ class TestModeMixingErrors:
 
     def test_safe_and_expert_mode_mixing_raises_error(self):
         """Test that specifying both scheme and solvers raises error."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb = HJBFDMSolver(problem)
         fp = FPFDMSolver(problem)
@@ -234,7 +313,14 @@ class TestModeMixingErrors:
 
     def test_safe_mode_with_partial_expert_raises_error(self):
         """Test that specifying scheme with one solver raises error."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         hjb = HJBFDMSolver(problem)
 
@@ -252,7 +338,14 @@ class TestBackwardCompatibility:
 
     def test_basic_solve_still_works(self):
         """Test that problem.solve() without parameters still works."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         # Old pattern: Just call solve()
         result = problem.solve(max_iterations=5, verbose=False)
@@ -263,7 +356,14 @@ class TestBackwardCompatibility:
 
     def test_solve_with_tolerance_and_iterations(self):
         """Test that specifying tolerance and iterations still works."""
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
 
         result = problem.solve(
             max_iterations=10,
@@ -282,7 +382,14 @@ class TestConfigIntegration:
         """Test Safe Mode with custom config."""
         from mfgarchon.config import MFGSolverConfig
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
         config = MFGSolverConfig()
         config.picard.max_iterations = 3
 
@@ -299,7 +406,14 @@ class TestConfigIntegration:
         """Test Expert Mode with custom config."""
         from mfgarchon.config import MFGSolverConfig
 
-        problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            Nt=10,
+            T=1.0,
+            components=_default_components(),
+        )
         config = MFGSolverConfig()
 
         hjb = HJBFDMSolver(problem)
@@ -320,7 +434,14 @@ if __name__ == "__main__":
     print("Running three-mode API integration tests...")
 
     # Test Safe Mode
-    problem = MFGProblem(Nx=[20], Nt=10, T=1.0, components=_default_components())
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=10,
+        T=1.0,
+        components=_default_components(),
+    )
     result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=3, verbose=False)
     assert result is not None
     print("✓ Safe Mode works")
