@@ -63,6 +63,16 @@ class NewtonMFGSolver(BaseCouplingIterator):
         - Automatic Jacobian (finite diff or JAX)
         - Line search for globalization
 
+    Source / nonlocal / obstacle terms (Issue #1361):
+        ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
+        ``obstacle`` flow through the residual ``MFGResidual`` and are composed
+        from the ``(U, M)`` residual arguments via the single-source
+        ``source_composition`` helpers shared with the Picard
+        ``FixedPointIterator``. The FD Jacobian differentiates through the source
+        dependence (option A; see ``MFGResidual``), so Newton converges to the
+        same equilibrium as Picard. Obstacle uses the Picard-matching approximate
+        penalty; ``PenaltyHJBSolver`` (#924) is the proper-handling route.
+
     Performance / solver selection:
         NewtonMFGSolver is research-grade for d>=2 / Nx>~50 — it is ~135x slower
         than the fixed-point (Picard) coupler in 2D and scales poorly with

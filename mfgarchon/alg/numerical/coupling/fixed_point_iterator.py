@@ -29,7 +29,7 @@ from .fixed_point_utils import (
     preserve_terminal_condition,
     resolve_fp_drift_kwargs,
 )
-from .graph_coupling import _get_time_slice
+from .source_composition import compose_fp_source, compose_hjb_source
 
 logger = get_logger(__name__)
 
@@ -235,83 +235,31 @@ class FixedPointIterator(BaseCouplingIterator):
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
 
     def _compose_hjb_source(self, m_current: np.ndarray, u_current: np.ndarray) -> Callable | None:
-        """Compose problem-level source terms into a solver-level source_term callable.
+        """Compose problem-level HJB source terms into a solver-level callable.
 
-        Reads source_term_hjb, nonlocal_operator, and obstacle from MFGProblem,
-        binds spatial grid, current density, and current value function, returns
-        a (t, x) -> array closure compatible with
-        BaseHJBSolver.solve_hjb_system(source_term=...).
-
-        Issue #921/#922: Bridges problem-level signature (x, m, v, t) to
-        solver-level signature (t, x) by closure binding.
-        Issue #1259 fix (2026-06-10 audit): nonlocal_operator term was computed
-        in has_nonlocal but never applied inside the closure.  Added explicit
-        branch that extracts the time slice of the previous-iterate value function
-        and applies J[v] with the same sign convention used by graph_mfg_solver
-        (s += nonlocal_operator @ v_t).
+        Issue #1361: thin delegate to the single-source
+        :func:`source_composition.compose_hjb_source`, shared verbatim with the
+        coupled-Newton ``MFGResidual`` path so the source/nonlocal/obstacle
+        convention lives in exactly one place (the bug class behind #1259 and
+        #1285 was a private second copy). Bridges the problem-level signature
+        ``(x, m, v, t)`` to the solver-level ``(t, x)`` by closure binding.
 
         Returns:
-            Callable or None if no source terms are active.
+            Callable or None if no HJB source terms are active.
         """
-        problem = self.problem
-        has_nonlocal = problem.nonlocal_operator is not None
-        has_source = problem.source_term_hjb is not None
-        has_obstacle = problem.obstacle is not None
-
-        if not (has_nonlocal or has_source or has_obstacle):
-            return None
-
-        def composed(t: float, x: np.ndarray) -> np.ndarray:
-            # Note: HJB solver calls source_term(t, x_grid) -> array.
-            # The nonlocal and source terms use the previous iterate's U
-            # (explicit treatment), consistent with graph_mfg_solver.py:306.
-            terms: list[np.ndarray] = []
-            if has_source:
-                # Issue #1285: evaluate the problem-level source (delta F / delta m) at the
-                # density SLICE for time t, not the whole (Nt+1, Nx) array. Otherwise a
-                # time-dependent source (e.g. lions_correction F[m]) silently falls back to the
-                # terminal slice m[-1] for every t. Mirrors the nonlocal branch below and
-                # graph_mfg_solver.py (_get_time_slice).
-                m_t = _get_time_slice(m_current, t, problem.dt)
-                terms.append(problem.source_term_hjb(x, m_t, np.zeros_like(m_t), t))
-            if has_obstacle:
-                psi = problem.obstacle(x)
-                # Penalty parameter: large but finite, consistent with Rev 4 design
-                eps = getattr(problem, "_penalty_eps", 1e6)
-                # Note: this is evaluated with v=0 here; for proper penalty,
-                # PenaltyHJBSolver wrapper (#924) should be used instead.
-                terms.append((1.0 / eps) * np.maximum(0.0, psi.ravel()))
-            if has_nonlocal:
-                # Issue #1259 fix (2026-06-10 audit): apply J[v] using the
-                # previous iterate's value function at time t (explicit
-                # treatment), matching the convention in graph_mfg_solver.py:306.
-                v_t = _get_time_slice(u_current, t, problem.dt)
-                terms.append(problem.nonlocal_operator @ v_t)
-            return sum(terms) if terms else np.zeros(x.shape[0])
-
-        return composed
+        return compose_hjb_source(self.problem, m_current, u_current)
 
     def _compose_fp_source(self, m_current: np.ndarray, v_current: np.ndarray) -> Callable | None:
-        """Compose problem-level FP source terms into solver-level callable.
+        """Compose problem-level FP source terms into a solver-level callable.
 
-        Returns a (t, x) -> array closure for BaseFPSolver.solve_fp_system(source_term=...).
+        Issue #1361: thin delegate to the single-source
+        :func:`source_composition.compose_fp_source`, shared with the
+        coupled-Newton ``MFGResidual`` path.
 
         Returns:
             Callable or None if no FP source terms are active.
         """
-        problem = self.problem
-        has_source = problem.source_term_fp is not None
-
-        if not has_source:
-            return None
-
-        def composed(t: float, x: np.ndarray) -> np.ndarray:
-            # Issue #1285: slice density and value function at time t (see _compose_hjb_source).
-            m_t = _get_time_slice(m_current, t, problem.dt)
-            v_t = _get_time_slice(v_current, t, problem.dt)
-            return problem.source_term_fp(x, m_t, v_t, t)
-
-        return composed
+        return compose_fp_source(self.problem, m_current, v_current)
 
     def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
         """
