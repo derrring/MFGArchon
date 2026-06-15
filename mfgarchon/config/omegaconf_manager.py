@@ -236,7 +236,7 @@ class OmegaConfManager:
         }
 
         # Write default configs
-        configs = {
+        configs: dict[str, dict[str, Any]] = {
             "base_mfg.yaml": base_mfg_config,
             "solver.yaml": solver_config,
             "beach_problem.yaml": beach_config,

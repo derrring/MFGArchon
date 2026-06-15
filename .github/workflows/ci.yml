@@ -119,6 +119,15 @@ jobs:
         echo "Testing package imports..."
         python -c "import mfgarchon; print('✅ Package imports successfully')"
 
+    - name: MyPy type gate (config subpackage, blocking)
+      timeout-minutes: 2
+      run: |
+        echo "Type-checking mfgarchon/config (blocking gate)..."
+        # Scoped to config + --follow-imports=silent on purpose: raw mypy on
+        # config pulls 1800+ transitive errors from un-annotated deps otherwise.
+        mypy mfgarchon/config --follow-imports=silent
+        echo "✅ config type-checks clean"
+
     - name: Documentation completeness check
       run: |
         echo "📚 Checking documentation completeness..."
@@ -188,11 +197,20 @@ jobs:
 
     - name: Run tests with coverage (skip slow tests on PRs)
       if: github.event_name != 'release'
-      timeout-minutes: 38  # serial suite (~4770 tests) under coverage; grew past the old 30-min budget
+      timeout-minutes: 25  # parallel (-n auto) suite under coverage; ~2.3x faster than the old 38-min serial budget
+      env:
+        # Pin BLAS/OpenMP to 1 thread per worker: xdist already saturates cores,
+        # so per-process BLAS parallelism would oversubscribe and slow the run.
+        OMP_NUM_THREADS: 1
+        OPENBLAS_NUM_THREADS: 1
+        MKL_NUM_THREADS: 1
       run: |
         # Note: test_backends/ and test_visualization/ excluded due to platform-specific failures
         # (MPS device tests on non-Mac, legacy plotting issues)
+        # -n auto: pytest-xdist parallelism. Confirmed equivalent to serial
+        # (same pass/skip/xfail counts, no isolation failures) before enabling.
         pytest tests/ -v \
+          -n auto \
           --ignore=tests/unit/test_backends/ \
           --ignore=tests/unit/test_visualization/ \
           -m "not slow and not optional_torch and not benchmark and not experimental and not environment" \
