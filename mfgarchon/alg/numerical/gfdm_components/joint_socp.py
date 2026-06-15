@@ -37,8 +37,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.spatial import cKDTree
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:
     import cvxpy as cp
@@ -494,6 +499,42 @@ class PrecomputedJointSocpStencils:
         Wendland $C^2$).
     eps_pos : float
         Minimum off-center Laplacian weight (M-matrix slack). Default 0.0.
+    max_stencil_enlargements : int
+        SOCP-infeasibility-triggered adaptive stencil enlargement (Issue #1106).
+        When > 0, a stencil that remains infeasible after C-bisection is rebuilt
+        with ``enlargement_step`` additional next-nearest cloud points and the
+        SOCP retried, up to this many enlargement steps. A larger stencil adds
+        Taylor degrees of freedom, so the SOCP feasible set can become non-empty
+        for geometrically starved (wall / corner / obstacle-adjacent) stencils
+        where C-bisection alone fails (the infeasibility is directional, not a
+        cone-magnitude issue). Default 0 (OFF) — the paper / default path is
+        byte-identical. The enlarged neighbor set is stored ONLY in this object's
+        ``JointSocpStencilData.neighbor_indices`` (consumed by the HJB-GFDM
+        differentiation/Jacobian assembly via the same single-source contract);
+        it does NOT mutate the shared runtime neighborhoods, so enlargement does
+        not cascade into the operator / FP solver / boundary handler.
+    enlargement_step : int
+        Number of next-nearest cloud points added per enlargement step
+        (Issue #1106). Default 2.
+    obstacle_sdf : Callable | None
+        Signed-distance function of the obstacle region, same convention and
+        object as passed to ``HJBGFDMSolver`` / ``NeighborhoodBuilder``
+        (``obstacle_sdf(x) < 0`` means x is INSIDE the obstacle). When provided,
+        adaptive enlargement (Issue #1106) applies the SAME line-of-sight filter
+        (``geometry.visibility.filter_visible_neighbors``) to its candidate
+        next-nearest points that the base neighborhoods were post-filtered with.
+        This prevents enlargement from re-adding a cross-wall / cross-obstacle
+        neighbor that the base visibility filter removed — which would silently
+        re-open the #1102 cross-wall coupling (wrong physics) on problems with an
+        internal obstacle or narrow channel. None (default) => no visibility
+        constraint on enlargement (the common, obstacle-free case is unchanged).
+        Only consulted when ``max_stencil_enlargements > 0``.
+    visibility_samples : int
+        Interior samples per candidate edge for the obstacle line-of-sight test
+        during enlargement. Mirrors ``NeighborhoodBuilder``. Default 10.
+    visibility_margin : float
+        Safety margin for obstacle proximity during the enlargement visibility
+        test. Mirrors ``NeighborhoodBuilder``. Default 0.0.
 
     Attributes
     ----------
@@ -501,8 +542,13 @@ class PrecomputedJointSocpStencils:
         Precomputed weights at each feasible interior node.
     stats : dict
         Precomputation statistics: n_feasible, n_infeasible, n_fast_path,
-        n_socp, time_ms.
+        n_socp, n_enlarged, max_enlargement_steps, time_ms.
     """
+
+    # Extra candidate margin queried from the kD-tree beyond the requested
+    # additions, so duplicates already present in the stencil don't starve the
+    # enlargement of fresh points.
+    _ENLARGE_POOL = 8
 
     def __init__(
         self,
@@ -517,6 +563,11 @@ class PrecomputedJointSocpStencils:
         use_relaxed_fallback: bool = False,
         lambda_M: float = 1.0e4,
         lambda_C: float = 1.0e4,
+        max_stencil_enlargements: int = 0,
+        enlargement_step: int = 2,
+        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
+        visibility_samples: int = 10,
+        visibility_margin: float = 0.0,
     ):
         if not _CVXPY_AVAILABLE:
             raise ImportError("cvxpy is required for joint SOCP. Install with: pip install cvxpy")
@@ -548,6 +599,22 @@ class PrecomputedJointSocpStencils:
         self._use_relaxed_fallback = bool(use_relaxed_fallback)
         self._lambda_M = float(lambda_M)
         self._lambda_C = float(lambda_C)
+        # SOCP-infeasibility-triggered adaptive stencil enlargement (Issue #1106).
+        # The kD-tree (over the full cloud) is built only when enlargement is
+        # enabled, keeping the default path overhead-free.
+        self._max_enlargements = int(max_stencil_enlargements)
+        self._enlargement_step = int(enlargement_step)
+        if self._max_enlargements > 0 and self._enlargement_step < 1:
+            raise ValueError(f"enlargement_step must be >= 1 when enlargement is enabled, got {enlargement_step}")
+        self._kdtree = cKDTree(self._points) if self._max_enlargements > 0 else None
+        # Obstacle visibility for enlargement candidates (Issue #1106 defect fix).
+        # The base neighborhoods were already post-filtered by
+        # `filter_visible_neighbors`; enlargement must apply the same filter so it
+        # never re-adds a cross-wall / cross-obstacle neighbor (re-opening the
+        # #1102 cross-wall coupling). None => no obstacle => enlargement unchanged.
+        self._obstacle_sdf = obstacle_sdf
+        self._visibility_samples = int(visibility_samples)
+        self._visibility_margin = float(visibility_margin)
         self._dimension = self._points.shape[1] if self._points.ndim == 2 else 1
 
         if self._dimension not in (1, 2):
@@ -566,13 +633,102 @@ class PrecomputedJointSocpStencils:
             "n_relaxed_fallback": 0,  # stencils that needed slack-penalty solve
             "max_eps_M": 0.0,
             "max_eps_C": 0.0,
+            "n_enlarged": 0,  # stencils made feasible via adaptive enlargement (#1106)
+            "max_enlargement_steps": 0,
             "time_ms": 0.0,
         }
         self._precompute()
 
+    def _build_stencil_arrays(self, center_global: int, nbr: np.ndarray) -> tuple[np.ndarray, int, float, np.ndarray]:
+        """Build the Taylor matrix, center position, scale h_i, and Wendland
+        weights for the stencil at ``center_global`` over neighbors ``nbr``.
+
+        Returns ``(A, center_in_nbr, h_i, w_neighbor)``. The caller must ensure
+        ``center_global`` is present in ``nbr``.
+        """
+        build_A = build_taylor_matrix_1d if self._dimension == 1 else build_taylor_matrix_2d
+        offsets = self._points[nbr] - self._points[center_global]
+        offsets_for_taylor = offsets.reshape(-1) if self._dimension == 1 and offsets.ndim == 2 else offsets
+        A, _ = build_A(offsets_for_taylor)
+
+        if self._dimension == 1:
+            offsets_1d = offsets.reshape(-1)
+            dists = np.abs(offsets_1d)
+            w_neighbor = wendland_stencil_weights(offsets_1d, self._delta)
+        else:
+            dists = np.linalg.norm(offsets, axis=1)
+            w_neighbor = wendland_stencil_weights(offsets, self._delta)
+
+        nz = dists[dists > 1e-12]
+        h_i = float(np.median(nz)) if len(nz) > 0 else self._delta
+        center_in_nbr = int(np.where(nbr == int(center_global))[0][0])
+        return A, center_in_nbr, h_i, w_neighbor
+
+    def _solve_with_bisection(
+        self, A: np.ndarray, center_in_nbr: int, h_i: float, w_neighbor: np.ndarray
+    ) -> tuple[dict, float]:
+        """Solve the joint SOCP at one stencil, retrying with C-bisection
+        (C *= growth up to C_max) while infeasible. Returns ``(res, C_used)``.
+        """
+        C_try = self._C
+        res = solve_joint_socp_at_stencil(
+            A, center_in_nbr, h_i, C_try, eps_pos=self._eps_pos, dimension=self._dimension, wendland_w=w_neighbor
+        )
+        while self._C_max is not None and res["status"] != "feasible" and C_try * self._C_growth <= self._C_max + 1e-12:
+            C_try *= self._C_growth
+            res = solve_joint_socp_at_stencil(
+                A, center_in_nbr, h_i, C_try, eps_pos=self._eps_pos, dimension=self._dimension, wendland_w=w_neighbor
+            )
+        return res, C_try
+
+    def _enlarge_stencil(self, center_global: int, cur_nbr: np.ndarray) -> np.ndarray | None:
+        """Append up to ``enlargement_step`` next-nearest cloud points not already
+        in ``cur_nbr`` (Issue #1106).
+
+        Returns the enlarged neighbor-index array (center preserved at its
+        position, new indices appended), or ``None`` if the cloud has no further
+        points to add. New neighbors inject Taylor degrees of freedom so the SOCP
+        feasible set can become non-empty for a geometrically starved stencil.
+
+        Obstacle visibility (Issue #1106 defect fix): when ``obstacle_sdf`` was
+        supplied, candidate next-nearest points whose line of sight to the center
+        is occluded by the obstacle are discarded BEFORE selecting the additions —
+        the same ``filter_visible_neighbors`` filter the base neighborhoods were
+        post-filtered with. Enlargement therefore never re-adds a cross-wall /
+        cross-obstacle neighbor that the base filter removed (which would silently
+        re-open the #1102 cross-wall coupling). If no visible candidate remains,
+        returns ``None`` so the stencil falls through to the relaxed fallback on
+        its original (visibility-consistent) base stencil rather than adopting an
+        occluded neighbor.
+        """
+        existing = {int(x) for x in cur_nbr}
+        n_total = len(self._points)
+        # Widen the candidate window when an obstacle filter is active: visibility
+        # may discard many of the nearest points, so query a larger pool to still
+        # find `enlargement_step` line-of-sight-visible additions.
+        pool = self._ENLARGE_POOL * (4 if self._obstacle_sdf is not None else 1)
+        k_query = min(n_total, len(cur_nbr) + self._enlargement_step + pool)
+        _, idxs = self._kdtree.query(self._points[center_global], k=k_query)
+        idxs = np.atleast_1d(np.asarray(idxs))
+        new = [int(j) for j in idxs if 0 <= int(j) < n_total and int(j) not in existing]
+        if self._obstacle_sdf is not None and new:
+            from mfgarchon.geometry.visibility import filter_visible_neighbors
+
+            vis_mask = filter_visible_neighbors(
+                self._points[center_global],
+                self._points[new],
+                self._obstacle_sdf,
+                n_samples=self._visibility_samples,
+                margin=self._visibility_margin,
+            )
+            new = [j for j, visible in zip(new, vis_mask, strict=True) if visible]
+        if not new:
+            return None
+        add = new[: self._enlargement_step]
+        return np.concatenate([np.asarray(cur_nbr, dtype=int), np.asarray(add, dtype=int)])
+
     def _precompute(self) -> None:
         t0 = time.time()
-        build_A = build_taylor_matrix_1d if self._dimension == 1 else build_taylor_matrix_2d
 
         for i in self._interior_indices:
             i = int(i)
@@ -582,60 +738,56 @@ class PrecomputedJointSocpStencils:
             if nh is None:
                 continue
             nbr = np.asarray(nh["indices"])
-            center_match = np.where(nbr == int(i))[0]
-            if len(center_match) == 0:
+            if not np.any(nbr == i):
                 continue
-            center_in_nbr = int(center_match[0])
 
-            offsets = self._points[nbr] - self._points[i]
-            offsets_for_taylor = offsets.reshape(-1) if self._dimension == 1 and offsets.ndim == 2 else offsets
-            A, _ = build_A(offsets_for_taylor)
+            A, center_in_nbr, h_i, w_neighbor = self._build_stencil_arrays(i, nbr)
+            res, C_try = self._solve_with_bisection(A, center_in_nbr, h_i, w_neighbor)
 
-            if self._dimension == 1:
-                offsets_1d = offsets.reshape(-1)
-                dists = np.abs(offsets_1d)
-                w_neighbor = wendland_stencil_weights(offsets_1d, self._delta)
-            else:
-                dists = np.linalg.norm(offsets, axis=1)
-                w_neighbor = wendland_stencil_weights(offsets, self._delta)
+            # SOCP-infeasibility-triggered adaptive stencil enlargement (Issue #1106).
+            # When a stencil is infeasible after C-bisection, add next-nearest
+            # cloud points and retry: the extra Taylor degrees of freedom can make
+            # the SOCP feasible set non-empty for geometrically starved
+            # (wall / corner / obstacle-adjacent) stencils where the infeasibility
+            # is directional, not a cone-magnitude issue that C-bisection covers.
+            # The enlarged stencil is ADOPTED only when it achieves feasibility, so
+            # if enlargement does not help, the relaxed fallback below runs on the
+            # original (base) stencil exactly as before. Default OFF
+            # (max_stencil_enlargements=0) => this block is skipped entirely.
+            n_steps_used = 0
+            if res["status"] != "feasible" and self._max_enlargements > 0:
+                cur_nbr = nbr
+                for step in range(1, self._max_enlargements + 1):
+                    ext = self._enlarge_stencil(i, cur_nbr)
+                    if ext is None:
+                        break  # cloud exhausted; no further points to add
+                    cur_nbr = ext
+                    A_e, center_e, h_e, w_e = self._build_stencil_arrays(i, cur_nbr)
+                    res_e, C_e = self._solve_with_bisection(A_e, center_e, h_e, w_e)
+                    if res_e["status"] == "feasible":
+                        nbr, A, center_in_nbr, h_i, w_neighbor = cur_nbr, A_e, center_e, h_e, w_e
+                        res, C_try = res_e, C_e
+                        n_steps_used = step
+                        break
 
-            nz = dists[dists > 1e-12]
-            h_i = float(np.median(nz)) if len(nz) > 0 else self._delta
+            if n_steps_used > 0:
+                self.stats["n_enlarged"] += 1
+                self.stats["max_enlargement_steps"] = max(self.stats["max_enlargement_steps"], n_steps_used)
 
-            C_try = self._C
-            res = solve_joint_socp_at_stencil(
-                A,
-                center_in_nbr,
-                h_i,
-                C_try,
-                eps_pos=self._eps_pos,
-                dimension=self._dimension,
-                wendland_w=w_neighbor,
-            )
-            while (
-                self._C_max is not None
-                and res["status"] != "feasible"
-                and C_try * self._C_growth <= self._C_max + 1e-12
-            ):
-                C_try *= self._C_growth
-                res = solve_joint_socp_at_stencil(
-                    A,
-                    center_in_nbr,
-                    h_i,
-                    C_try,
-                    eps_pos=self._eps_pos,
-                    dimension=self._dimension,
-                    wendland_w=w_neighbor,
-                )
-
-            # If still infeasible after C-bisection, fall through to the always-
-            # feasible relaxed SOCP. This eliminates the discrete scheme switch
-            # between joint_socp and Phase-2 M-matrix-QP that creates
-            # discontinuous discretization on irregular clouds. For
-            # well-conditioned stencils (the C-bisection feasible cases), the
-            # original joint_socp solution is used. For marginally infeasible
-            # stencils, the relaxed SOCP smoothly degrades while maintaining
-            # the equality constraints (consistency).
+            # Final resort: always-feasible relaxed SOCP. This eliminates the
+            # discrete scheme switch between joint_socp and Phase-2 M-matrix-QP
+            # that creates discontinuous discretization on irregular clouds. For
+            # well-conditioned stencils (the C-bisection feasible cases) the
+            # original joint_socp solution is used; for marginally infeasible
+            # stencils the relaxed SOCP smoothly degrades while keeping the
+            # equality constraints (consistency).
+            #
+            # Issue #1106/#1107/#1108 hook: this point is reached only when both
+            # C-bisection AND adaptive enlargement (#1106) failed to find an exact
+            # feasible solution — i.e. the stencil is geometrically infeasible at
+            # every attempted size. Future exact fallbacks plug in HERE, before
+            # the slack-penalty relaxed SOCP: #1107 (3rd-order Taylor stencil) and
+            # #1108 (M-matrix-only fallback for cone-binding infeasibility).
             if res["status"] != "feasible" and self._use_relaxed_fallback:
                 C_relaxed = self._C if self._C_max is None else self._C_max
                 res = solve_relaxed_joint_socp_at_stencil(
