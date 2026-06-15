@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-06-15
+
 ### Changed
 
 - **Vectorized the semi-Lagrangian canonical Carlini-Silva per-point optimization** (PR #1353).

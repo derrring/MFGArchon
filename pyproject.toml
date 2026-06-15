@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.20.0"  # v0.20.0: interaction operators (#1023) + hex FEM (#470) + CS semi-Lagrangian (#1058) + FVM-FP (#422) + solver demote (#1342) + ~50 fixes
+version = "0.20.1"  # v0.20.1: deprecation cleanup (Tier-1/2/3a removed, #1354-1357/#1360) + SL vectorize 13-40x (#1353) + CI mypy-gate & xdist (#1358)
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
