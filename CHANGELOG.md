@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hamiltonian single-source contract** (PR #1377, Refs #1071 — pilot, Phase 0+1). New `HEvalState`,
+  `HamiltonianValues`, and a `Regularizer` protocol in `core/hamiltonian.py`; `HamiltonianBase` gains
+  granular primitives `evaluate_H` / `evaluate_dp` (the residual/Jacobian hot path), a separate
+  `dH_dm`, a thin `evaluate()` convenience, and a physics-only `with_regularizer()` scaffold.
+  `base_hjb`'s residual + analytic Jacobian now consume the primitives (byte-identical, atol=0), and
+  `h_eval.eval_H_batch` / `eval_dH_dp_batch` delegate to them (single source — no third layer). First
+  phase of consolidating per-solver physics re-derivation; later phases migrate WENO/SL/GFDM. (JAX
+  lowering #1072 is a separate sub-RFC — not delivered here.)
+
 ### Removed (BREAKING)
 
+- **`mfgarchon.core.HamiltonianState`** (PR #1377) — an unused public export (zero usages anywhere in
+  the package, tests, or research); superseded by `HEvalState` (reshaped, so no compatible alias was
+  possible). Use `HEvalState(x, p, m, t)`.
 - **Legacy 1D-geometry `MFGProblem` construct/write surfaces** (PR #1375, Refs #1363) — completes the
   geometry-first migration begun in #1360 (Tier-3a). Removed the `xmin=`/`xmax=`/`Nx=`/`Lx=`
   **constructor** kwargs (deprecated v0.17.1), the `_init_1d_legacy`/`_init_nd` manual grid-construction
