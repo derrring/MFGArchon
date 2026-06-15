@@ -450,6 +450,21 @@ def test_create_from_hamiltonian_missing_domain(factory, sample_hamiltonian, tim
 
 @pytest.mark.unit
 @pytest.mark.fast
+def test_create_from_hamiltonian_legacy_domain_missing_nx(factory, sample_hamiltonian, time_config, sample_functions):
+    """Legacy 1D domain spec (xmin/xmax/Lx) without Nx must fail fast with a
+    clear ValueError naming Nx, not a bare KeyError (Issue #1363)."""
+    with pytest.raises(ValueError, match="Nx"):
+        factory.create_from_hamiltonian(
+            hamiltonian=sample_hamiltonian,
+            domain_config={"xmin": 0.0, "xmax": 1.0, "Lx": 1.0},  # no Nx
+            time_config=time_config,
+            m_initial=sample_functions["initial_density"],
+            u_terminal=sample_functions["final_value"],
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.fast
 def test_create_from_hamiltonian_missing_time(factory, sample_hamiltonian, domain_config):
     """Test error when time config is missing."""
     with pytest.raises((TypeError, KeyError)):

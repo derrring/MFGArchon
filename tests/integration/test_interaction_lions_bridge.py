@@ -100,19 +100,32 @@ class TestGate3LionsBridgeEquivalence:
         with pytest.raises(ValueError):
             create_lions_source(energy_lambda)
 
-    def test_time_space_array_uses_last_slice(self):
-        """Source handles both (Nx,) slice and (Nt+1, Nx) trajectory inputs."""
+    def test_time_space_array_rejected(self):
+        """A 2-D (Nt+1, Nx) trajectory is a caller error: the source pipeline
+        time-slices before calling, so a per-time source must get a 1-D spatial
+        slice. Passing the full trajectory raises (was a silent m[-1] fallback
+        that reintroduced the Issue #1285 wrong-slice bug). The 1-D slice path
+        still works on both the analytic and the optimized nonlocal source."""
         N = 30
         x = np.linspace(0.0, 1.0, N)
         dx = x[1] - x[0]
         conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
         source = create_lions_source(QuadraticInteractionEnergy(conv))
+        W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.2**2))
+        source_nonlocal = create_nonlocal_source(W, grid_spacing=dx)
 
         m_slice = np.sin(np.pi * x) + 1.0
         m_traj = np.tile(m_slice, (5, 1))  # (Nt+1, Nx), constant in time
+
+        # 1-D slice path still works.
         r_slice = source(x, m_slice, np.zeros(N), 0.0)
-        r_traj = source(x, m_traj, np.zeros(N), 0.0)
-        np.testing.assert_allclose(r_slice, r_traj, atol=1e-12)
+        assert r_slice.shape == (N,)
+
+        # 2-D trajectory rejected on both paths.
+        with pytest.raises(ValueError, match=r"1-D spatial density"):
+            source(x, m_traj, np.zeros(N), 0.0)
+        with pytest.raises(ValueError, match=r"1-D spatial density"):
+            source_nonlocal(x, m_traj, np.zeros(N), 0.0)
 
 
 def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):

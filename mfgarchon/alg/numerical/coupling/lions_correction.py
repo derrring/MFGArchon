@@ -58,6 +58,25 @@ if TYPE_CHECKING:
     from mfgarchon.utils.functional_calculus import FunctionalDerivative, FunctionalOnMeasures
 
 
+def _spatial_density(m: NDArray) -> NDArray:
+    """Return the flat spatial density, rejecting (Nt+1, Nx) trajectories.
+
+    The composed source pipeline (:mod:`source_composition`) time-slices the
+    density to the current backward time step before calling the source, so a
+    per-time source always receives a 1-D spatial array. A 2-D ``(Nt+1, Nx)``
+    trajectory reaching here is a caller error: silently collapsing it to the
+    terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug.
+    """
+    if m.ndim == 2:
+        raise ValueError(
+            f"Lions source expects a 1-D spatial density (Nx,), got a 2-D array "
+            f"with shape {m.shape}. Pass the time-t density slice, not the full "
+            "(Nt+1, Nx) trajectory (see source_composition.compose_hjb_source; "
+            "Issue #1285)."
+        )
+    return m.ravel()
+
+
 def create_lions_source(
     energy_functional: FunctionalOnMeasures | EnergyFunctional,
     functional_derivative: FunctionalDerivative | None = None,
@@ -126,7 +145,7 @@ def create_lions_source(
             t: float,
         ) -> NDArray:
             """Evaluate the analytic Lions correction delta F / delta m[m](x)."""
-            m_flat = m[-1].ravel() if m.ndim == 2 else m.ravel()
+            m_flat = _spatial_density(m)
             return np.asarray(analytic.lions_derivative(m_flat)).ravel()
 
         return source_term_hjb_analytic
@@ -147,21 +166,16 @@ def create_lions_source(
 
         Args:
             x: Spatial grid points, shape (Nx,) or (Nx, d)
-            m: Current density — may be (Nx,) for single time slice or
-                (Nt+1, Nx) for full time-space array (as passed by FixedPointIterator).
+            m: Current spatial density, shape (Nx,). Must be a single time-t
+                slice; the source pipeline time-slices before calling (a 2-D
+                (Nt+1, Nx) trajectory is rejected — see Issue #1285).
             v: Current value function (unused — correction depends on m only)
             t: Current time (unused for time-independent F[m])
 
         Returns:
             Source term values, shape (Nx,)
         """
-        # Extract spatial density at current time if m is time-space array
-        if m.ndim == 2:
-            # m is (Nt+1, Nx) — use last time step as representative
-            # (consistent with explicit source term treatment)
-            m_flat = m[-1].ravel()
-        else:
-            m_flat = m.ravel()
+        m_flat = _spatial_density(m)
         Nx = len(m_flat)
 
         # Compute delta F / delta m at each grid point
@@ -218,8 +232,7 @@ def create_nonlocal_source(
         t: float,
     ) -> NDArray:
         """Evaluate (W * m)(x) = int W(x,y) m(y) dy."""
-        # Handle (Nt+1, Nx) time-space array from FixedPointIterator
-        m_spatial = m[-1].ravel() if m.ndim == 2 else m.ravel()
+        m_spatial = _spatial_density(m)
         return (W @ m_spatial) * dx
 
     return source_term_hjb

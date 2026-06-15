@@ -103,9 +103,9 @@ class PenaltyHJBSolver(BaseHJBSolver):
 
     def solve_hjb_system(
         self,
-        M_density_evolution_from_FP: NDArray,
-        U_final_condition_at_T: NDArray,
-        U_from_prev_picard: NDArray,
+        M_density: NDArray,
+        U_terminal: NDArray,
+        U_coupling_prev: NDArray,
         volatility_field: float | NDArray | None = None,
         source_term: Callable | None = None,
     ) -> NDArray:
@@ -145,9 +145,9 @@ class PenaltyHJBSolver(BaseHJBSolver):
             return base + penalty_param * np.maximum(0.0, psi)
 
         return self._inner.solve_hjb_system(
-            M_density_evolution_from_FP,
-            U_final_condition_at_T,
-            U_from_prev_picard,
+            M_density,
+            U_terminal,
+            U_coupling_prev,
             volatility_field=volatility_field,
             source_term=penalized_source,
         )
