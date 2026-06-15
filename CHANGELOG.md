@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-06-15
+
 ### Added
 
 - **Coupled-Newton coupler solves source/nonlocal/obstacle problems** (PR #1372, Refs #1361). The
