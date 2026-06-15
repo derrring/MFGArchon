@@ -17,8 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+from mfgarchon.core.hamiltonian import HEvalState
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -31,21 +30,25 @@ if TYPE_CHECKING:
 def eval_H_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t: float) -> NDArray:
     """Evaluate the Hamiltonian value ``H(x, m, p, t)`` over a batch of points.
 
-    Returns a float ``ndarray`` shaped as ``H_class`` returns it (callers ``.ravel()`` or
-    reshape as their assembly needs). Byte-identical to the inline
-    ``np.asarray(H_class(x, m, p, t=t), dtype=float)`` it replaces.
+    Thin shim over the single-source primitive ``H_class.evaluate_H`` (Issue #1071):
+    this is no longer a parallel implementation, it delegates to the method on the
+    Hamiltonian so the batch contract has exactly one home. Byte-identical to the
+    inline ``np.asarray(H_class(x, m, p, t=t), dtype=float)`` it replaced; callers
+    ``.ravel()`` / reshape as their assembly needs.
     """
-    return np.asarray(H_class(x, m, p, t=t), dtype=float)
+    return H_class.evaluate_H(HEvalState(x=x, p=p, m=m, t=t))
 
 
 def eval_dH_dp_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t: float) -> NDArray:
     """Evaluate the Hamiltonian gradient ``∂H/∂p(x, m, p, t)`` over a batch of points.
 
-    Returns a float ``ndarray`` as ``H_class.dp`` returns it. Callers keep their own sign
-    convention (the FP drift is ``alpha* = -∂H/∂p``, so several callers negate the result).
-    Byte-identical to the inline ``np.asarray(H_class.dp(x, m, p, t=t), dtype=float)``.
+    Thin shim over the single-source primitive ``H_class.evaluate_dp`` (Issue #1071);
+    delegates to the method on the Hamiltonian rather than re-implementing the batch
+    call. Callers keep their own sign convention (the FP drift is ``alpha* = -∂H/∂p``,
+    so several callers negate the result). Byte-identical to the inline
+    ``np.asarray(H_class.dp(x, m, p, t=t), dtype=float)``.
     """
-    return np.asarray(H_class.dp(x, m, p, t=t), dtype=float)
+    return H_class.evaluate_dp(HEvalState(x=x, p=p, m=m, t=t))
 
 
 def assemble_hjb_residual(

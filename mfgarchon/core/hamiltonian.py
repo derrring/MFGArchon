@@ -62,7 +62,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -719,33 +719,97 @@ class MFGOperatorBase(ABC):
 # ============================================================================
 
 
-@dataclass
-class HamiltonianState:
-    """
-    State container for Hamiltonian evaluation.
+@dataclass(frozen=True)
+class HEvalState:
+    """Pure evaluation state for the single-source Hamiltonian contract (Issue #1071).
 
-    Encapsulates all information needed to evaluate H(x, m, p, t).
-    This allows clean separation between state and computation.
+    The minimal batch state the Hamiltonian needs to produce ``H``, ``∂H/∂p``, and
+    ``∂H/∂m``. It carries physics inputs only — position, momentum, density, time —
+    and deliberately holds NO discretization concern (no ``dt``, ``u``, grid, or
+    boundary conditions); those stay solver-side. Single-point evaluation is the
+    ``N=1`` case.
+
+    Absorbs the former ``HamiltonianState`` (its ``x_idx`` grid-coupling field is
+    dropped — operator assembly is the solver's responsibility, not the
+    Hamiltonian's). Named ``HEvalState`` to avoid collision with the unrelated
+    ``types/solver_types.SolverState`` alias.
 
     Attributes
     ----------
     x : NDArray
-        Position(s), shape (d,) for single point or (N, d) for N points
-    m : float | NDArray
-        Density at x, scalar or array of shape (N,)
+        Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point).
     p : NDArray
-        Momentum ∇u at x, shape (d,) or (N, d)
+        Momentum ``p = ∇u``, shape ``(N, d)``. Exposed as ``grad_u`` alias.
+    m : float | NDArray
+        Density, shape ``(N,)`` single-population or ``(K, N)`` stacked
+        multi-population.
     t : float
-        Time
-    x_idx : int | None
-        Grid index if on a grid (for grid-based methods)
+        Time (default ``0.0``).
     """
 
     x: NDArray
-    m: float | NDArray
     p: NDArray
+    m: float | NDArray
     t: float = 0.0
-    x_idx: int | None = None
+
+    @property
+    def grad_u(self) -> NDArray:
+        """Alias for ``p`` — the momentum is the value-function gradient ``∇u``."""
+        return self.p
+
+
+@dataclass(frozen=True)
+class HamiltonianValues:
+    """Bundled Hamiltonian outputs for the convenience ``evaluate()`` pass (Issue #1071).
+
+    Returned by :meth:`HamiltonianBase.evaluate` — a THIN convenience for explicit
+    solvers (WENO/SL Lax-Friedrichs speed) and the future JAX spec that want ``H``
+    and ``∂H/∂p`` (and σ) from one sweep. The implicit-Newton hot path does NOT use
+    this; it calls the granular :meth:`HamiltonianBase.evaluate_H` /
+    :meth:`HamiltonianBase.evaluate_dp` so the residual never computes ``∂H/∂p`` and
+    the Jacobian never recomputes ``H``.
+
+    ``∂H/∂m`` is deliberately NOT a field here — it is the separate
+    :meth:`HamiltonianBase.dH_dm` (FP-coupling only), kept off this struct so the
+    hot bundle stays a fixed-shape pytree.
+
+    Attributes
+    ----------
+    H : NDArray
+        Hamiltonian value, shape ``(N,)``.
+    dH_dp : NDArray
+        Momentum gradient ``∂H/∂p``, shape ``(N, d)``. Drift ``α* = -sign · ∂H/∂p``.
+    sigma : NDArray
+        PHYSICAL volatility σ, ALWAYS an array — shape ``(N,)`` (isotropic) or
+        ``(N, d, d)`` (anisotropic). This is σ, NOT the diffusion coefficient
+        ``D = σ²/2`` (folded at the stencil by ``diffusion_from_volatility``) and
+        NOT a numerical viscosity (LLF/SUPG live at the solver level, never here).
+    """
+
+    H: NDArray
+    dH_dp: NDArray
+    sigma: NDArray
+
+
+class Regularizer(Protocol):
+    """Physics-only Hamiltonian regularizer (Issue #1071 scaffold).
+
+    A value object that composes a *physical* regularization onto a Hamiltonian:
+    Moreau–Yosida control-cost smoothing, anisotropic volatility, congestion
+    mobility — terms whose strength ``epsilon`` vanishes on a chosen schedule, NOT
+    with the mesh. Numerical viscosity (Local Lax–Friedrichs #1059, SUPG, SBP-SAT)
+    is explicitly OUT of scope: it vanishes with the mesh, so it is a solver-level
+    mixin consuming ``∂H/∂p`` + ``h``, never a Hamiltonian-level regularizer.
+
+    Concrete regularizers land in later #1071 phases; this phase ships only the
+    protocol + :meth:`HamiltonianBase.with_regularizer` composition hook.
+    """
+
+    epsilon: float
+
+    def apply(self, h: HamiltonianBase) -> HamiltonianBase:
+        """Return a NEW Hamiltonian with this regularization composed on."""
+        ...
 
 
 class HamiltonianBase(MFGOperatorBase):
@@ -818,6 +882,90 @@ class HamiltonianBase(MFGOperatorBase):
     def is_lagrangian(self) -> bool:
         """Return False - this is not a Lagrangian operator."""
         return False
+
+    # === SINGLE-SOURCE CONTRACT (Issue #1071) ===
+
+    # Physical volatility σ for the convenience evaluate(); ``None`` until the
+    # σ-source unification (#1071 Phase 6) wires it from the problem/coefficient
+    # field. The implicit-Newton hot path does NOT use this — base_hjb resolves σ
+    # at timestep scope and passes it to the stencil. Set explicitly to call
+    # evaluate(). Class-level default keeps object shape stable.
+    physical_sigma: float | NDArray | None = None
+
+    def evaluate_H(self, state: HEvalState) -> NDArray:
+        """Hamiltonian value ``H`` over a batch (Issue #1071 granular primitive).
+
+        The single home for the batch ``H`` call that every HJB solver used to
+        inline as ``np.asarray(H_class(x, m, p, t=t), dtype=float)``. This is the
+        residual-path primitive: it computes ``H`` only and never touches
+        ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
+        (callers ``.ravel()`` / reshape as their assembly needs).
+        """
+        return np.asarray(self(state.x, state.m, state.p, t=state.t), dtype=float)
+
+    def evaluate_dp(self, state: HEvalState) -> NDArray:
+        """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
+
+        The single home for the batch ``∂H/∂p`` call that HJB Jacobians used to
+        inline as ``np.asarray(H_class.dp(x, m, p, t=t), dtype=float)``. This is the
+        Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
+        ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
+        """
+        return np.asarray(self.dp(state.x, state.m, state.p, t=state.t), dtype=float)
+
+    def dH_dm(self, state: HEvalState) -> NDArray:
+        """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
+
+        Separate from the residual/Jacobian primitives — the FP source term, not the
+        HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
+        """
+        return np.asarray(self.dm(state.x, state.m, state.p, t=state.t), dtype=float)
+
+    def evaluate(self, state: HEvalState) -> HamiltonianValues:
+        """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
+
+        THIN wrapper composing :meth:`evaluate_H` + :meth:`evaluate_dp` + the
+        physical volatility, for explicit solvers (WENO/SL Lax–Friedrichs speed) and
+        the future JAX spec. NOT used by the implicit-Newton hot path, which calls
+        the granular primitives so the residual never computes ``∂H/∂p`` and the
+        Jacobian never recomputes ``H``.
+        """
+        return HamiltonianValues(
+            H=self.evaluate_H(state),
+            dH_dp=self.evaluate_dp(state),
+            sigma=self._resolve_physical_sigma(state),
+        )
+
+    def _resolve_physical_sigma(self, state: HEvalState) -> NDArray:
+        """Resolve :attr:`physical_sigma` to a batch array for :meth:`evaluate`.
+
+        Fail-fast when σ has not been set: the σ-source unification (#1071 Phase 6)
+        will wire it from the problem; until then, callers of the convenience
+        ``evaluate()`` must set ``physical_sigma`` explicitly.
+        """
+        if self.physical_sigma is None:
+            raise ValueError(
+                "HamiltonianBase.evaluate() needs a physical volatility but "
+                "`physical_sigma` is None. Set it before calling evaluate(); the "
+                "σ-source unification (Issue #1071 Phase 6) will wire it from the "
+                "problem. The implicit-Newton hot path uses evaluate_H/evaluate_dp "
+                "and does not require this."
+            )
+        sig = np.asarray(self.physical_sigma, dtype=float)
+        if sig.ndim == 0:
+            n = int(np.asarray(state.x).shape[0])
+            return np.full(n, float(sig))
+        return sig
+
+    def with_regularizer(self, reg: Regularizer) -> HamiltonianBase:
+        """Compose a PHYSICS-ONLY regularizer, returning a NEW Hamiltonian (Issue #1071).
+
+        Functional composition scaffold for physical regularizers (Moreau–Yosida,
+        anisotropic, congestion). Numerical viscosity (LLF/SUPG/SBP-SAT) is NOT a
+        regularizer — it is a solver-level mixin (see :class:`Regularizer`). Concrete
+        regularizers land in later #1071 phases.
+        """
+        return reg.apply(self)
 
     @abstractmethod
     def __call__(
@@ -1378,6 +1526,19 @@ class BoundHamiltonian:
 
     def dx(self, x, m, p, t=0.0):
         return self._inner.dx(x, self._m_at(t), p, t)
+
+    # Issue #1071 single-source primitives — delegate via __call__/dp/dm so the
+    # cross-density binding (and the discard of the solver-supplied ``state.m``) is
+    # preserved. Byte-identical to the inline ``np.asarray(H(...), float)`` these
+    # replaced, with the bound density substituted at the current timestep.
+    def evaluate_H(self, state: HEvalState) -> NDArray:
+        return np.asarray(self(state.x, state.m, state.p, t=state.t), dtype=float)
+
+    def evaluate_dp(self, state: HEvalState) -> NDArray:
+        return np.asarray(self.dp(state.x, state.m, state.p, t=state.t), dtype=float)
+
+    def dH_dm(self, state: HEvalState) -> NDArray:
+        return np.asarray(self.dm(state.x, state.m, state.p, t=state.t), dtype=float)
 
     def is_smooth(self):
         return self._inner.is_smooth()
