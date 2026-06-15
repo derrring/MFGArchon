@@ -77,7 +77,27 @@ REGULARIZATION = 1e-12
 # Pseudoinverse rcond parameter
 PINV_RCOND = 1e-10
 
-# Condition number threshold for "ill-conditioned" warning
+# Condition number threshold for the "ill-conditioned" *diagnostic warning*
+# (Issue #1084). This is WARN-ONLY: `_validate_stencils` never rejects a stencil
+# for ill-conditioning (it returns valid=True regardless, see the comment at the
+# `ill_conditioned_points` branch), so the computed weights — and hence every
+# numerical result — are independent of this value. It only controls when a
+# diagnostic UserWarning is emitted.
+#
+# Accuracy implication of the chosen level. For the (least-squares Taylor)
+# system A x = b solved for the stencil weights, the relative weight error is
+# bounded by kappa(A) * u with float64 unit roundoff u ~ 1.1e-16, so the weights
+# lose ~log10(kappa) digits: reliable_digits ~ 16 - log10(kappa). At the current
+# 1e12 the weights retain only ~4 reliable digits, which at realistic grids
+# (h ~ 1e-2..1e-3, O(h^2) truncation ~ 1e-4..1e-6) is on par with the truncation
+# error a stencil claims to achieve — i.e. conditioning up to 1e12 is *permitted*
+# and the advertised order can be masked by weight roundoff without any warning.
+#
+# Kept at 1e12 (not tightened to ~1e8) deliberately: the gate is warn-only so a
+# tighter value would not improve accuracy, only change diagnostics; the
+# narrower band is documented per-level in `get_condition_numbers` (Notes), and a
+# tightening attempt (PR #1341) was reverted. Callers needing a stricter audit
+# can pass `cond_threshold` explicitly to `_validate_stencils`.
 COND_THRESHOLD = 1e12
 
 # PHS singularity epsilon (added to r for r^m)
@@ -723,12 +743,17 @@ class TaylorOperator(DifferentialOperator):
         Args:
             weight_threshold: Neighbors with weight < threshold * max_weight
                 are considered ineffective. Default 0.01 (1% of max).
-            cond_threshold: Condition numbers above this are considered
-                ill-conditioned. Default 1e12.
+            cond_threshold: Condition numbers above this trigger the
+                ill-conditioned *diagnostic warning*. Default 1e12 (~4 reliable
+                float64 digits in the solved weights; reliable_digits ~ 16 -
+                log10(kappa)). This is warn-only and does NOT affect the returned
+                validity or any computed result (see COND_THRESHOLD, Issue #1084).
+                Pass a smaller value (e.g. 1e8 for ~8 digits) for a stricter audit.
 
         Returns:
-            True if all stencils are valid, False if any are degenerate or
-            ill-conditioned.
+            True if all stencils are valid, False if any are degenerate
+            (rank-deficient). Ill-conditioning alone never sets this False; it
+            only emits a warning.
 
         Notes:
             Degenerate stencils occur when effective data points < n_derivatives.

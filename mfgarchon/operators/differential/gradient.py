@@ -107,7 +107,7 @@ class PartialDerivOperator(LinearOperator):
             scheme: Difference scheme
                 - "central": 2nd-order central differences (default)
                 - "upwind": Godunov upwind (monotone, 1st-order)
-                - "one_sided": Forward at left, backward at right
+                - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
                 - "weno5": 5th-order WENO reconstruction (high-order, shock-capturing)
             bc: Boundary conditions (None for periodic)
             time: Time for time-dependent BCs (default 0.0)
@@ -294,7 +294,7 @@ class GradientOperator:
             scheme: Difference scheme for all components
                 - "central": 2nd-order central differences (default)
                 - "upwind": Godunov upwind (monotone, 1st-order)
-                - "one_sided": Forward at left, backward at right
+                - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
                 - "weno5": 5th-order WENO reconstruction
             bc: Boundary conditions (None for periodic)
             time: Time for time-dependent BCs (default 0.0)

@@ -19,7 +19,7 @@ Stencil Types:
     - FORWARD: 1st-order accurate, uses u[i+1] - u[i]
     - BACKWARD: 1st-order accurate, uses u[i] - u[i-1]
     - UPWIND: Godunov selection based on flow direction (stable for advection)
-    - ONE_SIDED: Boundary handling with forward/backward at edges
+    - ONE_SIDED: 2nd-order one-sided boundary handling (3-point stencils at edges)
 
 Mathematical Background:
     Central:   ∂u/∂x ≈ (u[i+1] - u[i-1]) / (2h)     Error: O(h²)
@@ -187,15 +187,20 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
 
 def fix_boundaries_one_sided(grad: NDArray, u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     """
-    Replace boundary values with one-sided differences.
+    Replace boundary values with second-order one-sided differences.
 
     Central differences wrap around at boundaries (via np.roll), which is
     incorrect for non-periodic BCs. This function fixes the boundary values
-    using appropriate one-sided stencils.
+    using 3-point one-sided stencils that match the O(h²) accuracy of the
+    central interior, so a central-interior + one-sided-boundary gradient is
+    O(h²) throughout rather than degrading to O(h) at the edges (Issue #1084).
 
-    Boundary corrections:
-        Left (i=0):  use forward difference
-        Right (i=-1): use backward difference
+    Boundary corrections (require ≥ 3 points along ``axis``):
+        Left  (i=0):  forward  (-3u[0] + 4u[1] - u[2]) / (2h)     Error: O(h²)
+        Right (i=-1): backward (3u[-1] - 4u[-2] + u[-3]) / (2h)   Error: O(h²)
+
+    When the axis has only 2 points the 3-point stencil is unavailable, so the
+    (exact-best) first-order one-sided difference O(h) is used for that axis.
 
     Args:
         grad: Gradient array computed with central differences
@@ -212,20 +217,23 @@ def fix_boundaries_one_sided(grad: NDArray, u: NDArray, axis: int, h: float, xp:
         >>> grad = fix_boundaries_one_sided(grad, u, axis=0, h=dx)
     """
     ndim = u.ndim
+    n = u.shape[axis]
 
-    # Left boundary: forward difference
-    left_slice = [slice(None)] * ndim
-    left_slice[axis] = 0
-    next_slice = [slice(None)] * ndim
-    next_slice[axis] = 1
-    grad[tuple(left_slice)] = (u[tuple(next_slice)] - u[tuple(left_slice)]) / h
+    def _at(idx: int) -> tuple:
+        s = [slice(None)] * ndim
+        s[axis] = idx
+        return tuple(s)
 
-    # Right boundary: backward difference
-    right_slice = [slice(None)] * ndim
-    right_slice[axis] = -1
-    prev_slice = [slice(None)] * ndim
-    prev_slice[axis] = -2
-    grad[tuple(right_slice)] = (u[tuple(right_slice)] - u[tuple(prev_slice)]) / h
+    if n >= 3:
+        # Left boundary: second-order forward, (-3u[0] + 4u[1] - u[2]) / (2h)
+        grad[_at(0)] = (-3.0 * u[_at(0)] + 4.0 * u[_at(1)] - u[_at(2)]) / (2.0 * h)
+        # Right boundary: second-order backward, (3u[-1] - 4u[-2] + u[-3]) / (2h)
+        grad[_at(-1)] = (3.0 * u[_at(-1)] - 4.0 * u[_at(-2)] + u[_at(-3)]) / (2.0 * h)
+    else:
+        # Only 2 points along axis: the 3-point stencil cannot be formed;
+        # first-order one-sided is the exact-best available approximation.
+        grad[_at(0)] = (u[_at(1)] - u[_at(0)]) / h
+        grad[_at(-1)] = (u[_at(-1)] - u[_at(-2)]) / h
 
     return grad
 

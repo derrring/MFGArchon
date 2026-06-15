@@ -163,7 +163,7 @@ class TestFixBoundariesOneSided:
 
     @pytest.mark.unit
     def test_1d_boundary_correction(self):
-        """Boundaries should use forward/backward difference."""
+        """Boundaries should use 2nd-order one-sided differences (Issue #1084)."""
         n = 50
         x = np.linspace(0, 1, n)
         h = x[1] - x[0]
@@ -174,17 +174,21 @@ class TestFixBoundariesOneSided:
         # Fix boundaries
         grad_fixed = fix_boundaries_one_sided(grad.copy(), u, axis=0, h=h)
 
-        # Left boundary: forward diff of x^2 at x=0 should be ~h (O(h) error)
-        expected_left = (u[1] - u[0]) / h
+        # Left boundary: 2nd-order forward (-3u0 + 4u1 - u2)/(2h)
+        expected_left = (-3.0 * u[0] + 4.0 * u[1] - u[2]) / (2.0 * h)
         assert abs(grad_fixed[0] - expected_left) < 1e-14
+        # x^2 is a quadratic, so the 2nd-order stencil is exact: f'(0) = 0
+        assert abs(grad_fixed[0] - 0.0) < 1e-12
 
-        # Right boundary: backward diff
-        expected_right = (u[-1] - u[-2]) / h
+        # Right boundary: 2nd-order backward (3u_{-1} - 4u_{-2} + u_{-3})/(2h)
+        expected_right = (3.0 * u[-1] - 4.0 * u[-2] + u[-3]) / (2.0 * h)
         assert abs(grad_fixed[-1] - expected_right) < 1e-14
+        # exact derivative f'(1) = 2
+        assert abs(grad_fixed[-1] - 2.0) < 1e-12
 
     @pytest.mark.unit
     def test_2d_boundary_correction(self):
-        """Should correct boundaries along specified axis in 2D."""
+        """Should correct boundaries along specified axis in 2D (2nd-order)."""
         nx, ny = 20, 20
         x = np.linspace(0, 1, nx)
         y = np.linspace(0, 1, ny)
@@ -195,9 +199,48 @@ class TestFixBoundariesOneSided:
         grad = gradient_central(u, axis=0, h=dx)
         grad_fixed = fix_boundaries_one_sided(grad.copy(), u, axis=0, h=dx)
 
-        # Left boundary (X=0): forward diff
-        expected_left = (u[1, :] - u[0, :]) / dx
+        # Left boundary (X=0): 2nd-order forward, exact for quadratic (f'(0) = 0)
+        expected_left = (-3.0 * u[0, :] + 4.0 * u[1, :] - u[2, :]) / (2.0 * dx)
         np.testing.assert_allclose(grad_fixed[0, :], expected_left, atol=1e-14)
+        np.testing.assert_allclose(grad_fixed[0, :], 0.0, atol=1e-12)
+
+    @pytest.mark.unit
+    def test_boundary_eoc_second_order(self):
+        """One-sided boundary correction converges at O(h^2) (Issue #1084).
+
+        Uses a non-polynomial smooth field so the truncation error is nonzero
+        and the empirical order of convergence is observable.
+        """
+
+        def f(x):
+            return np.exp(np.sin(3.0 * x))
+
+        def fprime(x):
+            return 3.0 * np.cos(3.0 * x) * np.exp(np.sin(3.0 * x))
+
+        hs = []
+        errs = []
+        for n in (40, 80, 160, 320):
+            x = np.linspace(0.0, 1.0, n)
+            h = x[1] - x[0]
+            u = f(x)
+            grad = fix_boundaries_one_sided(gradient_central(u, axis=0, h=h), u, axis=0, h=h)
+            err = max(abs(grad[0] - fprime(x[0])), abs(grad[-1] - fprime(x[-1])))
+            hs.append(h)
+            errs.append(err)
+
+        slope = np.polyfit(np.log(hs), np.log(errs), 1)[0]
+        assert slope > 1.8, f"boundary EOC {slope:.2f} is not second order"
+
+    @pytest.mark.unit
+    def test_boundary_two_point_falls_back_to_first_order(self):
+        """With only 2 points the 3-point stencil is unavailable; use 1st-order."""
+        u = np.array([1.0, 3.0])
+        h = 0.5
+        grad = fix_boundaries_one_sided(gradient_central(u, axis=0, h=h), u, axis=0, h=h)
+        # both endpoints use (u[1]-u[0])/h = 4.0
+        assert abs(grad[0] - 4.0) < 1e-14
+        assert abs(grad[-1] - 4.0) < 1e-14
 
 
 # =============================================================================

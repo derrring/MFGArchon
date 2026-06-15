@@ -103,7 +103,7 @@ class DirectDerivOperator(LinearOperator):
             scheme: Difference scheme for gradient computation
                 - "central": 2nd-order central differences (default)
                 - "upwind": Godunov upwind (monotone, 1st-order)
-                - "one_sided": Forward at left, backward at right
+                - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
             bc: Boundary conditions (None for periodic)
             time: Time for time-dependent BCs (default 0.0)
 
