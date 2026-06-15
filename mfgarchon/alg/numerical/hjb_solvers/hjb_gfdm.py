@@ -303,6 +303,15 @@ class HJBGFDMSolver(BaseHJBSolver):
         llf_augmentation: bool = False,
         llf_cone_constant: float = 0.5,  # C in nu_i = max(0, C*l_H*h - sigma^2/2)
         llf_l_H: float | np.ndarray | None = None,  # per-node Lipschitz bound |dH/dp|
+        # SOCP-infeasibility-triggered adaptive stencil enlargement (Issue #1106),
+        # joint_socp scheme only. When > 0, a stencil that is still infeasible
+        # after C-bisection is rebuilt with additional next-nearest neighbors and
+        # the SOCP retried, up to this many enlargement steps. Default 0 (OFF):
+        # the paper / default path is byte-identical. The enlarged neighbor set is
+        # contained inside the precomputed SOCP stencils and does NOT mutate the
+        # shared runtime neighborhoods (no cascade into operator / FP / BC).
+        socp_max_stencil_enlargements: int = 0,
+        socp_enlargement_step: int = 2,
     ):
         """
         Initialize the GFDM HJB solver.
@@ -447,6 +456,19 @@ class HJBGFDMSolver(BaseHJBSolver):
                 options: (a) cone bound from stencil, (b) from ``dH/dp`` at previous
                 Picard iterate, (c) user-supplied (this parameter).  Fail-loud if
                 ``llf_augmentation=True`` and this is None.
+            socp_max_stencil_enlargements: SOCP-infeasibility-triggered adaptive
+                stencil enlargement budget (Issue #1106), ``joint_socp`` scheme
+                only. When > 0, a stencil that is still infeasible after the
+                C-bisection is rebuilt with ``socp_enlargement_step`` additional
+                next-nearest neighbors and the SOCP retried, up to this many
+                steps; the extra Taylor degrees of freedom can flip a
+                geometrically starved (wall / corner / obstacle-adjacent) stencil
+                from infeasible to feasible. Default 0 (OFF): the paper / default
+                path is byte-identical. The enlarged neighbor set is contained in
+                the precomputed SOCP stencils and does not mutate the shared
+                runtime neighborhoods.
+            socp_enlargement_step: Number of next-nearest neighbors added per
+                enlargement step (Issue #1106). Default 2.
         """
         super().__init__(problem)
 
@@ -670,6 +692,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             self._llf_l_H = None  # type: ignore[assignment]
             self._llf_sigma_eff = None  # type: ignore[assignment]
+
+        # SOCP adaptive stencil enlargement (Issue #1106), joint_socp scheme only.
+        self._socp_max_stencil_enlargements: int = int(socp_max_stencil_enlargements)
+        self._socp_enlargement_step: int = int(socp_enlargement_step)
 
         # Monotonicity scheme (single source of truth) — already set above (v0.18.0 rename)
         # self.monotonicity_scheme and self.qp_optimization_level both = resolved monotonicity_scheme
@@ -1015,6 +1041,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 use_relaxed_fallback=True,
                 lambda_M=1.0e4,
                 lambda_C=1.0e4,
+                # SOCP-infeasibility-triggered adaptive stencil enlargement
+                # (Issue #1106). Default 0 (OFF) — paper / default path unchanged.
+                max_stencil_enlargements=self._socp_max_stencil_enlargements,
+                enlargement_step=self._socp_enlargement_step,
             )
             stats = self._joint_socp_stencils.stats
             relax_C_msg = (
@@ -1028,11 +1058,17 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if stats.get("n_relaxed_fallback", 0) > 0
                 else ""
             )
+            enlarge_msg = (
+                f"; {stats['n_enlarged']} via adaptive enlargement "
+                f"(max {stats['max_enlargement_steps']} steps, Issue #1106)"
+                if stats.get("n_enlarged", 0) > 0
+                else ""
+            )
             logger.info(
                 f"Precomputed joint SOCP stencils: feasible {stats['n_feasible']}/"
                 f"{stats['n_interior']} interior "
                 f"({stats['n_fast_path']} via Wendland-LSQ fast-path, "
-                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{relax_fb_msg}) in "
+                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}{relax_fb_msg}) in "
                 f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} fall "
                 f"back to M-matrix QP (Phase 2)"
             )
@@ -1635,10 +1671,22 @@ class HJBGFDMSolver(BaseHJBSolver):
             if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(i):
                 socp_weights = self._joint_socp_stencils.get_weights_dict(i)
                 if socp_weights is not None:
-                    # Joint SOCP guarantees same neighbor_indices + center as the
-                    # operator's stencil (it uses op.get_derivative_weights to build).
+                    # Single source of truth: consume the SOCP stencil's OWN
+                    # neighbor_indices together with its (L, D). With
+                    # SOCP-infeasibility-triggered adaptive enlargement (Issue
+                    # #1106) the SOCP stencil may have MORE neighbors than the
+                    # operator's base stencil, so the fill below must index the
+                    # (possibly enlarged) SOCP set — not the operator's. When
+                    # enlargement is off these are identical (verified), so this is
+                    # byte-identical to the prior behaviour.
+                    neighbor_indices = socp_weights["neighbor_indices"]
                     lap_weights = socp_weights["lap_weights"]
                     grad_weights = socp_weights["grad_weights"]
+                    assert grad_weights.shape[1] == len(neighbor_indices) == len(lap_weights), (
+                        f"joint_socp stencil weight/index length mismatch at point {i}: "
+                        f"grad {grad_weights.shape}, lap {len(lap_weights)}, "
+                        f"neighbors {len(neighbor_indices)} (Issue #1106 enlargement contract)"
+                    )
 
             # Fill gradient matrices
             for dim in range(d):
@@ -1880,16 +1928,34 @@ class HJBGFDMSolver(BaseHJBSolver):
         if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(point_idx):
             socp = self._joint_socp_stencils.get_weights_dict(point_idx)
             if socp is not None:
-                L_w = socp["lap_weights"]  # shape (n_neighbors,)
-                D_w = socp["grad_weights"]  # shape (d, n_neighbors)
+                L_w = socp["lap_weights"]  # shape (n_socp_neighbors,)
+                D_w = socp["grad_weights"]  # shape (d, n_socp_neighbors)
+                # Rebuild b on the SOCP stencil's OWN neighbor_indices. With
+                # SOCP-infeasibility-triggered adaptive enlargement (Issue #1106)
+                # the SOCP stencil can have MORE neighbors than the runtime
+                # `neighborhood["indices"]` that the outer `b` was built on;
+                # contracting `D_w @ b` / `L_w @ b` on the mismatched-length outer
+                # `b` would raise a matmul size error (the #1102 / G-013 pattern,
+                # already handled for the M-matrix elif via `b_precomp`). SOCP
+                # applies to interior cloud points only, so these indices are pure
+                # cloud indices (no ghosts). When enlargement is off the SOCP
+                # neighbor_indices equal the runtime ones, so `b_socp == b`
+                # (byte-identical).
+                socp_nbr = socp["neighbor_indices"]
+                assert D_w.shape[1] == len(socp_nbr) == len(L_w), (
+                    f"joint_socp stencil weight/index length mismatch at point {point_idx}: "
+                    f"grad {D_w.shape}, lap {len(L_w)}, neighbors {len(socp_nbr)} "
+                    f"(Issue #1106 enlargement contract)"
+                )
+                b_socp = u_values[socp_nbr] - u_center
                 # Override gradient: ∂u/∂x_d (i) = sum_j D_w[d, j] * b_j
                 for d in range(self.dimension):
                     beta = tuple(1 if k == d else 0 for k in range(self.dimension))
-                    derivatives[beta] = float(D_w[d] @ b)
+                    derivatives[beta] = float(D_w[d] @ b_socp)
                 # Override Laplacian sum (= trace of Hessian) via diagonal split.
                 # Preserves bare-WT off-diagonal Hessian entries (e.g. (1,1) in 2D)
                 # while enforcing target_lap = L_w · b on the trace.
-                target_lap = float(L_w @ b)
+                target_lap = float(L_w @ b_socp)
                 current_lap = sum(
                     float(derivatives.get(beta, 0.0))
                     for beta in self.multi_indices
