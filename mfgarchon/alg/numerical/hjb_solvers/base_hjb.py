@@ -336,7 +336,9 @@ class BaseHJBSolver(BaseNumericalSolver):
         Example:
             >>> from mfgarchon.core.mfg_problem import MFGProblem
             >>> from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
-            >>> problem = MFGProblem(Nx=100, xmin=0.0, xmax=1.0, Nt=50, T=1.0)
+            >>> from mfgarchon.geometry import TensorProductGrid
+            >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101])
+            >>> problem = MFGProblem(geometry=grid, Nt=50, T=1.0)
             >>> solver = HJBFDMSolver(problem)
             >>> U = solver.solve()  # Standalone HJB solution
             >>> print(U.shape)  # (51, 101)

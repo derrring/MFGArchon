@@ -18,6 +18,8 @@ import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 class QuadraticHamiltonian2D(MFGProblem):
@@ -51,7 +53,13 @@ class QuadraticHamiltonian2D(MFGProblem):
 
 def benchmark_1d_solver(Nx=100, Nt=50, solver_type="newton"):
     """Benchmark 1D HJB solver."""
-    problem = MFGProblem(Nx=Nx, Nt=Nt, T=1.0)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=Nt,
+        T=1.0,
+    )
 
     if solver_type == "fixed_point":
         solver = HJBFDMSolver(

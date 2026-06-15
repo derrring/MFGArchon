@@ -12,6 +12,8 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_penalty import PenaltyHJBSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_problem(Nx: int = 51, Nt: int = 20, sigma: float = 0.3) -> MFGProblem:
@@ -26,7 +28,15 @@ def _make_problem(Nx: int = 51, Nt: int = 20, sigma: float = 0.3) -> MFGProblem:
         u_terminal=lambda x: 0.0,
         m_initial=lambda x: 1.0,
     )
-    return MFGProblem(Nx=Nx, xmin=0.0, xmax=1.0, T=1.0, Nt=Nt, sigma=sigma, components=components)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=1.0,
+        Nt=Nt,
+        sigma=sigma,
+        components=components,
+    )
 
 
 def _make_solver_inputs(problem: MFGProblem):

@@ -321,15 +321,20 @@ class CompiledMFGSystem:
     def to_mfg_problem(self):
         """Convert to standard MFGProblem instance."""
         from mfgarchon.core.mfg_problem import MFGProblem
+        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry.boundary import no_flux_bc
 
         # Extract domain parameters
         domain = self.domain_info
 
+        geometry = TensorProductGrid(
+            bounds=[(domain["xmin"], domain["xmax"])],
+            Nx_points=[domain["nx"] + 1],  # Nx intervals -> Nx + 1 grid points
+            boundary_conditions=no_flux_bc(dimension=1),
+        )
         problem = MFGProblem(
-            xmin=domain["xmin"],
-            xmax=domain["xmax"],
+            geometry=geometry,
             T=domain["tmax"],
-            Nx=domain["nx"],
             Nt=domain["nt"],
         )
 

@@ -15,6 +15,8 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
@@ -26,14 +28,12 @@ def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
     print("=" * 70)
 
     # Create a simple 1D problem
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1))
     problem = MFGProblem(
-        domain=(0.0, 1.0),
-        Nx=Nx,
+        geometry=geometry,
         T=1.0,
         Nt=11,
         sigma=0.2,
-        nu=0.0,  # No running cost
-        use_analytic_solution=False,
     )
 
     # Create value function with stall at x_stall
@@ -167,9 +167,9 @@ def compare_with_explicit_fp(Nx: int = 21, x_stall: float = 0.3):
     print("Comparison: Strict Adjoint vs Standard FP")
     print("=" * 70)
 
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1))
     problem = MFGProblem(
-        domain=(0.0, 1.0),
-        Nx=Nx,
+        geometry=geometry,
         T=1.0,
         Nt=11,
         sigma=0.2,

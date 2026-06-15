@@ -56,8 +56,10 @@ class FPGFDMSolver(BaseFPSolver):
     Example:
         >>> from mfgarchon import MFGProblem
         >>> from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver
+        >>> from mfgarchon.geometry import TensorProductGrid
         >>>
-        >>> problem = MFGProblem(Nx=30, Nt=20, T=1.0, sigma=0.1)
+        >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31])
+        >>> problem = MFGProblem(geometry=grid, Nt=20, T=1.0, sigma=0.1)
         >>> points = np.random.rand(100, 1)  # Scattered 1D points
         >>> solver = FPGFDMSolver(problem, collocation_points=points)
         >>>

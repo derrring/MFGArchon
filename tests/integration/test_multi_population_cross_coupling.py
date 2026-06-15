@@ -29,6 +29,8 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 _NX, _NT, _T, _SIG = 20, 8, 1.0, 0.15
 
@@ -58,7 +60,15 @@ def _make_problem(k, cross, K):
         u_terminal=lambda xx: np.asarray(xx) * 0.0,
         hamiltonian=H,
     )
-    return MFGProblem(Nx=[_NX], Nt=_NT, T=_T, sigma=_SIG, components=comps)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[_NX + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=_NT,
+        T=_T,
+        sigma=_SIG,
+        components=comps,
+    )
 
 
 def _solve(K, cross, max_iterations=6):

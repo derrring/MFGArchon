@@ -25,13 +25,15 @@ import numpy as np
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # ---------------------------------------------------------------------------
 # Minimal problem factory (small/short/weakly coupled: keeps the FD-Jacobian
 # Newton solve in the physical basin and fast).
 # ---------------------------------------------------------------------------
 
-_NX = 5  # MFGProblem(Nx=5) -> 6 grid points
+_NX = 5  # Nx=5 intervals -> 6 grid points
 _NT = 3
 _GRID = _NX + 1
 
@@ -50,7 +52,16 @@ def _components() -> MFGComponents:
 
 
 def _make(**extra) -> MFGProblem:
-    return MFGProblem(Nx=_NX, xmin=0.0, xmax=1.0, T=0.15, Nt=_NT, sigma=0.3, components=_components(), **extra)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[_NX + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=0.15,
+        Nt=_NT,
+        sigma=0.3,
+        components=_components(),
+        **extra,
+    )
 
 
 def _make_plain_problem() -> MFGProblem:

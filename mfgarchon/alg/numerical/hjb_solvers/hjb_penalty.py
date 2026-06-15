@@ -174,6 +174,8 @@ if __name__ == "__main__":
     """Quick smoke test for PenaltyHJBSolver."""
     from mfgarchon import MFGProblem
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
 
     print("Testing PenaltyHJBSolver...")
 
@@ -190,7 +192,8 @@ if __name__ == "__main__":
         u_terminal=lambda x: 0.0,
         m_initial=lambda x: 1.0,
     )
-    problem = MFGProblem(Nx=50, xmin=0.0, xmax=1.0, T=1.0, Nt=20, sigma=0.3, components=components)
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(geometry=geometry, T=1.0, Nt=20, sigma=0.3, components=components)
     inner = HJBFDMSolver(problem)
 
     # Obstacle: Psi(x) = 0.5 * sin(pi * x) — agents must stay above this

@@ -34,6 +34,8 @@ from mfgarchon.config import (
 )
 from mfgarchon.config.mfg_methods import FDMConfig
 from mfgarchon.types import NumericalScheme
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,7 +58,14 @@ def _tiny_problem():
         m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
         u_terminal=lambda x: 0.0,
     )
-    return MFGProblem(Nx=[10], Nt=5, T=0.1, components=components)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[10 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=5,
+        T=0.1,
+        components=components,
+    )
 
 
 # ---------------------------------------------------------------------------

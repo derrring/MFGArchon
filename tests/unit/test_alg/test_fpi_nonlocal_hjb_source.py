@@ -19,6 +19,8 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_problem_with_nonlocal(Nx: int = 5, Nt: int = 3) -> MFGProblem:
@@ -36,9 +38,9 @@ def _make_problem_with_nonlocal(Nx: int = 5, Nt: int = 3) -> MFGProblem:
     # nonlocal_operator: 2*I (applied to v_t it returns 2*v_t)
     nonlocal_op = 2.0 * np.eye(Nx)
     return MFGProblem(
-        Nx=Nx,
-        xmin=0.0,
-        xmax=1.0,
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=0.3,
         Nt=Nt,
         sigma=0.2,

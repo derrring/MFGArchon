@@ -118,9 +118,9 @@ class StochasticMFGProblem(MFGProblem):
         Raises:
             ValueError: If noise_process provided but conditional_hamiltonian is None
         """
-        # Initialize base MFG problem
-        # If geometry is provided in kwargs, don't pass legacy xmin/xmax/Nx
-        # to avoid ambiguous initialization (Issue #543 compliance)
+        # Initialize base MFG problem.
+        # Issue #1363: MFGProblem no longer accepts legacy xmin/xmax/Nx kwargs;
+        # translate this subclass's 1D domain spec to the geometry-first API.
         if "geometry" in kwargs:
             super().__init__(
                 T=T,
@@ -130,10 +130,16 @@ class StochasticMFGProblem(MFGProblem):
                 **kwargs,
             )
         else:
+            from mfgarchon.geometry import TensorProductGrid
+            from mfgarchon.geometry.boundary import no_flux_bc
+
+            geometry = TensorProductGrid(
+                bounds=[(xmin, xmax)],
+                Nx_points=[Nx + 1],  # Nx intervals -> Nx + 1 grid points
+                boundary_conditions=no_flux_bc(dimension=1),
+            )
             super().__init__(
-                xmin=xmin,
-                xmax=xmax,
-                Nx=Nx,
+                geometry=geometry,
                 T=T,
                 Nt=Nt,
                 sigma=sigma,

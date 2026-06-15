@@ -54,6 +54,8 @@ except ImportError:
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.utils.numerical import create_lq_policy_problem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def demonstrate_policy_iteration_concept():
@@ -102,13 +104,13 @@ def solve_lq_mfg_with_value_iteration():
 
     # Create 1D LQ-MFG problem
     problem = MFGProblem(
-        Nx=100,  # Spatial grid points
-        Nt=50,  # Time steps
-        T=1.0,  # Time horizon
-        xmin=0.0,
-        xmax=1.0,
-        sigma=0.1,  # Diffusion
-        coupling_coefficient=0.5,  # Control cost
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=50,
+        T=1.0,
+        sigma=0.1,
+        coupling_coefficient=0.5,
     )
 
     print("\nProblem setup:")

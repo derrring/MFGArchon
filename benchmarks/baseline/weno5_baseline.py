@@ -15,6 +15,8 @@ import timeit
 from pathlib import Path
 
 import numpy as np
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def benchmark_smoothness_indicators():
@@ -23,7 +25,13 @@ def benchmark_smoothness_indicators():
     from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
 
     # Create solver
-    problem = MFGProblem(Nx=100, Nt=50, T=1.0)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=50,
+        T=1.0,
+    )
     solver = HJBWenoSolver(problem, weno_variant="weno5")
 
     # Test data (typical 5-point stencil)

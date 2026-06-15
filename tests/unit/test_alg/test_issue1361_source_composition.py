@@ -29,8 +29,10 @@ from mfgarchon.alg.numerical.coupling.source_composition import (
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
-_NX = 6  # MFGProblem(Nx=[6]) -> 7 grid points
+_NX = 6  # Nx=6 intervals -> 7 grid points
 _NT = 4
 
 
@@ -85,7 +87,16 @@ def _ref_compose_fp_source(problem, m_current, v_current):
 def _make_problem(**extra) -> MFGProblem:
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     comp = MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0)
-    return MFGProblem(Nx=[_NX], xmin=0.0, xmax=1.0, T=0.4, Nt=_NT, sigma=0.3, components=comp, **extra)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[_NX + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=0.4,
+        Nt=_NT,
+        sigma=0.3,
+        components=comp,
+        **extra,
+    )
 
 
 def _grid_size(problem) -> int:

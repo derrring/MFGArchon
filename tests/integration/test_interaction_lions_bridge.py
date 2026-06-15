@@ -37,6 +37,8 @@ from mfgarchon.operators.interaction import (
     QuadraticInteractionEnergy,
 )
 from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 class TestGate3LionsBridgeEquivalence:
@@ -129,7 +131,15 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
         return np.exp(-((xx - 0.5) ** 2) / (2 * 0.12**2))
 
     components = MFGComponents(hamiltonian=H, u_terminal=lambda xx: 0.0, m_initial=m_initial)
-    problem = MFGProblem(Nx=21, xmin=0.0, xmax=1.0, T=0.5, Nt=4, sigma=0.2, components=components)
+    problem = MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[21 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=0.5,
+        Nt=4,
+        sigma=0.2,
+        components=components,
+    )
     g = problem.geometry.get_spatial_grid().ravel()
     dx = g[1] - g[0]
     potential = PotentialEnergy(bowl * (g - 0.5) ** 2)  # attractive bowl (cost away from centre)

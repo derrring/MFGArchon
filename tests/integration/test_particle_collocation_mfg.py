@@ -23,6 +23,8 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.implicit import Hyperrectangle
 
 
@@ -54,14 +56,13 @@ class SimpleLQMFG2D(MFGProblem):
 
     def __init__(self):
         super().__init__(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1)
+            ),
             T=1.0,
             Nt=20,
-            Nx=30,
-            Lx=1.0,
-            xmin=0.0,
             sigma=0.2,
             coupling_coefficient=0.5,
-            dimension=2,
             components=_default_components_2d(),
         )
         # GFDM solver expects problem.d for spatial dimension

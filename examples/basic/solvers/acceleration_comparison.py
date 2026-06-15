@@ -25,6 +25,8 @@ import matplotlib.pyplot as plt
 from mfgarchon import MFGProblem
 from mfgarchon.factory import create_standard_solver
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # Configure logging
 configure_research_logging("acceleration_comparison", level="INFO")
@@ -44,12 +46,12 @@ def create_test_problem():
         return 0.5 * p**2 + 0.5 * x**2 + m
 
     problem = MFGProblem(
-        xmin=-5.0,
-        xmax=5.0,
-        Nx=50,  # Reduced for faster convergence
+        geometry=TensorProductGrid(
+            bounds=[(-5.0, 5.0)], Nx_points=[50 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=1.0,
-        Nt=25,  # Reduced for faster convergence
-        sigma=0.5,  # Increased diffusion for better convergence
+        Nt=25,
+        sigma=0.5,
         hamiltonian=hamiltonian,
     )
 

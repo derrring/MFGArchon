@@ -20,6 +20,8 @@ from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -42,7 +44,15 @@ def _make_lq_problem(coupling_coeff: float = 1.0, sigma: float = 0.1) -> MFGProb
         u_terminal=lambda x: 0.0,
         hamiltonian=hamiltonian,
     )
-    return MFGProblem(Nx=[NX], Nt=NT, T=T, sigma=sigma, components=components)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[NX + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        Nt=NT,
+        T=T,
+        sigma=sigma,
+        components=components,
+    )
 
 
 # ---------------------------------------------------------------------------

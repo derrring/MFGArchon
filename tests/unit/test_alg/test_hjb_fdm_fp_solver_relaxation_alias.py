@@ -19,6 +19,8 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.utils.numerical.nonlinear_solvers import FixedPointSolver
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _make_problem():
@@ -32,7 +34,15 @@ def _make_problem():
         u_terminal=lambda x: 0.0,
         m_initial=lambda x: 1.0,
     )
-    return MFGProblem(Nx=11, xmin=0.0, xmax=1.0, T=0.2, Nt=5, sigma=0.3, components=c)
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[11 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        T=0.2,
+        Nt=5,
+        sigma=0.3,
+        components=c,
+    )
 
 
 # ------------------------------------------------------------------

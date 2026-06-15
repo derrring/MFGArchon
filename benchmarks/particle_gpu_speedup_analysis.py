@@ -13,6 +13,8 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.backends.torch_backend import TorchBackend
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry.boundary import periodic_bc
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 print("=" * 80)
 print("Track B Phase 2.1: GPU Speedup Analysis")
@@ -26,11 +28,11 @@ def benchmark_particle_solver(Nx: int, Nt: int, N_particles: int, device: str = 
 
     # Create problem
     problem = MFGProblem(
-        Nx=Nx,
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         Nt=Nt,
         T=1.0,
-        xmin=0.0,
-        xmax=1.0,
         sigma=0.1,
         coupling_coefficient=1.0,
     )

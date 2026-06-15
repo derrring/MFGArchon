@@ -21,6 +21,8 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.factory import create_semi_lagrangian_solver
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 # Configure logging
 configure_research_logging("semi_lagrangian_validation", level="INFO")
@@ -89,13 +91,13 @@ def create_validation_problem(nx: int = 51, nt: int = 51) -> MFGProblem:
         MFG problem with known analytical properties
     """
     return MFGProblem(
-        xmin=0.0,
-        xmax=1.0,
-        Nx=nx,
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[nx + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
         T=0.5,
         Nt=nt,
         sigma=0.1,
-        coupling_coefficient=0.5,  # Moderate diffusion  # Standard control cost
+        coupling_coefficient=0.5,
     )
 
 

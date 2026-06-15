@@ -17,7 +17,7 @@ from mfgarchon.core.mfg_components import (
 from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
-from mfgarchon.utils.deprecation import deprecated, deprecated_parameter, validate_kwargs
+from mfgarchon.utils.deprecation import validate_kwargs
 
 # Use unified nD-capable BoundaryConditions from conditions.py
 
@@ -180,75 +180,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     volatility_field: DiffusionField
     drift_field: DriftField
 
-    @staticmethod
-    def _normalize_to_array(
-        value: int | float | list[int] | list[float] | None,
-        param_name: str = "parameter",
-        warn: bool = True,
-    ) -> list[int] | list[float] | None:
-        """
-        Convert scalar or array to array with optional deprecation warning.
-
-        Args:
-            value: Scalar or array value to normalize
-            param_name: Parameter name for warning message
-            warn: Whether to emit deprecation warning for scalar inputs
-
-        Returns:
-            Array form of the value, or None if input is None
-
-        Examples:
-            >>> MFGProblem._normalize_to_array(100, "Nx")  # Warns
-            [100]
-            >>> MFGProblem._normalize_to_array([100], "Nx")  # No warning
-            [100]
-            >>> MFGProblem._normalize_to_array(None, "Nx")
-            None
-        """
-        import warnings
-
-        if value is None:
-            return None
-
-        if isinstance(value, (int, float)):
-            if warn:
-                warnings.warn(
-                    f"Passing scalar {param_name}={value} is deprecated. "
-                    f"Use array notation {param_name}=[{value}] instead. "
-                    f"Scalar support will be removed in v1.0.0. "
-                    f"See docs/development/MATHEMATICAL_NOTATION_STANDARD.md for details.",
-                    DeprecationWarning,
-                    stacklevel=4,
-                )
-            return [value]
-
-        # Already a list - return as-is
-        return list(value)
-
-    @deprecated_parameter(
-        param_name="Lx",
-        since="v0.17.1",
-        replacement="geometry=TensorProductGrid(...)",
-        removal_blockers=["internal_usage", "migration_docs"],
-    )
-    @deprecated_parameter(
-        param_name="Nx",
-        since="v0.17.1",
-        replacement="geometry=TensorProductGrid(...)",
-        removal_blockers=["internal_usage", "migration_docs"],
-    )
-    @deprecated_parameter(
-        param_name="xmax",
-        since="v0.17.1",
-        replacement="geometry=TensorProductGrid(...)",
-        removal_blockers=["internal_usage", "migration_docs"],
-    )
-    @deprecated_parameter(
-        param_name="xmin",
-        since="v0.17.1",
-        replacement="geometry=TensorProductGrid(...)",
-        removal_blockers=["internal_usage", "migration_docs"],
-    )
     def __init__(
         self,
         # === API v1.0 parameters (Issue #875) ===
@@ -257,11 +188,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         conditions: Any | None = None,  # Conditions instance (time + IC/TC)
         constraints: list | None = None,  # Optional constraints (future)
         # === Legacy parameters (all below deprecated in favor of model/domain/conditions) ===
-        # Legacy 1D parameters (backward compatible - scalars will be converted to arrays with deprecation warning)
-        xmin: float | list[float] | None = None,
-        xmax: float | list[float] | None = None,
-        Nx: int | list[int] | None = None,
-        Lx: float | None = None,  # Alternative to xmin/xmax
         # N-D grid parameters
         spatial_bounds: list[tuple[float, float]] | None = None,
         spatial_discretization: list[int] | None = None,
@@ -296,15 +222,16 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """
         Initialize MFG problem with support for all spatial dimensions and domain types.
 
-        Supports five initialization modes:
-        1. Legacy 1D mode: Specify Nx, xmin, xmax
-        2. N-D grid mode: Specify spatial_bounds, spatial_discretization
-        3. Geometry mode: Specify geometry object (with optional obstacles)
-        4. Network mode: Specify network graph
-        5. Custom components: Full mathematical control via MFGComponents
+        Supports four initialization modes:
+        1. N-D grid mode: Specify spatial_bounds, spatial_discretization
+        2. Geometry mode: Specify geometry object (with optional obstacles)
+        3. Network mode: Specify network graph
+        4. Custom components: Full mathematical control via MFGComponents
+
+        For a 1D grid, use the geometry-first API:
+            geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])
 
         Args:
-            xmin, xmax, Nx, Lx: Legacy 1D spatial domain parameters
             spatial_bounds: List of (min, max) tuples for each dimension
                            Example: [(0, 1), (0, 1)] for 2D unit square
             spatial_discretization: List of grid points per dimension
@@ -341,8 +268,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             **kwargs: Additional parameters
 
         Examples:
-            # Mode 1: 1D legacy (100% backward compatible)
-            problem = MFGProblem(Nx=100, xmin=0.0, xmax=1.0, Nt=100)
+            # Mode 1: 1D grid via geometry-first API
+            geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101])
+            problem = MFGProblem(geometry=geometry, T=1.0, Nt=100)
 
             # Mode 2: N-D grid
             problem = MFGProblem(
@@ -447,9 +375,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 n: v
                 for n, v in [
                     ("geometry", geometry),
-                    ("xmin", xmin),
-                    ("xmax", xmax),
-                    ("Nx", Nx),
                     ("spatial_bounds", spatial_bounds),
                     ("spatial_discretization", spatial_discretization),
                     ("sigma", sigma),
@@ -624,28 +549,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Scalar: use directly
             sigma_scalar = float(vola_value)
 
-        # Normalize spatial parameters to arrays (with deprecation warnings for scalars)
-        # This enables dimension-agnostic code while maintaining backward compatibility
-
-        # Issue #544: Deprecate legacy 1D parameters (Nx, xmin, xmax, Lx)
-        # Note: Deprecation warnings issued by @deprecated_parameter decorators
-        # Detailed migration guide: docs/user/LEGACY_PARAMETERS.md
-
-        if Nx is not None:
-            Nx_normalized = self._normalize_to_array(Nx, "Nx")
-        else:
-            Nx_normalized = None
-
-        if xmin is not None:
-            xmin_normalized = self._normalize_to_array(xmin, "xmin")
-        else:
-            xmin_normalized = None
-
-        if xmax is not None:
-            xmax_normalized = self._normalize_to_array(xmax, "xmax")
-        else:
-            xmax_normalized = None
-
         # Initialize geometry-related attributes explicitly (Issue #543 - fail-fast principle)
         # These may be set by init methods, but should have explicit defaults
         self.geometry = None  # type: GeometryProtocol | None
@@ -689,39 +592,21 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             final_hjb_geometry = None
             final_fp_geometry = None
 
-        # Detect initialization mode (use normalized Nx for detection)
+        # Detect initialization mode
         # For dual geometry, pass the hjb_geometry to mode detection
         geometry_for_detection = final_hjb_geometry if final_hjb_geometry is not None else geometry
-        mode = self._detect_init_mode(
-            Nx=Nx_normalized, spatial_bounds=spatial_bounds, geometry=geometry_for_detection, network=network
-        )
+        mode = self._detect_init_mode(spatial_bounds=spatial_bounds, geometry=geometry_for_detection, network=network)
 
         # Dispatch to appropriate initializer
         # Note: Pass sigma_scalar (the backward-compatible float value)
-        if mode == "1d_legacy":
-            # Mode 1: Legacy 1D
-            if Lx is not None:
-                # Use Lx to set xmin/xmax if provided
-                if xmin_normalized is None:
-                    xmin_normalized = [0.0]
-                xmax_normalized = [xmin_normalized[0] + Lx]
-            else:
-                if xmin_normalized is None:
-                    xmin_normalized = [0.0]
-                if xmax_normalized is None:
-                    xmax_normalized = [1.0]
-            self._init_1d_legacy(
-                xmin_normalized, xmax_normalized, Nx_normalized, T, Nt, sigma_scalar, coupling_coefficient
-            )
-
-        elif mode == "nd_grid":
-            # Mode 2: N-dimensional grid
-            self._init_nd(
+        if mode == "nd_grid":
+            # Mode 1: N-dimensional grid
+            self._init_grid(
                 spatial_bounds, spatial_discretization, T, Nt, sigma_scalar, coupling_coefficient, suppress_warnings
             )
 
         elif mode == "geometry":
-            # Mode 3: Complex geometry
+            # Mode 2: Complex geometry
             self._init_geometry(
                 final_hjb_geometry,
                 obstacles,
@@ -739,17 +624,17 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 self.fp_geometry = final_fp_geometry
 
         elif mode == "network":
-            # Mode 4: Network MFG
+            # Mode 3: Network MFG
             self._init_network(network, T, Nt, sigma_scalar, coupling_coefficient, lambda_, gamma)
 
         elif mode == "default":
-            # Default: 1D with default parameters
+            # Default: 1D unit interval with 51 grid points
             warnings.warn(
                 "No spatial domain specified. Using default 1D domain: [0, 1] with 51 points.",
                 UserWarning,
                 stacklevel=2,
             )
-            self._init_1d_legacy([0.0], [1.0], [51], T, Nt, sigma_scalar, coupling_coefficient)
+            self._init_grid([(0.0, 1.0)], [51], T, Nt, sigma_scalar, coupling_coefficient, suppress_warnings)
 
         else:
             raise ValueError(f"Unknown initialization mode: {mode}")
@@ -807,85 +692,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Detect solver compatibility
         self._detect_solver_compatibility()
 
-    @deprecated(
-        since="v0.17.0",
-        replacement="geometry-first API with TensorProductGrid",
-        reason="Manual grid construction is deprecated. See docs/migration/GEOMETRY_PARAMETER_MIGRATION.md",
-    )
-    def _init_1d_legacy(
-        self,
-        xmin: list[float],
-        xmax: list[float],
-        Nx: list[int],
-        T: float,
-        Nt: int,
-        sigma: float,
-        coupling_coefficient: float,
-    ) -> None:
-        """
-        Initialize problem in legacy 1D mode (100% backward compatible).
-
-        Args:
-            xmin: Lower bound as array (e.g., [-2.0])
-            xmax: Upper bound as array (e.g., [2.0])
-            Nx: Grid points as array (e.g., [100])
-            T: Terminal time
-            Nt: Temporal grid points
-            sigma: Diffusion coefficient
-            coupling_coefficient: Control cost coefficient
-
-        Note:
-            This manual grid construction pattern is deprecated. Consider using
-            the geometry-first API with TensorProductGrid instead.
-            See migration guide: docs/migration/GEOMETRY_PARAMETER_MIGRATION.md
-        """
-        from mfgarchon.geometry import TensorProductGrid
-
-        # Extract scalar values from arrays for backward compatibility
-        xmin_scalar = xmin[0]
-        xmax_scalar = xmax[0]
-        Nx_scalar = Nx[0]
-
-        # Create TensorProductGrid geometry object (unified internal representation)
-        # Use default no_flux_bc for legacy _init_1d_legacy path (Issue #674)
-        # Note: This is a deprecated code path; users should use geometry-first API
-        from mfgarchon.geometry.boundary import no_flux_bc
-
-        geometry = TensorProductGrid(
-            bounds=[(xmin_scalar, xmax_scalar)],
-            Nx_points=[Nx_scalar + 1],
-            boundary_conditions=no_flux_bc(dimension=1),
-        )
-
-        # Store geometry for unified interface
-        self.geometry = geometry
-
-        # Set dimension from geometry
-        self.dimension = geometry.dimension
-
-        # Time domain
-        self.T: float = T
-        self.Nt: int = Nt
-        self.dt: float = T / Nt if Nt > 0 else 0.0
-
-        # Time grid
-        self.tSpace: np.ndarray = np.linspace(0, T, Nt + 1, endpoint=True)
-
-        # Coefficients
-        self.sigma: float = sigma
-        self.coupling_coefficient: float = coupling_coefficient
-
-        # N-D attributes (derived from geometry)
-        self.spatial_shape = geometry.get_grid_shape()
-        self.spatial_bounds = [(xmin_scalar, xmax_scalar)]
-        self.spatial_discretization = [Nx_scalar]
-
-    @deprecated(
-        since="v0.17.0",
-        replacement="geometry-first API with TensorProductGrid",
-        reason="Manual grid construction is deprecated. See docs/migration/GEOMETRY_PARAMETER_MIGRATION.md",
-    )
-    def _init_nd(
+    def _init_grid(
         self,
         spatial_bounds: list[tuple[float, float]],
         spatial_discretization: list[int] | None,
@@ -896,12 +703,23 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         suppress_warnings: bool,
     ) -> None:
         """
-        Initialize problem in n-dimensional mode.
+        Initialize problem on a tensor-product Cartesian grid.
 
-        Note:
-            This manual grid construction pattern is deprecated. Consider using
-            the geometry-first API with TensorProductGrid instead.
-            See migration guide: docs/migration/GEOMETRY_PARAMETER_MIGRATION.md
+        Builds a ``TensorProductGrid`` (with default no-flux boundary conditions)
+        from ``spatial_bounds`` and the per-dimension interval counts in
+        ``spatial_discretization`` and stores the derived grid attributes. Used
+        by the ``spatial_bounds=`` (n-D grid) and no-argument (default 1D) paths.
+
+        Args:
+            spatial_bounds: List of (min, max) tuples, one per dimension.
+            spatial_discretization: Interval count per dimension (Nx); the grid
+                allocates Nx + 1 points per axis. Defaults to 51 intervals per
+                dimension when None.
+            T: Terminal time.
+            Nt: Number of time intervals.
+            sigma: Diffusion coefficient.
+            coupling_coefficient: Control cost coefficient.
+            suppress_warnings: Skip the computational-feasibility check.
         """
         # Validate inputs
         if not spatial_bounds:
@@ -924,8 +742,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Convert discretization to Nx_points (add 1 for point count vs intervals)
         Nx_points = [n + 1 for n in spatial_discretization]
-        # Use default no_flux_bc for legacy _init_nd path (Issue #674)
-        # Note: This is a deprecated code path; users should use geometry-first API
         geometry = TensorProductGrid(
             bounds=spatial_bounds, Nx_points=Nx_points, boundary_conditions=no_flux_bc(dimension=dimension)
         )
@@ -1022,7 +838,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     def _detect_init_mode(
         self,
-        Nx: list[int] | None,
         spatial_bounds: list[tuple[float, float]] | None,
         geometry: GeometryProtocol | None,
         network: Any | None,
@@ -1031,20 +846,18 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Detect which initialization mode to use based on provided parameters.
 
         Args:
-            Nx: Normalized array of grid points (or None)
             spatial_bounds: Spatial bounds (or None)
             geometry: Geometry object (or None)
             network: Network object (or None)
 
         Returns:
-            mode: One of "1d_legacy", "nd_grid", "geometry", "network", "default"
+            mode: One of "nd_grid", "geometry", "network", "default"
 
         Raises:
             ValueError: If parameters are ambiguous or conflicting
         """
         # Count how many modes are specified
         mode_indicators = {
-            "1d_legacy": Nx is not None,
             "nd_grid": spatial_bounds is not None,
             "geometry": geometry is not None,
             "network": network is not None,
@@ -1059,7 +872,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 f"Ambiguous initialization: Multiple modes specified: {specified}\n"
                 f"Provide ONLY ONE of:\n"
-                f"  - Nx (for 1D legacy mode)\n"
                 f"  - spatial_bounds (for n-D grid mode)\n"
                 f"  - geometry (for complex geometry mode)\n"
                 f"  - network (for network MFG mode)"
@@ -1318,7 +1130,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             True if domain_type is "grid", False otherwise.
 
         Example:
-            >>> problem = MFGProblem(Nx=[50], xmin=[0.0], xmax=[1.0], T=1.0, Nt=10)
+            >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51])
+            >>> problem = MFGProblem(geometry=grid, T=1.0, Nt=10)
             >>> problem.is_cartesian
             True
         """
@@ -2108,48 +1921,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """Get terminal condition u(T, x). Issue #670: unified naming."""
         return self.u_terminal.copy()
 
-    def get_u_final(self) -> np.ndarray:
-        """Deprecated: use get_u_terminal() instead.
-
-        .. deprecated:: v0.17.6
-            Use :meth:`get_u_terminal` instead. Will be removed in v1.0.0.
-        """
-        from mfgarchon.utils.deprecation import deprecated
-
-        # Apply decorator dynamically to avoid import cycle at module level
-        @deprecated(
-            since="v0.17.6",
-            replacement="use get_u_terminal() instead",
-            reason="Renamed for consistency with MFG literature terminology",
-        )
-        def _deprecated_get_u_final() -> np.ndarray:
-            return self.get_u_terminal()
-
-        return _deprecated_get_u_final()
-
     def get_m_initial(self) -> np.ndarray:
         """Get initial density m(0, x). Issue #670: unified naming."""
         return self.m_initial.copy()
 
     # Legacy aliases for backward compatibility
-    def get_u_fin(self) -> np.ndarray:
-        """Legacy alias for get_u_terminal().
-
-        .. deprecated:: v0.17.6
-            Use :meth:`get_u_terminal` instead. Will be removed in v1.0.0.
-        """
-        from mfgarchon.utils.deprecation import deprecated
-
-        @deprecated(
-            since="v0.17.6",
-            replacement="use get_u_terminal() instead",
-            reason="Shortened alias deprecated in favor of full name",
-        )
-        def _deprecated_get_u_fin() -> np.ndarray:
-            return self.get_u_terminal()
-
-        return _deprecated_get_u_fin()
-
     def get_m_init(self) -> np.ndarray:
         """Legacy alias for get_m_initial()."""
         return self.get_m_initial()
@@ -2224,7 +2000,16 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         "m_initial": "MFGComponents.m_initial",
         "u_final": "MFGComponents.u_terminal",
         "initial_density": "MFGComponents.m_initial",
+        # Issue #1363: legacy 1D geometry kwargs removed (deprecated since v0.17.1);
+        # the **kwargs signature would otherwise swallow them silently.
+        "xmin": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
+        "xmax": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
+        "Nx": "geometry=TensorProductGrid(bounds=[(xmin, xmax)], Nx_points=[Nx + 1])",
+        "Lx": "geometry=TensorProductGrid(bounds=[(0.0, Lx)], Nx_points=[Nx + 1])",
     }
+
+    # Legacy 1D geometry kwargs removed in Issue #1363 (subset of _DEPRECATED_KWARGS)
+    _GEOMETRY_KWARGS: ClassVar[set[str]] = {"xmin", "xmax", "Nx", "Lx"}
 
     # Known valid kwargs that are consumed by _initialize_functions or mixins
     _RECOGNIZED_KWARGS: ClassVar[set[str]] = {
@@ -2252,8 +2037,28 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 warn_on_unrecognized=True,
             )
         except ValueError as e:
-            # Enhance error with MFGProblem-specific migration guide
-            migration_guide = """
+            # Enhance error with the relevant MFGProblem-specific migration guide.
+            if self._GEOMETRY_KWARGS & set(kwargs):
+                # Issue #1363: legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) removed.
+                migration_guide = """
+
+The legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) are no longer supported.
+Use the geometry-first API:
+
+  from mfgarchon.geometry import TensorProductGrid
+  from mfgarchon.geometry.boundary import no_flux_bc
+
+  geometry = TensorProductGrid(
+      bounds=[(xmin, xmax)],
+      Nx_points=[Nx + 1],  # Nx intervals -> Nx + 1 grid points
+      boundary_conditions=no_flux_bc(dimension=1),
+  )
+
+  problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma)
+
+See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
+            else:
+                migration_guide = """
 
 The old kwargs-based Hamiltonian API is no longer supported.
 Use MFGComponents for custom problem definitions:
