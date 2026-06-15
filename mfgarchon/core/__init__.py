@@ -25,7 +25,9 @@ from .hamiltonian import (
     DualLagrangian,
     # Full MFG Hamiltonian classes (Issue #673)
     HamiltonianBase,
-    HamiltonianState,
+    # Single-source contract (Issue #1071)
+    HamiltonianValues,
+    HEvalState,
     L1ControlCost,
     L1Hamiltonian,
     # Lagrangian classes (Issue #651)
@@ -36,6 +38,7 @@ from .hamiltonian import (
     QuadraticControlCost,
     QuadraticHamiltonian,
     QuadraticMFGHamiltonian,
+    Regularizer,
     SeparableHamiltonian,
     create_hamiltonian,
 )
@@ -81,7 +84,10 @@ __all__ = [
     "BoundedHamiltonian",
     # Full MFG Hamiltonian classes (Issue #673, #782)
     "HamiltonianBase",
-    "HamiltonianState",
+    # Single-source contract (Issue #1071)
+    "HEvalState",
+    "HamiltonianValues",
+    "Regularizer",
     "SeparableHamiltonian",
     "CongestionHamiltonian",
     "QuadraticMFGHamiltonian",

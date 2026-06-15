@@ -7,8 +7,8 @@ import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
-from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
+from mfgarchon.core.hamiltonian import HEvalState
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -705,8 +705,11 @@ def compute_hjb_residual(
         m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
-        # Single batch call — eliminates per-point problem.H() overhead
-        H_values = eval_H_batch(H_class, x_grid, m_grid, p_grid, current_time).ravel()
+        # Single batch call — eliminates per-point problem.H() overhead.
+        # Issue #1071: consume the single-source residual primitive (H only); the
+        # Jacobian below independently calls evaluate_dp (∂H/∂p only), so the
+        # residual never computes the drift gradient.
+        H_values = H_class.evaluate_H(HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time)).ravel()
 
         # Mask: propagate NaN from existing Phi_U or from NaN gradients
         nan_mask = np.isnan(Phi_U) | np.isnan(precomputed_grad) | ~np.isfinite(H_values)
@@ -844,9 +847,11 @@ def compute_hjb_jacobian(
         m_grid = np.asarray(M_density_at_n_plus_1, dtype=float)  # (Nx,)
         p_grid = precomputed_grad.reshape(-1, 1)  # (Nx, 1)
 
-        # Single batch call: dH/dp at all grid points
-        dH_dp = eval_dH_dp_batch(
-            H_class, x_grid, m_grid, p_grid, current_time
+        # Single batch call: dH/dp at all grid points.
+        # Issue #1071: consume the single-source Jacobian primitive (∂H/∂p only);
+        # this never recomputes the Hamiltonian value H.
+        dH_dp = H_class.evaluate_dp(
+            HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time)
         ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
 
         # Stencil coefficients: dp_i/dU_j depends on upwind direction

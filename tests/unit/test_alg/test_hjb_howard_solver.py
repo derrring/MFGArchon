@@ -33,6 +33,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
+    HamiltonianBase,
     OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
@@ -137,13 +138,19 @@ def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors
         )
 
 
-class _LQHam:
+class _LQHam(HamiltonianBase):
     """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(x, m, p, t) = p (so α* = -dp = -p).
 
     Used to validate the integrated `inner_solver='howard'` path, which derives α* from
     `problem.hamiltonian_class.dp` (Issue #1118). Matches the explicit `lambda x,p,m,t: -p`
-    the standalone Howard tests pass.
+    the standalone Howard tests pass. Subclasses ``HamiltonianBase`` so it carries the
+    Issue #1071 single-source primitives (``evaluate_H``/``evaluate_dp``) the helpers
+    delegate to; ``__call__`` provides the matching H = |p|²/2 value.
     """
+
+    def __call__(self, x, m, p, t=0.0):
+        p = np.asarray(p, dtype=float)
+        return 0.5 * np.sum(p**2, axis=-1) if p.ndim == 2 else 0.5 * float(np.sum(p**2))
 
     def dp(self, x, m, p, t=0.0):
         return np.asarray(p, dtype=float)
