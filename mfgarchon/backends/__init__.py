@@ -22,6 +22,22 @@ logger = get_logger(__name__)
 _BACKENDS = {}
 _DEFAULT_BACKEND = "numpy"
 
+# Issue #1072 (interim): the JAX backend ghost-implements its HJB/FP time steps
+# (jax_backend.py `_hjb_step_impl` / `_fpk_step_impl`) using 2nd-order central
+# differences only, instead of calling the high-order operators the NumPy path
+# uses (e.g. WENO5 / upwind reconstruction). Selecting JAX for any scheme other
+# than 2nd-order central therefore silently solves *different* math, so a
+# cross-backend "speedup" benchmark compares apples to oranges. Full backend
+# uniformity is the deferred design in #1072; this is the documented stop-gap.
+#
+# `fdm_centered` is the one scheme whose stencil the JAX 2nd-order central
+# implementation faithfully reproduces — every other scheme (upwind, WENO5, SL,
+# GFDM, FEM, FVM, meshless) uses a stencil JAX does not implement.
+_JAX_NATIVE_SCHEME_VALUES = frozenset({"fdm_centered"})
+# One-time guard, keyed by scheme value (matches the repo's set-based idiom, e.g.
+# utils/pde_coefficients._VOLATILITY_LEGACY_KEY_WARNED).
+_JAX_SCHEME_DOWNGRADE_WARNED: set[str] = set()
+
 
 def register_backend(name: str, backend_class):
     """Register a computational backend."""
@@ -162,6 +178,62 @@ def create_backend(backend_name: str | None = None, **kwargs):
     return _BACKENDS[backend_name](**kwargs)
 
 
+def warn_if_jax_scheme_downgraded(backend_name: str | None, scheme: Any) -> bool:
+    """Warn once when the JAX backend is paired with a non-2nd-order-central scheme.
+
+    Issue #1072 (interim mitigation). The JAX backend's ``hjb_step`` / ``fpk_step``
+    ghost-implement 2nd-order central differences rather than calling the
+    high-order operators (WENO5 / upwind) the NumPy path uses. When JAX is
+    selected for a scheme whose stencil it does not implement, the requested
+    discretization is silently replaced by 2nd-order central, so results differ
+    from the NumPy high-order path and cross-backend comparison is not
+    quantitatively meaningful.
+
+    The warning is emitted at most once per distinct scheme value. It fires only
+    on the JAX backend with a non-native scheme; it is a no-op for the NumPy /
+    other backends, for ``fdm_centered`` (which JAX reproduces exactly), and when
+    no scheme is known (e.g. Expert Mode with injected solvers).
+
+    Parameters
+    ----------
+    backend_name : str | None
+        Resolved backend name (e.g. ``"jax"``, ``"numpy"``). ``None`` means the
+        default backend, which is never JAX.
+    scheme : Any
+        A ``NumericalScheme`` enum member or its string value. ``None`` skips the
+        check (no scheme to classify).
+
+    Returns
+    -------
+    bool
+        ``True`` if a warning was emitted by this call, ``False`` otherwise.
+    """
+    if backend_name != "jax" or scheme is None:
+        return False
+
+    # Accept either a NumericalScheme enum (has `.value`) or a bare string.
+    scheme_value = str(getattr(scheme, "value", scheme))
+
+    if scheme_value in _JAX_NATIVE_SCHEME_VALUES:
+        return False
+    if scheme_value in _JAX_SCHEME_DOWNGRADE_WARNED:
+        return False
+
+    _JAX_SCHEME_DOWNGRADE_WARNED.add(scheme_value)
+    warnings.warn(
+        f"JAX backend selected with scheme '{scheme_value}', but the JAX backend "
+        f"implements only 2nd-order central differences (it ghost-implements "
+        f"hjb_step/fpk_step instead of the high-order operators, e.g. WENO5/upwind, "
+        f"used by the NumPy path). The requested stencil is silently replaced by "
+        f"2nd-order central, so results will differ from the NumPy high-order path "
+        f"and cross-backend comparison is not quantitatively meaningful. Use the "
+        f"NumPy backend for this scheme, or scheme 'fdm_centered' with JAX. "
+        f"(Issue #1072, interim; full backend uniformity is deferred.)",
+        stacklevel=2,
+    )
+    return True
+
+
 def get_backend_info() -> dict[str, Any]:
     """Get information about available backends."""
     available = get_available_backends()
@@ -263,4 +335,5 @@ __all__ = [
     "get_available_backends",
     "get_backend_info",
     "register_backend",
+    "warn_if_jax_scheme_downgraded",
 ]
