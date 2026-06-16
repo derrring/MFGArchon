@@ -366,8 +366,14 @@ class GeneralMFGFactory:
                 }
                 return eval(func_spec, safe_namespace)
             except Exception as e:
-                logger.error(f"Failed to evaluate lambda function '{func_spec}': {e}")
-                return None
+                # Issue #1071 / fail-fast: a PROVIDED spec that won't evaluate must not return
+                # None (silently dropping the user's function → default for m_initial/potential,
+                # or a misleading "u_terminal required" downstream). func_spec is None → None
+                # above is the legitimate "not provided" case; this is a real load failure.
+                raise ValueError(
+                    f"GeneralMFGFactory: failed to evaluate lambda function spec {func_spec!r}: {e}. "
+                    "A provided function spec that cannot be loaded is not silently dropped (Issue #1071)."
+                ) from e
 
         # Check if it's a module path
         if "." in func_spec:
@@ -376,11 +382,16 @@ class GeneralMFGFactory:
                 module = importlib.import_module(module_path)
                 return getattr(module, function_name)
             except Exception as e:
-                logger.error(f"Failed to import function '{func_spec}': {e}")
-                return None
+                raise ValueError(
+                    f"GeneralMFGFactory: failed to import function spec {func_spec!r}: {e}. "
+                    "A provided function spec that cannot be loaded is not silently dropped (Issue #1071)."
+                ) from e
 
-        logger.warning(f"Could not resolve function specification: '{func_spec}'")
-        return None
+        raise ValueError(
+            f"GeneralMFGFactory: could not resolve function specification {func_spec!r} "
+            "(not a registered name, a 'lambda ...' expression, or an importable 'module.func' "
+            "path). A provided spec that cannot be loaded is not silently dropped (Issue #1071)."
+        )
 
     def create_template_config(self, filename: str) -> None:
         """Create a template configuration file.
