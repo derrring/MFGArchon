@@ -355,6 +355,7 @@ class HJBFDMSolver(BaseHJBSolver):
         source_term: Callable | None = None,
         *,
         hamiltonian_override=None,  # Issue #1157: multi-population cross-density bound H
+        cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     ) -> NDArray:
         """
         Solve HJB system backward in time.
@@ -389,6 +390,18 @@ class HJBFDMSolver(BaseHJBSolver):
                 "Multi-population Hamiltonian override (Issue #1157) is currently validated "
                 f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
                 "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
+            )
+        # Issue #1071: the lock-faithful cross-density channel shares the 1D-only batch path.
+        if cross_density is not None and self.dimension != 1:
+            raise NotImplementedError(
+                "Multi-population cross-density coupling (Issue #1071) is currently validated "
+                f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
+                "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
+            )
+        if hamiltonian_override is not None and cross_density is not None:
+            raise ValueError(
+                "hamiltonian_override (Issue #1157 bound H) and cross_density (Issue #1071) are "
+                "mutually exclusive multi-population channels; pass exactly one."
             )
         # Issue #889: merge tensor_volatility_field into volatility_field
         # Deprecation warning issued by @deprecated_parameter decorator
@@ -433,7 +446,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # a scalar own-population density and cannot express cross-population coupling. The
             # batch path is numerically equivalent to the per-point path (Issue #789), so this
             # changes nothing for single-population solves (override None => self.backend).
-            effective_backend = None if hamiltonian_override is not None else self.backend
+            effective_backend = (
+                None if (hamiltonian_override is not None or cross_density is not None) else self.backend
+            )
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
@@ -450,6 +465,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 domain_bounds=domain_bounds,
                 source_term=source_term,
                 active_hamiltonian=hamiltonian_override,  # Issue #1157
+                cross_density=cross_density,  # Issue #1071
             )
 
             # Apply variational inequality constraint via projection (Issue #591)

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Multi-population HJB cross-coupling: lock-faithful `cross_density` channel** (Issue #1071,
+  increment 1 of the `BoundHamiltonian` retirement). `HJBFDMSolver.solve_hjb_system` gains a
+  `cross_density=` parameter taking the stacked `(Nt+1, K*Nx)` cross-density trajectory directly;
+  the backward loop indexes it at each integer timestep `n_idx_hjb` (where
+  `current_time = n_idx_hjb · dt`) and feeds the population's *own* Hamiltonian, which slices the
+  other populations via `population_index`. This replaces the `BoundHamiltonian` wrapper's two
+  smells — the dead `m` argument and the reverse-engineered `round(t/dt)` row-pick — while keeping
+  `HEvalState` physics-only (no `dt` on the state). `MultiPopulationIterator`'s HJB step now uses
+  this channel; the FP drift path still uses `bind_cross_density` (migrated in the next increment).
+  The bound-H `hamiltonian_override` channel is retained until the wrapper is deleted, and the two
+  are mutually exclusive (fail loud). **Byte-identical** to the bound-H path. Pinned by
+  `tests/integration/test_multi_population_cross_coupling.py::test_cross_density_channel_byte_identical_to_bound_hamiltonian_1071`.
+
 ### Added
 
 - **Fail-fast ratchet in CI** (Issue #1071). `scripts/check_fail_fast.py` gains
