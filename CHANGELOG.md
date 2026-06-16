@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`LaplacianOperator` fails loud on an unhandled / unparseable boundary condition**
+  (Issue #1071, fail-fast). Two silent-wrong fallbacks (surfaced by the silent-fallback scan)
+  are now errors: (a) an **unhandled `bc_type`** (e.g. Robin) previously emitted a
+  boundary-diffusion-free *interior-only* stencil (a silently under-constrained boundary) →
+  now raises `NotImplementedError` naming the unsupported type and the supported set; (b) a
+  **provided `bc` whose `bc_type` could not be determined** previously degraded silently to
+  the periodic default → now raises `ValueError`. The documented **`bc=None` → periodic**
+  default is unchanged. No tested path hit either fallback (436-test FP/laplacian sweep green),
+  so this is byte-identical for real usage. Regression:
+  `tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071`.
+
 - **HJB semi-Lagrangian and WENO now fail loud on a missing Hamiltonian** (Issue #1071,
   fail-fast). Both solvers carried silent fallbacks that substituted a hardcoded LQ
   Hamiltonian when no `hamiltonian_class` / `problem.H` was available — returning a
