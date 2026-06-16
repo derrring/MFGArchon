@@ -197,3 +197,40 @@ class TestParticleMeasureRepr:
         mu = ParticleMeasure(np.zeros((10, 3)))
         assert "n=10" in repr(mu)
         assert "d=3" in repr(mu)
+
+
+class TestDegenerateCloudWarns1071:
+    """Issue #1071: a degenerate particle cloud (zero spread) must not silently fall back to a
+    fixed KDE bandwidth — it warns (the fallback is kept, but it is no longer silent).
+
+    Spies on the module logger directly (mfgarchon's get_logger does not propagate to the
+    pytest caplog root handler).
+    """
+
+    @staticmethod
+    def _spy_warnings(monkeypatch):
+        import mfgarchon.core.measure as measure_mod
+
+        calls: list[str] = []
+        monkeypatch.setattr(measure_mod.logger, "warning", lambda msg, *a, **k: calls.append(str(msg)))
+        return calls
+
+    def test_1d_zero_spread_warns(self, monkeypatch):
+        calls = self._spy_warnings(monkeypatch)
+        mu = ParticleMeasure(np.array([0.5, 0.5, 0.5]))  # std == 0 (degenerate)
+        density = mu.to_density(np.linspace(0.0, 1.0, 51))
+        assert density.shape == (51,)
+        assert any("zero spread" in c for c in calls)
+
+    def test_nd_zero_spread_warns(self, monkeypatch):
+        calls = self._spy_warnings(monkeypatch)
+        mu = ParticleMeasure(np.full((5, 2), 0.5))  # all at (0.5, 0.5): std == 0
+        grid = np.array([[0.4, 0.4], [0.5, 0.5], [0.6, 0.6]])
+        mu.to_density(grid)
+        assert any("zero spread" in c for c in calls)
+
+    def test_nondegenerate_does_not_warn(self, monkeypatch):
+        calls = self._spy_warnings(monkeypatch)
+        mu = ParticleMeasure(np.array([0.2, 0.5, 0.8]))  # std > 0
+        mu.to_density(np.linspace(0.0, 1.0, 51))
+        assert not any("zero spread" in c for c in calls)
