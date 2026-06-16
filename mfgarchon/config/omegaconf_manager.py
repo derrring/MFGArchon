@@ -18,7 +18,8 @@ Features:
 - Configuration composition and inheritance via OmegaConf.merge
 - CLI overrides (OmegaConf.from_cli, .from_dotlist)
 - Parameter sweeps via `create_parameter_sweep`
-- Bridging to Pydantic validation via `create_pydantic_config`
+- Bridging to Pydantic validation via `mfgarchon.config.bridge.bridge_to_pydantic`
+  (the single canonical OmegaConf->Pydantic crossing; this manager is transport only)
 """
 
 from __future__ import annotations
@@ -95,7 +96,6 @@ else:
         ConfigAttributeError = Exception
         UnsupportedInterpolationType = Exception
 
-from .core import MFGSolverConfig
 
 logger = get_logger(__name__)
 
@@ -315,49 +315,12 @@ class OmegaConfManager:
 
         return cast("OmegaConfig", composed_config)
 
-    def create_pydantic_config(self, omega_config: OmegaConfig) -> MFGSolverConfig:
-        """
-        Convert OmegaConf configuration to Pydantic MFGSolverConfig.
-
-        Args:
-            omega_config: OmegaConf configuration
-
-        Returns:
-            Pydantic MFGSolverConfig object
-        """
-        # Extract solver configuration
-        solver_config = omega_config.get("solver", {})
-        # Convert OmegaConf to Python dict (use to_container for newer OmegaConf versions)
-        if hasattr(self._OmegaConf, "to_container"):
-            raw_dict = self._OmegaConf.to_container(solver_config, resolve=True)
-        else:
-            # Fallback for older OmegaConf versions
-            raw_dict = dict(solver_config) if hasattr(solver_config, "items") else {}
-
-        # Ensure we have a proper dictionary with string keys
-        from typing import cast
-
-        solver_dict: dict[str, Any] = cast("dict[str, Any]", raw_dict if isinstance(raw_dict, dict) else {})
-
-        # Map OmegaConf structure to Pydantic structure
-        pydantic_dict = self._map_omega_to_pydantic(solver_dict)
-
-        try:
-            return MFGSolverConfig(**pydantic_dict)
-        except Exception as e:
-            logger.warning(f"Could not create Pydantic config directly: {e}")
-            # Fall back to default configuration
-            return MFGSolverConfig()
-
-    def _map_omega_to_pydantic(self, omega_dict: dict[str, Any]) -> dict[str, Any]:
-        """Map OmegaConf structure to Pydantic structure."""
-        # This is a simplified mapping - extend as needed
-        return {
-            "max_iterations": omega_dict.get("max_iterations", 100),
-            "tolerance": omega_dict.get("tolerance", 1e-6),
-            "damping": omega_dict.get("damping", 0.5),
-            # Add more mappings as needed
-        }
+    # NOTE (Issue #1392): the vestigial `create_pydantic_config` / `_map_omega_to_pydantic`
+    # pair was removed. They were a pre-North-Star second OmegaConf->Pydantic bridge that
+    # bypassed the canonical, single crossing `mfgarchon.config.bridge.bridge_to_pydantic`
+    # and silently returned a default config (flat keys vs the nested MFGSolverConfig). Use
+    # `bridge_to_pydantic(omega_cfg, MFGSolverConfig)` for validation; this manager is
+    # transport only (load/merge/save/CLI).
 
     def save_config(self, config: OmegaConfig, output_path: str | Path) -> None:
         """
