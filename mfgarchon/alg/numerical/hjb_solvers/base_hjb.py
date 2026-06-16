@@ -675,10 +675,22 @@ def compute_hjb_residual(
         # Works for both constant σ (scalar) and σ(x,t) (array)
         Phi_U += -diffusion_from_volatility(sigma, kind="field") * U_xx
 
-    # Precompute BC-aware gradient for entire array (Issue #542 fix)
-    # This avoids repeated per-point computation with wrong BC
+    # Precompute BC-aware gradient for entire array (Issue #542 fix).
+    # This avoids the per-point %Nx periodic fallback that ignores the actual BC.
+    #
+    # Issue #1384: the original gate `backend is None` left the DEFAULT single-population
+    # NumPy path on the periodic %Nx gradient regardless of BC, because hjb_fdm.py sets
+    # effective_backend=NumPyBackend (≠ None) for single-population solves. The diffusion
+    # term was already BC-aware for this path via the non-torch Laplacian gate (above);
+    # the gradient was not. Mirror that gate: use the BC-aware gradient for any non-torch
+    # (NumPy-like) array, not only backend is None. The batch Hamiltonian path below keeps
+    # its `backend is None` gate, so NumPy single-population still uses the per-point loop —
+    # now fed the BC-aware gradient. Interior momenta are unchanged to ≤1 ULP; only the two
+    # boundary points move, and only for non-periodic BC (periodic ≤1 ULP everywhere).
+    # Validated in: scripts/validation/hjb_1d_bc_gradient.py
     precomputed_grad = None
-    if bc is not None and backend is None:
+    _grad_uses_torch_roll = backend is not None and hasattr(U_n_current_newton_iterate, "roll")
+    if bc is not None and not _grad_uses_torch_roll:
         precomputed_grad = _compute_gradient_array_1d(
             U_n_current_newton_iterate, dx, bc=bc, upwind=use_upwind, time=current_time
         )
