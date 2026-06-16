@@ -155,3 +155,52 @@ def test_nonfdm_backend_multipop_fails_loud():
     )
     with pytest.raises(NotImplementedError, match="1157"):
         it.solve(max_iterations=2, tolerance=1e-10)
+
+
+def test_cross_density_channel_byte_identical_to_bound_hamiltonian_1071():
+    """Issue #1071 (lock-faithful migration): the ``cross_density`` trajectory channel must be
+    byte-identical to the ``BoundHamiltonian`` (``hamiltonian_override``) path it replaces.
+
+    The new channel indexes the stacked trajectory at each integer backward-loop timestep
+    ``n_idx_hjb`` and feeds the population's OWN Hamiltonian (which slices the other populations
+    via ``population_index``) — eliminating the wrapper's ``round(t/dt)`` and dead-``m`` smells.
+    Because ``current_time = n_idx_hjb * dt``, the trajectory row picked is identical, so the HJB
+    value function is bit-for-bit unchanged. This pins the equivalence so the ``BoundHamiltonian``
+    retirement (migration increments 2-4) cannot silently drift the multi-population HJB."""
+    K = 2
+    probs = [_make_problem(k, cross=2.0, K=K) for k in range(K)]
+    solvers = [HJBFDMSolver(p) for p in probs]
+    Nx = _NX + 1
+    rng = np.random.RandomState(0)
+    M = [np.abs(rng.rand(_NT + 1, Nx)) + 0.1 for _ in range(K)]
+    M = [m / m.sum(axis=-1, keepdims=True) for m in M]  # mass-normalize each timestep
+    m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx) stacked trajectory
+    U_prev = [rng.rand(_NT + 1, Nx) for _ in range(K)]
+    U_term = [np.zeros(Nx) for _ in range(K)]
+
+    for k in range(K):
+        H_bound = probs[k].hamiltonian_class.bind_cross_density(m_all, dt=probs[k].dt)
+        U_bound = np.asarray(solvers[k].solve_hjb_system(M[k], U_term[k], U_prev[k], hamiltonian_override=H_bound))
+        U_cross = np.asarray(solvers[k].solve_hjb_system(M[k], U_term[k], U_prev[k], cross_density=m_all))
+        assert np.array_equal(U_bound, U_cross), (
+            f"pop {k}: cross_density channel diverged from BoundHamiltonian "
+            f"(max|delta|={np.max(np.abs(U_bound - U_cross)):.3e}); #1071 migration not byte-identical"
+        )
+
+
+def test_cross_density_and_bound_hamiltonian_mutually_exclusive_1071():
+    """Issue #1071: the legacy bound-H channel and the new cross_density channel must not be
+    supplied together (one would silently shadow the other)."""
+    prob = _make_problem(0, cross=2.0, K=2)
+    solver = HJBFDMSolver(prob)
+    Nx = _NX + 1
+    M = np.ones((_NT + 1, Nx)) / Nx
+    m_all = np.concatenate([M, M], axis=-1)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        solver.solve_hjb_system(
+            M,
+            np.zeros(Nx),
+            np.zeros((_NT + 1, Nx)),
+            hamiltonian_override=prob.hamiltonian_class.bind_cross_density(m_all, dt=prob.dt),
+            cross_density=m_all,
+        )
