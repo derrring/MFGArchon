@@ -1512,14 +1512,29 @@ class FPParticleSolver(BaseFPSolver):
             current_M_particles_t = np.zeros((Nt, self.num_particles))
             particles_list = None
 
-        # Sample initial particles
+        # Sample initial particles.
+        # Issue #1071 / fail-fast: an INVALID initial density must not be silently replaced by a
+        # uniform sample (that solves a different problem with no error). A NaN/Inf density would
+        # otherwise route to the uniform `else` below (because `NaN > 1e-9` is False); a negative
+        # density makes np.random.choice raise, which was previously swallowed to uniform.
+        if not np.all(np.isfinite(m_initial_condition)):
+            raise ValueError(
+                "FPParticleSolver: m_initial contains NaN/Inf — cannot sample initial particles. "
+                "Provide a finite, non-negative initial density; it will not be silently replaced "
+                "by a uniform sample (Issue #1071, fail-fast)."
+            )
         if Dx > 1e-14 and np.sum(m_initial_condition * Dx) > 1e-9:
             m0_probs_unnormalized = m_initial_condition * Dx
             m0_probs = m0_probs_unnormalized / np.sum(m0_probs_unnormalized)
             try:
                 initial_particle_positions = np.random.choice(x_grid, size=self.num_particles, p=m0_probs, replace=True)
-            except ValueError:
-                initial_particle_positions = np.random.uniform(xmin, xmin + Lx, self.num_particles)
+            except ValueError as e:
+                # m0_probs is non-normalizable (e.g. negative entries) — the density is invalid.
+                raise ValueError(
+                    "FPParticleSolver: m_initial produced invalid sampling probabilities "
+                    f"(e.g. negative entries): {e}. Provide a non-negative initial density; it "
+                    "will not be silently replaced by a uniform sample (Issue #1071, fail-fast)."
+                ) from e
         else:
             initial_particle_positions = (
                 np.random.uniform(xmin, xmin + Lx, self.num_particles)
