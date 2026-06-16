@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-06-16
+
 ### Fixed
 
 - **HJB source term receives the value function on all couplers** (Issue #1382).
