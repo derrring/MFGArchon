@@ -14,6 +14,15 @@ These pins assert:
    therefore agree with them exactly.
 
 If the shared helper ever drifts from the pinned convention, these fail.
+
+Issue #1382: the HJB source convention changed from ``v = 0`` to the
+value-function slice ``v_t`` (the documented ``(x, m, v, t)`` contract), and the
+source/nonlocal terms are now built by the single
+``source_composition._problem_hjb_source_terms`` primitive that BOTH the grid
+couplers and ``graph_mfg_solver`` call — so the grid-vs-graph fork (the original
+#1382 divergence) cannot re-open. The reference below and ``src_hjb`` were updated
+to the ``v_t`` convention, and ``test_hjb_source_receives_value_function_slice``
+pins that the primitive passes ``v_t`` (not zero).
 """
 
 from __future__ import annotations
@@ -23,6 +32,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
+    _problem_hjb_source_terms,
     compose_fp_source,
     compose_hjb_source,
 )
@@ -53,7 +63,10 @@ def _ref_compose_hjb_source(problem, m_current, u_current):
         terms = []
         if has_source:
             m_t = _get_time_slice(m_current, t, problem.dt)
-            terms.append(problem.source_term_hjb(x, m_t, np.zeros_like(m_t), t))
+            # Issue #1382: the HJB source receives the value-function slice v_t
+            # (the documented (x, m, v, t) contract), not zero.
+            v_t = _get_time_slice(u_current, t, problem.dt)
+            terms.append(problem.source_term_hjb(x, m_t, v_t, t))
         if has_obstacle:
             psi = problem.obstacle(x)
             eps = getattr(problem, "_penalty_eps", 1e6)
@@ -110,7 +123,10 @@ def _row_indexed(gs: int) -> np.ndarray:
 
 # Field configurations spanning every branch and their combinations.
 def _field_configs(gs: int):
-    src_hjb = lambda x, m, v, t: 0.7 * np.ones(x.shape[0]) + 0.1 * t + 0.01 * m  # noqa: E731
+    # Issue #1382: v-dependent so the test exercises that the HJB source receives the
+    # value-function slice v_t (the +0.03*v term would be silently dropped under the
+    # old v=0 convention, making shared != reference).
+    src_hjb = lambda x, m, v, t: 0.7 * np.ones(x.shape[0]) + 0.1 * t + 0.01 * m + 0.03 * v  # noqa: E731
     src_fp = lambda x, m, v, t: 0.05 * np.ones(x.shape[0]) + 0.02 * v  # noqa: E731
     obstacle = lambda x: np.asarray(x) - 0.5  # noqa: E731
     nonlocal_op = 0.3 * np.eye(gs) + 0.05 * np.ones((gs, gs))
@@ -153,6 +169,33 @@ def test_hjb_composition_matches_reference_and_delegate():
             c = delegate(t, x)
             np.testing.assert_array_equal(a, b, err_msg=f"{name} t={t}: shared != reference (HJB)")
             np.testing.assert_array_equal(a, c, err_msg=f"{name} t={t}: shared != FixedPointIterator delegate (HJB)")
+
+
+def test_hjb_source_receives_value_function_slice():
+    """Issue #1382: the shared HJB source primitive passes the value-function slice v_t
+    (not 0) to source_term_hjb. Both the grid couplers and graph_mfg_solver build their
+    HJB source through _problem_hjb_source_terms, so this pins the convention they share
+    and forbids the grid-vs-graph v=0/v_t fork from re-opening silently."""
+    gs = _grid_size(_make_problem())
+    M = _row_indexed(gs)
+    U = 2.0 * _row_indexed(gs) + 0.5  # distinct from M so v_t != m_t
+    x = np.linspace(0.0, 1.0, gs)
+
+    captured: dict[str, np.ndarray] = {}
+
+    def src(x_, m_, v_, t_):
+        captured["v"] = np.array(v_)
+        return 0.03 * v_
+
+    problem = _make_problem(source_term_hjb=src)
+    for k in range(_NT + 1):
+        t = k * problem.dt
+        parts = _problem_hjb_source_terms(problem, M, U, t, x, problem.dt)
+        v_expected = _get_time_slice(U, t, problem.dt)
+        # the source saw the value-function slice, not zeros (would be all-0 under the old convention)
+        np.testing.assert_array_equal(captured["v"], v_expected, err_msg=f"t={t}: source did not receive v_t")
+        assert np.any(v_expected != 0.0), "test vacuous: pick U with a nonzero slice"
+        np.testing.assert_array_equal(parts["source"], 0.03 * v_expected, err_msg=f"t={t}: v-dependent term wrong")
 
 
 def test_fp_composition_matches_reference_and_delegate():

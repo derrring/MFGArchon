@@ -31,6 +31,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     resolve_fp_drift_kwargs,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
+from mfgarchon.alg.numerical.coupling.source_composition import _problem_hjb_source_terms
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -321,13 +322,15 @@ class GraphMFGSolver(BaseCouplingIterator):
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
             s = coupling_source(t, x_eval)
-            if has_problem_source:
-                v_t = _get_time_slice(Us_full[k], t, dt)
-                m_t = _get_time_slice(Ms_expanded[k], t, dt)
-                s = s + p.source_term_hjb(x_eval, m_t, v_t, t)
-            if has_nonlocal:
-                v_t = _get_time_slice(Us_full[k], t, dt)
-                s = s + p.nonlocal_operator @ v_t
+            # Source + nonlocal via the shared single-source primitive (Issue #1382),
+            # layered on the graph coupling source. Order [coupling, source, nonlocal]
+            # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses
+            # self._dt so the slice index matches the grid couplers.
+            parts = _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt)
+            if "source" in parts:
+                s = s + parts["source"]
+            if "nonlocal" in parts:
+                s = s + parts["nonlocal"]
             return s
 
         return composed

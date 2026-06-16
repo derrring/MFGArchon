@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **HJB source term receives the value function on all couplers** (Issue #1382).
+  `source_composition.compose_hjb_source` (the Picard / coupled-Newton couplers)
+  passed `v = 0` to `source_term_hjb(x, m, v, t)`, while `graph_mfg_solver` passed
+  the real value-function slice `v_t` — so the same problem-level source yielded a
+  different result on graph vs grid for any `v`-dependent HJB source (the #1259/#1285
+  silent-divergence class). The documented contract (`mfg_problem.py`:
+  `Callable(x, m, v, t)`) and the FP source both bind `v_t`; the grid couplers now do
+  too. Both couplers build the source + nonlocal terms through a single
+  `_problem_hjb_source_terms` primitive, so the fork cannot re-open silently.
+  Byte-identical for the existing (all `v`-independent) sources and obstacle/nonlocal
+  ordering preserved; the change only affects a future `v`-dependent HJB source.
+  Pinned by `test_issue1361_source_composition.py::test_hjb_source_receives_value_function_slice`.
+
 - **1D HJB boundary gradient now BC-aware on the default NumPy path — residual AND Jacobian**
   (Issue #1384). The default single-population `HJBFDMSolver` carries `backend=NumPyBackend`
   (≠ `None`), so both the residual's Hamiltonian momentum `p = ∂u/∂x` and the per-point FD
