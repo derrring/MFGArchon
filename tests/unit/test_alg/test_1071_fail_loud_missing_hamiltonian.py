@@ -62,6 +62,28 @@ def test_semi_lagrangian_default_hamiltonian_method_removed():
     assert not hasattr(HJBSemiLagrangianSolver, "_default_hamiltonian")
 
 
+def test_semi_lagrangian_solve_no_hamiltonian_fails_loud(monkeypatch):
+    """The REAL solve path must fail loud, not just _evaluate_hamiltonian in isolation.
+
+    The batch path used to zero H silently and the per-point loops' broad except would
+    swallow the per-point raise; the solve-entry guard catches the missing Hamiltonian
+    before either can produce a silent pure-transport solution.
+    """
+    problem = _problem()
+    solver = HJBSemiLagrangianSolver(problem)
+    monkeypatch.setattr(problem.components, "_hamiltonian_class", None, raising=False)
+
+    nx = problem.geometry.get_grid_shape()[0]
+    nt_points = problem.Nt + 1
+    x = problem.geometry.get_spatial_grid().ravel()
+    m_density = np.ones((nt_points, nx)) / nx
+    u_terminal = 0.5 * (x - 0.5) ** 2
+    u_prev = np.tile(u_terminal, (nt_points, 1))
+
+    with pytest.raises(ValueError, match="silently substitute|fail-fast"):
+        solver.solve_hjb_system(M_density=m_density, U_terminal=u_terminal, U_coupling_prev=u_prev)
+
+
 def test_weno_no_hamiltonian_fails_loud(monkeypatch):
     """WENO: with problem.H unavailable, _evaluate_hamiltonian raises rather than silently
     returning the hardcoded 0.5*grad**2 + m_val*grad."""

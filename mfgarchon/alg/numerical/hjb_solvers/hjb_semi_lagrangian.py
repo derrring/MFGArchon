@@ -838,6 +838,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
 
+        # Issue #1071 / fail-fast: a missing Hamiltonian must fail loud HERE, before the
+        # timestep loop — otherwise the batch path silently zeros H (pure transport of the
+        # terminal data) and the per-point loops' broad except swallows the per-point raise.
+        # MFGProblem construction requires a Hamiltonian, so this only fires on a duck-typed
+        # or externally-nulled problem; it must not silently solve the wrong physics.
+        if self.problem.hamiltonian_class is None:
+            raise ValueError(
+                "HJBSemiLagrangianSolver: problem.hamiltonian_class is None. Specify a Hamiltonian "
+                "explicitly, e.g. MFGComponents(hamiltonian=SeparableHamiltonian(...)). The solver "
+                "will not silently substitute the LQ default H=0.5*|p|^2 (Issue #1071, fail-fast)."
+            )
+
         # Reset gradient clipping statistics for this solve (Issue #583)
         self._reset_gradient_stats()
 
@@ -1023,7 +1035,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 if H_class is not None:
                     H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * self.dt).ravel()
                 else:
-                    H_values = np.zeros(Nx)
+                    # Issue #1071 / fail-fast: never silently drop the Hamiltonian term (that
+                    # reduces the HJB update to pure transport of the terminal data). The
+                    # solve-entry guard catches this first; this is the batch-path backstop.
+                    raise ValueError(
+                        "HJBSemiLagrangianSolver: problem.hamiltonian_class is None in the batch "
+                        "Hamiltonian path. Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
+                    )
 
                 # Step 1d: Advection update (vectorized)
                 U_star = u_departures - self.dt * H_values
