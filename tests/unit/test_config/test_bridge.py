@@ -217,3 +217,21 @@ class TestLoadEffectiveConfig:
             assert loaded.picard.tolerance == 1e-10
             assert loaded.picard.max_iterations == 500
             assert loaded.picard.relaxation == 0.8
+
+
+class TestNoVestigialOmegaToPydanticBridge1392:
+    """Issue #1392: OmegaConf->Pydantic validation has ONE canonical crossing
+    (bridge_to_pydantic). The pre-North-Star OmegaConfManager.create_pydantic_config /
+    _map_omega_to_pydantic pair (a second, broken bridge that silently returned a default
+    config) was removed and must not be silently re-introduced."""
+
+    def test_create_pydantic_config_removed(self) -> None:
+        from mfgarchon.config.omegaconf_manager import OmegaConfManager
+
+        assert not hasattr(OmegaConfManager, "create_pydantic_config")
+        assert not hasattr(OmegaConfManager, "_map_omega_to_pydantic")
+
+    def test_bridge_to_pydantic_is_the_canonical_crossing(self) -> None:
+        from mfgarchon.config import bridge_to_pydantic
+
+        assert callable(bridge_to_pydantic)
