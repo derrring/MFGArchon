@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 import sys
@@ -81,19 +82,68 @@ def print_section(title, items, limit=None):
         print(f"... and {len(items) - limit} more.")
 
 
+def _counts(results: dict) -> dict:
+    """Per-category violation counts (the ratchet's comparison surface)."""
+    return {category: len(items) for category, items in results.items()}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check for 'Fail Fast' principle violations.")
     parser.add_argument("--path", default=".", help="Root directory to scan")
     parser.add_argument("--limit", type=int, default=20, help="Limit lines printed per category")
     parser.add_argument("--all", action="store_true", help="Show all violations (no limit)")
+    parser.add_argument("--write-baseline", metavar="FILE", help="Write current per-category counts to FILE and exit")
+    parser.add_argument(
+        "--check-baseline",
+        metavar="FILE",
+        help=(
+            "Ratchet mode (CI guard): compare current counts to FILE and exit 1 ONLY if any "
+            "category increased (a new fail-fast violation was introduced). Counts may ratchet "
+            "down freely; regenerate the baseline with --write-baseline after fixing violations."
+        ),
+    )
 
     args = parser.parse_args()
-
-    print(f"Scanning '{args.path}' for Fail Fast violations...")
     results = check_fail_fast_violations(args.path)
+    counts = _counts(results)
 
+    # --- Ratchet modes (the durable CI guard) ---
+    if args.write_baseline:
+        with open(args.write_baseline, "w") as fh:
+            json.dump(counts, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        print(f"Wrote fail-fast baseline to {args.write_baseline}: {counts}")
+        sys.exit(0)
+
+    if args.check_baseline:
+        with open(args.check_baseline) as fh:
+            baseline = json.load(fh)
+        categories = sorted(set(counts) | set(baseline))
+        regressed = [
+            (c, counts.get(c, 0), baseline.get(c, 0)) for c in categories if counts.get(c, 0) > baseline.get(c, 0)
+        ]
+        improved = [
+            (c, counts.get(c, 0), baseline.get(c, 0)) for c in categories if counts.get(c, 0) < baseline.get(c, 0)
+        ]
+        if improved:
+            print("Fail-fast violations DECREASED — please tighten the baseline (run --write-baseline):")
+            for c, cur, base in improved:
+                print(f"  {c}: {base} -> {cur} ({cur - base})")
+        if regressed:
+            print("FAIL: new fail-fast violations introduced (no new broad/bare except, silent pass, or hasattr):")
+            for c, cur, base in regressed:
+                print(f"  {c}: {base} -> {cur} (+{cur - base})")
+            print(
+                "If a decrease is expected, regenerate the baseline: python scripts/check_fail_fast.py "
+                "--path mfgarchon --write-baseline scripts/fail_fast_baseline.json"
+            )
+            sys.exit(1)
+        print(f"OK: no new fail-fast violations vs baseline (counts: {counts})")
+        sys.exit(0)
+
+    # --- Human report mode ---
+    print(f"Scanning '{args.path}' for Fail Fast violations...")
     limit = None if args.all else args.limit
-
     print_section("SILENT FALLBACKS (Critical)", results["silent_pass"], limit)
     print_section("BARE EXCEPTS (Critical)", results["bare_except"], limit)
     print_section("BROAD EXCEPTIONS (Warning)", results["broad_except"], limit)

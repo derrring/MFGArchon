@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Fail-fast ratchet in CI** (Issue #1071). `scripts/check_fail_fast.py` gains
+  `--write-baseline` / `--check-baseline` (ratchet) modes, and Quick Validation now runs
+  `--check-baseline scripts/fail_fast_baseline.json` against `mfgarchon/`. It fails the
+  build only when a category (broad/bare `except`, silent `pass`-in-except, `hasattr`)
+  **increases** vs the committed baseline — so the silent-fallback cleanup can't regress,
+  while the count is free to ratchet down (regenerate the baseline with `--write-baseline`
+  after fixing violations). Baseline at introduction: `hasattr=174, silent_pass=70,
+  bare_except=0, broad_except=11`. Physics-style fallbacks (getattr-default, hardcoded
+  defaults) are intentionally NOT regex-gated (too many legitimate defaults — 160 seen in
+  the scan); those stay covered by periodic judgment-based scans + per-site fixes.
+
 ### Changed
 
 - **`GeneralMFGFactory._load_function` fails loud on a provided-but-unloadable spec**
