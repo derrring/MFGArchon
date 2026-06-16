@@ -2510,10 +2510,15 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Use LIL format for efficient construction
         jacobian = lil_matrix((n, n))
 
+        degenerate_rows: list[int] = []
         for i in range(n):
             weights = self._cached_derivative_weights[i]
             if weights is None:
-                jacobian[i, i] = 1.0 / dt  # Fallback: identity
+                # Issue #1071: degenerate stencil (singular Taylor matrix) at point i. Use an
+                # identity Jacobian row so Newton can continue, but record it — the degenerate
+                # stencil must not be masked silently (aggregated warning emitted after the loop).
+                jacobian[i, i] = 1.0 / dt
+                degenerate_rows.append(i)
                 continue
 
             neighbor_indices = weights["neighbor_indices"]
@@ -2548,6 +2553,15 @@ class HJBGFDMSolver(BaseHJBSolver):
             jacobian[i, i] += np.dot(dH_dp, center_grad_weight) - diffusion_coeff * center_lap_weight
             jacobian[i, i] += 1.0 / dt  # Time derivative
 
+        if degenerate_rows:
+            logger.warning(
+                "HJBGFDMSolver: %d collocation point(s) have a degenerate stencil "
+                "(singular Taylor matrix); used an identity Jacobian row there, which degrades "
+                "Newton convergence at those points. Indices: %s%s",
+                len(degenerate_rows),
+                degenerate_rows[:10],
+                "..." if len(degenerate_rows) > 10 else "",
+            )
         return jacobian.tocsr()
 
     _BC_STR_TO_ENUM: ClassVar[dict[str, BCType]] = {

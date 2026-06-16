@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Degraded fallbacks now warn instead of staying silent** (Issue #1071). Two legitimate
+  fallbacks that previously masked a real degeneracy are kept but surfaced: `HJBGFDMSolver`'s
+  per-point FD Jacobian uses an identity row when a stencil is degenerate (singular Taylor
+  matrix) — now emits one aggregated warning naming the affected collocation points (Newton
+  convergence is degraded there); and `MeasureField`'s 1D/nD KDE falls back to a fixed
+  bandwidth `0.1` on a zero-spread (degenerate) particle cloud — now warns that the density
+  estimate is unreliable. Behavior is unchanged (byte-identical for non-degenerate inputs).
+  Regression: `tests/unit/test_core/test_measure.py::TestDegenerateCloudWarns1071`.
+
 - **`GeneralMFGFactory._load_function` fails loud on a provided-but-unloadable spec**
   (Issue #1071, fail-fast). A function spec that failed to load — a `lambda` that won't
   evaluate, an unimportable `module.func` path, or an unresolvable name — previously

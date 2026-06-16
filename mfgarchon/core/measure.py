@@ -24,8 +24,13 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from mfgarchon.utils.mfg_logging import get_logger
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+logger = get_logger(__name__)
 
 
 @runtime_checkable
@@ -150,7 +155,16 @@ class ParticleMeasure:
         positions = self._positions[:, 0]
         if bandwidth is None:
             std = np.std(positions)
-            bandwidth = std * self._n_particles ** (-1 / 5) if std > 0 else 0.1
+            if std > 0:
+                bandwidth = std * self._n_particles ** (-1 / 5)
+            else:
+                # Issue #1071: degenerate cloud (zero spread) — fall back to a fixed bandwidth
+                # to avoid div-by-zero, but surface it (the density estimate is unreliable).
+                logger.warning(
+                    "MeasureField 1D KDE: particle cloud has zero spread (std=0, degenerate); "
+                    "using fallback bandwidth 0.1 — the density estimate is unreliable."
+                )
+                bandwidth = 0.1
 
         # Gaussian kernel: K(u) = (1/sqrt(2*pi)) * exp(-u^2/2)
         # density(x) = sum_i w_i * K((x - y_i) / h) / h
@@ -163,7 +177,15 @@ class ParticleMeasure:
         d = self._dim
         if bandwidth is None:
             std = np.std(self._positions, axis=0).mean()
-            bandwidth = std * self._n_particles ** (-1 / (d + 4)) if std > 0 else 0.1
+            if std > 0:
+                bandwidth = std * self._n_particles ** (-1 / (d + 4))
+            else:
+                logger.warning(
+                    "MeasureField %dD KDE: particle cloud has zero spread (std=0, degenerate); "
+                    "using fallback bandwidth 0.1 — the density estimate is unreliable.",
+                    d,
+                )
+                bandwidth = 0.1
 
         M = x.shape[0]
         density = np.zeros(M)
