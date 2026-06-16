@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`QPSolver` warns on non-convergence instead of silently returning the unconstrained
+  solution** (Issue #1071). All three backends (OSQP / scipy SLSQP / L-BFGS-B) returned the
+  unconstrained least-squares `x0` (incrementing a `failures` stat) when the constrained solve
+  did not converge — with no error or warning, so a constraint-violating result was used as if
+  it had succeeded. (Distinct from the *exception* path, which `monotonicity_enforcer` already
+  warns + falls back on.) For the GFDM monotone-stencil use, that silently produces a
+  non-monotone stencil. The shared `_unconstrained_fallback` helper now emits a `logger.warning`
+  (constraints not enforced); the `x0` fallback is kept (robustness). Byte-identical for
+  converged solves. Regression: `tests/unit/test_utils/test_qp_utils.py::TestQPNonConvergenceWarns1071`.
+
 - **Degraded fallbacks now warn instead of staying silent** (Issue #1071). Two legitimate
   fallbacks that previously masked a real degeneracy are kept but surfaced: `HJBGFDMSolver`'s
   per-point FD Jacobian uses an identity row when a stencil is degenerate (singular Taylor

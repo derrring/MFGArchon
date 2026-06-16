@@ -46,8 +46,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from mfgarchon.utils.mfg_logging import get_logger
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+logger = get_logger(__name__)
 
 # Optional dependencies - runtime imports
 try:
@@ -401,6 +405,22 @@ class QPSolver:
             solution, *_ = np.linalg.lstsq(A.T @ WA, A.T @ Wb, rcond=None)
             return solution
 
+    def _unconstrained_fallback(self, x0: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Record a solver non-convergence and return the unconstrained least-squares ``x0``.
+
+        Issue #1071 / fail-fast: the constrained solve did not converge, so the requested
+        constraints/bounds are NOT enforced on the returned weights. Surface it (do not return
+        silently); the caller decides how to treat a constraint-violating result — e.g. for
+        GFDM monotone stencils, a stencil from this is not guaranteed monotone.
+        """
+        self.stats["failures"] += 1
+        logger.warning(
+            "QPSolver: constrained solve did not converge; returning the unconstrained "
+            "least-squares solution — the requested constraints/bounds are NOT enforced on this "
+            "result (for GFDM monotone stencils, the resulting stencil is not guaranteed monotone)."
+        )
+        return x0
+
     def _solve_with_osqp(
         self,
         A: NDArray[np.float64],
@@ -493,9 +513,7 @@ class QPSolver:
                 self._warm_start_cache[point_id] = (result.x.copy(), result.y.copy())
             return result.x
 
-        # Fallback to unconstrained
-        self.stats["failures"] += 1
-        return x0
+        return self._unconstrained_fallback(x0)
 
     def _solve_with_lbfgsb(
         self,
@@ -562,8 +580,7 @@ class QPSolver:
                 self._warm_start_cache[point_id] = (result.x.copy(), None)
             return result.x
 
-        self.stats["failures"] += 1
-        return x0
+        return self._unconstrained_fallback(x0)
 
     def _solve_with_slsqp(
         self,
@@ -632,8 +649,7 @@ class QPSolver:
                 self._warm_start_cache[point_id] = (result.x.copy(), None)
             return result.x
 
-        self.stats["failures"] += 1
-        return x0
+        return self._unconstrained_fallback(x0)
 
     def print_statistics(self) -> None:
         """Print detailed solver statistics."""

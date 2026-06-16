@@ -396,5 +396,25 @@ class TestQPIntegration:
         assert solver_cached.stats["cache_misses"] == 1
 
 
+class TestQPNonConvergenceWarns1071:
+    """Issue #1071: a QP/least-squares solve that does not converge must NOT silently return
+    the unconstrained solution — it warns (the constraints are not enforced on the result)."""
+
+    def test_unconstrained_fallback_warns_and_returns_x0(self, monkeypatch):
+        import mfgarchon.utils.numerical.qp_utils as qp_mod
+
+        calls: list[str] = []
+        monkeypatch.setattr(qp_mod.logger, "warning", lambda msg, *a, **k: calls.append(str(msg)))
+
+        solver = QPSolver()
+        before = solver.stats["failures"]
+        x0 = np.array([1.0, 2.0, 3.0])
+        result = solver._unconstrained_fallback(x0)
+
+        assert np.array_equal(result, x0)  # unconstrained x0 still returned (robustness)
+        assert solver.stats["failures"] == before + 1  # failure tracked
+        assert any("did not converge" in c for c in calls)  # and NOT silent
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
