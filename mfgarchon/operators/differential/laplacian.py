@@ -278,8 +278,15 @@ class LaplacianOperator(LinearOperator):
         if self.bc is not None:
             try:
                 bc_type = self.bc.bc_type.value if hasattr(self.bc.bc_type, "value") else str(self.bc.bc_type)
-            except (AttributeError, ValueError):
-                bc_type = None
+            except (AttributeError, ValueError) as e:
+                # Issue #1071 / fail-fast: a PROVIDED bc whose bc_type cannot be determined must
+                # NOT silently degrade to the bc=None periodic default (that would solve a
+                # different boundary than the caller specified). Surface it.
+                raise ValueError(
+                    f"LaplacianOperator: could not determine bc_type from the provided bc "
+                    f"({type(self.bc).__name__}): {e}. A BoundaryConditions exposing a single bc_type "
+                    f"is required; the operator will not silently treat a provided bc as periodic."
+                ) from e
 
         # All flat indices
         all_idx = np.arange(N)
@@ -422,18 +429,15 @@ class LaplacianOperator(LinearOperator):
                 vals_list.append(np.full(int(at_max.sum()), 1.0 / h2))
 
             else:
-                # Unknown BC: interior-only standard stencil
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior])
-                vals_list.append(np.full(int(interior.sum()), -2.0 / h2))
-
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior] - stride)
-                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
-
-                rows_list.append(all_idx[interior])
-                cols_list.append(all_idx[interior] + stride)
-                vals_list.append(np.full(int(interior.sum()), 1.0 / h2))
+                # Issue #1071 / fail-fast: an unhandled bc_type previously produced an
+                # interior-only stencil — boundary rows with NO diffusion entries, i.e. a
+                # silently under-constrained boundary (wrong physics, no error). Surface it.
+                raise NotImplementedError(
+                    f"LaplacianOperator does not implement bc_type={bc_type!r}. Supported: "
+                    "'periodic' (or bc=None), 'neumann'/'no_flux', 'dirichlet'. It will not "
+                    "silently emit a boundary-diffusion-free interior-only stencil for an "
+                    "unhandled BC (Issue #1071, fail-fast)."
+                )
 
         # Single concatenation + single sparse construction
         rows = np.concatenate(rows_list)

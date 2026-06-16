@@ -463,5 +463,43 @@ class TestLaplacianVariableCoefficient:
             )
 
 
+class TestLaplacianBCFailLoud1071:
+    """Issue #1071 / fail-fast: a missing/unhandled BC must not silently degrade the stencil.
+
+    Previously an unknown bc_type silently produced a boundary-diffusion-free interior-only
+    stencil, and a provided bc whose bc_type could not be parsed silently became periodic.
+    Both now raise (the bc=None periodic default is unchanged — it is documented).
+    """
+
+    def test_unknown_bc_type_fails_loud(self):
+        """An unhandled bc_type (e.g. robin) raises instead of emitting an interior-only stencil."""
+
+        class _FakeBCType:
+            value = "robin"
+
+        class _FakeRobinBC:
+            bc_type = _FakeBCType()
+
+        op = LaplacianOperator(spacings=[0.1], field_shape=(10,), bc=_FakeRobinBC())
+        with pytest.raises(NotImplementedError, match="does not implement bc_type"):
+            op.as_scipy_sparse()
+
+    def test_provided_bc_without_bc_type_fails_loud(self):
+        """A provided bc with no determinable bc_type raises, not silently treated as periodic."""
+
+        class _NoBCType:
+            pass  # no .bc_type attribute
+
+        op = LaplacianOperator(spacings=[0.1], field_shape=(10,), bc=_NoBCType())
+        with pytest.raises(ValueError, match="could not determine bc_type"):
+            op.as_scipy_sparse()
+
+    def test_bc_none_still_periodic(self):
+        """bc=None remains the documented periodic default (NOT failed-loud)."""
+        op = LaplacianOperator(spacings=[0.1], field_shape=(10,), bc=None)
+        mat = op.as_scipy_sparse()  # must not raise
+        assert mat.shape == (10, 10)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
