@@ -555,3 +555,26 @@ def test_function_registry_accessible_after_registration(factory):
     retrieved = factory.function_registry["custom"]
     assert retrieved is custom_func
     assert retrieved(5) == 10
+
+
+class TestLoadFunctionFailLoud1071:
+    """Issue #1071 / fail-fast: a PROVIDED function spec that cannot be loaded must raise,
+    not return None (which silently drops the user's function — defaulted for optional
+    components, or surfaced as a misleading 'required' error downstream).
+    func_spec is None remains the legitimate 'not provided' case.
+    """
+
+    def test_none_spec_returns_none(self, factory):
+        assert factory._load_function(None) is None
+
+    def test_malformed_lambda_fails_loud(self, factory):
+        with pytest.raises(ValueError, match="failed to evaluate lambda"):
+            factory._load_function("lambda x: x +")  # syntax error at eval time
+
+    def test_bad_module_path_fails_loud(self, factory):
+        with pytest.raises(ValueError, match="failed to import"):
+            factory._load_function("nonexistent_module_xyz.some_func")
+
+    def test_unresolvable_spec_fails_loud(self, factory):
+        with pytest.raises(ValueError, match="could not resolve"):
+            factory._load_function("not_a_registered_name")

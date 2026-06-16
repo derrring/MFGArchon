@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`GeneralMFGFactory._load_function` fails loud on a provided-but-unloadable spec**
+  (Issue #1071, fail-fast). A function spec that failed to load — a `lambda` that won't
+  evaluate, an unimportable `module.func` path, or an unresolvable name — previously
+  logged and returned `None`, silently dropping the user's function (defaulted for
+  optional components like `m_initial`/`potential`, or surfaced downstream as a misleading
+  "u_terminal required"). All three now raise a clear `ValueError` naming the spec and the
+  underlying error. `func_spec=None` (not provided) still returns `None` — the legitimate
+  case. Byte-identical for valid specs (factory suite green). Regression:
+  `tests/unit/test_factory/test_general_mfg_factory.py::TestLoadFunctionFailLoud1071`.
+
 - **`FPParticleSolver` fails loud on an invalid initial density** (Issue #1071, fail-fast).
   When `m_initial` produced invalid sampling probabilities — NaN/Inf (which routed silently to
   the uniform `else` since `NaN > 1e-9` is False) or negative entries (which made
