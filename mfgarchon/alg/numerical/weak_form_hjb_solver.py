@@ -264,17 +264,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
         M_density_evolution_from_FP: NDArray | None = None,
         U_final_condition_at_T: NDArray | None = None,
         U_from_prev_picard: NDArray | None = None,
-        hamiltonian_override=None,
+        cross_density=None,
         **kwargs,
     ) -> NDArray:
         """Solve the HJB system backward in time on the weak-form operators."""
-        # Issue #1157: named explicitly (not swallowed by **kwargs) so a multi-population
-        # cross-density override fails loud rather than silently decoupling. Covers the
+        # Issue #1071: named explicitly (not swallowed by **kwargs) so a multi-population
+        # cross-density trajectory fails loud rather than silently decoupling. Covers the
         # meshless-Galerkin solver, which forwards **kwargs here.
-        if hamiltonian_override is not None:
+        if cross_density is not None:
             raise NotImplementedError(
-                "WeakFormHJBSolver does not support the multi-population Hamiltonian override "
-                "(Issue #1157). Use HJBFDMSolver for multi-population MFG."
+                "WeakFormHJBSolver does not support multi-population cross-density coupling "
+                "(Issue #1071). Use HJBFDMSolver for multi-population MFG."
             )
         if M_density is None and M_density_evolution_from_FP is not None:
             M_density = M_density_evolution_from_FP

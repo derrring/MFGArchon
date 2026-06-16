@@ -500,7 +500,7 @@ class HJBHowardSolver:
         self,
         M_density: np.ndarray | None,
         U_terminal: np.ndarray,
-        hamiltonian_override=None,
+        cross_density=None,
         **_unused,
     ) -> np.ndarray:
         """Backward sweep using Howard inner.
@@ -518,13 +518,13 @@ class HJBHowardSolver:
         np.ndarray
             Value function `U(t, x)`, shape `(Nt+1, n)`. `U[Nt] == U_terminal`.
         """
-        # Issue #1157: named explicitly (not swallowed by **_unused) so a multi-population
-        # cross-density override fails loud here rather than silently decoupling — the bound
-        # Hamiltonian would never reach Howard's policy-iteration evaluation.
-        if hamiltonian_override is not None:
+        # Issue #1071: named explicitly (not swallowed by **_unused) so a multi-population
+        # cross-density trajectory fails loud here rather than silently decoupling — it would
+        # never reach Howard's policy-iteration evaluation.
+        if cross_density is not None:
             raise NotImplementedError(
-                "HJBHowardSolver does not support the multi-population Hamiltonian override "
-                "(Issue #1157). Use HJBFDMSolver for multi-population MFG."
+                "HJBHowardSolver does not support multi-population cross-density coupling "
+                "(Issue #1071). Use HJBFDMSolver for multi-population MFG."
             )
         if self._static is None:
             self._static = self._build_static()

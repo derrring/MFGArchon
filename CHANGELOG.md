@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`BoundHamiltonian` + `bind_cross_density` retired** (Issue #1071, increment 3 — completes the
+  multi-population cross-coupling migration). With both the HJB (#1397) and FP (#1398) paths moved
+  to the lock-faithful `cross_density` trajectory channel, the `BoundHamiltonian` wrapper and
+  `HamiltonianBase.bind_cross_density` had no remaining callers and are deleted, along with the now
+  dead bound-H plumbing: the `active_hamiltonian` parameter throughout `base_hjb` (residual,
+  Jacobian, Newton step, timestep, backward sweep) and the `hamiltonian_override` keyword on
+  `HJBFDMSolver.solve_hjb_system`. The fail-loud guards on `HJBHowardSolver`/`WeakFormHJBSolver`
+  and the `MultiPopulationIterator` gate now key off the live channel: `hamiltonian_override` →
+  `cross_density`, and `_honors_multipop_hamiltonian_override` → `_honors_multipop_cross_density`
+  (this also closes the latent `**kwargs` silent-swallow on `WeakFormHJBSolver`). The
+  `resolve_fp_drift_kwargs` `_inner`-unwrap is simplified away (no wrapper left to unwrap). All
+  internal/[PROVISIONAL] APIs — no public surface affected. Behavior-preserving: the `cross_density`
+  channel was proven byte-identical to the wrapper in #1397/#1398; 911 HJB/coupling + multipop
+  tests pass. The wrapper-specific and byte-identity pinning tests are retired (purpose served); the
+  FP velocity test is kept as a cross-density *flow* test.
+
 ### Changed
 
 - **Multi-population FP drift: lock-faithful `cross_density` channel** (Issue #1071, increment 2

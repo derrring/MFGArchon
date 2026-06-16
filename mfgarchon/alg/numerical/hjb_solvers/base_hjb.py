@@ -606,7 +606,6 @@ def compute_hjb_residual(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification: pre-evaluated S(t, x)
-    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H (None => problem's own)
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
 ) -> np.ndarray:
     Nx = problem.geometry.get_grid_shape()[0]
@@ -702,22 +701,15 @@ def compute_hjb_residual(
 
     # Issue #789: Batch Hamiltonian path — single H_class() call replaces per-point loop
     # Conditions: precomputed_grad available (BC-aware), no backend (NumPy), H_class exists
-    # Issue #1157: a multi-population bound Hamiltonian (active_hamiltonian) is honored
-    # only on this batch path; the per-point fallback below calls problem.H() (the
-    # uncoupled Hamiltonian), which would silently drop the cross-density coupling.
-    if active_hamiltonian is not None and cross_density_at_n is not None:
-        raise ValueError(
-            "active_hamiltonian (bound H, Issue #1157) and cross_density_at_n (Issue #1071) are "
-            "mutually exclusive multi-population channels; pass exactly one."
-        )
-    H_class = active_hamiltonian if active_hamiltonian is not None else problem.hamiltonian_class
-    if (active_hamiltonian is not None or cross_density_at_n is not None) and not (
-        precomputed_grad is not None and backend is None
-    ):
+    # Issue #1071: the multi-population cross-density (cross_density_at_n) is honored only on this
+    # batch path; the per-point fallback below calls problem.H() (the uncoupled Hamiltonian),
+    # which would silently drop the cross-density coupling — so fail loud rather than decouple.
+    H_class = problem.hamiltonian_class
+    if cross_density_at_n is not None and not (precomputed_grad is not None and backend is None):
         raise NotImplementedError(
             "Multi-population cross-coupling requires the batch Hamiltonian path "
             "(precomputed_grad available, backend=None); the per-point problem.H() fallback "
-            "cannot honor the cross-density coupling and would silently decouple (Issue #1157)."
+            "cannot honor the cross-density coupling and would silently decouple (Issue #1071)."
         )
     if precomputed_grad is not None and backend is None and H_class is not None:
         # Build batch arrays
@@ -807,7 +799,6 @@ def compute_hjb_jacobian(
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
-    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H (None => problem's own)
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
 ) -> sparse.csr_matrix:
     Nx = problem.geometry.get_grid_shape()[0]
@@ -879,21 +870,14 @@ def compute_hjb_jacobian(
 
     # Hamiltonian part: analytical Jacobian via chain rule (Issue #789)
     # dΦ/dU_j = (dH/dp)_i * (dp_i/dU_j), where dp/dU comes from the gradient stencil.
-    # Issue #1157: the multi-pop bound Hamiltonian is honored only on the batch dp() path;
-    # the per-point problem.H() fallback below would silently drop the cross-density coupling.
-    if active_hamiltonian is not None and cross_density_at_n is not None:
-        raise ValueError(
-            "active_hamiltonian (bound H, Issue #1157) and cross_density_at_n (Issue #1071) are "
-            "mutually exclusive multi-population channels; pass exactly one."
-        )
-    H_class = active_hamiltonian if active_hamiltonian is not None else problem.hamiltonian_class
-    if (active_hamiltonian is not None or cross_density_at_n is not None) and not (
-        backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1
-    ):
+    # Issue #1071: the multi-pop cross-density (cross_density_at_n) is honored only on the batch
+    # dp() path; the per-point problem.H() fallback below would silently drop the coupling.
+    H_class = problem.hamiltonian_class
+    if cross_density_at_n is not None and not (backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1):
         raise NotImplementedError(
             "Multi-population cross-coupling requires the batch Jacobian path "
             "(backend=None, Nx>1); the per-point problem.H() fallback cannot honor the "
-            "cross-density coupling and would silently decouple (Issue #1157)."
+            "cross-density coupling and would silently decouple (Issue #1071)."
         )
     if backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1:
         # Compute BC-aware gradient for stencil direction
@@ -1080,7 +1064,6 @@ def newton_hjb_step(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574
     source_term: np.ndarray | None = None,  # MMS verification
-    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
 ) -> tuple[np.ndarray, float]:
     dx = problem.geometry.get_grid_spacing()[0]
@@ -1103,7 +1086,6 @@ def newton_hjb_step(
         current_time=current_time,
         bc_values=bc_values,  # Issue #574
         source_term=source_term,
-        active_hamiltonian=active_hamiltonian,  # Issue #1157
         cross_density_at_n=cross_density_at_n,  # Issue #1071
     )
     if has_nan_or_inf(residual_F_U, backend):
@@ -1122,7 +1104,6 @@ def newton_hjb_step(
         bc=bc,
         domain_bounds=domain_bounds,
         current_time=current_time,
-        active_hamiltonian=active_hamiltonian,  # Issue #1157
         cross_density_at_n=cross_density_at_n,  # Issue #1071
     )
     if np.any(np.isnan(jacobian_J_U.data)) or np.any(np.isinf(jacobian_J_U.data)):
@@ -1185,7 +1166,6 @@ def solve_hjb_timestep_newton(
     current_time: float = 0.0,  # Current time for time-dependent BCs
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification
-    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
 ) -> np.ndarray:
     """
@@ -1237,7 +1217,6 @@ def solve_hjb_timestep_newton(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574
             source_term=source_term,
-            active_hamiltonian=active_hamiltonian,  # Issue #1157
             cross_density_at_n=cross_density_at_n,  # Issue #1071
         )
 
@@ -1370,7 +1349,6 @@ def solve_hjb_system_backward(
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: Callable | None = None,  # MMS verification: S(t, x_grid) -> values
-    active_hamiltonian=None,  # Issue #1157: multi-pop cross-density bound H
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
 ) -> np.ndarray:
     """
@@ -1431,9 +1409,8 @@ def solve_hjb_system_backward(
             continue
 
         # Issue #1071: index the stacked cross-density trajectory at the SAME integer timestep as
-        # the own density above (n_idx_hjb). This is the lock-faithful row-pick: it replaces the
-        # BoundHamiltonian wrapper's round(t/dt) (current_time = n_idx_hjb * dt, so the row is
-        # identical) and is consistent with M_density's own indexing. None => single-population.
+        # the own density above (n_idx_hjb) — an honest integer row-pick (no reverse-engineered
+        # round(t/dt)), consistent with M_density's own indexing. None => single-population.
         cross_density_at_n = cross_density[n_idx_hjb, :] if cross_density is not None else None
 
         U_n_prev_picard = U_from_prev_picard[n_idx_hjb, :]  # U_k[n] from notebook
@@ -1477,7 +1454,6 @@ def solve_hjb_system_backward(
             current_time=current_time,
             bc_values=bc_values,  # Issue #574: Per-boundary BC values
             source_term=source_at_n,
-            active_hamiltonian=active_hamiltonian,  # Issue #1157
             cross_density_at_n=cross_density_at_n,  # Issue #1071
         )
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
