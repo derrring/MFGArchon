@@ -72,6 +72,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fix instead of silently solving the wrong physics. Regression (incl. the real solve
   path): `tests/unit/test_alg/test_1071_fail_loud_missing_hamiltonian.py`.
 
+### Removed
+
+- **Vestigial `OmegaConfManager.create_pydantic_config` / `_map_omega_to_pydantic`**
+  (Issue #1392). A pre-North-Star second OmegaConf→Pydantic bridge that bypassed the
+  canonical single crossing (`config.bridge.bridge_to_pydantic`) and silently returned a
+  **default** `MFGSolverConfig`: `_map_omega_to_pydantic` mapped flat keys
+  (`max_iterations`/`tolerance`/`damping`) while `MFGSolverConfig` is nested
+  (`hjb`/`fp`/`picard`/…), so Pydantic (`extra=ignore`) dropped them — the user's config was
+  silently discarded. No callers. Per the Config System North Star (Pydantic = single source
+  of truth, OmegaConf = transport only, one validation crossing), this was residue. Use
+  `bridge_to_pydantic(omega_cfg, MFGSolverConfig)`; `OmegaConfManager`'s load/merge/save
+  transport is unchanged. Regression guard:
+  `tests/unit/test_config/test_bridge.py::TestNoVestigialOmegaToPydanticBridge1392`.
+
 ## [0.20.4] - 2026-06-16
 
 ### Fixed
