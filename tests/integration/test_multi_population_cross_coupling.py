@@ -188,6 +188,70 @@ def test_cross_density_channel_byte_identical_to_bound_hamiltonian_1071():
         )
 
 
+def test_fp_velocity_cross_density_byte_identical_to_bound_hamiltonian_1071():
+    """Issue #1071 increment 2: the FP drift velocity via the ``cross_density`` channel must be
+    byte-identical to the ``BoundHamiltonian`` path it replaces, and the cross-density must
+    actually flow (the integration test's separable H has a momentum-only ``optimal_control``,
+    so it would not exercise this — hence a deliberately ``m``-dependent test Hamiltonian)."""
+    from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
+    from mfgarchon.core.hamiltonian import HamiltonianBase
+
+    K, Nx, Nt, T = 2, _NX + 1, _NT, _T
+    dt = T / Nt
+
+    class _MDepH(HamiltonianBase):
+        """optimal_control reads the stacked density (the OTHER population) so the velocity
+        genuinely depends on the cross-density (gives the byte-identity test teeth)."""
+
+        def __init__(self, population_index, k_pops):
+            self.population_index = population_index
+            self._K = k_pops
+
+        def __call__(self, x, m, p, t=0.0):
+            return 0.5 * np.asarray(p, float) ** 2
+
+        def optimal_control(self, x, m, p, t=0.0):
+            m = np.asarray(m, float)
+            p = np.asarray(p, float)
+            other = 0.0
+            if m.ndim >= 1 and m.shape[-1] % self._K == 0 and m.shape[-1] >= 2 * self._K:
+                grid = m.shape[-1] // self._K
+                other = float(m.reshape(*m.shape[:-1], self._K, grid)[..., 1 - self.population_index, :].mean())
+            return p.ravel() + other
+
+    class _Geom:
+        def get_grid_spacing(self):
+            return [1.0 / _NX]
+
+        def get_bounds(self):
+            return [(0.0,), (1.0,)]
+
+    class _Prob:
+        geometry = _Geom()
+
+    prob = _Prob()
+    prob.dt = dt
+    rng = np.random.RandomState(1)
+    M = [np.abs(rng.rand(Nt + 1, Nx)) + 0.1 for _ in range(K)]
+    M = [m / m.sum(axis=-1, keepdims=True) for m in M]
+    m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx)
+    U = rng.rand(Nt + 1, Nx)
+
+    for k in range(K):
+        h = _MDepH(k, K)
+        H_bound = h.bind_cross_density(m_all, dt=dt)
+        v_bound = compute_fp_velocity_field(prob, U, M[k], H_bound)
+        v_cross = compute_fp_velocity_field(prob, U, M[k], h, cross_density=m_all)
+        v_own = compute_fp_velocity_field(prob, U, M[k], h)  # own face density (no cross)
+        assert np.array_equal(v_bound, v_cross), (
+            f"pop {k}: FP velocity cross_density channel diverged from BoundHamiltonian "
+            f"(max|delta|={np.max(np.abs(v_bound - v_cross)):.3e})"
+        )
+        assert not np.array_equal(v_cross, v_own), (
+            f"pop {k}: cross_density did not flow into the FP velocity (== own-density result)"
+        )
+
+
 def test_cross_density_and_bound_hamiltonian_mutually_exclusive_1071():
     """Issue #1071: the legacy bound-H channel and the new cross_density channel must not be
     supplied together (one would silently shadow the other)."""

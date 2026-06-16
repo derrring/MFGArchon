@@ -176,25 +176,26 @@ class MultiPopulationIterator:
 
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
             # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population
-            # FixedPointIterator — so a K=1 multi-population solve matches single-pop. The
-            # cross-density-bound Hamiltonian is passed as h_class so the velocity (non-smooth H)
-            # sees the other populations' density (its optimal_control maps t→trajectory row n;
-            # Issue #1157). Network problems keep the U-as-drift path (FPNetworkSolver extracts
-            # rates internally).
+            # FixedPointIterator — so a K=1 multi-population solve matches single-pop. Issue #1071
+            # (lock-faithful): the population's OWN (unbound) Hamiltonian is passed as h_class plus
+            # the stacked cross-density trajectory m_all; the velocity (non-smooth H) sees the other
+            # populations' density via cross_density[n] (sliced by population_index) — no
+            # BoundHamiltonian wrapper, no round(t/dt). Smooth-separable H takes the potential_field=U
+            # path (cross-coupling enters via the HJB only). Network problems keep the U-as-drift
+            # path (FPNetworkSolver extracts rates internally).
             from .fixed_point_utils import resolve_fp_drift_kwargs
 
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
                 m0_k = M[k][0]
                 H_k = prob_k.hamiltonian_class
-                H_bound = H_k.bind_cross_density(m_all, dt=prob_k.dt) if hasattr(H_k, "bind_cross_density") else H_k
                 fp_k = self.fp_solvers[k]
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
                     M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        prob_k, self._fp_sig_params[k], None, U[k], M[k], h_class=H_bound
+                        prob_k, self._fp_sig_params[k], None, U[k], M[k], h_class=H_k, cross_density=m_all
                     )
                     if use_positional_U:
                         M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False)
