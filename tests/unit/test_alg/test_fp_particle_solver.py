@@ -988,5 +988,34 @@ class TestFPParticleSolverRemovedDeprecatedParams:
             solver.solve_fp_system(m0, diffusion_field=0.5)
 
 
+class TestFPParticleInvalidMInitial1071:
+    """Issue #1071 / fail-fast: an invalid initial density must not be silently replaced by a
+    uniform particle sample (which solves a different problem with no error)."""
+
+    def _solver_and_shapes(self):
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=0.2, Nt=5, components=_default_components())
+        solver = FPParticleSolver(problem, num_particles=200)
+        nx = problem.geometry.get_grid_shape()[0]
+        nt_points = problem.Nt_points
+        return solver, np.zeros((nt_points, nx)), nx
+
+    def test_nan_m_initial_fails_loud(self):
+        """NaN m_initial must raise, not silently route to a uniform sample."""
+        solver, u_solution, nx = self._solver_and_shapes()
+        m_bad = np.full(nx, np.nan)
+        with pytest.raises(ValueError, match="NaN/Inf"):
+            solver.solve_fp_system(m_bad, u_solution)
+
+    def test_negative_m_initial_fails_loud(self):
+        """A finite density with negative entries (positive sum) must raise, not silently
+        fall back to a uniform sample on the np.random.choice ValueError."""
+        solver, u_solution, nx = self._solver_and_shapes()
+        m_neg = np.ones(nx)
+        m_neg[0] = -5.0  # finite, positive sum, but a negative (invalid) probability mass
+        with pytest.raises(ValueError, match="invalid sampling probabilities"):
+            solver.solve_fp_system(m_neg, u_solution)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FPParticleSolver` fails loud on an invalid initial density** (Issue #1071, fail-fast).
+  When `m_initial` produced invalid sampling probabilities — NaN/Inf (which routed silently to
+  the uniform `else` since `NaN > 1e-9` is False) or negative entries (which made
+  `np.random.choice` raise) — the solver silently sampled the initial particles from a
+  **uniform** distribution instead of the specified density, solving a different problem with no
+  error. Both invalid cases now raise a clear `ValueError`; the documented
+  degenerate-but-finite (`sum ≈ 0`) → uniform default is unchanged. No test relied on the
+  fallback (all use finite, non-negative densities) so this is byte-identical for valid usage.
+  Regression: `tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleInvalidMInitial1071`.
+
 - **`LaplacianOperator` fails loud on an unhandled / unparseable boundary condition**
   (Issue #1071, fail-fast). Two silent-wrong fallbacks (surfaced by the silent-fallback scan)
   are now errors: (a) an **unhandled `bc_type`** (e.g. Robin) previously emitted a
