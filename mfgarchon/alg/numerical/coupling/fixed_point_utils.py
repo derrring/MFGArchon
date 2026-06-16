@@ -398,6 +398,7 @@ def compute_fp_velocity_field(
     U: np.ndarray,
     M: np.ndarray,
     H_class: object,
+    cross_density: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute the face-centered FP advection velocity $\\alpha^*$ from the value function.
 
@@ -412,6 +413,12 @@ def compute_fp_velocity_field(
         U: Value function, shape ``(Nt+1, *spatial_shape)``.
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
         H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
+        cross_density: Optional stacked multi-population density trajectory
+            ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
+            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``,
+            sliced per-population via ``population_index``) instead of the own-population
+            density — replacing the ``BoundHamiltonian`` wrapper's ``m_all[round(t/dt)]``
+            (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
 
     Returns:
         Face-centered velocity $\\alpha^*$.
@@ -444,7 +451,14 @@ def compute_fp_velocity_field(
         alpha_faces = np.zeros((Nt, Nx - 1))
         x_arr = x_faces.reshape(-1, 1)
         for n in range(Nt):
-            m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
+            # Issue #1071: a multi-population solve passes the stacked cross-density trajectory;
+            # optimal_control then sees the other populations' density (sliced via population_index)
+            # at this integer timestep, replacing the BoundHamiltonian wrapper's m_all[round(t/dt)]
+            # (n*dt/dt == n, byte-identical). Single-population: the own face-centered density.
+            if cross_density is not None:
+                m_n = cross_density[n]
+            else:
+                m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
             p_n = p_faces[n].reshape(-1, 1)
             alpha_faces[n] = H_class.optimal_control(x_arr, m_n, p_n, t=n * dt).ravel()
 
@@ -463,7 +477,11 @@ def compute_fp_velocity_field(
         alpha_field = np.zeros((Nt, ndim, *spatial_shape))
         for n in range(Nt):
             p_n = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1)
-            m_n = M[n] if n < M.shape[0] else M[-1]
+            # Issue #1071: stacked cross-density at this integer timestep for multi-pop (see 1D path).
+            if cross_density is not None:
+                m_n = cross_density[n]
+            else:
+                m_n = M[n] if n < M.shape[0] else M[-1]
             alpha_n = H_class.optimal_control(x_grid, m_n, p_n, t=n * dt)
             if alpha_n.ndim == ndim + 1:
                 alpha_field[n] = np.moveaxis(alpha_n, -1, 0)
@@ -482,6 +500,7 @@ def resolve_fp_drift_kwargs(
     M: np.ndarray,
     *,
     h_class: object | None = None,
+    cross_density: np.ndarray | None = None,
 ) -> tuple[dict, bool]:
     """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
 
@@ -508,8 +527,12 @@ def resolve_fp_drift_kwargs(
         M: Current density, shape ``(Nt+1, *spatial_shape)`` (used only for non-smooth $H$).
         h_class: Hamiltonian to use for the smoothness dispatch and velocity computation,
             overriding ``problem.hamiltonian_class``. The multi-population iterator passes the
-            cross-density-bound Hamiltonian here (Issue #1043) so K populations resolve drift the
-            same way single-pop does; ``None`` uses ``problem.hamiltonian_class`` (single-pop).
+            population's own (unbound) Hamiltonian here (Issue #1043) so K populations resolve drift
+            the same way single-pop does; ``None`` uses ``problem.hamiltonian_class`` (single-pop).
+        cross_density: Optional stacked multi-population density trajectory ``(Nt+1, K*Nx)``
+            (Issue #1071, lock-faithful). Forwarded to :func:`compute_fp_velocity_field` so the
+            non-smooth velocity path sees the other populations' density — replacing the retired
+            ``BoundHamiltonian`` wrapper. ``None`` => single-population own density.
 
     Returns:
         ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
@@ -546,7 +569,7 @@ def resolve_fp_drift_kwargs(
             and not (isinstance(H_base, SeparableHamiltonian) and H_base.control_cost.is_smooth())
         )
         if use_velocity:
-            drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class)
+            drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class, cross_density=cross_density)
         elif "potential_field" in params:
             drift_kwargs["potential_field"] = U
         elif "drift_field" in params:

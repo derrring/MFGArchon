@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Multi-population FP drift: lock-faithful `cross_density` channel** (Issue #1071, increment 2
+  of the `BoundHamiltonian` retirement). `compute_fp_velocity_field` and `resolve_fp_drift_kwargs`
+  gain a `cross_density=` parameter (the stacked `(Nt+1, K*Nx)` trajectory); when given, the
+  non-smooth FP velocity path feeds `optimal_control` the stacked density at each integer timestep
+  `n` (`cross_density[n]`, sliced per-population via `population_index`) instead of the wrapper's
+  `m_all[round(t/dt)]`. `MultiPopulationIterator`'s FP step now passes the population's own
+  (unbound) Hamiltonian + `cross_density=m_all` (unconditionally, matching the old unconditional
+  `bind_cross_density`) — so smooth-separable H keeps the `potential_field=U` dispatch and the
+  whole path is **byte-identical** to the bound-H path. This removes the **last**
+  `bind_cross_density` call site; `BoundHamiltonian` is now unused (deleted in increment 3). Pinned
+  by `test_fp_velocity_cross_density_byte_identical_to_bound_hamiltonian_1071` (byte-identity + a
+  flow assertion using an m-dependent test Hamiltonian).
+
 - **Multi-population HJB cross-coupling: lock-faithful `cross_density` channel** (Issue #1071,
   increment 1 of the `BoundHamiltonian` retirement). `HJBFDMSolver.solve_hjb_system` gains a
   `cross_density=` parameter taking the stacked `(Nt+1, K*Nx)` cross-density trajectory directly;
