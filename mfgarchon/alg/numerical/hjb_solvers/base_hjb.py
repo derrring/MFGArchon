@@ -675,10 +675,22 @@ def compute_hjb_residual(
         # Works for both constant σ (scalar) and σ(x,t) (array)
         Phi_U += -diffusion_from_volatility(sigma, kind="field") * U_xx
 
-    # Precompute BC-aware gradient for entire array (Issue #542 fix)
-    # This avoids repeated per-point computation with wrong BC
+    # Precompute BC-aware gradient for entire array (Issue #542 fix).
+    # This avoids the per-point %Nx periodic fallback that ignores the actual BC.
+    #
+    # Issue #1384: the original gate `backend is None` left the DEFAULT single-population
+    # NumPy path on the periodic %Nx gradient regardless of BC, because hjb_fdm.py sets
+    # effective_backend=NumPyBackend (≠ None) for single-population solves. The diffusion
+    # term was already BC-aware for this path via the non-torch Laplacian gate (above);
+    # the gradient was not. Mirror that gate: use the BC-aware gradient for any non-torch
+    # (NumPy-like) array, not only backend is None. The batch Hamiltonian path below keeps
+    # its `backend is None` gate, so NumPy single-population still uses the per-point loop —
+    # now fed the BC-aware gradient. Interior momenta are unchanged to ≤1 ULP; only the two
+    # boundary points move, and only for non-periodic BC (periodic ≤1 ULP everywhere).
+    # Validated in: scripts/validation/hjb_1d_bc_gradient.py
     precomputed_grad = None
-    if bc is not None and backend is None:
+    _grad_uses_torch_roll = backend is not None and hasattr(U_n_current_newton_iterate, "roll")
+    if bc is not None and not _grad_uses_torch_roll:
         precomputed_grad = _compute_gradient_array_1d(
             U_n_current_newton_iterate, dx, bc=bc, upwind=use_upwind, time=current_time
         )
@@ -804,6 +816,27 @@ def compute_hjb_jacobian(
     else:
         U_n_np = U_n_current_newton_iterate
 
+    # Issue #1384: mirror the residual's BC-aware gradient in the per-point FD Jacobian
+    # fallback. That fallback perturbs U and recomputes the Hamiltonian momentum via
+    # _calculate_derivatives; with no precomputed gradient it uses the legacy periodic
+    # %Nx stencil, so the two boundary Jacobian rows wrap periodically even under
+    # non-periodic BC. With the residual now BC-aware, a periodic boundary Jacobian is a
+    # severe J != dF/dU mismatch that makes Newton diverge for Dirichlet BC (the residual
+    # one-sided gradient against a pinned boundary value has no periodic counterpart).
+    # Feeding the same BC-aware gradient makes the boundary rows consistent: at the wall the
+    # BC-aware momentum does not depend on the opposite end, so the spurious periodic corner
+    # coupling vanishes (and was dropped by spdiags anyway). Torch (GPU) keeps the periodic
+    # path (no BC support yet), matching the residual; periodic BC returns the %Nx-identical
+    # array, so the assembled Jacobian is byte-identical there.
+    _jac_uses_torch_roll = backend is not None and hasattr(U_n_current_newton_iterate, "roll")
+    _jac_bc_aware = bc is not None and not _jac_uses_torch_roll
+
+    def _bc_grad(u_arr: np.ndarray) -> np.ndarray | None:
+        """BC-aware gradient of a perturbed state for the FD Jacobian (None => legacy %Nx)."""
+        if _jac_bc_aware:
+            return _compute_gradient_array_1d(u_arr, dx, bc=bc, upwind=use_upwind, time=current_time)
+        return None
+
     J_D = np.zeros(Nx)
     J_L = np.zeros(Nx)
     J_U = np.zeros(Nx)
@@ -888,6 +921,7 @@ def compute_hjb_jacobian(
                 clip=True,
                 clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                 upwind=use_upwind,
+                precomputed_gradient=_bc_grad(U_perturbed_p_i),
             )
             derivs_m_i = _calculate_derivatives(
                 U_perturbed_m_i,
@@ -897,6 +931,7 @@ def compute_hjb_jacobian(
                 clip=True,
                 clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                 upwind=use_upwind,
+                precomputed_gradient=_bc_grad(U_perturbed_m_i),
             )
 
             H_p_i = np.nan
@@ -923,6 +958,7 @@ def compute_hjb_jacobian(
                     clip=True,
                     clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
+                    precomputed_gradient=_bc_grad(U_perturbed_p_im1),
                 )
                 derivs_m_im1 = _calculate_derivatives(
                     U_perturbed_m_im1,
@@ -932,6 +968,7 @@ def compute_hjb_jacobian(
                     clip=True,
                     clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
+                    precomputed_gradient=_bc_grad(U_perturbed_m_im1),
                 )
                 H_p_im1 = np.nan
                 H_m_im1 = np.nan
@@ -955,6 +992,7 @@ def compute_hjb_jacobian(
                     clip=True,
                     clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
+                    precomputed_gradient=_bc_grad(U_perturbed_p_ip1),
                 )
                 derivs_m_ip1 = _calculate_derivatives(
                     U_perturbed_m_ip1,
@@ -964,6 +1002,7 @@ def compute_hjb_jacobian(
                     clip=True,
                     clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
+                    precomputed_gradient=_bc_grad(U_perturbed_m_ip1),
                 )
                 H_p_ip1 = np.nan
                 H_m_ip1 = np.nan

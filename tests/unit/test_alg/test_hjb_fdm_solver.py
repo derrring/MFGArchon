@@ -1108,5 +1108,91 @@ class TestHJBFDMSolverNewtonFallback:
         assert err.solver_type == "newton"
 
 
+class TestBoundaryGradientBCAware1384:
+    """Issue #1384: the default single-population 1D HJB must use the BC-aware boundary
+    gradient (residual AND Jacobian), not the periodic %Nx wraparound.
+
+    Coverage gap these tests close: the prior suite's only non-periodic FDM solve was a
+    fully symmetric no_flux problem, for which the periodic and BC-aware boundary gradients
+    coincide — so the bug (and the residual/Jacobian boundary inconsistency it would expose)
+    was invisible. These exercise (a) asymmetric no_flux, where the fix changes the result
+    toward BC-respecting, (b) periodic, which must stay byte-identical, and (c) Dirichlet
+    with a steep terminal, which diverged when only the residual was made BC-aware.
+    """
+
+    def _solve(self, bc, *, Nx=42, sigma=0.3, Nt=20, T=0.5, terminal):
+        components = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=terminal,
+            hamiltonian=_default_hamiltonian(),
+        )
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
+        problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma, components=components)
+        solver = HJBFDMSolver(problem)
+        Nx_points = problem.geometry.get_grid_shape()[0]
+        Nt_points = problem.Nt_points
+        x = problem.geometry.get_spatial_grid().ravel()
+        M = np.ones((Nt_points, Nx_points)) / Nx_points
+        U_T = terminal(x)
+        return solver.solve_hjb_system(M, U_T, np.tile(U_T, (Nt_points, 1)))
+
+    @staticmethod
+    def _legacy_periodic_grad(U, dx):
+        """The pre-fix per-point gradient (legacy %Nx wraparound), for discrimination."""
+        from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+
+        Nx = len(U)
+        return np.array(
+            [
+                base_hjb._calculate_derivatives(U, i, dx, Nx, upwind=False, precomputed_gradient=None)[(1,)]
+                for i in range(Nx)
+            ]
+        )
+
+    def test_boundary_gradient_is_bc_aware_not_periodic(self):
+        """Mechanism: for non-periodic BC the boundary momentum differs materially from the
+        legacy %Nx periodic stencil, while the interior agrees to <=1 ULP. This is exactly
+        the #1384 corruption; the test fails if the boundary gradient is not BC-aware."""
+        from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+        from mfgarchon.geometry.boundary import no_flux_bc as _nf
+
+        Nx = 21
+        x = np.linspace(0.0, 1.0, Nx)
+        dx = x[1] - x[0]
+        U = x**2  # asymmetric on [0,1]; analytic du/dx = 2x (0 at left, 2 at right)
+        legacy = self._legacy_periodic_grad(U, dx)
+        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=_nf(dimension=1), upwind=False)
+        # interior agrees to <=1 ULP (only the boundary stencil changes)
+        assert np.allclose(bc_aware[1:-1], legacy[1:-1], rtol=0, atol=1e-12)
+        # boundary is materially different: legacy wraps to the opposite end (~ -9.97)
+        assert abs(bc_aware[0] - legacy[0]) > 1.0
+        assert abs(bc_aware[-1] - legacy[-1]) > 1.0
+
+    def test_periodic_gradient_byte_identical_to_legacy(self):
+        """Mechanism: for PERIODIC BC the BC-aware gradient equals the legacy %Nx stencil
+        (Δ <= 1 ULP everywhere) — the discrimination the fix relies on, so periodic
+        baselines do not move."""
+        from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+        from mfgarchon.geometry.boundary import periodic_bc as _pb
+
+        Nx = 21
+        x = np.linspace(0.0, 1.0, Nx)
+        dx = x[1] - x[0]
+        U = np.sin(2 * np.pi * x)
+        legacy = self._legacy_periodic_grad(U, dx)
+        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=_pb(dimension=1), upwind=False)
+        assert np.max(np.abs(bc_aware - legacy)) <= 1e-12
+
+    def test_dirichlet_steep_terminal_converges(self):
+        """Dirichlet with a steep terminal: making only the residual BC-aware while the FD
+        Jacobian stayed periodic made Newton diverge (J != dF/dU at the pinned boundary).
+        With the Jacobian also BC-aware the solve stays finite and bounded."""
+        from mfgarchon.geometry.boundary import dirichlet_bc as _db
+
+        U = self._solve(_db(0.0, dimension=1), Nx=42, sigma=0.05, Nt=3, T=2.0, terminal=lambda x: np.sin(3 * np.pi * x))
+        assert np.all(np.isfinite(U)), "Dirichlet steep-terminal solve produced NaN/Inf"
+        assert np.max(np.abs(U)) < 10.0, "Dirichlet solve blew up (Newton J/residual boundary mismatch)"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

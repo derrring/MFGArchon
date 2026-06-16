@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **1D HJB boundary gradient now BC-aware on the default NumPy path — residual AND Jacobian**
+  (Issue #1384). The default single-population `HJBFDMSolver` carries `backend=NumPyBackend`
+  (≠ `None`), so both the residual's Hamiltonian momentum `p = ∂u/∂x` and the per-point FD
+  Jacobian fell to the legacy per-point stencil, which uses periodic `% Nx` wraparound at the
+  boundary — a wrong boundary momentum for Dirichlet/Neumann/no-flux problems, regardless of
+  the actual BC. (The Issue #542 diffusion fix made the *Laplacian* BC-aware for this path,
+  but the *gradient* was gated more strictly behind `backend is None`.) Both the precomputed
+  residual gradient and the FD-Jacobian momentum stencil are now BC-aware for any non-torch
+  (NumPy-like) array, mirroring the BC-aware Laplacian gate. **Both had to move together**:
+  making only the residual BC-aware while the Jacobian stayed periodic is a severe
+  `J ≠ ∂F/∂U` mismatch at the boundary that makes Newton *diverge* for Dirichlet BC with
+  steep terminals. This stays finite-difference; the analytic-Jacobian swap is a separate
+  question under #1380. Verified: the Dirichlet steep-terminal case that diverged with a
+  residual-only fix now converges; for a no-flux wall the fix feeds momentum `0.0`
+  (BC-respecting) where the old path fed a spurious `+2.69`; **periodic BC is byte-identical**
+  (Δ=0); the full suite is green. Only asymmetric non-periodic 1D FDM solves shift (toward
+  correct). Validated in `scripts/validation/hjb_1d_bc_gradient.py`; regression-tested in
+  `tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384`.
 - **Post-audit hygiene** (session quality audit). Three low-severity consistency
   fixes plus a CHANGELOG cleanup:
   - `GeneralMFGFactory.create_from_hamiltonian` now raises a clear `ValueError`
