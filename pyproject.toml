@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.20.3"  # v0.20.3: complete legacy 1D-geometry removal Tier-3b/3c (#1363) + Hamiltonian single-source contract pilot (#1071)
+version = "0.20.4"  # v0.20.4: HJB 1D BC-aware boundary gradient residual+Jacobian (#1384) + HJB source v_t on all couplers (#1382) + post-audit hygiene (#1383)
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
