@@ -89,6 +89,12 @@ jobs:
         ruff check --select F mfgarchon/
         echo "✅ No critical errors"
 
+    - name: Fail-fast ratchet (no new silent fallbacks)
+      timeout-minutes: 1
+      run: |
+        echo "Checking for NEW fail-fast violations (broad/bare except, silent pass, hasattr) vs baseline..."
+        python scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
+
   # === PHASE 1: Import Validation ===
   # Note: Ruff formatting, linting, and MyPy checks run in modern_quality.yml workflow
   import-validation:
