@@ -2373,7 +2373,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         except (AttributeError, TypeError) as e:
             logger.debug(f"Legacy Hamiltonian signature failed: {e}")
 
-        return self._default_hamiltonian(derivs, m)
+        # Issue #1071 / fail-fast: do NOT silently fall back to the LQ default
+        # H = ½|p|² + C·m. That substitutes the WRONG physics for any non-LQ problem and
+        # returns a plausible-but-incorrect solution with no error (the exact silent-fallback
+        # class this codebase forbids). Fail loud and tell the caller to supply a Hamiltonian.
+        raise ValueError(
+            "HJB semi-Lagrangian: no Hamiltonian available (problem.hamiltonian_class is None "
+            "and no legacy problem.H / problem.hamiltonian succeeded). Specify one explicitly, "
+            "e.g. MFGComponents(hamiltonian=SeparableHamiltonian(...)). The solver will not "
+            "silently substitute the LQ default H=0.5*|p|^2 + C*m (Issue #1071, fail-fast)."
+        )
 
     def _build_derivative_tensors(self, p: np.ndarray | float) -> DerivativeTensors:
         """
@@ -2429,20 +2438,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 idx = int((x_vec[i] - xmin_i) / dx_i)
                 indices.append(int(np.clip(idx, 0, Nx_i)))
             return tuple(indices)
-
-    def _default_hamiltonian(self, derivs: DerivativeTensors, m: float) -> float:
-        """
-        Default quadratic Hamiltonian H = |p|²/2 + C*m.
-
-        Args:
-            derivs: DerivativeTensors with gradient
-            m: Density value
-
-        Returns:
-            Hamiltonian value
-        """
-        coef_CT = getattr(self.problem, "coupling_coefficient", 0.5)
-        return 0.5 * derivs.grad_norm_squared + coef_CT * m
 
     def _solve_crank_nicolson_diffusion(self, U_star: np.ndarray, dt: float, sigma: float) -> np.ndarray:
         """

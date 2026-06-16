@@ -698,9 +698,16 @@ class HJBWenoSolver(BaseHJBSolver):
         except AttributeError:
             pass
 
-        # Default: standard quadratic MFG Hamiltonian H = |p|²/2 + m*p
-        # For 1D partial: H = (1/2)|∂u/∂x_i|² + m * ∂u/∂x_i
-        return 0.5 * grad**2 + m_val * grad
+        # Issue #1071 / fail-fast: do NOT silently fall back to a hardcoded Hamiltonian
+        # H = 0.5*|p|^2 + m*p. That substitutes the WRONG physics (a specific LQ-congestion
+        # model) for whatever the caller actually defined, returning a plausible-but-incorrect
+        # solution with no error — the silent-fallback class this codebase forbids.
+        raise ValueError(
+            "HJB WENO: no Hamiltonian available (problem.H is absent / raised). Provide a "
+            "problem exposing H, e.g. MFGProblem(components=MFGComponents(hamiltonian=...)). "
+            "The solver will not silently substitute the LQ default H=0.5*|p|^2 + m*p "
+            "(Issue #1071, fail-fast)."
+        )
 
     def _compute_hjb_rhs_axis(self, u: np.ndarray, m: np.ndarray, axis: int) -> np.ndarray:
         """Right-hand side of the HJB equation along a single ``axis``.

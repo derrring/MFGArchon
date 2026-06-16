@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **HJB semi-Lagrangian and WENO now fail loud on a missing Hamiltonian** (Issue #1071,
+  fail-fast). Both solvers carried a silent fallback that substituted a hardcoded LQ
+  Hamiltonian (`H = 0.5*|p|^2 + C*m` in SL's `_default_hamiltonian`; `0.5*grad**2 + m*grad`
+  in WENO) when no `hamiltonian_class` / `problem.H` was available — returning a
+  plausible-but-wrong solution for any non-LQ problem with no error. These paths were dead
+  for any normally-constructed `MFGProblem` (construction requires a Hamiltonian), so the
+  change is byte-identical for real usage; both now raise a clear `ValueError` naming the
+  fix (specify a Hamiltonian explicitly) instead of silently solving the wrong physics. The
+  dead `HJBSemiLagrangianSolver._default_hamiltonian` method is removed. Regression:
+  `tests/unit/test_alg/test_1071_fail_loud_missing_hamiltonian.py`.
+
 ## [0.20.4] - 2026-06-16
 
 ### Fixed
