@@ -352,7 +352,11 @@ class NumbaBackend(BaseBackend):
         return -p
 
     def hjb_step(self, U, M, dt, dx, problem_params):
-        """Single Hamilton-Jacobi-Bellman time step."""
+        """Single HJB time step — LQ-only toy stepper (hardcoded H = 0.5·p² + log m).
+
+        ⚠️ Does NOT honor ``problem.hamiltonian_class`` and has no caller in the solver fleet. Not
+        the production path — see :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
+        """
         # Issue #1282: numba already uses the canonical "sigma" key; route through the
         # single-source resolver (no legacy key) so all four backends share one lookup.
         sigma = resolve_volatility(problem_params, default=1.0)

@@ -399,6 +399,10 @@ class TorchBackend(BaseBackend):
         Single Hamilton-Jacobi-Bellman time step using PyTorch operations.
 
         Implements: dU/dt + H(x, ∇U, M) = 0
+
+        ⚠️ LQ-only toy stepper (hardcoded H = 0.5|p|² + potential·x² + interaction·log m); does NOT
+        honor ``problem.hamiltonian_class`` and has no caller in the solver fleet. Not the production
+        path — see :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
         """
         U_tensor = self._to_torch(U)
         M_tensor = self._to_torch(M)

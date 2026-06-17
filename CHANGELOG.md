@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Backend `hjb_step`/`fpk_step` documented as LQ-only toy steppers** (Issue #1072, docs-only).
+  `BaseBackend.hjb_step`/`fpk_step` and all four backend impls (numpy/torch/numba/jax) now state
+  in their docstrings that these are experimental LQ-only steppers — each hardcodes a *different*
+  default Hamiltonian and **none honors `problem.hamiltonian_class`** — with **no caller in the
+  HJB/FP solver fleet** (the production solvers single-source the Hamiltonian via `base_hjb.evaluate_H`
+  ← `problem.hamiltonian_class`, #1071). This removes the trap of mistaking #1072 ("Functional
+  Operator Lowering", the deferred post-v1.0 RFC to XLA-lower the operator tree + Hamiltonian) for a
+  quick patch on `jax_backend.py`. No runtime change. The World-A-vs-World-B design fork and the
+  un-defer trigger are recorded on #1072.
+
 - **GFDM Local-Lax-Friedrichs assembly single-sourced through the Layer-B helpers** (Issue #1071
   phase 7). The two batch-Hamiltonian GFDM paths each re-implemented the entire residual /
   Jacobian assembly inline solely to swap the scalar diffusion `σ` for the per-node LLF field

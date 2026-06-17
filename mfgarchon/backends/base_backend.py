@@ -122,11 +122,33 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def hjb_step(self, U, M, dt, dx, problem_params):
-        """Single Hamilton-Jacobi-Bellman time step."""
+        """Single explicit HJB time step — LQ-only toy stepper, NOT the production solve path.
+
+        ⚠️ These backend ``*_step`` methods hardcode a fixed (Linear-Quadratic-flavoured)
+        Hamiltonian and do NOT honor ``problem.hamiltonian_class`` — and each backend hardcodes a
+        *different* default (numpy ``0.5 p²``; torch ``0.5|p|² + V + interaction·log m``; numba
+        ``0.5 p² + log m``; jax ``0.5 p²``). They are an experimental/benchmark surface with **no
+        caller in the HJB/FP solver fleet** (only ``tests/`` and one benchmark demo reach them).
+
+        The production solvers (``HJBFDMSolver``/``HJBGFDMSolver``/…) do NOT use this; they evaluate
+        the problem's actual Hamiltonian through the #1071 single source
+        (``base_hjb``/``h_eval.evaluate_H`` ← ``problem.hamiltonian_class``). So a custom-Hamiltonian
+        solve via ``problem.solve()`` is correct regardless of this hardcode.
+
+        Teaching these steppers ``hamiltonian_class`` (and XLA-lowering the operator tree) is the
+        deferred RFC #1072 ("Functional Operator Lowering", post-v1.0). Do NOT treat this as a quick
+        patch — see #1072 for the World-A-vs-World-B fork and the tracing/operator walls.
+        """
 
     @abstractmethod
     def fpk_step(self, M, U, dt, dx, problem_params):
-        """Single Fokker-Planck-Kolmogorov time step."""
+        """Single explicit FPK time step — LQ-only toy stepper, NOT the production solve path.
+
+        See :meth:`hjb_step`: this is the experimental backend stepper surface (hardcoded default
+        drift, not ``problem.hamiltonian_class``), with no caller in the solver fleet. The live FP
+        solvers single-source the drift from the problem (#1071/#1043), not from here. Honoring
+        ``hamiltonian_class`` here is the deferred RFC #1072.
+        """
 
     # Performance and Compilation
     def compile_function(self, func, *args, **kwargs):
