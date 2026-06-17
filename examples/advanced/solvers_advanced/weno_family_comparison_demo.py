@@ -27,9 +27,9 @@ import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
-from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 
 # Configure logging for research session
 configure_research_logging("weno_family_comparison", level="INFO")

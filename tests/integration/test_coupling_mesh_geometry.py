@@ -55,7 +55,8 @@ class TestFixedPointIteratorMeshGeometry:
         m_sol = np.asarray(res.M)
         u_sol = np.asarray(res.U)
         assert m_sol.shape == (problem.Nt + 1, problem.num_spatial_points)
-        assert np.all(np.isfinite(u_sol)) and np.all(np.isfinite(m_sol))
+        assert np.all(np.isfinite(u_sol))
+        assert np.all(np.isfinite(m_sol))
         assert np.all(m_sol >= -1e-9)
         mass_matrix = assemble_mass(fp._basis)
         masses = [float((mass_matrix @ m_sol[t]).sum()) for t in range(m_sol.shape[0])]

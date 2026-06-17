@@ -18,8 +18,9 @@ the diagnostic protocol this test codifies.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
@@ -27,7 +28,6 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
-
 
 # ---------------------------------------------------------------------------
 # Test infrastructure

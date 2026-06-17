@@ -1038,7 +1038,7 @@ class TestStochasticSLUnificationPinning:
         np.testing.assert_array_equal(got, ref)
 
 
-class TestStochasticCharacteristicSL_nD:
+class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangian, n-Dimensional (deliberate test-group name)
     """Issue #1054: nD stochastic SL companion fixes (analogous to 1D #1033/#1048/#1049)."""
 
     def _make_2d_problem(self, sigma=0.3, T=0.1, Nt=4, N=15):

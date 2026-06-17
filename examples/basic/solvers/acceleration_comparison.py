@@ -24,9 +24,9 @@ import matplotlib.pyplot as plt
 
 from mfgarchon import MFGProblem
 from mfgarchon.factory import create_standard_solver
-from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 
 # Configure logging
 configure_research_logging("acceleration_comparison", level="INFO")

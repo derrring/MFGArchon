@@ -226,7 +226,8 @@ class TestOutwardNormalSourceAgreement:
         assert normal is not None
         np.testing.assert_allclose(np.linalg.norm(normal), 1.0, atol=1e-9)
         # diagonal => both components non-trivial (an axis face normal would have a zero component)
-        assert abs(normal[0]) > 0.1 and abs(normal[1]) > 0.1
+        assert abs(normal[0]) > 0.1
+        assert abs(normal[1]) > 0.1
 
 
 class TestDiffusionOperatorSingleSource:

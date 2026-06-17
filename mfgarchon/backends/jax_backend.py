@@ -7,11 +7,12 @@ and JIT compilation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # For type checking, always assume JAX is available
+    from collections.abc import Callable
+
     import jax
     import jax.numpy as jnp
     from jax import device_get, device_put, grad, jit, vmap

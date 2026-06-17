@@ -30,9 +30,9 @@ import numpy as np
 
 pytest.importorskip("cvxpy")
 
-from mfgarchon.alg.numerical.gfdm_components.joint_socp import PrecomputedJointSocpStencils
 from scipy.spatial import cKDTree
 
+from mfgarchon.alg.numerical.gfdm_components.joint_socp import PrecomputedJointSocpStencils
 
 # ---------------------------------------------------------------------------
 # Deterministic irregular cloud with controllable (small) base stencils.
@@ -121,7 +121,7 @@ def test_specific_stencil_infeasible_at_base_feasible_when_enlarged():
         f"recovered stencil {i} must have grown beyond base size {base_len}, got {len(sd.neighbor_indices)}"
     )
     # Center present, Laplacian consistency (sum-zero) and M-matrix sign.
-    assert i in set(int(x) for x in sd.neighbor_indices)
+    assert i in {int(x) for x in sd.neighbor_indices}
     assert np.isclose(sd.L.sum(), 0.0, atol=1e-8)
     L_off = np.delete(sd.L, sd.center_in_neighbors)
     assert np.all(L_off >= -1e-8)
@@ -260,7 +260,7 @@ def _solver_with_small_stencils(enlarge: int):
     import sys
 
     sys.path.insert(0, "tests/unit/test_alg")
-    from test_joint_socp_mirror_symmetry import _MockProblem  # noqa: PLC0415
+    from test_joint_socp_mirror_symmetry import _MockProblem
 
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
     from mfgarchon.geometry import Hyperrectangle
@@ -332,7 +332,8 @@ def test_solver_enlargement_end_to_end_runtime_consistent():
 
     # Path 1: differentiation-matrix assembly (asserts length contract internally).
     solver._build_differentiation_matrices()
-    assert solver._D_lap is not None and len(solver._D_grad) == 2
+    assert solver._D_lap is not None
+    assert len(solver._D_grad) == 2
 
     # Path 2: per-point derivative override on the grown stencils.
     u = np.random.default_rng(0).standard_normal(len(pts))

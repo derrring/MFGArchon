@@ -12,9 +12,9 @@ duck-typed / externally-nulled Hamiltonian misuse and forbids silent re-introduc
 
 from __future__ import annotations
 
-import numpy as np
-
 import pytest
+
+import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver, HJBWenoSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -53,7 +53,7 @@ def test_semi_lagrangian_no_hamiltonian_fails_loud(monkeypatch):
     monkeypatch.setattr(problem, "H", _raise_attribute_error, raising=False)
     monkeypatch.setattr(problem, "hamiltonian", _raise_attribute_error, raising=False)
 
-    with pytest.raises(ValueError, match="silently substitute|fail-fast"):
+    with pytest.raises(ValueError, match=r"silently substitute|fail-fast"):
         solver._evaluate_hamiltonian(x=0.5, p=0.3, m=1.0, time_idx=0)
 
 
@@ -80,7 +80,7 @@ def test_semi_lagrangian_solve_no_hamiltonian_fails_loud(monkeypatch):
     u_terminal = 0.5 * (x - 0.5) ** 2
     u_prev = np.tile(u_terminal, (nt_points, 1))
 
-    with pytest.raises(ValueError, match="silently substitute|fail-fast"):
+    with pytest.raises(ValueError, match=r"silently substitute|fail-fast"):
         solver.solve_hjb_system(M_density=m_density, U_terminal=u_terminal, U_coupling_prev=u_prev)
 
 
@@ -92,7 +92,7 @@ def test_weno_no_hamiltonian_fails_loud(monkeypatch):
 
     monkeypatch.setattr(problem, "H", _raise_attribute_error, raising=False)
 
-    with pytest.raises(ValueError, match="silently substitute|fail-fast"):
+    with pytest.raises(ValueError, match=r"silently substitute|fail-fast"):
         solver._evaluate_hamiltonian(x_idx=0, m_val=1.0, grad=0.3)
 
 

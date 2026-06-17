@@ -33,9 +33,9 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.types import NumericalScheme
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.types import NumericalScheme
 
 
 def _default_hamiltonian():

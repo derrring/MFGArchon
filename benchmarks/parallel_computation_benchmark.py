@@ -25,10 +25,10 @@ import numpy as np
 
 from mfgarchon.alg.numerical.stochastic import CommonNoiseMFGSolver
 from mfgarchon.core.stochastic import OrnsteinUhlenbeckProcess, StochasticMFGProblem
-from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
-from mfgarchon.workflow.parameter_sweep import ParameterSweep, SweepConfiguration
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
+from mfgarchon.workflow.parameter_sweep import ParameterSweep, SweepConfiguration
 
 # Configure logging
 configure_research_logging("parallel_benchmark", level="INFO")
