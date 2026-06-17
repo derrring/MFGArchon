@@ -16,7 +16,9 @@ Run: ``python scripts/validation/hjb_1d_bc_gradient.py``
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers import base_hjb as B
+from mfgarchon.alg.numerical.hjb_solvers import (
+    base_hjb as B,  # noqa: N812 — brevity alias in a standalone validation script
+)
 from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc
 
 # Known function U = x^2 on [0,1], analytic grad = 2x

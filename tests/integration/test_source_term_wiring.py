@@ -205,7 +205,7 @@ class TestNewtonPicardParity:
     _TOL = 1e-5  # observed agreement ~1e-10; generous margin
 
     def test_parity_source_term_hjb(self):
-        kw = dict(source_term_hjb=lambda x, m, v, t: 0.8 * np.ones(x.shape[0]))
+        kw = {"source_term_hjb": lambda x, m, v, t: 0.8 * np.ones(x.shape[0])}
         Up, Mp = _solve_picard(_make_parity_problem(**kw))
         Un, Mn, info = _solve_newton(_make_parity_problem(**kw))
         assert info["converged"], "Newton did not converge for source_term_hjb"
@@ -213,7 +213,7 @@ class TestNewtonPicardParity:
         assert _rel_linf(Mn, Mp) < self._TOL, f"M parity: {_rel_linf(Mn, Mp):.2e}"
 
     def test_parity_source_term_fp(self):
-        kw = dict(source_term_fp=lambda x, m, v, t: 0.05 * np.ones(x.shape[0]))
+        kw = {"source_term_fp": lambda x, m, v, t: 0.05 * np.ones(x.shape[0])}
         Up, Mp = _solve_picard(_make_parity_problem(**kw))
         Un, Mn, info = _solve_newton(_make_parity_problem(**kw))
         assert info["converged"], "Newton did not converge for source_term_fp"
@@ -222,7 +222,7 @@ class TestNewtonPicardParity:
 
     def test_parity_nonlocal_operator(self):
         gs = int(np.prod(_make_parity_problem().geometry.get_grid_shape()))
-        kw = dict(nonlocal_operator=0.5 * np.eye(gs))
+        kw = {"nonlocal_operator": 0.5 * np.eye(gs)}
         Up, Mp = _solve_picard(_make_parity_problem(**kw))
         Un, Mn, info = _solve_newton(_make_parity_problem(**kw))
         assert info["converged"], "Newton did not converge for nonlocal_operator"

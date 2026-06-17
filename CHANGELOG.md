@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Ruff updated v0.14.3 → v0.15.17** (pre-commit pin; the prior auto-update branches were stale).
+  Resolved the lint surfaced by the version jump (no runtime behavior change): import-sorting (I001),
+  comprehension/pytest/typing idioms (C4xx/PT/RUF/TC), and 2 typing-only-import moves into
+  `TYPE_CHECKING` in source (`fp_particle`, `jax_backend` — behavior-preserving under
+  `from __future__ import annotations`). **`UP042` (str-Enum → `StrEnum`) is now ignored**: it
+  changes `str()`/format output (the value vs `"Class.MEMBER"`), which the codebase relies on as a
+  tested contract (`test_*_string_representation`), so it is a behavior change, not a safe
+  modernization. Test-only naming exceptions (`N801` descriptive test class, `N812` script brevity
+  alias) carry targeted `noqa`. Pre-existing `tests/validation/test_duality_convergence.py::
+  TestConvergenceRate::test_upwind_first_order_convergence` fails on main too (unrelated to this bump).
+
 - **Backend `hjb_step`/`fpk_step` documented as LQ-only toy steppers** (Issue #1072, docs-only).
   `BaseBackend.hjb_step`/`fpk_step` and all four backend impls (numpy/torch/numba/jax) now state
   in their docstrings that these are experimental LQ-only steppers — each hardcodes a *different*

@@ -53,9 +53,9 @@ except ImportError:
 
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.utils.numerical import create_lq_policy_problem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.numerical import create_lq_policy_problem
 
 
 def demonstrate_policy_iteration_concept():

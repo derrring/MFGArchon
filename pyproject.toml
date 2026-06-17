@@ -358,6 +358,9 @@ ignore = [
     "RUF022", # `__all__` is not sorted (allow logical grouping)
     "SIM108", # Ternary operator suggestion (allow both styles)
     "SIM102", # Nested if statements (allow for clarity in mathematical conditions)
+    "UP042", # str-Enum -> StrEnum: changes str()/format output (value vs "Class.MEMBER"); the
+             # codebase relies on the (str, Enum) string representation as a tested contract
+             # (e.g. test_*_string_representation), so this "modernization" is a behavior change.
 ]
 
 [tool.ruff.lint.per-file-ignores]

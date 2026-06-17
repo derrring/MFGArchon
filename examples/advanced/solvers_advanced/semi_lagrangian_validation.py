@@ -20,9 +20,9 @@ import numpy as np
 
 from mfgarchon import MFGProblem
 from mfgarchon.factory import create_semi_lagrangian_solver
-from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
 
 # Configure logging
 configure_research_logging("semi_lagrangian_validation", level="INFO")

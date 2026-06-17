@@ -98,7 +98,8 @@ def test_silent_when_callable():
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem)
 
-    callable_vol = lambda t, x, m: 0.5
+    def callable_vol(t, x, m):
+        return 0.5
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")

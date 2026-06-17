@@ -15,6 +15,7 @@ import timeit
 from pathlib import Path
 
 import numpy as np
+
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 

@@ -15,10 +15,10 @@ from mfgarchon.alg import SchemeFamily
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.factory import create_paired_solvers, get_recommended_scheme
-from mfgarchon.types import NumericalScheme
-from mfgarchon.utils import DualityStatus, check_solver_duality
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.types import NumericalScheme
+from mfgarchon.utils import DualityStatus, check_solver_duality
 
 
 def _default_hamiltonian():

@@ -201,7 +201,8 @@ class TestFEMBoundaryConditionResolution:
             m_new = np.asarray(fp.solve_fp_system(m0, u_new))
             u_sol = 0.5 * u_sol + 0.5 * u_new
             m_sol = 0.5 * m_sol + 0.5 * m_new
-        assert np.all(np.isfinite(u_sol)) and np.all(np.isfinite(m_sol))
+        assert np.all(np.isfinite(u_sol))
+        assert np.all(np.isfinite(m_sol))
         assert np.all(m_sol >= -1e-9)
         masses = [float((mass_matrix @ m_sol[t]).sum()) for t in range(n_t + 1)]
         drift = abs(masses[-1] - masses[0]) / masses[0]

@@ -131,12 +131,20 @@ def _field_configs(gs: int):
     obstacle = lambda x: np.asarray(x) - 0.5  # noqa: E731
     nonlocal_op = 0.3 * np.eye(gs) + 0.05 * np.ones((gs, gs))
     return [
-        ("source_hjb", dict(source_term_hjb=src_hjb)),
-        ("source_fp", dict(source_term_fp=src_fp)),
-        ("obstacle", dict(obstacle=obstacle)),
-        ("nonlocal", dict(nonlocal_operator=nonlocal_op)),
-        ("hjb+obstacle+nonlocal", dict(source_term_hjb=src_hjb, obstacle=obstacle, nonlocal_operator=nonlocal_op)),
-        ("all", dict(source_term_hjb=src_hjb, source_term_fp=src_fp, obstacle=obstacle, nonlocal_operator=nonlocal_op)),
+        ("source_hjb", {"source_term_hjb": src_hjb}),
+        ("source_fp", {"source_term_fp": src_fp}),
+        ("obstacle", {"obstacle": obstacle}),
+        ("nonlocal", {"nonlocal_operator": nonlocal_op}),
+        ("hjb+obstacle+nonlocal", {"source_term_hjb": src_hjb, "obstacle": obstacle, "nonlocal_operator": nonlocal_op}),
+        (
+            "all",
+            {
+                "source_term_hjb": src_hjb,
+                "source_term_fp": src_fp,
+                "obstacle": obstacle,
+                "nonlocal_operator": nonlocal_op,
+            },
+        ),
     ]
 
 

@@ -19,9 +19,9 @@ from mfgarchon.config import MFGSolverConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
-from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
 
 
 def _make_problem(Nx: int = 51, source_term_hjb=None) -> MFGProblem:

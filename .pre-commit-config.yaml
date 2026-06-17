@@ -9,7 +9,7 @@
 repos:
   # Unified formatting and linting with Ruff (replaces Black + isort + Pylint)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.3
+    rev: v0.15.17
     hooks:
       # Format code (replaces Black + isort)
       - id: ruff-format

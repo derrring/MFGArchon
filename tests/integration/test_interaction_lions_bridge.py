@@ -29,6 +29,8 @@ from mfgarchon.config import MFGSolverConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.operators.interaction import (
     CombinedEnergy,
     ConvolutionCouplingOperator,
@@ -37,8 +39,6 @@ from mfgarchon.operators.interaction import (
     QuadraticInteractionEnergy,
 )
 from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
-from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
 
 
 class TestGate3LionsBridgeEquivalence:

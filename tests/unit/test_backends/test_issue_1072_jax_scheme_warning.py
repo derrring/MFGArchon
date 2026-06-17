@@ -24,8 +24,8 @@ import warnings
 
 import pytest
 
-from mfgarchon.backends import warn_if_jax_scheme_downgraded
 import mfgarchon.backends as backends_pkg
+from mfgarchon.backends import warn_if_jax_scheme_downgraded
 from mfgarchon.types import NumericalScheme
 
 
@@ -58,7 +58,7 @@ def test_jax_upwind_scheme_warns():
 
 def test_warning_message_mentions_issue_and_weno():
     """The warning is actionable: names the cause and the interim-fix issue."""
-    with pytest.warns(UserWarning) as record:
+    with pytest.warns(UserWarning, match="Issue #1072") as record:
         warn_if_jax_scheme_downgraded("jax", NumericalScheme.FDM_UPWIND)
     msg = str(record[0].message)
     assert "Issue #1072" in msg
@@ -138,7 +138,7 @@ def test_no_scheme_does_not_warn():
 
 def test_warning_fires_only_once_per_scheme():
     """Repeated identical calls warn once; the guard suppresses the rest."""
-    with pytest.warns(UserWarning):
+    with pytest.warns(UserWarning, match="Issue #1072"):
         first = warn_if_jax_scheme_downgraded("jax", NumericalScheme.FDM_UPWIND)
     assert first is True
 
@@ -150,8 +150,8 @@ def test_warning_fires_only_once_per_scheme():
 
 def test_distinct_schemes_warn_independently():
     """The guard is keyed per scheme: a different scheme still warns once."""
-    with pytest.warns(UserWarning):
+    with pytest.warns(UserWarning, match="Issue #1072"):
         warn_if_jax_scheme_downgraded("jax", NumericalScheme.FDM_UPWIND)
-    with pytest.warns(UserWarning):
+    with pytest.warns(UserWarning, match="Issue #1072"):
         fired = warn_if_jax_scheme_downgraded("jax", NumericalScheme.SL_CUBIC)
     assert fired is True

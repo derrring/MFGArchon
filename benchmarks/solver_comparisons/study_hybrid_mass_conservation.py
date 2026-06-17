@@ -12,10 +12,9 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.mfg_problem import MFGProblem
-from mfgarchon.geometry.boundary import neumann_bc
-from mfgarchon.utils.convergence import create_rolling_monitor
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc
+from mfgarchon.utils.convergence import create_rolling_monitor
 
 
 def setup_problem():

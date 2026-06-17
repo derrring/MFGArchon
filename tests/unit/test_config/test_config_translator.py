@@ -33,9 +33,9 @@ from mfgarchon.config import (
     picard_config_to_iterator_kwargs,
 )
 from mfgarchon.config.mfg_methods import FDMConfig
-from mfgarchon.types import NumericalScheme
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.types import NumericalScheme
 
 # ---------------------------------------------------------------------------
 # Helpers

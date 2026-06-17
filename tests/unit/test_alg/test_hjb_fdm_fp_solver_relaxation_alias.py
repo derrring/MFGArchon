@@ -18,9 +18,9 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
-from mfgarchon.utils.numerical.nonlinear_solvers import FixedPointSolver
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.numerical.nonlinear_solvers import FixedPointSolver
 
 
 def _make_problem():

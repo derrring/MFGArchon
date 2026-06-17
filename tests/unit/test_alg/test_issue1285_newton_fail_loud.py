@@ -99,7 +99,7 @@ def _assert_finite_solve(problem: MFGProblem) -> None:
     solver = NewtonMFGSolver(
         problem, hjb_solver, fp_solver, picard_warmup=3, newton_max_iterations=15, newton_tolerance=1e-8
     )
-    U, M, info = solver.solve(max_iterations=18, tolerance=1e-8, verbose=False)
+    U, M, _info = solver.solve(max_iterations=18, tolerance=1e-8, verbose=False)
     assert np.all(np.isfinite(U)), "U not finite"
     assert np.all(np.isfinite(M)), "M not finite"
     assert U.shape == solver.mfg_residual.solution_shape

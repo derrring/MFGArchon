@@ -29,13 +29,11 @@ from __future__ import annotations
 import warnings
 
 import numpy as np
-import pytest
 
 from mfgarchon.alg.numerical.gfdm_components.boundary_handler import BoundaryHandler
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.geometry import Hyperrectangle
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

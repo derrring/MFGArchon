@@ -26,14 +26,14 @@ Stress regime: O(1000) boundary points with realistic ε distribution.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+import numpy as np
 import scipy.sparse as sp
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.geometry import Hyperrectangle
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -150,7 +150,7 @@ def _build_solver(points, boundary_idx, bc, geometry, scheme="none"):
 
 
 @pytest.mark.parametrize(
-    "LX,LY,eps",
+    ("LX", "LY", "eps"),
     [
         (1.0, 1.0, 0.0),  # exactly on wall
         (1.0, 1.0, 1e-7),  # well inside tol
@@ -212,7 +212,8 @@ def test_identify_face_closed_inequality():
     tol = 1e-6
     face = bc.identify_boundary_face(np.array([tol, 5.0]), tolerance=tol)
     assert face is not None, "Closed inequality must include the tol-boundary case"
-    assert face.axis == 0 and face.side == "min"
+    assert face.axis == 0
+    assert face.side == "min"
 
 
 def test_identify_face_just_outside_tol_returns_none():
@@ -239,7 +240,8 @@ def test_identify_face_domain_bounds_override():
     override = np.array([[0.0, 1.0], [0.0, 1.0]])
     face = bc.identify_boundary_face(np.array([1.0, 0.5]), tolerance=1e-6, domain_bounds=override)
     assert face is not None
-    assert face.axis == 0 and face.side == "max"
+    assert face.axis == 0
+    assert face.side == "max"
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +250,7 @@ def test_identify_face_domain_bounds_override():
 
 
 @pytest.mark.parametrize(
-    "axis,side,expected",
+    ("axis", "side", "expected"),
     [
         (0, "min", [-1.0, 0.0]),
         (0, "max", [1.0, 0.0]),
@@ -265,7 +267,7 @@ def test_outward_normal_for_face_2d(axis, side, expected):
 
 
 @pytest.mark.parametrize(
-    "axis,side,expected",
+    ("axis", "side", "expected"),
     [
         (0, "min", [-1, 0, 0]),
         (1, "max", [0, 1, 0]),
@@ -397,7 +399,7 @@ def test_dispatch_dirichlet_row_is_identity():
     fake_jac = sp.eye(n, format="csr") * 0.5
     fake_res = np.ones(n)
 
-    jac_bc, res_bc = solver._apply_boundary_conditions_to_sparse_system(
+    jac_bc, _res_bc = solver._apply_boundary_conditions_to_sparse_system(
         fake_jac, fake_res, time_idx=0, u_current=np.zeros(n)
     )
 
