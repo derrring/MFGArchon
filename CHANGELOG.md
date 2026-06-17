@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **GFDM Local-Lax-Friedrichs assembly single-sourced through the Layer-B helpers** (Issue #1071
+  phase 7). The two batch-Hamiltonian GFDM paths each re-implemented the entire residual /
+  Jacobian assembly inline solely to swap the scalar diffusion `σ` for the per-node LLF field
+  `σ_eff` (Issue #1059). `assemble_hjb_residual` / `assemble_hjb_jacobian_diag` (`h_eval.py`) now
+  accept a per-node `σ` field — residual: `D = σ²/2` elementwise; Jacobian: **row-scales** the
+  Laplacian via `diags(D) @ D_lap` (not `D * D_lap`, which for an array does not row-scale) — so
+  the GFDM LLF residual/Jacobian branches collapse into the single shared assembly path (scalar `σ`
+  for a plain solve, `σ_eff` field when LLF is active). Scalar callers are **bit-identical** (the
+  scalar code path is untouched); the field path is byte-identical to the inline LLF expressions it
+  replaces, pinned by `test_assemble_hjb_residual_array_sigma_matches_inline_llf_1071` and
+  `test_assemble_hjb_jacobian_diag_array_sigma_matches_inline_llf_1071`, with the GFDM LLF
+  augmentation suite as the end-to-end check. (LLF stays solver-level — it modifies the diffusion
+  coefficient, not `H`/`∂H/∂p` — so the `Regularizer`/`with_regularizer` scaffold is correctly left
+  for the physics-only regularizers it was scoped for. The legacy-LQ-vectorized path inlines its own
+  Hamiltonian and is out of scope.)
+
 ### Removed
 
 - **`BoundHamiltonian` + `bind_cross_density` retired** (Issue #1071, increment 3 — completes the
