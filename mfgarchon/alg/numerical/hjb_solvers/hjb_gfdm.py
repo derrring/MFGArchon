@@ -2201,17 +2201,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         dt = self.problem.T / self.problem.Nt
         u_t = (u_n_plus_1 - u_current) / dt
         # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
-        # Issue #1059 LLF: when active, assemble inline with per-node D_i = sigma_eff_i^2/2
-        # (assemble_hjb_residual only accepts scalar sigma; bypass it for the LLF path).
-        if self.llf_augmentation and self._llf_sigma_eff is not None:
-            from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
-
-            H = eval_H_batch(H_class, self.collocation_points, m_n_plus_1, grad_u, current_time)
-            if running_cost is not None:
-                H = H + running_cost
-            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
-            return -u_t + H - D_eff * lap_u
-        sigma = self._get_sigma_value(None)
+        # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
+        # assemble_hjb_residual (now field-σ capable, D_i = σ_eff_i²/2 elementwise); a plain solve
+        # uses the scalar σ. One assembly path either way.
+        sigma = (
+            self._llf_sigma_eff
+            if (self.llf_augmentation and self._llf_sigma_eff is not None)
+            else self._get_sigma_value(None)
+        )
         return assemble_hjb_residual(
             H_class=H_class,
             x=self.collocation_points,
@@ -2252,21 +2249,14 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         dt = self.problem.T / self.problem.Nt
         # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
-        # Issue #1059 LLF: assemble_hjb_jacobian_diag only accepts scalar sigma;
-        # for the LLF path assemble inline with per-node D_i = sigma_eff_i^2/2.
-        if self.llf_augmentation and self._llf_sigma_eff is not None:
-            from scipy.sparse import diags, eye
-
-            from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch
-
-            dH_dp = eval_dH_dp_batch(H_class, self.collocation_points, m_n_plus_1, grad_u, current_time)
-            n = self._D_lap.shape[0]
-            jacobian = (1.0 / dt) * eye(n, format="csr")
-            for dim in range(dH_dp.shape[1]):
-                jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ self._D_grad[dim]
-            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
-            return jacobian - diags(D_eff, format="csr") @ self._D_lap
-        sigma = self._get_sigma_value(None)
+        # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
+        # assemble_hjb_jacobian_diag (now field-σ capable: it row-scales the Laplacian via
+        # diags(D_i) @ D_lap); a plain solve uses the scalar σ. One assembly path either way.
+        sigma = (
+            self._llf_sigma_eff
+            if (self.llf_augmentation and self._llf_sigma_eff is not None)
+            else self._get_sigma_value(None)
+        )
         return assemble_hjb_jacobian_diag(
             H_class=H_class,
             x=self.collocation_points,

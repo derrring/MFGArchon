@@ -17,8 +17,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from mfgarchon.core.hamiltonian import HEvalState
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+
+def _diffusion_coeff(sigma: float | NDArray) -> float | NDArray:
+    """Diffusion ``D = sigma^2/2`` for the assembly helpers (Issue #1071 phase 7).
+
+    A scalar ``sigma`` keeps the exact prior call ``diffusion_from_volatility(sigma)``
+    (``kind`` is ignored for a scalar, so this is bit-identical). A per-node ``sigma``
+    field (e.g. the GFDM Local-Lax-Friedrichs ``sigma_eff`` array, Issue #1059) is
+    isotropic-per-point, so it requires ``kind="field"`` -> ``D = sigma**2/2`` elementwise.
+    """
+    if np.ndim(sigma) == 0:
+        return diffusion_from_volatility(sigma)
+    return diffusion_from_volatility(sigma, kind="field")
+
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -65,17 +81,21 @@ def assemble_hjb_residual(
 ) -> NDArray:
     r"""Assemble the implicit-backward-Euler HJB residual (Layer B of #1071).
 
-    Returns ``-u_t + H(+running_cost) - D·lap_u`` with ``D = diffusion_from_volatility(sigma)``,
-    so the diffusion-term convention (Issue #1073/#811: ``D = σ²/2``) lives in one place. The
-    caller supplies its own discrete operators (gradient ``p``, Laplacian ``lap_u``) and the
-    time-derivative ``u_t = (u^{n+1}-u^n)/dt``; it owns its own framing -- this is the implicit
-    residual ``-u_t + H - D·lap``, NOT the WENO explicit-RHS framing ``-H + D·Δu``. Byte-identical
-    to the inline gfdm expression it replaces.
+    Returns ``-u_t + H(+running_cost) - D·lap_u`` with ``D = σ²/2``, so the diffusion-term
+    convention (Issue #1073/#811) lives in one place. The caller supplies its own discrete
+    operators (gradient ``p``, Laplacian ``lap_u``) and the time-derivative
+    ``u_t = (u^{n+1}-u^n)/dt``; it owns its own framing -- this is the implicit residual
+    ``-u_t + H - D·lap``, NOT the WENO explicit-RHS framing ``-H + D·Δu``.
+
+    ``sigma`` may be a scalar (bit-identical to the prior scalar call) OR a per-node field array
+    (Issue #1071 phase 7: e.g. the GFDM Local-Lax-Friedrichs ``sigma_eff``, Issue #1059), in which
+    case ``D = σ_i²/2`` elementwise and ``D·lap_u`` is the per-node product -- byte-identical to the
+    inline ``diffusion_from_volatility(sigma_eff, kind="field") * lap_u`` LLF expression it replaces.
     """
     H = eval_H_batch(H_class, x, m, p, t)
     if running_cost is not None:
         H = H + running_cost
-    return -u_t + H - diffusion_from_volatility(sigma) * lap_u
+    return -u_t + H - _diffusion_coeff(sigma) * lap_u
 
 
 def assemble_hjb_jacobian_diag(
@@ -92,10 +112,15 @@ def assemble_hjb_jacobian_diag(
 ) -> spmatrix:
     r"""Assemble the sparse HJB Newton Jacobian for the implicit residual (Layer B of #1071).
 
-    Returns ``(1/dt)I + Σ_d diag(∂H/∂p_d) @ D_grad[d] - D·D_lap`` with
-    ``D = diffusion_from_volatility(sigma)``. ``D_grad`` (per-dimension first-derivative
-    matrices) and ``D_lap`` (Laplacian matrix) are the caller's discrete operators -- scattered
-    GFDM stencils, structured FDM matrices, etc. Byte-identical to the inline gfdm assembly.
+    Returns ``(1/dt)I + Σ_d diag(∂H/∂p_d) @ D_grad[d] - D·D_lap`` with ``D = σ²/2``. ``D_grad``
+    (per-dimension first-derivative matrices) and ``D_lap`` (Laplacian matrix) are the caller's
+    discrete operators -- scattered GFDM stencils, structured FDM matrices, etc.
+
+    ``sigma`` may be a scalar (bit-identical to the prior ``D * D_lap`` scalar scaling) OR a per-node
+    field array (Issue #1071 phase 7: GFDM Local-Lax-Friedrichs ``sigma_eff``, Issue #1059). For an
+    array the diffusion term must ROW-SCALE the Laplacian: ``diags(D) @ D_lap`` -- NOT ``D * D_lap``,
+    which for an array left operand does not row-scale a sparse matrix. Byte-identical to the inline
+    ``jacobian - diags(diffusion_from_volatility(sigma_eff, kind="field")) @ D_lap`` it replaces.
     """
     from scipy.sparse import diags, eye
 
@@ -104,4 +129,7 @@ def assemble_hjb_jacobian_diag(
     jacobian = (1.0 / dt) * eye(n, format="csr")
     for dim in range(dH_dp.shape[1]):
         jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ D_grad[dim]
-    return jacobian - diffusion_from_volatility(sigma) * D_lap
+    D = _diffusion_coeff(sigma)
+    if np.ndim(sigma) == 0:
+        return jacobian - D * D_lap
+    return jacobian - diags(D, format="csr") @ D_lap
