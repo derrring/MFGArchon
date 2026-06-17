@@ -130,10 +130,10 @@ class HJBFDMSolver(BaseHJBSolver):
 
     _scheme_family = SchemeFamily.FDM
 
-    # Issue #1157: this backend threads the multi-population cross-density bound Hamiltonian
-    # (hamiltonian_override) into the HJB solve. MultiPopulationIterator checks this flag and
+    # Issue #1071: this backend threads the multi-population cross-density trajectory
+    # (cross_density) into the HJB solve. MultiPopulationIterator checks this flag and
     # fails loud for K>1 on backends that lack it rather than silently decoupling the HJB.
-    _honors_multipop_hamiltonian_override = True
+    _honors_multipop_cross_density = True
 
     @deprecated_parameter(
         param_name="damping_factor",
@@ -354,7 +354,6 @@ class HJBFDMSolver(BaseHJBSolver):
         # MMS verification support
         source_term: Callable | None = None,
         *,
-        hamiltonian_override=None,  # Issue #1157: multi-population cross-density bound H
         cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     ) -> NDArray:
         """
@@ -382,26 +381,14 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError("U_terminal is required")
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
-        # Issue #1157: a multi-population bound Hamiltonian carries the stacked cross-density
-        # field, which only the batch Hamiltonian path (compute_hjb_residual at backend=None)
-        # can consume; the nD path's per-timestep evaluation is not yet validated for it.
-        if hamiltonian_override is not None and self.dimension != 1:
-            raise NotImplementedError(
-                "Multi-population Hamiltonian override (Issue #1157) is currently validated "
-                f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
-                "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
-            )
-        # Issue #1071: the lock-faithful cross-density channel shares the 1D-only batch path.
+        # Issue #1071: the multi-population cross-density trajectory is consumed only by the batch
+        # Hamiltonian path (compute_hjb_residual at backend=None); the nD path's per-timestep
+        # evaluation is not yet validated for it, so restrict to 1D.
         if cross_density is not None and self.dimension != 1:
             raise NotImplementedError(
                 "Multi-population cross-density coupling (Issue #1071) is currently validated "
                 f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
                 "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
-            )
-        if hamiltonian_override is not None and cross_density is not None:
-            raise ValueError(
-                "hamiltonian_override (Issue #1157 bound H) and cross_density (Issue #1071) are "
-                "mutually exclusive multi-population channels; pass exactly one."
             )
         # Issue #889: merge tensor_volatility_field into volatility_field
         # Deprecation warning issued by @deprecated_parameter decorator
@@ -441,14 +428,12 @@ class HJBFDMSolver(BaseHJBSolver):
                 with suppress(AttributeError):
                     logger.debug(f"[DEBUG Issue #542] BC has {len(bc.segments)} segments")
 
-            # Issue #1157: when a cross-density bound Hamiltonian is supplied, force the batch
-            # Hamiltonian path (backend=None) — the per-point problem.H() fallback receives only
-            # a scalar own-population density and cannot express cross-population coupling. The
+            # Issue #1071: when a multi-population cross-density trajectory is supplied, force the
+            # batch Hamiltonian path (backend=None) — the per-point problem.H() fallback receives
+            # only a scalar own-population density and cannot express cross-population coupling. The
             # batch path is numerically equivalent to the per-point path (Issue #789), so this
-            # changes nothing for single-population solves (override None => self.backend).
-            effective_backend = (
-                None if (hamiltonian_override is not None or cross_density is not None) else self.backend
-            )
+            # changes nothing for single-population solves (cross_density None => self.backend).
+            effective_backend = None if cross_density is not None else self.backend
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
@@ -464,7 +449,6 @@ class HJBFDMSolver(BaseHJBSolver):
                 bc=bc,  # Uses Robin BC from geometry; providers resolved by iterator (Issue #625)
                 domain_bounds=domain_bounds,
                 source_term=source_term,
-                active_hamiltonian=hamiltonian_override,  # Issue #1157
                 cross_density=cross_density,  # Issue #1071
             )
 

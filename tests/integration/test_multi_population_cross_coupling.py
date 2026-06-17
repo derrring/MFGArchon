@@ -109,13 +109,14 @@ def test_k1_matches_single_population_fp_convention():
 
     Two stacked convention bugs made K=1 diverge from single-pop. (1) The iterator computed its
     own *node*-centered velocity and always passed it as an explicit ``drift_field`` (~116% off);
-    routing through the shared ``resolve_fp_drift_kwargs`` fixed the convention. (2) The iterator
-    binds ``H_bound = H.bind_cross_density(...)`` — a ``BoundHamiltonian`` wrapper that fails
-    ``isinstance(SeparableHamiltonian)``, so the resolver took the *velocity* path while single-pop
-    (unbound H) took *potential*; the K=1 solve then converged to a point with ``||F_FP|| ~ O(1)``
-    that is **not** a coupled fixed point. Unwrapping the bound H for the smoothness dispatch fixed
-    it. With both fixes K=1 matches single-pop **exactly** (bounded only by the Picard tolerance),
-    so a tight threshold catches any reintroduction of either bug."""
+    routing through the shared ``resolve_fp_drift_kwargs`` fixed the convention. (2) Historically
+    the iterator bound the Hamiltonian (``BoundHamiltonian``), which failed
+    ``isinstance(SeparableHamiltonian)`` so the resolver took the *velocity* path while single-pop
+    (unbound H) took *potential* → ``||F_FP|| ~ O(1)`` (not a coupled fixed point). The lock-faithful
+    migration (Issue #1071) retired the wrapper: the iterator now passes the population's own
+    (unbound) H + a ``cross_density`` trajectory, so the smoothness dispatch reads the plain H. With
+    both fixes K=1 matches single-pop **exactly** (bounded only by the Picard tolerance), so a tight
+    threshold catches any reintroduction of either bug."""
     from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 
     prob = _make_problem(0, cross=0.0, K=1)
@@ -140,7 +141,7 @@ def test_nonfdm_backend_multipop_fails_loud():
     loud (the half-coupled silent-wrong equilibrium is the bug), not run silently."""
 
     class _StubHJB:
-        # Deliberately lacks _honors_multipop_hamiltonian_override.
+        # Deliberately lacks _honors_multipop_cross_density.
         def solve_hjb_system(self, *args, **kwargs):  # pragma: no cover - must not be reached
             raise AssertionError("solve_hjb_system should not be called; iterator must fail loud first")
 
@@ -153,46 +154,16 @@ def test_nonfdm_backend_multipop_fails_loud():
         [FPFDMSolver(p) for p in probs],
         relaxation=0.5,
     )
-    with pytest.raises(NotImplementedError, match="1157"):
+    with pytest.raises(NotImplementedError, match="1071"):
         it.solve(max_iterations=2, tolerance=1e-10)
 
 
-def test_cross_density_channel_byte_identical_to_bound_hamiltonian_1071():
-    """Issue #1071 (lock-faithful migration): the ``cross_density`` trajectory channel must be
-    byte-identical to the ``BoundHamiltonian`` (``hamiltonian_override``) path it replaces.
-
-    The new channel indexes the stacked trajectory at each integer backward-loop timestep
-    ``n_idx_hjb`` and feeds the population's OWN Hamiltonian (which slices the other populations
-    via ``population_index``) — eliminating the wrapper's ``round(t/dt)`` and dead-``m`` smells.
-    Because ``current_time = n_idx_hjb * dt``, the trajectory row picked is identical, so the HJB
-    value function is bit-for-bit unchanged. This pins the equivalence so the ``BoundHamiltonian``
-    retirement (migration increments 2-4) cannot silently drift the multi-population HJB."""
-    K = 2
-    probs = [_make_problem(k, cross=2.0, K=K) for k in range(K)]
-    solvers = [HJBFDMSolver(p) for p in probs]
-    Nx = _NX + 1
-    rng = np.random.RandomState(0)
-    M = [np.abs(rng.rand(_NT + 1, Nx)) + 0.1 for _ in range(K)]
-    M = [m / m.sum(axis=-1, keepdims=True) for m in M]  # mass-normalize each timestep
-    m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx) stacked trajectory
-    U_prev = [rng.rand(_NT + 1, Nx) for _ in range(K)]
-    U_term = [np.zeros(Nx) for _ in range(K)]
-
-    for k in range(K):
-        H_bound = probs[k].hamiltonian_class.bind_cross_density(m_all, dt=probs[k].dt)
-        U_bound = np.asarray(solvers[k].solve_hjb_system(M[k], U_term[k], U_prev[k], hamiltonian_override=H_bound))
-        U_cross = np.asarray(solvers[k].solve_hjb_system(M[k], U_term[k], U_prev[k], cross_density=m_all))
-        assert np.array_equal(U_bound, U_cross), (
-            f"pop {k}: cross_density channel diverged from BoundHamiltonian "
-            f"(max|delta|={np.max(np.abs(U_bound - U_cross)):.3e}); #1071 migration not byte-identical"
-        )
-
-
-def test_fp_velocity_cross_density_byte_identical_to_bound_hamiltonian_1071():
-    """Issue #1071 increment 2: the FP drift velocity via the ``cross_density`` channel must be
-    byte-identical to the ``BoundHamiltonian`` path it replaces, and the cross-density must
-    actually flow (the integration test's separable H has a momentum-only ``optimal_control``,
-    so it would not exercise this — hence a deliberately ``m``-dependent test Hamiltonian)."""
+def test_fp_velocity_consumes_cross_density_1071():
+    """Issue #1071: the FP drift velocity must consume the ``cross_density`` trajectory — at each
+    integer timestep ``optimal_control`` sees the stacked density (the other populations), not the
+    own-population density. The integration test's separable H has a momentum-only
+    ``optimal_control`` (so it would not exercise this), hence a deliberately ``m``-dependent test
+    Hamiltonian; the velocity with a cross-density must differ from the own-density velocity."""
     from mfgarchon.alg.numerical.coupling.fixed_point_utils import compute_fp_velocity_field
     from mfgarchon.core.hamiltonian import HamiltonianBase
 
@@ -201,7 +172,7 @@ def test_fp_velocity_cross_density_byte_identical_to_bound_hamiltonian_1071():
 
     class _MDepH(HamiltonianBase):
         """optimal_control reads the stacked density (the OTHER population) so the velocity
-        genuinely depends on the cross-density (gives the byte-identity test teeth)."""
+        genuinely depends on the cross-density (gives the flow test teeth)."""
 
         def __init__(self, population_index, k_pops):
             self.population_index = population_index
@@ -239,32 +210,8 @@ def test_fp_velocity_cross_density_byte_identical_to_bound_hamiltonian_1071():
 
     for k in range(K):
         h = _MDepH(k, K)
-        H_bound = h.bind_cross_density(m_all, dt=dt)
-        v_bound = compute_fp_velocity_field(prob, U, M[k], H_bound)
         v_cross = compute_fp_velocity_field(prob, U, M[k], h, cross_density=m_all)
         v_own = compute_fp_velocity_field(prob, U, M[k], h)  # own face density (no cross)
-        assert np.array_equal(v_bound, v_cross), (
-            f"pop {k}: FP velocity cross_density channel diverged from BoundHamiltonian "
-            f"(max|delta|={np.max(np.abs(v_bound - v_cross)):.3e})"
-        )
         assert not np.array_equal(v_cross, v_own), (
             f"pop {k}: cross_density did not flow into the FP velocity (== own-density result)"
-        )
-
-
-def test_cross_density_and_bound_hamiltonian_mutually_exclusive_1071():
-    """Issue #1071: the legacy bound-H channel and the new cross_density channel must not be
-    supplied together (one would silently shadow the other)."""
-    prob = _make_problem(0, cross=2.0, K=2)
-    solver = HJBFDMSolver(prob)
-    Nx = _NX + 1
-    M = np.ones((_NT + 1, Nx)) / Nx
-    m_all = np.concatenate([M, M], axis=-1)
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        solver.solve_hjb_system(
-            M,
-            np.zeros(Nx),
-            np.zeros((_NT + 1, Nx)),
-            hamiltonian_override=prob.hamiltonian_class.bind_cross_density(m_all, dt=prob.dt),
-            cross_density=m_all,
         )

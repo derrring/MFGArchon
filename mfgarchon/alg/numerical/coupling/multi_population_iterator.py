@@ -159,15 +159,15 @@ class MultiPopulationIterator:
                 # decouple (their solve reads the uncoupled ``problem.hamiltonian_class``), so fail
                 # loud for K>1. K==1 has no cross-coupling: a standalone solve is byte-identical,
                 # so no cross-density is sent regardless of backend.
-                honors_override = getattr(solver_k, "_honors_multipop_hamiltonian_override", False)
-                if K > 1 and not honors_override:
+                honors_cross_density = getattr(solver_k, "_honors_multipop_cross_density", False)
+                if K > 1 and not honors_cross_density:
                     raise NotImplementedError(
                         f"Multi-population cross-coupling requires HJBFDMSolver for the HJB step "
-                        f"(Issue #1157); population {k} uses {type(solver_k).__name__}, which does "
+                        f"(Issue #1071); population {k} uses {type(solver_k).__name__}, which does "
                         "not thread the cross-density trajectory into solve_hjb_system and "
                         "would silently decouple. Use HJBFDMSolver for multi-population MFG."
                     )
-                if honors_override:
+                if honors_cross_density:
                     U[k] = solver_k.solve_hjb_system(
                         M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all)
                     )
