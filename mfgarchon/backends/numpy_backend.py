@@ -142,6 +142,10 @@ class NumPyBackend(BaseBackend):
         Hamilton-Jacobi-Bellman time step using finite differences.
 
         ∂U/∂t + H(x, ∇U, M) = 0
+
+        ⚠️ LQ-only toy stepper (hardcoded H = 0.5·p²); does NOT honor ``problem.hamiltonian_class``
+        and has no caller in the solver fleet. Not the production path — see
+        :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
         """
         # Compute spatial gradient of U using central differences
         dU_dx = np.zeros_like(U)

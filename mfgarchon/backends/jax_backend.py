@@ -271,6 +271,14 @@ class JAXBackend(BaseBackend):
         return M_new
 
     def hjb_step(self, U, M, dt, dx, problem_params):
+        """Single HJB time step — LQ-only toy stepper (hardcoded H = 0.5·p², see ``_hamiltonian_impl``).
+
+        ⚠️ Does NOT honor ``problem.hamiltonian_class`` and has no caller in the solver fleet (only
+        tests + the jax_acceleration benchmark demo). Not the production path — see
+        :meth:`BaseBackend.hjb_step`. Teaching it ``hamiltonian_class`` by XLA-lowering the operator
+        tree + Hamiltonian is the deferred RFC #1072 ("Functional Operator Lowering", post-v1.0) —
+        this is the issue's named target; do NOT treat it as a quick patch.
+        """
         x_grid = problem_params.get("x_grid", jnp.linspace(0, 1, len(U)))
         if self.jit_compile and self._jit_hjb_step is not None:
             return self._jit_hjb_step(U, M, dt, dx, x_grid, problem_params)
