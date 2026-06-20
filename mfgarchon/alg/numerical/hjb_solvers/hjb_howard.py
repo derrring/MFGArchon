@@ -74,6 +74,10 @@ For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(x, p, m, t) = -p/c`.
 """
 
 RunningCostFn = Callable[[int], np.ndarray]
+# Control-cost Lagrangian L(alpha) over the collocation cloud (Issue #1071): the
+# policy-evaluation running cost. Single source = control_cost.lagrangian; the
+# default unit-quadratic (1/2)|alpha|^2 is used when this is None.
+ControlLagrangianFn = Callable[[np.ndarray], np.ndarray]
 """Time-indexed running cost L(x, alpha*, m, t) at the optimal policy.
 
 `running_cost(t_idx) -> array of shape (n,)` returning the running cost
@@ -276,6 +280,7 @@ class HJBHowardSolver:
         stencil_provider: HJBGFDMSolver,
         alpha_star: AlphaStarFn,
         running_cost: RunningCostFn | None = None,
+        control_lagrangian: ControlLagrangianFn | None = None,
         discretisation: Literal["upwind_projection", "upwind_per_axis", "central"] = "upwind_projection",
         max_iter: int = 20,
         tol: float = 1e-4,
@@ -298,6 +303,7 @@ class HJBHowardSolver:
         self.stencil_provider = stencil_provider
         self.alpha_star = alpha_star
         self.running_cost = running_cost
+        self.control_lagrangian = control_lagrangian
         self.discretisation = discretisation
         self.max_iter = int(max_iter)
         self.tol = float(tol)
@@ -432,9 +438,16 @@ class HJBHowardSolver:
             A_adv = self._build_A_adv(alpha, static)
             A = eye(n, format="csr") / dt - A_adv - 0.5 * sigma * sigma * D_lap
 
-            # RHS: u_next/dt + (1/2)|alpha|^2 + running_cost
-            alpha_sq = np.sum(alpha * alpha, axis=1)
-            b = u_next / dt + 0.5 * alpha_sq
+            # RHS: u_next/dt + L(alpha) + running_cost. L(alpha) is the control-cost
+            # Lagrangian from the single source (control_cost.lagrangian, Issue #1071):
+            # L(alpha) = lambda/2 |alpha|^2 for the quadratic cost, so this is byte-identical
+            # to the prior hardcoded (1/2)|alpha|^2 at lambda=1 and correct for lambda != 1.
+            # Falls back to the unit-quadratic form when no Lagrangian is supplied.
+            if self.control_lagrangian is not None:
+                L_alpha = self.control_lagrangian(alpha)
+            else:
+                L_alpha = 0.5 * np.sum(alpha * alpha, axis=1)
+            b = u_next / dt + L_alpha
             if rc_t is not None:
                 b = b + rc_t
 
@@ -569,4 +582,4 @@ class HJBHowardSolver:
         return U
 
 
-__all__ = ["HJBHowardSolver", "AlphaStarFn", "RunningCostFn"]
+__all__ = ["HJBHowardSolver", "AlphaStarFn", "RunningCostFn", "ControlLagrangianFn"]
