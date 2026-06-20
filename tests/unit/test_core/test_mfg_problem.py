@@ -445,6 +445,27 @@ def test_mfg_problem_validates_zero_mass_m_initial():
         MFGProblem(geometry=geometry, components=components)
 
 
+@pytest.mark.unit
+def test_mfg_problem_rejects_negative_sigma():
+    """Issue #1077 (case 3): a negative scalar sigma is nonsensical volatility -> fail fast."""
+    with pytest.raises(ValueError, match=r"sigma.*must be >= 0"):
+        create_test_problem(sigma=-1.0)
+
+
+@pytest.mark.unit
+def test_mfg_problem_zero_sigma_is_allowed_and_reconstruction_safe():
+    """Issue #1077 (case 3): sigma == 0 is the deterministic sentinel and must stay allowed,
+    so the negative-sigma guard is reconstruction-safe -- rebuilding from a deterministic
+    problem's stored sigma (0.0) does not raise."""
+    determ = create_test_problem(sigma=None)
+    assert determ.sigma == 0.0
+    assert create_test_problem(sigma=0.0).sigma == 0.0
+    # Reconstruction: MFGProblem(sigma=other.sigma) with a deterministic ``other``.
+    assert create_test_problem(sigma=determ.sigma).sigma == 0.0
+    # Positive volatility is unaffected.
+    assert create_test_problem(sigma=0.3).sigma == 0.3
+
+
 # ===================================================================
 # Test Hamiltonian Methods
 # ===================================================================

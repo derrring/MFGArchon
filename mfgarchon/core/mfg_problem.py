@@ -459,10 +459,23 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Convert to SDE volatility (the internal representation used by all solvers).
         # After this block, `vola_value` holds the SDE volatility field.
         if sigma is not None:
+            # Issue #1077 (case 3): reject a nonsensical NEGATIVE scalar volatility
+            # (fail-fast). A scalar sigma == 0 is the legitimate deterministic sentinel
+            # (identical to the sigma=None path below), so it stays allowed -- this guard is
+            # reconstruction-safe: MFGProblem(sigma=other.sigma) with a deterministic
+            # ``other`` (self.sigma == 0.0) does not raise. Callable / array sigma
+            # (Issue #1248) is validated where it is evaluated, not here.
+            if isinstance(sigma, (int, float, np.floating, np.integer)) and sigma < 0:
+                raise ValueError(
+                    f"sigma (SDE volatility) must be >= 0, got {sigma}. "
+                    "Use sigma=0 or sigma=None for deterministic dynamics."
+                )
             # User provided SDE volatility directly — no conversion needed
             vola_value = sigma
         elif diffusion is not None:
             # User provided PDE coefficient D = sigma^2/2.
+            # (Negative D is already rejected by `_diffusion_to_volatility` -- the #811
+            # "Diffusion coefficient must be non-negative" guard -- so no extra check here.)
             # Convert to SDE volatility: sigma = sqrt(2D).
             if callable(diffusion):
                 _D_callable = diffusion
