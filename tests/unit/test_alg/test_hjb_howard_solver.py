@@ -35,6 +35,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     HamiltonianBase,
+    L1ControlCost,
     OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
@@ -477,17 +478,16 @@ def _howard_gfdm_with_hamiltonian(hamiltonian_class, *, LX=4.0, Nt=20):
     return gfdm, U_T
 
 
-def test_integrated_howard_rejects_nonunit_control_cost():
-    """Non-unit control cost defeats the hardcoded (1/2)|alpha|^2 Lagrangian -> fail loud.
+def test_integrated_howard_rejects_nonquadratic_control_cost():
+    """Non-QUADRATIC control cost -> fail loud (Issue #1071).
 
-    Regression for the gate reading problem.lambda_ (left at the 1.0 default here) instead of
-    the components Hamiltonian's actual control cost: the old gate passed and Howard solved the
-    wrong effective Hamiltonian; the fixed gate reads control_cost.lambda_ and raises.
-    """
-    H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=2.0))
+    Howard now consumes control_cost.lagrangian() in the policy-evaluation RHS, so any quadratic
+    cost (unit or lambda != 1; see test_integrated_howard_matches_newton_nonlq) is supported. A
+    non-quadratic cost (L1/bounded) has a non-smooth Lagrangian whose Howard policy-iteration
+    convergence is unvalidated, so it stays gated."""
+    H = SeparableHamiltonian(control_cost=L1ControlCost(lambda_=1.0))
     gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
-    assert gfdm.problem.lambda_ == 1.0  # the legacy gate's source is unit -> would have passed
-    with pytest.raises(NotImplementedError, match="control cost"):
+    with pytest.raises(NotImplementedError, match="quadratic"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 
@@ -592,24 +592,31 @@ def _v_quadratic(x, t):
 
 
 @pytest.mark.parametrize(
-    ("potential", "coupling", "case"),
+    ("potential", "coupling", "lambda_", "case"),
     [
-        (_v_quadratic, None, "V-only"),
-        (None, lambda m: 0.5 * np.asarray(m), "f(m)-only"),
-        (_v_quadratic, lambda m: 0.5 * np.asarray(m), "V+f(m)"),
+        (_v_quadratic, None, 1.0, "V-only"),
+        (None, lambda m: 0.5 * np.asarray(m), 1.0, "f(m)-only"),
+        (_v_quadratic, lambda m: 0.5 * np.asarray(m), 1.0, "V+f(m)"),
+        # Issue #1071: lambda != 1 quadratic — Howard consumes control_cost.lagrangian()
+        # = lambda/2|alpha|^2, so it must still match Newton (the gate that used to reject
+        # lambda != 1 is lifted). alpha* = -p/lambda + L = lambda/2|alpha|^2 reconstructs H.
+        (_v_quadratic, lambda m: 0.5 * np.asarray(m), 2.0, "V+f(m), lambda=2"),
+        (_v_quadratic, lambda m: 0.5 * np.asarray(m), 0.5, "V+f(m), lambda=0.5"),
     ],
 )
-def test_integrated_howard_matches_newton_nonlq(potential, coupling, case):
-    """Issue #1247 correctness gate + rc_t sign resolver.
+def test_integrated_howard_matches_newton_nonlq(potential, coupling, lambda_, case):
+    """Issue #1247 correctness gate + rc_t sign resolver; Issue #1071 lambda != 1 coverage.
 
     Howard (inner_solver='howard') must match Newton (inner_solver='newton') on a non-LQ
     separable Hamiltonian once V(x)/f(m) are wired into Howard's running_cost slot. The
     relative tolerance 2e-2 PASSES for the resolved sign rc_t = -(V+f(m)) (observed
-    max-rel-error <~5e-4 for all three cases) and FAILS for the flipped sign rc_t = +(V+f(m))
+    max-rel-error <~5e-4 for the lambda=1 cases) and FAILS for the flipped sign rc_t = +(V+f(m))
     (observed ~2.0). Zero terminal cost makes the pure-LQ baseline exact so the residual is
-    the V/f-wiring error, not |grad u|^2 stiffness."""
+    the V/f-wiring error, not |grad u|^2 stiffness. The lambda != 1 cases additionally pin that
+    Howard's single-source Lagrangian (control_cost.lagrangian = lambda/2|alpha|^2) agrees with
+    Newton's analytic H = |p|^2/(2 lambda) + V + f(m) (Issue #1071)."""
     H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=1.0),
+        control_cost=QuadraticControlCost(lambda_=lambda_),
         potential=potential,
         coupling=coupling,
     )

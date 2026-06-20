@@ -3000,34 +3000,29 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "inner_solver='howard' requires problem.hamiltonian_class to derive the optimal "
                 "control alpha* = -dH/dp; the legacy no-Hamiltonian LQ path is unsupported."
             )
-        # Issue #1071: derive lambda from the Hamiltonian's control cost (the single source),
-        # NOT from problem.lambda_ — the placeholder read that powered the #1247 desync.
-        lambda_val = self._control_cost_lambda()
-        if abs(lambda_val - 1.0) > 1e-12:
-            raise NotImplementedError(
-                f"inner_solver='howard' currently assumes unit control cost (lambda_=1), got {lambda_val}. "
-                "Howard's policy-evaluation Lagrangian is hardcoded to (1/2)|alpha|^2; non-unit control cost "
-                "needs a running-cost correction (deferred, Issue #1118 PR2)."
-            )
-        # Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2 and
-        # derives alpha* = -dH/dp, so the control term is faithful only for a unit-quadratic
-        # MINIMIZE control cost H_control = (1/2)|p|^2. The potential V(x, t), the density
-        # coupling f(m), and any caller running cost ARE now wired (Issue #1247, below); what
-        # remains unmodelled — non-unit / non-quadratic control cost and the MAXIMIZE sense —
-        # is the Lagrangian-scaling work deferred alongside #1071. Fail loud on those cases;
-        # validated by tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*.
+        # Howard derives alpha* = -dH/dp and now consumes the control-cost Lagrangian
+        # L(alpha) = lambda/2 |alpha|^2 from the single source (control_cost.lagrangian, wired
+        # below), so any QUADRATIC control cost (unit or lambda != 1) MINIMIZE is faithful. The
+        # potential V(x, t), the density coupling f(m), and any caller running cost are wired
+        # (Issue #1247, below). What remains unmodelled — NON-quadratic control cost and the
+        # MAXIMIZE sense — is failed loud below (validated by
+        # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
         control_cost = getattr(H_class, "control_cost", None)
         if control_cost is not None:
             from mfgarchon.core.hamiltonian import QuadraticControlCost
 
-            cc_lambda = getattr(control_cost, "lambda_", 1.0)
-            if not isinstance(control_cost, QuadraticControlCost) or abs(cc_lambda - 1.0) > 1e-12:
+            # Issue #1071: the policy-evaluation RHS now consumes control_cost.lagrangian()
+            # (wired below as control_lagrangian=), so any QUADRATIC control cost — unit or
+            # lambda != 1 — is exact: L(alpha) = lambda/2 |alpha|^2. Non-quadratic costs (L1,
+            # bounded) have a non-smooth Lagrangian whose Howard policy-iteration convergence
+            # is unvalidated, so they stay gated.
+            if not isinstance(control_cost, QuadraticControlCost):
                 raise NotImplementedError(
-                    "inner_solver='howard' hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2, "
-                    f"but the Hamiltonian's control cost is {type(control_cost).__name__}"
-                    f"(lambda_={cc_lambda}). Non-unit / non-quadratic control cost needs "
-                    "control_cost.lagrangian() in the policy-evaluation RHS; use inner_solver='newton' "
-                    "(deferred, Issue #1118 PR2)."
+                    "inner_solver='howard' supports a quadratic control cost (its Lagrangian "
+                    "L(alpha) = lambda/2 |alpha|^2 is wired into the policy-evaluation RHS, any "
+                    f"lambda), but the Hamiltonian's control cost is {type(control_cost).__name__}. "
+                    "Non-quadratic control costs have a non-smooth Lagrangian whose Howard "
+                    "convergence is unvalidated; use inner_solver='newton' (Issue #1071)."
                 )
             if getattr(control_cost, "sign", 1) != 1:
                 raise NotImplementedError(
@@ -3146,11 +3141,16 @@ class HJBGFDMSolver(BaseHJBSolver):
                     rc = rc + np.asarray(user_rc(t_idx), dtype=float).ravel()
                 return -rc  # rc_t = -(V + f(m) + L_user); see SIGN note above.
 
+        # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
+        # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The
+        # gate above guarantees a QuadraticControlCost, so L(alpha) = lambda/2 |alpha|^2.
+        control_lagrangian = control_cost.lagrangian if control_cost is not None else None
         howard = HJBHowardSolver(
             self.problem,
             stencil_provider=self,
             alpha_star=alpha_star,
             running_cost=howard_running_cost,
+            control_lagrangian=control_lagrangian,
             discretisation="central" if self.dimension == 1 else "upwind_projection",
             use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
         )
