@@ -281,10 +281,14 @@ class TestCanonicalCSImplicitVsExplicit:
         err_explicit = float(np.sqrt(np.mean((U_explicit[0][interior] - ref_on_x[interior]) ** 2)))
 
         assert np.all(np.isfinite(U_canonical)), "canonical produced NaN/Inf"
-        # The implicit-alpha* DPP is much closer to the reference than the explicit at-grid alpha*.
+        # The implicit-alpha* DPP is meaningfully closer to the reference than the explicit
+        # at-grid alpha*. Issue #1413: the explicit (stochastic) path is now the CORRECTED
+        # Lax-Oleinik scheme, so this gap (~6-7x here) reflects the genuine implicit-vs-explicit
+        # alpha* difference at large dt — NOT the former sign/foot bug, which made the explicit
+        # >10x worse (and ~24% off even at lambda=1; see Issue #575/#1413).
         assert err_canonical < err_explicit, f"canonical {err_canonical:.3e} !< explicit {err_explicit:.3e}"
-        assert err_explicit > 10.0 * err_canonical, (
-            f"explicit not dramatically worse: canonical={err_canonical:.3e}, explicit={err_explicit:.3e}"
+        assert err_explicit > 3.0 * err_canonical, (
+            f"explicit not meaningfully worse: canonical={err_canonical:.3e}, explicit={err_explicit:.3e}"
         )
         assert err_canonical < 0.1, f"canonical itself inaccurate at large dt: {err_canonical:.3e}"
 
