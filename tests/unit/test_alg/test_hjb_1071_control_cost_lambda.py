@@ -22,6 +22,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.core.derivatives import DerivativeTensors
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -123,3 +124,76 @@ def test_nonpositive_lambda_rejected():
     """A non-positive control cost is rejected (division by lambda requires lambda > 0)."""
     with pytest.raises(ValueError, match="must be positive"):
         QuadraticControlCost(lambda_=-1.0)
+
+
+# --- #1071 Phase 4: GFDM per-point FD-Jacobian fast path sources lambda from the
+# --- Hamiltonian single source, not a direct problem.lambda_ read (hjb_gfdm.py:_compute_dH_dp_fd).
+
+
+class _ControlCost:
+    def __init__(self, lambda_: float):
+        self.lambda_ = lambda_
+
+
+class _Ham:
+    def __init__(self, lambda_: float):
+        self.control_cost = _ControlCost(lambda_)
+
+
+class _FastPathProblem:
+    """``is_custom=False`` (so the GFDM LQ fast path runs) but the Hamiltonian's control
+    cost (canonical lambda) disagrees with the ``problem.lambda_`` placeholder.
+
+    This divergent state is NOT reachable through the public API -- ``is_custom=False``
+    implies the problem carries no Hamiltonian class, so the two always agree. It is
+    constructed here purely to PIN that the fast path reads lambda from the canonical
+    single source, discriminating the single-source code from the pre-fix direct read.
+    """
+
+    is_custom = False
+    dimension = 1
+
+    def __init__(self, placeholder_lambda: float, canonical_lambda: float):
+        self.lambda_ = placeholder_lambda
+        self.hamiltonian_class = _Ham(canonical_lambda)
+
+
+class _FastPathSolver:
+    """Minimal stand-in carrying the inherited ``_control_cost_lambda`` for unbound-call
+    invocation of ``HJBGFDMSolver._compute_dH_dp_fd``."""
+
+    _control_cost_lambda = BaseHJBSolver._control_cost_lambda
+
+    def __init__(self, problem):
+        self.problem = problem
+
+
+def test_fd_jacobian_fast_path_sources_lambda_from_hamiltonian_not_placeholder():
+    """#1071 Phase 4 (discriminating): the GFDM per-point FD-Jacobian fast path derives
+    lambda from the Hamiltonian single source, not ``problem.lambda_``.
+
+    Pins against reverting ``hjb_gfdm.py:_compute_dH_dp_fd`` to a direct
+    ``getattr(self.problem, "lambda_")`` read: canonical lambda=2 must give dH/dp = p/2,
+    whereas the pre-fix placeholder read (lambda=1) gave p/1.
+    """
+    solver = _FastPathSolver(_FastPathProblem(placeholder_lambda=1.0, canonical_lambda=2.0))
+    derivs = DerivativeTensors.from_arrays(grad=np.array([0.6]), hess=np.zeros((1, 1)))
+
+    out = HJBGFDMSolver._compute_dH_dp_fd(solver, point_idx=0, m_at_x=1.0, derivs=derivs)
+
+    np.testing.assert_allclose(out, np.array([0.3]))  # p / canonical lambda = 0.6 / 2
+    assert not np.allclose(out, np.array([0.6])), (
+        "fast path read the problem.lambda_ placeholder (p/1) instead of control_cost.lambda_ (p/2)"
+    )
+
+
+def test_fd_jacobian_fast_path_byte_identical_on_reachable_legacy_path():
+    """#1071 Phase 4 (equivalence): on the only construction that actually reaches the
+    fast path -- no Hamiltonian class, ``problem.lambda_`` the sole source -- the
+    single-source routing reproduces the old direct-read result exactly (p / lambda_)."""
+    solver = _FastPathSolver(_NoHamProblem(lambda_=2.0))
+    derivs = DerivativeTensors.from_arrays(grad=np.array([0.6]), hess=np.zeros((1, 1)))
+
+    out = HJBGFDMSolver._compute_dH_dp_fd(solver, point_idx=0, m_at_x=1.0, derivs=derivs)
+
+    np.testing.assert_allclose(out, np.array([0.3]))  # p / problem.lambda_ = 0.6 / 2

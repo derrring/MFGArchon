@@ -3560,13 +3560,18 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         p = derivs.grad if derivs.grad is not None else np.zeros(self.problem.dimension)
 
-        # Fast path: for standard LQ Hamiltonian H = |p|²/(2λ), dH/dp = p/λ
-        lambda_val = getattr(self.problem, "lambda_", None)
-        if lambda_val is not None and lambda_val > 0:
-            # Check if using standard (non-custom) Hamiltonian
-            is_custom = getattr(self.problem, "is_custom", False)
-            if not is_custom:
-                return p / lambda_val
+        # Fast path: for standard LQ Hamiltonian H = |p|²/(2λ), dH/dp = p/λ.
+        # Source λ from the canonical single source (``_control_cost_lambda`` ->
+        # ``control_cost.lambda_``, falling back to ``problem.lambda_`` only when the
+        # problem carries no Hamiltonian class) rather than reading ``problem.lambda_``
+        # directly. This was the last direct ``problem.lambda_`` read in a physics path
+        # -- the #1247 desync survivor on the per-point FD-Jacobian fast path (#1071
+        # Phase 4). On every reachable construction the two agree (the divergent case is
+        # unreachable: ``not is_custom`` implies the problem carries no control cost), so
+        # this is byte-identical single-source hygiene, not a behaviour change.
+        is_custom = getattr(self.problem, "is_custom", False)
+        if not is_custom:
+            return p / self._control_cost_lambda()
 
         # Fallback: finite differences for custom Hamiltonians using scipy
         x_pos = self.collocation_points[point_idx]
