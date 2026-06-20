@@ -3102,6 +3102,14 @@ class HJBGFDMSolver(BaseHJBSolver):
             U_solution_collocation = self._solve_backward_howard(
                 M_collocation, U_solution_collocation[n_time_points - 1, :]
             )
+            # Issue #1381: Howard owns the full backward sweep and bypasses _solve_timestep,
+            # so the diagnostic DMP guard the Newton path runs per timestep (see
+            # _maybe_warn_dmp call below) would otherwise never fire on this path. Run it
+            # over the solved time-slices; the warn-once latch stops after the first
+            # exceedance. No-op unless check_dmp=True (first line early-returns), and the
+            # drift check is numerically inert (Issue #1074).
+            for n in range(n_time_points - 1):
+                self._maybe_warn_dmp(U_solution_collocation[n, :])
         else:
             # Backward time stepping: Nt steps from index (n_time_points-2) down to 0
             # This covers all Nt intervals in the backward direction (Issue #587 Protocol pattern)
