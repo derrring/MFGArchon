@@ -1974,120 +1974,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         is_smooth = getattr(H_class, "is_smooth", lambda: True)
         return bool(callable(is_smooth) and not is_smooth())
 
-    def _find_optimal_control(self, x: np.ndarray | float, m: float, time_idx: int) -> np.ndarray | float:
-        """
-        Find optimal control p* that minimizes H(x, p, m) (supports 1D and nD).
-
-        For the standard MFG Hamiltonian H(x, p, m) = |p|²/2 + V(x) + C(x,m),
-        the optimal control is p* = 0 in all dimensions.
-
-        For general Hamiltonians:
-        - 1D: Uses scalar optimization (minimize_scalar with Brent/Golden search)
-        - nD: Uses vector optimization (scipy.optimize.minimize with L-BFGS-B)
-
-        Args:
-            x: Spatial position
-                - 1D: scalar float
-                - nD: array of shape (dimension,)
-            m: Density value
-            time_idx: Time index
-
-        Returns:
-            Optimal control value p*
-                - 1D: scalar float
-                - nD: array of shape (dimension,)
-        """
-        # Issue #902: Infer control bounds from Lagrangian or Hamiltonian
-        _bounds = (-10.0, 10.0)  # default
-        L_class = self.problem.lagrangian_class
-        if L_class is not None:
-            cb = L_class.control_bounds()
-            if cb is not None:
-                _bounds = cb
-
-        # Issue #902: Use HamiltonianBase.optimal_control() if available.
-        # Note: _find_optimal_control finds p* that MINIMIZES H(x, p, m),
-        # NOT the MFG drift alpha*. For quadratic H = |p|^2/2 + ..., p* = 0.
-        # This is used for characteristic tracing, not for FP drift.
-
-        # Priority 1: hamiltonian_class — if H has a known minimum (e.g., quadratic at p=0)
-        H_class = self.problem.hamiltonian_class
-        if H_class is not None:
-            # For separable H: minimum of H_control(p) w.r.t. p
-            # Quadratic: dp=0 at p=0. L1: H=0 for |p|<=lambda, min at p=0.
-            # General: use scipy.
-            try:
-                _ = H_class.control_cost  # check if separable (has control_cost)
-                # ControlCostBase: minimum of evaluate(p) is at p=0 for all standard costs
-                if self.dimension == 1:
-                    return 0.0
-                return np.zeros(self.dimension)
-            except AttributeError:
-                pass  # Not separable, fall through to optimization
-
-        if self.dimension == 1:
-            x_scalar = float(x) if np.ndim(x) > 0 else x
-
-            # Legacy: quadratic shortcut
-            try:
-                _ = self.problem.coupling_coefficient
-                return 0.0
-            except AttributeError:
-                pass
-
-            # Numerical optimization using _evaluate_hamiltonian
-            def hamiltonian_objective(p):
-                return self._evaluate_hamiltonian(x_scalar, p, m, time_idx)
-
-            if self.optimization_method == "brent":
-                result = minimize_scalar(
-                    hamiltonian_objective,
-                    bounds=_bounds,
-                    method="bounded",
-                    options={"xatol": self.tolerance},
-                )
-            else:
-                result = minimize_scalar(
-                    hamiltonian_objective,
-                    bounds=_bounds,
-                    method="golden",
-                    options={"xtol": self.tolerance},
-                )
-
-            return result.x if result.success else 0.0
-
-        else:
-            # Legacy: quadratic shortcut
-            try:
-                _ = self.problem.coupling_coefficient
-                return np.zeros(self.dimension)
-            except AttributeError:
-                pass
-
-            def hamiltonian_objective(p_vec):
-                return self._evaluate_hamiltonian(x, p_vec, m, time_idx)
-
-            p0 = np.zeros(self.dimension)
-
-            try:
-                # Use L-BFGS-B for smooth, unconstrained optimization
-                result = minimize(
-                    hamiltonian_objective,
-                    p0,
-                    method="L-BFGS-B",
-                    options={"ftol": self.tolerance, "maxiter": 100},
-                )
-
-                if result.success:
-                    return result.x
-                else:
-                    logger.debug(f"Vector optimization did not converge: {result.message}")
-                    return p0
-
-            except Exception as e:
-                logger.debug(f"Vector optimization failed at x={x}: {e}")
-                return p0
-
     def _trace_characteristic_backward(
         self, x_current: np.ndarray | float, p_optimal: np.ndarray | float, dt: float
     ) -> np.ndarray | float:
@@ -2365,12 +2251,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Compute time value
         t_value = time_idx * self.problem.T / self.problem.Nt if time_idx is not None else 0.0
 
-        # Issue #902: Use HamiltonianBase class API first
+        # Issue #902/#1071: route the H value through the single-source batch shim
+        # (eval_H_batch -> HamiltonianBase.evaluate_H) rather than calling H_class
+        # directly, so the batch-call glue (dtype/shape) has one home — matching the
+        # batch SL paths above. Byte-identical: evaluate_H is np.asarray(H_class(...),
+        # dtype=float), so float() of it equals the prior float(H_class(...)).
         H_class = self.problem.hamiltonian_class
         if H_class is not None:
             x_vec = np.atleast_1d(x)
             p_vec = np.atleast_1d(p)
-            return float(H_class(x_vec, m, p_vec, t_value))
+            return float(eval_H_batch(H_class, x_vec, m, p_vec, t_value))
 
         # Legacy fallbacks for problems without hamiltonian_class
         derivs = self._build_derivative_tensors(p)

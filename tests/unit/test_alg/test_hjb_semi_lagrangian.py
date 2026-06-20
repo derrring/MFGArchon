@@ -1256,5 +1256,34 @@ class TestReflectIntoDomain:
         assert np.all((out >= xmn - 1e-9) & (out <= xmx + 1e-9))
 
 
+class TestSLHamiltonianSingleSource:
+    """Issue #1071: _evaluate_hamiltonian routes the H value through the single-source
+    batch shim (eval_H_batch -> HamiltonianBase.evaluate_H) instead of calling H_class
+    directly."""
+
+    def test_evaluate_hamiltonian_byte_identical_to_inline_call(self):
+        """Pin: _evaluate_hamiltonian(x, p, m, t_idx) is byte-identical (exact IEEE-754) to
+        the inline ``float(H_class(x_vec, m, p_vec, t))`` it replaced. evaluate_H wraps
+        ``__call__`` (np.asarray(self(...), dtype=float)), so float() of the shim equals the
+        direct call; this locks SL against a future divergence of the shim from __call__."""
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
+        solver = HJBSemiLagrangianSolver(problem)
+        H_class = problem.hamiltonian_class
+
+        rng = np.random.default_rng(1071)
+        for _ in range(100):
+            x = float(rng.uniform(0.0, 1.0))
+            p = float(rng.standard_normal() * 3.0)
+            m = float(rng.uniform(1e-3, 5.0))
+            t_idx = int(rng.integers(0, problem.Nt + 1))
+            t_value = t_idx * problem.T / problem.Nt
+            inline = float(H_class(np.atleast_1d(x), m, np.atleast_1d(p), t_value))
+            routed = solver._evaluate_hamiltonian(x, p, m, t_idx)
+            assert routed.hex() == inline.hex(), (
+                f"x={x} p={p} m={m} t_idx={t_idx}: routed {routed!r} != inline {inline!r}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
