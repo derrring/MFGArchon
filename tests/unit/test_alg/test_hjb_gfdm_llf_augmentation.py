@@ -397,3 +397,48 @@ class TestLLFJacobianEffect:
             "Expected at least one interior node with strictly larger diagonal "
             "when LLF is active with l_H=10 (nu_i > 0 at every node)"
         )
+
+    def test_llf_jacobian_byte_identical_to_inline_field_formula(self, problem_and_pts):
+        """Issue #1071: with LLF active the consolidated ``_compute_hjb_jacobian_vectorized``
+        routes the per-node ``σ_eff`` diffusion through the single-source assembler
+        (``assemble_hjb_jacobian_diag``, which row-scales the Laplacian via
+        ``diags(σ_eff²/2) @ D_lap``).
+
+        Pin: the assembled CSR is byte-identical (atol=0) to the explicit inline field
+        formula ``(1/dt)I + Σ_d diag(p_d/λ) @ D_grad[d] - diags(σ_eff²/2) @ D_lap`` it
+        replaced — locks the field-σ branch against a regression to the scalar ``D * D_lap``
+        scaling (which does NOT row-scale for an array left operand)."""
+        from scipy.sparse import diags, eye
+
+        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+        problem, pts = problem_and_pts
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none", llf_augmentation=True, llf_l_H=10.0)
+        solver._build_differentiation_matrices()
+        assert solver._llf_sigma_eff is not None, "LLF sigma_eff must be populated at init"
+
+        rng = np.random.default_rng(1071)
+        grad_u = rng.standard_normal((solver.n_points, 1))
+        J = solver._compute_hjb_jacobian_vectorized(grad_u)
+
+        n = solver.n_points
+        dt = solver.problem.T / solver.problem.Nt
+        lam = solver._control_cost_lambda()
+        D_field = diffusion_from_volatility(solver._llf_sigma_eff, kind="field")
+        ref = (1.0 / dt) * eye(n, format="csr")
+        for d in range(solver.dimension):
+            ref = ref + diags(grad_u[:, d] / lam, format="csr") @ solver._D_grad[d]
+        ref = ref - diags(D_field, format="csr") @ solver._D_lap
+
+        Jc, rc = J.tocsr(), ref.tocsr()
+        Jc.sort_indices()
+        rc.sort_indices()
+        assert Jc.shape == rc.shape
+        assert np.array_equal(Jc.indptr, rc.indptr), "CSR indptr drift"
+        assert np.array_equal(Jc.indices, rc.indices), "CSR indices drift"
+        maxabsdiff = float(np.max(np.abs((Jc - rc).data))) if (Jc - rc).nnz else 0.0
+        assert np.array_equal(Jc.data, rc.data), (
+            f"LLF field-σ Jacobian not byte-identical to inline formula (maxabsdiff={maxabsdiff:.3e})"
+        )

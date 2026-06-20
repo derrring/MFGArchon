@@ -2214,10 +2214,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         grad_u: np.ndarray,
     ):
         """
-        Compute sparse Jacobian using vectorized operations with pre-computed differentiation matrices.
+        Compute the sparse LQ Newton Jacobian via the single-source assembler (Issue #1071).
 
-        For standard LQ Hamiltonian H = |p|²/(2λ), dH/dp = p/λ.
-        Jacobian structure: J = (1/dt)I + (1/λ) * Σ_d diag(p_d) @ D_grad[d] - (σ²/2) * D_lap
+        Routes ∂H/∂p through ``H_class.evaluate_dp`` (the one Hamiltonian source) instead of
+        the inline ``p/λ`` re-derivation: the body delegates to
+        :meth:`_compute_hjb_jacobian_hamiltonian`, which assembles
+        ``(1/dt)I + Σ_d diag(∂H/∂p_d) @ D_grad[d] - D·D_lap`` (with ``D = σ²/2``, per-node for
+        the LLF ``σ_eff`` field) through ``assemble_hjb_jacobian_diag``. For the separable LQ
+        Hamiltonian ``∂H/∂p = p/λ`` is independent of ``m`` and ``t``, so passing ``m=0`` / ``t=0``
+        is byte-identical to the prior inline form (verified maxabsdiff=0 across the joint_socp
+        σ-sweep, strong-drift, and LLF field-σ configurations).
+
+        The single-``grad_u`` wrapper is kept because the Issue #1074 M-matrix /
+        discrete-maximum-principle tests assemble the iteration matrix directly through it.
 
         Args:
             grad_u: Pre-computed gradient, shape (n_points, dimension)
@@ -2225,45 +2234,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             Sparse Jacobian matrix in CSR format
         """
-        from scipy.sparse import diags, eye
-
-        # Lazy initialization of differentiation matrices
-        if self._D_grad is None:
-            self._build_differentiation_matrices()
-
-        n = self.n_points
-        d = self.dimension
-        dt = self.problem.T / self.problem.Nt
-        lambda_val = self._control_cost_lambda()
-        # Issue #1073: use _get_sigma_value (returns σ) instead of confusing
-        # `getattr(problem, "diffusion") or getattr(problem, "sigma")` chain.
-        # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
-        # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
-        # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
-        # Issue #1059 LLF: when active, use per-node D_i = sigma_eff_i^2/2.
-        if self.llf_augmentation and self._llf_sigma_eff is not None:
-            D_eff = diffusion_from_volatility(self._llf_sigma_eff, kind="field")
-        else:
-            sigma = self._get_sigma_value(None)
-            D_eff = None
-            diffusion_coeff = diffusion_from_volatility(sigma)
-
-        # Time derivative term: (1/dt) * I
-        jacobian = (1.0 / dt) * eye(n, format="csr")
-
-        # Hamiltonian gradient term: (1/λ) * Σ_d diag(p_d) @ D_grad[d]
-        # For LQ: dH/dp = p/λ, so ∂(dH/dp · ∇u)/∂u_j = (p/λ) · (∂∇u/∂u_j)
-        for dim in range(d):
-            p_d = grad_u[:, dim] / lambda_val  # dH/dp_d = p_d / λ
-            jacobian = jacobian + diags(p_d, format="csr") @ self._D_grad[dim]
-
-        # Diffusion term: -(D_i) * D_lap  [per-node for LLF, scalar otherwise]
-        if D_eff is not None:
-            jacobian = jacobian - diags(D_eff, format="csr") @ self._D_lap
-        else:
-            jacobian = jacobian - diffusion_coeff * self._D_lap
-
-        return jacobian
+        H_class = getattr(self.problem, "hamiltonian_class", None)
+        if H_class is None:
+            raise ValueError(
+                "_compute_hjb_jacobian_vectorized requires problem.hamiltonian_class to derive "
+                "∂H/∂p via the single-source assembler (Issue #1071)."
+            )
+        # Separable LQ: ∂H/∂p = p/λ ignores m and t, so m=0 / t=0 are byte-identical.
+        return self._compute_hjb_jacobian_hamiltonian(grad_u, np.zeros(self.n_points), H_class, 0.0)
 
     def _maybe_warn_dmp(self, u_current: np.ndarray) -> None:
         """Warn (once) when the current drift exceeds the assembled-M-matrix threshold (Issue #1074).
