@@ -1001,7 +1001,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # For explicit_euler/rk2, characteristic is x_departure = x - p*dt (vectorizable)
             if self.characteristic_solver in ("explicit_euler", "rk2"):
                 # Step 1a: Batch departure points
-                x_departures = self.x_grid - grad_u * self.dt
+                x_departures = self.x_grid - (grad_u / self._control_cost_lambda()) * self.dt
 
                 # Apply boundary conditions (vectorized)
                 bc = self.get_boundary_conditions()
@@ -1028,34 +1028,34 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     interp_fn = interp1d(self.x_grid, U_next, kind="linear", fill_value="extrapolate")
                     u_departures = interp_fn(x_departures)
 
-                # Step 1c: Batch Hamiltonian evaluation
-                x_batch = self.x_grid.reshape(-1, 1)  # (Nx, 1)
-                p_batch = grad_u.reshape(-1, 1)  # (Nx, 1)
+                # Step 1c: fail-fast on a missing Hamiltonian (Issue #1071) — never silently
+                # drop the H term (that reduces the update to pure transport of the terminal data).
                 H_class = self.problem.hamiltonian_class
-                if H_class is not None:
-                    H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * self.dt).ravel()
-                else:
-                    # Issue #1071 / fail-fast: never silently drop the Hamiltonian term (that
-                    # reduces the HJB update to pure transport of the terminal data). The
-                    # solve-entry guard catches this first; this is the batch-path backstop.
+                if H_class is None:
                     raise ValueError(
                         "HJBSemiLagrangianSolver: problem.hamiltonian_class is None in the batch "
                         "Hamiltonian path. Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
                     )
+                x_batch = self.x_grid.reshape(-1, 1)  # (Nx, 1)
+                p_batch = grad_u.reshape(-1, 1)  # (Nx, 1)
 
-                # Step 1d: Advection update (vectorized)
-                U_star = u_departures - self.dt * H_values
+                # Step 1d: Lax-Oleinik value update (Issue #1413)
+                U_star = self._sl_value_update(u_departures, x_batch, M_next, p_batch, time_idx * self.dt, self.dt)
 
             else:
-                # Fallback: per-point loop for rk4 or other methods
+                # Fallback: per-point loop for rk4 or other methods. Issue #1413: λ-scaled foot
+                # (x - dt·∂H/∂p = x - dt·p/λ) + Lax-Oleinik value update, matching the batch path.
+                lam = self._control_cost_lambda()
+                t_val = time_idx * self.dt
                 U_star = np.zeros(Nx)
                 for i in range(Nx):
                     try:
-                        p_optimal = grad_u[i]
-                        x_departure = self._trace_characteristic_backward(self.x_grid[i], p_optimal, self.dt)
+                        vel_i = grad_u[i] / lam
+                        x_departure = self._trace_characteristic_backward(self.x_grid[i], vel_i, self.dt)
                         u_departure = self._interpolate_value(U_next, x_departure)
-                        hamiltonian_value = self._evaluate_hamiltonian(self.x_grid[i], p_optimal, M_next[i], time_idx)
-                        U_star[i] = u_departure - self.dt * hamiltonian_value
+                        U_star[i] = self._sl_value_update(
+                            u_departure, np.array([self.x_grid[i]]), M_next[i], np.array([grad_u[i]]), t_val, self.dt
+                        )
                     except Exception as e:
                         logger.warning(f"Error at grid point {i}: {e}")
                         U_star[i] = U_next[i]
@@ -1109,39 +1109,32 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             error_count = 0
             total_points = int(np.prod(grid_shape))
 
+            # Issue #1413: hoist λ and the time value for the Lax-Oleinik update in the loop.
+            lam = self._control_cost_lambda()
+            t_val = time_idx * self.dt
             # Iterate over all grid points for advection
             for multi_idx in np.ndindex(grid_shape):
                 # Get spatial coordinates for this grid point
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
                 m_current = M_next_shaped[multi_idx]
 
-                # Extract optimal control from gradient (vector for nD)
+                # Extract momentum p = ∇u (vector for nD)
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
-                # Trace characteristic backward (vector operation)
-                x_departure = self._trace_characteristic_backward(x_current, p_optimal, self.dt)
-
-                # Interpolate at departure point
+                # Issue #1413: trace along the characteristic velocity ∂H/∂p (= p/λ for the
+                # quadratic control cost), then apply the Lax-Oleinik value update (the foot
+                # carries advection; cost = dt·H_control - dt·(V+f)). Replaces the inconsistent
+                # `u_departure - dt·H` with a non-λ-scaled foot (Issue #575/#1413).
+                vel = p_optimal / lam
+                x_departure = self._trace_characteristic_backward(x_current, vel, self.dt)
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
-
-                # Evaluate Hamiltonian
-                hamiltonian_value = self._evaluate_hamiltonian(x_current, p_optimal, m_current, time_idx)
-
-                # Advection step for backward HJB solve:
-                # HJB: -∂u/∂t + H(x,∇u,m) - σ²/2 Δu = 0
-                # Rearranging: ∂u/∂t = H - σ²/2 Δu
-                # Backward discretization: u^n = u^{n+1} - dt * H (diffusion handled separately)
-                # Issue #575: Sign was wrong (+ instead of -)
-                u_star_val = u_departure - self.dt * hamiltonian_value
+                u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, self.dt)
 
                 # Check for numerical issues
                 if np.isnan(u_star_val) or np.isinf(u_star_val):
                     error_count += 1
                     if error_count <= 5:
-                        logger.warning(
-                            f"NaN/Inf at grid point {multi_idx}: "
-                            f"u_departure={u_departure:.3e}, H={hamiltonian_value:.3e}"
-                        )
+                        logger.warning(f"NaN/Inf at grid point {multi_idx}: u_departure={u_departure:.3e}")
                     U_star[multi_idx] = U_next_shaped[multi_idx]  # Fallback
                 else:
                     U_star[multi_idx] = u_star_val
@@ -1214,19 +1207,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_u = self._compute_gradient(U_next, check_cfl=False, t_idx=time_idx, m_density=M_next)
 
-            # Step 1: Advection along characteristics
+            # Step 1: Advection along characteristics (Issue #1413: λ-scaled foot + Lax-Oleinik)
+            lam = self._control_cost_lambda()
+            t_val = time_idx * self.dt
             for i in range(Nx):
                 x_current = self.x_grid[i]
                 m_current = M_next[i]
 
                 try:
-                    p_optimal = grad_u[i]
-                    x_departure = self._trace_characteristic_backward(x_current, p_optimal, dt)
+                    vel_i = grad_u[i] / lam
+                    x_departure = self._trace_characteristic_backward(x_current, vel_i, dt)
                     u_departure = self._interpolate_value(U_next, x_departure)
-                    hamiltonian_value = self._evaluate_hamiltonian(x_current, p_optimal, m_current, time_idx)
-
-                    # Backward HJB: u^n = u^{n+1} - dt * H (Issue #575: sign fix)
-                    U_star[i] = u_departure - dt * hamiltonian_value
+                    U_star[i] = self._sl_value_update(
+                        u_departure, np.array([x_current]), m_current, np.array([grad_u[i]]), t_val, dt
+                    )
 
                 except Exception as e:
                     logger.warning(f"Error at grid point {i}: {e}")
@@ -1267,17 +1261,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             error_count = 0
             total_points = int(np.prod(grid_shape))
 
+            lam = self._control_cost_lambda()
+            t_val = time_idx * self.dt
             for multi_idx in np.ndindex(grid_shape):
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
                 m_current = M_next_shaped[multi_idx]
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
-                x_departure = self._trace_characteristic_backward(x_current, p_optimal, dt)
+                # Issue #1413: λ-scaled foot (∂H/∂p) + Lax-Oleinik value update.
+                vel = p_optimal / lam
+                x_departure = self._trace_characteristic_backward(x_current, vel, dt)
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
-                hamiltonian_value = self._evaluate_hamiltonian(x_current, p_optimal, m_current, time_idx)
-
-                # Backward HJB: u^n = u^{n+1} - dt * H (Issue #575: sign fix)
-                u_star_val = u_departure - dt * hamiltonian_value
+                u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, dt)
 
                 if np.isnan(u_star_val) or np.isinf(u_star_val):
                     error_count += 1
@@ -1317,14 +1312,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         The diffusion enters directly through 2*d stochastic departure points
         (one pair per spatial dimension), eliminating the operator-splitting
-        diffusion solve. For separable convex Lagrangian L(x, a, m) =
-        (1/2)|a|^2 + f(x, m) the optimal control is alpha* = -nabla u^{n+1}
-        and the update is
+        diffusion solve. For a separable Hamiltonian H = H_control(p) + V(x) + f(m)
+        the characteristic velocity is dH/dp (= p/lambda for the quadratic control
+        cost) and the Lax-Oleinik update is (Issue #1413)
 
             U^n_i = (1/(2d)) * sum_{k=1..d} [I[U^{n+1}](y_k^+) + I[U^{n+1}](y_k^-)]
-                    - dt * H(x_i, p_i, m_i^n)
+                    + dt * H_control(p_i) - dt * (V + f)
+                  = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
 
-        with y_k^pm = x_i + alpha*_i * dt +/- sigma * sqrt(dt) * e_k.
+        with y_k^pm = x_i - (dH/dp)_i * dt +/- sigma * sqrt(dt) * e_k. (The prior
+        `alpha* = -nabla u` foot with `- dt*H` was lambda=1-only on the foot and
+        double-counted the kinetic term ~3x; see Issue #575/#1413.)
 
         Validation: see mfg-research/experiments/crowd_evacuation_2d/minors/archive/
         exp14_towel_1d_benchmark/subs/exp14e_solver_comparison/, where the
@@ -1469,8 +1467,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         mesh = np.meshgrid(*grid_coords, indexing="ij")
         # x_drift_flat[i, ax] = x_current[ax] − dt · p[ax] for node i
         x_drift_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        # Issue #1413: drift along the characteristic velocity ∂H/∂p = p/λ (not raw p).
+        lam = self._control_cost_lambda()
         for ax in range(d):
-            x_drift_flat[:, ax] -= grad_components[ax].ravel() * dt
+            x_drift_flat[:, ax] -= (grad_components[ax].ravel() / lam) * dt
 
         all_departures = np.empty((2 * d * n_total, d), dtype=float)
         for ax in range(d):
@@ -1513,17 +1513,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Average over the 2*d Brownian directions
         u_avg = all_u.reshape(2 * d, n_total).mean(axis=0).reshape(grid_shape)
 
-        # --- Hamiltonian (single-source batch eval, Issue #1071) ---
+        # --- Lax-Oleinik value update (Issue #1413; single source, Issue #1071) ---
         x_batch = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
         p_batch = np.stack([grad_components[ax].ravel() for ax in range(d)], axis=1)
         H_class = self.problem.hamiltonian_class
-        if H_class is not None:
-            H_values = eval_H_batch(H_class, x_batch, M_shaped.ravel(), p_batch, time_idx * dt).ravel()
-            H_values = H_values.reshape(grid_shape)
-        else:
-            H_values = np.zeros(grid_shape)
-
-        U_current = u_avg - dt * H_values
+        if H_class is None:
+            raise ValueError(
+                "HJBSemiLagrangianSolver (stochastic CS): problem.hamiltonian_class is None. "
+                "Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
+            )
+        U_current = self._sl_value_update(u_avg.ravel(), x_batch, M_shaped.ravel(), p_batch, time_idx * dt, dt).reshape(
+            grid_shape
+        )
 
         # --- Enforce BC on the result (dim-dependent applicator, see docstring) ---
         if d == 1:
@@ -2227,6 +2228,41 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 laplacian += second_deriv
 
             return float(laplacian)
+
+    def _sl_value_update(
+        self,
+        u_at_foot: np.ndarray | float,
+        x: np.ndarray,
+        m: np.ndarray | float,
+        p: np.ndarray,
+        t: float,
+        dt: float,
+    ) -> np.ndarray | float:
+        """Consistent semi-Lagrangian value update (Issue #1413).
+
+        For the backward HJB ``-∂_t u + H(x, ∇u, m) = 0`` with a separable
+        ``H = H_control(p) + V(x) + f(m)``, the Lax-Oleinik / DPP step is
+
+            u^n(x) = u^{n+1}(x - dt·∂_pH) + dt·H_control(p) - dt·(V + f),
+
+        where the departure foot ``x - dt·∂_pH`` carries the advection (``∂_pH`` is the
+        characteristic velocity, ``= p/λ`` for the quadratic control cost). With the
+        departure value ``u_at_foot = u^{n+1}(foot)`` already interpolated and
+        ``V + f = H(x, m, p=0)``:
+
+            u^n = u_at_foot + dt·(H(p) - H(0)) - dt·H(0) = u_at_foot + dt·(H(p) - 2·H(0)).
+
+        This replaces the prior ``u_at_foot - dt·H(p)`` (with a non-λ-scaled foot), which
+        double-counted the kinetic term (≈3× too large) and was λ=1-only on the foot —
+        ~24% off the analytic Hopf-Lax solution even at λ=1 (FDM matches it to 0.6%). See
+        Issue #575 (which corrected the state term but left the kinetic error) and Issue
+        #1413. ``H`` comes from the single source (``eval_H_batch`` → ``hamiltonian_class``).
+        """
+        H_class = self.problem.hamiltonian_class
+        p_arr = np.atleast_1d(np.asarray(p, dtype=float))
+        H_full = np.asarray(eval_H_batch(H_class, x, m, p_arr, t), dtype=float)
+        H_state = np.asarray(eval_H_batch(H_class, x, m, np.zeros_like(p_arr), t), dtype=float)
+        return u_at_foot + dt * (H_full - 2.0 * H_state)
 
     def _evaluate_hamiltonian(self, x: np.ndarray | float, p: np.ndarray | float, m: float, time_idx: int) -> float:
         """

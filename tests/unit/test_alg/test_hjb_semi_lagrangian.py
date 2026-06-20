@@ -6,6 +6,8 @@ Tests the semi-Lagrangian method for solving Hamilton-Jacobi-Bellman equations
 in Mean Field Games, including characteristic-following schemes and interpolation.
 """
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -965,12 +967,13 @@ class TestStochasticSLUnificationPinning:
             get_bc_type_string,
         )
 
-        Nx = len(U_next)
         sigma = solver.problem.sigma
         sqrt_dt = float(np.sqrt(dt))
         diffusion_offset = sigma * sqrt_dt
         grad_u = solver._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
-        x_drift = solver.x_grid - grad_u * dt
+        # Issue #1413: drift along the characteristic velocity dH/dp = p/lambda (not raw p).
+        lam = solver._control_cost_lambda()
+        x_drift = solver.x_grid - (grad_u / lam) * dt
         y_plus = x_drift + diffusion_offset
         y_minus = x_drift - diffusion_offset
         bc = solver.get_boundary_conditions()
@@ -995,11 +998,10 @@ class TestStochasticSLUnificationPinning:
         x_batch = solver.x_grid.reshape(-1, 1)
         p_batch = grad_u.reshape(-1, 1)
         H_class = solver.problem.hamiltonian_class
-        if H_class is not None:
-            H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
-        else:
-            H_values = np.zeros(Nx)
-        U_current = u_avg - dt * H_values
+        # Issue #1413: Lax-Oleinik value update u_avg + dt*(H(p) - 2*H(0)), where H(0) = V+f.
+        H_values = eval_H_batch(H_class, x_batch, M_next, p_batch, time_idx * dt).ravel()
+        H_0 = eval_H_batch(H_class, x_batch, M_next, np.zeros_like(p_batch), time_idx * dt).ravel()
+        U_current = u_avg + dt * (H_values - 2.0 * H_0)
         if bc:
             U_current = solver.bc_applicator.enforce_values(
                 U_current, boundary_conditions=bc, spacing=(solver.dx,), time=time_idx * dt
@@ -1283,6 +1285,94 @@ class TestSLHamiltonianSingleSource:
             assert routed.hex() == inline.hex(), (
                 f"x={x} p={p} m={m} t_idx={t_idx}: routed {routed!r} != inline {inline!r}"
             )
+
+
+class TestSLHJBConsistency:
+    """Issue #1413: the semi-Lagrangian scheme must solve the correct HJB.
+
+    Pins the corrected Lax-Oleinik update ``u_dep + dt*(H(p) - 2*H(0))`` with a λ-scaled
+    departure foot against (a) the analytic Hopf-Lax solution for σ→0 pure-LQ, and (b) FDM
+    (the reference solver) with a potential. Before the fix the H-based SL was ~24% off the
+    analytic solution even at λ=1 AND non-convergent (the foot + ``-dt*H`` double-counted the
+    kinetic term ≈3×); the foot was also λ=1-only. Issue #575 corrected the state term but
+    left the kinetic error. FDM matches the analytic Hopf-Lax to ~0.6%, so it is the oracle.
+    """
+
+    @staticmethod
+    def _build(lam, potential, coupling, coupling_dm, sigma, nx, Nt, T):
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+        geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
+        comp = MFGComponents(
+            m_initial=lambda x: 0.5 + np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=lam),
+                potential=potential,
+                coupling=coupling,
+                coupling_dm=coupling_dm,
+            ),
+        )
+        problem = MFGProblem(geometry=geom, T=T, Nt=Nt, sigma=sigma, components=comp)
+        x = np.linspace(0.0, 1.0, nx)
+        U_T = 0.5 * (x - 0.5) ** 2
+        M = np.tile(0.5 + np.exp(-10 * (x - 0.5) ** 2), (Nt + 1, 1))
+        U_prev = np.tile(U_T, (Nt + 1, 1))
+        return problem, x, U_T, M, U_prev
+
+    @staticmethod
+    def _solve(solver_cls, problem, U_T, M, U_prev):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            s = solver_cls(problem)
+            U = np.asarray(s.solve_hjb_system(M_density=M, U_terminal=U_T, U_coupling_prev=U_prev))
+        return U[0] if U.ndim == 2 else U
+
+    @pytest.mark.parametrize("lam", [1.0, 2.0])
+    def test_matches_analytic_hopf_lax(self, lam):
+        """σ→0 pure-LQ: SL must match the λ-dependent Hopf-Lax solution
+        ``u(0,x) = min_y[u_T(y) + λ(x-y)²/(2T)]`` — and for λ≠1 must be CLEARLY distinct
+        from the λ=1 solution (so a regression to the λ=1-foot fails here)."""
+        T, nx, Nt = 0.2, 121, 200
+        problem, x, U_T, M, U_prev = self._build(lam, None, None, None, sigma=1e-3, nx=nx, Nt=Nt, T=T)
+        U_sl = self._solve(HJBSemiLagrangianSolver, problem, U_T, M, U_prev)
+
+        y = np.linspace(0.0, 1.0, 4001)
+
+        def hopf_lax(xq, lq):
+            return np.array([np.min(0.5 * (y - 0.5) ** 2 + lq * (xi - y) ** 2 / (2.0 * T)) for xi in xq])
+
+        interior = (x > 0.25) & (x < 0.75)
+        a_lam = hopf_lax(x, lam)
+        denom = max(float(np.max(np.abs(a_lam[interior]))), 1e-12)
+        err = float(np.max(np.abs(U_sl[interior] - a_lam[interior]))) / denom
+        assert err < 0.05, f"λ={lam}: SL vs analytic Hopf-Lax rel-err={err:.3e} (expected <5%)"
+        if lam != 1.0:
+            a_1 = hopf_lax(x, 1.0)
+            err_1 = float(np.max(np.abs(U_sl[interior] - a_1[interior]))) / denom
+            assert err_1 > 0.05, (
+                f"λ={lam}: SL is indistinguishable from the λ=1 solution (rel-err vs analytic(1)="
+                f"{err_1:.3e}) — the λ-scaled foot regressed (Issue #1413)."
+            )
+
+    @pytest.mark.parametrize("lam", [1.0, 2.0])
+    def test_matches_fdm_with_potential(self, lam):
+        """σ>0 with a potential V(x): SL must match FDM (the reference). Pins the state-term
+        sign — the corrected scheme is ``+dt*H_control - dt*(V+f)`` (Issue #575/#1413)."""
+        from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+        def V(x, t):
+            return -0.5 * (np.asarray(x)[..., 0] - 0.5) ** 2
+
+        T, nx, Nt = 0.3, 101, 120
+        problem, x, U_T, M, U_prev = self._build(lam, V, None, None, sigma=0.25, nx=nx, Nt=Nt, T=T)
+        U_sl = self._solve(HJBSemiLagrangianSolver, problem, U_T, M, U_prev)
+        problem_f, _, _, _, _ = self._build(lam, V, None, None, sigma=0.25, nx=nx, Nt=Nt, T=T)
+        U_fdm = self._solve(HJBFDMSolver, problem_f, U_T, M, U_prev)
+        interior = (x > 0.2) & (x < 0.8)
+        denom = max(float(np.max(np.abs(U_fdm[interior]))), 1e-12)
+        err = float(np.max(np.abs(U_sl[interior] - U_fdm[interior]))) / denom
+        assert err < 0.05, f"λ={lam}: SL(+V) vs FDM rel-err={err:.3e} (expected <5%)"
 
 
 if __name__ == "__main__":
