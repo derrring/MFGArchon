@@ -53,6 +53,7 @@ def _default_components_2d():
     )
 
 
+@pytest.mark.slow
 class TestHJBWithLowerObstacle:
     """Test HJB solver with lower obstacle constraint (u ≥ ψ)."""
 
@@ -196,6 +197,7 @@ class TestHJBWithLowerObstacle:
         # The test still validates that the constraint mechanism works correctly.
 
 
+@pytest.mark.slow
 class TestHJBWithUpperObstacle:
     """Test HJB solver with upper obstacle constraint (u ≤ ψ_upper)."""
 
@@ -243,6 +245,7 @@ class TestHJBWithUpperObstacle:
         # even if not actively binding for this particular problem.
 
 
+@pytest.mark.slow
 class TestHJBWithBilateralObstacle:
     """Test HJB solver with bilateral obstacle (ψ_lower ≤ u ≤ ψ_upper)."""
 

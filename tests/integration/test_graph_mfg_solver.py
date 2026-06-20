@@ -92,6 +92,7 @@ class TestGraphMFGSolverInstantiation:
         assert solver._tol == 1e-3
 
 
+@pytest.mark.slow
 class TestGraphMFGSolverSolve:
     def test_returns_result(self):
         problems, coupling, hjbs, fps = _make_3node_system()
@@ -163,6 +164,7 @@ class TestGraphMFGSolverSolve:
         assert 0 < result.iterations <= 3
 
 
+@pytest.mark.slow
 class TestGraphMFGSolverCouplingEffect:
     def test_coupling_affects_solution(self):
         """With coupling, node solutions should differ from uncoupled."""

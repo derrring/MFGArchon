@@ -11,6 +11,8 @@ Test strategy:
 
 from __future__ import annotations
 
+import pytest
+
 import numpy as np
 
 from mfgarchon import MFGProblem
@@ -199,6 +201,7 @@ def _rel_linf(a, b):
     return float(np.max(np.abs(a - b)) / max(np.max(np.abs(b)), 1e-30))
 
 
+@pytest.mark.slow
 class TestNewtonPicardParity:
     """Newton (residual path) and Picard reach the same source-inclusive equilibrium."""
 

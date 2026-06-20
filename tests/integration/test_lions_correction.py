@@ -6,6 +6,8 @@ into the HJB source term pipeline via create_lions_source and
 create_nonlocal_source.
 """
 
+import pytest
+
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
@@ -187,6 +189,7 @@ class TestCreateNonlocalSource:
         np.testing.assert_allclose(result_direct, result_fd, rtol=0.05)
 
 
+@pytest.mark.slow
 class TestLionsCorrectionEndToEnd:
     """Test Lions correction flows through the full MFG solve pipeline."""
 

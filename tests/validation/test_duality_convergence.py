@@ -256,6 +256,7 @@ class TestConvergenceRate:
             assert 0.1 < ratio <= 1.5, f"Refinement should improve accuracy (ratio={ratio:.3f})"
 
 
+@pytest.mark.slow
 class TestNumericalStability:
     """Test that dual schemes maintain stability."""
 
