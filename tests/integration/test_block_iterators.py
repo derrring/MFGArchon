@@ -262,6 +262,7 @@ class TestBlockIteratorParameters:
         assert np.all(result.M >= -1e-6), f"M has negative values: min={np.min(result.M)}"
 
 
+@pytest.mark.slow
 class TestBlockVsFixedPoint:
     """Compare block iterators with FixedPointIterator."""
 

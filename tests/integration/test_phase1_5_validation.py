@@ -269,6 +269,7 @@ class TestNetworkSolverIntegration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 class TestHomotopyContinuation:
     """Validate homotopy continuation tracks equilibrium branches."""
 
