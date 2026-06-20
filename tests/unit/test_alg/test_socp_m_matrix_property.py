@@ -250,6 +250,49 @@ def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
     assert report["n_positive_offdiag"] > 0
 
 
+@pytest.mark.parametrize("sigma", [0.3, 0.5, 1.0, 1.5])
+def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
+    """Issue #1071: ``_compute_hjb_jacobian_vectorized`` now routes ∂H/∂p through the
+    single-source assembler (``assemble_hjb_jacobian_diag`` → ``H_class.evaluate_dp``)
+    instead of the inline ``p/λ`` re-derivation.
+
+    Pin: the assembled CSR is byte-identical (atol=0, dtype-exact) to the explicit inline
+    LQ Jacobian ``(1/dt)I + Σ_d diag(p_d/λ) @ D_grad[d] - (σ²/2)·D_lap`` it replaced. The
+    M-matrix property asserts above are necessary but insufficient — they pass for any
+    structurally-similar matrix; this locks the λ / diffusion convention against a silent
+    assembler drift (sign flip, stray m-term, wrong diffusion coefficient)."""
+    from scipy.sparse import diags, eye
+
+    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+    solver = _make_solver(sigma=sigma, n_x=21)
+    rng = np.random.default_rng(1071)
+    grad_u = rng.standard_normal((solver.n_points, 1))
+
+    J = solver._compute_hjb_jacobian_vectorized(grad_u)  # builds operators lazily
+
+    # Independent reference: the explicit inline LQ Jacobian this consolidation replaced.
+    n = solver.n_points
+    dt = solver.problem.T / solver.problem.Nt
+    lam = solver._control_cost_lambda()
+    D = diffusion_from_volatility(solver._get_sigma_value(None))
+    ref = (1.0 / dt) * eye(n, format="csr")
+    for d in range(solver.dimension):
+        ref = ref + diags(grad_u[:, d] / lam, format="csr") @ solver._D_grad[d]
+    ref = ref - D * solver._D_lap
+
+    Jc, rc = J.tocsr(), ref.tocsr()
+    Jc.sort_indices()
+    rc.sort_indices()
+    assert Jc.shape == rc.shape
+    assert np.array_equal(Jc.indptr, rc.indptr), "CSR indptr drift"
+    assert np.array_equal(Jc.indices, rc.indices), "CSR indices drift"
+    maxabsdiff = float(np.max(np.abs((Jc - rc).data))) if (Jc - rc).nnz else 0.0
+    assert np.array_equal(Jc.data, rc.data), (
+        f"σ={sigma}: assembled Jacobian not byte-identical to inline LQ formula (maxabsdiff={maxabsdiff:.3e})"
+    )
+
+
 def test_runtime_dmp_guard_warns_only_when_violated():
     """Issue #1074 runtime guard: check_dmp=True warns when the drift exceeds α_crit; it is
     silent below the threshold and a no-op when check_dmp=False (the default — numerically inert)."""
