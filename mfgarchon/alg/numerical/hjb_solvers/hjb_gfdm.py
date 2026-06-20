@@ -1107,7 +1107,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         # These are expensive to compute and only created when needed
         self._D_grad: list | None = None  # Gradient differentiation matrices
         self._D_lap: Any | None = None  # Laplacian differentiation matrix
-        self._potential_at_collocation: np.ndarray | None = None  # Interpolated potential field
         self._cached_derivative_weights: dict | None = None  # Pre-computed GFDM weights
         self._running_cost_fn: Callable[[int], np.ndarray] | None = None  # Running cost f(n) -> (n_points,)
         self._f_potential_warned: bool = False  # One-time warning for unused f_potential (Issue #766)
@@ -2068,107 +2067,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             all_derivs[i] = self.approximate_derivatives(u, i)
         return all_derivs
 
-    def _compute_hjb_residual_vectorized(
-        self,
-        u_current: np.ndarray,
-        u_n_plus_1: np.ndarray,
-        m_n_plus_1: np.ndarray,
-        grad_u: np.ndarray,
-        lap_u: np.ndarray,
-        running_cost: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """
-        Compute HJB residual using vectorized operations (LQ fast path).
-
-        This is the vectorized LQ fast path, only active for non-custom problems
-        (is_custom=False) without QP monotonicity enforcement. It assumes:
-        - Quadratic control cost: H_control = |p|^2 / (2*lambda)
-        - Linear density coupling: f(m) = gamma * |Omega| * m
-        - Static potential: V(x) from problem.f_potential (NOT from Hamiltonian class)
-
-        For custom problems with a Hamiltonian class, the per-point path
-        _compute_hjb_residual_with_cache() is used instead. See Issue #766.
-
-        Args:
-            u_current: Current solution at collocation points
-            u_n_plus_1: Solution at next time step
-            m_n_plus_1: Density at collocation points
-            grad_u: Pre-computed gradient, shape (n_points, dimension)
-            lap_u: Pre-computed Laplacian, shape (n_points,)
-
-        Returns:
-            Residual vector, shape (n_points,)
-        """
-        dt = self.problem.T / self.problem.Nt
-        u_t = (u_n_plus_1 - u_current) / dt
-
-        # Compute Hamiltonian for all points (vectorized LQ formula)
-        # Two modes supported:
-        # - additive:       H = |p|²/(2λ) + V + γm (standard separable form)
-        # - multiplicative: H = (1 + γ|Ω|m)|p|²/(2λ) + V (velocity reduction by congestion)
-        lambda_val = self._control_cost_lambda()
-        gamma_val = getattr(self.problem, "gamma", 0.0)
-
-        # |grad_u|^2 for all points
-        grad_norm_sq = np.sum(grad_u**2, axis=1)
-
-        # Potential term (optional)
-        f_potential = getattr(self.problem, "f_potential", None)
-        if f_potential is not None:
-            # Need to interpolate potential to collocation points
-            H_potential = self._interpolate_potential_to_collocation()
-        else:
-            H_potential = np.zeros(self.n_points)
-
-        # Congestion mode determines how density couples with velocity
-        if self.congestion_mode == "multiplicative":
-            # Multiplicative (congestion aversion): H = |p|²/(2λ(1 + γ|Ω|m))
-            #
-            # Legendre transform gives Lagrangian: L = (λ/2)(1 + γ|Ω|m)|v|²
-            # - High density m → HIGH running cost (congestion aversion)
-            # - Optimal velocity v* = -∇u/[λ(1 + γ|Ω|m)] → slower in crowds
-            #
-            # The |Ω| normalization makes γ dimensionless and O(1)
-            domain_volume = self._compute_domain_volume()
-            congestion_factor = 1.0 + gamma_val * domain_volume * m_n_plus_1
-            H_kinetic = grad_norm_sq / (2 * lambda_val * congestion_factor)
-            H_total = H_kinetic + H_potential
-        else:
-            # Additive: density-dependent running cost in HJB equation
-            # HJB: -∂u/∂t + |∇u|²/(2λ) + γ|Ω|m - (σ²/2)Δu = 0
-            #
-            # The +γ|Ω|m term increases u in high-density regions,
-            # which agents minimize → congestion avoidance (queuing cost)
-            # The |Ω| normalization makes γ dimensionless and O(1)
-            domain_volume = self._compute_domain_volume()
-            H_kinetic = grad_norm_sq / (2 * lambda_val)
-            H_interaction = gamma_val * domain_volume * m_n_plus_1
-            H_total = H_kinetic + H_potential + H_interaction
-
-        # Running cost L(x) at this timestep (passed explicitly from backward loop)
-        if running_cost is not None:
-            H_total = H_total + running_cost
-
-        # Diffusion term: (sigma^2 / 2) * Laplacian
-        # Issue #1073: use _get_sigma_value (returns σ) instead of confusing
-        # `getattr(problem, "diffusion") or getattr(problem, "sigma")` chain.
-        # `problem.diffusion` returns σ²/2 (PDE coefficient D), so the old chain
-        # treated σ as D, then computed (σ²/2)² = σ⁴/8 instead of σ²/2 — 4-44× too
-        # small for σ ∈ {0.3, 0.5, 1.0, 1.414} (only σ=2 happens to be correct).
-        #
-        # Issue #1059 LLF augmentation: use per-node sigma_eff_i when active.
-        if self.llf_augmentation and self._llf_sigma_eff is not None:
-            # Per-node effective diffusion: D_i = sigma_eff_i^2/2 (elementwise)
-            diffusion_term = diffusion_from_volatility(self._llf_sigma_eff, kind="field") * lap_u
-        else:
-            sigma = self._get_sigma_value(None)
-            diffusion_term = diffusion_from_volatility(sigma) * lap_u
-
-        # HJB residual: -u_t + H - diffusion = 0
-        residual = -u_t + H_total - diffusion_term
-
-        return residual
-
     def _compute_hjb_residual_hamiltonian(
         self,
         u_current: np.ndarray,
@@ -2268,54 +2166,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             D_grad=self._D_grad,
             D_lap=self._D_lap,
         )
-
-    def _interpolate_potential_to_collocation(self) -> np.ndarray:
-        """
-        Interpolate potential field to collocation points (cached).
-
-        Only used by the legacy vectorized LQ path (no hamiltonian_class).
-        For problems with a Hamiltonian class, the potential V(x) comes from
-        the Hamiltonian via H(x, m, p, t). See Issue #766, #775.
-
-        Handles arbitrary dimensions by building grid axes from bounds.
-        """
-        # Return cached value if already computed
-        # self._potential_at_collocation initialized as None in __init__
-        if self._potential_at_collocation is not None:
-            return self._potential_at_collocation
-
-        f_potential = getattr(self.problem, "f_potential", None)
-        if f_potential is None:
-            self._potential_at_collocation = np.zeros(self.n_points)
-            return self._potential_at_collocation
-
-        from scipy.interpolate import RegularGridInterpolator
-
-        potential = self.problem.f_potential
-        bounds = self.domain_bounds
-
-        # Validate potential shape matches dimension
-        if potential.ndim != self.dimension:
-            raise ValueError(
-                f"Potential array has {potential.ndim} dimensions but problem is "
-                f"{self.dimension}D. Potential shape: {potential.shape}"
-            )
-
-        # Build grid axes for each dimension
-        axes = []
-        for d in range(self.dimension):
-            xmin, xmax = bounds[d]
-            axes.append(np.linspace(xmin, xmax, potential.shape[d]))
-
-        # Handle 1D special case (needs flattening)
-        if self.dimension == 1:
-            potential = potential.flatten()
-
-        # Create interpolator and evaluate at collocation points
-        interp = RegularGridInterpolator(tuple(axes), potential, bounds_error=False, fill_value=0.0)
-        self._potential_at_collocation = interp(self.collocation_points)
-
-        return self._potential_at_collocation
 
     def _compute_hjb_residual_with_cache(
         self,
@@ -2928,7 +2778,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         effective sigma sqrt(sigma^2 + 2*nu_i) from LLF augmentation (Issue #1059).
         When point_idx is None (batch path), returns the base scalar sigma regardless
         of llf_augmentation (the batch path handles LLF separately via the
-        self._llf_sigma_eff array in _compute_hjb_residual_vectorized and related).
+        self._llf_sigma_eff array in the residual/Jacobian assembly).
 
         Args:
             point_idx: Collocation point index (for callable sigma evaluation or LLF lookup)
@@ -3359,21 +3209,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         #    Works with any Hamiltonian subclass (SeparableHamiltonian, etc.)
         #    Fast: numpy vectorized over all collocation points at once
         #
-        # 2. Legacy LQ vectorized path (use_legacy_vectorized=True):
-        #    Fallback when: no hamiltonian_class AND is_custom=False AND no QP
-        #    Hardcodes LQ formula: H = |p|^2/(2*lambda) + V(x) + gamma*|Omega|*m
-        #    Gets V(x) from problem.f_potential via _interpolate_potential_to_collocation()
-        #
-        # 3. Per-point path (fallback):
-        #    Active when: QP mode enabled OR (is_custom=True without hamiltonian_class)
-        #    Calls problem.H() per-point -> loops over collocation points
+        # 2. Per-point path (fallback):
+        #    Active when: NOT the batch path -- QP mode enabled, is_custom=True without a
+        #    hamiltonian_class, or no hamiltonian_class at all. Calls problem.H() per-point
+        #    over collocation points. (Issue #1071 Phase 5 retired the dead legacy-LQ
+        #    vectorized residual branch that ran only for is_custom=False mock problems.)
         H_class = getattr(self.problem, "hamiltonian_class", None)
-        is_custom = getattr(self.problem, "is_custom", False)
         use_hamiltonian_batch = H_class is not None and self.qp_optimization_level == "none"
-        use_legacy_vectorized = not use_hamiltonian_batch and not is_custom and self.qp_optimization_level == "none"
 
         # Warn if f_potential is set but won't be used (Issue #766)
-        if not use_legacy_vectorized and not self._f_potential_warned:
+        if not self._f_potential_warned:
             f_pot = getattr(self.problem, "f_potential", None)
             if f_pot is not None and np.any(f_pot != 0):
                 warnings.warn(
@@ -3404,16 +3249,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     l_u,
                     H_class,
                     current_time,
-                    running_cost=running_cost,
-                )
-            elif use_legacy_vectorized:
-                g_u, l_u = self._compute_derivatives_vectorized(u_trial)
-                r = self._compute_hjb_residual_vectorized(
-                    u_trial,
-                    u_n_plus_1,
-                    m_n_plus_1,
-                    g_u,
-                    l_u,
                     running_cost=running_cost,
                 )
             else:
@@ -3458,23 +3293,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     H_class,
                     current_time,
                 )
-            elif use_legacy_vectorized:
-                # Legacy LQ vectorized path (no hamiltonian_class available)
-                grad_u, lap_u = self._compute_derivatives_vectorized(u_current)
-
-                residual = self._compute_hjb_residual_vectorized(
-                    u_current,
-                    u_n_plus_1,
-                    m_n_plus_1,
-                    grad_u,
-                    lap_u,
-                    running_cost=running_cost,
-                )
-
-                if np.linalg.norm(residual) < self.newton_tolerance:
-                    break
-
-                jacobian_sparse = self._compute_hjb_jacobian_vectorized(grad_u)
             else:
                 # Per-point path for QP mode or legacy custom without hamiltonian_class
                 all_derivs = self._approximate_all_derivatives_cached(u_current)
