@@ -1375,5 +1375,73 @@ class TestSLHJBConsistency:
         assert err < 0.05, f"λ={lam}: SL(+V) vs FDM rel-err={err:.3e} (expected <5%)"
 
 
+class TestSLValueUpdateND:
+    """Issue #1413/#1417: pin the nD Lax-Oleinik value combination ``u_foot + dt*(H(p) - 2*H(0))``.
+
+    The 1D update is covered by TestSLHJBConsistency (analytic Hopf-Lax). nD previously had
+    only finiteness checks, so the corrected λ-aware kinetic term was invisible in every nD
+    test (audit finding S0-28). This pins ``_sl_value_update`` directly on a 2D batch against
+    the analytic LQ closed form ``u_foot + dt*(|p|²/(2λ) - V - f)`` for λ≠1 with V,f≠0, and
+    asserts it stays distinct from the pre-#575/#1413 scheme (kinetic 3x / λ=1-only foot).
+    """
+
+    @staticmethod
+    def _build_2d(lam):
+        def V(x, t):
+            return 0.2 * (x[:, 0] ** 2 + x[:, 1] ** 2)
+
+        geom = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)],
+            Nx_points=[6, 5],
+            boundary_conditions=no_flux_bc(dimension=2),
+        )
+        comp = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=lam),
+                potential=V,
+                coupling=lambda m: 0.7 * m,
+                coupling_dm=lambda m: 0.7 * np.ones_like(m),
+            ),
+        )
+        problem = MFGProblem(geometry=geom, T=0.1, Nt=10, sigma=0.1, components=comp)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver = HJBSemiLagrangianSolver(problem)
+        return solver, V
+
+    @pytest.mark.parametrize("lam", [1.0, 2.0, 0.5])
+    def test_nd_value_update_matches_analytic_lq(self, lam):
+        solver, V = self._build_2d(lam)
+        xs = np.linspace(0.0, 1.0, 6)
+        ys = np.linspace(0.0, 1.0, 5)
+        gx, gy = np.meshgrid(xs, ys, indexing="ij")
+        pts = np.stack([gx.ravel(), gy.ravel()], axis=1)
+        n = pts.shape[0]
+        idx = np.arange(n)
+        p = np.stack([0.1 + 0.03 * idx, -0.2 + 0.02 * idx], axis=1)
+        m = 0.5 + 0.01 * idx
+        u_foot = np.cos(idx * 0.3)
+        t, dt = 0.05, 0.01
+
+        out = np.asarray(solver._sl_value_update(u_foot, pts, m, p, t, dt))
+
+        # Independent analytic LQ form: H = |p|^2/(2λ) + V(x) + f(m), so
+        # H(p) - 2*H(0) = |p|^2/(2λ) - (V + f).
+        h_control = np.sum(p**2, axis=1) / (2.0 * lam)
+        h_state = V(pts, t) + 0.7 * m
+        expected = u_foot + dt * (h_control - h_state)
+        old_scheme = u_foot - dt * (h_control + h_state)  # pre-#575/#1413
+
+        assert out.shape == (n,)
+        np.testing.assert_allclose(
+            out, expected, atol=1e-10, err_msg=f"λ={lam}: nD value update != analytic LQ closed form"
+        )
+        assert not np.allclose(out, old_scheme, atol=1e-6), (
+            f"λ={lam}: nD value update matches the pre-#1413 scheme — corrected kinetic term regressed"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
