@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Semi-Lagrangian HJB scheme corrected — was ~24% wrong even at λ=1** (Issue #1413, PR #1417).
+  The H-based SL update `u^{n+1}(x − dt·∇u) − dt·H` combined the characteristic foot with a
+  pointwise `−dt·H`, double-counting the kinetic term (~3×), and used a λ=1-only foot (`∇u`
+  instead of `∂H/∂p`). The default SL solver was therefore ~24% off the analytic Hopf-Lax
+  solution **even at λ=1** and non-convergent under refinement (FDM matches the analytic to
+  0.6%). Issue #575 had corrected only the state-term `(V+f)` sign on a coupling-dominated case,
+  which masked the kinetic error. Replaced with the consistent Lax-Oleinik form
+  `u_at_foot + dt·(H(p) − 2·H(0))` (foot `x − dt·∂H/∂p`) in the shared `_sl_value_update` helper,
+  applied to every H-based SL path (default 1D batch/per-point/nD, `_with_dt`, stochastic CS).
+  Validated <1.2% vs the analytic Hopf-Lax and <0.5% vs FDM across {kinetic, +V(x), +f(m)} ×
+  λ∈{0.5, 1, 2}; new `TestSLHJBConsistency` regression gate. No paper experiments use SL.
+
 ### Changed
+
+- **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue
+  #1071). The GFDM legacy-LQ vectorized residual was retired (#1407) and its Jacobian
+  single-sourced through `assemble_hjb_jacobian_diag` → `H_class.evaluate_dp` (#1408,
+  byte-identical; the test-only entry point renamed to the public `assemble_hjb_iteration_matrix`,
+  #1414/#1418); the dead `_compute_hjb_jacobian`/`_analytic` pair removed (#1409); the
+  semi-Lagrangian H value routed through the `eval_H_batch` shim and the dead
+  `_find_optimal_control` dropped (#1410); and **Howard's policy-evaluation Lagrangian
+  single-sourced via `control_cost.lagrangian()`, lifting the λ≠1 restriction** (#1416,
+  byte-identical at λ=1; Howard-vs-Newton agreement validated for λ∈{0.5, 1, 2}). Each step is
+  byte-identical-pinned. Remaining #1071 work is tracked in #1411 (paper-baseline migrations) and
+  #1412 (σ-source unification).
 
 - **Ruff updated v0.14.3 → v0.15.17** (pre-commit pin; the prior auto-update branches were stale).
   Resolved the lint surfaced by the version jump (no runtime behavior change): import-sorting (I001),
