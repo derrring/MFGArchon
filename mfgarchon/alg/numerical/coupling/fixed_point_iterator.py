@@ -296,57 +296,51 @@ class FixedPointIterator(BaseCouplingIterator):
         return arr.reshape(shape) if arr.shape != shape else arr
 
     def _resolve_initial_density(self, shape: tuple) -> np.ndarray:
-        """Resolve the initial density via the 4-priority cascade (Issue #1425: independent of terminal)."""
-        try:
-            return self._reshape_to(self.problem.get_m_init(), shape)
-        except AttributeError:
-            pass
-        try:
-            m = self.problem.m_initial
-            if m is not None:
-                return self._reshape_to(m, shape)
-        except AttributeError:
-            pass
-        try:
-            return self.problem.get_initial_m()
-        except AttributeError:
-            pass
-        try:
-            x_grid = self.problem.geometry.get_spatial_grid()
-            return self.problem.initial_density(x_grid).reshape(shape)
-        except AttributeError as e:
-            raise ValueError(
-                "Problem must provide an initial density via one of: get_m_init() / m_initial / "
-                "get_initial_m() / initial_density()."
-            ) from e
+        """Resolve the initial density via the 4-priority cascade (Issue #1425: independent of terminal).
+
+        Uses explicit ``getattr(..., None)`` + ``callable()`` probes (the project's optional-accessor
+        pattern) rather than ``try/except AttributeError`` so a real error inside an accessor
+        propagates instead of being swallowed (and no silent ``pass``).
+        """
+        get_m_init = getattr(self.problem, "get_m_init", None)
+        if callable(get_m_init):
+            return self._reshape_to(get_m_init(), shape)
+        m_initial = getattr(self.problem, "m_initial", None)
+        if m_initial is not None:
+            return self._reshape_to(m_initial, shape)
+        get_initial_m = getattr(self.problem, "get_initial_m", None)
+        if callable(get_initial_m):
+            return get_initial_m()
+        initial_density = getattr(self.problem, "initial_density", None)
+        if callable(initial_density):
+            return initial_density(self.problem.geometry.get_spatial_grid()).reshape(shape)
+        raise ValueError(
+            "Problem must provide an initial density via one of: get_m_init() / m_initial / "
+            "get_initial_m() / initial_density()."
+        )
 
     def _resolve_terminal_value(self, shape: tuple) -> np.ndarray:
         """Resolve the terminal value via the 4-priority cascade, INDEPENDENT of the initial density.
 
         Issue #1425: previously a successful Priority-1 initial density forced the terminal from the
         same priority, so a mixed-API problem (e.g. ``get_m_init()`` + ``u_terminal`` attribute)
-        silently received ``u(T,·)=0``. Each terminal accessor is now tried in turn; only if all
-        fail does it default to zero terminal cost — with a warning, not a silent fallback.
+        silently received ``u(T,·)=0``. Each terminal accessor is tried in turn (explicit
+        ``getattr(..., None)`` + ``callable()`` probes, not ``try/except AttributeError``, so a real
+        error inside an accessor propagates); only if all are absent does it default to zero terminal
+        cost — with a warning, not a silent fallback.
         """
-        try:
-            return self._reshape_to(self.problem.get_u_terminal(), shape)
-        except AttributeError:
-            pass
-        try:
-            u = self.problem.u_terminal
-            if u is not None:
-                return self._reshape_to(u, shape)
-        except AttributeError:
-            pass
-        try:
-            return self.problem.get_final_u()
-        except AttributeError:
-            pass
-        try:
-            x_grid = self.problem.geometry.get_spatial_grid()
-            return self.problem.terminal_cost(x_grid).reshape(shape)
-        except AttributeError:
-            pass
+        get_u_terminal = getattr(self.problem, "get_u_terminal", None)
+        if callable(get_u_terminal):
+            return self._reshape_to(get_u_terminal(), shape)
+        u_terminal = getattr(self.problem, "u_terminal", None)
+        if u_terminal is not None:
+            return self._reshape_to(u_terminal, shape)
+        get_final_u = getattr(self.problem, "get_final_u", None)
+        if callable(get_final_u):
+            return get_final_u()
+        terminal_cost = getattr(self.problem, "terminal_cost", None)
+        if callable(terminal_cost):
+            return terminal_cost(self.problem.geometry.get_spatial_grid()).reshape(shape)
         warnings.warn(
             "No terminal condition found on the problem (get_u_terminal / u_terminal / get_final_u / "
             "terminal_cost all absent); defaulting to u(T,·)=0.",
