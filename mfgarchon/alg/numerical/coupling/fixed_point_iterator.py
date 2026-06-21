@@ -11,6 +11,7 @@ Modern fixed-point iterator for MFG systems with full feature support:
 from __future__ import annotations
 
 import time
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -274,72 +275,84 @@ class FixedPointIterator(BaseCouplingIterator):
         Returns:
             (M_initial, U_terminal): Initial density and terminal value function
 
-        Priority order:
+        Issue #1425: the initial density and the terminal value are resolved by *independent*
+        cascades. Previously they were resolved together per priority, so a problem supplying its
+        initial density via Priority 1 (``get_m_init()``) but its terminal via a lower priority
+        (e.g. the ``u_terminal`` attribute) silently received ``u(T,·)=0`` — the Priority-1 terminal
+        accessor raised and the method returned zeros before the attribute was tried. Decoupling
+        fixes the mixed-API case; standard single-API problems resolve both fields via the same
+        priority as before (byte-identical).
+
+        Priority order (applied independently to each field):
             1. get_m_init() / get_u_terminal() methods (preferred modern API)
             2. m_initial / u_terminal attributes (Issue #670 unified naming)
             3. get_initial_m() / get_final_u() methods (alternate modern API)
             4. initial_density() / terminal_cost() callables (functional API)
         """
-        # Priority 1: get_m_init() / get_u_terminal() methods
+        return self._resolve_initial_density(shape), self._resolve_terminal_value(shape)
+
+    @staticmethod
+    def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
+        return arr.reshape(shape) if arr.shape != shape else arr
+
+    def _resolve_initial_density(self, shape: tuple) -> np.ndarray:
+        """Resolve the initial density via the 4-priority cascade (Issue #1425: independent of terminal)."""
         try:
-            M_initial = self.problem.get_m_init()
-            if M_initial.shape != shape:
-                M_initial = M_initial.reshape(shape)
-
-            try:
-                U_terminal = self.problem.get_u_terminal()
-            except AttributeError:
-                # No terminal condition - use zeros
-                U_terminal = np.zeros(shape)
-
-            if U_terminal.shape != shape:
-                U_terminal = U_terminal.reshape(shape)
-
-            return M_initial, U_terminal
+            return self._reshape_to(self.problem.get_m_init(), shape)
         except AttributeError:
-            pass  # Try next priority
-
-        # Priority 2: m_initial / u_terminal attributes (Issue #670: unified naming)
+            pass
         try:
-            M_initial = self.problem.m_initial
-            if M_initial is not None:
-                if M_initial.shape != shape:
-                    M_initial = M_initial.reshape(shape)
-
-                try:
-                    U_terminal = self.problem.u_terminal
-                except AttributeError:
-                    U_terminal = np.zeros(shape)
-
-                if U_terminal.shape != shape:
-                    U_terminal = U_terminal.reshape(shape)
-
-                return M_initial, U_terminal
+            m = self.problem.m_initial
+            if m is not None:
+                return self._reshape_to(m, shape)
         except AttributeError:
-            pass  # Try next priority
-
-        # Priority 3: get_initial_m() / get_final_u() methods
+            pass
         try:
-            M_initial = self.problem.get_initial_m()
-            U_terminal = self.problem.get_final_u()
-            return M_initial, U_terminal
+            return self.problem.get_initial_m()
         except AttributeError:
-            pass  # Try next priority
-
-        # Priority 4: initial_density() / terminal_cost() callables
+            pass
         try:
             x_grid = self.problem.geometry.get_spatial_grid()
-            M_initial = self.problem.initial_density(x_grid).reshape(shape)
-            U_terminal = self.problem.terminal_cost(x_grid).reshape(shape)
-            return M_initial, U_terminal
+            return self.problem.initial_density(x_grid).reshape(shape)
         except AttributeError as e:
             raise ValueError(
-                "Problem must provide initial/terminal conditions via one of:\n"
-                "  1. get_m_init()/get_u_terminal() methods (preferred)\n"
-                "  2. m_initial/u_terminal attributes\n"
-                "  3. get_initial_m()/get_final_u() methods\n"
-                "  4. initial_density()/terminal_cost() callables"
+                "Problem must provide an initial density via one of: get_m_init() / m_initial / "
+                "get_initial_m() / initial_density()."
             ) from e
+
+    def _resolve_terminal_value(self, shape: tuple) -> np.ndarray:
+        """Resolve the terminal value via the 4-priority cascade, INDEPENDENT of the initial density.
+
+        Issue #1425: previously a successful Priority-1 initial density forced the terminal from the
+        same priority, so a mixed-API problem (e.g. ``get_m_init()`` + ``u_terminal`` attribute)
+        silently received ``u(T,·)=0``. Each terminal accessor is now tried in turn; only if all
+        fail does it default to zero terminal cost — with a warning, not a silent fallback.
+        """
+        try:
+            return self._reshape_to(self.problem.get_u_terminal(), shape)
+        except AttributeError:
+            pass
+        try:
+            u = self.problem.u_terminal
+            if u is not None:
+                return self._reshape_to(u, shape)
+        except AttributeError:
+            pass
+        try:
+            return self.problem.get_final_u()
+        except AttributeError:
+            pass
+        try:
+            x_grid = self.problem.geometry.get_spatial_grid()
+            return self.problem.terminal_cost(x_grid).reshape(shape)
+        except AttributeError:
+            pass
+        warnings.warn(
+            "No terminal condition found on the problem (get_u_terminal / u_terminal / get_final_u / "
+            "terminal_cost all absent); defaulting to u(T,·)=0.",
+            stacklevel=2,
+        )
+        return np.zeros(shape)
 
     def _compute_drift_field(self, U, M, H_class):
         """Compute α* from U via H.optimal_control, return as synthetic U.
