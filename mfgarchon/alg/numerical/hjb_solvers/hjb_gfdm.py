@@ -2209,35 +2209,32 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return residual
 
-    def _compute_hjb_jacobian_vectorized(
-        self,
-        grad_u: np.ndarray,
-    ):
-        """
-        Compute the sparse LQ Newton Jacobian via the single-source assembler (Issue #1071).
+    def assemble_hjb_iteration_matrix(self, grad_u: np.ndarray):
+        """Assemble the sparse HJB Newton iteration matrix at a given gradient (Issue #1414).
 
-        Routes ∂H/∂p through ``H_class.evaluate_dp`` (the one Hamiltonian source) instead of
-        the inline ``p/λ`` re-derivation: the body delegates to
-        :meth:`_compute_hjb_jacobian_hamiltonian`, which assembles
-        ``(1/dt)I + Σ_d diag(∂H/∂p_d) @ D_grad[d] - D·D_lap`` (with ``D = σ²/2``, per-node for
-        the LLF ``σ_eff`` field) through ``assemble_hjb_jacobian_diag``. For the separable LQ
-        Hamiltonian ``∂H/∂p = p/λ`` is independent of ``m`` and ``t``, so passing ``m=0`` / ``t=0``
-        is byte-identical to the prior inline form (verified maxabsdiff=0 across the joint_socp
-        σ-sweep, strong-drift, and LLF field-σ configurations).
+        Returns ``(1/dt)I + Σ_d diag(∂H/∂p_d) @ D_grad[d] - D·D_lap`` (with ``D = σ²/2``,
+        per-node for the LLF ``σ_eff`` field) via the single-source assembler
+        ``assemble_hjb_jacobian_diag`` → ``H_class.evaluate_dp`` (no inline ``p/λ``
+        re-derivation; Issue #1071/#1408). For the separable LQ Hamiltonian ``∂H/∂p = p/λ``
+        is independent of ``m`` and ``t``, so ``m=0`` / ``t=0`` reproduce the production
+        Newton Jacobian exactly.
 
-        The single-``grad_u`` wrapper is kept because the Issue #1074 M-matrix /
-        discrete-maximum-principle tests assemble the iteration matrix directly through it.
+        Dedicated entry point for the Issue #1074 M-matrix / discrete-maximum-principle tests,
+        which assemble the iteration matrix directly to verify its M-matrix structure. It has
+        no production callers — the backward solve calls :meth:`_compute_hjb_jacobian_hamiltonian`
+        directly with the live ``m`` / ``t`` (this replaces the former private
+        ``_compute_hjb_jacobian_vectorized`` alias).
 
         Args:
             grad_u: Pre-computed gradient, shape (n_points, dimension)
 
         Returns:
-            Sparse Jacobian matrix in CSR format
+            Sparse Jacobian (iteration matrix) in CSR format
         """
         H_class = getattr(self.problem, "hamiltonian_class", None)
         if H_class is None:
             raise ValueError(
-                "_compute_hjb_jacobian_vectorized requires problem.hamiltonian_class to derive "
+                "assemble_hjb_iteration_matrix requires problem.hamiltonian_class to derive "
                 "∂H/∂p via the single-source assembler (Issue #1071)."
             )
         # Separable LQ: ∂H/∂p = p/λ ignores m and t, so m=0 / t=0 are byte-identical.

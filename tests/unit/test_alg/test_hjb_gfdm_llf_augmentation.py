@@ -378,8 +378,8 @@ class TestLLFJacobianEffect:
         solver_on._build_differentiation_matrices()
 
         # Jacobian at zero gradient (only time + diffusion terms matter)
-        J_off = solver_off._compute_hjb_jacobian_vectorized(grad_u_zero)
-        J_on = solver_on._compute_hjb_jacobian_vectorized(grad_u_zero)
+        J_off = solver_off.assemble_hjb_iteration_matrix(grad_u_zero)
+        J_on = solver_on.assemble_hjb_iteration_matrix(grad_u_zero)
 
         diag_off = J_off.diagonal()
         diag_on = J_on.diagonal()
@@ -399,7 +399,7 @@ class TestLLFJacobianEffect:
         )
 
     def test_llf_jacobian_byte_identical_to_inline_field_formula(self, problem_and_pts):
-        """Issue #1071: with LLF active the consolidated ``_compute_hjb_jacobian_vectorized``
+        """Issue #1071: with LLF active the consolidated ``assemble_hjb_iteration_matrix``
         routes the per-node ``σ_eff`` diffusion through the single-source assembler
         (``assemble_hjb_jacobian_diag``, which row-scales the Laplacian via
         ``diags(σ_eff²/2) @ D_lap``).
@@ -421,7 +421,7 @@ class TestLLFJacobianEffect:
 
         rng = np.random.default_rng(1071)
         grad_u = rng.standard_normal((solver.n_points, 1))
-        J = solver._compute_hjb_jacobian_vectorized(grad_u)
+        J = solver.assemble_hjb_iteration_matrix(grad_u)
 
         n = solver.n_points
         dt = solver.problem.T / solver.problem.Nt

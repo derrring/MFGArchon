@@ -216,7 +216,7 @@ def test_assembled_m_matrix_holds_at_zero_drift(sigma):
 
     solver = _make_solver(sigma=sigma, n_x=21)
     grad_u = np.zeros((solver.n_points, 1))
-    J = solver._compute_hjb_jacobian_vectorized(grad_u)
+    J = solver.assemble_hjb_iteration_matrix(grad_u)
     report = verify_assembled_m_matrix(J, interior_indices=solver.interior_indices)
     assert report["is_m_matrix"], f"σ={sigma}: assembled interior matrix not M-matrix at zero drift: {report}"
 
@@ -235,7 +235,7 @@ def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
     from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
     solver = _make_solver(sigma=sigma, n_x=21)
-    solver._compute_hjb_jacobian_vectorized(np.zeros((solver.n_points, 1)))  # build operators
+    solver.assemble_hjb_iteration_matrix(np.zeros((solver.n_points, 1)))  # build operators
     diffusion_coeff = diffusion_from_volatility(sigma)
     alpha_crit = critical_drift_for_dmp(
         solver._D_lap, solver._D_grad, diffusion_coeff, interior_indices=solver.interior_indices
@@ -244,7 +244,7 @@ def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
 
     # λ=1 ⇒ |α| = |grad|. Drift well past α_crit must break the assembled M-matrix.
     strong = np.full((solver.n_points, 1), 5.0 * alpha_crit)
-    J = solver._compute_hjb_jacobian_vectorized(strong)
+    J = solver.assemble_hjb_iteration_matrix(strong)
     report = verify_assembled_m_matrix(J, interior_indices=solver.interior_indices)
     assert not report["is_m_matrix"], f"σ={sigma}: expected M-matrix violation at |drift|=5·α_crit, got {report}"
     assert report["n_positive_offdiag"] > 0
@@ -252,7 +252,7 @@ def test_assembled_m_matrix_breaks_under_strong_drift(sigma):
 
 @pytest.mark.parametrize("sigma", [0.3, 0.5, 1.0, 1.5])
 def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
-    """Issue #1071: ``_compute_hjb_jacobian_vectorized`` now routes ∂H/∂p through the
+    """Issue #1071: ``assemble_hjb_iteration_matrix`` now routes ∂H/∂p through the
     single-source assembler (``assemble_hjb_jacobian_diag`` → ``H_class.evaluate_dp``)
     instead of the inline ``p/λ`` re-derivation.
 
@@ -269,7 +269,7 @@ def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
     rng = np.random.default_rng(1071)
     grad_u = rng.standard_normal((solver.n_points, 1))
 
-    J = solver._compute_hjb_jacobian_vectorized(grad_u)  # builds operators lazily
+    J = solver.assemble_hjb_iteration_matrix(grad_u)  # builds operators lazily
 
     # Independent reference: the explicit inline LQ Jacobian this consolidation replaced.
     n = solver.n_points
@@ -305,7 +305,7 @@ def test_runtime_dmp_guard_warns_only_when_violated():
     gfdm_logger.addHandler(handler)
     try:
         solver = _make_solver_check_dmp(sigma=0.3, check_dmp=True)
-        solver._compute_hjb_jacobian_vectorized(np.zeros((solver.n_points, 1)))  # build operators + α_crit
+        solver.assemble_hjb_iteration_matrix(np.zeros((solver.n_points, 1)))  # build operators + α_crit
         x = np.linspace(0.0, 1.0, solver.n_points)
 
         records.clear()
@@ -318,7 +318,7 @@ def test_runtime_dmp_guard_warns_only_when_violated():
         assert any("Issue #1074" in m for m in records), "guard did not warn under strong drift"
 
         off = _make_solver_check_dmp(sigma=0.3, check_dmp=False)
-        off._compute_hjb_jacobian_vectorized(np.zeros((off.n_points, 1)))
+        off.assemble_hjb_iteration_matrix(np.zeros((off.n_points, 1)))
         records.clear()
         off._maybe_warn_dmp(100.0 * x)
         assert not any("DMP" in m for m in records), "guard fired with check_dmp=False (should be inert)"
