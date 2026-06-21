@@ -442,3 +442,47 @@ class TestLLFJacobianEffect:
         assert np.array_equal(Jc.data, rc.data), (
             f"LLF field-σ Jacobian not byte-identical to inline formula (maxabsdiff={maxabsdiff:.3e})"
         )
+
+    def test_llf_residual_byte_identical_to_inline_field_formula(self, problem_and_pts):
+        """Issue #1071/#1059 (audit S0-29): with LLF active the consolidated residual routes the
+        per-node ``σ_eff`` diffusion through the single-source ``assemble_hjb_residual``
+        (``-u_t + H - D·lap_u`` with ``D = σ_eff²/2`` elementwise).
+
+        Pin: byte-identical (atol=0) to the inline field formula, AND distinct from the scalar-σ
+        residual — locks against a residual/Jacobian σ-source split where the residual silently
+        reverts to the base scalar σ while the Jacobian (separately pinned above) uses σ_eff."""
+        from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
+        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+        problem, pts = problem_and_pts
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none", llf_augmentation=True, llf_l_H=10.0)
+        solver._build_differentiation_matrices()
+        assert solver._llf_sigma_eff is not None, "LLF sigma_eff must be populated at init"
+
+        n = solver.n_points
+        dt = solver.problem.T / solver.problem.Nt
+        H_class = solver.problem.hamiltonian_class
+        x = solver.collocation_points
+        rng = np.random.default_rng(1059)
+        u_cur = rng.standard_normal(n)
+        u_next = rng.standard_normal(n)
+        m = np.abs(rng.standard_normal(n)) + 0.1
+        grad_u = rng.standard_normal((n, solver.dimension))
+        lap_u = rng.standard_normal(n)
+        t = 0.0
+
+        r = solver._compute_hjb_residual_hamiltonian(u_cur, u_next, m, grad_u, lap_u, H_class, t)
+
+        u_t = (u_next - u_cur) / dt
+        H = np.asarray(eval_H_batch(H_class, x, m, grad_u, t), dtype=float)
+        d_field = diffusion_from_volatility(solver._llf_sigma_eff, kind="field")
+        ref_field = -u_t + H - d_field * lap_u
+        d_scalar = diffusion_from_volatility(solver._get_sigma_value(None))
+        ref_scalar = -u_t + H - d_scalar * lap_u
+
+        assert np.array_equal(np.asarray(r), ref_field), "LLF residual not byte-identical to inline field formula"
+        assert not np.allclose(np.asarray(r), ref_scalar), (
+            "LLF residual matches the scalar-σ form — per-node σ_eff not used (σ-source split, S0-29)"
+        )
