@@ -33,11 +33,11 @@ class TestHJBSolverTraits:
         assert HJBGFDMSolver._scheme_family == SchemeFamily.GFDM
 
     def test_hjb_weno_has_fdm_trait(self):
-        """Test that HJBWenoSolver has FDM scheme family (WENO is FDM variant)."""
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        """Test that HJBWENOSolver has FDM scheme family (WENO is FDM variant)."""
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
-        assert hasattr(HJBWenoSolver, "_scheme_family")
-        assert HJBWenoSolver._scheme_family == SchemeFamily.FDM
+        assert hasattr(HJBWENOSolver, "_scheme_family")
+        assert HJBWENOSolver._scheme_family == SchemeFamily.FDM
 
     def test_all_hjb_solvers_have_trait(self):
         """Test that all HJB solvers have _scheme_family trait."""
@@ -46,13 +46,13 @@ class TestHJBSolverTraits:
         from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
             HJBSemiLagrangianSolver,
         )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
         hjb_solvers = [
             HJBFDMSolver,
             HJBSemiLagrangianSolver,
             HJBGFDMSolver,
-            HJBWenoSolver,
+            HJBWENOSolver,
         ]
 
         for solver_class in hjb_solvers:
@@ -64,11 +64,11 @@ class TestHJBSolverTraits:
     def test_hjb_fdm_variants_both_fdm(self):
         """Test that both FDM and WENO solvers have FDM family."""
         from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
         # Both should be FDM family (WENO is high-order FDM)
         assert HJBFDMSolver._scheme_family == SchemeFamily.FDM
-        assert HJBWenoSolver._scheme_family == SchemeFamily.FDM
+        assert HJBWENOSolver._scheme_family == SchemeFamily.FDM
 
     def test_hjb_trait_types_are_consistent(self):
         """Test that all HJB solver traits are valid SchemeFamily values."""
@@ -77,7 +77,7 @@ class TestHJBSolverTraits:
         from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
             HJBSemiLagrangianSolver,
         )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
         # All should be valid SchemeFamily enum members
         all_families = set(SchemeFamily)
@@ -85,7 +85,7 @@ class TestHJBSolverTraits:
         assert HJBFDMSolver._scheme_family in all_families
         assert HJBSemiLagrangianSolver._scheme_family in all_families
         assert HJBGFDMSolver._scheme_family in all_families
-        assert HJBWenoSolver._scheme_family in all_families
+        assert HJBWENOSolver._scheme_family in all_families
 
 
 class TestValidatorPatternWithTraits:
@@ -116,13 +116,13 @@ class TestValidatorPatternWithTraits:
         from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
             HJBSemiLagrangianSolver,
         )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
         hjb_solvers = [
             (HJBFDMSolver, SchemeFamily.FDM),
             (HJBSemiLagrangianSolver, SchemeFamily.SL),
             (HJBGFDMSolver, SchemeFamily.GFDM),
-            (HJBWenoSolver, SchemeFamily.FDM),
+            (HJBWENOSolver, SchemeFamily.FDM),
         ]
 
         for solver_class, expected_family in hjb_solvers:
@@ -240,13 +240,13 @@ class TestTraitImportability:
         from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
             HJBSemiLagrangianSolver,
         )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
         # All should have trait
         assert HJBFDMSolver._scheme_family is not None
         assert HJBSemiLagrangianSolver._scheme_family is not None
         assert HJBGFDMSolver._scheme_family is not None
-        assert HJBWenoSolver._scheme_family is not None
+        assert HJBWENOSolver._scheme_family is not None
 
     def test_no_circular_import_with_scheme_family(self):
         """Test that importing solvers doesn't cause circular import."""
@@ -385,14 +385,14 @@ if __name__ == "__main__":
     from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
     from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
     # Test all HJB solvers have traits
     solvers = [
         (HJBFDMSolver, SchemeFamily.FDM, "HJB FDM"),
         (HJBSemiLagrangianSolver, SchemeFamily.SL, "HJB Semi-Lagrangian"),
         (HJBGFDMSolver, SchemeFamily.GFDM, "HJB GFDM"),
-        (HJBWenoSolver, SchemeFamily.FDM, "HJB WENO"),
+        (HJBWENOSolver, SchemeFamily.FDM, "HJB WENO"),
     ]
 
     for solver_class, expected_family, name in solvers:

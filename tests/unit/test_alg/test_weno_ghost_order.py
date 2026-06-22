@@ -46,10 +46,10 @@ def test_weno_uses_high_order_ghosts():
     )
 
     # Import WENO solver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBWENOSolver
 
     # Create WENO solver
-    solver = HJBWenoSolver(problem)
+    solver = HJBWENOSolver(problem)
 
     # Check that ghost buffer was created with correct parameters.
     # Issue #1200: the Osher-Shu HJ-WENO5 one-sided derivative stencil spans
@@ -78,10 +78,10 @@ def test_weno_ghost_cells_work():
     )
 
     # Import WENO solver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBWENOSolver
 
     # Create WENO solver
-    solver = HJBWenoSolver(problem)
+    solver = HJBWENOSolver(problem)
 
     # Test ghost cell update with smooth function
     x = np.linspace(0.0, 1.0, solver.num_grid_points_x)

@@ -16,7 +16,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver, HJBWenoSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -88,7 +88,7 @@ def test_weno_no_hamiltonian_fails_loud(monkeypatch):
     """WENO: with problem.H unavailable, _evaluate_hamiltonian raises rather than silently
     returning the hardcoded 0.5*grad**2 + m_val*grad."""
     problem = _problem()
-    solver = HJBWenoSolver(problem=problem)
+    solver = HJBWENOSolver(problem=problem)
 
     monkeypatch.setattr(problem, "H", _raise_attribute_error, raising=False)
 

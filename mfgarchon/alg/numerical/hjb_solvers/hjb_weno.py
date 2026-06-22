@@ -44,6 +44,7 @@ import numpy as np
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
+from mfgarchon.utils.deprecation import deprecated_alias
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
@@ -60,7 +61,7 @@ _CFL_CAP_1D: float = 0.5
 _DIFFUSION_CAP_1D: float = 0.25
 
 
-class HJBWenoSolver(BaseHJBSolver):
+class HJBWENOSolver(BaseHJBSolver):
     """
     Unified WENO family solver for Hamilton-Jacobi-Bellman equations.
 
@@ -1289,9 +1290,15 @@ class HJBWenoSolver(BaseHJBSolver):
         return variant_info[self.weno_variant]
 
 
+# Issue #1426: renamed HJBWenoSolver -> HJBWENOSolver (WENO is an acronym; matches the
+# all-caps HJBGFDMSolver / HJBFDMSolver siblings and PEP 8 acronym capitalization).
+# Deprecated alias kept for backward compatibility (removal per deprecation policy).
+HJBWenoSolver = deprecated_alias("HJBWenoSolver", HJBWENOSolver, "v0.20.5")
+
+
 if __name__ == "__main__":
     """Quick smoke test for development."""
-    print("Testing HJBWenoSolver...")
+    print("Testing HJBWENOSolver...")
 
     import numpy as np
 
@@ -1304,7 +1311,7 @@ if __name__ == "__main__":
     n_pts = problem_1d.geometry.num_spatial_points  # number of spatial grid points (Nx + 1)
 
     # Test standard WENO variant
-    solver_1d = HJBWenoSolver(problem_1d, weno_variant="weno-z")
+    solver_1d = HJBWENOSolver(problem_1d, weno_variant="weno-z")
 
     # Test solver initialization
     assert solver_1d.dimension == 1

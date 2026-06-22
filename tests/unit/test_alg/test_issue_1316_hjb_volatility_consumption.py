@@ -34,7 +34,7 @@ import numpy as np
 from mfgarchon.alg.numerical.hjb_solvers import (
     HJBGFDMSolver,
     HJBSemiLagrangianSolver,
-    HJBWenoSolver,
+    HJBWENOSolver,
 )
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -171,7 +171,7 @@ def _sl_problem():
     return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=_components())
 
 
-@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWenoSolver])
+@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWENOSolver])
 def test_sl_weno_fail_loud_on_spatial_volatility(solver_cls):
     """Issue #1316 — SL/WENO read problem.sigma at scattered sites (no chokepoint); a
     spatial volatility_field must fail loud, not be silently ignored."""
@@ -185,7 +185,7 @@ def test_sl_weno_fail_loud_on_spatial_volatility(solver_cls):
         solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=field)
 
 
-@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWenoSolver])
+@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWENOSolver])
 def test_sl_weno_fail_loud_on_mismatched_scalar(solver_cls):
     """Issue #1316 — a scalar volatility_field that differs from problem.sigma also fails
     loud (HJB would silently solve a different diffusion than FP)."""
@@ -198,7 +198,7 @@ def test_sl_weno_fail_loud_on_mismatched_scalar(solver_cls):
         solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=0.9)
 
 
-@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWenoSolver])
+@pytest.mark.parametrize("solver_cls", [HJBSemiLagrangianSolver, HJBWENOSolver])
 def test_sl_weno_accept_scalar_equal_to_sigma(solver_cls):
     """Issue #1316 — the iterator's redundant forwarding of a scalar problem.sigma as
     volatility_field is a no-op and must NOT raise."""
