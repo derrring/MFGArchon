@@ -138,9 +138,12 @@ class MeshData:
         areas = np.zeros(self.num_elements)
         for i, element in enumerate(self.elements):
             v0, v1, v2 = self.vertices[element]
-            # Area = 0.5 * |cross product|
-            cross = np.cross(v1 - v0, v2 - v0)
-            areas[i] = 0.5 * abs(cross)
+            # 2D triangle area = 0.5 * |x_a*y_b - y_a*x_b|. Only 2D triangles reach here
+            # (see compute_element_volumes' dispatch), so compute the scalar cross explicitly:
+            # numpy 2.x removed np.cross for 2D inputs.
+            a = v1 - v0
+            b = v2 - v0
+            areas[i] = 0.5 * abs(float(a[0] * b[1] - a[1] * b[0]))
         return areas
 
     def _compute_tetrahedron_volumes(self) -> NDArray[np.floating]:
