@@ -121,6 +121,7 @@ def compute_advection_term_nd(
     ndim: int,
     boundary_conditions: Any,
     scheme: str = "upwind",
+    mass_conservative: bool = False,
 ) -> np.ndarray:
     """
     Compute advection term div(alpha * m) where alpha = -coupling_coefficient * grad(U).
@@ -144,6 +145,11 @@ def compute_advection_term_nd(
         Boundary conditions specification
     scheme : str, optional
         Advection scheme: "upwind" (default) or "centered"
+    mass_conservative : bool, optional
+        If True (upwind only), use the discretely-conservative finite-volume divergence that
+        zeroes the advective flux through no-flux walls (Issue #1184/#1428), so density driven
+        against a wall by strong drift does not leak mass. Default False keeps the byte-identical
+        node-based divergence.
 
     Returns
     -------
@@ -181,6 +187,7 @@ def compute_advection_term_nd(
         scheme=scheme,
         form="divergence",  # Conservative form: ∇·(vm)
         bc=boundary_conditions,
+        mass_conservative=mass_conservative,  # Issue #1428: zero advective flux through no-flux walls
     )
 
     # Apply operator

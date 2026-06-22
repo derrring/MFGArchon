@@ -1045,8 +1045,11 @@ def solve_timestep_tensor_explicit(
         )
     else:
         # MFG coupled mode: derive drift from U
+        # Issue #1428: conservative FV divergence (zero advective flux through no-flux walls),
+        # matching the direct-drift branch above and every other FP path (#1184). Previously this
+        # branch alone used the non-conservative node divergence, leaking mass at no-flux walls.
         advection_term = compute_advection_term_nd(
-            M_current, U_current, coupling_coefficient, spacing, ndim, boundary_conditions
+            M_current, U_current, coupling_coefficient, spacing, ndim, boundary_conditions, mass_conservative=True
         )
 
     # Explicit Forward Euler update

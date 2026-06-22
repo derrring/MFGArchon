@@ -314,11 +314,16 @@ class AdvectionOperator(LinearOperator):
         """
         from mfgarchon.geometry.boundary import BCType, BoundaryConditions
 
+        # Issue #1428: an explicit periodic BoundaryConditions object must be treated like
+        # bc=None (wrap-face telescoping), not rejected — previously only bc=None counted as
+        # periodic, so a periodic BoundaryConditions raised despite periodic being supported.
         periodic = self.bc is None
         if not periodic:
             ok = isinstance(self.bc, BoundaryConditions) and self.bc.is_uniform
             seg_type = self.bc.segments[0].bc_type if ok else None
-            if seg_type not in (BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING):
+            if seg_type == BCType.PERIODIC:
+                periodic = True
+            elif seg_type not in (BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING):
                 raise NotImplementedError(
                     "mass_conservative divergence supports only no-flux/Neumann/reflecting "
                     f"(zero wall flux) or periodic boundaries; got {self.bc!r}."
