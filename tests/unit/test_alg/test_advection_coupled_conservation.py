@@ -14,7 +14,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_term_nd
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 
 
 def _setup_2d(n=12):
@@ -50,6 +50,16 @@ class TestCoupledAdvectionConservation:
             f"node-divergence default expected to leak (nonzero sum); got {total:.3e} — "
             f"if this is ~0 the default silently changed."
         )
+
+    def test_conservative_branch_accepts_explicit_periodic_bc(self):
+        """Issue #1428: an explicit periodic BoundaryConditions object (not bc=None) must be
+        accepted by the conservative-FV mode (wrap-face telescoping) and integrate to ~0 — it
+        previously raised NotImplementedError because only bc=None counted as periodic."""
+        M, U, spacing = _setup_2d()
+        bc = periodic_bc(dimension=2)
+        adv = compute_advection_term_nd(M, U, 1.0, spacing, 2, bc, mass_conservative=True)
+        total = float(np.sum(adv))
+        assert abs(total) < 1e-10, f"conservative FV advection must integrate to ~0 under periodic, got {total:.3e}"
 
     def test_default_is_nonconservative_byte_identical(self):
         """Omitting mass_conservative must equal mass_conservative=False (baseline preserved)."""
