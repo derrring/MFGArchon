@@ -710,6 +710,13 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Congestion mode for Hamiltonian coupling
         self.congestion_mode = congestion_mode
+        # Issue #1426: congestion_mode is stored but never read — 'multiplicative' was a silent
+        # no-op. Fail loud rather than silently behaving as 'additive'.
+        if congestion_mode != "additive":
+            raise NotImplementedError(
+                f"congestion_mode={congestion_mode!r} is not implemented (Issue #1426): it is stored but "
+                f"never applied, so it would silently behave as 'additive'. Only 'additive' is supported."
+            )
 
         # Collocation geometry for periodic domains (Issue #711)
         self._collocation_geometry = collocation_geometry

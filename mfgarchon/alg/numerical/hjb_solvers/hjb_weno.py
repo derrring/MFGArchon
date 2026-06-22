@@ -226,6 +226,13 @@ class HJBWenoSolver(BaseHJBSolver):
             raise ValueError(f"WENO-Z parameter must be positive, got {self.weno_z_parameter}")
         if self.weno_m_parameter <= 0:
             raise ValueError(f"WENO-M parameter must be positive, got {self.weno_m_parameter}")
+        # Issue #1426: weno_m_parameter is validated and stored but never applied in the WENO-M
+        # mapping. Fail loud on a non-default value rather than silently ignoring it.
+        if self.weno_m_parameter != 1.0:
+            raise NotImplementedError(
+                f"weno_m_parameter={self.weno_m_parameter} is not implemented (Issue #1426): it is stored "
+                f"but never applied in the WENO-M mapping. Only the default 1.0 is supported."
+            )
 
         if self.splitting_method not in ["strang", "godunov"]:
             raise ValueError(f"Unknown splitting method: {self.splitting_method}")
