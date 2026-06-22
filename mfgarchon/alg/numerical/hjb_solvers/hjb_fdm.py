@@ -520,7 +520,11 @@ class HJBFDMSolver(BaseHJBSolver):
         # Backward time loop
         for n in timestep_iter:
             U_next = U_solution[n + 1]
-            M_next = M_density[n + 1]
+            # Issue #1423: couple U^n to the density at the SAME time level, M[n] — the HJB and FP
+            # are coupled at the same physical time t_n (H(x, ∇u, m(t_n))). The 1D path was fixed
+            # to M[n] ("BUG #7 FIX" in base_hjb.solve_hjb_system_backward); this propagates that to
+            # the nD path, which previously used M[n+1] (a silent O(dt) cross-path off-by-one).
+            M_n = M_density[n]
             U_guess = U_prev[n]
 
             # Issue #889: unified volatility_field with shape-based dispatch
@@ -538,20 +542,20 @@ class HJBFDMSolver(BaseHJBSolver):
                 # Callable: evaluate and check shape
                 t = n * self.problem.dt
                 test_x = np.array([self.grid.coordinates[dd][0] for dd in range(d)])
-                test_val = volatility_field(t, test_x, float(M_next.flat[0]))
+                test_val = volatility_field(t, test_x, float(M_n.flat[0]))
                 test_arr = np.asarray(test_val)
                 if test_arr.ndim >= 2 and test_arr.shape[-2:] == (d, d):
                     # Tensor callable — evaluate at all points
                     Sigma_at_n = np.zeros((*self.shape, d, d))
                     for idx in np.ndindex(self.shape):
                         x_coords = np.array([self.grid.coordinates[dd][idx[dd]] for dd in range(d)])
-                        Sigma_at_n[idx] = volatility_field(t, x_coords, float(M_next[idx]))
+                        Sigma_at_n[idx] = volatility_field(t, x_coords, float(M_n[idx]))
 
             if Sigma_at_n is None:
                 # Scalar path (CoefficientField handles float, array, callable)
                 diffusion = CoefficientField(volatility_field, self.problem.sigma, "volatility_field", dimension=d)
                 sigma_at_n = diffusion.evaluate_at(
-                    timestep_idx=n, grid=self.grid.coordinates, density=M_next, dt=self.problem.dt
+                    timestep_idx=n, grid=self.grid.coordinates, density=M_n, dt=self.problem.dt
                 )
 
             # Compute current time for time-dependent BCs
@@ -567,7 +571,7 @@ class HJBFDMSolver(BaseHJBSolver):
             # Solve nonlinear system using centralized solver
             U_solution[n] = self._solve_single_timestep(
                 U_next,
-                M_next,
+                M_n,
                 U_guess,
                 sigma_at_n,
                 Sigma_at_n,
