@@ -322,7 +322,9 @@ class HJBFDMSolver(BaseHJBSolver):
             dt = self.problem.dt
             dx = self.problem.geometry.get_grid_spacing()[0]
             sigma = volatility_field if isinstance(volatility_field, (int, float)) else self.problem.sigma
-            cfl_diffusive = sigma**2 * dt / dx**2
+            # Issue #1426/S0-14: diffusive CFL uses the PDE coefficient D = sigma^2/2 (not sigma^2),
+            # matching the actual diffusion term -(sigma^2/2) Delta u. Diagnostic log only.
+            cfl_diffusive = 0.5 * sigma**2 * dt / dx**2
             if cfl_diffusive > 0.5:
                 log_fn = logger.debug if getattr(self, "_cfl_logged", False) else logger.info
                 log_fn(
