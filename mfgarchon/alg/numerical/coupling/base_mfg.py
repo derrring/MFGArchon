@@ -39,6 +39,8 @@ class BaseCouplingIterator(ABC):
         self._solution_computed: bool = False
         self._hjb_sig_params: set[str] | None = None
         self._fp_sig_params: set[str] | None = None
+        self._hjb_solver_name: str = "<hjb solver>"
+        self._fp_solver_name: str = "<fp solver>"
 
     def _init_solver_signatures(self, hjb_solver: Any, fp_solver: Any) -> None:
         """Cache solver method signatures for conditional parameter passing.
@@ -46,6 +48,8 @@ class BaseCouplingIterator(ABC):
         Call this in subclass ``__init__`` after storing solver references.
         Replaces per-iterator ``_cache_solver_signatures`` methods.
         """
+        self._hjb_solver_name = type(hjb_solver).__name__
+        self._fp_solver_name = type(fp_solver).__name__
         try:
             sig = inspect.signature(hjb_solver.solve_hjb_system)
             self._hjb_sig_params = set(sig.parameters.keys())
@@ -74,7 +78,15 @@ class BaseCouplingIterator(ABC):
             return kwargs
         if "volatility_field" in params and volatility_field is not None:
             kwargs["volatility_field"] = volatility_field
-        if "source_term" in params and source_term is not None:
+        if source_term is not None:
+            if "source_term" not in params:
+                raise NotImplementedError(
+                    f"{self._hjb_solver_name}.solve_hjb_system does not accept 'source_term', but the "
+                    f"problem defines a source / nonlocal / obstacle term (composed into a non-None HJB "
+                    f"source). Silently dropping it would solve the wrong problem (Issue #1424). Use an "
+                    f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator / obstacle from the "
+                    f"problem."
+                )
             kwargs["source_term"] = source_term
         return kwargs
 
@@ -97,7 +109,14 @@ class BaseCouplingIterator(ABC):
             kwargs["drift_field"] = drift_field
         if "volatility_field" in params and volatility_field is not None:
             kwargs["volatility_field"] = volatility_field
-        if "source_term" in params and source_term is not None:
+        if source_term is not None:
+            if "source_term" not in params:
+                raise NotImplementedError(
+                    f"{self._fp_solver_name}.solve_fp_system does not accept 'source_term', but the "
+                    f"problem defines an FP source term (composed into a non-None FP source). Silently "
+                    f"dropping it would solve the wrong problem (Issue #1424). Use an FDM FP solver, or "
+                    f"remove source_term_fp from the problem."
+                )
             kwargs["source_term"] = source_term
         return kwargs
 
