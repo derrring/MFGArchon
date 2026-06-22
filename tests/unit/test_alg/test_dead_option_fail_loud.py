@@ -13,7 +13,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver, HJBWenoSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver, HJBWENOSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -60,13 +60,13 @@ class TestDeadOptionFailLoud:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with pytest.raises(NotImplementedError, match="weno_m_parameter"):
-                HJBWenoSolver(problem, weno_m_parameter=2.0)
+                HJBWENOSolver(problem, weno_m_parameter=2.0)
 
     def test_weno_m_parameter_default_ok(self):
         problem = _problem()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            HJBWenoSolver(problem, weno_m_parameter=1.0)
+            HJBWENOSolver(problem, weno_m_parameter=1.0)
 
 
 if __name__ == "__main__":
