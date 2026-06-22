@@ -160,9 +160,9 @@ class TestCheckSolverDualityFDM:
     def test_fdm_weno_compatibility(self):
         """Test that WENO and FDM are compatible (both FDM family)."""
         from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
+        from mfgarchon.alg.numerical.hjb_solvers import HJBWENOSolver
 
-        result = check_solver_duality(HJBWenoSolver, FPFDMSolver)
+        result = check_solver_duality(HJBWENOSolver, FPFDMSolver)
 
         assert result.status == DualityStatus.DISCRETE_DUAL
         assert result.hjb_family == SchemeFamily.FDM

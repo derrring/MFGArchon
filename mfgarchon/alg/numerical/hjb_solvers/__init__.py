@@ -11,7 +11,8 @@ numerical analysis approaches:
   inner (resolves Issue #1118 Newton stiffness; requires SOCP-precomputed
   stencils on a stencil_provider HJBGFDMSolver)
 - HJBSemiLagrangianSolver: Semi-Lagrangian approach (characteristic-based, nD)
-- HJBWenoSolver: WENO (Weighted Essentially Non-Oscillatory) method (1D/2D/3D)
+- HJBWENOSolver: WENO (Weighted Essentially Non-Oscillatory) method (1D/2D/3D)
+  (HJBWenoSolver: deprecated alias, removal per policy)
 - PenaltyHJBSolver: Variational inequality wrapper (obstacle/optimal stopping)
 
 All solvers inherit from BaseNumericalSolver and follow the new paradigm structure.
@@ -23,7 +24,7 @@ from .hjb_gfdm import HJBGFDMSolver
 from .hjb_howard import HJBHowardSolver
 from .hjb_penalty import PenaltyHJBSolver
 from .hjb_semi_lagrangian import HJBSemiLagrangianSolver
-from .hjb_weno import HJBWenoSolver
+from .hjb_weno import HJBWENOSolver, HJBWenoSolver
 
 __all__ = [
     "BaseHJBSolver",
@@ -32,6 +33,7 @@ __all__ = [
     "HJBGFDMSolver",
     "HJBHowardSolver",
     "HJBSemiLagrangianSolver",
+    "HJBWENOSolver",
     "HJBWenoSolver",
     "PenaltyHJBSolver",
 ]
