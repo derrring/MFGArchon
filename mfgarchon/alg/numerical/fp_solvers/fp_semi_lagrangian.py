@@ -44,7 +44,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 from .base_fp import BaseFPSolver, DriftConvention
 
@@ -291,8 +291,14 @@ class FPSLJacobianSolver(BaseFPSolver):
         return M
 
     def _compute_velocity(self, U: np.ndarray) -> np.ndarray:
-        """Compute velocity field alpha = -grad(U)."""
-        return -np.gradient(U, self.dx)
+        """Compute the optimal-control drift alpha* = -grad(U) / control_cost.
+
+        Issue #1420 / G-017 / S0-03: the coefficient is single-sourced from the Hamiltonian's
+        control_cost via ``fp_drift_coefficient`` (= 1/control_cost for a quadratic
+        SeparableHamiltonian), not hardcoded to 1 (which dropped the 1/lambda factor for
+        control_cost != 1). Byte-identical when control_cost == 1.
+        """
+        return -fp_drift_coefficient(self.problem) * np.gradient(U, self.dx)
 
     def _compute_divergence_from_U(self, U: np.ndarray) -> np.ndarray:
         """
@@ -327,7 +333,9 @@ class FPSLJacobianSolver(BaseFPSolver):
         # Compute Laplacian with proper ghost cell handling
         lap_U = laplacian_with_bc(U, spacings=[self.dx], bc=extrap_bc)
 
-        return -lap_U
+        # div(alpha) = div(-c*grad U) = -c*Laplacian(U); c = 1/control_cost single-sourced
+        # via fp_drift_coefficient (Issue #1420 / S0-03), consistent with _compute_velocity.
+        return -fp_drift_coefficient(self.problem) * lap_U
 
     def _apply_boundary_conditions(self, x_dep: np.ndarray) -> np.ndarray:
         """
