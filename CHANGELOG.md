@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1/control_cost`; the LQ-FDM coupled golden was regenerated for the corrected physics (validated
   end-to-end against exp16, `KL_tavg = 8.0e-3`).
 
+- **Semi-Lagrangian FP drift now includes the `1/control_cost` factor** (Issue #1420, audit finding
+  S0-03). `FPSLJacobianSolver` and `FPSLSolver`/`FPSLAdjointSolver` computed the drift as `α = -∇U`,
+  dropping the `1/λ` factor entirely, so for `control_cost ≠ 1` the transported drift had the wrong
+  magnitude (the HJB used `λ` while the FP advected `c_eff = 1`). The drift is now
+  `α* = -∇U/control_cost` (and the Jacobian-SL divergence shortcut `div(α) = -c·ΔU` carries the same
+  `c`), single-sourced via `pde_coefficients.fp_drift_coefficient`. Byte-identical when
+  `control_cost == 1`; corrected otherwise. New `test_fp_sl_drift_control_cost_s003` regression gate.
+
 ### Changed
 
 - **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue

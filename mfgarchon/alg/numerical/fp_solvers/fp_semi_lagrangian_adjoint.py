@@ -43,7 +43,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd
@@ -329,20 +329,26 @@ class FPSLSolver(BaseFPSolver):
         return M
 
     def _compute_velocity_1d(self, U: np.ndarray) -> np.ndarray:
-        """Compute velocity field alpha = -grad(U) for 1D."""
-        return -np.gradient(U, self.dx)
+        """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
+
+        Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
+        (= 1/control_cost), not hardcoded to 1. Byte-identical when control_cost == 1.
+        """
+        return -fp_drift_coefficient(self.problem) * np.gradient(U, self.dx)
 
     def _compute_velocity_nd(self, U: np.ndarray) -> tuple[np.ndarray, ...]:
         """
-        Compute velocity field alpha = -grad(U) for nD.
+        Compute the optimal-control drift alpha* = -grad(U) / control_cost for nD.
 
-        Returns tuple of arrays, one per dimension.
+        Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
+        (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
         # Use np.gradient with spacing for each dimension
+        c = fp_drift_coefficient(self.problem)
         gradients = np.gradient(U, *[self.spacing[d] for d in range(self.dimension)])
         if self.dimension == 1:
-            return (-gradients,)
-        return tuple(-g for g in gradients)
+            return (-c * gradients,)
+        return tuple(-c * g for g in gradients)
 
     def _adjoint_sl_step_1d(
         self,
