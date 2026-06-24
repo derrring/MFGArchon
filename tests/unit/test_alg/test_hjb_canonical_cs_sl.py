@@ -324,3 +324,50 @@ class TestCanonicalCSMultiDimensional:
         assert np.all(np.isfinite(U))
         # With h=0 the maximum principle bounds u by the terminal data.
         assert np.max(np.abs(U)) <= np.max(np.abs(U_terminal)) + 1e-9
+
+
+class TestCanonicalCSControlCostLambda:
+    """Issue #1420: the canonical_cs DPP running cost is L(α) = (λ/2)|α|², not (1/2)|α|².
+
+    Pre-fix the kinetic term hardcoded λ=1, so the per-node minimizer gave α* = -∇u (not -∇u/λ)
+    and, for a pure-LQ problem (h=0), the value function U was identical for λ=1 and λ=2. Post-fix
+    U depends on λ and matches the analytic LQ Riccati ratio u(0,x)/u(T,x) = λ/(λ+1).
+    """
+
+    @staticmethod
+    def _solve(control_cost: float):
+        Nx, Nt = 41, 20
+        geometry = TensorProductGrid(
+            dimension=1, bounds=[(-2.0, 2.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)
+        )
+        components = MFGComponents(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.5 * x**2,
+        )
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=Nt, diffusion=0.0, components=components)
+        solver = HJBSemiLagrangianSolver(problem, interpolation_method="linear", diffusion_method="canonical_cs")
+        x = geometry.get_spatial_grid().flatten()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            U = solver.solve_hjb_system(np.ones((Nt + 1, Nx)), 0.5 * x**2, np.zeros((Nt + 1, Nx)))
+        return U, x
+
+    def test_depends_on_control_cost(self):
+        """Pure-LQ U must differ for λ=1 vs λ=2 (pre-fix they were identical — kinetic term ignored λ)."""
+        U1, _ = self._solve(1.0)
+        U2, _ = self._solve(2.0)
+        rel = np.max(np.abs(U1 - U2)) / (np.max(np.abs(U1)) + 1e-15)
+        assert rel > 0.05, (
+            f"canonical_cs U insensitive to control_cost (rel diff {rel:.3e}); kinetic term still λ=1 (#1420)."
+        )
+
+    @pytest.mark.parametrize(("control_cost", "expected_ratio"), [(0.5, 1.0 / 3.0), (1.0, 0.5), (2.0, 2.0 / 3.0)])
+    def test_riccati_ratio_scales_with_lambda(self, control_cost, expected_ratio):
+        """Analytic LQ (σ=0, T=1): u(0,x)/u(T,x) = P(0)/P(T) = λ/(λ+1) at any off-centre x."""
+        U, x = self._solve(control_cost)
+        probe = int(np.argmin(np.abs(x - 1.0)))  # off-centre |x| = 1
+        ratio = U[0, probe] / (0.5 * x[probe] ** 2)
+        assert abs(ratio - expected_ratio) < 0.1, (
+            f"control_cost={control_cost}: canonical_cs ratio {ratio:.3f}, expected λ/(λ+1) ≈ {expected_ratio:.3f}"
+        )

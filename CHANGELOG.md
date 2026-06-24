@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (CLAUDE.md "NO silent fallbacks"). Standard `MFGProblem`s (always carry `coupling_coefficient`) and
   quadratic-Hamiltonian solves are unaffected.
 
+- **Canonical Carlini-Silva SL (`diffusion_method="canonical_cs"`) honors `control_cost`** (Issue
+  #1420). The per-node DPP running cost was hardcoded `(1/2)|α|²` (λ=1), so the implicit-α* minimizer
+  gave `α* = -∇u` instead of `-∇u/control_cost` — undercutting the solver's λ≠1 support. It is now
+  `(λ/2)|α|²` (and the α search bound scales by `1/λ`), so the minimizer yields `α* = -∇u/λ` and the
+  LQ value matches the analytic Riccati ratio `u(0)/u(T) = λ/(λ+1)`. Byte-identical at `control_cost
+  == 1`. New `TestCanonicalCSControlCostLambda` covers λ∈{0.5,1,2} (sensitivity + Riccati ratio).
+
 ### Changed
 
 - **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue
