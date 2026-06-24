@@ -24,7 +24,6 @@ from mfgarchon.utils.solver_result import SolverResult
 from .base_mfg import BaseCouplingIterator
 from .fixed_point_utils import (
     check_convergence_criteria,
-    compute_fp_velocity_field,
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
@@ -347,84 +346,6 @@ class FixedPointIterator(BaseCouplingIterator):
             stacklevel=2,
         )
         return np.zeros(shape)
-
-    def _compute_drift_field(self, U, M, H_class):
-        """Compute α* from U via H.optimal_control, return as synthetic U.
-
-        Issue #896: replaces the quadratic assumption (effective_drift = U).
-        Computes α* = H.optimal_control(x, m, ∇U, t) at each time step,
-        then integrates α* to produce a synthetic U field whose finite
-        differences reproduce the correct velocity in the legacy FP solver.
-
-        For quadratic H (α* = -∇U/λ), this is equivalent to U/λ.
-        For non-quadratic H, the synthetic U encodes the non-linear control.
-
-        Currently 1D only. For nD problems, falls back to passing U directly
-        (correct for quadratic H; TODO: extend synthetic-U to nD).
-        """
-        import numpy as np
-
-        # For separable H with smooth (quadratic) control cost, the FP solver's
-        # internal drift extraction (-coupling_coefficient * ∇U) is already
-        # correct: it reproduces α* = -∇U/λ. The synthetic-U reconstruction
-        # introduces unnecessary numerical integration error.
-        # Only use synthetic-U for non-smooth or non-quadratic H.
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
-
-        if isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth():
-            return U
-
-        # Synthetic-U integration is 1D only. For nD with non-smooth H,
-        # the reconstruction requires solving ∇U_syn = -α*/c (a Poisson-like
-        # problem). This is deferred; for now, fall back to U (which is exact
-        # for quadratic H and approximate for others).
-        if U.ndim > 2:
-            logger.warning(
-                "Non-smooth H with nD problem: synthetic-U drift not yet supported. "
-                "Falling back to U as drift potential (exact only for quadratic H)."
-            )
-            return U
-
-        geometry = self.problem.geometry
-        grid_spacing = geometry.get_grid_spacing()
-        dx = grid_spacing[0]
-        dt = self.problem.dt
-        Nt = U.shape[0]
-        Nx = U.shape[-1]
-        coupling_coefficient = getattr(self.problem, "coupling_coefficient", 1.0)
-
-        # Compute ∇U via central differences
-        grad_U = np.gradient(U, dx, axis=-1)
-
-        # Compute α* at grid points for all time steps
-        bounds = geometry.get_bounds()
-        x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx).reshape(-1, 1)
-
-        alpha_field = np.zeros_like(grad_U)
-        for n in range(Nt):
-            p = grad_U[n]
-            m_n = M[n] if n < M.shape[0] else M[-1]
-            alpha_field[n] = H_class.optimal_control(x_grid, m_n, p.reshape(-1, 1), t=n * dt).ravel()
-
-        # Construct synthetic U such that:
-        #   -coupling_coefficient * (U_syn[i+1] - U_syn[i]) / dx ≈ α*[i+1/2]
-        # => U_syn[i+1] - U_syn[i] = -α*[i+1/2] * dx / coupling_coefficient
-        # Using midpoint α*[i+1/2] ≈ (α*[i] + α*[i+1]) / 2
-        alpha_mid = 0.5 * (alpha_field[:, :-1] + alpha_field[:, 1:])  # (Nt, Nx-1)
-        increments = -alpha_mid * dx / coupling_coefficient
-        U_synthetic = np.zeros_like(U)
-        U_synthetic[:, 1:] = np.cumsum(increments, axis=-1)
-
-        return U_synthetic
-
-    def _compute_velocity_field(self, U, M, H_class):
-        """Compute face-centered velocity α* via H.optimal_control.
-
-        Issue #1233: single-sourced through
-        :func:`fixed_point_utils.compute_fp_velocity_field` (shared with the Newton
-        ``MFGResidual``). The face-centered convention (Issue #919) is unchanged.
-        """
-        return compute_fp_velocity_field(self.problem, U, M, H_class)
 
     def solve(
         self,

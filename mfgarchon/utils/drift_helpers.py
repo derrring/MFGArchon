@@ -133,7 +133,8 @@ def optimal_control_drift(
             alpha = H.optimal_control(x, m, grad_U, t)
 
         The FixedPointIterator handles this automatically via
-        ``_compute_drift_field()``. Will be removed in v0.25.0.
+        ``fixed_point_utils.resolve_fp_drift_kwargs`` /
+        ``fixed_point_utils.compute_fp_velocity_field``. Will be removed in v0.25.0.
 
     Equation:
         α(t,x) = -∇U(t,x) / λ
