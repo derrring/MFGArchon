@@ -558,6 +558,36 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
+def _fp_drift_coefficient(problem: Any) -> float:
+    """Single-source the FP drift coefficient ``c`` (drift = ``-c·∇U``) from the Hamiltonian's
+    control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
+
+    For a smooth separable quadratic control cost ``H_control = |p|²/(2·control_cost)`` (MINIMIZE) —
+    the only Hamiltonian the value-function (``-c·∇U``) drift path serves — the optimal feedback is
+    ``α* = -∇U/control_cost``, so ``c = 1/control_cost``. ``control_cost`` is owned by the
+    Hamiltonian (``problem.hamiltonian_class.control_cost.lambda_``), the single source also used by
+    ``H.optimal_control`` and the HJB Jacobian. The legacy ``coupling_coefficient`` attribute is a
+    private copy that must equal ``1/control_cost`` but silently diverged from it (default 0.5),
+    making the coupled solve converge to the wrong fixed point (G-017; exp16 Tier-2).
+
+    Falls back to the legacy ``coupling_coefficient`` attribute only when there is no quadratic
+    MINIMIZE separable Hamiltonian to source from — i.e. a non-Hamiltonian direct
+    ``solve_fp_system`` call. Non-smooth / congestion / MAXIMIZE Hamiltonians never reach this path
+    (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
+    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+    """
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    h_class = getattr(problem, "hamiltonian_class", None)
+    if (
+        isinstance(h_class, SeparableHamiltonian)
+        and isinstance(h_class.control_cost, QuadraticControlCost)
+        and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
+    ):
+        return 1.0 / h_class.control_cost.lambda_
+    return getattr(problem, "coupling_coefficient", 1.0)
+
+
 def solve_fp_nd_full_system(
     m_initial_condition: np.ndarray,
     U_solution_for_drift: np.ndarray | None,
@@ -664,7 +694,9 @@ def solve_fp_nd_full_system(
     ndim = problem.geometry.dimension
     shape = tuple(problem.geometry.get_grid_shape())
     dt = problem.dt
-    coupling_coefficient = getattr(problem, "coupling_coefficient", 1.0)
+    # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
+    # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
+    coupling_coefficient = _fp_drift_coefficient(problem)
 
     # Get grid spacing and geometry
     spacing = problem.geometry.get_grid_spacing()

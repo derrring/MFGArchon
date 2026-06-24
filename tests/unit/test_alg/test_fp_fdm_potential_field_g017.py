@@ -22,8 +22,8 @@ Measured: when ``coupling_coefficient == 1/control_cost`` the two are **byte-ide
   stay byte-identical through the single-source refactor).
 - ``test_potential_path_uses_control_cost_not_coupling`` asserts the CORRECT behavior (the two paths
   agree even when ``coupling_coefficient ≠ 1/control_cost``, i.e. the potential path ignores the
-  redundant scalar) — currently xfail because the potential path still reads ``coupling_coefficient``
-  (G-017); it flips to pass when the drift is single-sourced through ``optimal_control``.
+  redundant scalar). Before the fix this diverged ~20% (G-017); the FP-FDM drift is now single-sourced
+  from the Hamiltonian's control_cost (``fp_fdm_time_stepping._fp_drift_coefficient``).
 
 Refs #1420, #1430. Pattern: single source of truth — sharp form (one owner + pinning test).
 """
@@ -104,16 +104,11 @@ class TestFPFDMPotentialFieldDriftSource:
             f"{float(np.max(np.abs(m_potential - m_velocity))):.3e}."
         )
 
-    @pytest.mark.xfail(
-        reason="G-017 / #1420: the FP-FDM potential_field=U path forms -coupling_coefficient·∇U, "
-        "ignoring the Hamiltonian's control_cost. Flips to pass when the drift is single-sourced "
-        "through optimal_control (then coupling_coefficient is irrelevant to the drift).",
-        strict=True,
-    )
     def test_potential_path_uses_control_cost_not_coupling(self):
-        """The potential-field drift must equal α* = -∇U/control_cost regardless of the (redundant)
-        coupling_coefficient. With coupling_coefficient ≠ 1/control_cost the current path diverges
-        ~20% (the bug); the single-source refactor makes the two paths agree."""
+        """The potential-field drift equals α* = -∇U/control_cost regardless of the (now-redundant)
+        coupling_coefficient. Before the G-017 fix (#1420) this diverged ~20% when
+        coupling_coefficient ≠ 1/control_cost; the FP-FDM drift is now single-sourced from the
+        Hamiltonian's control_cost (``_fp_drift_coefficient``), so the two channels agree."""
         control_cost = 1.0
         problem = _problem(control_cost=control_cost, coupling_coefficient=0.5)  # 0.5 != 1/1.0
         m_potential, m_velocity = _solve_both_paths(problem)
