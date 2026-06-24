@@ -38,7 +38,8 @@ def fp_drift_coefficient(problem: Any) -> float:
     ``QuadraticMFGHamiltonian``, which carries its own ``coupling_coefficient``) or a non-Hamiltonian
     direct solve. Non-smooth / congestion / MAXIMIZE control costs never reach the ``-c·∇U`` path
     (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
-    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type. A
+    ``coupling_coefficient`` of ``None`` (absent / explicitly unset) falls back to ``1.0``.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
@@ -49,7 +50,8 @@ def fp_drift_coefficient(problem: Any) -> float:
         and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
     ):
         return 1.0 / h_class.control_cost.lambda_
-    return getattr(problem, "coupling_coefficient", 1.0)
+    cc = getattr(problem, "coupling_coefficient", None)
+    return float(cc) if cc is not None else 1.0
 
 
 def diffusion_from_volatility(

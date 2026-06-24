@@ -64,7 +64,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -226,7 +226,9 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     def _face_velocity_from_potential(self, u_slice: np.ndarray):
         """alpha_{i+1/2} = -coupling*(U_{i+1} - U_i)/dx per axis (+ periodic wrap face)."""
-        coupling = float(self.problem.coupling_coefficient)
+        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
+        # (single source), not the independent coupling_coefficient field.
+        coupling = fp_drift_coefficient(self.problem)
         spacing = list(self.problem.geometry.get_grid_spacing())
         ndim = u_slice.ndim
         alpha_faces: list[np.ndarray] = []
