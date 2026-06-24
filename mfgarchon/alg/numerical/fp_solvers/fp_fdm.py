@@ -754,8 +754,13 @@ class FPFDMSolver(BaseFPSolver):
         # n_time_points = number of time knots (including t=0 and t=T)
         # This allows tests to pass edge cases like n_time_points=0 or n_time_points=1
         n_time_points = U_solution_for_drift.shape[0]
+        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+
         sigma_base = self.problem.sigma  # Base diffusion (scalar or array)
-        coupling_coefficient = getattr(self.problem, "coupling_coefficient", 1.0)
+        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
+        # (the single source), not the independent coupling_coefficient field. Matches the HJB-side
+        # build_advection_matrix so the strict-adjoint relation A_fp = A_hjb.T is preserved.
+        coupling_coefficient = fp_drift_coefficient(self.problem)
 
         if n_time_points == 0:
             if self.backend is not None:

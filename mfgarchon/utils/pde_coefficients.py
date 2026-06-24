@@ -21,6 +21,37 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def fp_drift_coefficient(problem: Any) -> float:
+    """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
+    control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
+
+    For a smooth separable quadratic control cost ``H_control = |p|²/(2·control_cost)`` (MINIMIZE),
+    the optimal feedback is ``α* = -∇U/control_cost``, so ``c = 1/control_cost``. ``control_cost`` is
+    owned by the Hamiltonian (``problem.hamiltonian_class.control_cost.lambda_``) — the single source
+    also consumed by ``H.optimal_control`` and the HJB Jacobian. The legacy ``coupling_coefficient``
+    attribute is a private copy that must equal ``1/control_cost`` but silently diverged from it
+    (``MFGProblem`` default 0.5), making the coupled solve converge to the wrong fixed point
+    (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too wide).
+
+    Falls back to the legacy ``coupling_coefficient`` attribute when there is no quadratic MINIMIZE
+    separable Hamiltonian to source from: a non-``SeparableHamiltonian`` Hamiltonian (e.g.
+    ``QuadraticMFGHamiltonian``, which carries its own ``coupling_coefficient``) or a non-Hamiltonian
+    direct solve. Non-smooth / congestion / MAXIMIZE control costs never reach the ``-c·∇U`` path
+    (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
+    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+    """
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    h_class = getattr(problem, "hamiltonian_class", None)
+    if (
+        isinstance(h_class, SeparableHamiltonian)
+        and isinstance(h_class.control_cost, QuadraticControlCost)
+        and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
+    ):
+        return 1.0 / h_class.control_cost.lambda_
+    return getattr(problem, "coupling_coefficient", 1.0)
+
+
 def diffusion_from_volatility(
     sigma: float | np.ndarray,
     *,

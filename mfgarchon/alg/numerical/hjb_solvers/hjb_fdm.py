@@ -21,7 +21,7 @@ from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured gri
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
-from mfgarchon.utils.pde_coefficients import CoefficientField, diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import CoefficientField, diffusion_from_volatility, fp_drift_coefficient
 
 from . import base_hjb
 from .base_hjb import BaseHJBSolver
@@ -996,7 +996,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = getattr(self.problem, "coupling_coefficient", 1.0)
+            coupling_coefficient = fp_drift_coefficient(self.problem)
 
         # Compute gradient ∂U/∂x using BC-aware computation
         bc = self.get_boundary_conditions()
@@ -1071,7 +1071,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Get coupling coefficient
         if coupling_coefficient is None:
-            coupling_coefficient = getattr(self.problem, "coupling_coefficient", 1.0)
+            coupling_coefficient = fp_drift_coefficient(self.problem)
 
         # Compute gradients using trait-based operators
         gradients = self._compute_gradients_nd(U, time=time)
