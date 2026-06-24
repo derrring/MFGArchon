@@ -355,9 +355,12 @@ class FPParticleSolver(BaseFPSolver):
         # constructor, so it is never None here; the prior `else 0.1` silent
         # default was dead defensive code masking a malformed problem.
         sigma = self.problem.sigma
-        coupling_coefficient = (
-            self.problem.coupling_coefficient if self.problem.coupling_coefficient is not None else 1.0
-        )
+        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
+        # (single source), not the independent coupling_coefficient field. This params value flows
+        # to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
+        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+
+        coupling_coefficient = fp_drift_coefficient(self.problem)
 
         result = {
             # nD parameters
