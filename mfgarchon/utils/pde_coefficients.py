@@ -38,8 +38,12 @@ def fp_drift_coefficient(problem: Any) -> float:
     ``QuadraticMFGHamiltonian``, which carries its own ``coupling_coefficient``) or a non-Hamiltonian
     direct solve. Non-smooth / congestion / MAXIMIZE control costs never reach the ``-c·∇U`` path
     (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
-    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type. A
-    ``coupling_coefficient`` of ``None`` (absent / explicitly unset) falls back to ``1.0``.
+    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+
+    Fail-loud (Issue #1420 V1): if there is neither a quadratic-MINIMIZE ``SeparableHamiltonian`` to
+    source ``1/control_cost`` from nor a ``coupling_coefficient`` on the problem, this raises rather
+    than silently returning ``1.0`` (the prior fallback masked a malformed/duck-typed problem getting
+    a wrong-temperature drift with no error — CLAUDE.md "NO silent fallbacks").
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
@@ -51,7 +55,14 @@ def fp_drift_coefficient(problem: Any) -> float:
     ):
         return 1.0 / h_class.control_cost.lambda_
     cc = getattr(problem, "coupling_coefficient", None)
-    return float(cc) if cc is not None else 1.0
+    if cc is None:
+        raise ValueError(
+            "Cannot determine the FP drift coefficient: the problem has no quadratic-MINIMIZE "
+            "SeparableHamiltonian (to source 1/control_cost) and no `coupling_coefficient` attribute. "
+            "Set a quadratic control cost on the Hamiltonian, or set problem.coupling_coefficient. "
+            "(Issue #1420 V1: the prior silent fallback to 1.0 masked a malformed problem.)"
+        )
+    return float(cc)
 
 
 def diffusion_from_volatility(
