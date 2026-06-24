@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -67,6 +67,11 @@ class FPGFDMSolver(BaseFPSolver):
         >>> U_drift = np.zeros((21, 100))  # Zero drift
         >>> M = solver.solve_fp_system(m_init, drift_field=U_drift)
     """
+
+    # Issue #1420 (G-017 V2): this meshfree solver consumes the precomputed velocity α* directly
+    # (drift_field), never the value function U — it has no potential_field path. Declared explicit
+    # so the coupling layer (resolve_fp_drift_kwargs) does not auto-route U as a velocity.
+    _drift_convention = DriftConvention.VELOCITY
 
     # Scheme family trait for duality validation (Issue #580)
     from mfgarchon.alg.base_solver import SchemeFamily
