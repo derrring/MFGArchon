@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Validated <1.2% vs the analytic Hopf-Lax and <0.5% vs FDM across {kinetic, +V(x), +f(m)} ×
   λ∈{0.5, 1, 2}; new `TestSLHJBConsistency` regression gate. No paper experiments use SL.
 
+- **FP/HJB drift single-sourced from `control_cost`, not `coupling_coefficient`** (Issue #1420,
+  gotcha G-017; PR #1441 + follow-up). The MFG optimal feedback `α* = -∇U/control_cost` was computed
+  in the FP-FDM coupled path (and the strict-adjoint `build_advection_matrix` /
+  `solve_fp_step_adjoint_mode` pair) from the independent `MFGProblem.coupling_coefficient` field
+  (default 0.5) instead of the Hamiltonian's `control_cost`. With `coupling_coefficient ≠
+  1/control_cost` the HJB and FP used inconsistent control costs and converged to the wrong fixed
+  point (exp16 Tier-2 had the Towel equilibrium ~4-5× too wide). The drift coefficient is now
+  single-sourced via `pde_coefficients.fp_drift_coefficient` (`1/control_cost` for a
+  quadratic-MINIMIZE `SeparableHamiltonian`; falls back to `coupling_coefficient` for
+  `QuadraticMFGHamiltonian` / non-Hamiltonian solves). Byte-identical when `coupling_coefficient ==
+  1/control_cost`; the LQ-FDM coupled golden was regenerated for the corrected physics (validated
+  end-to-end against exp16, `KL_tavg = 8.0e-3`).
+
 ### Changed
 
 - **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue
