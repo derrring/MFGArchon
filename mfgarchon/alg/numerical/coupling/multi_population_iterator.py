@@ -229,56 +229,6 @@ class MultiPopulationIterator:
             population_names=self.multi_problem.population_names,
         )
 
-    @staticmethod
-    def _compute_drift_field(U, M, H_class, problem):
-        """Deprecated: use _compute_velocity_field instead.
-
-        Kept for backward compatibility. Returns synthetic U potential.
-        """
-        # Issue #915: dispatch on problem type
-        spatial_dim = getattr(problem, "spatial_dimension", None)
-        if spatial_dim == 0:
-            # Network problem: pass U directly.
-            # FPNetworkSolver computes flows from U differences.
-            # TODO (#913): FPNetworkSolver should use H.optimal_control()
-            return U
-
-        # For smooth separable H, the FP solver's internal drift extraction
-        # (-coupling_coefficient * ∇U) is already correct. Skip synthetic-U.
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
-
-        if isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth():
-            return U
-
-        # Non-smooth H, 1D only: synthetic U approach
-        if U.ndim > 2:
-            return U  # nD non-smooth: deferred
-
-        # Continuous problem: synthetic U approach (same as FixedPointIterator)
-        geometry = problem.geometry
-        grid_spacing = geometry.get_grid_spacing()
-        dx = grid_spacing[0]
-        dt = problem.dt
-        Nt = U.shape[0]
-        Nx = U.shape[-1]
-        coupling_coefficient = getattr(problem, "coupling_coefficient", 1.0)
-
-        grad_U = np.gradient(U, dx, axis=-1)
-        bounds = geometry.get_bounds()
-        x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx).reshape(-1, 1)
-
-        alpha_field = np.zeros_like(grad_U)
-        for n in range(Nt):
-            p = grad_U[n]
-            m_n = M[n] if n < M.shape[0] else M[-1]
-            alpha_field[n] = H_class.optimal_control(x_grid, m_n, p.reshape(-1, 1), t=n * dt).ravel()
-
-        alpha_mid = 0.5 * (alpha_field[:, :-1] + alpha_field[:, 1:])
-        increments = -alpha_mid * dx / coupling_coefficient
-        U_synthetic = np.zeros_like(U)
-        U_synthetic[:, 1:] = np.cumsum(increments, axis=-1)
-        return U_synthetic
-
 
 class MultiPopulationResult:
     """Result of multi-population MFG solve.

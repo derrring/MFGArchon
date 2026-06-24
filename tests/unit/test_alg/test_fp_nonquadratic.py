@@ -343,7 +343,7 @@ class TestFixedPointIteratorDrift:
         )
 
     def test_quadratic_drift_matches_legacy(self):
-        """Quadratic H through _compute_drift_field should match passing U directly."""
+        """Quadratic H through the FixedPointIterator drift pipeline should match passing U directly."""
         from mfgarchon.alg.numerical.coupling import FixedPointIterator
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
