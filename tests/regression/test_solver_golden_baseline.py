@@ -34,6 +34,11 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: solver_golden_lq_fdm.npz was regenerated 2026-06-24 for the G-017 fix (#1420). The prior
+# baseline encoded the bug: with control_cost=1.0 but coupling_coefficient left at its default 0.5,
+# the FP drift was -0.5*grad(U) (c_eff=2) while the HJB used c=1. The corrected FP drift single-sources
+# 1/control_cost (=1.0), shifting the coupled solve by max|dU|~5e-4 / max|dM|~0.1 (mass conserved).
+# The GFDM fixture is unchanged (HJB-GFDM was already single-sourced).
 _FIXTURE = Path(__file__).parent / "fixtures" / "solver_golden_lq_fdm.npz"
 _GFDM_FIXTURE = Path(__file__).parent / "fixtures" / "solver_golden_gfdm_hjb.npz"
 
