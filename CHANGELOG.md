@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`CoefficientField` diffusion default-value precedence fixed: `override → volatility_field → sigma`**
+  (Issue #1412). The FDM/HJB solver sites (`hjb_fdm`, `base_hjb`, `fp_fdm_time_stepping`) hand-built
+  `CoefficientField(override, problem.sigma)`, so a `None` per-solve `volatility_field` fell back to the
+  **derived scalar** `problem.sigma` (`mean(array)`, or `1.0` for a callable) — silently dropping a
+  spatially-varying `volatility_field`. They now route through the `MFGProblem.get_diffusion_coefficient_field(override=…)`
+  factory (extended with `override` / `field_name` / `dimension`), whose precedence prefers the full
+  `volatility_field` over the scalar placeholder. Byte-identical for all scalar-σ problems (every current
+  golden) and for the #1248-forwarded `solve()` path (override non-None); corrects only the direct-call
+  `None`-override edge on array/callable-σ problems. New precedence pins in `test_mfg_problem`.
 - **σ-value lookup single-sourced via `pde_coefficients.resolve_diffusion_source`** (Issue #1412,
   generalizing #1071 to the diffusion coefficient). The per-solve `volatility_field` override
   resolution (scalar / per-point array / callable → scalar; batch path = array mean, callable at the

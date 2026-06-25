@@ -21,7 +21,7 @@ from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured gri
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
-from mfgarchon.utils.pde_coefficients import CoefficientField, diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 from . import base_hjb
 from .base_hjb import BaseHJBSolver
@@ -553,7 +553,9 @@ class HJBFDMSolver(BaseHJBSolver):
 
             if Sigma_at_n is None:
                 # Scalar path (CoefficientField handles float, array, callable)
-                diffusion = CoefficientField(volatility_field, self.problem.sigma, "volatility_field", dimension=d)
+                diffusion = self.problem.get_diffusion_coefficient_field(
+                    override=volatility_field, field_name="volatility_field", dimension=d
+                )
                 sigma_at_n = diffusion.evaluate_at(
                     timestep_idx=n, grid=self.grid.coordinates, density=M_n, dt=self.problem.dt
                 )
