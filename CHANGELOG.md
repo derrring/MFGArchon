@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dead solver knobs now fail loud instead of silently doing nothing** (Issue #1426, S0-26/S0-27).
+  `FPGFDMSolver(boundary_indices=…/domain_bounds=…)` and `FPSLJacobianSolver(characteristic_solver=…)`
+  were accepted, documented, and stored on `self` but never read — a non-default value was a silent
+  no-op (worse than an error). They now raise `NotImplementedError` on a non-default value; the
+  defaults (`None` / `"explicit_euler"`) are unchanged, so existing usage is unaffected. Follows the
+  S0-23/24 (`congestion_mode` / `weno_m_parameter`) fail-loud pattern. (Network knobs S0-25 remain.)
+
 - **Semi-Lagrangian HJB scheme corrected — was ~24% wrong even at λ=1** (Issue #1413, PR #1417).
   The H-based SL update `u^{n+1}(x − dt·∇u) − dt·H` combined the characteristic foot with a
   pointwise `−dt·H`, double-counting the kinetic term (~3×), and used a λ=1-only foot (`∇u`

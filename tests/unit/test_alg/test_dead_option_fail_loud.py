@@ -2,9 +2,11 @@
 """Issue #1426: solver options that are stored but never applied must fail loud on a non-default
 value instead of being silent no-ops. Defaults remain accepted (baseline-safe).
 
-Covers the two cleanly-dead options (no live non-default setter anywhere): GFDM ``congestion_mode``
-and WENO ``weno_m_parameter``. (The FPSL/FPGFDM ``characteristic_solver`` / ``boundary_indices``
-namesakes are live on other solvers and are handled separately.)
+Covers the GFDM ``congestion_mode`` / WENO ``weno_m_parameter`` options (S0-23/24), plus the
+solver-specific dead knobs ``FPGFDMSolver.boundary_indices`` / ``domain_bounds`` (S0-26) and
+``FPSLJacobianSolver.characteristic_solver`` (S0-27). These last two are guarded on those specific
+solvers only — the namesakes are live on other solvers / geometry APIs. (Network knobs S0-25 are
+tracked separately.)
 """
 
 import warnings
@@ -13,6 +15,8 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver, HJBWENOSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -67,6 +71,43 @@ class TestDeadOptionFailLoud:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             HJBWENOSolver(problem, weno_m_parameter=1.0)
+
+    # Issue #1426 S0-26: FPGFDMSolver.boundary_indices / domain_bounds stored, never read.
+
+    def test_fp_gfdm_boundary_indices_raises(self):
+        problem = _problem()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pytest.raises(NotImplementedError, match="boundary_indices"):
+                FPGFDMSolver(problem, collocation_points=_pts(problem), boundary_indices={0, 1})
+
+    def test_fp_gfdm_domain_bounds_raises(self):
+        problem = _problem()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pytest.raises(NotImplementedError, match="domain_bounds"):
+                FPGFDMSolver(problem, collocation_points=_pts(problem), domain_bounds=[(0.0, 1.0)])
+
+    def test_fp_gfdm_boundary_defaults_ok(self):
+        problem = _problem()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            FPGFDMSolver(problem, collocation_points=_pts(problem))
+
+    # Issue #1426 S0-27: FPSLJacobianSolver.characteristic_solver stored, never read.
+
+    def test_fp_sl_characteristic_solver_nondefault_raises(self):
+        problem = _problem()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pytest.raises(NotImplementedError, match="characteristic_solver"):
+                FPSLJacobianSolver(problem, characteristic_solver="rk4")
+
+    def test_fp_sl_characteristic_solver_default_ok(self):
+        problem = _problem()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            FPSLJacobianSolver(problem)
 
 
 if __name__ == "__main__":
