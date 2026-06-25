@@ -153,6 +153,20 @@ class FPGFDMSolver(BaseFPSolver):
         # Store boundary info for solver-level BC enforcement
         self._boundary_indices = boundary_indices
         self._domain_bounds = domain_bounds
+        # Issue #1426 (S0-26): boundary_indices / domain_bounds are accepted and stored but never
+        # read — boundary handling uses the problem geometry's boundary conditions. Fail loud on a
+        # non-default (non-None) value rather than silently ignoring it.
+        if boundary_indices is not None:
+            raise NotImplementedError(
+                "FPGFDMSolver(boundary_indices=...) is accepted but never applied (Issue #1426): "
+                "boundary handling uses the problem geometry's boundary conditions. Remove the "
+                "argument or set boundary conditions on problem.geometry."
+            )
+        if domain_bounds is not None:
+            raise NotImplementedError(
+                "FPGFDMSolver(domain_bounds=...) is accepted but never applied (Issue #1426): the "
+                "domain is taken from problem.geometry. Remove the argument."
+            )
         self._boundary_type = resolved_bc_type
 
         # Store upwind parameters

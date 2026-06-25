@@ -124,6 +124,14 @@ class FPSLJacobianSolver(BaseFPSolver):
         # Solver configuration
         self.interpolation_method = interpolation_method
         self.characteristic_solver = characteristic_solver
+        # Issue #1426 (S0-27): characteristic_solver is accepted and stored but never read — the SL
+        # characteristic foot is traced with explicit Euler only. Fail loud on a non-default value.
+        if characteristic_solver != "explicit_euler":
+            raise NotImplementedError(
+                f"FPSLJacobianSolver(characteristic_solver={characteristic_solver!r}) is not "
+                "implemented (Issue #1426): the characteristic foot is traced with explicit Euler "
+                "only. Use the default 'explicit_euler'."
+            )
 
         # Detect problem dimension
         self.dimension = self._detect_dimension()  # Issue #633: Use inherited method
