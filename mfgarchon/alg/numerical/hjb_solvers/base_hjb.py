@@ -27,7 +27,7 @@ from mfgarchon.operators.stencils.finite_difference import (
     gradient_upwind,
     laplacian_with_bc,
 )
-from mfgarchon.utils.pde_coefficients import CoefficientField, get_spatial_grid
+from mfgarchon.utils.pde_coefficients import get_spatial_grid
 
 logger = get_logger(__name__)
 if TYPE_CHECKING:
@@ -1418,8 +1418,12 @@ def solve_hjb_system_backward(
             backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), float("nan"), backend)
             continue
 
-        # Extract or evaluate diffusion using CoefficientField abstraction
-        diffusion = CoefficientField(volatility_field, problem.sigma, "volatility_field", dimension=1)
+        # Extract or evaluate diffusion using CoefficientField abstraction (Issue #1412: route
+        # through the single-source factory so a None override falls back to the full
+        # volatility_field, not the scalar problem.sigma placeholder). dimension=1: 1D path.
+        diffusion = problem.get_diffusion_coefficient_field(
+            override=volatility_field, field_name="volatility_field", dimension=1
+        )
         grid = get_spatial_grid(problem)
         sigma_at_n = diffusion.evaluate_at(timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt)
 

@@ -1322,16 +1322,38 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # PDE Coefficient Field Helpers
     # =========================================================================
 
-    def get_diffusion_coefficient_field(self) -> Any:
+    def get_diffusion_coefficient_field(
+        self,
+        override: float | np.ndarray | Callable | None = None,
+        *,
+        field_name: str = "diffusion",
+        dimension: int | None = None,
+    ) -> Any:
         """
         Get a CoefficientField wrapper for the diffusion coefficient.
 
         Returns a CoefficientField that handles scalar, array, and callable
         diffusion coefficients uniformly. Use this in solvers instead of
-        directly accessing self.sigma.
+        hand-constructing ``CoefficientField(..., self.sigma)`` (Issue #1412).
+
+        Precedence — the single source for the solver-side volatility lookup: a per-solve
+        ``override`` (the ``volatility_field`` a solver receives) wins; otherwise the problem's
+        full ``volatility_field`` (the SDE volatility property — scalar/array/callable); the
+        derived scalar ``self.sigma`` is only the ultimate fallback. Before this, the
+        FDM/time-stepping solver sites hand-built ``CoefficientField(override, self.sigma)`` and
+        so fell back to ``self.sigma`` (``mean(array)``, or ``1.0`` for a callable) when no
+        override was passed, silently dropping a spatially-varying ``volatility_field``.
+
+        Args:
+            override: Per-solve volatility override (a solver's ``volatility_field`` argument).
+                ``None`` falls back to ``self.volatility_field`` then ``self.sigma``.
+            field_name: Name used in CoefficientField diagnostics (default ``"diffusion"``;
+                solvers pass ``"volatility_field"`` to preserve their error wording).
+            dimension: Spatial dimension for array/spatiotemporal extraction; defaults to
+                ``self.dimension``.
 
         Returns:
-            CoefficientField wrapping self.volatility_field with self.sigma as default
+            CoefficientField wrapping the resolved field with self.sigma as the scalar default
 
         Example:
             >>> diffusion = problem.get_diffusion_coefficient_field()
@@ -1345,10 +1367,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         from mfgarchon.utils.pde_coefficients import CoefficientField
 
         return CoefficientField(
-            field=self.volatility_field,
+            field=override if override is not None else self.volatility_field,
             default_value=self.sigma,
-            field_name="diffusion",
-            dimension=self.dimension,
+            field_name=field_name,
+            dimension=self.dimension if dimension is None else dimension,
         )
 
     def get_drift_coefficient_field(self) -> Any:

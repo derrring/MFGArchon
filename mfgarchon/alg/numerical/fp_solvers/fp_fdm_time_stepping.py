@@ -870,7 +870,9 @@ def solve_fp_nd_full_system(
         elif drift.is_callable():
             # Callable drift with scalar diffusion - use explicit Forward Euler
             # This avoids the mathematically incorrect synthetic U approach
-            diffusion = CoefficientField(sigma_base, problem.sigma, "volatility_field", dimension=ndim)
+            diffusion = problem.get_diffusion_coefficient_field(
+                override=sigma_base, field_name="volatility_field", dimension=ndim
+            )
             sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
 
             M_next = solve_timestep_explicit_with_drift(
@@ -886,7 +888,9 @@ def solve_fp_nd_full_system(
             )
         else:
             # MFG-coupled mode: scalar diffusion + U/velocity-based drift - implicit solver
-            diffusion = CoefficientField(sigma_base, problem.sigma, "volatility_field", dimension=ndim)
+            diffusion = problem.get_diffusion_coefficient_field(
+                override=sigma_base, field_name="volatility_field", dimension=ndim
+            )
             sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
 
             M_next = solve_timestep_full_nd(

@@ -1094,6 +1094,51 @@ def test_get_diffusion_coefficient_field():
 
 
 @pytest.mark.unit
+def test_get_diffusion_coefficient_field_override_precedence():
+    """Issue #1412: the factory resolves override > volatility_field > sigma.
+
+    A per-solve override wins; with no override the FULL ``volatility_field`` is used, NOT the
+    derived scalar ``problem.sigma`` (``mean`` for an array, ``1.0`` for a callable). This is the
+    precedence the FDM/HJB solver sites now route through, instead of the old
+    ``CoefficientField(override, problem.sigma)`` that dropped a spatial ``volatility_field`` on a
+    ``None`` override."""
+    sigma_arr = np.linspace(0.2, 0.8, 11)
+    problem = create_test_problem(sigma=sigma_arr)
+    # problem.sigma is the derived scalar (mean); volatility_field is the full array.
+    assert problem.sigma == pytest.approx(float(np.mean(sigma_arr)))
+    np.testing.assert_array_equal(problem.volatility_field, sigma_arr)
+
+    # override given -> override wins
+    assert problem.get_diffusion_coefficient_field(override=0.9).field == 0.9
+
+    # override None -> the FULL volatility_field (array), not the scalar mean placeholder
+    field = problem.get_diffusion_coefficient_field(override=None)
+    np.testing.assert_array_equal(field.field, sigma_arr)
+    assert field.default == pytest.approx(problem.sigma)  # sigma only the ultimate fallback
+
+
+@pytest.mark.unit
+def test_get_diffusion_coefficient_field_scalar_is_byte_identical():
+    """Issue #1412: for a scalar problem volatility_field == sigma, so an override=None resolution
+    equals the old problem.sigma fallback — the solver-site migration is byte-identical."""
+    problem = create_test_problem(sigma=0.3)
+    field = problem.get_diffusion_coefficient_field(override=None)
+    assert field.field == pytest.approx(0.3)
+    assert field.default == pytest.approx(0.3)
+
+
+@pytest.mark.unit
+def test_get_diffusion_coefficient_field_name_and_dimension_params():
+    """Issue #1412: default field_name stays 'diffusion' (back-compat); solvers pass
+    'volatility_field' and their own dimension."""
+    problem = create_test_problem(sigma=0.3)
+    assert problem.get_diffusion_coefficient_field().name == "diffusion"
+    f = problem.get_diffusion_coefficient_field(field_name="volatility_field", dimension=1)
+    assert f.name == "volatility_field"
+    assert f.dimension == 1
+
+
+@pytest.mark.unit
 def test_get_drift_coefficient_field():
     """Test get_drift_coefficient_field returns CoefficientField wrapper."""
     # default_geometry has 11 grid points
