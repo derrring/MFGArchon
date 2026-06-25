@@ -120,8 +120,10 @@ class TestFPNetworkSolverInitialization:
 
         assert solver.cfl_factor == 0.3
 
-    def test_custom_iteration_parameters(self):
-        """Test initialization with custom iteration parameters."""
+    def test_dead_iteration_parameters_fail_loud(self):
+        """Issue #1426 (S0-25): max_iterations / tolerance are dead — the implicit step is a direct
+        sparse solve (spsolve), not iterative — so a non-default value fails loud; defaults are a
+        no-op and construct fine."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
@@ -131,14 +133,15 @@ class TestFPNetworkSolverInitialization:
             Nt=10,
         )
 
-        solver = FPNetworkSolver(
-            problem,
-            max_iterations=500,
-            tolerance=1e-8,
-        )
+        with pytest.raises(NotImplementedError, match="max_iterations"):
+            FPNetworkSolver(problem, max_iterations=500)
+        with pytest.raises(NotImplementedError, match="tolerance"):
+            FPNetworkSolver(problem, tolerance=1e-8)
 
-        assert solver.max_iterations == 500
-        assert solver.tolerance == 1e-8
+        # Defaults construct fine (the no-op knobs are unchanged).
+        solver = FPNetworkSolver(problem)
+        assert solver.max_iterations == 1000
+        assert solver.tolerance == 1e-6
 
     def test_mass_conservation_flag(self):
         """Test mass conservation enforcement flag."""
@@ -599,7 +602,7 @@ class TestFPNetworkSolverIntegration:
 
         configs = [
             {"scheme": "explicit", "cfl_factor": 0.4},
-            {"scheme": "implicit", "max_iterations": 500},
+            {"scheme": "implicit"},
             {"scheme": "upwind", "diffusion_coefficient": 0.15},
         ]
 

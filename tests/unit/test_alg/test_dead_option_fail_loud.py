@@ -6,7 +6,7 @@ Covers the GFDM ``congestion_mode`` / WENO ``weno_m_parameter`` options (S0-23/2
 solver-specific dead knobs ``FPGFDMSolver.boundary_indices`` / ``domain_bounds`` (S0-26) and
 ``FPSLJacobianSolver.characteristic_solver`` (S0-27). These last two are guarded on those specific
 solvers only — the namesakes are live on other solvers / geometry APIs. (Network knobs S0-25 are
-tracked separately.)
+pinned in ``test_fp_network_solver`` / ``test_hjb_network_solver`` alongside their live siblings.)
 """
 
 import warnings
