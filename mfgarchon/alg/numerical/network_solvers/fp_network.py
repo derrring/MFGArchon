@@ -31,6 +31,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -169,9 +170,11 @@ class FPNetworkSolver(BaseFPSolver):
             drift_field: DEPRECATED since v0.21.0 — use potential_field.
                 Accepted U under the old drift_field name (U-semantic). The rename
                 mirrors the weak-form rename from PR #1205 (Issue #1043 Phase 2).
-            volatility_field: Diffusion specification (optional):
-                - None: Use self.diffusion_coefficient (backward compatible).
-                - float: Constant diffusion on network.
+            volatility_field: SDE volatility sigma (optional); D = sigma^2/2 internally
+                (Issue #1429 S0-15 — the base_fp contract, consistent with FDM/FVM/GFDM):
+                - None: Use the D-valued self.diffusion_coefficient constructor knob (backward
+                  compatible).
+                - float: constant SDE volatility sigma; the diffusion is D = sigma^2/2.
                 - np.ndarray/Callable: Phase 2 (not yet supported).
             show_progress: Whether to display progress bar for timesteps.
 
@@ -227,8 +230,10 @@ class FPNetworkSolver(BaseFPSolver):
             # Use self.diffusion_coefficient (backward compatible)
             effective_diffusion = self.diffusion_coefficient
         elif isinstance(volatility_field, (int, float)):
-            # Constant diffusion
-            effective_diffusion = float(volatility_field)
+            # Issue #1429 (S0-15): volatility_field is the SDE volatility sigma (the base_fp
+            # contract used by FDM/FVM/GFDM), NOT the diffusion D — convert via the single source
+            # D = sigma^2/2. (The `diffusion_coefficient` constructor knob stays D-valued.)
+            effective_diffusion = float(diffusion_from_volatility(float(volatility_field)))
         elif isinstance(volatility_field, np.ndarray) or callable(volatility_field):
             # Spatially varying or state-dependent - Phase 2
             raise NotImplementedError(

@@ -41,6 +41,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
+  S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
+  LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,
+  not the override. `solve_hjb_system` now recomputes `_llf_sigma_eff` from the installed override
+  (unconditionally, so a later `volatility_field=None` solve resets it). Byte-identical when LLF is
+  off (the default) or no override is passed; idempotent across Picard iterations (does not reopen
+  the #1059 frozen-ν stability note).
+- **`FPNetworkSolver` treats a scalar `volatility_field` as SDE volatility σ (D = σ²/2), not as D**
+  (Issue #1429, S0-15). The float branch consumed `volatility_field` directly as the diffusion `D`,
+  diverging from the `base_fp` contract used by FDM/FVM/GFDM (where `volatility_field = σ`). It now
+  routes through the single source `diffusion_from_volatility` (`D = σ²/2`). Affects only an explicit
+  scalar `volatility_field` passed to the network FP solve; the `None` path (D-valued
+  `diffusion_coefficient` knob) is unchanged.
 - **Dead solver knobs now fail loud instead of silently doing nothing** (Issue #1426, all of
   S0-23–S0-27). Knobs accepted, documented, and stored on `self` but **never read** — a non-default
   value was a silent no-op (worse than an error) — now raise `NotImplementedError` on a non-default

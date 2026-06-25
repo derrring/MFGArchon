@@ -2856,6 +2856,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         # legacy problem.sigma path.
         self._volatility_field_override = volatility_field
 
+        # Issue #1429 (S0-13): recompute the LLF effective volatility from the per-solve override.
+        # _llf_sigma_eff is otherwise frozen at __init__ from problem.sigma, so an LLF-augmented
+        # solve with a #1316 override would stabilize off the base sigma, not the override.
+        # Unconditional so a later volatility_field=None solve resets it to the base (no stale
+        # override). Safe w.r.t. the #1059 frozen-nu note: the override is constant across Picard
+        # iterations and _llf_l_H is static, so this recompute is idempotent — not the
+        # solution-driven feedback #1059 guards against.
+        if self.llf_augmentation:
+            self._llf_sigma_eff = self._compute_llf_sigma_eff()
+
         # Pick up any per-Picard resolved BC the coupling layer installed on the
         # geometry since construction (Issue #1118; matches FDM's per-solve re-read).
         self._refresh_boundary_conditions_if_changed()
