@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently mean-collapsing it (which would re-open the divergence). New `test_issue_1412_fp_volatility_fail_loud`
   pins those previously-unpinned GFDM / SL / SL-adjoint guards so a future "route through the shared
   resolver" refactor cannot silently drop them.
+- **`FPParticleSolver` per-solve volatility no longer mutates the shared `problem.sigma`** (Issue
+  #1412). The grid-drift paths previously applied a custom `volatility_field` by monkeypatching
+  `self.problem.sigma = effective_sigma` before dispatch and restoring it in a `finally` (#1248) —
+  a shared-state / re-entrancy hazard. It is now a solver-local `_effective_sigma_override` attribute
+  (the #1316 pattern), resolved in `_get_grid_params` through `resolve_diffusion_source`. Byte-identical
+  (a seeded `volatility_field=s` solve equals a `problem.sigma=s` solve to 1e-10); `problem.sigma` is
+  never written. New `test_issue_1412_fp_particle_sigma_override`.
 
 ### Fixed
 

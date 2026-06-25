@@ -155,6 +155,10 @@ class FPParticleSolver(BaseFPSolver):
         self.kde_normalization = kde_normalization
         self.M_particles_trajectory: np.ndarray | None = None
         self._time_step_counter = 0  # Track current time step for normalization logic
+        # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
+        # paths use), set by solve_fp_system instead of mutating the shared problem.sigma.
+        # None => use problem.sigma. Explicit init for object-shape stability (CLAUDE.md).
+        self._effective_sigma_override: float | None = None
 
         # Density mode for direct queries (Issue #489 Phase 2)
         self.density_mode = density_mode
@@ -354,12 +358,18 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1081: problem.sigma is typed float and resolved in the MFGProblem
         # constructor, so it is never None here; the prior `else 0.1` silent
         # default was dead defensive code masking a malformed problem.
-        sigma = self.problem.sigma
+        # Issue #1412: a per-solve volatility override (set by solve_fp_system for a custom
+        # volatility_field) is the authoritative diffusion source, resolved through the shared
+        # single source; None falls back to the byte-identical problem.sigma path.
+        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_diffusion_source
+
+        sigma_source = (
+            self._effective_sigma_override if self._effective_sigma_override is not None else self.problem.sigma
+        )
+        sigma = resolve_diffusion_source(sigma_source)
         # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
         # (single source), not the independent coupling_coefficient field. This params value flows
         # to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
-        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
-
         coupling_coefficient = fp_drift_coefficient(self.problem)
 
         result = {
@@ -1411,10 +1421,11 @@ class FPParticleSolver(BaseFPSolver):
                 f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
             )
 
-        # Temporarily override problem.sigma if custom volatility provided
-        original_sigma = self.problem.sigma
-        if volatility_field is not None:
-            self.problem.sigma = effective_sigma
+        # Issue #1412: install the resolved per-solve volatility as a solver-local override
+        # (consumed by _get_grid_params), instead of mutating the shared problem.sigma. None
+        # restores the byte-identical problem.sigma path. Replaces the prior #1248 monkeypatch
+        # (self.problem.sigma = effective_sigma + finally-restore), which mutated shared state.
+        self._effective_sigma_override = effective_sigma if volatility_field is not None else None
 
         # Reset time step counter for normalization logic
         self._time_step_counter = 0
@@ -1470,8 +1481,9 @@ class FPParticleSolver(BaseFPSolver):
                 # GPU nD solver not yet implemented
                 return self._solve_fp_system_cpu_nd(M_initial, effective_U)
         finally:
-            # Restore original sigma
-            self.problem.sigma = original_sigma
+            # Issue #1412: clear the per-solve volatility override (transient state); no shared
+            # problem.sigma to restore now that the monkeypatch is gone.
+            self._effective_sigma_override = None
 
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """CPU pipeline - existing NumPy implementation."""
