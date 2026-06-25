@@ -568,7 +568,20 @@ def resolve_fp_drift_kwargs(
         elif "potential_field" in params:
             drift_kwargs["potential_field"] = U
         elif "drift_field" in params:
-            drift_kwargs["drift_field"] = U
+            # Issue #1420 (G-017 V2): the FP solver exposes only `drift_field` (the velocity α*,
+            # DriftConvention.VELOCITY) and no `potential_field`. We hold the value function U, not a
+            # velocity, and for a meshfree/collocation solver (e.g. FPGFDMSolver) the coupling layer
+            # cannot derive α* at the solver's own points (compute_fp_velocity_field is grid-based).
+            # Passing U as `drift_field` would silently advect the value function as a velocity — the
+            # exact #1043/V2 bug. Fail loud instead of solving the wrong problem.
+            raise ValueError(
+                "Cannot auto-route the value function as FP drift: the FP solver exposes only "
+                "`drift_field` (velocity α*) and no `potential_field`, so U cannot be passed as a "
+                "velocity (this would silently advect the value function as a velocity). Pass an "
+                "explicit `drift_field=α*` (the precomputed optimal control, e.g. -∇U/control_cost via "
+                "`compute_fp_velocity_field` at the solver's own points), or use an FP solver with "
+                "`potential_field` support (e.g. FPFDMSolver). Issue #1420 (G-017 V2)."
+            )
 
     use_positional_U = not ("drift_field" in params or "potential_field" in params)
     return drift_kwargs, use_positional_U

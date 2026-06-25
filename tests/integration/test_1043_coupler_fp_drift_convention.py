@@ -43,7 +43,8 @@ from mfgarchon.alg.numerical.coupling import (
     FictitiousPlayIterator,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import resolve_fp_drift_kwargs
-from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPGFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -602,6 +603,33 @@ class TestFPNetworkSolverPotentialFieldRename:
         )
         # drift_field still present as deprecated alias (not removed until v0.25.0)
         assert "drift_field" in params, "drift_field must remain as a deprecated alias until v0.25.0 removal."
+
+
+class TestVelocityOnlySolverFailLoud:
+    """Issue #1420 (G-017 V2): for smooth-separable H, a velocity-only FP solver — one that exposes
+    ``drift_field`` (= velocity α*) but no ``potential_field`` (e.g. ``FPGFDMSolver``, which is
+    meshfree, so the coupling layer cannot derive α* at its collocation points) — must NOT have the
+    value function auto-routed as a velocity. ``resolve_fp_drift_kwargs`` now fails loud instead of
+    silently advecting U as α*. (#1043 fixed this for the FDM/``potential_field`` path; the
+    velocity-only path was the remaining gap.)
+    """
+
+    def test_resolve_fails_loud_for_velocity_only_solver(self):
+        problem = _lq_problem()  # smooth-separable LQ
+        nx = 21
+        nt = problem.Nt + 1
+        x = np.linspace(0.0, 1.0, nx)
+        U = np.tile((x - 0.8) ** 2, (nt, 1))
+        M = np.tile(np.exp(-10 * (x - 0.5) ** 2), (nt, 1))
+        # FPGFDMSolver's real signature: drift_field present, potential_field absent (the V2 trigger).
+        gfdm_params = set(inspect.signature(FPGFDMSolver.solve_fp_system).parameters)
+        assert "drift_field" in gfdm_params
+        assert "potential_field" not in gfdm_params
+        with pytest.raises(ValueError, match="Cannot auto-route the value function"):
+            resolve_fp_drift_kwargs(problem, gfdm_params, None, U, M)
+
+    def test_fp_gfdm_declares_velocity_convention(self):
+        assert FPGFDMSolver._drift_convention == DriftConvention.VELOCITY
 
 
 if __name__ == "__main__":

@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `c`), single-sourced via `pde_coefficients.fp_drift_coefficient`. Byte-identical when
   `control_cost == 1`; corrected otherwise. New `test_fp_sl_drift_control_cost_s003` regression gate.
 
+- **Coupling layer fails loud instead of advecting the value function as a velocity** (Issue #1420
+  V2). For a smooth-separable Hamiltonian, `resolve_fp_drift_kwargs` routed `U` to a velocity-only FP
+  solver (one exposing `drift_field`=α* but no `potential_field`, e.g. `FPGFDMSolver`) as
+  `drift_field=U` — silently advecting the value function as a velocity. Since such solvers are
+  meshfree (the coupling layer cannot derive α* at their collocation points), this now raises a
+  `ValueError` directing the caller to pass an explicit `drift_field=α*` or use a `potential_field`-
+  capable solver. `FPGFDMSolver` declares `_drift_convention = VELOCITY` explicitly. No previously
+  passing path is affected (the fp_gfdm tests use the explicit precomputed-drift path).
+
 ### Changed
 
 - **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue
