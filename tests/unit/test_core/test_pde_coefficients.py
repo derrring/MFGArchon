@@ -15,7 +15,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.pde_coefficients import CoefficientField, get_spatial_grid
+from mfgarchon.utils.pde_coefficients import CoefficientField, fp_drift_coefficient, get_spatial_grid
 
 
 def _default_hamiltonian():
@@ -463,3 +463,37 @@ class TestScalarDiffusionFromVolatility:
             d = scalar_diffusion_from_volatility(arr, 0.3)
         # byte-identical to the prior inline `0.5 * mean(arr)**2`
         assert d == pytest.approx(0.5 * float(np.mean(arr)) ** 2, rel=1e-12)
+
+
+class TestFpDriftCoefficient:
+    """Issue #1420: fp_drift_coefficient single-sources 1/control_cost from a quadratic-MINIMIZE
+    SeparableHamiltonian, falls back to coupling_coefficient otherwise, and fails loud when neither
+    is available (V1 — no silent 1.0 fallback for a malformed/duck-typed problem)."""
+
+    @pytest.mark.parametrize("control_cost", [0.5, 1.0, 2.0])
+    def test_sources_inverse_control_cost_from_quadratic_hamiltonian(self, control_cost):
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+        comp = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
+        )
+        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, sigma=0.1)
+        # the quadratic-Sep-H path wins over the default coupling_coefficient (0.5)
+        assert fp_drift_coefficient(prob) == pytest.approx(1.0 / control_cost)
+
+    def test_falls_back_to_coupling_coefficient_without_quadratic_hamiltonian(self):
+        class _Obj:
+            hamiltonian_class = None
+            coupling_coefficient = 0.7
+
+        assert fp_drift_coefficient(_Obj()) == pytest.approx(0.7)
+
+    def test_fails_loud_when_no_hamiltonian_and_no_coupling(self):
+        # V1: a duck-typed problem with neither a quadratic SeparableHamiltonian nor
+        # coupling_coefficient must raise, not silently return 1.0.
+        class _Bare:
+            hamiltonian_class = None
+
+        with pytest.raises(ValueError, match="Cannot determine the FP drift coefficient"):
+            fp_drift_coefficient(_Bare())

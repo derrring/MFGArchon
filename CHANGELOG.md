@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capable solver. `FPGFDMSolver` declares `_drift_convention = VELOCITY` explicitly. No previously
   passing path is affected (the fp_gfdm tests use the explicit precomputed-drift path).
 
+- **`fp_drift_coefficient` fails loud when it cannot source the drift coefficient** (Issue #1420 V1).
+  For a problem with neither a quadratic-MINIMIZE `SeparableHamiltonian` (to source `1/control_cost`)
+  nor a `coupling_coefficient` attribute — a duck-typed / malformed problem — the helper previously
+  returned `1.0` silently (a wrong-temperature drift with no error). It now raises `ValueError`
+  (CLAUDE.md "NO silent fallbacks"). Standard `MFGProblem`s (always carry `coupling_coefficient`) and
+  quadratic-Hamiltonian solves are unaffected.
+
 ### Changed
 
 - **Hamiltonian as single source of truth — solver-level physics re-derivation retired** (Issue
