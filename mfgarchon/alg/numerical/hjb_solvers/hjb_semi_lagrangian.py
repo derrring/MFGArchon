@@ -1656,9 +1656,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             sigma_diag = np.full(d, float(sigma))
 
         H_class = self.problem.hamiltonian_class
-        # Allow up to 4x natural-traversal speed (scale-invariant heuristic, per the
-        # validated prototype): alpha is bounded by 4 * domain_length / T per axis.
-        alpha_bound = 4.0 * span / float(self.problem.T)
+        # Issue #1420: control-cost lambda from the single source. The DPP running cost is
+        # L(alpha) = (lambda/2)|alpha|^2, so the per-node minimizer gives alpha* = -grad(u)/lambda.
+        # Hardcoding (1/2)|alpha|^2 (lambda=1) below undercut the solver's lambda != 1 support.
+        lam = self._control_cost_lambda()
+        # Allow up to 4x natural-traversal speed (scale-invariant heuristic, per the validated
+        # prototype): alpha is bounded by 4 * domain_length / T per axis, scaled by 1/lambda since
+        # the optimal control alpha* = -grad(u)/lambda grows as 1/lambda (no-op at lambda=1).
+        alpha_bound = 4.0 * span / float(self.problem.T) / lam
 
         if d == 1:
             Nx = len(U_next)
@@ -1690,7 +1695,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 feet_plus = _fold((y_drift + diff_off).reshape(-1, 1)).ravel()
                 feet_minus = _fold((y_drift - diff_off).reshape(-1, 1)).ravel()
                 u_pm = 0.5 * (interp_fn(feet_plus) + interp_fn(feet_minus))
-                return 0.5 * dt * alpha * alpha - dt * h + u_pm
+                return 0.5 * lam * dt * alpha * alpha - dt * h + u_pm
 
             invphi = (np.sqrt(5.0) - 1.0) / 2.0  # 0.618...
             invphi2 = 1.0 - invphi  # 0.382...
@@ -1762,7 +1767,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 drift = _xi + np.asarray(alpha_vec) * dt  # (d,)
                 feet = _fold(drift[None, :] + depart_offsets)  # (2d, d)
                 u_pm = interp_fn(feet)  # (2d,)
-                return 0.5 * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
+                return 0.5 * lam * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
 
             res = minimize(
                 phi_nd,
