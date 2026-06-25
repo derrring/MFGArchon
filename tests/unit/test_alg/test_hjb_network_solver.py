@@ -10,7 +10,10 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver
+from mfgarchon.alg.numerical.network_solvers.hjb_network import (
+    NetworkHJBSolver,
+    NetworkPolicyIterationHJBSolver,
+)
 from mfgarchon.extensions.topology import NetworkMFGProblem
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
@@ -67,6 +70,22 @@ class TestNetworkHJBSolverInitialization:
 
         solver = NetworkHJBSolver(problem, tolerance=1e-8)
         assert solver.tolerance == 1e-8
+
+    def test_policy_iteration_policy_tolerance_fail_loud(self):
+        """Issue #1426 (S0-25): NetworkPolicyIterationHJBSolver.policy_tolerance is dead — policy
+        iteration converges on policy stability (`_policies_equal`), not a value tolerance — so a
+        non-default value fails loud; the default constructs fine and max_policy_iterations (live)
+        is freely settable."""
+        network = GridNetwork(width=3, height=3)
+        network.create_network()
+        problem = NetworkMFGProblem(network_geometry=network, T=1.0, Nt=10)
+
+        with pytest.raises(NotImplementedError, match="policy_tolerance"):
+            NetworkPolicyIterationHJBSolver(problem, policy_tolerance=1e-8)
+
+        solver = NetworkPolicyIterationHJBSolver(problem, max_policy_iterations=20)
+        assert solver.policy_tolerance == 1e-6
+        assert solver.max_policy_iterations == 20
 
     def test_network_properties_extracted(self):
         """Test that network properties are properly extracted."""

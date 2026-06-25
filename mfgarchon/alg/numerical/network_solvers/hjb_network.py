@@ -233,6 +233,16 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
 
         self.max_policy_iterations = max_policy_iterations
         self.policy_tolerance = policy_tolerance
+        # Issue #1426 (S0-25): policy_tolerance is stored but never read — policy iteration
+        # terminates on discrete policy stability (`_policies_equal`), not a value tolerance. Fail
+        # loud on a non-default value. (max_policy_iterations IS used and bounds the loop.)
+        if policy_tolerance != 1e-6:
+            raise NotImplementedError(
+                f"NetworkPolicyIterationHJBSolver(policy_tolerance={policy_tolerance}) is not "
+                "implemented (Issue #1426): policy iteration terminates when the policy stops "
+                "changing (exact convergence), not on a value tolerance, so policy_tolerance is "
+                "never used. Omit it (default 1e-6); use max_policy_iterations to bound the loop."
+            )
         self.hjb_method_name = "NetworkHJB_PolicyIteration"
 
         # Current policy (action for each node)

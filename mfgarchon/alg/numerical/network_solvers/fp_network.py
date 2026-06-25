@@ -95,6 +95,21 @@ class FPNetworkSolver(BaseFPSolver):
         self.cfl_factor = cfl_factor
         self.max_iterations = max_iterations
         self.tolerance = tolerance
+        # Issue #1426 (S0-25): max_iterations / tolerance are documented "for implicit schemes" but
+        # the implicit step is a direct sparse solve (spsolve), not iterative, so they are never
+        # read. Fail loud on a non-default value rather than silently ignoring it.
+        if max_iterations != 1000:
+            raise NotImplementedError(
+                f"FPNetworkSolver(max_iterations={max_iterations}) is not implemented (Issue #1426): "
+                "the implicit scheme is a direct sparse solve (spsolve), not iterative, so "
+                "max_iterations is never used. Omit it (default 1000)."
+            )
+        if tolerance != 1e-6:
+            raise NotImplementedError(
+                f"FPNetworkSolver(tolerance={tolerance}) is not implemented (Issue #1426): the "
+                "implicit scheme is a direct sparse solve, so there is no iterative tolerance. Omit "
+                "it (default 1e-6)."
+            )
         self.enforce_mass_conservation = enforce_mass_conservation
         self._current_rates: dict | None = None  # Issue #913: precomputed per timestep
 
