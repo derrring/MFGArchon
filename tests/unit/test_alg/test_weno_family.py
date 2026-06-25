@@ -23,7 +23,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 
 
 def _default_hamiltonian():
@@ -790,6 +790,26 @@ class TestWeno2DSolve:
         amp = np.max(np.abs(U_A[0]))
         # O(dt^2) Strang asymmetry only; a per-axis-spacing bug would be ~0.5*amp.
         assert diff < 5e-2 * amp, f"per-axis spacing not honoured: diff={diff:.3e}, amp={amp:.3e}"
+
+
+def test_weno_bc_resolved_via_inherited_single_source():
+    """Issue #1429 (S0-21): HJBWENOSolver resolves boundary conditions through the inherited
+    single source ``get_boundary_conditions()`` (Issue #634 pattern) and honors a configured
+    non-default BC, instead of a private 4-accessor copy that terminated in a silent Neumann
+    default. Pins that _get_boundary_conditions returns exactly the inherited resolution (a
+    silent-Neumann regression would return a fresh object, not the configured periodic BC)."""
+    domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[33], boundary_conditions=periodic_bc(dimension=1))
+    problem = MFGProblem(geometry=domain, T=0.1, Nt=10, sigma=0.1, components=_default_components())
+    solver = HJBWENOSolver(problem)
+
+    inherited = solver.get_boundary_conditions()
+    assert inherited is not None
+    # WENO delegates to the inherited single source (non-None case) — same object, no private fork.
+    assert solver._get_boundary_conditions() is inherited
+    # ...resolving to the configured geometry BC (stable object), not a private re-derivation.
+    assert inherited is domain.get_boundary_conditions()
+    # ...and honoring the configured periodic BC, not a silent Neumann fallback.
+    assert inherited != no_flux_bc(dimension=1)
 
 
 if __name__ == "__main__":
