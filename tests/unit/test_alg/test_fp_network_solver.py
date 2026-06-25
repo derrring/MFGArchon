@@ -241,6 +241,35 @@ class TestFPNetworkSolverSolveFPSystem:
         assert M_solution.shape == (Nt, num_nodes)
         assert np.all(np.isfinite(M_solution))
 
+    def test_volatility_field_is_sigma_not_diffusion(self):
+        """Issue #1429 (S0-15): volatility_field is the SDE volatility sigma (D = sigma^2/2), the
+        base_fp contract shared with FDM/FVM/GFDM — not the diffusion D directly. So a solve with
+        volatility_field=sigma equals a solve with diffusion_coefficient=0.5*sigma**2 (which the
+        pre-fix `D = volatility_field` fork would have failed)."""
+        network = GridNetwork(width=3, height=3)
+        network.create_network()
+        problem = NetworkMFGProblem(network_geometry=network, T=0.5, Nt=10)
+        num_nodes = problem.num_nodes
+        # NON-uniform initial density: a uniform m is a diffusion fixed point (Laplacian of a
+        # constant is 0), so D would be unobservable. A ramp makes the diffusion (hence D) matter.
+        m0 = np.arange(1, num_nodes + 1, dtype=float)
+        m0 /= m0.sum()
+        U = np.zeros((problem.Nt + 1, num_nodes))
+        sigma = 0.4
+
+        m_via_sigma = FPNetworkSolver(problem, scheme="explicit").solve_fp_system(m0, U, volatility_field=sigma)
+        m_via_diffusion = FPNetworkSolver(
+            problem, scheme="explicit", diffusion_coefficient=0.5 * sigma**2
+        ).solve_fp_system(m0, U)
+
+        np.testing.assert_allclose(
+            m_via_sigma,
+            m_via_diffusion,
+            rtol=1e-12,
+            atol=1e-12,
+            err_msg="volatility_field=sigma must yield D=sigma^2/2 (== diffusion_coefficient=0.5*sigma^2)",
+        )
+
     def test_solve_fp_system_initial_condition(self):
         """Test that initial condition is preserved."""
         network = GridNetwork(width=3, height=3)

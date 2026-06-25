@@ -110,6 +110,46 @@ class TestLLFAugmentationPinning:
         assert solver._llf_sigma_eff.shape == (solver.n_points,)
         assert solver._llf_sigma_eff.dtype == np.float64
 
+    def test_llf_sigma_eff_recomputed_from_volatility_override(self, problem_and_pts):
+        """Issue #1429 (S0-13): a per-solve volatility_field override (#1316) must propagate into
+        the LLF effective volatility. _llf_sigma_eff is otherwise frozen at __init__ from
+        problem.sigma, so an LLF-augmented solve with an override stabilizes off the base sigma.
+
+        Uses a tiny llf_l_H so nu_i = 0 (no augmentation) and sigma_eff == the base sigma exactly,
+        making the override directly observable as sigma_eff == override."""
+        problem, pts = problem_and_pts  # problem.sigma = 0.5
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver = HJBGFDMSolver(
+                problem, pts, monotonicity_scheme="none", llf_augmentation=True, llf_cone_constant=0.5, llf_l_H=0.01
+            )
+        base = solver._llf_sigma_eff.copy()  # nu_i = 0 -> sigma_eff = problem.sigma = 0.5
+        n = solver.n_points
+        M = np.ones((problem.Nt + 1, n)) / n
+        U_T = np.zeros(n)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=0.9)
+        np.testing.assert_allclose(
+            solver._llf_sigma_eff,
+            0.9,
+            rtol=1e-9,
+            err_msg="LLF sigma_eff ignored the per-solve volatility_field override (S0-13: frozen at problem.sigma)",
+        )
+        assert not np.allclose(solver._llf_sigma_eff, base), "override had no effect — _llf_sigma_eff stayed frozen"
+
+        # A subsequent default solve must reset sigma_eff to the base (unconditional recompute).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=None)
+        np.testing.assert_allclose(
+            solver._llf_sigma_eff,
+            base,
+            rtol=1e-9,
+            err_msg="LLF sigma_eff not reset to base after a volatility_field=None solve (stale override)",
+        )
+
     def test_llf_sigma_eff_ge_base(self, problem_and_pts):
         """PINNING: sigma_eff_i >= sigma everywhere (LLF only adds diffusion)."""
         problem, pts = problem_and_pts
