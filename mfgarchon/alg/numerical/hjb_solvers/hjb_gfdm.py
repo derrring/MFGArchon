@@ -35,7 +35,7 @@ from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, resolve_diffusion_source
 
 from .base_hjb import (
     DEFAULT_NEWTON_MAX_ITERATIONS,
@@ -2809,26 +2809,13 @@ class HJBGFDMSolver(BaseHJBSolver):
     def _resolve_diffusion_source(self, source: float | np.ndarray | Callable, point_idx: int | None) -> float:
         """Resolve a scalar / callable / per-point-array diffusion source to a scalar sigma.
 
-        - callable: evaluate at the collocation point (``point_idx`` given) or at the
-          domain center (mean of collocation points) on the batch path (``point_idx=None``).
-        - array (ndim >= 1): index by point (``point_idx`` given); on the batch path the
-          GFDM residual applies one global scalar, so collapse to the mean — matching
-          MFGProblem's own array->scalar (sigma = mean) convention.
-        - scalar: returned directly.
+        Thin adapter over the shared single source
+        :func:`mfgarchon.utils.pde_coefficients.resolve_diffusion_source` (Issue #1412): the
+        collocation points are this solver's spatial points; the batch path (``point_idx=None``)
+        collapses an array to its mean / evaluates a callable at the domain center, matching
+        ``MFGProblem``'s array -> scalar (sigma = mean) convention.
         """
-        if callable(source):
-            if point_idx is not None and point_idx < len(self.collocation_points):
-                x = self.collocation_points[point_idx]
-            else:
-                # Center of domain (mean of collocation points), shape (d,).
-                x = self.collocation_points.mean(axis=0)
-            return float(source(x))
-        arr = np.asarray(source)
-        if arr.ndim >= 1:
-            if point_idx is not None and point_idx < len(arr):
-                return float(arr[point_idx])
-            return float(np.mean(arr))
-        return float(source)
+        return resolve_diffusion_source(source, index=point_idx, points=self.collocation_points)
 
     # Note: _check_monotonicity_violation moved to MonotonicityEnforcer component
     # Note: _check_m_matrix_property moved to MonotonicityEnforcer component

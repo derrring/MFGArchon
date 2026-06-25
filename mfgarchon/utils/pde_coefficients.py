@@ -253,6 +253,72 @@ def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any)
     return float(diffusion_from_volatility(float(np.mean(volatility_field))))
 
 
+def resolve_diffusion_source(
+    source: float | np.ndarray | Callable,
+    *,
+    index: int | None = None,
+    points: np.ndarray | None = None,
+) -> float:
+    """Resolve a scalar / callable / array volatility (``sigma``) source to a scalar at one point.
+
+    Single source for the per-solve volatility *lookup* shared by the HJB and FP solver
+    families (Issue #1412, generalizing #1071 to the diffusion coefficient). Before this,
+    only ``HJBGFDMSolver`` centralized the lookup (its private ``_resolve_diffusion_source``);
+    every other solver read ``problem.sigma`` raw or honored a passed ``volatility_field``
+    override at only some of its sites, so an override could be consumed by HJB and silently
+    ignored by FP — the same silent cross-path divergence #1316 fixed for HJB-GFDM, but on the
+    FP side. The ``sigma -> D`` conversion stays in :func:`diffusion_from_volatility`; this
+    function only resolves *which* scalar ``sigma`` a given solve sees.
+
+    Resolution (matching ``MFGProblem``'s own array -> scalar ``mean`` convention so the batch
+    path is convention-consistent with the per-point path):
+
+    - **callable** ``source(x)``: evaluate at ``points[index]`` when ``index`` is given, else at
+      the domain center ``points.mean(axis=0)`` (the batch path). A callable source therefore
+      requires ``points``; passing ``points=None`` for a callable is a programming error and
+      raises (fail-loud, not a silent ``sigma=1`` fallback — the #1316 regression class).
+    - **array** (``ndim >= 1``): index by ``index`` when given and in range, else collapse to
+      ``mean`` (the batch path applies one global scalar).
+    - **scalar**: returned as ``float`` directly.
+
+    Parameters
+    ----------
+    source : float | ndarray | Callable
+        The volatility source: a scalar ``sigma``, a per-point ``sigma`` array, or a callable
+        ``sigma(x)`` over spatial coordinates.
+    index : int | None
+        Collocation-point / grid-node index for the per-point path; ``None`` for the batch path
+        (one global scalar via center evaluation / array mean).
+    points : ndarray | None
+        Spatial points (collocation points for GFDM, grid coordinates for FDM), shape
+        ``(n_points, d)``. Required only for a callable ``source``.
+
+    Returns
+    -------
+    float
+        The resolved scalar volatility ``sigma`` at the requested point.
+    """
+    if callable(source):
+        if points is None:
+            raise ValueError(
+                "resolve_diffusion_source: a callable volatility source needs `points` to "
+                "evaluate sigma(x) at (the collocation points / grid coordinates). Refusing to "
+                "substitute a placeholder sigma (Issue #1412; cf. the #1316 hardcoded-1.0 regression)."
+            )
+        pts = np.asarray(points)
+        if index is not None and index < len(pts):
+            x = pts[index]
+        else:
+            x = pts.mean(axis=0)
+        return float(source(x))
+    arr = np.asarray(source)
+    if arr.ndim >= 1:
+        if index is not None and index < len(arr):
+            return float(arr[index])
+        return float(np.mean(arr))
+    return float(source)
+
+
 class CoefficientMode(Enum):
     """
     Specifies which variables a callable coefficient depends on.
