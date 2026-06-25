@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **σ-value lookup single-sourced via `pde_coefficients.resolve_diffusion_source`** (Issue #1412,
+  generalizing #1071 to the diffusion coefficient). The per-solve `volatility_field` override
+  resolution (scalar / per-point array / callable → scalar; batch path = array mean, callable at the
+  domain center) is now one shared function; `HJBGFDMSolver._resolve_diffusion_source` delegates to it
+  (byte-identical, pinned by `TestResolveDiffusionSource`'s convention-agreement test). A 6-solver FP
+  audit confirmed the cross-path HJB/FP diffusion divergence the issue targeted is **already closed**
+  (HJB-GFDM honors the override via #1316; SL/WENO and the scalar-only FP solvers fail loud; FP-FDM
+  honors it via #1248) — this is a consolidation, not a behavior change. The σ-structure axis
+  (constant `D` vs spatially-varying `σ(x)`) is orthogonal to spatial dimension: scalar-only solvers
+  are constant-coefficient in both 1D and nD, and **fail loud** on a spatial override rather than
+  silently mean-collapsing it (which would re-open the divergence). New `test_issue_1412_fp_volatility_fail_loud`
+  pins those previously-unpinned GFDM / SL / SL-adjoint guards so a future "route through the shared
+  resolver" refactor cannot silently drop them.
+
 ### Fixed
 
 - **Semi-Lagrangian HJB scheme corrected — was ~24% wrong even at λ=1** (Issue #1413, PR #1417).

@@ -15,7 +15,12 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.pde_coefficients import CoefficientField, fp_drift_coefficient, get_spatial_grid
+from mfgarchon.utils.pde_coefficients import (
+    CoefficientField,
+    fp_drift_coefficient,
+    get_spatial_grid,
+    resolve_diffusion_source,
+)
 
 
 def _default_hamiltonian():
@@ -497,3 +502,75 @@ class TestFpDriftCoefficient:
 
         with pytest.raises(ValueError, match="Cannot determine the FP drift coefficient"):
             fp_drift_coefficient(_Bare())
+
+
+class TestResolveDiffusionSource:
+    """Issue #1412: the shared single-source volatility (sigma) lookup that HJB and FP
+    solvers consume — generalizing HJBGFDMSolver._resolve_diffusion_source so an override
+    is resolved identically on every path (no per-solver private copy)."""
+
+    _POINTS = np.linspace(0.0, 1.0, 11).reshape(-1, 1)  # x in [0,1], center = 0.5
+
+    def test_scalar_returns_float(self):
+        assert resolve_diffusion_source(0.3) == pytest.approx(0.3)
+        assert isinstance(resolve_diffusion_source(0.3), float)
+
+    def test_array_per_point_indexes(self):
+        arr = np.linspace(0.2, 0.8, 11)
+        assert resolve_diffusion_source(arr, index=0) == pytest.approx(0.2)
+        assert resolve_diffusion_source(arr, index=10) == pytest.approx(0.8)
+
+    def test_array_batch_collapses_to_mean(self):
+        """Batch path (index=None) collapses an array to its mean — MFGProblem's own
+        array -> scalar convention, so the batch and per-point paths stay consistent."""
+        arr = np.array([0.2, 0.4, 0.6])
+        assert resolve_diffusion_source(arr, index=None) == pytest.approx(0.4)
+
+    def test_array_out_of_range_index_falls_to_mean(self):
+        arr = np.array([0.2, 0.4, 0.6])
+        assert resolve_diffusion_source(arr, index=99) == pytest.approx(0.4)
+
+    def test_callable_per_point_evaluates_at_point(self):
+        def sigma(x):
+            return 0.5 + 0.5 * float(np.atleast_1d(x)[0])
+
+        assert resolve_diffusion_source(sigma, index=0, points=self._POINTS) == pytest.approx(0.5)
+        assert resolve_diffusion_source(sigma, index=10, points=self._POINTS) == pytest.approx(1.0)
+
+    def test_callable_batch_evaluates_at_domain_center(self):
+        """Batch path evaluates the callable at the domain center (mean of points) — NOT a
+        hardcoded placeholder (the #1316 sigma=1.0 regression class this single source kills)."""
+
+        def sigma(x):
+            return 0.5 + 0.5 * float(np.atleast_1d(x)[0])
+
+        assert resolve_diffusion_source(sigma, index=None, points=self._POINTS) == pytest.approx(0.75)
+
+    def test_callable_without_points_fails_loud(self):
+        """A callable source with no points cannot be evaluated; refusing to substitute a
+        placeholder sigma is the fail-loud contract (Issue #1412)."""
+        with pytest.raises(ValueError, match="callable volatility source needs `points`"):
+            resolve_diffusion_source(lambda x: 0.3, index=None, points=None)
+
+    def test_matches_hjb_gfdm_private_adapter(self):
+        """Convention agreement — HJBGFDMSolver._resolve_diffusion_source must now be a thin
+        adapter over the shared function (same scalar for the same source/point)."""
+        import warnings
+
+        from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=_default_components())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver = HJBGFDMSolver(problem, collocation_points=self._POINTS, delta=0.3)
+
+        arr = np.linspace(0.2, 0.8, 11)
+
+        def sigma_cb(x):
+            return 0.5 + 0.5 * float(np.atleast_1d(x)[0])
+
+        for source, idx in [(0.42, None), (arr, 3), (arr, None), (sigma_cb, 5), (sigma_cb, None)]:
+            assert solver._resolve_diffusion_source(source, idx) == pytest.approx(
+                resolve_diffusion_source(source, index=idx, points=solver.collocation_points)
+            )
