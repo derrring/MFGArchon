@@ -122,6 +122,19 @@ class FPParticleSolver(BaseFPSolver):
     # which mislabeled the solver.
     _drift_convention = DriftConvention.VALUE_FUNCTION
 
+    # BoundaryCapable protocol (Issue #1456): particle walls are reflect (no-flux / Neumann /
+    # reflecting, see reflective_types), wrap (periodic), or ABSORB (Dirichlet — particles crossing
+    # the boundary are removed / marked NaN, the preserve_indices path). Robin is not represented
+    # and fails loud rather than being silently ignored.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset(
+        {BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.PERIODIC, BCType.DIRICHLET}
+    )
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
+
     def __init__(
         self,
         problem: MFGProblem,
@@ -238,6 +251,10 @@ class FPParticleSolver(BaseFPSolver):
                         "  1. Pass explicit boundary_conditions parameter, OR\n"
                         "  2. Use fully periodic geometry (all dims in periodic_dimensions)"
                     )
+
+        # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
+        # (no-op for the "periodic" string sentinel).
+        self._validate_bc_support(self.boundary_conditions)
 
     def _get_grid_params(self) -> dict:
         """

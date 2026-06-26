@@ -41,6 +41,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     get_bc_type_string,
 )
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
@@ -98,6 +99,16 @@ class FPSLSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.SL  # Forward SL (adjoint of HJB Backward SL)
     _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
+
+    # BoundaryCapable protocol (Issue #1456): the CN/ADI diffusion sub-step is zero-flux
+    # (no-flux / Neumann g=0) and the advection wraps for periodic; Dirichlet / Robin / absorbing
+    # are silently collapsed to Neumann downstream, so they fail loud here instead.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -199,6 +210,9 @@ class FPSLSolver(BaseFPSolver):
             self.boundary_conditions = boundary_conditions
         else:
             self.boundary_conditions = self._get_boundary_conditions_from_problem()
+        # Issue #1456: fail loud now if the resolved BC requests a type this solver cannot honor
+        # (Dirichlet/Robin would otherwise be silently collapsed to the zero-flux Neumann stencil).
+        self._validate_bc_support(self.boundary_conditions)
 
     def _get_boundary_conditions_from_problem(self) -> BoundaryConditions | None:
         """Get boundary conditions from problem or geometry."""

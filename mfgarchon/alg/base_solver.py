@@ -234,6 +234,36 @@ class BaseMFGSolver(ABC):
         # No BC found
         return None
 
+    def _validate_bc_support(self, bc: Any) -> None:
+        """Fail loud if ``bc`` requests a ``BCType`` this solver does not declare in
+        ``supported_bc_types`` (the ``BoundaryCapable`` protocol; Issue #1456).
+
+        Without this gate an unsupported BC type is silently collapsed to the solver's default
+        (usually Neumann / no-flux) and the solver returns a wrong answer with no error — the
+        BC-blindness class mapped in #1456. No-op when the solver does not declare
+        ``supported_bc_types`` (un-migrated solver), when ``bc`` is ``None``, or when ``bc`` is a
+        non-``BoundaryConditions`` sentinel (e.g. the particle ``"periodic"`` string).
+        """
+        supported = getattr(self, "supported_bc_types", None)
+        if supported is None or bc is None:
+            return
+        segments = getattr(bc, "segments", None)
+        if segments is None:
+            return  # not a BoundaryConditions object (e.g. a string sentinel)
+        requested = {seg.bc_type for seg in segments}
+        default = getattr(bc, "default_bc", None)
+        if default is not None:
+            requested.add(default)
+        unsupported = requested - set(supported)
+        if unsupported:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support boundary condition type(s) "
+                f"{sorted(t.name for t in unsupported)} (supported: "
+                f"{sorted(t.name for t in supported)}). Passing it would silently apply a different "
+                f"default boundary condition and solve the wrong problem (Issue #1456). Use a solver "
+                f"that supports it, or change the problem's boundary conditions."
+            )
+
 
 class BaseNumericalSolver(BaseMFGSolver):
     """Base class for numerical methods (FDM, FEM, spectral, etc.)."""
