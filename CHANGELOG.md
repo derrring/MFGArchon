@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HJBWENOSolver` boundary-condition resolution single-sourced** (Issue #1429, S0-21). Replaced a
+  private 4-accessor copy of the BC resolution chain (which also diverged at the terminal — private
+  `neumann_bc` vs the inherited `None` vs the ConditionsMixin `periodic_bc`) with a delegation to the
+  inherited single source `BaseMFGSolver.get_boundary_conditions()` (the Issue #634 pattern already
+  applied to the SL solver), keeping WENO's no-flux fallback for its concrete-BC ghost-buffer
+  requirement. Byte-identical for real problems (`self._boundary_conditions` is never set, and the
+  geometry/problem accessors resolve to the same stored BC); a convention-agreement pin was added.
+
 - **`CoefficientField` diffusion default-value precedence fixed: `override → volatility_field → sigma`**
   (Issue #1412). The FDM/HJB solver sites (`hjb_fdm`, `base_hjb`, `fp_fdm_time_stepping`) hand-built
   `CoefficientField(override, problem.sigma)`, so a `None` per-solve `volatility_field` fell back to the

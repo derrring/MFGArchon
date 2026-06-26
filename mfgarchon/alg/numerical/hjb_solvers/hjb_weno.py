@@ -337,52 +337,20 @@ class HJBWENOSolver(BaseHJBSolver):
         )
 
     def _get_boundary_conditions(self):
+        """Resolve boundary conditions through the single-source inherited
+        ``BaseMFGSolver.get_boundary_conditions()`` (Issue #634 pattern), falling back to Neumann
+        (no-flux) when none is configured.
+
+        Issue #1429 (S0-21): this replaces a private 4-accessor copy of the resolution chain that
+        also diverged at the terminal (private ``neumann_bc`` vs inherited ``None`` vs the
+        ConditionsMixin ``periodic_bc``). The inherited chain resolves to the same stored BC for a
+        real ``MFGProblem``: ``self._boundary_conditions`` is never assigned, so its Priority-1 is a
+        no-op, and the geometry/problem attribute and method accessors return the same object. WENO
+        keeps a concrete-BC requirement — the ghost buffer cannot take ``None`` — so a no-flux
+        Neumann fallback is applied here when the single source yields ``None``.
         """
-        Get boundary conditions from problem or geometry.
-
-        Falls back to Neumann (no-flux) BC if not specified.
-
-        Resolution order (NO hasattr per CLAUDE.md):
-        1. geometry.get_boundary_conditions() (method accessor)
-        2. geometry.boundary_conditions (direct attribute)
-        3. problem.get_boundary_conditions() (method accessor)
-        4. problem.boundary_conditions (direct attribute)
-        5. Default Neumann BC
-        """
-        # Priority 1: geometry.get_boundary_conditions() (method accessor)
-        try:
-            bc = self.problem.geometry.get_boundary_conditions()
-            if bc is not None:
-                return bc
-        except AttributeError:
-            pass
-
-        # Priority 2: geometry.boundary_conditions (direct attribute)
-        try:
-            bc = self.problem.geometry.boundary_conditions
-            if bc is not None:
-                return bc
-        except AttributeError:
-            pass
-
-        # Priority 3: problem.get_boundary_conditions() (method accessor)
-        try:
-            bc = self.problem.get_boundary_conditions()
-            if bc is not None:
-                return bc
-        except AttributeError:
-            pass
-
-        # Priority 4: problem.boundary_conditions (direct attribute)
-        try:
-            bc = self.problem.boundary_conditions
-            if bc is not None:
-                return bc
-        except AttributeError:
-            pass
-
-        # Default: Neumann (no-flux) BC - common for HJB problems
-        return neumann_bc(dimension=self.dimension)
+        bc = self.get_boundary_conditions()
+        return bc if bc is not None else neumann_bc(dimension=self.dimension)
 
     def _get_domain_bounds(self) -> np.ndarray:
         """Get domain bounds from problem/geometry (NO hasattr per CLAUDE.md)."""
