@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HJBGFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
+  supported set `{DIRICHLET, NEUMANN, NO_FLUX, ROBIN, PERIODIC}` (fixing the audit-flagged
+  declared≠handled set — added `ROBIN` and `PERIODIC`) and validates it at construction.
+  `REFLECTING` / `EXTRAPOLATION_*` (which no test constructs and the audit confirms it cannot honor)
+  now fail loud at construction; the general-Robin and *mixed*-periodic sub-cases pass the type-level
+  gate and remain enforced by the row builder at solve time (so uniform-periodic ghost-skip and the
+  adjoint-consistent Robin path are unaffected). Byte-identical for every existing GFDM test.
+
 - **BC-capability gate: solvers fail loud on an unsupported boundary-condition type** (Issue #1456,
   first increment). The `BoundaryCapable` protocol (`supported_bc_types` + `_validate_bc_support`)
   existed but was un-adopted (1/12 solvers declared it, 0 enforced), which is why a BC type a solver

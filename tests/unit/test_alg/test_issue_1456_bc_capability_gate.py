@@ -3,11 +3,11 @@
 The `BoundaryCapable` protocol (`geometry/boundary/protocols.py`) lets a solver declare
 `_SUPPORTED_BC_TYPES`; `BaseMFGSolver._validate_bc_support` raises on an unsupported type at
 construction instead of silently collapsing it to the solver's default (usually Neumann / no-flux)
-— the BC-blindness class mapped in #1456. This pins the template solvers wired in the first
-increment: `FPParticleSolver` (already fail-fast → now a declared contract) and `FPSLSolver`
-(silently collapsed Dirichlet/Robin to its zero-flux Neumann stencil → now fails loud).
-(`HJBGFDMSolver` already fails loud at its row builder and has a uniform-vs-mixed periodic nuance
-the type-level construction gate cannot express honestly — deferred to the per-solver rollout.)
+— the BC-blindness class mapped in #1456. This pins the migrated solvers: `FPParticleSolver`
+(already fail-fast → now a declared contract), `FPSLSolver` (silently collapsed Dirichlet/Robin to
+its zero-flux Neumann stencil → now fails loud), and `HJBGFDMSolver` (declares
+Dirichlet/Neumann/no-flux/Robin/periodic; rejects Reflecting/Extrapolation at construction — the
+general-Robin / mixed-periodic sub-cases the row builder still enforces pass the type-level gate).
 """
 
 from __future__ import annotations
@@ -18,11 +18,13 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc, robin_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc, robin_bc, uniform_bc
+from mfgarchon.geometry.boundary.types import BCType
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -40,6 +42,28 @@ def _components():
 def _problem(bc):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=bc)
     return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=_components())
+
+
+def _pts():
+    return np.linspace(0.0, 1.0, N).reshape(-1, 1)
+
+
+# ---------------------------------------------------------------------------
+# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin/periodic; Reflecting/Extrapolation
+# (which no other test constructs, and the audit confirms it cannot honor) fail loud at
+# construction. Periodic and general-Robin sub-cases pass the type-level gate and remain
+# enforced by the row builder at solve time.
+# ---------------------------------------------------------------------------
+
+
+def test_hjb_gfdm_fails_loud_on_reflecting():
+    with pytest.raises(NotImplementedError, match="does not support"):
+        HJBGFDMSolver(_problem(uniform_bc(BCType.REFLECTING, dimension=1)), collocation_points=_pts(), delta=0.25)
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, periodic_bc, robin_bc])
+def test_hjb_gfdm_accepts_supported(bc_factory):
+    HJBGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=_pts(), delta=0.25)  # must not raise
 
 
 # ---------------------------------------------------------------------------
