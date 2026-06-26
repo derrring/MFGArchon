@@ -3,10 +3,11 @@
 The `BoundaryCapable` protocol (`geometry/boundary/protocols.py`) lets a solver declare
 `_SUPPORTED_BC_TYPES`; `BaseMFGSolver._validate_bc_support` raises on an unsupported type at
 construction instead of silently collapsing it to the solver's default (usually Neumann / no-flux)
-— the BC-blindness class mapped in #1456. This pins the three template solvers wired in the first
-increment: `HJBGFDMSolver` (declares-but-never-enforced → now enforced), `FPParticleSolver`
-(already fail-fast → now a declared contract), and `FPSLSolver` (silently collapsed Dirichlet/Robin
-to Neumann → now fails loud).
+— the BC-blindness class mapped in #1456. This pins the template solvers wired in the first
+increment: `FPParticleSolver` (already fail-fast → now a declared contract) and `FPSLSolver`
+(silently collapsed Dirichlet/Robin to its zero-flux Neumann stencil → now fails loud).
+(`HJBGFDMSolver` already fails loud at its row builder and has a uniform-vs-mixed periodic nuance
+the type-level construction gate cannot express honestly — deferred to the per-solver rollout.)
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -42,10 +42,6 @@ def _problem(bc):
     return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=_components())
 
 
-def _pts():
-    return np.linspace(0.0, 1.0, N).reshape(-1, 1)
-
-
 # ---------------------------------------------------------------------------
 # FPSLSolver — supports no-flux / Neumann / periodic; the silent-Neumann-collapse
 # of Dirichlet / Robin now fails loud (the headline #1456 flip).
@@ -61,22 +57,6 @@ def test_fp_sl_fails_loud_on_unsupported(bc):
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, periodic_bc])
 def test_fp_sl_accepts_supported(bc_factory):
     FPSLSolver(_problem(bc_factory(dimension=1)))  # must not raise
-
-
-# ---------------------------------------------------------------------------
-# HJBGFDM — declared Dirichlet/Neumann/no-flux/Robin; it rejects periodic (already
-# fail-loud at the row builder, now caught early at construction).
-# ---------------------------------------------------------------------------
-
-
-def test_hjb_gfdm_fails_loud_on_periodic():
-    with pytest.raises(NotImplementedError, match="does not support"):
-        HJBGFDMSolver(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
-
-
-@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc])
-def test_hjb_gfdm_accepts_supported(bc_factory):
-    HJBGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=_pts(), delta=0.25)  # must not raise
 
 
 # ---------------------------------------------------------------------------

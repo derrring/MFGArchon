@@ -14,13 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existed but was un-adopted (1/12 solvers declared it, 0 enforced), which is why a BC type a solver
   cannot honor was silently collapsed to its default (usually Neumann) and solved the wrong problem.
   Added the missing `BaseMFGSolver._validate_bc_support` (raises `NotImplementedError` on an
-  unsupported `BCType` at construction) and wired it into three template solvers with honest,
-  audit-derived `_SUPPORTED_BC_TYPES`: `HJBGFDMSolver` (declared but never enforced → now enforced;
-  added the adjoint-consistent `ROBIN`), `FPParticleSolver` (codifies its existing fail-fast; supports
-  reflect/wrap **and** Dirichlet=absorbing), and `FPSLSolver` (previously collapsed Dirichlet/Robin to
+  unsupported `BCType` at construction) and wired it into two template solvers with honest,
+  audit-derived `_SUPPORTED_BC_TYPES`: `FPParticleSolver` (codifies its existing fail-fast; supports
+  reflect/wrap **and** Dirichlet=absorbing) and `FPSLSolver` (previously collapsed Dirichlet/Robin to
   its zero-flux Neumann stencil → now raises). Byte-identical for every supported BC; only a
-  genuinely-unsupported BC (which was silently mis-solved) now raises. Remaining solvers are migrated
-  in follow-ups per #1456.
+  genuinely-unsupported BC (which was silently mis-solved) now raises. (`HJBGFDMSolver` already fails
+  loud at its row builder and has a uniform-vs-mixed periodic nuance the type-level construction gate
+  cannot express honestly — deferred.) Remaining solvers are migrated in follow-ups per #1456.
 
 - **`HJBWENOSolver` boundary-condition resolution single-sourced** (Issue #1429, S0-21). Replaced a
   private 4-accessor copy of the BC resolution chain (which also diverged at the terminal — private

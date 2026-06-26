@@ -103,7 +103,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             BCType.DIRICHLET,
             BCType.NEUMANN,
             BCType.NO_FLUX,  # Same as Neumann with g=0
-            BCType.ROBIN,  # adjoint-consistent Robin(alpha=0, beta=1); general Robin fails loud in the row builder
         }
     )
 
@@ -649,9 +648,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Geometry-sourced BC may be re-resolved per Picard iteration by the
             # coupling layer (using_resolved_bc); refresh at solve time (Issue #1118).
             self._bc_from_geometry = True
-        # Issue #1456: fail loud now if the resolved BC requests a type this solver cannot honor,
-        # instead of silently mis-applying it downstream (BoundaryCapable enforcement).
-        self._validate_bc_support(self.boundary_conditions)
         self.interior_indices = np.setdiff1d(np.arange(self.n_points), self.boundary_indices)
 
         # DMP runtime guard state (Issue #1074): lazily-computed critical drift and a
