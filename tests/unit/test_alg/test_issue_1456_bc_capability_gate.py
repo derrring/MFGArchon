@@ -17,6 +17,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBWENOSolver
@@ -116,6 +117,23 @@ def test_hjb_fdm_fails_loud_on_unsupported(bc):
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, dirichlet_bc, periodic_bc])
 def test_hjb_fdm_accepts_supported(bc_factory):
     HJBFDMSolver(_problem(bc_factory(dimension=1)))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# FP-FVM — conservative FV: no-flux/Neumann/periodic; Robin/Reflecting/Extrapolation fail loud
+# via the gate (Dirichlet has its own Issue #422 guard, tested in test_fvm_hjb_coupling).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bc", [robin_bc(dimension=1), uniform_bc(BCType.REFLECTING, dimension=1)])
+def test_fp_fvm_fails_loud_on_unsupported(bc):
+    with pytest.raises(NotImplementedError, match="does not support"):
+        FPFVMSolver(_problem(bc))
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+def test_fp_fvm_accepts_supported(bc_factory):
+    FPFVMSolver(_problem(bc_factory(dimension=1)))  # must not raise
 
 
 # ---------------------------------------------------------------------------

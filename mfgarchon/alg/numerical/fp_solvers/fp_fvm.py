@@ -62,6 +62,7 @@ from scipy.sparse.linalg import splu
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
@@ -95,6 +96,17 @@ class FPFVMSolver(BaseFPSolver):
     """
 
     _scheme_family = SchemeFamily.FVM
+
+    # BoundaryCapable protocol (Issue #1456): the conservative FV scheme handles no-flux / Neumann
+    # and periodic (wrap) walls; Dirichlet fails loud via the specific Issue #422 guard below, and
+    # Robin / Reflecting / Extrapolation are not represented.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
+
     # The FP equation consumes the advective velocity alpha directly via ``drift_field``; a
     # value function ``U`` may instead be passed via ``potential_field`` (the solver then forms
     # alpha = -coupling*grad(U) at the faces). Default convention is VELOCITY.
@@ -131,12 +143,13 @@ class FPFVMSolver(BaseFPSolver):
         # Dirichlet inflow handling (deferred, Issue #422 scope; the diffusion operator alone
         # supports Dirichlet). Without this guard the solver would only raise from
         # ``fp_fvm_flux.axis_flux_divergence`` once an advected solve is attempted.
-        from mfgarchon.geometry.boundary import BCType
-
         if any(seg.bc_type == BCType.DIRICHLET for seg in self.boundary_conditions.segments):
             raise NotImplementedError(
                 "FP FVM (v1) does not support Dirichlet BC (Issue #422 scope); use no_flux/neumann/periodic."
             )
+        # Issue #1456: fail loud on a type FVM cannot honor at all (Robin / Reflecting /
+        # Extrapolation). Dirichlet is handled by the specific guard above (its own message).
+        self._validate_bc_support(self.boundary_conditions)
 
     # ------------------------------------------------------------------
     # Setup helpers
