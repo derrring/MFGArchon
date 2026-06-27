@@ -18,6 +18,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured grid ABC
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
@@ -134,6 +135,15 @@ class HJBFDMSolver(BaseHJBSolver):
     # (cross_density) into the HJB solve. MultiPopulationIterator checks this flag and
     # fails loud for K>1 on backends that lack it rather than silently decoupling the HJB.
     _honors_multipop_cross_density = True
+
+    # BoundaryCapable protocol (Issue #1456): FDM assembles Dirichlet / Neumann / no-flux / periodic
+    # boundary rows; Robin / Reflecting / Extrapolation are not handled and fail loud.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     @deprecated_parameter(
         param_name="damping_factor",
@@ -295,6 +305,11 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Cached Laplacian operator for nD diffusion (Issue #787)
         self._laplacian_op: object | None = None
+
+        # Issue #1456: fail loud now if the (geometry/problem) BC requests a type FDM cannot honor
+        # (Robin / Reflecting / Extrapolation), instead of silently assembling a default wall. None
+        # (BC resolved later) is a no-op; HJB-FDM re-reads get_boundary_conditions() per solve.
+        self._validate_bc_support(self.get_boundary_conditions())
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
