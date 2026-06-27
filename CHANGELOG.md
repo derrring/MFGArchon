@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FPFVMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
+  supported set `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction (after
+  the pre-existing Issue #422 Dirichlet guard, whose specific message is preserved). `ROBIN` /
+  `REFLECTING` / `EXTRAPOLATION_*` now fail loud at construction. Byte-identical for every supported
+  BC (the FVM unit surface + the Dirichlet guard test pass unchanged).
+
 - **`HJBWENOSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates the resolved BC at
   construction (right after the inherited single-source resolution from #1429-S0-21). `ROBIN` /
