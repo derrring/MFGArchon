@@ -44,6 +44,7 @@ import numpy as np
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_alias
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -129,6 +130,16 @@ class HJBWENOSolver(BaseHJBSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.FDM  # WENO is FDM variant
+
+    # BoundaryCapable protocol (Issue #1456): WENO5 ghost buffers handle Dirichlet / Neumann /
+    # no-flux / periodic; Robin, Reflecting and Extrapolation are not faithfully supported (the
+    # ghost path would silently reflect / degrade them) and fail loud.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -320,6 +331,10 @@ class HJBWENOSolver(BaseHJBSolver):
 
         # Get boundary conditions from problem/geometry if available
         bc = self._get_boundary_conditions()
+        # Issue #1456: fail loud now if the resolved BC requests a type WENO cannot honor
+        # (Robin / Reflecting / Extrapolation), instead of silently reflecting/degrading it in the
+        # ghost path. The neumann fallback above keeps an unconfigured problem on a supported type.
+        self._validate_bc_support(bc)
 
         # Build domain bounds from grid information
         domain_bounds = self._get_domain_bounds()
