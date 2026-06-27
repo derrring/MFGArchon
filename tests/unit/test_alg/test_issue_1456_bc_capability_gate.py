@@ -18,9 +18,11 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBWENOSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -167,6 +169,47 @@ def test_fp_particle_fails_loud_on_robin():
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, periodic_bc, dirichlet_bc])
 def test_fp_particle_accepts_supported(bc_factory):
     FPParticleSolver(_problem(bc_factory(dimension=1)))  # must not raise (Dirichlet = absorbing)
+
+
+# ---------------------------------------------------------------------------
+# HJB-SL / FP-SL-Jacobian / FP-GFDM — zero-flux/periodic; Dirichlet/Robin (silently collapsed to
+# Neumann / returned None — the audit's silent-mishandling cases) now fail loud at construction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bc", [dirichlet_bc(dimension=1), robin_bc(dimension=1)])
+def test_hjb_sl_fails_loud_on_unsupported(bc):
+    with pytest.raises(NotImplementedError, match="does not support"):
+        HJBSemiLagrangianSolver(_problem(bc))
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+def test_hjb_sl_accepts_supported(bc_factory):
+    HJBSemiLagrangianSolver(_problem(bc_factory(dimension=1)))
+
+
+@pytest.mark.parametrize("bc", [dirichlet_bc(dimension=1), robin_bc(dimension=1)])
+def test_fp_sl_jacobian_fails_loud_on_unsupported(bc):
+    with pytest.raises(NotImplementedError, match="does not support"):
+        FPSLJacobianSolver(_problem(bc))
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+def test_fp_sl_jacobian_accepts_supported(bc_factory):
+    FPSLJacobianSolver(_problem(bc_factory(dimension=1)))
+
+
+@pytest.mark.parametrize("bc", [dirichlet_bc(dimension=1), robin_bc(dimension=1)])
+def test_fp_gfdm_fails_loud_on_unsupported(bc):
+    pts = np.linspace(0.0, 1.0, N).reshape(-1, 1)
+    with pytest.raises(NotImplementedError, match="does not support"):
+        FPGFDMSolver(_problem(bc), collocation_points=pts, delta=0.25)
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+def test_fp_gfdm_accepts_supported(bc_factory):
+    pts = np.linspace(0.0, 1.0, N).reshape(-1, 1)
+    FPGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=pts, delta=0.25)
 
 
 # ---------------------------------------------------------------------------
