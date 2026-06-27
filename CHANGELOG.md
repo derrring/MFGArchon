@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FPFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
+  supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates it at construction; `ROBIN`
+  (no stencil — #1250) and `REFLECTING` / `EXTRAPOLATION_*` now fail loud at construction instead of
+  silently assembling the default no-flux wall. The pre-existing solve-time Robin raise
+  (`test_robin_bc_fails_loud_implicit`) is now caught earlier at construction (message says `ROBIN`).
+  Byte-identical for every supported BC (181-test FP-FDM surface unchanged; no other test constructs
+  FP-FDM with an unsupported type).
+
 - **`HJBGFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{DIRICHLET, NEUMANN, NO_FLUX, ROBIN, PERIODIC}` (fixing the audit-flagged
   declared≠handled set — added `ROBIN` and `PERIODIC`) and validates it at construction.

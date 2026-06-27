@@ -120,8 +120,9 @@ class TestNeumannBCImplicitFP:
 
         Issue #1250: until a correct Robin stencil is implemented, failing loud is
         correct (fail-fast doctrine); silently assembling an absorbing wall is not.
+        Issue #1456: now caught at construction by the BC-capability gate (message says ROBIN).
         """
-        with pytest.raises(NotImplementedError, match="robin"):
+        with pytest.raises(NotImplementedError, match=r"(?i)robin"):
             _zero_drift_density_evolution(robin_bc(dimension=1))
 
 

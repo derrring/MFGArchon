@@ -7,6 +7,7 @@ import scipy.sparse as sparse
 
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.aux_func import npart, ppart
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -101,6 +102,16 @@ class FPFDMSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.FDM
+
+    # BoundaryCapable protocol (Issue #1456): FP-FDM assembles Dirichlet / Neumann / no-flux /
+    # periodic boundary rows; Robin has no stencil (fails loud — Issue #1250), and
+    # Reflecting/Extrapolation are not field-BC types it handles.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -233,6 +244,11 @@ class FPFDMSolver(BaseFPSolver):
                 from mfgarchon.geometry.boundary import no_flux_bc
 
                 self.boundary_conditions = no_flux_bc(dimension=self.dimension)
+
+        # Issue #1456: fail loud now if the resolved BC requests a type FP-FDM cannot honor
+        # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
+        # silently assembling a default (no-flux) wall.
+        self._validate_bc_support(self.boundary_conditions)
 
         # Issue #1075: the non-conservative gradient (point-value) advection schemes do
         # NOT conserve mass at no-flux walls -- even for pure diffusion -- because the
