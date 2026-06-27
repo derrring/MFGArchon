@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HJBFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
+  supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates the geometry/problem BC at
+  construction (HJB-FDM re-reads `get_boundary_conditions()` per solve, so a `None` BC at construction
+  is a no-op). `ROBIN` / `REFLECTING` / `EXTRAPOLATION_*` now fail loud at construction. Byte-identical
+  for every supported BC (270-test HJB-FDM surface unchanged; no test constructs HJB-FDM with an
+  unsupported type).
+
 - **`FPFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates it at construction; `ROBIN`
   (no stencil — #1250) and `REFLECTING` / `EXTRAPOLATION_*` now fail loud at construction instead of
