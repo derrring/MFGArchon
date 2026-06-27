@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HJBWENOSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
+  supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates the resolved BC at
+  construction (right after the inherited single-source resolution from #1429-S0-21). `ROBIN` /
+  `REFLECTING` / `EXTRAPOLATION_*` — which the WENO5 ghost path would otherwise silently reflect or
+  degrade — now fail loud. Byte-identical for every supported BC (94-test WENO surface unchanged;
+  no test constructs WENO with an unsupported type).
+
 - **`HJBFDMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{DIRICHLET, NEUMANN, NO_FLUX, PERIODIC}` and validates the geometry/problem BC at
   construction (HJB-FDM re-reads `get_boundary_conditions()` per solve, so a `None` BC at construction

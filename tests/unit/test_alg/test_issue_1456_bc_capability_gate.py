@@ -19,7 +19,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBWENOSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -82,6 +82,23 @@ def test_fp_sl_fails_loud_on_unsupported(bc):
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, periodic_bc])
 def test_fp_sl_accepts_supported(bc_factory):
     FPSLSolver(_problem(bc_factory(dimension=1)))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# HJB-WENO — WENO5 ghost buffers handle Dirichlet/Neumann/no-flux/periodic; Robin/Reflecting/
+# Extrapolation (silently reflected/degraded in the ghost path) fail loud at construction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bc", [robin_bc(dimension=1), uniform_bc(BCType.REFLECTING, dimension=1)])
+def test_hjb_weno_fails_loud_on_unsupported(bc):
+    with pytest.raises(NotImplementedError, match="does not support"):
+        HJBWENOSolver(_problem(bc))
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, dirichlet_bc, periodic_bc])
+def test_hjb_weno_accepts_supported(bc_factory):
+    HJBWENOSolver(_problem(bc_factory(dimension=1)))  # must not raise
 
 
 # ---------------------------------------------------------------------------
