@@ -167,7 +167,7 @@ def create_el_farol_problem(
 
     # Create problem
     problem = NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,

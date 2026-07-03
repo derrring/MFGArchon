@@ -62,7 +62,7 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
         comps = NetworkMFGComponents(
             hamiltonian_func=lambda n, nb, m, p, t: sum((p[j] - p[n]) ** 2 for j in nb) + 0.7 * m[n]
         )
-    prob = NetworkMFGProblem(network_geometry=net, T=1.0, Nt=5, components=comps)
+    prob = NetworkMFGProblem(geometry=net, T=1.0, Nt=5, components=comps)
     H = _build_H(prob)
 
     rng = np.random.default_rng(7)
@@ -93,7 +93,7 @@ def test_network_components_is_mfg_components_byte_identical():
 
     net = GridNetwork(width=3, height=3)
     net.create_network()
-    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=4)
 
     assert isinstance(prob.components, MFGComponents)
     # Issue #1474: the NetworkHamiltonian is now WIRED as the single-source Hamiltonian (previously
@@ -121,7 +121,7 @@ def test_network_hamiltonian_minimize_consistency():
     """
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=20)
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=20)
     H = prob.hamiltonian_class
     assert H is not None
     N = prob.num_nodes
@@ -162,7 +162,7 @@ def test_network_policy_iteration_converges_to_rk45():
     g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])
     errs = []
     for nt in (20, 40, 80):
-        prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=nt)
+        prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt)
         n = prob.num_nodes
         m = np.ones((nt + 1, n)) / n
         u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
@@ -182,7 +182,7 @@ def test_network_hamiltonian_maximize_fails_loud():
 
     net = GridNetwork(width=3, height=1)
     net.create_network()
-    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=4)
     with pytest.raises(NotImplementedError, match="MINIMIZE"):
         NetworkHamiltonian(network_data=prob.network_data, sense=OptimizationSense.MAXIMIZE)
 
@@ -207,10 +207,45 @@ def test_network_hamiltonian_method_equals_object():
     ):
         net = GridNetwork(width=5, height=1)
         net.create_network()
-        prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=10, components=comps)
+        prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=10, components=comps)
         obj = prob.hamiltonian_class
         for node in range(prob.num_nodes):
             nbrs = prob.get_node_neighbors(node)
             method_val = prob.hamiltonian(node, nbrs, m5, p5, 0.1)
             object_val = float(obj(node, m5, p5, 0.1))
             assert method_val == object_val, f"method != object at node {node} (single-source broken)"
+
+
+def test_network_geometry_alias_equivalence_and_deprecation():
+    """Issue #1472 (deprecation policy): the constructor param is ``geometry`` (aligned with
+    ``MFGProblem``); ``network_geometry`` is a deprecated alias that redirects IDENTICALLY. Proves
+    old == new construction and that the alias warns.
+    """
+    net_new = GridNetwork(width=4, height=1)
+    net_new.create_network()
+    net_old = GridNetwork(width=4, height=1)
+    net_old.create_network()
+
+    prob_new = NetworkMFGProblem(geometry=net_new, T=0.5, Nt=10)
+    with pytest.warns(DeprecationWarning, match="network_geometry"):
+        prob_old = NetworkMFGProblem(network_geometry=net_old, T=0.5, Nt=10)
+
+    # byte-identical construction: same node count, same single-source Hamiltonian, same values
+    assert prob_new.num_nodes == prob_old.num_nodes
+    assert type(prob_new.hamiltonian_class) is type(prob_old.hamiltonian_class)
+    m = np.ones(prob_new.num_nodes) / prob_new.num_nodes
+    p = np.arange(prob_new.num_nodes, dtype=float)
+    for node in range(prob_new.num_nodes):
+        h_new = prob_new.hamiltonian(node, prob_new.get_node_neighbors(node), m, p, 0.1)
+        h_old = prob_old.hamiltonian(node, prob_old.get_node_neighbors(node), m, p, 0.1)
+        assert h_new == h_old, f"alias construction diverged at node {node}"
+
+
+def test_network_geometry_both_or_neither_fail_loud():
+    """Issue #1472: passing both geometry= and network_geometry=, or neither, fails loud."""
+    net = GridNetwork(width=3, height=1)
+    net.create_network()
+    with pytest.raises(ValueError, match="do not pass both"):
+        NetworkMFGProblem(geometry=net, network_geometry=net, T=0.5, Nt=4)
+    with pytest.raises(ValueError, match="requires a graph geometry"):
+        NetworkMFGProblem(T=0.5, Nt=4)

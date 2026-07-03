@@ -19,6 +19,7 @@ Key differences from continuous MFG:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -289,22 +290,46 @@ class NetworkMFGProblem(MFGProblem):
 
     def __init__(
         self,
-        network_geometry: BaseNetworkGeometry,
+        geometry: BaseNetworkGeometry | None = None,
         T: float = 1.0,
         Nt: int = 100,
         components: NetworkMFGComponents | None = None,
         problem_name: str = "NetworkMFG",
+        *,
+        network_geometry: BaseNetworkGeometry | None = None,
     ):
         """
         Initialize network MFG problem.
 
         Args:
-            network_geometry: Network structure and geometry
+            geometry: Graph geometry (network structure). Named ``geometry`` to align with
+                ``MFGProblem`` — geometry is the axis of variation (Issue #1472).
             T: Terminal time
             Nt: Number of time steps
             components: Network MFG components (optional)
             problem_name: Problem identifier
+            network_geometry: Deprecated alias for ``geometry`` (Issue #1472); redirects identically.
         """
+        # Issue #1472: the canonical constructor param is `geometry` (aligned with MFGProblem, toward
+        # the Problem/Components unification). `network_geometry=` is a deprecated alias that redirects
+        # identically (equivalence-tested); it will be removed after the deprecation window.
+        if network_geometry is not None:
+            if geometry is not None:
+                raise ValueError(
+                    "Pass the graph geometry via geometry=; network_geometry= is a deprecated alias — "
+                    "do not pass both."
+                )
+            warnings.warn(
+                "NetworkMFGProblem(network_geometry=...) is deprecated (Issue #1472); use geometry=. "
+                "The alias redirects identically and is removed after the deprecation window.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            geometry = network_geometry
+        if geometry is None:
+            raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
+        network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry
+
         # Network properties - set first before calling super()
         self.network_geometry = network_geometry
         self.network_data = network_geometry.network_data
@@ -667,7 +692,7 @@ def create_grid_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,
@@ -692,7 +717,7 @@ def create_random_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,
@@ -717,7 +742,7 @@ def create_scale_free_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,
