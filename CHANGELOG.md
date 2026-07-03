@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single-sourced the network Hamiltonian** (Issue #1472, Stage 3): `NetworkMFGProblem.hamiltonian()`
+  now delegates to the wired `NetworkHamiltonian` object — the SAME object the FP and policy-iteration
+  solvers use via `optimal_control` — so the RK45 base solver reads the identical Hamiltonian instead
+  of a second hand-synced copy. Removed the `_default_network_hamiltonian` duplicate (the #1474/N15
+  fix had to keep it in lockstep with the object by hand — a latent silent-divergence risk of the kind
+  that caused N15 itself). Pinned by `test_network_hamiltonian_method_equals_object` (method == object
+  byte-identity across default, custom-potential, and custom-`hamiltonian_func` cases). Byte-identical.
+
 - **Removed the dummy continuum spatial fields (`Nx`, `xmin`, `xmax`, `Dx`) from `NetworkMFGProblem`**
   (Issue #1472, Stage 3 increment 1). They returned nonsense placeholders (`Nx = num_nodes - 1`,
   `xmin = 0`, `xmax = num_nodes - 1`, `Dx = 1`) to fake a continuum interface a network problem never

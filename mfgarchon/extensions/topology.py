@@ -392,52 +392,17 @@ class NetworkMFGProblem(MFGProblem):
     # Network-specific MFG components
 
     def hamiltonian(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
+        """Network Hamiltonian at a node — delegates to the single-source ``NetworkHamiltonian``.
+
+        Issue #1472: the value is computed by the wired ``hamiltonian_class`` — the SAME object the FP
+        and policy-iteration solvers use (via ``optimal_control``) — so the RK45 base solver reads the
+        identical Hamiltonian rather than a second hand-synced copy. This removes the former
+        ``_default_network_hamiltonian`` duplicate, which had to be kept in lockstep with the object by
+        hand (the #1474/N15 divergence risk). ``neighbors`` is accepted for signature compatibility;
+        the object recomputes the neighborhood from ``network_data``. Byte-identical (pinned by
+        ``test_network_hamiltonian_method_equals_object``).
         """
-        Network Hamiltonian function.
-
-        Args:
-            node: Current node index
-            neighbors: List of neighboring nodes
-            m: Density vector at all nodes
-            p: Co-state vector at all nodes
-            t: Current time
-
-        Returns:
-            Hamiltonian value at the node
-        """
-        if self.components.hamiltonian_func is not None:
-            return self.components.hamiltonian_func(node, neighbors, m, p, t)
-
-        # Default quadratic Hamiltonian with network structure
-        return self._default_network_hamiltonian(node, neighbors, m, p, t)
-
-    def _default_network_hamiltonian(
-        self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float
-    ) -> float:
-        """Default network Hamiltonian implementation."""
-        # Quadratic control cost + potential + density coupling
-        control_cost = 0.0
-
-        # Sum over possible moves to neighbors
-        for neighbor in neighbors:
-            if self.network_data is None:
-                edge_weight = 1.0  # Default weight
-            else:
-                edge_weight = self.network_data.get_edge_weight(node, neighbor)
-            # Control cost (Issue #1474): one-sided finite-state MFG control, sense=MINIMIZE — only
-            # downhill edges (u_i > u_j) contribute, matching NetworkHamiltonian and the alpha>=0
-            # generator. (Was the full quadratic 0.5*edge_weight*(u_j-u_i)^2 = unconstrained
-            # relaxation, which made RK45 solve a different HJB than FP/policy iteration.)
-            du = p[node] - p[neighbor]  # u_i - u_j
-            control_cost += 0.5 * edge_weight * max(du, 0.0) ** 2
-
-        # Node potential
-        potential = self.node_potential(node, t)
-
-        # Density coupling (congestion effects)
-        coupling = self.density_coupling(node, m, t)
-
-        return control_cost + potential + coupling
+        return float(self.hamiltonian_class(node, m, p, t))
 
     def hamiltonian_dm(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
         """Derivative of Hamiltonian with respect to density."""
