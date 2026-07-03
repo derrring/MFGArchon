@@ -127,7 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NetworkPolicyIterationHJBSolver` now converges to the same value as the RK45 ODE — the dt-refinement
   gap that previously *plateaued* at ~0.708 (converging to different equations) now halves per
   refinement (first-order → 0). Pinned by `test_network_hamiltonian_minimize_consistency` and
-  `test_network_policy_iteration_converges_to_rk45`.
+  `test_network_policy_iteration_converges_to_rk45`. Scope: the network finite-state MFG is
+  implemented for `sense=MINIMIZE` (cost-to-go) only; `sense=MAXIMIZE` now **fails loud** rather than
+  silently computing the MINIMIZE math (full reward-to-go support tracked in #1476).
 - **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
   (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
   orphaned — `__init__` overwrites `self.components` after constructing it, so

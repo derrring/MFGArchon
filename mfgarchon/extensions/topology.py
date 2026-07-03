@@ -73,6 +73,19 @@ class NetworkHamiltonian(HamiltonianBase):
         population_index: int = 0,
     ):
         super().__init__(sense=sense, population_index=population_index)
+        # Issue #1474/#1476: the finite-state MFG here is implemented for sense=MINIMIZE (cost-to-go,
+        # downhill control) only — the control cost, optimal_control, dp, and the base-solver
+        # integration sign are all hardcoded to the MINIMIZE convention. Fail loud rather than
+        # silently compute MINIMIZE for a MAXIMIZE (reward-to-go, uphill) problem. Full MAXIMIZE
+        # support (the mirror) is tracked in #1476.
+        if sense != OptimizationSense.MINIMIZE:
+            raise NotImplementedError(
+                f"NetworkHamiltonian supports sense=OptimizationSense.MINIMIZE only (finite-state MFG "
+                f"cost-to-go / downhill control); got {sense}. MAXIMIZE (reward-to-go, uphill) is not "
+                f"yet implemented for network problems — see Issue #1476. Its control / H / dp and the "
+                f"base-solver integration sign are the mirror of the MINIMIZE case and need separate "
+                f"validation, so it cannot be silently reused."
+            )
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func

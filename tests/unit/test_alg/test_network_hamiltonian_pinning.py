@@ -132,7 +132,8 @@ def test_network_hamiltonian_minimize_consistency():
     t = 0.1
 
     alpha2 = np.atleast_1d(H.optimal_control(np.array([2]), m, u, t))
-    assert alpha2[1] > 0 and alpha2[3] == 0, f"control must be downhill (MINIMIZE); got {alpha2}"
+    assert alpha2[1] > 0, f"control must flow to the lower neighbour (MINIMIZE); got {alpha2}"
+    assert alpha2[3] == 0, f"control must not flow to the higher neighbour (MINIMIZE); got {alpha2}"
 
     for i in range(N):
         ai = np.atleast_1d(H.optimal_control(np.array([i]), m, u, t))
@@ -168,7 +169,21 @@ def test_network_policy_iteration_converges_to_rk45():
         m = np.ones((nt + 1, n)) / n
         u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
         u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=g)
-        assert np.isfinite(u_pi).all() and np.isfinite(u_rk).all(), "both solvers must be finite"
+        assert np.isfinite(u_pi).all(), "policy-iteration value must be finite"
+        assert np.isfinite(u_rk).all(), "RK45 value must be finite"
         errs.append(float(np.max(np.abs(u_pi[0] - u_rk[0]))))
     assert errs[0] < 0.2, f"PI and RK45 must agree closely (same HJB), got {errs[0]:.3f}"
     assert errs[-1] < 0.55 * errs[0], f"gap must shrink under dt-refinement (N15 plateau closed): {errs}"
+
+
+def test_network_hamiltonian_maximize_fails_loud():
+    """Issue #1474 / #1476: the network finite-state MFG is implemented for ``sense=MINIMIZE`` only.
+    ``sense=MAXIMIZE`` must fail loud rather than silently compute the MINIMIZE (downhill) math. Full
+    MAXIMIZE (reward-to-go / uphill) support — the mirror — is tracked in #1476."""
+    from mfgarchon.core.hamiltonian import OptimizationSense
+
+    net = GridNetwork(width=3, height=1)
+    net.create_network()
+    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
+    with pytest.raises(NotImplementedError, match="MINIMIZE"):
+        NetworkHamiltonian(network_data=prob.network_data, sense=OptimizationSense.MAXIMIZE)
