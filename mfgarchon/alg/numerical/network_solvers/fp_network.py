@@ -423,18 +423,18 @@ class FPNetworkSolver(BaseFPSolver):
         rates = {}
         for i in range(self.num_nodes):
             neighbors = self.divergence_ops.get(i, [])
-            if H_class is not None:
-                alpha = H_class.optimal_control(np.array([i]), m, u, t)
-                rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
-            else:
-                # Legacy: quadratic rates from value gradient
-                rates[i] = {}
-                for j in neighbors:
-                    du = u[j] - u[i]
-                    edge_weight = self.network_problem.network_data.get_edge_weight(i, j)
-                    rate = edge_weight * max(du, 0.0)
-                    if rate > 0:
-                        rates[i][j] = rate
+            if H_class is None:
+                # Issue #1474: fail loud. A NetworkMFGProblem always wires a single-source
+                # NetworkHamiltonian (`hamiltonian_class`), so this is unreachable; the old legacy
+                # branch computed the wrong-signed uphill rate `w*max(u_j-u_i,0)` (MAXIMIZE), diverging
+                # from the value Hamiltonian. Never fall back to it silently (fail-fast).
+                raise RuntimeError(
+                    "FPNetworkSolver: problem.hamiltonian_class is None. The network transition rates "
+                    "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
+                    "Ensure the NetworkMFGProblem wired its Hamiltonian."
+                )
+            alpha = H_class.optimal_control(np.array([i]), m, u, t)
+            rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 
     def _compute_drift_term(self, node: int, m: np.ndarray, u: np.ndarray, t: float) -> float:
