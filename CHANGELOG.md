@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed the dummy continuum spatial fields (`Nx`, `xmin`, `xmax`, `Dx`) from `NetworkMFGProblem`**
+  (Issue #1472, Stage 3 increment 1). They returned nonsense placeholders (`Nx = num_nodes - 1`,
+  `xmin = 0`, `xmax = num_nodes - 1`, `Dx = 1`) to fake a continuum interface a network problem never
+  uses — no network-path consumer reads them (the base `MFGProblem` does not define them; the network
+  solvers use `num_nodes`; every reader of `.Nx`/`.xmin`/`.xmax`/`.Dx` is a continuum path). Removing
+  them prevents accidental continuum code paths on a graph problem. Verified by the full network suite
+  plus an end-to-end network solve; thins the `NetworkMFGProblem` fork ahead of the collapse.
+
 - **Removed three dead graph-operator reimplementations from `NetworkMFGProblem`** (Issue #1472,
   Stage 3 increment 0): `compute_graph_gradient`, `compute_graph_divergence` (a self-described
   "simplified" stub), and `apply_graph_laplacian`. They had **zero callers** — the network solvers

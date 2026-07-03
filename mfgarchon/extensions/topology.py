@@ -631,25 +631,10 @@ class NetworkMFGProblem(MFGProblem):
         """Get terminal value function (legacy interface)."""
         return self.get_terminal_value()
 
-    @property
-    def Nx(self) -> int:
-        """Number of spatial points (nodes in network)."""
-        return self.num_nodes - 1
-
-    @property
-    def xmin(self) -> float:
-        """Minimum spatial coordinate (dummy for networks)."""
-        return 0.0
-
-    @property
-    def xmax(self) -> float:
-        """Maximum spatial coordinate (dummy for networks)."""
-        return float(self.num_nodes - 1)
-
-    @property
-    def Dx(self) -> float:
-        """Spatial step size (dummy for networks)."""
-        return 1.0
+    # The continuum spatial fields Nx / xmin / xmax / Dx are not defined here (Issue #1472). They are
+    # not part of the base MFGProblem interface and no network-path consumer reads them — the network
+    # solvers use num_nodes; graph geometry has no continuum coordinates. The former dummies (Nx =
+    # num_nodes - 1, xmin = 0, xmax = num_nodes - 1, Dx = 1) invited nonsense continuum code paths.
 
     # Network-specific properties
 
