@@ -57,6 +57,12 @@ class NetworkHJBSolver(BaseHJBSolver):
         Trait validation occurs at problem/geometry level.
     """
 
+    # Node-BC capability gate (Issue #1468; #1456 network family). The base solver integrates the
+    # backward HJB ODE (`_solve_ode` via `solve_ivp`) with terminal data only and never applies
+    # `components.boundary_nodes`, so it cannot honor a node BC: `False`. The
+    # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
+    _honors_node_bc: bool = False
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
@@ -76,6 +82,19 @@ class NetworkHJBSolver(BaseHJBSolver):
         super().__init__(problem)
 
         self.network_problem = problem
+
+        # Issue #1468: fail loud on a node BC this solver cannot honor. The base ODE path applies
+        # only the terminal condition and never `boundary_nodes`, so a node BC would be silently
+        # ignored. `NetworkPolicyIterationHJBSolver` (which applies them) sets `_honors_node_bc`.
+        if not self._honors_node_bc and problem.components.boundary_nodes:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support node boundary conditions "
+                f"(problem.components.boundary_nodes is set). The base network HJB integrates the "
+                f"backward ODE with terminal data only and never applies boundary_nodes, so the "
+                f"node BC would be silently ignored (Issue #1468, #1456). Use "
+                f"NetworkPolicyIterationHJBSolver, which applies them, or remove boundary_nodes."
+            )
+
         self.scheme = scheme
         self.tolerance = tolerance
 
@@ -212,6 +231,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     1. Policy evaluation: Solve linear system for current policy
     2. Policy improvement: Update control policy
     """
+
+    # Issue #1468: unlike the base ODE solver, policy iteration applies
+    # `problem.apply_boundary_conditions` (the node-Dirichlet pin over `boundary_nodes`) at every
+    # timestep in `solve_hjb_system`, so it honors a node BC and is exempt from the base gate.
+    _honors_node_bc: bool = True
 
     def __init__(
         self,

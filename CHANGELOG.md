@@ -98,6 +98,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Network solvers fail loud on an unsupported node boundary condition** (Issue #1468; #1456
+  network family). The continuum `BCType` gate (`_validate_bc_support`) is a structural no-op for
+  network problems — `NetworkMFGProblem` carries no `BoundaryConditions`, so it keys on nothing — so
+  a network-appropriate gate on `components.boundary_nodes` was added instead. `FPNetworkSolver`
+  (ignores `boundary_nodes` and unconditionally renormalizes mass) and the base `NetworkHJBSolver`
+  (ODE path applies only terminal data) now raise `NotImplementedError` at construction when
+  `boundary_nodes` is set, rather than silently dropping the node BC and hiding any absorption.
+  `NetworkPolicyIterationHJBSolver` (which applies `apply_boundary_conditions` each step) declares
+  `_honors_node_bc = True` and is exempt. No `_SUPPORTED_BC_TYPES` frozenset is added (it would be a
+  no-op). Zero regression: nothing sets `boundary_nodes` today. First step of the network-solver
+  Problem/Components unification (Layer Ψ).
 - **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
   S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
   LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,

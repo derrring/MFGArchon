@@ -66,6 +66,14 @@ class FPNetworkSolver(BaseFPSolver):
         Mass conservation enforced through discrete operators.
     """
 
+    # Node-BC capability gate (Issue #1468; #1456 network family). The network BC model is
+    # `NetworkMFGComponents.boundary_nodes` (a node-level Dirichlet pin applied via
+    # `NetworkMFGProblem.apply_boundary_conditions`), NOT the continuum `BCType`/segments framework —
+    # so the inherited `_validate_bc_support` (which keys on `BoundaryConditions.segments`) is a
+    # structural no-op for network problems. This solver ignores `boundary_nodes` entirely and
+    # unconditionally renormalizes total mass each step, so it cannot honor a node BC: `False`.
+    _honors_node_bc: bool = False
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
@@ -91,6 +99,21 @@ class FPNetworkSolver(BaseFPSolver):
         super().__init__(problem)
 
         self.network_problem = problem
+
+        # Issue #1468: fail loud on a node BC this solver cannot honor. It ignores
+        # `boundary_nodes` and unconditionally renormalizes total mass each step
+        # (`enforce_mass_conservation`), so a node BC would be silently dropped and any
+        # absorption hidden — manufacturing the mass-conserving answer in place of the
+        # intended one (the #1456 silent-wrong-answer class, on the graph).
+        if not self._honors_node_bc and problem.components.boundary_nodes:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support node boundary conditions "
+                f"(problem.components.boundary_nodes is set). It ignores boundary_nodes and "
+                f"unconditionally renormalizes total mass each step, so the node BC would be "
+                f"silently dropped and any absorption hidden (Issue #1468, #1456). Remove "
+                f"boundary_nodes, or use a solver that honors them."
+            )
+
         self.scheme = scheme
         self.diffusion_coefficient = diffusion_coefficient
         self.cfl_factor = cfl_factor
