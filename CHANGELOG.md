@@ -119,6 +119,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_network_hamiltonian_object_equals_method_node_by_node`, node-by-node across the default /
   interaction / custom branches). Dormant reconciliation — no live behavior change (network suites
   unchanged); first step of the network Problem/Components unification (Layer Ψ).
+- **Network solvers fail loud on an unsupported node boundary condition** (Issue #1468; #1456
+  network family). The continuum `BCType` gate (`_validate_bc_support`) is a structural no-op for
+  network problems — `NetworkMFGProblem` carries no `BoundaryConditions`, so it keys on nothing — so
+  a network-appropriate gate on `components.boundary_nodes` was added instead. `FPNetworkSolver`
+  (ignores `boundary_nodes` and unconditionally renormalizes mass) and the base `NetworkHJBSolver`
+  (ODE path applies only terminal data) now raise `NotImplementedError` at construction when
+  `boundary_nodes` is set, rather than silently dropping the node BC and hiding any absorption.
+  `NetworkPolicyIterationHJBSolver` (which applies `apply_boundary_conditions` each step) declares
+  `_honors_node_bc = True` and is exempt. No `_SUPPORTED_BC_TYPES` frozenset is added (it would be a
+  no-op). Zero regression: nothing sets `boundary_nodes` today. First step of the network-solver
+  Problem/Components unification (Layer Ψ).
+- **Howard advection operator preserves the unconditional M-matrix at degenerate stencils**
+  (Issue #1466). `_build_upwind_projection` (Howard policy-eval, GFDM scattered clouds) fell back to
+  `mask = np.ones(...)` when no neighbour lay on the upwind side of `alpha`, pulling the whole
+  all-downwind neighbourhood in with negative advective off-diagonals (`proj_j < 0 -> w_j < 0`) —
+  the opposite sign to the genuine upwind stencil, breaking the M-matrix property
+  `thm:upwind_comparison` rests on. It now skips the node (pure diffusion, M-matrix preserved),
+  matching the sibling `_build_per_axis_upwind_pair`. Pinned by
+  `test_howard_upwind_projection_degenerate_stencil_preserves_m_matrix`. Refs #1074, #1381.
 - **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
   S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
   LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,

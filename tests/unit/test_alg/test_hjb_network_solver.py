@@ -14,7 +14,7 @@ from mfgarchon.alg.numerical.network_solvers.hjb_network import (
     NetworkHJBSolver,
     NetworkPolicyIterationHJBSolver,
 )
-from mfgarchon.extensions.topology import NetworkMFGProblem
+from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
 # Skip all tests if igraph is not available (network backend dependency)
@@ -492,6 +492,60 @@ class TestNetworkHJBSolverIntegration:
             U_solution = solver.solve_hjb_system(M_density, U_final)
 
             assert np.all(np.isfinite(U_solution))
+
+
+class TestNetworkHJBIssue1468NodeBCGate:
+    """Issue #1468 (BC-capability, #1456 network family).
+
+    The base ``NetworkHJBSolver`` integrates the backward HJB ODE (``solve_ivp``) with terminal
+    data only and never applies ``components.boundary_nodes``, so it must fail loud on a node BC.
+    ``NetworkPolicyIterationHJBSolver`` applies ``apply_boundary_conditions`` at every backward
+    step, so it honors node BC and is exempt from the gate.
+    """
+
+    def _network(self):
+        network = GridNetwork(width=3, height=3)
+        network.create_network()
+        return network
+
+    def test_base_solver_boundary_nodes_fail_loud(self):
+        problem = NetworkMFGProblem(
+            network_geometry=self._network(),
+            T=0.5,
+            Nt=10,
+            components=NetworkMFGComponents(boundary_nodes=[0]),
+        )
+        with pytest.raises(NotImplementedError, match="boundary_nodes"):
+            NetworkHJBSolver(problem)
+
+    def test_base_solver_no_boundary_nodes_constructs(self):
+        problem = NetworkMFGProblem(network_geometry=self._network(), T=0.5, Nt=10)
+        solver = NetworkHJBSolver(problem)  # no raise
+        assert solver._honors_node_bc is False
+
+    # The trivial default Hamiltonian makes the tiny-grid policy-evaluation matrix singular; that
+    # is orthogonal to the gate (the BC pass overwrites the node value regardless of the interior
+    # solve), so suppress the pre-existing warning to keep the assertion focused.
+    @pytest.mark.filterwarnings("ignore:Matrix is exactly singular")
+    def test_policy_iteration_exempt_and_honors_boundary_nodes(self):
+        """Policy iteration constructs with ``boundary_nodes`` (gate-exempt) and actually pins the
+        node value at every backward step via ``apply_boundary_conditions``."""
+        problem = NetworkMFGProblem(
+            network_geometry=self._network(),
+            T=0.5,
+            Nt=10,
+            components=NetworkMFGComponents(boundary_nodes=[0], boundary_values_func=lambda node, t: 7.0),
+        )
+        solver = NetworkPolicyIterationHJBSolver(problem)  # no raise
+        assert solver._honors_node_bc is True
+
+        n_time_points = problem.Nt + 1
+        num_nodes = problem.num_nodes
+        U = solver.solve_hjb_system(np.ones((n_time_points, num_nodes)), np.zeros(num_nodes))
+        # apply_boundary_conditions pins node 0 = 7.0 at every backward step (indices 0..Nt-1);
+        # the terminal step (index Nt) keeps U_terminal (= 0), which the BC pass does not touch.
+        assert np.allclose(U[:-1, 0], 7.0), f"boundary node not pinned: U[:, 0] = {U[:, 0]}"
+        assert U[-1, 0] == 0.0, "terminal condition must be preserved (BC not applied at t=T)"
 
 
 if __name__ == "__main__":
