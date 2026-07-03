@@ -143,7 +143,7 @@ class NetworkMFGBenchmark:
         )
 
         problem = NetworkMFGProblem(
-            network_geometry=network_geometry,
+            geometry=network_geometry,
             T=self.T,
             Nt=self.Nt,
             components=components,

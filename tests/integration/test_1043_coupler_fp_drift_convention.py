@@ -519,7 +519,7 @@ class TestFPNetworkSolverPotentialFieldRename:
 
         network = GridNetwork(width=3, height=3)
         network.create_network()
-        return NetworkMFGProblem(network_geometry=network, T=0.5, Nt=5)
+        return NetworkMFGProblem(geometry=network, T=0.5, Nt=5)
 
     def test_potential_field_kwarg_accepted(self, network_problem):
         """potential_field=U is the new canonical keyword; must work without DeprecationWarning."""

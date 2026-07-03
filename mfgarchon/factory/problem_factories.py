@@ -238,7 +238,7 @@ def create_mfg_problem(
     >>>
     >>> # Network MFG (new unified API)
     >>> components = MFGComponents(
-    ...     network_geometry=graph,
+    ...     geometry=graph,
     ...     node_interaction_func=node_cost,
     ...     edge_cost_func=edge_cost
     ... )
@@ -429,7 +429,7 @@ def create_network_problem(
 
     >>> from mfgarchon.extensions.topology import NetworkMFGProblem
     >>> problem = NetworkMFGProblem(
-    ...     network_geometry=graph,
+    ...     geometry=graph,
     ...     node_interaction=lambda node, m: m[node]**2,
     ...     edge_cost=lambda edge: 1.0,
     ...     initial_density=initial_m,
@@ -459,7 +459,7 @@ def create_network_problem(
         "Use the extension module directly:\n"
         "  from mfgarchon.extensions.topology import NetworkMFGProblem\n\n"
         "  problem = NetworkMFGProblem(\n"
-        "      network_geometry=graph,\n"
+        "      geometry=graph,\n"
         "      node_interaction=lambda node, m: m[node]**2,\n"
         "      edge_cost=lambda edge: 1.0,\n"
         "      initial_density=initial_m,\n"

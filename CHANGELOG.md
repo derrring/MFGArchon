@@ -158,6 +158,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a seeded `volatility_field=s` solve equals a `problem.sigma=s` solve to 1e-10); `problem.sigma` is
   never written. New `test_issue_1412_fp_particle_sigma_override`.
 
+### Deprecated
+
+- **`NetworkMFGProblem(network_geometry=...)` → `geometry=`** (Issue #1472, Stage 3). The constructor
+  parameter is now `geometry`, aligned with `MFGProblem` — geometry is the single axis of variation,
+  toward the Problem/Components unification. `network_geometry=` is a deprecated alias that redirects
+  identically (emits `DeprecationWarning`; removed after the deprecation window). Passing both, or
+  neither, fails loud. All internal call sites (factories, tests, examples) are migrated to `geometry=`.
+  Equivalence-tested (`test_network_geometry_alias_equivalence_and_deprecation`): old and new
+  construction are byte-identical (same nodes, same single-source Hamiltonian, same values).
+
 ### Fixed
 
 - **Network finite-state MFG: value Hamiltonian, optimal control, and `dp` reconciled into one

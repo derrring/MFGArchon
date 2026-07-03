@@ -27,7 +27,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -48,7 +48,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -64,7 +64,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -80,7 +80,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -96,7 +96,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -111,7 +111,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -128,7 +128,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -149,7 +149,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -166,7 +166,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -183,7 +183,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=2.0,
             Nt=20,
         )
@@ -201,7 +201,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -221,7 +221,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -248,7 +248,7 @@ class TestFPNetworkSolverSolveFPSystem:
         pre-fix `D = volatility_field` fork would have failed)."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
-        problem = NetworkMFGProblem(network_geometry=network, T=0.5, Nt=10)
+        problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=10)
         num_nodes = problem.num_nodes
         # NON-uniform initial density: a uniform m is a diffusion fixed point (Laplacian of a
         # constant is 0), so D would be unobservable. A ramp makes the diffusion (hence D) matter.
@@ -276,7 +276,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -303,7 +303,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.1,  # Short time for stability
             Nt=20,
         )
@@ -326,7 +326,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -349,7 +349,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -372,7 +372,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -396,7 +396,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -423,7 +423,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -448,7 +448,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -478,7 +478,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -507,7 +507,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -535,7 +535,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -559,7 +559,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -583,7 +583,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -612,7 +612,7 @@ class TestFPNetworkSolverIntegration:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -637,7 +637,7 @@ class TestFPNetworkSolverIntegration:
 
         for config in configs:
             problem = NetworkMFGProblem(
-                network_geometry=network,
+                geometry=network,
                 T=0.2,
                 Nt=10,
             )
@@ -671,7 +671,7 @@ class TestFPNetworkSolverAbsorbingNodeBC:
         return network
 
     def test_absorbing_fp_mass_decreases(self):
-        problem = NetworkMFGProblem(network_geometry=self._network(absorbing_node=0), T=0.5, Nt=20)
+        problem = NetworkMFGProblem(geometry=self._network(absorbing_node=0), T=0.5, Nt=20)
         solver = FPNetworkSolver(problem, scheme="explicit")  # honors it — no raise
         n = problem.num_nodes
         m0 = np.ones(n) / n
@@ -682,7 +682,7 @@ class TestFPNetworkSolverAbsorbingNodeBC:
 
     def test_no_node_bc_constructs_and_conserves(self):
         """No node BC -> construction unchanged and mass is conserved (renorm active)."""
-        problem = NetworkMFGProblem(network_geometry=self._network(), T=0.5, Nt=10)
+        problem = NetworkMFGProblem(geometry=self._network(), T=0.5, Nt=10)
         solver = FPNetworkSolver(problem)  # no raise
         assert solver.num_nodes == 9
         assert solver._mass_changing_bc is False
