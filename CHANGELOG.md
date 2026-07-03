@@ -184,6 +184,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Weak-form MFG family (FEM + meshless-Galerkin) now single-sources the FP drift from
+  `fp_drift_coefficient`** (Issue #1487 / #1420, gotcha G-017). `FPFEMSolver`, `MeshlessGalerkinFPSolver`
+  and `MeshlessGalerkinHJBSolver` read the raw `coupling_coefficient` (default 0.5) for the FP advection
+  scale instead of the single source `fp_drift_coefficient` (= `1/control_cost`, the HJB optimal-control
+  scale) that the seven FDM / FVM / particle / SL solvers already use — the weak-form family was the lone
+  holdout. When `coupling_coefficient ≠ 1/control_cost` the FP transported mass at the wrong velocity, so
+  Picard converged **silently to the wrong equilibrium** (the G-017 failure — `exp16` Towel equilibrium
+  ~4–5× too wide). Both meshless HJB and FP now read the same `fp_drift_coefficient`, preserving
+  `A_FP = A_HJB^T`. Pinned by `test_weakform_fp_drift_single_source` (drift invariant to
+  `coupling_coefficient`, sourced from `control_cost`). **Affects the Weak-GFDM paper's coupled runs.**
+
 - **Network finite-state MFG: value Hamiltonian, optimal control, and `dp` reconciled into one
   consistent object** (Issue #1474). `NetworkHamiltonian.__call__` / `_default_network_hamiltonian`
   used the full quadratic `½Σw(u_j−u_i)²` — the unconstrained α∈ℝ relaxation, an invalid CTMC

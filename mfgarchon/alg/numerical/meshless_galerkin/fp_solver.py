@@ -32,6 +32,7 @@ from scipy import sparse
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -115,7 +116,9 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         )
 
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
-        coupling = self.problem.coupling_coefficient
+        # Issue #1487/#1420 (G-017): FP drift scale = 1/control_cost, single-sourced (not raw
+        # coupling_coefficient). Same read as the paired HJB Newton advection -> A_FP = A_HJB^T.
+        coupling = fp_drift_coefficient(self.problem)
         G = self._gradient_operators()
         grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim)
         velocity = (-coupling * grad_U).T  # (dim, N): v = -coupling * grad(U)
