@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 from .discretization import FEMDiscretization
 from .mesh_adapter import meshdata_to_skfem
@@ -114,7 +115,11 @@ class FPFEMSolver(WeakFormFPSolver):
         from skfem import BilinearForm
 
         dim = self._skfem_mesh.p.shape[0]
-        coupling = self.problem.coupling_coefficient
+        # Issue #1487/#1420 (G-017): the FP drift scale is the HJB optimal-control scale 1/control_cost,
+        # single-sourced via fp_drift_coefficient — NOT the raw coupling_coefficient (which defaults to
+        # 0.5 and silently diverges from 1/control_cost -> wrong equilibrium). Matches the 7 FDM/FVM/
+        # particle/SL solvers; the weak-form family was the lone holdout.
+        coupling = fp_drift_coefficient(self.problem)
         du = self._basis.interpolate(U_n)
 
         @BilinearForm
