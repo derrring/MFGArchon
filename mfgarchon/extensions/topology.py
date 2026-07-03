@@ -186,7 +186,7 @@ class NetworkHamiltonian(HamiltonianBase):
 
 
 @dataclass
-class NetworkMFGComponents:
+class NetworkMFGComponents(MFGComponents):
     """
     Components for defining MFG problems on networks.
 
@@ -229,6 +229,17 @@ class NetworkMFGComponents:
 
     # Problem parameters
     problem_params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Issue #1470 (Problem/Components unification, Layer Ψ): NetworkMFGComponents IS-A
+        # MFGComponents so ``isinstance`` holds and the #1456 BC-capability gate stops silently
+        # no-op'ing on network problems. But it specifies the MFG with the network-native fields
+        # (hamiltonian_func, node_interaction_func, boundary_nodes, ...), not the continuum ones,
+        # so the parent __post_init__ — which requires a class-based Hamiltonian / m_initial /
+        # u_terminal at construction — does not apply. The network Hamiltonian needs graph
+        # structure and is bound by NetworkMFGProblem, not the components. The init=False
+        # ``_hamiltonian_class`` / ``_lagrangian_class`` fields default to None regardless.
+        pass
 
 
 class NetworkMFGProblem(MFGProblem):

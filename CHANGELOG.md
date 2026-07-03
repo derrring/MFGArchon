@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`NetworkMFGComponents` is now a `MFGComponents`** (Issue #1470, Problem/Components unification —
+  Layer Ψ). It subclasses `MFGComponents` with a relaxed `__post_init__` (network problems specify
+  the MFG with the network-native fields — `hamiltonian_func`, `node_interaction_func`,
+  `boundary_nodes` — so the parent's class-based-Hamiltonian requirement does not apply), so
+  `isinstance(components, MFGComponents)` now holds. Byte-identical: `hamiltonian_class` stays `None`
+  (the network solvers read the method / legacy rate paths, not the object), so every solver output
+  is unchanged. Also fixes `NetworkMFGProblem.get_problem_info()` (was `AttributeError` on the
+  missing `description`) and makes `get_boundary_conditions()` resolve to `None` instead of raising.
+  Wiring `boundary_nodes` into the `BoundaryConditions` framework (so the #1456 continuum gate
+  applies to network problems) is a later stage.
+
 - **`FPFVMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction (after
   the pre-existing Issue #422 Dirichlet guard, whose specific message is preserved). `ROBIN` /

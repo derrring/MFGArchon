@@ -73,3 +73,31 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
         method_val = prob.hamiltonian(i, nbrs, m, u, t)
         object_val = float(H(np.array([i]), m, u, t))
         assert method_val == object_val, f"node {i} ({case}): method={method_val!r} object={object_val!r}"
+
+
+def test_network_components_is_mfg_components_byte_identical():
+    """Issue #1470 Stage 1: ``NetworkMFGComponents`` IS-A ``MFGComponents`` (type unification), and
+    the change is byte-identical.
+
+    ``isinstance`` holds; the solve path is unchanged because ``hamiltonian_class`` stays ``None``
+    (the network solvers read the method / legacy rate paths, not the object). ``get_problem_info()``
+    now works (previously ``AttributeError`` on the non-subclass components' missing ``description``),
+    and ``get_boundary_conditions()`` resolves to ``None`` instead of raising. Wiring
+    ``boundary_nodes`` into the ``BoundaryConditions`` framework (so the #1456 continuum gate applies)
+    is Stage 2 — not claimed here.
+    """
+    from mfgarchon.core.mfg_components import MFGComponents
+
+    net = GridNetwork(width=3, height=3)
+    net.create_network()
+    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
+
+    assert isinstance(prob.components, MFGComponents)
+    assert prob.hamiltonian_class is None, "byte-identity: the subclass must not activate the object"
+    assert isinstance(prob.get_problem_info(), dict), "get_problem_info must not raise (was AttributeError)"
+    assert prob.get_boundary_conditions() is None, "network BC still resolves to None (Stage 2 wires it)"
+
+    # network-native construction is unaffected
+    comps = NetworkMFGComponents(boundary_nodes=[0, 8], node_potential_func=lambda n, t: 0.1 * n)
+    assert isinstance(comps, MFGComponents)
+    assert comps.boundary_nodes == [0, 8]
