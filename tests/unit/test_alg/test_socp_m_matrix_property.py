@@ -293,6 +293,74 @@ def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
     )
 
 
+# ---------------------------------------------------------------------------
+# Closed-form pinning: the paper's headline Wendland-stencil constants.
+# `app:proof_joint_socp` Step 1 (1D reduction) and Step 3 (hex cone constant).
+# These were derived by hand (`thm:joint_socp(b)`: C_star^sym = 1/2) but had no
+# regression test. Pin them so a stencil-construction change cannot silently
+# move the load-bearing constant that the discrete comparison principle rests on.
+# ---------------------------------------------------------------------------
+
+
+def test_socp_reproduces_1d_second_difference():
+    """`app:proof_joint_socp` Step 1: the 1D uniform 3-point Wendland C2 stencil
+    (δ/h = 2) reduces to the standard second difference — physical
+    ``L = (1, -2, 1)/h^2``, i.e. ``L = (-2, 1, 1)`` at ``h = 1`` with the center
+    listed first."""
+    from mfgarchon.alg.numerical.gfdm_components.joint_socp import (
+        build_taylor_matrix_1d,
+        solve_joint_socp_at_stencil,
+        wendland_stencil_weights,
+    )
+
+    offsets = np.array([0.0, -1.0, 1.0])  # center first, spacing h = 1
+    A, _ = build_taylor_matrix_1d(offsets)
+    w = wendland_stencil_weights(offsets, delta=2.0)
+    out = solve_joint_socp_at_stencil(A, center_idx=0, h_i=1.0, C=8.0, wendland_w=w, dimension=1)
+
+    assert out["L"] is not None, "SOCP infeasible on the 1D uniform reference stencil"
+    L = np.asarray(out["L"])
+    assert np.isclose(L[0], -2.0, atol=1e-3), f"center L = {L[0]:.4f}, expected -2"
+    assert np.allclose(L[1:], 1.0, atol=1e-3), f"off-diagonal L = {L[1:]}, expected (1, 1)"
+
+
+@pytest.mark.parametrize("delta", [1.2, 1.6, 2.0])
+def test_socp_reproduces_hex_closed_form_constant(delta):
+    """`thm:joint_socp(b)` / `app:proof_joint_socp` Step 3: on the 2D regular
+    hexagon reference the joint SOCP reproduces the closed-form Wendland stencil
+    constants ``L_hat = 2/3``, ``L_center = -4``, ``||D_hat|| = 1/3``, and the
+    cone constant ``xi = h_i * ||D|| / L = C_star^sym = 1/2`` exactly, independent
+    of ``δ/h`` in ``(1, 2]``."""
+    from mfgarchon.alg.numerical.gfdm_components.joint_socp import (
+        build_taylor_matrix_2d,
+        solve_joint_socp_at_stencil,
+        wendland_stencil_weights,
+    )
+
+    angles = np.arange(6) * (np.pi / 3.0)
+    hexagon = np.stack([np.cos(angles), np.sin(angles)], axis=1)  # 6 unit vertices
+    offsets = np.vstack([[0.0, 0.0], hexagon])  # center first, h_i = 1
+    A, _ = build_taylor_matrix_2d(offsets)
+    w = wendland_stencil_weights(offsets, delta=delta)
+    out = solve_joint_socp_at_stencil(A, center_idx=0, h_i=1.0, C=8.0, wendland_w=w, dimension=2)
+
+    assert out["L"] is not None, f"δ={delta}: SOCP infeasible on the hexagonal reference"
+    L = np.asarray(out["L"])
+    D = np.asarray(out["D"])  # shape (2, 7)
+    off = np.arange(1, 7)
+    L_off = L[off]
+    D_off_norm = np.linalg.norm(D[:, off], axis=0)
+
+    assert np.isclose(L[0], -4.0, atol=1e-3), f"δ={delta}: center L = {L[0]:.4f}, expected -4"
+    assert np.allclose(L_off, 2.0 / 3.0, atol=1e-3), f"δ={delta}: L_off = {L_off}, expected 2/3"
+    assert np.allclose(D_off_norm, 1.0 / 3.0, atol=1e-3), f"δ={delta}: ||D|| = {D_off_norm}, expected 1/3"
+    xi = D_off_norm / L_off
+    assert np.allclose(xi, 0.5, atol=1e-3), f"δ={delta}: ξ = {xi}, expected C_star^sym = 1/2"
+    assert np.isclose(out["kappa_max"], 0.5, atol=1e-3), (
+        f"δ={delta}: kappa_max = {out['kappa_max']:.4f}, expected C_star^sym = 1/2"
+    )
+
+
 def test_runtime_dmp_guard_warns_only_when_violated():
     """Issue #1074 runtime guard: check_dmp=True warns when the drift exceeds α_crit; it is
     silent below the threshold and a no-op when check_dmp=False (the default — numerically inert)."""
@@ -455,6 +523,69 @@ def test_critical_drift_includes_negative_lap_edges():
         f"alpha_crit={alpha_crit:.4f}: negative-L edge (L=-0.1, g=1.0) must drive alpha_crit <= 0; "
         "old code returned +0.5, masking a pre-existing M-matrix violation (Issue #1253)"
     )
+
+
+def test_howard_upwind_projection_degenerate_stencil_preserves_m_matrix():
+    """`thm:upwind_comparison`: at a node with no upwind neighbour, the Howard
+    advection operator ``_build_upwind_projection`` must contribute *nothing*
+    (pure diffusion), not fall back to the whole neighbourhood.
+
+    Regression for the ``mask = np.ones(...)`` fallback. When ``proj = rel . alpha_hat``
+    is non-positive for every neighbour, the old fallback selected all (downwind)
+    neighbours, giving weights ``w_j = |alpha| * proj_j / sum(proj^2) < 0`` — negative
+    advective off-diagonals with the opposite sign to the genuine upwind stencil
+    (``proj_j > 0 -> w_j > 0``). Mixing signs breaks the unconditional M-matrix
+    property the discrete comparison principle rests on; the fix skips the node.
+
+    The cloud has one degenerate node (all neighbours downwind of alpha) and one
+    ordinary node (an upwind neighbour available), so the test also pins that the
+    fix is surgical: the ordinary node still advects, using only its upwind edge.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import _build_upwind_projection
+
+    # Flow alpha = +x everywhere. Node 0's neighbours all sit at x < 0 (downwind);
+    # node 1 has one upwind neighbour (x > x_1) and one downwind neighbour (x < x_1).
+    points = np.array(
+        [
+            [0.0, 0.0],  # 0: degenerate centre
+            [5.0, 0.0],  # 1: ordinary centre
+            [-1.0, 0.0],  # 2: downwind nbr of 0
+            [-1.0, 1.0],  # 3: downwind nbr of 0
+            [-1.0, -1.0],  # 4: downwind nbr of 0
+            [6.0, 0.0],  # 5: upwind nbr of 1
+            [4.0, 0.0],  # 6: downwind nbr of 1 (must be excluded by upwind selection)
+        ]
+    )
+    alpha = np.zeros((7, 2))
+    alpha[0] = [1.0, 0.0]
+    alpha[1] = [1.0, 0.0]
+    socp_data = {
+        0: {"neighbor_indices": [2, 3, 4]},
+        1: {"neighbor_indices": [5, 6]},
+    }
+
+    A = _build_upwind_projection(alpha, points, socp_data, n_total=7).tolil()
+
+    # Degenerate node 0: no advective contribution at all. The old fallback filled
+    # this row with negative off-diagonals; this assertion fails under that fallback.
+    assert A.rows[0] == [], (
+        f"degenerate node 0 must contribute no advection, got {dict(zip(A.rows[0], A.data[0], strict=True))}"
+    )
+
+    # Ordinary node 1: still advects, using only the upwind neighbour (5), not the
+    # downwind one (6); the off-diagonal weight has the correct (positive) upwind sign.
+    assert A[1, 5] > 0.0, "ordinary node must keep its upwind advective weight"
+    assert A[1, 6] == 0.0, "downwind neighbour must be excluded from the upwind stencil"
+    assert A[1, 1] < 0.0, "advection diagonal must be negative (row sum zero)"
+
+    # Global upwind sign: every advective off-diagonal is non-negative. The old
+    # degenerate fallback injects negatives here, so this is a second catch of the bug.
+    Acsr = A.tocsr()
+    for i in range(7):
+        row = Acsr.getrow(i)
+        for j, val in zip(row.indices, row.data, strict=True):
+            if j != i:
+                assert val >= 0.0, f"A[{i},{j}] = {val:.3e} < 0 breaks upwind off-diagonal sign"
 
 
 if __name__ == "__main__":

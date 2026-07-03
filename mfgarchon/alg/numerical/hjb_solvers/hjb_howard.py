@@ -193,7 +193,15 @@ def _build_upwind_projection(alpha: np.ndarray, points: np.ndarray, socp_data: d
         proj = rel @ d_a  # shape (k,)
         mask = proj > 0
         if mask.sum() < 1:
-            mask = np.ones(len(nbr_idx), dtype=bool)
+            # No neighbour lies on the upwind side of alpha: no sign-correct
+            # one-sided advection stencil exists at this node. Skip its advective
+            # contribution (pure diffusion, M-matrix preserved), matching
+            # `_build_per_axis_upwind_pair`. The previous `mask = np.ones(...)`
+            # fallback pulled in downwind neighbours (proj_j < 0 -> w_j < 0),
+            # silently emitting negative advective off-diagonals and breaking the
+            # unconditional-M-matrix property of `thm:upwind_comparison`. Such
+            # degenerate stencils are expected to be excluded by the boundary buffer.
+            continue
         sel_proj = proj[mask]
         sel_nbrs = nbr_idx[mask]
         denom = float(np.sum(sel_proj * sel_proj))

@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Howard advection operator preserves the unconditional M-matrix at degenerate stencils**
+  (Issue #1466). `_build_upwind_projection` (Howard policy-eval, GFDM scattered clouds) fell back to
+  `mask = np.ones(...)` when no neighbour lay on the upwind side of `alpha`, pulling the whole
+  all-downwind neighbourhood in with negative advective off-diagonals (`proj_j < 0 -> w_j < 0`) —
+  the opposite sign to the genuine upwind stencil, breaking the M-matrix property
+  `thm:upwind_comparison` rests on. It now skips the node (pure diffusion, M-matrix preserved),
+  matching the sibling `_build_per_axis_upwind_pair`. Pinned by
+  `test_howard_upwind_projection_degenerate_stencil_preserves_m_matrix`. Refs #1074, #1381.
 - **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
   S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
   LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,
