@@ -32,7 +32,7 @@ class TestNetworkMFGSolverCreation:
 
         # Create network MFG problem
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -50,7 +50,7 @@ class TestNetworkMFGSolverCreation:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=20,
         )
@@ -69,7 +69,7 @@ class TestNetworkMFGSolverCreation:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=20,
         )
@@ -88,7 +88,7 @@ class TestNetworkMFGSolverCreation:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -104,7 +104,7 @@ class TestNetworkMFGSolverCreation:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -126,7 +126,7 @@ class TestNetworkMFGProblemSetup:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=20,
         )
@@ -142,7 +142,7 @@ class TestNetworkMFGProblemSetup:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -161,7 +161,7 @@ class TestNetworkMFGProblemSetup:
         )
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
             components=components,
@@ -193,7 +193,7 @@ class TestNetworkMFGSolverExecution:
 
         # Create problem
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -224,7 +224,7 @@ class TestNetworkMFGSolverExecution:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.2,
             Nt=20,
         )
@@ -248,7 +248,7 @@ class TestNetworkMFGSolverExecution:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=15,
         )
@@ -273,7 +273,7 @@ class TestNetworkSolutionProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -297,7 +297,7 @@ class TestNetworkSolutionProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -317,7 +317,7 @@ class TestNetworkSolutionProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=20,
         )
@@ -342,7 +342,7 @@ class TestNetworkGeometryVariations:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -363,7 +363,7 @@ class TestNetworkGeometryVariations:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -386,7 +386,7 @@ class TestSolverConvergence:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.3,
             Nt=10,
         )
@@ -405,7 +405,7 @@ class TestSolverConvergence:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -427,7 +427,7 @@ class TestSolverRobustness:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -447,7 +447,7 @@ class TestSolverRobustness:
 
         for T_val in [0.3, 0.5, 1.0]:
             problem = NetworkMFGProblem(
-                network_geometry=network,
+                geometry=network,
                 T=T_val,
                 Nt=10,
             )
@@ -466,7 +466,7 @@ class TestSolverRobustness:
             network.create_network()
 
             problem = NetworkMFGProblem(
-                network_geometry=network,
+                geometry=network,
                 T=0.5,
                 Nt=10,
             )

@@ -17,6 +17,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently for them — now all fail loud. No construct-then-check test constructs any of them with an
   unsupported type (grep-verified); their unit surfaces pass unchanged.
 
+- **Removed dead methods from `NetworkMFGProblem`** (Issue #1472, Stage 3): `trajectory_cost`,
+  `compute_relaxed_equilibrium`, and `edge_cost` — all had zero callers. `compute_relaxed_equilibrium`
+  was a fail-silent stub (returned all-zero `U`/`M` placeholders — a silent-wrong-answer risk if
+  called). Further thins the `NetworkMFGProblem` fork; the live methods (`node_potential`,
+  `density_coupling`, `lagrangian` — used by the RK45 source term) are unchanged.
+
+- **Single-sourced the network Hamiltonian** (Issue #1472, Stage 3): `NetworkMFGProblem.hamiltonian()`
+  now delegates to the wired `NetworkHamiltonian` object — the SAME object the FP and policy-iteration
+  solvers use via `optimal_control` — so the RK45 base solver reads the identical Hamiltonian instead
+  of a second hand-synced copy. Removed the `_default_network_hamiltonian` duplicate (the #1474/N15
+  fix had to keep it in lockstep with the object by hand — a latent silent-divergence risk of the kind
+  that caused N15 itself). Pinned by `test_network_hamiltonian_method_equals_object` (method == object
+  byte-identity across default, custom-potential, and custom-`hamiltonian_func` cases). Byte-identical.
+
+- **Removed the dummy continuum spatial fields (`Nx`, `xmin`, `xmax`, `Dx`) from `NetworkMFGProblem`**
+  (Issue #1472, Stage 3 increment 1). They returned nonsense placeholders (`Nx = num_nodes - 1`,
+  `xmin = 0`, `xmax = num_nodes - 1`, `Dx = 1`) to fake a continuum interface a network problem never
+  uses — no network-path consumer reads them (the base `MFGProblem` does not define them; the network
+  solvers use `num_nodes`; every reader of `.Nx`/`.xmin`/`.xmax`/`.Dx` is a continuum path). Removing
+  them prevents accidental continuum code paths on a graph problem. Verified by the full network suite
+  plus an end-to-end network solve; thins the `NetworkMFGProblem` fork ahead of the collapse.
+
+- **Removed three dead graph-operator reimplementations from `NetworkMFGProblem`** (Issue #1472,
+  Stage 3 increment 0): `compute_graph_gradient`, `compute_graph_divergence` (a self-described
+  "simplified" stub), and `apply_graph_laplacian`. They had **zero callers** — the network solvers
+  build their own neighbor operators and read adjacency / Laplacian from `network_data` — and graph
+  operators are owned by the geometry (`GraphGeometry`). Behavior-preserving dead-code removal; first
+  step toward collapsing the `NetworkMFGProblem` fork onto `MFGProblem`-parameterized-by-geometry.
+
+- **Network FP honors ABSORBING node boundary conditions (exit nodes)** (Issue #1478, Stage 2b). An
+  absorbing/exit node is one physical BC with dual operations (adjoint duality): the HJB value carries
+  the exit cost (`GraphApplicator` pins `u` = the `NodeBC` value on the value field), and the FP
+  density is absorbed (`m → 0`, mass exits, on the density field). `FPNetworkSolver` now applies the
+  geometry node-BC to the density field each step and **gates the mass renormalization off** when the
+  BC changes total mass (ABSORBING / SOURCE) — so absorption is no longer hidden (it previously failed
+  loud). With no node-BC, mass is conserved exactly as before. Validated: total mass strictly decreases
+  at an absorbing node while the HJB pins the exit cost. Refines the #1471 `ABSORBING` handling from
+  density-only to the dual (value-pin + density-zero).
+
+- **Graph node boundary conditions are now owned by `GraphGeometry`** (Issue #1471,
+  Problem/Components unification — Layer Ψ). Node-BC (a `GraphBCConfig` of DIRICHLET / ABSORBING /
+  SOURCE / NEUMANN `NodeBC`s) attaches at `GraphGeometry` — the highest abstraction over
+  `NetworkGeometry` (grid / random / scale-free) and `MazeGeometry` — so **both inherit it uniformly**
+  (graphon is a separate continuum-limit construct, not a `GraphGeometry`). Construct it via
+  `GridNetwork(..., boundary_conditions=GraphBCConfig(...))`. `get_boundary_conditions()` on a graph
+  problem now returns the geometry's node-BC (was always `None`); it is polymorphic by geometry —
+  the boundary *locus* on a graph is a node set, not a wall segment, so the graph BC representation
+  genuinely differs from the continuum `BoundaryConditions`. The network HJB/FP solvers read node-BC
+  from the geometry through a single-source `GraphApplicator`, **retiring** the ad-hoc
+  `NetworkMFGComponents.boundary_nodes` / `boundary_values_func` channel (which bypassed the #1456 BC
+  single source); the temporary Stage-0 fail-loud gate is **re-keyed** to
+  `geometry.has_explicit_boundary_conditions()`. Byte-identical: the policy-iteration node-Dirichlet
+  pin is unchanged (now flows through `GraphApplicator.apply_hjb`). `GraphApplicator` (previously
+  untested / orphaned, though registered in `apply_bc()` dispatch) gains its first unit coverage and
+  a field-type fix (DIRICHLET → value field, ABSORBING → density field). Absorbing FP (opening the
+  conservative stencil at a node + gating the mass renorm) remains Stage 2b.
+
+- **`NetworkMFGComponents` is now a `MFGComponents`** (Issue #1470, Problem/Components unification —
+  Layer Ψ). It subclasses `MFGComponents` with a relaxed `__post_init__` (network problems specify
+  the MFG with the network-native fields — `hamiltonian_func`, `node_interaction_func`,
+  `boundary_nodes` — so the parent's class-based-Hamiltonian requirement does not apply), so
+  `isinstance(components, MFGComponents)` now holds. Byte-identical: `hamiltonian_class` stays `None`
+  (the network solvers read the method / legacy rate paths, not the object), so every solver output
+  is unchanged. Also fixes `NetworkMFGProblem.get_problem_info()` (was `AttributeError` on the
+  missing `description`) and makes `get_boundary_conditions()` resolve to `None` instead of raising.
+  Wiring `boundary_nodes` into the `BoundaryConditions` framework (so the #1456 continuum gate
+  applies to network problems) is a later stage.
+
 - **`FPFVMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction (after
   the pre-existing Issue #422 Dirichlet guard, whose specific message is preserved). `ROBIN` /
@@ -104,8 +172,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a seeded `volatility_field=s` solve equals a `problem.sigma=s` solve to 1e-10); `problem.sigma` is
   never written. New `test_issue_1412_fp_particle_sigma_override`.
 
+### Deprecated
+
+- **`NetworkMFGProblem(network_geometry=...)` → `geometry=`** (Issue #1472, Stage 3). The constructor
+  parameter is now `geometry`, aligned with `MFGProblem` — geometry is the single axis of variation,
+  toward the Problem/Components unification. `network_geometry=` is a deprecated alias that redirects
+  identically (emits `DeprecationWarning`; removed after the deprecation window). Passing both, or
+  neither, fails loud. All internal call sites (factories, tests, examples) are migrated to `geometry=`.
+  Equivalence-tested (`test_network_geometry_alias_equivalence_and_deprecation`): old and new
+  construction are byte-identical (same nodes, same single-source Hamiltonian, same values).
+
 ### Fixed
 
+- **Network finite-state MFG: value Hamiltonian, optimal control, and `dp` reconciled into one
+  consistent object** (Issue #1474). `NetworkHamiltonian.__call__` / `_default_network_hamiltonian`
+  used the full quadratic `½Σw(u_j−u_i)²` — the unconstrained α∈ℝ relaxation, an invalid CTMC
+  generator — while `optimal_control` used the upwind `w·max(u_j−u_i,0)`, so RK45 (reads the method)
+  and FP / policy-iteration (read the control) solved *different* HJBs. For `sense=MINIMIZE` the
+  correct finite-state control is downhill `α*=w·max(u_i−u_j,0)` with one-sided value
+  `H=½Σw·max(u_i−u_j,0)²` — mass now transports toward lower cost-to-go (was the wrong direction).
+  The orphaned `NetworkHamiltonian` is now **wired** as the single-source `hamiltonian_class`, and the
+  wrong-signed FP legacy rate branch fails loud. Two further defects that made the HJB *solve* wrong
+  are also fixed: (i) the base-solver integration sign — `du/ds=+H` integrated `u_t+H=0` (opposite to
+  the global `−u_t+H=0`) and self-amplified the one-sided control term (value blew up); it now
+  integrates `du/ds = −H_control + source` by separating the control Hamiltonian from the V+coupling
+  RHS sources; (ii) the policy-evaluation linear system was singular (`A_ii=1/dt, A_ij=−1/dt` →
+  row-sum 0 → NaN) and single-action — rewritten to the full-rate M-matrix `A = I/dt + Lᵖⁱ`
+  (`A_ii=1/dt+Σα`, `A_ij=−α`) with the control cost `½Σα²/w` in the RHS. **Decisive check**:
+  `NetworkPolicyIterationHJBSolver` now converges to the same value as the RK45 ODE — the dt-refinement
+  gap that previously *plateaued* at ~0.708 (converging to different equations) now halves per
+  refinement (first-order → 0). Pinned by `test_network_hamiltonian_minimize_consistency` and
+  `test_network_policy_iteration_converges_to_rk45`. Scope: the network finite-state MFG is
+  implemented for `sense=MINIMIZE` (cost-to-go) only; `sense=MAXIMIZE` now **fails loud** rather than
+  silently computing the MINIMIZE math (full reward-to-go support tracked in #1476).
+- **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
+  (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
+  orphaned — `__init__` overwrites `self.components` after constructing it, so
+  `problem.hamiltonian_class` is `None` and it is never exercised. Being dead, it had silently
+  diverged from `NetworkMFGProblem.hamiltonian`: default node congestion `0.0` instead of
+  `0.5*m[node]^2`, and it read the dead `congestion_func` field instead of the live
+  `node_interaction_func`. It now reproduces the method byte-identically (pinned by
+  `test_network_hamiltonian_object_equals_method_node_by_node`, node-by-node across the default /
+  interaction / custom branches). Dormant reconciliation — no live behavior change (network suites
+  unchanged); first step of the network Problem/Components unification (Layer Ψ).
+- **Network solvers fail loud on an unsupported node boundary condition** (Issue #1468; #1456
+  network family). The continuum `BCType` gate (`_validate_bc_support`) is a structural no-op for
+  network problems — `NetworkMFGProblem` carries no `BoundaryConditions`, so it keys on nothing — so
+  a network-appropriate gate on `components.boundary_nodes` was added instead. `FPNetworkSolver`
+  (ignores `boundary_nodes` and unconditionally renormalizes mass) and the base `NetworkHJBSolver`
+  (ODE path applies only terminal data) now raise `NotImplementedError` at construction when
+  `boundary_nodes` is set, rather than silently dropping the node BC and hiding any absorption.
+  `NetworkPolicyIterationHJBSolver` (which applies `apply_boundary_conditions` each step) declares
+  `_honors_node_bc = True` and is exempt. No `_SUPPORTED_BC_TYPES` frozenset is added (it would be a
+  no-op). Zero regression: nothing sets `boundary_nodes` today. First step of the network-solver
+  Problem/Components unification (Layer Ψ).
+- **Howard advection operator preserves the unconditional M-matrix at degenerate stencils**
+  (Issue #1466). `_build_upwind_projection` (Howard policy-eval, GFDM scattered clouds) fell back to
+  `mask = np.ones(...)` when no neighbour lay on the upwind side of `alpha`, pulling the whole
+  all-downwind neighbourhood in with negative advective off-diagonals (`proj_j < 0 -> w_j < 0`) —
+  the opposite sign to the genuine upwind stencil, breaking the M-matrix property
+  `thm:upwind_comparison` rests on. It now skips the node (pure diffusion, M-matrix preserved),
+  matching the sibling `_build_per_axis_upwind_pair`. Pinned by
+  `test_howard_upwind_projection_degenerate_stencil_preserves_m_matrix`. Refs #1074, #1381.
 - **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
   S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
   LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,

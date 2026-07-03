@@ -57,6 +57,12 @@ class NetworkHJBSolver(BaseHJBSolver):
         Trait validation occurs at problem/geometry level.
     """
 
+    # Node-BC capability gate (Issue #1468; #1456 network family). The base solver integrates the
+    # backward HJB ODE (`_solve_ode` via `solve_ivp`) with terminal data only and never applies
+    # `components.boundary_nodes`, so it cannot honor a node BC: `False`. The
+    # `NetworkPolicyIterationHJBSolver` subclass — which applies them each step — overrides to `True`.
+    _honors_node_bc: bool = False
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
@@ -76,6 +82,20 @@ class NetworkHJBSolver(BaseHJBSolver):
         super().__init__(problem)
 
         self.network_problem = problem
+
+        # Issue #1468/#1471: fail loud on a node BC this solver cannot honor. Node-BC now lives on the
+        # geometry (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only
+        # the terminal condition and never the node-BC, so it would be silently ignored.
+        # `NetworkPolicyIterationHJBSolver` (which applies it) sets `_honors_node_bc`.
+        if not self._honors_node_bc and problem.geometry.has_explicit_boundary_conditions():
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support node boundary conditions "
+                f"(the graph geometry carries an explicit node-BC config). The base network HJB "
+                f"integrates the backward ODE with terminal data only and never applies node-BC, so "
+                f"it would be silently ignored (Issue #1468, #1456, #1471). Use "
+                f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
+            )
+
         self.scheme = scheme
         self.tolerance = tolerance
 
@@ -139,6 +159,20 @@ class NetworkHJBSolver(BaseHJBSolver):
             H[i] = self.network_problem.hamiltonian(i, neighbors, m, u, t)
         return H
 
+    def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:
+        """Per-node RHS source terms V(i, t) + f(i, m, t) — node potential + congestion coupling
+        (Issue #1474). In mfgarchon's convention ``-u_t + H_control = source`` these sit on the RHS,
+        so in reversed time they enter ``du/ds`` with the OPPOSITE sign to the control Hamiltonian.
+        The network Hamiltonian method returns ``control + source``; subtracting this isolates the
+        control Hamiltonian.
+        """
+        return np.array(
+            [
+                self.network_problem.node_potential(i, t) + self.network_problem.density_coupling(i, m, t)
+                for i in range(self.num_nodes)
+            ]
+        )
+
     def _solve_ode(
         self,
         U_terminal: np.ndarray,
@@ -167,8 +201,15 @@ class NetworkHJBSolver(BaseHJBSolver):
             # Interpolate density at physical time t
             t_idx = min(int(t_physical / self.dt), n_time_points - 1)
             m = M_density[t_idx, :]
-            # HJB: du/dt + H = 0  =>  du/ds = H (sign flip from time reversal)
-            return self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
+            # mfgarchon convention -u_t + H_control = source (source = V + coupling on the RHS). In
+            # reversed time s = T - t this is du/ds = -H_control + source (Issue #1474). The network
+            # method returns control + source, so isolate the control Hamiltonian by subtracting the
+            # source. (The old du/ds = +H integrated u_t + H = 0 and self-amplified the one-sided
+            # control term (u_i - u_j)_+^2, blowing the value up for any non-trivial terminal data.)
+            h_total = self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
+            source = self._source_terms(m, t_physical)
+            h_control = h_total - source
+            return -h_control + source
 
         sol = solve_ivp(
             rhs,
@@ -213,6 +254,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     2. Policy improvement: Update control policy
     """
 
+    # Issue #1468: unlike the base ODE solver, policy iteration applies
+    # `problem.apply_boundary_conditions` (the node-Dirichlet pin over `boundary_nodes`) at every
+    # timestep in `solve_hjb_system`, so it honors a node BC and is exempt from the base gate.
+    _honors_node_bc: bool = True
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
@@ -245,8 +291,9 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             )
         self.hjb_method_name = "NetworkHJB_PolicyIteration"
 
-        # Current policy (action for each node)
-        self.current_policy: dict[int, int] = {}
+        # Current policy: the full transition-rate vector alpha*_i per node (Issue #1474), not a
+        # single dominant action — finite-state control is a full rate row over neighbors.
+        self.current_rates: dict[int, np.ndarray] = {}
 
     def solve_hjb_system(
         self,
@@ -285,140 +332,71 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         return U
 
     def _policy_iteration_step(self, u_next: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
-        """Single time step using policy iteration."""
-        u_current = u_next.copy()
+        """Single backward time step via Howard policy iteration (Issue #1474).
 
-        # Initialize policy (greedy with respect to u_next)
+        The "policy" is the full transition-rate vector ``alpha*(u) = H.optimal_control`` (not a single
+        dominant action). Each iteration solves the linear policy-evaluation
+        ``(I/dt + L^pi) u = u_next/dt + c(alpha) + source`` then recomputes the rates, until they
+        stabilize. At the fixed point this is the backward-Euler discretization of the same HJB the
+        RK45 path integrates: ``Q^pi u + c(alpha*) = -H_control`` (envelope identity), so
+        ``-du/dt = -H_control + source``.
+        """
         self._initialize_policy(u_next, m, t)
-
-        # Policy iteration loop
+        u_current = u_next.copy()
         for _policy_iter in range(self.max_policy_iterations):
-            # Policy evaluation: solve linear system
             u_new = self._policy_evaluation(u_next, m, t)
-
-            # Policy improvement
-            old_policy = self.current_policy.copy()
+            old_rates = self.current_rates
             self._policy_improvement(u_new, m, t)
-
-            # Check policy convergence
-            if self._policies_equal(old_policy, self.current_policy):
-                u_current = u_new
-                break
-
             u_current = u_new
-
+            if self._policies_equal(old_rates, self.current_rates):
+                break
         return u_current
 
+    def _rates_at(self, u: np.ndarray, m: np.ndarray, t: float) -> dict[int, np.ndarray]:
+        """Full transition-rate vector ``alpha*_i`` for every node from the single-source Hamiltonian."""
+        H = self.network_problem.hamiltonian_class
+        if H is None:
+            raise RuntimeError(
+                "NetworkPolicyIterationHJBSolver requires a wired hamiltonian_class (Issue #1474). "
+                "The legacy edge-cost policy evaluation assembled a singular row-sum-zero system "
+                "(returned NaN); a NetworkMFGProblem always wires a NetworkHamiltonian."
+            )
+        return {i: np.atleast_1d(H.optimal_control(np.array([i]), m, u, t)) for i in range(self.num_nodes)}
+
     def _initialize_policy(self, u: np.ndarray, m: np.ndarray, t: float) -> None:
-        """Initialize policy via H.optimal_control (Issue #916).
-
-        Uses NetworkHamiltonian.optimal_control() to compute transition rates,
-        then extracts the dominant action (node with highest rate) as discrete policy.
-        Falls back to greedy neighbor search if no hamiltonian_class.
-        """
-        H = self.network_problem.hamiltonian_class
-        for i in range(self.num_nodes):
-            neighbors = self.gradient_ops[i]
-            if not neighbors:
-                self.current_policy[i] = i
-                continue
-
-            if H is not None:
-                # Issue #916: use H.optimal_control for transition rates
-                rates = H.optimal_control(np.array([i]), m, u, t)
-                rates_arr = np.atleast_1d(rates)
-                # Pick neighbor with highest rate (dominant transition)
-                best_action = i
-                best_rate = 0.0
-                for neighbor in neighbors:
-                    if neighbor < len(rates_arr) and rates_arr[neighbor] > best_rate:
-                        best_rate = rates_arr[neighbor]
-                        best_action = neighbor
-                self.current_policy[i] = best_action
-            else:
-                # Legacy: greedy cost minimization
-                best_action = i
-                best_cost = float("inf")
-                for neighbor in neighbors:
-                    cost = self._compute_action_cost(i, neighbor, u, m, t)
-                    if cost < best_cost:
-                        best_cost = cost
-                        best_action = neighbor
-                self.current_policy[i] = best_action
-
-    def _policy_evaluation(self, u_next: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
-        """Evaluate current policy by solving linear system.
-
-        Issue #916: uses H.optimal_control for transition rates when available,
-        falling back to edge_cost for the rate coefficient.
-        """
-        H = self.network_problem.hamiltonian_class
-
-        A = sp.lil_matrix((self.num_nodes, self.num_nodes))
-        b = np.zeros(self.num_nodes)
-
-        for i in range(self.num_nodes):
-            action = self.current_policy[i]
-            A[i, i] = 1.0 / self.dt
-
-            if action != i:
-                if H is not None:
-                    # Rate from H.optimal_control
-                    rates = H.optimal_control(np.array([i]), m, u_next, t)
-                    rate = float(np.atleast_1d(rates)[action])
-                    A[i, i] += rate
-                    A[i, action] -= rate
-                else:
-                    # Legacy: edge cost
-                    edge_cost = self.network_problem.edge_cost(i, action, t)
-                    A[i, action] -= 1.0 / self.dt
-                    b[i] = edge_cost
-
-            # Potential and coupling
-            potential = self.network_problem.node_potential(i, t)
-            coupling = self.network_problem.density_coupling(i, m, t)
-            b[i] += potential + coupling + u_next[i] / self.dt
-
-        A = A.tocsr()
-        u_evaluated = spsolve(A, b)
-        return np.asarray(u_evaluated)
+        self.current_rates = self._rates_at(u, m, t)
 
     def _policy_improvement(self, u: np.ndarray, m: np.ndarray, t: float) -> None:
-        """Improve policy using H.optimal_control (Issue #916)."""
-        H = self.network_problem.hamiltonian_class
+        self.current_rates = self._rates_at(u, m, t)
+
+    def _policy_evaluation(self, u_next: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
+        """Solve ``(I/dt + L^pi) u = u_next/dt + c(alpha) + source`` for the frozen rate policy.
+
+        ``L^pi = -Q^pi`` is the policy-weighted graph Laplacian (``A_ii = 1/dt + sum_j alpha_ij``,
+        ``A_ij = -alpha_ij``) — a strictly diagonally-dominant M-matrix, non-singular for any
+        ``alpha >= 0`` (the old ``A_ii=1/dt, A_ij=-1/dt`` was row-sum zero -> singular -> NaN).
+        ``c_i(alpha) = 0.5 * sum_j alpha_ij^2 / w_ij`` is the control cost; ``source = V + coupling``.
+        """
+        A = sp.lil_matrix((self.num_nodes, self.num_nodes))
+        b = np.zeros(self.num_nodes)
+        source = self._source_terms(m, t)
         for i in range(self.num_nodes):
-            neighbors = self.gradient_ops[i] + [i]
+            alpha_i = self.current_rates[i]
+            A[i, i] = 1.0 / self.dt
+            control_cost = 0.0
+            for j in self.gradient_ops[i]:
+                a = float(alpha_i[j]) if j < len(alpha_i) else 0.0
+                if a > 0.0:
+                    A[i, i] += a
+                    A[i, j] -= a
+                    w = self.network_problem.network_data.get_edge_weight(i, j)
+                    control_cost += 0.5 * a * a / w
+            b[i] = u_next[i] / self.dt + control_cost + source[i]
+        return np.asarray(spsolve(A.tocsr(), b))
 
-            if H is not None:
-                rates = H.optimal_control(np.array([i]), m, u, t)
-                rates_arr = np.atleast_1d(rates)
-                best_action = i
-                best_rate = 0.0
-                for action in neighbors:
-                    if action < len(rates_arr) and rates_arr[action] > best_rate:
-                        best_rate = rates_arr[action]
-                        best_action = action
-                self.current_policy[i] = best_action
-            else:
-                best_action = self.current_policy[i]
-                best_cost = self._compute_action_cost(i, best_action, u, m, t)
-                for action in neighbors:
-                    cost = self._compute_action_cost(i, action, u, m, t)
-                    if cost < best_cost:
-                        best_cost = cost
-                        best_action = action
-                self.current_policy[i] = best_action
-
-    def _compute_action_cost(self, node: int, action: int, u: np.ndarray, m: np.ndarray, t: float) -> float:
-        """Legacy: compute cost of taking action from node (no H.optimal_control)."""
-        if action == node:
-            return self.network_problem.node_potential(node, t) + self.network_problem.density_coupling(node, m, t)
-        edge_cost = self.network_problem.edge_cost(node, action, t)
-        return edge_cost + u[action]
-
-    def _policies_equal(self, policy1: dict[int, int], policy2: dict[int, int]) -> bool:
-        """Check if two policies are equal."""
-        return len(policy1) == len(policy2) and all(policy1[node] == policy2.get(node) for node in policy1)
+    def _policies_equal(self, rates1: dict[int, np.ndarray], rates2: dict[int, np.ndarray]) -> bool:
+        """Two rate policies are equal when every node's rate vector matches."""
+        return all(np.allclose(rates1[i], rates2[i], atol=1e-10) for i in range(self.num_nodes))
 
 
 # Factory function for network HJB solvers

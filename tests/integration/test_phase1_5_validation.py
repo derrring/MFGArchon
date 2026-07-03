@@ -190,7 +190,7 @@ class TestNetworkSolverIntegration:
 
         network = GridNetwork(width=n_nodes, height=1)
         network.create_network()
-        return NetworkMFGProblem(network_geometry=network, T=0.5, Nt=5)
+        return NetworkMFGProblem(geometry=network, T=0.5, Nt=5)
 
     def test_network_hjb_solver_runs(self):
         """Network HJB solver initialization and basic solve."""

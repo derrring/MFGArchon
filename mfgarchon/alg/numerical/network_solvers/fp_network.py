@@ -66,6 +66,14 @@ class FPNetworkSolver(BaseFPSolver):
         Mass conservation enforced through discrete operators.
     """
 
+    # Node-BC capability gate (Issue #1468; #1456 network family). The network BC model is
+    # `NetworkMFGComponents.boundary_nodes` (a node-level Dirichlet pin applied via
+    # `NetworkMFGProblem.apply_boundary_conditions`), NOT the continuum `BCType`/segments framework —
+    # so the inherited `_validate_bc_support` (which keys on `BoundaryConditions.segments`) is a
+    # structural no-op for network problems. This solver ignores `boundary_nodes` entirely and
+    # unconditionally renormalizes total mass each step, so it cannot honor a node BC: `False`.
+    _honors_node_bc: bool = False
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
@@ -91,6 +99,21 @@ class FPNetworkSolver(BaseFPSolver):
         super().__init__(problem)
 
         self.network_problem = problem
+
+        # Issue #1478 (Stage 2b): the FP now HONORS the geometry-owned node-BC via the single-source
+        # GraphApplicator. ABSORBING nodes are exits (their mass leaves, m -> 0), applied to the
+        # density field each step; DIRICHLET / NEUMANN are no-ops on density. The mass renorm is gated
+        # OFF whenever the BC changes total mass (ABSORBING / SOURCE) — else it would manufacture
+        # false conservation and hide the absorption (the #1456 silent-wrong-answer class).
+        self._node_applicator = problem._node_applicator
+        self._mass_changing_bc = False
+        node_bc = problem.geometry.get_boundary_conditions()
+        if node_bc is not None:
+            from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
+
+            mass_changing = {GraphBCType.ABSORBING, GraphBCType.SOURCE}
+            self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
+
         self.scheme = scheme
         self.diffusion_coefficient = diffusion_coefficient
         self.cfl_factor = cfl_factor
@@ -295,10 +318,17 @@ class FPNetworkSolver(BaseFPSolver):
                 else:
                     raise ValueError(f"Unknown scheme: {self.scheme}")
 
-                # Enforce non-negativity and mass conservation
+                # Enforce non-negativity
                 M[n + 1, :] = np.maximum(M[n + 1, :], 0)
 
-                if self.enforce_mass_conservation:
+                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
+                # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
+                # With an absorbing / source node the total mass legitimately changes, so renormalizing
+                # would manufacture false conservation and hide the absorption.
+                if self._node_applicator is not None:
+                    M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
+
+                if self.enforce_mass_conservation and not self._mass_changing_bc:
                     total_mass = np.sum(M[n + 1, :])
                     if total_mass > 1e-12:
                         M[n + 1, :] /= total_mass
@@ -400,18 +430,18 @@ class FPNetworkSolver(BaseFPSolver):
         rates = {}
         for i in range(self.num_nodes):
             neighbors = self.divergence_ops.get(i, [])
-            if H_class is not None:
-                alpha = H_class.optimal_control(np.array([i]), m, u, t)
-                rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
-            else:
-                # Legacy: quadratic rates from value gradient
-                rates[i] = {}
-                for j in neighbors:
-                    du = u[j] - u[i]
-                    edge_weight = self.network_problem.network_data.get_edge_weight(i, j)
-                    rate = edge_weight * max(du, 0.0)
-                    if rate > 0:
-                        rates[i][j] = rate
+            if H_class is None:
+                # Issue #1474: fail loud. A NetworkMFGProblem always wires a single-source
+                # NetworkHamiltonian (`hamiltonian_class`), so this is unreachable; the old legacy
+                # branch computed the wrong-signed uphill rate `w*max(u_j-u_i,0)` (MAXIMIZE), diverging
+                # from the value Hamiltonian. Never fall back to it silently (fail-fast).
+                raise RuntimeError(
+                    "FPNetworkSolver: problem.hamiltonian_class is None. The network transition rates "
+                    "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
+                    "Ensure the NetworkMFGProblem wired its Hamiltonian."
+                )
+            alpha = H_class.optimal_control(np.array([i]), m, u, t)
+            rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 
     def _compute_drift_term(self, node: int, m: np.ndarray, u: np.ndarray, t: float) -> float:

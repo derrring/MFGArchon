@@ -8,9 +8,7 @@ authors:
     alias: Jeremy
     email: jiongyiwang@gmail.com
     orcid: "https://orcid.org/0009-0003-7717-2361"
-doi: "10.5281/zenodo.19251867"
-version: "0.18.0"
-date-released: "2026-03-29"
+doi: "10.5281/zenodo.19251867"  # concept DOI (resolves to latest); version pinned per-paper, not here
 url: "https://github.com/derrring/MFGArchon"
 repository-code: "https://github.com/derrring/MFGArchon"
 license: MIT

@@ -30,7 +30,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -47,7 +47,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -63,7 +63,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -78,7 +78,7 @@ class TestNetworkHJBSolverInitialization:
         is freely settable."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
-        problem = NetworkMFGProblem(network_geometry=network, T=1.0, Nt=10)
+        problem = NetworkMFGProblem(geometry=network, T=1.0, Nt=10)
 
         with pytest.raises(NotImplementedError, match="policy_tolerance"):
             NetworkPolicyIterationHJBSolver(problem, policy_tolerance=1e-8)
@@ -93,7 +93,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -110,7 +110,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=2.0,
             Nt=20,
         )
@@ -128,7 +128,7 @@ class TestNetworkHJBSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -148,7 +148,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -174,7 +174,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -200,7 +200,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.1,  # Short time for stability
             Nt=20,
         )
@@ -223,7 +223,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -246,7 +246,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -269,7 +269,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -295,7 +295,7 @@ class TestNetworkHJBSolverSolveHJBSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -322,7 +322,7 @@ class TestNetworkHJBSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -346,7 +346,7 @@ class TestNetworkHJBSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -374,7 +374,7 @@ class TestNetworkHJBSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -398,7 +398,7 @@ class TestNetworkHJBSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -422,7 +422,7 @@ class TestNetworkHJBSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -451,7 +451,7 @@ class TestNetworkHJBSolverIntegration:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -476,7 +476,7 @@ class TestNetworkHJBSolverIntegration:
 
         for config in configs:
             problem = NetworkMFGProblem(
-                network_geometry=network,
+                geometry=network,
                 T=0.2,
                 Nt=10,
             )
@@ -492,6 +492,52 @@ class TestNetworkHJBSolverIntegration:
             U_solution = solver.solve_hjb_system(M_density, U_final)
 
             assert np.all(np.isfinite(U_solution))
+
+
+class TestNetworkHJBIssue1468NodeBCGate:
+    """Issue #1468 / #1471 (BC-capability, #1456 network family).
+
+    Node boundary conditions live on the graph geometry (``GraphGeometry``). The base
+    ``NetworkHJBSolver`` integrates the backward HJB ODE (``solve_ivp``) with terminal data only and
+    never applies node-BC, so it must fail loud. ``NetworkPolicyIterationHJBSolver`` applies
+    ``apply_boundary_conditions`` (the geometry-owned ``GraphApplicator`` DIRICHLET pin) at every
+    backward step, so it honors node-BC and is exempt from the gate.
+    """
+
+    def _network(self, value=None):
+        from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
+
+        bc = None
+        if value is not None:
+            bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[0], bc_type=GraphBCType.DIRICHLET, value=value)])
+        network = GridNetwork(width=3, height=3, boundary_conditions=bc)
+        network.create_network()
+        return network
+
+    def test_base_solver_node_bc_fail_loud(self):
+        problem = NetworkMFGProblem(geometry=self._network(value=0.0), T=0.5, Nt=10)
+        with pytest.raises(NotImplementedError, match="node boundary conditions"):
+            NetworkHJBSolver(problem)
+
+    def test_base_solver_no_node_bc_constructs(self):
+        problem = NetworkMFGProblem(geometry=self._network(), T=0.5, Nt=10)
+        solver = NetworkHJBSolver(problem)  # no raise
+        assert solver._honors_node_bc is False
+
+    def test_policy_iteration_exempt_and_honors_node_bc(self):
+        """Policy iteration constructs with a geometry node-BC (gate-exempt) and actually pins the
+        node value at every backward step via the geometry-owned ``GraphApplicator``."""
+        problem = NetworkMFGProblem(geometry=self._network(value=lambda node, t: 7.0), T=0.5, Nt=10)
+        solver = NetworkPolicyIterationHJBSolver(problem)  # no raise
+        assert solver._honors_node_bc is True
+
+        n_time_points = problem.Nt + 1
+        num_nodes = problem.num_nodes
+        U = solver.solve_hjb_system(np.ones((n_time_points, num_nodes)), np.zeros(num_nodes))
+        # apply_boundary_conditions pins node 0 = 7.0 at every backward step (indices 0..Nt-1);
+        # the terminal step (index Nt) keeps U_terminal (= 0), which the BC pass does not touch.
+        assert np.allclose(U[:-1, 0], 7.0), f"boundary node not pinned: U[:, 0] = {U[:, 0]}"
+        assert U[-1, 0] == 0.0, "terminal condition must be preserved (BC not applied at t=T)"
 
 
 if __name__ == "__main__":

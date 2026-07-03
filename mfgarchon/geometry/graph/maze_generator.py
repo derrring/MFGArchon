@@ -262,6 +262,7 @@ class MazeGeometry(GraphGeometry):
         cols: int,
         algorithm: MazeAlgorithm = MazeAlgorithm.RECURSIVE_BACKTRACKING,
         seed: int | None = None,
+        boundary_conditions=None,
     ):
         """
         Initialize and generate maze.
@@ -271,9 +272,11 @@ class MazeGeometry(GraphGeometry):
             cols: Number of columns in maze
             algorithm: Algorithm to use for generation
             seed: Random seed for reproducibility
+            boundary_conditions: Node-BC config (Issue #1471), inherited from GraphGeometry.
 
         Note: Maze is generated immediately upon initialization.
         """
+        super().__init__(boundary_conditions=boundary_conditions)  # Issue #1471: node-BC on the geometry
         self.rows = rows
         self.cols = cols
         self.algorithm = algorithm
