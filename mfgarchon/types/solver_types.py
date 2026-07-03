@@ -259,7 +259,6 @@ class NetworkSolveResult:
 
     See Also:
         - SolverResult: Full solver result with convergence information
-        - NetworkMFGProblem.compute_relaxed_equilibrium: Uses this return type
     """
 
     U: NDArray  # Value function u(t, node)

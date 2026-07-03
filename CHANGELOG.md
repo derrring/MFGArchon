@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed dead methods from `NetworkMFGProblem`** (Issue #1472, Stage 3): `trajectory_cost`,
+  `compute_relaxed_equilibrium`, and `edge_cost` — all had zero callers. `compute_relaxed_equilibrium`
+  was a fail-silent stub (returned all-zero `U`/`M` placeholders — a silent-wrong-answer risk if
+  called). Further thins the `NetworkMFGProblem` fork; the live methods (`node_potential`,
+  `density_coupling`, `lagrangian` — used by the RK45 source term) are unchanged.
+
 - **Single-sourced the network Hamiltonian** (Issue #1472, Stage 3): `NetworkMFGProblem.hamiltonian()`
   now delegates to the wired `NetworkHamiltonian` object — the SAME object the FP and policy-iteration
   solvers use via `optimal_control` — so the RK45 base solver reads the identical Hamiltonian instead

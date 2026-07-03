@@ -465,85 +465,6 @@ class NetworkMFGProblem(MFGProblem):
 
         return float(kinetic_energy + potential + interaction)
 
-    def trajectory_cost(
-        self,
-        trajectory: list[int],
-        velocities: np.ndarray,
-        m_evolution: np.ndarray,
-        times: np.ndarray,
-    ) -> float:
-        """
-        Compute cost along a network trajectory.
-
-        Args:
-            trajectory: Sequence of nodes visited
-            velocities: Velocity at each time step
-            m_evolution: Density evolution over time
-            times: Time points
-
-        Returns:
-            Total trajectory cost
-        """
-        if self.components.trajectory_cost_func is not None:  # type: ignore[attr-defined]
-            return self.components.trajectory_cost_func(trajectory, velocities, m_evolution, times)  # type: ignore[attr-defined]
-
-        # Default: integrate Lagrangian along trajectory
-        total_cost = 0.0
-        dt = times[1] - times[0] if len(times) > 1 else 1.0
-
-        for i, (node, t) in enumerate(zip(trajectory, times, strict=False)):
-            if i < len(velocities):
-                velocity = velocities[i] if velocities.ndim > 1 else np.array([velocities[i]])
-                m_current = m_evolution[i] if m_evolution.ndim > 1 else m_evolution
-                lagrangian_value = self.lagrangian(node, velocity, m_current, t)
-                total_cost += lagrangian_value * dt
-
-        return total_cost
-
-    def compute_relaxed_equilibrium(self, trajectory_measures: list[Callable]):
-        """
-        Compute relaxed equilibrium as probability measures on trajectories.
-
-        Based on the relaxed equilibria concept from ArXiv 2207.10908v3.
-
-        Args:
-            trajectory_measures: List of probability measures on trajectory space
-
-        Returns:
-            NetworkSolveResult with U (value function) and M (density)
-
-        Note:
-            Backward compatible: Supports tuple unpacking via `u, m = result`
-        """
-        # This is a placeholder for advanced trajectory measure computation
-        # Full implementation would require sophisticated measure theory
-
-        u = np.zeros((self.Nt + 1, self.num_nodes))
-        m = np.zeros((self.Nt + 1, self.num_nodes))
-
-        # Initialize with uniform distribution
-        m[0, :] = 1.0 / self.num_nodes
-
-        # Simple trajectory-based computation (to be enhanced)
-        for t_idx in range(self.Nt):
-            # Update based on trajectory measures
-            for node in range(self.num_nodes):
-                # Aggregate trajectory contributions
-                total_measure = 0.0
-                for measure in trajectory_measures:
-                    total_measure += measure(node, t_idx)
-                m[t_idx + 1, node] = total_measure
-
-        # Normalize density
-        for t_idx in range(self.Nt + 1):
-            total = np.sum(m[t_idx, :])
-            if total > 1e-12:
-                m[t_idx, :] /= total
-
-        from mfgarchon.types.solver_types import NetworkSolveResult
-
-        return NetworkSolveResult(U=u, M=m)
-
     def node_potential(self, node: int, t: float) -> float:
         """Potential function at network nodes."""
         if self.components.node_potential_func is not None:  # type: ignore[attr-defined]
@@ -561,17 +482,6 @@ class NetworkMFGProblem(MFGProblem):
     def _default_density_coupling_derivative(self, node: int, m: np.ndarray, t: float) -> float:
         """Derivative of default density coupling."""
         return m[node]  # d/dm[i] (0.5 * m[i]^2) = m[i]
-
-    def edge_cost(self, node_from: int, node_to: int, t: float) -> float:
-        """Cost of moving along network edges."""
-        if self.components.edge_cost_func is not None:  # type: ignore[attr-defined]
-            return self.components.edge_cost_func(node_from, node_to, t)  # type: ignore[attr-defined]
-
-        # Default: unit cost weighted by edge weight
-        if self.network_data is None:
-            return 1.0  # Default weight
-        edge_weight = self.network_data.get_edge_weight(node_from, node_to)
-        return edge_weight
 
     # Initial and terminal conditions
 
