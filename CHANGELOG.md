@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
+  (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
+  orphaned — `__init__` overwrites `self.components` after constructing it, so
+  `problem.hamiltonian_class` is `None` and it is never exercised. Being dead, it had silently
+  diverged from `NetworkMFGProblem.hamiltonian`: default node congestion `0.0` instead of
+  `0.5*m[node]^2`, and it read the dead `congestion_func` field instead of the live
+  `node_interaction_func`. It now reproduces the method byte-identically (pinned by
+  `test_network_hamiltonian_object_equals_method_node_by_node`, node-by-node across the default /
+  interaction / custom branches). Dormant reconciliation — no live behavior change (network suites
+  unchanged); first step of the network Problem/Components unification (Layer Ψ).
 - **LLF effective volatility now tracks the per-solve `volatility_field` override** (Issue #1429,
   S0-13). `HJBGFDMSolver._llf_sigma_eff` was frozen at `__init__` from `problem.sigma`, so an
   LLF-augmented solve (#1059) with a #1316 per-solve volatility override stabilized off the base σ,
