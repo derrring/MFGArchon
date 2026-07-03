@@ -60,3 +60,35 @@ def test_gradient_projection_is_weak_form_not_strong():
     np.testing.assert_allclose(raw, m_lumped, rtol=1e-9, atol=1e-12)
     # ... which is O(h), nowhere near the strong-form 1.0 (the #1145 bug).
     assert np.max(np.abs(raw)) < 0.5
+
+
+def test_gradient_recovery_fails_loud_on_near_zero_lumped_mass():
+    """Issue #1486/#1252: a near-zero lumped mass raises (not the old silent 1e-15 clamp, which made
+    1/M_lumped ~1e15 and returned garbage gradients). Single-sources the base's fail-loud policy."""
+    from scipy import sparse
+
+    from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    comp = MFGComponents(
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+        ),
+    )
+    prob = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+    cloud = np.linspace(0.0, 1.0, 11).reshape(-1, 1)
+    fp = MeshlessGalerkinFPSolver(prob, cloud, delta=2.6 / np.sqrt(11), degree=2)
+
+    # A valid cloud has strictly positive lumped masses; force one node near-zero to hit the guard.
+    diag = np.ones(fp._M.shape[0])
+    diag[0] = 1e-20
+    fp._M = sparse.diags(diag)
+    fp._G_grad = None
+    with pytest.raises(np.linalg.LinAlgError, match="lumped masses"):
+        fp._gradient_operators()

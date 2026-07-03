@@ -184,6 +184,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Meshless-Galerkin FP gradient recovery now fails loud on a near-zero lumped mass** (Issue #1486 /
+  #1252). `MeshlessGalerkinFPSolver._gradient_operators` kept a private copy of the silent clamp
+  `M_lumped[M_lumped < 1e-15] = 1e-15` that #1252 **removed** from the shared base
+  (`weak_form_hjb_solver._build_gradient_operators`) — the clamp made `1/M_lumped ~1e15` and
+  multiplied the recovered gradient into garbage, silently. It now raises (relative guard
+  `m_min < 1e-12·m_max`, matching the base) — a vanishing MLS row sum means a node whose support
+  barely overlaps the cloud (degenerate / under-covered). A parallel-path single-source regression;
+  pinned by `test_gradient_recovery_fails_loud_on_near_zero_lumped_mass`.
+
 - **Weak-form MFG family (FEM + meshless-Galerkin) now single-sources the FP drift from
   `fp_drift_coefficient`** (Issue #1487 / #1420, gotcha G-017). `FPFEMSolver`, `MeshlessGalerkinFPSolver`
   and `MeshlessGalerkinHJBSolver` read the raw `coupling_coefficient` (default 0.5) for the FP advection

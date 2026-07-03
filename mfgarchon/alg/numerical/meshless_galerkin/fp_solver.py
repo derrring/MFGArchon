@@ -73,7 +73,21 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # G_d = diag(1/M_lumped) @ R_d : mass-lumped L2 projection of d/dx_d.
         if self._G_grad is None:
             M_lumped = np.array(self._M.sum(axis=1)).ravel()
-            M_lumped[M_lumped < 1e-15] = 1e-15
+            # Issue #1486/#1252: fail loud on a near-zero lumped mass instead of the old silent clamp
+            # (M_lumped < 1e-15 -> 1e-15). The clamp made 1/M_lumped ~1e15 and multiplied the recovered
+            # gradient into garbage, silently. This is the single-source policy the base gradient
+            # recovery adopted in #1252 (weak_form_hjb_solver._build_gradient_operators); the meshless
+            # FP kept a private copy of the removed clamp. A vanishing MLS row sum means a node whose
+            # support barely overlaps the cloud (a degenerate / under-covered cloud).
+            m_min, m_max = float(M_lumped.min()), float(M_lumped.max())
+            if m_min < 1e-12 * m_max:
+                raise np.linalg.LinAlgError(
+                    f"Meshless gradient recovery requires strictly positive lumped masses, but the "
+                    f"minimum MLS row sum is {m_min:.3e} (max {m_max:.3e}). A near-zero row sum means a "
+                    f"node whose support barely overlaps the cloud — densify the cloud or increase the "
+                    f"support radius (delta). Silently clamping to 1e-15 would return garbage gradients "
+                    f"(#1486/#1252)."
+                )
             inv = 1.0 / M_lumped
             self._G_grad = [(sparse.diags(inv) @ R_d).tocsr() for R_d in self._disc.gradient_projection()]
         return self._G_grad
