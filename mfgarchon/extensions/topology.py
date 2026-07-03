@@ -123,11 +123,17 @@ class NetworkHamiltonian(HamiltonianBase):
         Custom hamiltonian_func receives full m_all for cross-coupling.
         """
         neighbors = self.network_data.get_neighbors(node)
+        # Finite-state MFG control cost (Issue #1474): one-sided / piecewise-quadratic — the value of
+        # the constrained optimum over rates alpha >= 0 (needed for a valid CTMC generator). For
+        # sense=MINIMIZE (cost-to-go) the agent moves toward LOWER-value neighbors, so only downhill
+        # edges (u_i > u_j) contribute: H_control = 0.5 * sum_j w_ij * max(u_i - u_j, 0)^2. The full
+        # quadratic 0.5*sum w*(u_j-u_i)^2 was the unconstrained (alpha in R) relaxation — invalid
+        # generator, and inconsistent with optimal_control.
         control_cost = 0.0
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p[neighbor] - p[node]
-            control_cost += 0.5 * w * dp**2
+            du = p[node] - p[neighbor]  # u_i - u_j
+            control_cost += 0.5 * w * max(du, 0.0) ** 2
 
         V = float(self._node_potential(node, t)) if self._node_potential else 0.0
         # Coupling f(node, m, t). Reconciled with the live NetworkMFGProblem.density_coupling
@@ -143,12 +149,13 @@ class NetworkHamiltonian(HamiltonianBase):
         return control_cost + V + f_m
 
     def optimal_control(self, x, m, p, t=0.0):
-        """Optimal transition rates from node x.
+        """Optimal transition rates from node x (Issue #1474).
 
-        For quadratic H: alpha_{ij} = w_ij * (p_j - p_i)_+ (upwind).
-        Transition rates are non-negative by construction, ensuring
-        the generator Q preserves positivity of m.
-        Returns array of rates to neighbors (zero for non-neighbors).
+        Finite-state MFG, sense=MINIMIZE: ``alpha*_ij = w_ij * max(u_i - u_j, 0)`` — the argmax of
+        the one-sided control Hamiltonian, sending agents DOWNHILL toward lower cost-to-go. Rates are
+        non-negative by construction (a valid conservative CTMC generator). ``max(u_j - u_i, 0)``
+        (the previous form) is the MAXIMIZE/uphill branch and transports mass the wrong way.
+        Returns an array of rates to neighbors (zero for non-neighbors).
         """
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
@@ -157,13 +164,14 @@ class NetworkHamiltonian(HamiltonianBase):
         alpha = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p_arr[neighbor] - p_arr[node]
-            # Issue #914: upwind truncation ensures alpha >= 0
-            alpha[neighbor] = w * max(dp, 0.0)
+            du = p_arr[node] - p_arr[neighbor]  # u_i - u_j
+            alpha[neighbor] = w * max(du, 0.0)
         return alpha
 
     def dp(self, x, m, p, t=0.0):
-        """dH/dp at node x. For quadratic: sum_j w_ij * (p_j - p_i) per component."""
+        """dH/dp at node x (Issue #1474). Gradient of the one-sided control Hamiltonian: with
+        ``alpha*_ij = w_ij max(u_i - u_j, 0)``, ``dH/du_i = +sum_j alpha*_ij`` and
+        ``dH/du_j = -alpha*_ij`` (so ``dp`` equals the generator action ``-Q^{alpha*} u``)."""
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
@@ -171,9 +179,9 @@ class NetworkHamiltonian(HamiltonianBase):
         grad = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p_arr[neighbor] - p_arr[node]
-            grad[neighbor] += w * dp
-            grad[node] -= w * dp
+            a = w * max(p_arr[node] - p_arr[neighbor], 0.0)  # alpha*_{i,neighbor} (downhill)
+            grad[neighbor] -= a
+            grad[node] += a
         return grad
 
     def dm(self, x, m, p, t=0.0):
@@ -313,7 +321,14 @@ class NetworkMFGProblem(MFGProblem):
             components=parent_components,
         )
 
-        self.components = components or NetworkMFGComponents()  # type: ignore[assignment]
+        # Issue #1474: store the SAME NetworkMFGComponents instance the NetworkHamiltonian was built
+        # from, and wire the object as the single-source Hamiltonian (`hamiltonian_class`). Previously
+        # `self.components` was overwritten with a fresh instance, orphaning the object
+        # (`hamiltonian_class == None`), so FP / policy iteration fell to divergent legacy paths while
+        # RK45 used the method — the three solved different HJBs. Now all read one Hamiltonian.
+        self.components = net_components  # type: ignore[assignment]
+        self.components.hamiltonian = network_hamiltonian
+        self.components._hamiltonian_class = network_hamiltonian
         self.problem_name = problem_name
 
         # Phase 3.1 integration: geometry is already set by parent
@@ -384,9 +399,12 @@ class NetworkMFGProblem(MFGProblem):
                 edge_weight = 1.0  # Default weight
             else:
                 edge_weight = self.network_data.get_edge_weight(node, neighbor)
-            # Control cost for moving to neighbor
-            dp = p[neighbor] - p[node]  # Discrete gradient
-            control_cost += 0.5 * edge_weight * dp**2
+            # Control cost (Issue #1474): one-sided finite-state MFG control, sense=MINIMIZE — only
+            # downhill edges (u_i > u_j) contribute, matching NetworkHamiltonian and the alpha>=0
+            # generator. (Was the full quadratic 0.5*edge_weight*(u_j-u_i)^2 = unconstrained
+            # relaxation, which made RK45 solve a different HJB than FP/policy iteration.)
+            du = p[node] - p[neighbor]  # u_i - u_j
+            control_cost += 0.5 * edge_weight * max(du, 0.0) ** 2
 
         # Node potential
         potential = self.node_potential(node, t)

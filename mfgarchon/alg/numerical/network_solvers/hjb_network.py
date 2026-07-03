@@ -187,6 +187,11 @@ class NetworkHJBSolver(BaseHJBSolver):
             t_idx = min(int(t_physical / self.dt), n_time_points - 1)
             m = M_density[t_idx, :]
             # HJB: du/dt + H = 0  =>  du/ds = H (sign flip from time reversal)
+            # NOTE (Issue #1474): this sign integrates u_t + H = 0, the OPPOSITE of mfgarchon's global
+            # -u_t + H = 0, and self-amplifies the one-sided control term for non-trivial terminal data
+            # (value blows up). The correct form is du/ds = -H_control + source (V + coupling), which
+            # needs the control Hamiltonian separated from the RHS source terms — a structural change
+            # tracked as the N15 follow-up (this PR only reconciles the three Hamiltonians into one).
             return self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
 
         sol = solve_ivp(

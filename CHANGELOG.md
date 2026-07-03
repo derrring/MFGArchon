@@ -109,6 +109,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Network finite-state MFG: value Hamiltonian, optimal control, and `dp` reconciled into one
+  consistent object** (Issue #1474). `NetworkHamiltonian.__call__` / `_default_network_hamiltonian`
+  used the full quadratic `½Σw(u_j−u_i)²` — the unconstrained α∈ℝ relaxation, an invalid CTMC
+  generator — while `optimal_control` used the upwind `w·max(u_j−u_i,0)`, so RK45 (reads the method)
+  and FP / policy-iteration (read the control) solved *different* HJBs. For `sense=MINIMIZE` the
+  correct finite-state control is downhill `α*=w·max(u_i−u_j,0)` with one-sided value
+  `H=½Σw·max(u_i−u_j,0)²` — mass now transports toward lower cost-to-go (was the wrong direction).
+  The orphaned `NetworkHamiltonian` is now **wired** as the single-source `hamiltonian_class`, and the
+  wrong-signed FP legacy rate branch fails loud. Pinned by `test_network_hamiltonian_minimize_consistency`.
+  Follow-up (N15 part 2, tracked in #1474): the base-solver integration sign (`du/ds=+H` self-amplifies
+  for non-trivial data — correct is `−H_control + source`) and the full-rate policy-evaluation rewrite.
 - **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
   (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
   orphaned — `__init__` overwrites `self.components` after constructing it, so

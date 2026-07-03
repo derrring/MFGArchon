@@ -93,7 +93,9 @@ def test_network_components_is_mfg_components_byte_identical():
     prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
 
     assert isinstance(prob.components, MFGComponents)
-    assert prob.hamiltonian_class is None, "byte-identity: the subclass must not activate the object"
+    # Issue #1474: the NetworkHamiltonian is now WIRED as the single-source Hamiltonian (previously
+    # orphaned/None). isinstance and get_problem_info remain the Stage-1 wins.
+    assert prob.hamiltonian_class is not None, "the single-source NetworkHamiltonian must be wired"
     assert isinstance(prob.get_problem_info(), dict), "get_problem_info must not raise (was AttributeError)"
     assert prob.get_boundary_conditions() is None, "network BC still resolves to None (Stage 2 wires it)"
 
@@ -101,3 +103,42 @@ def test_network_components_is_mfg_components_byte_identical():
     comps = NetworkMFGComponents(boundary_nodes=[0, 8], node_potential_func=lambda n, t: 0.1 * n)
     assert isinstance(comps, MFGComponents)
     assert comps.boundary_nodes == [0, 8]
+
+
+def test_network_hamiltonian_minimize_consistency():
+    """Issue #1474: the NetworkHamiltonian value H, optimal control, and dp form ONE consistent
+    finite-state MFG (controlled CTMC, sense=MINIMIZE), replacing the previous mismatch (full
+    quadratic __call__ vs upwind-uphill optimal_control) that made RK45 and FP solve different HJBs.
+
+    Invariants on a line graph with a strictly increasing value ``u = [0,1,2,3,4]``:
+    - control is DOWNHILL: at node 2, ``alpha* > 0`` toward the lower neighbour 1, ``== 0`` toward the
+      higher neighbour 3 (the old code had it backwards);
+    - rates are non-negative (valid conservative generator);
+    - the control part of H is one-sided and equals the envelope ``0.5 * sum(alpha*^2)`` (unit weights);
+    - the method ``NetworkMFGProblem.hamiltonian`` (used by RK45) equals the object ``__call__``.
+    """
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=20)
+    H = prob.hamiltonian_class
+    assert H is not None
+    N = prob.num_nodes
+    u = np.arange(N, dtype=float)
+    m = np.ones(N) / N
+    t = 0.1
+
+    alpha2 = np.atleast_1d(H.optimal_control(np.array([2]), m, u, t))
+    assert alpha2[1] > 0 and alpha2[3] == 0, f"control must be downhill (MINIMIZE); got {alpha2}"
+
+    for i in range(N):
+        ai = np.atleast_1d(H.optimal_control(np.array([i]), m, u, t))
+        assert (ai >= -1e-12).all(), f"rates must be >= 0 at node {i}: {ai}"
+
+    coupling2 = 0.5 * m[2] ** 2  # default node congestion at node 2
+    control2 = float(H(np.array([2]), m, u, t)) - coupling2
+    envelope2 = 0.5 * float(np.sum(alpha2**2))
+    assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
+    assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
+
+    method2 = prob.hamiltonian(2, prob.get_node_neighbors(2), m, u, t)
+    assert abs(method2 - float(H(np.array([2]), m, u, t))) < 1e-9, "RK45 method H must equal object H"
