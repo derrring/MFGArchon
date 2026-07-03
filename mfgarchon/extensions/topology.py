@@ -602,72 +602,10 @@ class NetworkMFGProblem(MFGProblem):
         # Default: zero terminal values
         return np.zeros(self.num_nodes)
 
-    # Network-specific operators
-
-    def compute_graph_gradient(self, u: np.ndarray) -> np.ndarray:
-        """
-        Compute discrete gradient on network.
-
-        For each node, computes differences to neighboring nodes.
-
-        Args:
-            u: Node values
-
-        Returns:
-            Gradient information (implementation dependent)
-        """
-        gradients = np.zeros((self.num_nodes, self.num_nodes))
-
-        for i in range(self.num_nodes):
-            if self.network_data is None:
-                neighbors = []  # No neighbors if no network data
-            else:
-                neighbors = self.network_data.get_neighbors(i)
-            for j in neighbors:
-                gradients[i, j] = u[j] - u[i]
-
-        return gradients
-
-    def compute_graph_divergence(self, flow: np.ndarray) -> np.ndarray:
-        """
-        Compute discrete divergence on network.
-
-        Args:
-            flow: Edge flow values
-
-        Returns:
-            Divergence at each node
-        """
-        # Simplified: divergence as sum of incoming/outgoing flows
-        divergence = np.zeros(self.num_nodes)
-
-        # This is a simplified implementation
-        # Full implementation would handle edge-based flows properly
-        for i in range(self.num_nodes):
-            if self.network_data is None:
-                neighbors = []  # No neighbors if no network data
-            else:
-                neighbors = self.network_data.get_neighbors(i)
-            div_i = 0.0
-            for j in neighbors:
-                # Flow from j to i minus flow from i to j
-                div_i += flow[j] - flow[i]  # Simplified
-            divergence[i] = div_i
-
-        return divergence
-
-    def apply_graph_laplacian(self, u: np.ndarray, coefficient: float = 1.0) -> np.ndarray:
-        """
-        Apply graph Laplacian operator to node values.
-
-        Args:
-            u: Node values
-            coefficient: Diffusion coefficient
-
-        Returns:
-            Laplacian applied to u
-        """
-        return np.asarray(coefficient * (self.laplacian_matrix @ u))
+    # Graph operators (gradient / divergence / Laplacian) are owned by the geometry
+    # (GraphGeometry, Issue #1472) — the graph structural data lives there, not on the problem. The
+    # problem previously reimplemented three of them (compute_graph_gradient / compute_graph_divergence
+    # / apply_graph_laplacian); they had zero callers and are removed to keep a single source.
 
     # Boundary conditions for networks
 

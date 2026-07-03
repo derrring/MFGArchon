@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed three dead graph-operator reimplementations from `NetworkMFGProblem`** (Issue #1472,
+  Stage 3 increment 0): `compute_graph_gradient`, `compute_graph_divergence` (a self-described
+  "simplified" stub), and `apply_graph_laplacian`. They had **zero callers** — the network solvers
+  build their own neighbor operators and read adjacency / Laplacian from `network_data` — and graph
+  operators are owned by the geometry (`GraphGeometry`). Behavior-preserving dead-code removal; first
+  step toward collapsing the `NetworkMFGProblem` fork onto `MFGProblem`-parameterized-by-geometry.
+
 - **Network FP honors ABSORBING node boundary conditions (exit nodes)** (Issue #1478, Stage 2b). An
   absorbing/exit node is one physical BC with dual operations (adjoint duality): the HJB value carries
   the exit cost (`GraphApplicator` pins `u` = the `NodeBC` value on the value field), and the FP
