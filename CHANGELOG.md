@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`NetworkMFGComponents` is now a `MFGComponents`** (Issue #1470, Problem/Components unification —
+  Layer Ψ). It subclasses `MFGComponents` with a relaxed `__post_init__` (network problems specify
+  the MFG with the network-native fields — `hamiltonian_func`, `node_interaction_func`,
+  `boundary_nodes` — so the parent's class-based-Hamiltonian requirement does not apply), so
+  `isinstance(components, MFGComponents)` now holds. Byte-identical: `hamiltonian_class` stays `None`
+  (the network solvers read the method / legacy rate paths, not the object), so every solver output
+  is unchanged. Also fixes `NetworkMFGProblem.get_problem_info()` (was `AttributeError` on the
+  missing `description`) and makes `get_boundary_conditions()` resolve to `None` instead of raising.
+  Wiring `boundary_nodes` into the `BoundaryConditions` framework (so the #1456 continuum gate
+  applies to network problems) is a later stage.
+
 - **`FPFVMSolver` joins the BC-capability gate** (Issue #1456, rollout). Declares its honest
   supported set `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction (after
   the pre-existing Issue #422 Dirichlet guard, whose specific message is preserved). `ROBIN` /
@@ -98,6 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
+  (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
+  orphaned — `__init__` overwrites `self.components` after constructing it, so
+  `problem.hamiltonian_class` is `None` and it is never exercised. Being dead, it had silently
+  diverged from `NetworkMFGProblem.hamiltonian`: default node congestion `0.0` instead of
+  `0.5*m[node]^2`, and it read the dead `congestion_func` field instead of the live
+  `node_interaction_func`. It now reproduces the method byte-identically (pinned by
+  `test_network_hamiltonian_object_equals_method_node_by_node`, node-by-node across the default /
+  interaction / custom branches). Dormant reconciliation — no live behavior change (network suites
+  unchanged); first step of the network Problem/Components unification (Layer Ψ).
 - **Network solvers fail loud on an unsupported node boundary condition** (Issue #1468; #1456
   network family). The continuum `BCType` gate (`_validate_bc_support`) is a structural no-op for
   network problems — `NetworkMFGProblem` carries no `BoundaryConditions`, so it keys on nothing — so

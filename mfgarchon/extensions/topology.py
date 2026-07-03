@@ -57,8 +57,9 @@ class NetworkHamiltonian(HamiltonianBase):
         Custom dH/dm.
     node_potential_func : callable or None
         V(node, t) -> float.
-    congestion_func : callable or None
-        f(node, m, t) -> float.
+    node_interaction_func : callable or None
+        f(node, m, t) -> float. Read on the FULL density, matching the live
+        ``NetworkMFGProblem.density_coupling`` (Issue #1470 reconciliation).
     """
 
     def __init__(
@@ -67,7 +68,7 @@ class NetworkHamiltonian(HamiltonianBase):
         hamiltonian_func=None,
         hamiltonian_dm_func=None,
         node_potential_func=None,
-        congestion_func=None,
+        node_interaction_func=None,
         sense=OptimizationSense.MINIMIZE,
         population_index: int = 0,
     ):
@@ -76,7 +77,7 @@ class NetworkHamiltonian(HamiltonianBase):
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func
         self._node_potential = node_potential_func
-        self._congestion = congestion_func
+        self._node_interaction = node_interaction_func
         self._num_nodes: int | None = None
 
     @property
@@ -129,10 +130,16 @@ class NetworkHamiltonian(HamiltonianBase):
             control_cost += 0.5 * w * dp**2
 
         V = float(self._node_potential(node, t)) if self._node_potential else 0.0
-        # Extract own population density for congestion (avoids silent wrong result
-        # when m is stacked K*N from multi-population)
-        m_own = self._extract_own_density(m)
-        f_m = float(self._congestion(node, m_own, t)) if self._congestion else 0.0
+        # Coupling f(node, m, t). Reconciled with the live NetworkMFGProblem.density_coupling
+        # (Issue #1470): read node_interaction_func on the FULL density, and default to the
+        # quadratic node congestion 0.5 * m_own[node]^2. The previous default of 0.0 (and reading
+        # the dead `congestion_func` field) silently diverged from the method used on every live
+        # solve — see Issue #910. `_extract_own_density` is the identity for single-population m
+        # (so byte-identical to the method) and slices the own population for stacked K*N m.
+        if self._node_interaction is not None:
+            f_m = float(self._node_interaction(node, m, t))
+        else:
+            f_m = 0.5 * float(self._extract_own_density(m)[node]) ** 2
         return control_cost + V + f_m
 
     def optimal_control(self, x, m, p, t=0.0):
@@ -179,7 +186,7 @@ class NetworkHamiltonian(HamiltonianBase):
 
 
 @dataclass
-class NetworkMFGComponents:
+class NetworkMFGComponents(MFGComponents):
     """
     Components for defining MFG problems on networks.
 
@@ -222,6 +229,17 @@ class NetworkMFGComponents:
 
     # Problem parameters
     problem_params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Issue #1470 (Problem/Components unification, Layer Ψ): NetworkMFGComponents IS-A
+        # MFGComponents so ``isinstance`` holds and the #1456 BC-capability gate stops silently
+        # no-op'ing on network problems. But it specifies the MFG with the network-native fields
+        # (hamiltonian_func, node_interaction_func, boundary_nodes, ...), not the continuum ones,
+        # so the parent __post_init__ — which requires a class-based Hamiltonian / m_initial /
+        # u_terminal at construction — does not apply. The network Hamiltonian needs graph
+        # structure and is bound by NetworkMFGProblem, not the components. The init=False
+        # ``_hamiltonian_class`` / ``_lagrangian_class`` fields default to None regardless.
+        pass
 
 
 class NetworkMFGProblem(MFGProblem):
@@ -279,7 +297,7 @@ class NetworkMFGProblem(MFGProblem):
             hamiltonian_func=net_components.hamiltonian_func,
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,
             node_potential_func=net_components.node_potential_func,
-            congestion_func=net_components.congestion_func,
+            node_interaction_func=net_components.node_interaction_func,
         )
         parent_components = MFGComponents(
             hamiltonian=network_hamiltonian,
