@@ -236,9 +236,9 @@ class NetworkMFGComponents(MFGComponents):
     initial_node_density_func: Callable | None = None  # m_0(node)
     terminal_node_value_func: Callable | None = None  # u_T(node)
 
-    # Network boundary conditions
-    boundary_nodes: list[int] | None = None  # Nodes with boundary conditions
-    boundary_values_func: Callable | None = None  # Boundary values
+    # Node boundary conditions are owned by the graph geometry (GraphGeometry), not components
+    # (Issue #1471) — construct e.g. GridNetwork(..., boundary_conditions=GraphBCConfig(...)). The
+    # former `boundary_nodes` / `boundary_values_func` fields bypassed the #1456 BC single source.
 
     # Flow dynamics parameters
     diffusion_coefficient: float = 1.0  # Diffusion strength
@@ -342,6 +342,18 @@ class NetworkMFGProblem(MFGProblem):
         self.components = net_components  # type: ignore[assignment]
         self.components.hamiltonian = network_hamiltonian
         self.components._hamiltonian_class = network_hamiltonian
+
+        # Issue #1471: node boundary conditions are owned by the graph geometry (GraphGeometry),
+        # not by components. Resolve the geometry's GraphBCConfig once into the single-source
+        # GraphApplicator (the single applier — the pin logic is not re-forked here). Explicit-init
+        # None when the geometry carries no node-BC.
+        self._node_applicator = None
+        node_bc = network_geometry.get_boundary_conditions()
+        if node_bc is not None:
+            from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
+
+            self._node_applicator = GraphApplicator.from_config(node_bc, num_nodes=network_geometry.num_spatial_points)
+
         self.problem_name = problem_name
 
         # Phase 3.1 integration: geometry is already set by parent
@@ -660,18 +672,16 @@ class NetworkMFGProblem(MFGProblem):
     # Boundary conditions for networks
 
     def apply_boundary_conditions(self, u: np.ndarray, t: float) -> np.ndarray:
-        """Apply boundary conditions to network nodes."""
-        u_bc = u.copy()
+        """Apply the geometry-owned node boundary conditions to the value field (Issue #1471).
 
-        if self.components.boundary_nodes is not None:  # type: ignore[attr-defined]
-            for node in self.components.boundary_nodes:  # type: ignore[attr-defined]
-                if self.components.boundary_values_func is not None:  # type: ignore[attr-defined]
-                    u_bc[node] = self.components.boundary_values_func(node, t)  # type: ignore[attr-defined]
-                else:
-                    # Default: zero boundary values
-                    u_bc[node] = 0.0
-
-        return u_bc
+        Node-BC lives on the graph geometry and is resolved once into a single-source
+        ``GraphApplicator``; this delegates the value-field (HJB) DIRICHLET pin to it (which copies
+        the input, so ``u`` is not mutated). No-op when the geometry carries no node-BC. The previous
+        ``components.boundary_nodes`` channel (which bypassed the #1456 BC single source) is retired.
+        """
+        if self._node_applicator is None:
+            return u
+        return self._node_applicator.apply_hjb(u, t)
 
     # Legacy interface compatibility
 

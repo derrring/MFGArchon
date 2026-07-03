@@ -490,17 +490,23 @@ class GraphApplicator(BaseGraphApplicator):
                     continue
 
                 if bc.bc_type == GraphBCType.DIRICHLET:
-                    value = bc.get_value(node, t)
-                    if is_2d:
-                        result[:, node] = value
-                    else:
-                        result[node] = value
+                    # Issue #1471: a Dirichlet value pin belongs to the VALUE field (HJB u), not the
+                    # density field (FP m) — pinning m to a value-function value is wrong.
+                    if field_type == "value":
+                        value = bc.get_value(node, t)
+                        if is_2d:
+                            result[:, node] = value
+                        else:
+                            result[node] = value
 
                 elif bc.bc_type == GraphBCType.ABSORBING:
-                    if is_2d:
-                        result[:, node] = 0.0
-                    else:
-                        result[node] = 0.0
+                    # Issue #1471: absorbing (density -> 0, mass exits) belongs to the DENSITY field
+                    # (FP m); zeroing the HJB value u at an exit is wrong (an exit carries exit cost).
+                    if field_type == "density":
+                        if is_2d:
+                            result[:, node] = 0.0
+                        else:
+                            result[node] = 0.0
 
                 elif bc.bc_type == GraphBCType.SOURCE:
                     if field_type == "density":

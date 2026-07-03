@@ -285,7 +285,9 @@ class NetworkGeometry(GraphGeometry):
         num_nodes: int,
         network_type: NetworkType = NetworkType.CUSTOM,
         backend_preference: NetworkBackendType = NetworkBackendType.IGRAPH,
+        boundary_conditions=None,
     ):
+        super().__init__(boundary_conditions=boundary_conditions)  # Issue #1471: node-BC on the geometry
         self._num_nodes = num_nodes
         self.network_type = network_type
         self.network_data: NetworkData | None = None
@@ -953,11 +955,17 @@ class GridNetwork(NetworkGeometry):
         height: int | None = None,
         periodic: bool = False,
         backend_preference: NetworkBackendType = NetworkBackendType.IGRAPH,
+        boundary_conditions=None,
     ):
         self.width = width
         self.height = height or width
         self.periodic = periodic
-        super().__init__(self.width * self.height, NetworkType.GRID, backend_preference)
+        super().__init__(
+            self.width * self.height,
+            NetworkType.GRID,
+            backend_preference,
+            boundary_conditions=boundary_conditions,
+        )
         # Issue #875: Auto-initialize network so users don't need to call create_network()
         self.create_network()
 

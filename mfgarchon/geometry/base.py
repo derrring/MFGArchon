@@ -1769,6 +1769,21 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         >>> grid = maze.get_maze_array()  # Returns 2D grid array
     """
 
+    def __init__(self, boundary_conditions=None):
+        """Graph geometry owns the node boundary conditions (Issue #1471).
+
+        Node-BC lives at this abstraction so NetworkGeometry (grid/random/scale-free) and
+        MazeGeometry inherit it uniformly (graph is the highest abstraction over both). The carrier
+        is a ``GraphBCConfig`` (multi-region node/edge BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN);
+        ``None`` means no explicit BC (the NEUMANN / zero-flux default), matching the prior behaviour.
+
+        Parameters
+        ----------
+        boundary_conditions : GraphBCConfig or None
+            Declarative node boundary conditions, or ``None``.
+        """
+        self._node_bc = boundary_conditions
+
     @property
     def dimension(self) -> int:
         """
@@ -2208,18 +2223,23 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         return (self.num_spatial_points,)
 
     def get_boundary_conditions(self):
-        """
-        Get boundary conditions for graph.
+        """Node boundary conditions owned by the graph geometry (Issue #1471).
 
-        Returns:
-            None - graphs don't have inherent spatial boundary conditions.
-
-        Notes:
-            For graphs, "boundary" typically refers to boundary nodes
-            (dead ends, exit nodes, or explicitly marked boundaries).
-            Specify via problem.boundary_conditions or node attributes.
+        Returns a ``GraphBCConfig`` (node/edge BC over node sets) or ``None``. This is the graph
+        analogue of the continuum ``BoundaryConditions`` on ``TensorProductGrid`` — the boundary
+        *locus* on a graph is a node set, not a wall segment, so the two BC representations are
+        genuinely different types (the accessor is polymorphic by geometry, consumed through the
+        geometry's applicator, not by type-assumption).
         """
-        return None
+        return getattr(self, "_node_bc", None)
+
+    def has_explicit_boundary_conditions(self) -> bool:
+        """True when an explicit node-BC config is set (Issue #1471); mirrors the continuum gate."""
+        return getattr(self, "_node_bc", None) is not None
+
+    def set_boundary_conditions(self, boundary_conditions) -> None:
+        """Set/replace the node-BC config at runtime (Issue #1471)."""
+        self._node_bc = boundary_conditions
 
     def get_collocation_points(self) -> NDArray:
         """
