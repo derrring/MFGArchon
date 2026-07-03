@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Graph node boundary conditions are now owned by `GraphGeometry`** (Issue #1471,
+  Problem/Components unification — Layer Ψ). Node-BC (a `GraphBCConfig` of DIRICHLET / ABSORBING /
+  SOURCE / NEUMANN `NodeBC`s) attaches at `GraphGeometry` — the highest abstraction over
+  `NetworkGeometry` (grid / random / scale-free) and `MazeGeometry` — so **both inherit it uniformly**
+  (graphon is a separate continuum-limit construct, not a `GraphGeometry`). Construct it via
+  `GridNetwork(..., boundary_conditions=GraphBCConfig(...))`. `get_boundary_conditions()` on a graph
+  problem now returns the geometry's node-BC (was always `None`); it is polymorphic by geometry —
+  the boundary *locus* on a graph is a node set, not a wall segment, so the graph BC representation
+  genuinely differs from the continuum `BoundaryConditions`. The network HJB/FP solvers read node-BC
+  from the geometry through a single-source `GraphApplicator`, **retiring** the ad-hoc
+  `NetworkMFGComponents.boundary_nodes` / `boundary_values_func` channel (which bypassed the #1456 BC
+  single source); the temporary Stage-0 fail-loud gate is **re-keyed** to
+  `geometry.has_explicit_boundary_conditions()`. Byte-identical: the policy-iteration node-Dirichlet
+  pin is unchanged (now flows through `GraphApplicator.apply_hjb`). `GraphApplicator` (previously
+  untested / orphaned, though registered in `apply_bc()` dispatch) gains its first unit coverage and
+  a field-type fix (DIRICHLET → value field, ABSORBING → density field). Absorbing FP (opening the
+  conservative stencil at a node + gating the mass renorm) remains Stage 2b.
+
 - **`NetworkMFGComponents` is now a `MFGComponents`** (Issue #1470, Problem/Components unification —
   Layer Ψ). It subclasses `MFGComponents` with a relaxed `__post_init__` (network problems specify
   the MFG with the network-native fields — `hamiltonian_func`, `node_interaction_func`,

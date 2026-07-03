@@ -14,7 +14,7 @@ from mfgarchon.alg.numerical.network_solvers.hjb_network import (
     NetworkHJBSolver,
     NetworkPolicyIterationHJBSolver,
 )
-from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
+from mfgarchon.extensions.topology import NetworkMFGProblem
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
 # Skip all tests if igraph is not available (network backend dependency)
@@ -495,47 +495,39 @@ class TestNetworkHJBSolverIntegration:
 
 
 class TestNetworkHJBIssue1468NodeBCGate:
-    """Issue #1468 (BC-capability, #1456 network family).
+    """Issue #1468 / #1471 (BC-capability, #1456 network family).
 
-    The base ``NetworkHJBSolver`` integrates the backward HJB ODE (``solve_ivp``) with terminal
-    data only and never applies ``components.boundary_nodes``, so it must fail loud on a node BC.
-    ``NetworkPolicyIterationHJBSolver`` applies ``apply_boundary_conditions`` at every backward
-    step, so it honors node BC and is exempt from the gate.
+    Node boundary conditions live on the graph geometry (``GraphGeometry``). The base
+    ``NetworkHJBSolver`` integrates the backward HJB ODE (``solve_ivp``) with terminal data only and
+    never applies node-BC, so it must fail loud. ``NetworkPolicyIterationHJBSolver`` applies
+    ``apply_boundary_conditions`` (the geometry-owned ``GraphApplicator`` DIRICHLET pin) at every
+    backward step, so it honors node-BC and is exempt from the gate.
     """
 
-    def _network(self):
-        network = GridNetwork(width=3, height=3)
+    def _network(self, value=None):
+        from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
+
+        bc = None
+        if value is not None:
+            bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[0], bc_type=GraphBCType.DIRICHLET, value=value)])
+        network = GridNetwork(width=3, height=3, boundary_conditions=bc)
         network.create_network()
         return network
 
-    def test_base_solver_boundary_nodes_fail_loud(self):
-        problem = NetworkMFGProblem(
-            network_geometry=self._network(),
-            T=0.5,
-            Nt=10,
-            components=NetworkMFGComponents(boundary_nodes=[0]),
-        )
-        with pytest.raises(NotImplementedError, match="boundary_nodes"):
+    def test_base_solver_node_bc_fail_loud(self):
+        problem = NetworkMFGProblem(network_geometry=self._network(value=0.0), T=0.5, Nt=10)
+        with pytest.raises(NotImplementedError, match="node boundary conditions"):
             NetworkHJBSolver(problem)
 
-    def test_base_solver_no_boundary_nodes_constructs(self):
+    def test_base_solver_no_node_bc_constructs(self):
         problem = NetworkMFGProblem(network_geometry=self._network(), T=0.5, Nt=10)
         solver = NetworkHJBSolver(problem)  # no raise
         assert solver._honors_node_bc is False
 
-    # The trivial default Hamiltonian makes the tiny-grid policy-evaluation matrix singular; that
-    # is orthogonal to the gate (the BC pass overwrites the node value regardless of the interior
-    # solve), so suppress the pre-existing warning to keep the assertion focused.
-    @pytest.mark.filterwarnings("ignore:Matrix is exactly singular")
-    def test_policy_iteration_exempt_and_honors_boundary_nodes(self):
-        """Policy iteration constructs with ``boundary_nodes`` (gate-exempt) and actually pins the
-        node value at every backward step via ``apply_boundary_conditions``."""
-        problem = NetworkMFGProblem(
-            network_geometry=self._network(),
-            T=0.5,
-            Nt=10,
-            components=NetworkMFGComponents(boundary_nodes=[0], boundary_values_func=lambda node, t: 7.0),
-        )
+    def test_policy_iteration_exempt_and_honors_node_bc(self):
+        """Policy iteration constructs with a geometry node-BC (gate-exempt) and actually pins the
+        node value at every backward step via the geometry-owned ``GraphApplicator``."""
+        problem = NetworkMFGProblem(network_geometry=self._network(value=lambda node, t: 7.0), T=0.5, Nt=10)
         solver = NetworkPolicyIterationHJBSolver(problem)  # no raise
         assert solver._honors_node_bc is True
 

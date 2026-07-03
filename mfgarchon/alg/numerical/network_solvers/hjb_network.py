@@ -83,16 +83,17 @@ class NetworkHJBSolver(BaseHJBSolver):
 
         self.network_problem = problem
 
-        # Issue #1468: fail loud on a node BC this solver cannot honor. The base ODE path applies
-        # only the terminal condition and never `boundary_nodes`, so a node BC would be silently
-        # ignored. `NetworkPolicyIterationHJBSolver` (which applies them) sets `_honors_node_bc`.
-        if not self._honors_node_bc and problem.components.boundary_nodes:
+        # Issue #1468/#1471: fail loud on a node BC this solver cannot honor. Node-BC now lives on the
+        # geometry (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only
+        # the terminal condition and never the node-BC, so it would be silently ignored.
+        # `NetworkPolicyIterationHJBSolver` (which applies it) sets `_honors_node_bc`.
+        if not self._honors_node_bc and problem.geometry.has_explicit_boundary_conditions():
             raise NotImplementedError(
                 f"{type(self).__name__} does not support node boundary conditions "
-                f"(problem.components.boundary_nodes is set). The base network HJB integrates the "
-                f"backward ODE with terminal data only and never applies boundary_nodes, so the "
-                f"node BC would be silently ignored (Issue #1468, #1456). Use "
-                f"NetworkPolicyIterationHJBSolver, which applies them, or remove boundary_nodes."
+                f"(the graph geometry carries an explicit node-BC config). The base network HJB "
+                f"integrates the backward ODE with terminal data only and never applies node-BC, so "
+                f"it would be silently ignored (Issue #1468, #1456, #1471). Use "
+                f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
             )
 
         self.scheme = scheme

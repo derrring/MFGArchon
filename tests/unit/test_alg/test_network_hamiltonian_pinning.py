@@ -86,9 +86,8 @@ def test_network_components_is_mfg_components_byte_identical():
     ``isinstance`` holds; the solve path is unchanged because ``hamiltonian_class`` stays ``None``
     (the network solvers read the method / legacy rate paths, not the object). ``get_problem_info()``
     now works (previously ``AttributeError`` on the non-subclass components' missing ``description``),
-    and ``get_boundary_conditions()`` resolves to ``None`` instead of raising. Wiring
-    ``boundary_nodes`` into the ``BoundaryConditions`` framework (so the #1456 continuum gate applies)
-    is Stage 2 — not claimed here.
+    and a graph problem with no geometry node-BC resolves ``get_boundary_conditions()`` to ``None``
+    (Issue #1471 moved node-BC ownership to the geometry).
     """
     from mfgarchon.core.mfg_components import MFGComponents
 
@@ -101,12 +100,11 @@ def test_network_components_is_mfg_components_byte_identical():
     # orphaned/None). isinstance and get_problem_info remain the Stage-1 wins.
     assert prob.hamiltonian_class is not None, "the single-source NetworkHamiltonian must be wired"
     assert isinstance(prob.get_problem_info(), dict), "get_problem_info must not raise (was AttributeError)"
-    assert prob.get_boundary_conditions() is None, "network BC still resolves to None (Stage 2 wires it)"
+    assert prob.get_boundary_conditions() is None, "no geometry node-BC -> resolves to None (Issue #1471)"
 
     # network-native construction is unaffected
-    comps = NetworkMFGComponents(boundary_nodes=[0, 8], node_potential_func=lambda n, t: 0.1 * n)
+    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.1 * n)
     assert isinstance(comps, MFGComponents)
-    assert comps.boundary_nodes == [0, 8]
 
 
 def test_network_hamiltonian_minimize_consistency():

@@ -105,13 +105,13 @@ class FPNetworkSolver(BaseFPSolver):
         # (`enforce_mass_conservation`), so a node BC would be silently dropped and any
         # absorption hidden — manufacturing the mass-conserving answer in place of the
         # intended one (the #1456 silent-wrong-answer class, on the graph).
-        if not self._honors_node_bc and problem.components.boundary_nodes:
+        if not self._honors_node_bc and problem.geometry.has_explicit_boundary_conditions():
             raise NotImplementedError(
                 f"{type(self).__name__} does not support node boundary conditions "
-                f"(problem.components.boundary_nodes is set). It ignores boundary_nodes and "
+                f"(the graph geometry carries an explicit node-BC config). It ignores node-BC and "
                 f"unconditionally renormalizes total mass each step, so the node BC would be "
-                f"silently dropped and any absorption hidden (Issue #1468, #1456). Remove "
-                f"boundary_nodes, or use a solver that honors them."
+                f"silently dropped and any absorption hidden (Issue #1468, #1456, #1471). Remove the "
+                f"geometry's BC, or use a solver that honors it (absorbing FP is Stage 2b)."
             )
 
         self.scheme = scheme
