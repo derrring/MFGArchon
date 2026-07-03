@@ -18,6 +18,10 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.network_solvers.hjb_network import (
+    NetworkHJBSolver,
+    NetworkPolicyIterationHJBSolver,
+)
 from mfgarchon.extensions.topology import (
     NetworkHamiltonian,
     NetworkMFGComponents,
@@ -142,3 +146,29 @@ def test_network_hamiltonian_minimize_consistency():
 
     method2 = prob.hamiltonian(2, prob.get_node_neighbors(2), m, u, t)
     assert abs(method2 - float(H(np.array([2]), m, u, t))) < 1e-9, "RK45 method H must equal object H"
+
+
+def test_network_policy_iteration_converges_to_rk45():
+    """Issue #1474 (N15 decisive): policy iteration and the RK45 value ODE now solve the SAME
+    finite-state MFG.
+
+    Before the fix they converged to *different* continuous equations (the gap plateaued at ~0.708
+    under dt-refinement, ratio ~1.0). After reconciling the Hamiltonian (value = control), fixing the
+    base-solver integration sign + source separation, and rewriting policy evaluation to the full-rate
+    M-matrix ``A = I/dt + L^pi``, the remaining difference is pure time discretization (backward-Euler
+    vs RK45): it roughly halves with each dt refinement, i.e. first-order convergence to zero.
+    """
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])
+    errs = []
+    for nt in (20, 40, 80):
+        prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=nt)
+        n = prob.num_nodes
+        m = np.ones((nt + 1, n)) / n
+        u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
+        u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=g)
+        assert np.isfinite(u_pi).all() and np.isfinite(u_rk).all(), "both solvers must be finite"
+        errs.append(float(np.max(np.abs(u_pi[0] - u_rk[0]))))
+    assert errs[0] < 0.2, f"PI and RK45 must agree closely (same HJB), got {errs[0]:.3f}"
+    assert errs[-1] < 0.55 * errs[0], f"gap must shrink under dt-refinement (N15 plateau closed): {errs}"

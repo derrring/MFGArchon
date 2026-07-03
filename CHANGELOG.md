@@ -117,9 +117,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correct finite-state control is downhill `α*=w·max(u_i−u_j,0)` with one-sided value
   `H=½Σw·max(u_i−u_j,0)²` — mass now transports toward lower cost-to-go (was the wrong direction).
   The orphaned `NetworkHamiltonian` is now **wired** as the single-source `hamiltonian_class`, and the
-  wrong-signed FP legacy rate branch fails loud. Pinned by `test_network_hamiltonian_minimize_consistency`.
-  Follow-up (N15 part 2, tracked in #1474): the base-solver integration sign (`du/ds=+H` self-amplifies
-  for non-trivial data — correct is `−H_control + source`) and the full-rate policy-evaluation rewrite.
+  wrong-signed FP legacy rate branch fails loud. Two further defects that made the HJB *solve* wrong
+  are also fixed: (i) the base-solver integration sign — `du/ds=+H` integrated `u_t+H=0` (opposite to
+  the global `−u_t+H=0`) and self-amplified the one-sided control term (value blew up); it now
+  integrates `du/ds = −H_control + source` by separating the control Hamiltonian from the V+coupling
+  RHS sources; (ii) the policy-evaluation linear system was singular (`A_ii=1/dt, A_ij=−1/dt` →
+  row-sum 0 → NaN) and single-action — rewritten to the full-rate M-matrix `A = I/dt + Lᵖⁱ`
+  (`A_ii=1/dt+Σα`, `A_ij=−α`) with the control cost `½Σα²/w` in the RHS. **Decisive check**:
+  `NetworkPolicyIterationHJBSolver` now converges to the same value as the RK45 ODE — the dt-refinement
+  gap that previously *plateaued* at ~0.708 (converging to different equations) now halves per
+  refinement (first-order → 0). Pinned by `test_network_hamiltonian_minimize_consistency` and
+  `test_network_policy_iteration_converges_to_rk45`.
 - **Reconciled the orphaned `NetworkHamiltonian` with the live network Hamiltonian method**
   (Issue #1470 / #910). The `NetworkHamiltonian` object built in every `NetworkMFGProblem` is
   orphaned — `__init__` overwrites `self.components` after constructing it, so
