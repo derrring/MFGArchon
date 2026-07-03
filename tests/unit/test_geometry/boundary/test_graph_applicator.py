@@ -34,14 +34,16 @@ def test_dirichlet_pins_value_not_density():
     assert np.array_equal(m_bc, m), "a Dirichlet value pin must be a no-op on the density field"
 
 
-def test_absorbing_zeros_density_not_value():
-    """ABSORBING (mass exits) belongs to the density field; it must not zero the HJB value."""
-    app = _app([NodeBC(nodes=[4], bc_type=GraphBCType.ABSORBING, value=0.0)])
+def test_absorbing_is_a_dual_exit_node():
+    """Issue #1478: an ABSORBING/exit node is one physical BC with dual operations — the FP density is
+    absorbed (m -> 0) and the HJB value carries the exit cost (Dirichlet u = value)."""
+    app = _app([NodeBC(nodes=[4], bc_type=GraphBCType.ABSORBING, value=5.0)])
     m_bc = app.apply_fp(np.full(9, 0.2), t=0.0)
-    assert m_bc[4] == 0.0
+    assert m_bc[4] == 0.0, "FP: exit node mass leaves (m -> 0)"
     assert m_bc[0] == 0.2
     u_bc = app.apply_hjb(np.full(9, 3.0), t=0.0)
-    assert np.array_equal(u_bc, np.full(9, 3.0)), "absorbing must not touch the value field"
+    assert u_bc[4] == 5.0, "HJB: exit node value pinned to the exit cost (Dirichlet)"
+    assert u_bc[0] == 3.0
 
 
 def test_source_injects_density_only():

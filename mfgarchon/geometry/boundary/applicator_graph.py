@@ -500,9 +500,16 @@ class GraphApplicator(BaseGraphApplicator):
                             result[node] = value
 
                 elif bc.bc_type == GraphBCType.ABSORBING:
-                    # Issue #1471: absorbing (density -> 0, mass exits) belongs to the DENSITY field
-                    # (FP m); zeroing the HJB value u at an exit is wrong (an exit carries exit cost).
-                    if field_type == "density":
+                    # Issue #1478: an absorbing / exit node is ONE physical BC with dual operations
+                    # (adjoint duality): the HJB value carries the exit cost (Dirichlet u = value), and
+                    # the FP density is absorbed (m -> 0, mass exits). Apply the right one per field.
+                    if field_type == "value":
+                        value = bc.get_value(node, t)
+                        if is_2d:
+                            result[:, node] = value
+                        else:
+                            result[node] = value
+                    else:  # density
                         if is_2d:
                             result[:, node] = 0.0
                         else:

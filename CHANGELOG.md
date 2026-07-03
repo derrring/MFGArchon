@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Network FP honors ABSORBING node boundary conditions (exit nodes)** (Issue #1478, Stage 2b). An
+  absorbing/exit node is one physical BC with dual operations (adjoint duality): the HJB value carries
+  the exit cost (`GraphApplicator` pins `u` = the `NodeBC` value on the value field), and the FP
+  density is absorbed (`m → 0`, mass exits, on the density field). `FPNetworkSolver` now applies the
+  geometry node-BC to the density field each step and **gates the mass renormalization off** when the
+  BC changes total mass (ABSORBING / SOURCE) — so absorption is no longer hidden (it previously failed
+  loud). With no node-BC, mass is conserved exactly as before. Validated: total mass strictly decreases
+  at an absorbing node while the HJB pins the exit cost. Refines the #1471 `ABSORBING` handling from
+  density-only to the dual (value-pin + density-zero).
+
 - **Graph node boundary conditions are now owned by `GraphGeometry`** (Issue #1471,
   Problem/Components unification — Layer Ψ). Node-BC (a `GraphBCConfig` of DIRICHLET / ABSORBING /
   SOURCE / NEUMANN `NodeBC`s) attaches at `GraphGeometry` — the highest abstraction over
