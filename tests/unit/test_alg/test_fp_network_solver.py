@@ -655,37 +655,37 @@ class TestFPNetworkSolverIntegration:
             assert np.all(np.isfinite(M_solution))
 
 
-class TestFPNetworkSolverIssue1468NodeBCGate:
-    """Issue #1468 / #1471 (BC-capability, #1456 network family).
-
-    FPNetworkSolver ignores node-BC and unconditionally renormalizes total mass each step, so it must
-    fail loud on a node BC (now owned by the graph geometry) rather than silently solve the
-    mass-conserving problem in place of the intended (absorbing) one — absorbing FP is Stage 2b. The
-    continuum ``BCType`` gate is a structural no-op for graph problems, so the fail-loud gate keys on
-    ``geometry.has_explicit_boundary_conditions()``.
+class TestFPNetworkSolverAbsorbingNodeBC:
+    """Issue #1478 (Stage 2b): FPNetworkSolver honors an ABSORBING (exit) node — its mass leaves
+    (``m -> 0``) and the mass renorm is gated off so the absorption is not hidden.
     """
 
-    def _network(self, with_bc=False):
+    def _network(self, absorbing_node=None):
         from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
 
         bc = None
-        if with_bc:
-            bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[0, 8], bc_type=GraphBCType.DIRICHLET, value=0.0)])
+        if absorbing_node is not None:
+            bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[absorbing_node], bc_type=GraphBCType.ABSORBING, value=0.0)])
         network = GridNetwork(width=3, height=3, boundary_conditions=bc)
         network.create_network()
         return network
 
-    def test_node_bc_fail_loud(self):
-        problem = NetworkMFGProblem(network_geometry=self._network(with_bc=True), T=1.0, Nt=10)
-        with pytest.raises(NotImplementedError, match="node boundary conditions"):
-            FPNetworkSolver(problem)
+    def test_absorbing_fp_mass_decreases(self):
+        problem = NetworkMFGProblem(network_geometry=self._network(absorbing_node=0), T=0.5, Nt=20)
+        solver = FPNetworkSolver(problem, scheme="explicit")  # honors it — no raise
+        n = problem.num_nodes
+        m0 = np.ones(n) / n
+        u = np.zeros((21, n))  # zero value -> pure diffusion toward the absorbing node
+        m = solver.solve_fp_system(M_initial=m0, potential_field=u)
+        assert m[-1].sum() < m[0].sum() - 1e-3, "absorption: total mass must strictly decrease"
+        assert np.allclose(m[1:, 0], 0.0), "the absorbing node's density is zeroed each step"
 
-    def test_no_node_bc_constructs(self):
-        """Gate inert when no node BC is set (the default) — construction unchanged."""
-        problem = NetworkMFGProblem(network_geometry=self._network(), T=1.0, Nt=10)
+    def test_no_node_bc_constructs_and_conserves(self):
+        """No node BC -> construction unchanged and mass is conserved (renorm active)."""
+        problem = NetworkMFGProblem(network_geometry=self._network(), T=0.5, Nt=10)
         solver = FPNetworkSolver(problem)  # no raise
         assert solver.num_nodes == 9
-        assert solver._honors_node_bc is False
+        assert solver._mass_changing_bc is False
 
 
 if __name__ == "__main__":

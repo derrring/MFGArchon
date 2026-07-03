@@ -100,19 +100,19 @@ class FPNetworkSolver(BaseFPSolver):
 
         self.network_problem = problem
 
-        # Issue #1468: fail loud on a node BC this solver cannot honor. It ignores
-        # `boundary_nodes` and unconditionally renormalizes total mass each step
-        # (`enforce_mass_conservation`), so a node BC would be silently dropped and any
-        # absorption hidden — manufacturing the mass-conserving answer in place of the
-        # intended one (the #1456 silent-wrong-answer class, on the graph).
-        if not self._honors_node_bc and problem.geometry.has_explicit_boundary_conditions():
-            raise NotImplementedError(
-                f"{type(self).__name__} does not support node boundary conditions "
-                f"(the graph geometry carries an explicit node-BC config). It ignores node-BC and "
-                f"unconditionally renormalizes total mass each step, so the node BC would be "
-                f"silently dropped and any absorption hidden (Issue #1468, #1456, #1471). Remove the "
-                f"geometry's BC, or use a solver that honors it (absorbing FP is Stage 2b)."
-            )
+        # Issue #1478 (Stage 2b): the FP now HONORS the geometry-owned node-BC via the single-source
+        # GraphApplicator. ABSORBING nodes are exits (their mass leaves, m -> 0), applied to the
+        # density field each step; DIRICHLET / NEUMANN are no-ops on density. The mass renorm is gated
+        # OFF whenever the BC changes total mass (ABSORBING / SOURCE) — else it would manufacture
+        # false conservation and hide the absorption (the #1456 silent-wrong-answer class).
+        self._node_applicator = problem._node_applicator
+        self._mass_changing_bc = False
+        node_bc = problem.geometry.get_boundary_conditions()
+        if node_bc is not None:
+            from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
+
+            mass_changing = {GraphBCType.ABSORBING, GraphBCType.SOURCE}
+            self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
 
         self.scheme = scheme
         self.diffusion_coefficient = diffusion_coefficient
@@ -318,10 +318,17 @@ class FPNetworkSolver(BaseFPSolver):
                 else:
                     raise ValueError(f"Unknown scheme: {self.scheme}")
 
-                # Enforce non-negativity and mass conservation
+                # Enforce non-negativity
                 M[n + 1, :] = np.maximum(M[n + 1, :], 0)
 
-                if self.enforce_mass_conservation:
+                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
+                # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
+                # With an absorbing / source node the total mass legitimately changes, so renormalizing
+                # would manufacture false conservation and hide the absorption.
+                if self._node_applicator is not None:
+                    M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
+
+                if self.enforce_mass_conservation and not self._mass_changing_bc:
                     total_mass = np.sum(M[n + 1, :])
                     if total_mass > 1e-12:
                         M[n + 1, :] /= total_mass
