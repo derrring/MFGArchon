@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FEM mesh adapter fails loud on mismatched connectivity + unsupported mesh class** (Issue #1489,
+  F6/F8). `meshdata_to_skfem` now validates the connectivity node-count against the element family
+  before construction — a 4-node quad mislabeled `triangle` was silently truncated by scikit-fem to
+  3 nodes (a wrong half-domain mesh, no error) — and `skfem_to_meshdata` raises on an unsupported
+  scikit-fem class instead of stamping `element_type="unknown"` (which failed confusingly on a later
+  re-conversion). Pinned by `test_meshdata_to_skfem_fails_loud_on_wrong_node_count`. Found by the
+  FEM infrastructure audit.
+
 - **`HJBSemiLagrangianSolver`, `FPSLJacobianSolver`, `FPGFDMSolver` join the BC-capability gate**
   (Issue #1456, rollout — completes the continuum solvers). Each declares its honest supported set
   `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction. These were the
