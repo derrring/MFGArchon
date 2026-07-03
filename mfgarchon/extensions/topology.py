@@ -316,8 +316,7 @@ class NetworkMFGProblem(MFGProblem):
         if network_geometry is not None:
             if geometry is not None:
                 raise ValueError(
-                    "Pass the graph geometry via geometry=; network_geometry= is a deprecated alias — "
-                    "do not pass both."
+                    "Pass the graph geometry via geometry=; network_geometry= is a deprecated alias — do not pass both."
                 )
             warnings.warn(
                 "NetworkMFGProblem(network_geometry=...) is deprecated (Issue #1472); use geometry=. "

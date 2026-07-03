@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HJBSemiLagrangianSolver`, `FPSLJacobianSolver`, `FPGFDMSolver` join the BC-capability gate**
+  (Issue #1456, rollout — completes the continuum solvers). Each declares its honest supported set
+  `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction. These were the
+  audit's silent-mishandling cases: the SL solvers' zero-flux CN/ADI diffusion silently collapsed
+  Dirichlet/Robin/absorbing to Neumann, and FP-GFDM's `_resolve_boundary_type` returned `None`
+  silently for them — now all fail loud. No construct-then-check test constructs any of them with an
+  unsupported type (grep-verified); their unit surfaces pass unchanged.
+
 - **Removed dead methods from `NetworkMFGProblem`** (Issue #1472, Stage 3): `trajectory_cost`,
   `compute_relaxed_equilibrium`, and `edge_cost` — all had zero callers. `compute_relaxed_equilibrium`
   was a fail-silent stub (returned all-zero `U`/`M` placeholders — a silent-wrong-answer risk if

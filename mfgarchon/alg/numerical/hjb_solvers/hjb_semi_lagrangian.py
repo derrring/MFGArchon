@@ -33,6 +33,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     get_bc_type_string,
 )
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
 
@@ -106,6 +107,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.SL
+
+    # BoundaryCapable protocol (Issue #1456): the SL diffusion sub-step (CN/ADI) is zero-flux
+    # (no-flux / Neumann g=0) and the characteristic foot wraps for periodic; Dirichlet / Robin /
+    # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -317,6 +328,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Setup JAX functions if available
         if self.use_jax:
             self._setup_jax_functions()
+
+        # Issue #1456: fail loud now if the (geometry/problem) BC requests a type SL cannot honor
+        # (Dirichlet/Robin/absorbing — otherwise silently collapsed to the zero-flux Neumann
+        # diffusion). None (BC resolved later) is a no-op; SL re-reads get_boundary_conditions().
+        self._validate_bc_support(self.get_boundary_conditions())
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 

@@ -39,6 +39,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     get_bc_type_string,
 )
+from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
@@ -95,6 +96,16 @@ class FPSLJacobianSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.SL
     _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
+
+    # BoundaryCapable protocol (Issue #1456): the CN diffusion sub-step is zero-flux (no-flux /
+    # Neumann g=0) and the advection wraps for periodic; Dirichlet / Robin / absorbing are silently
+    # collapsed to Neumann downstream, so they fail loud here instead.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     @deprecated(since="v0.17.6", replacement="FPSLSolver")
     def __init__(
@@ -155,6 +166,9 @@ class FPSLJacobianSolver(BaseFPSolver):
         else:
             # Try to get BC from problem/geometry
             self.boundary_conditions = self._get_boundary_conditions_from_problem()
+        # Issue #1456: fail loud now if the resolved BC requests a type this solver cannot honor
+        # (Dirichlet/Robin would otherwise be silently collapsed to the zero-flux Neumann stencil).
+        self._validate_bc_support(self.boundary_conditions)
 
     def _get_boundary_conditions_from_problem(self) -> BoundaryConditions | None:
         """Get boundary conditions from problem or geometry."""

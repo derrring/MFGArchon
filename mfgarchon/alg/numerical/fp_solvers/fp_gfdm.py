@@ -29,6 +29,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -77,6 +78,16 @@ class FPGFDMSolver(BaseFPSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.GFDM
+
+    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type handles no-flux / Neumann /
+    # periodic and returns None (silently) for everything else; declare exactly those so
+    # Dirichlet / Robin / Reflecting / Extrapolation fail loud instead.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -140,6 +151,10 @@ class FPGFDMSolver(BaseFPSolver):
             boundary_conditions=boundary_conditions,
             boundary_type_str=boundary_type,
         )
+        # Issue #1456: fail loud if the resolved BC requests a type GFDM cannot honor —
+        # _resolve_boundary_type returns None (silently) for Dirichlet/Robin/Reflecting/Extrapolation.
+        _bc_for_gate = boundary_conditions if boundary_conditions is not None else self.get_boundary_conditions()
+        self._validate_bc_support(_bc_for_gate)
 
         # Create GFDM operator using TaylorOperator (Strategy Pattern, Issue #844)
         # TaylorOperator handles neighborhoods and derivative weights
