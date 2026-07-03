@@ -11,7 +11,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
-from mfgarchon.extensions.topology import NetworkMFGProblem
+from mfgarchon.extensions.topology import NetworkMFGComponents, NetworkMFGProblem
 from mfgarchon.geometry.graph.network_geometry import GridNetwork
 
 # Skip all tests if igraph is not available (network backend dependency)
@@ -653,6 +653,49 @@ class TestFPNetworkSolverIntegration:
             M_solution = solver.solve_fp_system(m_initial, U_solution)
 
             assert np.all(np.isfinite(M_solution))
+
+
+class TestFPNetworkSolverIssue1468NodeBCGate:
+    """Issue #1468 (BC-capability, #1456 network family).
+
+    FPNetworkSolver ignores ``components.boundary_nodes`` and unconditionally renormalizes total
+    mass each step, so it must fail loud on a node BC rather than silently solve the
+    mass-conserving problem in place of the intended (absorbing/Dirichlet) one. The continuum
+    ``BCType`` gate (``_validate_bc_support``) is a structural no-op for network problems — they
+    carry no ``BoundaryConditions`` — so this is a network-specific gate on ``boundary_nodes``.
+    """
+
+    def _network(self):
+        network = GridNetwork(width=3, height=3)
+        network.create_network()
+        return network
+
+    def test_boundary_nodes_fail_loud(self):
+        problem = NetworkMFGProblem(
+            network_geometry=self._network(),
+            T=1.0,
+            Nt=10,
+            components=NetworkMFGComponents(boundary_nodes=[0, 8]),
+        )
+        with pytest.raises(NotImplementedError, match="boundary_nodes"):
+            FPNetworkSolver(problem)
+
+    def test_no_boundary_nodes_constructs(self):
+        """Gate inert when no node BC is set (the default) — construction unchanged."""
+        problem = NetworkMFGProblem(network_geometry=self._network(), T=1.0, Nt=10)
+        solver = FPNetworkSolver(problem)  # no raise
+        assert solver.num_nodes == 9
+        assert solver._honors_node_bc is False
+
+    def test_empty_boundary_nodes_list_is_inert(self):
+        """An empty ``boundary_nodes`` list is falsy — no node BC requested, no raise."""
+        problem = NetworkMFGProblem(
+            network_geometry=self._network(),
+            T=1.0,
+            Nt=10,
+            components=NetworkMFGComponents(boundary_nodes=[]),
+        )
+        FPNetworkSolver(problem)  # no raise
 
 
 if __name__ == "__main__":
