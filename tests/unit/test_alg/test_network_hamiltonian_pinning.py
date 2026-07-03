@@ -185,3 +185,32 @@ def test_network_hamiltonian_maximize_fails_loud():
     prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=4)
     with pytest.raises(NotImplementedError, match="MINIMIZE"):
         NetworkHamiltonian(network_data=prob.network_data, sense=OptimizationSense.MAXIMIZE)
+
+
+def test_network_hamiltonian_method_equals_object():
+    """Issue #1472: ``NetworkMFGProblem.hamiltonian()`` IS the single-source ``NetworkHamiltonian``
+    object, not a second hand-synced copy. The RK45 base solver (which reads the method) and the FP /
+    policy-iteration solvers (which read the object via ``optimal_control``) therefore see the
+    identical Hamiltonian — this pins the single source so the #1474/N15 divergence cannot re-open.
+    """
+    m5 = np.ones(5) / 5
+    p5 = np.array([0.0, 1.0, 0.5, 2.0, 1.5])
+    for comps in (
+        NetworkMFGComponents(),
+        NetworkMFGComponents(
+            node_potential_func=lambda n, t: 0.3 * n,
+            node_interaction_func=lambda n, m, t: 2.0 * m[n],
+        ),
+        NetworkMFGComponents(
+            hamiltonian_func=lambda node, nbrs, m, p, t: sum(max(p[node] - p[j], 0) ** 2 for j in nbrs) + 0.7
+        ),
+    ):
+        net = GridNetwork(width=5, height=1)
+        net.create_network()
+        prob = NetworkMFGProblem(network_geometry=net, T=0.5, Nt=10, components=comps)
+        obj = prob.hamiltonian_class
+        for node in range(prob.num_nodes):
+            nbrs = prob.get_node_neighbors(node)
+            method_val = prob.hamiltonian(node, nbrs, m5, p5, 0.1)
+            object_val = float(obj(node, m5, p5, 0.1))
+            assert method_val == object_val, f"method != object at node {node} (single-source broken)"
