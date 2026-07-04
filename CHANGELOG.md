@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FEM basis creation fails loud on a degenerate element** (Issue #1489, F7). `create_basis` now
+  checks per-element measures and raises on a near-zero (zero-area / collinear / coincident-node)
+  element instead of letting `skfem.asm` fill its stiffness/mass rows with NaN/Inf and only emit a
+  numpy `RuntimeWarning` — a silent corruption of the solve. An inverted-but-nonzero element still
+  integrates its true area (skfem uses `|detDF|`), so only genuine degeneracy is guarded. Pinned by
+  `test_fem_degenerate_assembly_f7`.
+
 - **FEM mesh adapter fails loud on mismatched connectivity + unsupported mesh class** (Issue #1489,
   F6/F8). `meshdata_to_skfem` now validates the connectivity node-count against the element family
   before construction — a 4-node quad mislabeled `triangle` was silently truncated by scikit-fem to
