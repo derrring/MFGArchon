@@ -230,6 +230,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gradients legitimately tolerate poor pointwise conditioning — so the guard is on the caller, NOT the
   shared basis (SCNI stays exempt). Pinned by `test_mls_conditioning_guard_1485`.
 
+- **Coupling fail-loud guards: finite mass-blowup + P2 DOF-count** (Issue #1489, S5/S6, shared coupling).
+  (S5) `FixedPointIterator`'s divergence guard checked only `np.isfinite`, so a FINITE but blown-up
+  density (the pre-overflow divergence, total mass ~5.9e4) passed and was reported converged/valid; a
+  magnitude guard now terminates with `diverged_mass_blowup` when the total density grows >1e4x the
+  initial (a legitimate solve conserves, or decreases under absorbing BC). (S6) the unstructured-mesh
+  state was sized from `num_spatial_points` (= vertices), never the solver's `n_dof`, so a P2 FEM solve
+  (n_dof = vertices + edges) hit an opaque broadcast `ValueError` in the damping step; the state is now
+  sized from the solver `n_dof`, with a fail-loud on a HJB/FP DOF-count mismatch. Byte-identical for the
+  P1 / meshless path (n_dof == num_spatial_points); verified by the coupling + coupled suites (no regression).
+
 - **FP drift is now routed by the solver-declared `_drift_convention`, failing loud for a
   non-smooth Hamiltonian on a `VALUE_FUNCTION` solver** (Issue #1489 S1; see also #1420).
   `resolve_fp_drift_kwargs` gated `use_velocity` on `"drift_field" in params`, but parameter
