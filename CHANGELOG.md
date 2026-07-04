@@ -5,7 +5,45 @@ All notable changes to MFGArchon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] - 2026-07-04
+
+### Added
+
+- **Fragment-based changelog** (Issue #1521). Each PR adds a `changelog.d/<slug>.<category>.md` fragment
+  instead of editing `CHANGELOG.md`, eliminating the append-only merge conflict on the shared sections.
+  `scripts/collate_changelog.py` collates fragments into a Keep-a-Changelog section at release.
+- **Python 3.13 and 3.14 support, verified in CI.** New additive `python-compat.yml` workflow runs the
+  install + fast test suite across 3.12/3.13/3.14 weekly and on any change to the matrix or dependency
+  metadata (kept off the per-PR and nightly paths, so no extra cost there). Added per-version classifiers
+  (3.12/3.13/3.14); `requires-python` stays `>=3.12` (no upper cap). Python 3.15 (pre-release, ships
+  Oct 2026) runs as an allow-failure early-warning job, not a support claim.
+
+### Changed
+
+- **Local full-test-suite usable + test-config single-sourced + hang safety net** (Issue #1522). A bare
+  `pytest tests/` ran *serial* and included `@slow`, taking hours — not a hang (CI parallelizes with
+  `-n auto` and skips slow on PRs; the light gate `ci.yml` + `nightly.yml` was already in place).
+  Also caught a config duplication: pytest read `pytest.ini` and **ignored** the `[tool.pytest.ini_options]`
+  block in `pyproject.toml` (dead config) — removed it so there is one test-config source. Added
+  `pytest-timeout` with a 900s per-test ceiling (a genuine infinite loop is now killed + reported), and
+  documented the CI-matching local command in `CLAUDE.md`.
+
+### Fixed
+
+- **GFDM non-LCR differentiation weights single-sourced** (Issue #1427). `_build_differentiation_matrices`
+  routed non-LCR points through the operator's *pre-adaptive* weights while the LCR path and
+  `self.neighborhoods` used the adaptive-aware builder — so `D_lap`/`D_grad` silently diverged from
+  `self.neighborhoods` for any non-LCR point whose neighborhood was enlarged by `adaptive_neighborhoods`.
+  Non-LCR points now route through the same `compute_derivative_weights_from_taylor` builder (falling back
+  to the operator only for QR-fallback stencils). Verified byte-identical on the default
+  `adaptive_neighborhoods=False` path (pinned), so the Weak-GFDM paper baseline is unchanged.
+- **Newton residual path fails loud on an undroppable source term** (Issue #1430, closing the #1424
+  sibling). The Newton/JFNK coupling path (`MFGResidual.compute_hjb_output` / `compute_fp_output`)
+  composed a problem-level source (`source_term_hjb/fp`, nonlocal, obstacle) *only when* the solver's
+  signature already had `source_term`, silently dropping it otherwise — so a source-defining problem on
+  a non-accepting solver gave a silently-wrong Newton fixed point while the Picard path (#1424)
+  correctly raised. Both Newton paths now compose unconditionally and raise `NotImplementedError` when
+  the source is active but the solver cannot accept it.
 
 ### Added
 
