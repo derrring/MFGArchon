@@ -54,6 +54,9 @@ class WeakFormFPSolver(BaseFPSolver):
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
         self._bc = self.get_boundary_conditions()
+        # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
+        # path is stateless per call, so the latch lives on the solver to warn once per solve).
+        self._adjoint_clip_warned = False
 
     @property
     def n_dof(self) -> int:
@@ -166,6 +169,10 @@ class WeakFormFPSolver(BaseFPSolver):
         pure_neumann = self._is_pure_neumann()
 
         clip_warned = False
+        clip_injected_total = 0.0
+        clip_injected_max = 0.0
+        clip_max_step = -1
+        m0_mass = float((self._M @ M[0]).sum())
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
             if rhs_robin is not None:
@@ -195,8 +202,14 @@ class WeakFormFPSolver(BaseFPSolver):
             # mass and violates conservation. Surface it once per solve rather than failing
             # silently (kernel fail-fast). Streamline diffusion suppresses the undershoots
             # at the source (meshless ``streamline_diffusion_scale > 0``, Issue #1145).
+            # Issue #1489 (S3): measure EVERY step (the former `if not clip_warned` guard skipped the
+            # measurement after the first exceedance, so the cumulative injection was under-reported).
+            injected = -float((self._M @ np.minimum(M[n + 1], 0.0)).sum())
+            clip_injected_total += injected
+            if injected > clip_injected_max:
+                clip_injected_max = injected
+                clip_max_step = n
             if not clip_warned:
-                injected = -float((self._M @ np.minimum(M[n + 1], 0.0)).sum())
                 total = float((self._M @ np.maximum(M[n + 1], 0.0)).sum())
                 if injected > 1e-6 * max(total, 1e-300):
                     logger.warning(
@@ -209,6 +222,21 @@ class WeakFormFPSolver(BaseFPSolver):
                     clip_warned = True
             M[n + 1] = np.maximum(M[n + 1], 0.0)
 
+        # Issue #1489 (S3): report the CUMULATIVE clip injection at solve end — the true magnitude of
+        # the conservation violation, which the one-shot first-exceedance warning under-reports (it
+        # fires at the smallest, first step). Threshold relative to the initial mass.
+        if clip_injected_total > 1e-6 * max(m0_mass, 1e-300):
+            logger.warning(
+                "FP positivity clip injected a CUMULATIVE %.2e mass over %d steps (per-step max %.2e "
+                "at step %d, %.1f%% of the initial mass): the Galerkin advection is not an M-matrix; "
+                "enable streamline diffusion (streamline_diffusion_scale > 0) to suppress the "
+                "undershoots (Issue #1145 / #1489).",
+                clip_injected_total,
+                Nt,
+                clip_injected_max,
+                clip_max_step,
+                100.0 * clip_injected_total / max(m0_mass, 1e-300),
+            )
         return M
 
     def solve_fp_step_adjoint_mode(
@@ -236,4 +264,19 @@ class WeakFormFPSolver(BaseFPSolver):
         if rhs_robin is not None:
             rhs = rhs + rhs_robin
         M_next = spsolve(A_system, rhs)
+        # Issue #1489 (S3): the adjoint FP step clips negative density (INJECTING mass, like the forward
+        # path) but was FULLY SILENT — an adjoint-coupled solve could drift in mass with no diagnostic.
+        # Surface it once per solve (solver-level latch, since this step is stateless per call).
+        if not self._adjoint_clip_warned:
+            injected = -float((self._M @ np.minimum(M_next, 0.0)).sum())
+            total = float((self._M @ np.maximum(M_next, 0.0)).sum())
+            if injected > 1e-6 * max(total, 1e-300):
+                logger.warning(
+                    "Adjoint FP positivity clip injected mass %.2e (%.1f%% of total): the transposed "
+                    "advection is not monotone, so mass conservation is violated in the adjoint solve "
+                    "(Issue #1489).",
+                    injected,
+                    100.0 * injected / max(total, 1e-300),
+                )
+                self._adjoint_clip_warned = True
         return np.maximum(M_next, 0.0).reshape(M_current.shape)
