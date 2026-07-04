@@ -21,6 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FEM P2 Dirichlet BC handling hardened** (Issue #1489, F2–F5). Four defects in the FEM Dirichlet
+  path, all silent-wrong or crash on P2 / multi-wall BCs: (F2) the whole-boundary fallback used
+  `mesh.boundary_nodes()` (vertices only), leaving every P2 boundary EDGE DOF free — Dirichlet
+  enforced on half the boundary; now resolves via `basis.get_dofs(boundary_facets)`. (F3) a *named*
+  boundary absent from the mesh silently fell back to the WHOLE boundary (a one-wall Dirichlet applied
+  everywhere); now raises — only `boundary=None` means the whole boundary. (F4) a corner DOF shared by
+  two Dirichlet segments was double-counted in the condensation lift (and scatter-back was
+  order-dependent); now deduped, with a fail-loud on conflicting values. (F5) a callable Dirichlet on
+  P2 indexed `mesh.p` (vertex coords) with DOF indices `>= n_vertices` → `IndexError`; now evaluates at
+  `basis.doflocs`. Pinned by `test_fem_p2_dirichlet_f2f5` + updated `test_fem_solver_path`.
+
+- **FEM basis creation fails loud on a degenerate element** (Issue #1489, F7). `create_basis` now
+  checks per-element measures and raises on a near-zero (zero-area / collinear / coincident-node)
+  element instead of letting `skfem.asm` fill its stiffness/mass rows with NaN/Inf and only emit a
+  numpy `RuntimeWarning` — a silent corruption of the solve. An inverted-but-nonzero element still
+  integrates its true area (skfem uses `|detDF|`), so only genuine degeneracy is guarded. Pinned by
+  `test_fem_degenerate_assembly_f7`.
+
 - **FEM mesh adapter fails loud on mismatched connectivity + unsupported mesh class** (Issue #1489,
   F6/F8). `meshdata_to_skfem` now validates the connectivity node-count against the element family
   before construction — a 4-node quad mislabeled `triangle` was silently truncated by scikit-fem to
