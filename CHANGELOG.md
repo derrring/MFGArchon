@@ -230,6 +230,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gradients legitimately tolerate poor pointwise conditioning — so the guard is on the caller, NOT the
   shared basis (SCNI stays exempt). Pinned by `test_mls_conditioning_guard_1485`.
 
+- **Paired-solver duality guards: factory conflict + streamline-diffusion mismatch** (Issue #1489).
+  `create_paired_solvers` reconciled the duality-critical meshless keys (`streamline_diffusion_scale`,
+  `delta`, `collocation_points`, `n_gauss`, `nitsche_penalty`, `domain`, ...) only via a fill-missing
+  loop; when a key was set in BOTH configs with CONFLICTING values, both branches fell through and the
+  mismatch was silently kept -> a half-stabilized pair with `A_FP != A_HJB^T`. It now raises on a
+  conflict. Separately, the `FixedPointIterator` now fails loud when a hand-built weak-form pair has
+  mismatched `streamline_diffusion_scale` (the SD block would be added to one side only). Pinned by
+  `test_factory_sd_duality`.
+
 - **Coupling fail-loud guards: finite mass-blowup + P2 DOF-count** (Issue #1489, S5/S6, shared coupling).
   (S5) `FixedPointIterator`'s divergence guard checked only `np.isfinite`, so a FINITE but blown-up
   density (the pre-overflow divergence, total mass ~5.9e4) passed and was reported converged/valid; a

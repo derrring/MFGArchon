@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from mfgarchon.types import NumericalScheme
 from mfgarchon.utils import DualityStatus, check_solver_duality
 
@@ -354,10 +356,25 @@ def _create_meshless_galerkin_pair(
         "nitsche_penalty",
         "streamline_diffusion_scale",
     ):
-        if key in hjb_config and key not in fp_config:
+        in_hjb = key in hjb_config
+        in_fp = key in fp_config
+        if in_hjb and not in_fp:
             fp_config[key] = hjb_config[key]
-        elif key in fp_config and key not in hjb_config:
+        elif in_fp and not in_hjb:
             hjb_config[key] = fp_config[key]
+        elif in_hjb and in_fp:
+            # Issue #1489: the key is set in BOTH configs. If the values conflict, the pair would build
+            # DIFFERENT operators and the Type-A transpose identity A_FP = A_HJB^T breaks silently. The
+            # former fill-missing loop only handled the "present in one" case; a conflict fell through
+            # both branches and was kept. Fail loud instead.
+            a, b = hjb_config[key], fp_config[key]
+            same = np.array_equal(a, b) if isinstance(a, np.ndarray) or isinstance(b, np.ndarray) else a == b
+            if not same:
+                raise ValueError(
+                    f"create_paired_solvers: conflicting '{key}' across the HJB/FP pair (hjb={a!r}, "
+                    f"fp={b!r}). This duality-critical key must match, or A_FP = A_HJB^T breaks. Pass it "
+                    f"in one config (it threads to the other) or set the same value in both (Issue #1489)."
+                )
 
     hjb_solver = MeshlessGalerkinHJBSolver(problem, **hjb_config)
     fp_solver = MeshlessGalerkinFPSolver(problem, **fp_config)
