@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
+  fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
+  np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean
+  field** for the whole run -- 'converged' and returned a policy/Q the user trusts as an MFG solution
+  while the coupling channel that DEFINES a mean-field game was dead. `get_population_state` is a required
+  capability, not optional backend detection, so all six sites (current + next state, across DDPG/TD3/SAC)
+  now fail loud via `getattr` + `callable` + `raise` (the repo's no-hasattr-duck-typing rule). Found by the
+  repo anti-pattern audit. Pinned by `test_mean_field_rl_requires_pop_state_1508`.
+
 - **Strict-adjoint FP-FDM step injected mass via a silent clip** (Issue #1507, silent-wrong, clipping).
   `solve_fp_step_adjoint_mode` clipped negative density to 0 with no renormalization and no diagnostic;
   the transposed-HJB advection operator is not an M-matrix, so at high Péclet the solve genuinely
