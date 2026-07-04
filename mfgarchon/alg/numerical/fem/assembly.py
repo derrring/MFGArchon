@@ -78,7 +78,24 @@ def create_basis(mesh: skfem.Mesh, order: int = 1) -> skfem.Basis:
             f"Supported: P1 (order=1) and P2 (order=2) for Tri/Tet/Line/Quad/Hex."
         )
 
-    return skfem.Basis(mesh, element_cls())
+    basis = skfem.Basis(mesh, element_cls())
+
+    # Issue #1489 (F7): a degenerate element (zero-area / collinear / coincident nodes) has a ~zero
+    # measure, so assembly (skfem.asm) fills its rows with NaN/Inf entries and only emits a numpy
+    # RuntimeWarning -- never an exception -- corrupting the solve silently. Fail loud at basis
+    # creation. skfem integrates with |detDF|, so an inverted-but-nonzero element still contributes its
+    # true area; guard only the near-zero (genuinely degenerate) case, relative to the largest element.
+    measures = np.asarray(basis.dx).sum(axis=1)  # per-element measure = integral of 1 over each element
+    scale = float(measures.max()) if measures.size else 0.0
+    bad = np.nonzero(measures < 1e-12 * max(scale, 1e-300))[0]
+    if bad.size:
+        raise ValueError(
+            f"{bad.size} degenerate mesh element(s) with near-zero measure: e.g. element {int(bad[0])} "
+            f"has measure {measures[bad[0]]:.3e} vs a max of {scale:.3e}. Zero-area / collinear / "
+            f"coincident-node elements produce NaN stiffness and mass entries silently under assembly "
+            f"(Issue #1489). Remove the degenerate / sliver elements from the mesh."
+        )
+    return basis
 
 
 def assemble_stiffness(basis: skfem.Basis) -> sparse.csr_matrix:
