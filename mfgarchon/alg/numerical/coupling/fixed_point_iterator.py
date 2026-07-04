@@ -164,10 +164,12 @@ class FixedPointIterator(BaseCouplingIterator):
         # Issue #1489 (SD-duality): a weak-form pair must share streamline_diffusion_scale, else the
         # symmetric SD block is added to only one side and the Type-A transpose identity A_FP = A_HJB^T
         # breaks silently. The factory (create_paired_solvers) threads this across the pair; guard the
-        # hand-built case here too. Only weak-form solvers carry `_sd_scale`; others return None (skip).
+        # hand-built case here too. Only weak-form solvers carry a NUMERIC `_sd_scale`; others lack the
+        # attr (getattr -> None). Compare only real numbers so bare Mock() test doubles -- whose
+        # `_sd_scale` auto-resolves to an unequal Mock, not None -- do not trip the guard (#1489).
         hjb_sd = getattr(hjb_solver, "_sd_scale", None)
         fp_sd = getattr(fp_solver, "_sd_scale", None)
-        if hjb_sd is not None and fp_sd is not None and hjb_sd != fp_sd:
+        if isinstance(hjb_sd, (int, float)) and isinstance(fp_sd, (int, float)) and hjb_sd != fp_sd:
             raise ValueError(
                 f"Paired HJB / FP solvers have different streamline_diffusion_scale (HJB={hjb_sd}, "
                 f"FP={fp_sd}); the SD block would be added to only one side and A_FP = A_HJB^T breaks "
