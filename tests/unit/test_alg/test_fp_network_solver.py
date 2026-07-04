@@ -6,6 +6,8 @@ Tests the Fokker-Planck solver for Mean Field Games on network/graph structures,
 including density evolution, mass conservation, and various time discretization schemes.
 """
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -686,6 +688,44 @@ class TestFPNetworkSolverAbsorbingNodeBC:
         solver = FPNetworkSolver(problem)  # no raise
         assert solver.num_nodes == 9
         assert solver._mass_changing_bc is False
+
+
+class TestFPNetworkDiffusionDefaultWarning1532:
+    """Issue #1532: relying on the D=0.1 diffusion fallback (no explicit ``diffusion_coefficient`` and
+    no ``volatility_field``) must WARN — otherwise the physical diffusion silently decouples from the
+    problem (NetworkMFGProblem carries no sigma to source from). Byte-value 0.1 is retained for
+    backward compatibility; only the silence is fixed."""
+
+    @staticmethod
+    def _setup():
+        net = GridNetwork(width=3, height=3)
+        net.create_network()
+        problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=10)
+        n = problem.num_nodes
+        return problem, np.ones(n) / n, np.zeros((problem.Nt, n))
+
+    def test_defaulted_diffusion_warns_on_solve(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem)  # diffusion defaulted -> fallback 0.1
+        assert solver.diffusion_coefficient == 0.1  # value unchanged (backward compatible)
+        with pytest.warns(UserWarning, match="1532"):
+            solver.solve_fp_system(m0, U)
+
+    def test_explicit_diffusion_does_not_warn(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem, diffusion_coefficient=0.05)
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            solver.solve_fp_system(m0, U)
+        assert not any("1532" in str(w.message) for w in rec)
+
+    def test_volatility_field_suppresses_warning(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem)  # defaulted, but sigma given at solve time
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            solver.solve_fp_system(m0, U, volatility_field=0.3)
+        assert not any("1532" in str(w.message) for w in rec)
 
 
 if __name__ == "__main__":
