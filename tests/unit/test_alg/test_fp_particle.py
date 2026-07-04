@@ -77,6 +77,23 @@ class TestFPParticleSolverBasic:
         assert solver.fp_method_name == "Particle"
         assert solver.num_particles == 100
 
+    def test_nd_kde_failure_fails_loud_like_1d(self):
+        """Issue #1513: an nD KDE failure must raise RuntimeError (matching the 1D twin
+        _estimate_density_from_particles), not silently substitute a histogram estimate. Dimension
+        must not decide raise-vs-swallow."""
+        problem = Simple2DMFGProblem()
+        solver = FPParticleSolver(problem, num_particles=50)
+
+        def _boom(*args, **kwargs):
+            raise np.linalg.LinAlgError("forced singular KDE")
+
+        solver._apply_kde_method_nd = _boom  # force the KDE core to fail
+        particles = np.random.RandomState(0).rand(50, 2)
+        coords = [np.linspace(0.0, 1.0, 11), np.linspace(0.0, 1.0, 11)]
+        bounds = [(0.0, 1.0), (0.0, 1.0)]
+        with pytest.raises(RuntimeError, match="KDE density estimation failed"):
+            solver._estimate_density_from_particles_nd(particles, coords, bounds)
+
     def test_output_shape(self):
         """Test that solver outputs density on grid."""
         problem = Simple2DMFGProblem()
