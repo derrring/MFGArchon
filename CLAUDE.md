@@ -161,11 +161,14 @@ Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examp
 
 ### Pre-commit / pre-merge checks
 ```bash
-pytest tests/unit/test_affected_module.py   # + the FULL suite before sign-off, not just -k subsets
+pytest tests/unit/test_affected_module.py            # iterate on the affected module
+pytest tests/ -n auto -m "not slow and not benchmark and not experimental and not optional_torch and not environment"   # full local sign-off — MATCH CI (parallel + skip slow)
 ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affected_module.py
 mypy mfgarchon/affected_module.py
 ```
-CI has two tiers: a fast **Unified Quality Assurance** (subset) and the full **CI/CD Pipeline → Test Suite** (slow tests, runs on push to main). *Fast-tier-green ≠ pipeline-green* — the full Test Suite is authoritative.
+⚠️ Run the full suite **the way CI does** — `-n auto` (xdist parallel) + skip `slow`. A bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop.
+
+**CI shape (light gate):** the fast **`ci.yml` Test Suite** (parallel, skip-slow) gates PRs; **`nightly.yml`** runs the full suite incl. `@slow` at 03:00. So *fast-tier-green ≠ full-green* — a slow-only or `@slow`-only regression surfaces in nightly, not on the PR. Before a release, run the full suite locally or trigger nightly on demand.
 
 ---
 

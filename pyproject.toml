@@ -129,6 +129,7 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-benchmark",
     "pytest-xdist>=3.5",
+    "pytest-timeout>=2.1",
     "ruff>=0.6.0",
     "mypy>=1.5",
     "pre-commit>=2.0",
@@ -260,21 +261,6 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 
 # Mathematical variables and naming conventions handled by Ruff configuration
-
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--verbose",
-    "--cov=mfgarchon",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "-x",  # Stop on first failure for faster debugging
-    "--tb=short",  # Shorter tracebacks
-]
 
 [tool.coverage.run]
 source = ["mfgarchon"]
