@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Strict-adjoint FP-FDM step injected mass via a silent clip** (Issue #1507, silent-wrong, clipping).
+  `solve_fp_step_adjoint_mode` clipped negative density to 0 with no renormalization and no diagnostic;
+  the transposed-HJB advection operator is not an M-matrix, so at high Péclet the solve genuinely
+  undershoots, the clip ADDS mass, and the caller stores it raw -> total mass drifts up across timesteps
+  and the coupled fixed point converges self-consistently wrong. Now renormalizes to the pre-step total
+  (physical density conserves mass; the operator-level adjoint A_FP=A_HJB^T is unchanged) and emits a
+  threshold-gated warning, matching the sibling FP paths (fp_semi_lagrangian / fp_fdm_time_stepping,
+  Issues #880/#886). Found by the repo anti-pattern audit. Pinned by `test_fp_adjoint_clip_mass_1507`.
+
 - **MLS moment-matrix conditioning guard on the Gauss-assembly path** (Issue #1485). A near-singular MLS
   moment matrix (too few nodes covering a quadrature point's support -> rank-deficient) produced silently
   garbage shape functions that `np.linalg.solve` does not flag (near-, not exactly, singular). The
