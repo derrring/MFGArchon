@@ -149,18 +149,29 @@ class NetworkHamiltonian(HamiltonianBase):
             du = p[node] - p[neighbor]  # u_i - u_j
             control_cost += 0.5 * w * max(du, 0.0) ** 2
 
+        # Issue #1470: the p-independent source (V + coupling) is single-sourced in `source_term` and
+        # consumed both here (control + source) and by the HJB solver's control isolation.
+        return control_cost + self.source_term(node, m, t)
+
+    def source_term(self, x, m, t=0.0):
+        """The p-independent source ``V(node) + f(node, m)`` — the RHS in ``-u_t + H_control = source``.
+
+        Single source consumed by ``_default_hamiltonian`` (as ``control + source``) AND by
+        ``hjb_network._source_terms`` (Issue #1470): computing it once here removes the multi-population
+        fork where the HJB used to re-derive ``V + density_coupling`` on the raw stacked ``m`` while the
+        Hamiltonian used ``_extract_own_density`` — so ``h_control = h_total - source`` now isolates the
+        control exactly. Coupling ``f(node, m, t)`` reads ``node_interaction_func`` on the FULL density
+        (cross-coupling), else defaults to quadratic node congestion ``0.5 * m_own[node]^2``.
+        ``_extract_own_density`` is the identity for single-population ``m`` (byte-identical) and slices
+        the own population for stacked ``K*N`` ``m``.
+        """
+        node = int(np.asarray(x).flat[0])
         V = float(self._node_potential(node, t)) if self._node_potential else 0.0
-        # Coupling f(node, m, t). Reconciled with the live NetworkMFGProblem.density_coupling
-        # (Issue #1470): read node_interaction_func on the FULL density, and default to the
-        # quadratic node congestion 0.5 * m_own[node]^2. The previous default of 0.0 (and reading
-        # the dead `congestion_func` field) silently diverged from the method used on every live
-        # solve — see Issue #910. `_extract_own_density` is the identity for single-population m
-        # (so byte-identical to the method) and slices the own population for stacked K*N m.
         if self._node_interaction is not None:
             f_m = float(self._node_interaction(node, m, t))
         else:
             f_m = 0.5 * float(self._extract_own_density(m)[node]) ** 2
-        return control_cost + V + f_m
+        return V + f_m
 
     def optimal_control(self, x, m, p, t=0.0):
         """Optimal transition rates from node x (Issue #1474).
