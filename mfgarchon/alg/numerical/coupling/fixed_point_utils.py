@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.utils.solver_result import SolverResult
 
 
@@ -501,6 +502,7 @@ def resolve_fp_drift_kwargs(
     *,
     h_class: object | None = None,
     cross_density: np.ndarray | None = None,
+    drift_convention: DriftConvention | None = None,
 ) -> tuple[dict, bool]:
     """Resolve how the value function enters ``solve_fp_system`` (drift vs potential).
 
@@ -514,10 +516,21 @@ def resolve_fp_drift_kwargs(
     Resolution rules (matching the FP-solver semantics post-v0.18.6):
         - Explicit ``drift_field`` override → pass it through verbatim (velocity).
         - Smooth separable $H$ → pass $U$ as ``potential_field`` (the FP solver derives
-          the velocity internally; ``potential_field`` is the deprecated-but-routing
-          U-potential entry point).
-        - Non-smooth $H$ → pass the face-centered velocity $\\alpha^*$ as ``drift_field``
-          (see :func:`compute_fp_velocity_field`).
+          the velocity $\\alpha = -c\\,\\nabla U$ internally; ``potential_field`` is the
+          deprecated-but-routing U-potential entry point).
+        - Non-smooth $H$ on a ``VELOCITY``-channel solver → pass the face-centered velocity
+          $\\alpha^*$ as ``drift_field`` (see :func:`compute_fp_velocity_field`).
+        - Non-smooth $H$ on a ``VALUE_FUNCTION`` solver (only ``potential_field=U``) → raise:
+          the solver forms $\\alpha = -c\\,\\nabla U$ internally, but a non-smooth $H$'s FP
+          drift is the Clarke optimal control $\\alpha^*$, not $-c\\,\\nabla U$, so $U$ cannot
+          represent it (Issue #1489 S1).
+
+    Issue #1489 (S1): the drift convention cannot be inferred from parameter presence.
+    ``drift_field`` is a real velocity channel on some solvers (fp_fvm / fp_gfdm / FPFDM)
+    but a DEPRECATED ALIAS for ``potential_field=U`` on the weak-form family
+    (``DriftConvention.VALUE_FUNCTION``). The routing therefore keys on the solver-declared
+    ``drift_convention`` when the caller supplies it, and falls back byte-for-byte to the
+    pre-#1489 param-presence gate when it is ``None`` (un-updated callers are unaffected).
 
     Args:
         problem: MFG problem (provides ``hamiltonian_class``, ``geometry``, ``dt``).
@@ -533,6 +546,12 @@ def resolve_fp_drift_kwargs(
             (Issue #1071, lock-faithful). Forwarded to :func:`compute_fp_velocity_field` so the
             non-smooth velocity path sees the other populations' density — replacing the retired
             ``BoundHamiltonian`` wrapper. ``None`` => single-population own density.
+        drift_convention: The FP solver's declared ``_drift_convention`` (Issue #1489 S1). When
+            given, it disambiguates the ``drift_field`` channel: ``DriftConvention.VELOCITY`` means
+            ``drift_field`` is a true velocity $\\alpha^*$; ``DriftConvention.VALUE_FUNCTION`` means
+            the solver only consumes $U$ (its ``drift_field`` is a deprecated alias for
+            ``potential_field``), so a non-smooth $H$ raises instead of silently advecting $U$.
+            ``None`` (caller did not thread it) => the pre-#1489 param-presence gate, byte-identical.
 
     Returns:
         ``(drift_kwargs, use_positional_U)`` where ``drift_kwargs`` is one of ``{}``,
@@ -551,6 +570,7 @@ def resolve_fp_drift_kwargs(
         if "drift_field" in params:
             drift_kwargs["drift_field"] = drift_field_override
     else:
+        from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
         H_class = h_class if h_class is not None else problem.hamiltonian_class
@@ -558,14 +578,50 @@ def resolve_fp_drift_kwargs(
         # Hamiltonian plus the cross_density trajectory, so the smoothness dispatch reads H_class
         # directly — a smooth-separable H takes potential_field=U (cross-coupling enters via the
         # HJB, not the FP drift). The former BoundHamiltonian-unwrap (getattr `_inner`) is gone.
-        use_velocity = (
-            H_class is not None
-            and "drift_field" in params
-            and not (isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth())
-        )
+        #
+        # A smooth separable H is the only case whose FP drift the potential_field=U channel can
+        # represent: the solver recovers alpha = -c*grad(U) internally. A non-smooth (or
+        # non-separable) H has a set-valued / Clarke optimal control alpha* that is NOT -c*grad(U),
+        # so it can only enter a VELOCITY-channel solver as a precomputed alpha*.
+        h_is_smooth_separable = isinstance(H_class, SeparableHamiltonian) and H_class.control_cost.is_smooth()
+
+        # Issue #1489 (S1): param presence cannot disambiguate the drift convention — `drift_field`
+        # is a real velocity channel on some solvers but a deprecated alias for `potential_field=U`
+        # on the weak-form family (VALUE_FUNCTION). Key on the solver-declared `drift_convention`
+        # when the caller threads it; when it is None, reproduce the pre-#1489 param-presence gate
+        # byte-for-byte so un-updated callers are unaffected.
+        if drift_convention is None:
+            use_velocity = H_class is not None and "drift_field" in params and not h_is_smooth_separable
+        else:
+            use_velocity = (
+                drift_convention == DriftConvention.VELOCITY
+                and H_class is not None
+                and "drift_field" in params
+                and not h_is_smooth_separable
+            )
+
         if use_velocity:
             drift_kwargs["drift_field"] = compute_fp_velocity_field(problem, U, M, H_class, cross_density=cross_density)
         elif "potential_field" in params:
+            # Issue #1489 (S1): a VALUE_FUNCTION solver consumes `potential_field=U` and forms its
+            # drift as alpha = -c*grad(U) internally. That is valid ONLY for a smooth separable H.
+            # For a non-smooth / non-separable H the true FP drift is the Clarke optimal control
+            # alpha* (set-valued at kinks), NOT -c*grad(U), which U cannot represent — passing it
+            # would silently solve the wrong problem, so fail loud. The determination is only safe
+            # when the caller declared a convention; with drift_convention=None we keep the legacy
+            # potential_field=U behavior (byte-identical pre-#1489 fallback).
+            if drift_convention is not None and not h_is_smooth_separable:
+                raise ValueError(
+                    "Cannot route the value function as FP drift: this FP solver takes "
+                    "`potential_field=U` (DriftConvention.VALUE_FUNCTION) and forms its drift as "
+                    "alpha = -c*grad(U) internally, but the problem's Hamiltonian is non-smooth / "
+                    "non-separable, whose optimal control alpha* is the (set-valued) Clarke control, "
+                    "not -c*grad(U). U cannot represent this drift, so passing it would silently solve "
+                    "the wrong problem. Use a VELOCITY-channel FP solver that accepts a precomputed "
+                    "alpha* (e.g. FPGFDMSolver / FPFVMSolver / FPFDMSolver) with an explicit "
+                    "`drift_field=alpha*`, or use a smooth separable Hamiltonian. Issue #1489 (S1); "
+                    "see also #1420."
+                )
             drift_kwargs["potential_field"] = U
         elif "drift_field" in params:
             # Issue #1420 (G-017 V2): the FP solver exposes only `drift_field` (the velocity α*,

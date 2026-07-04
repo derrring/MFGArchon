@@ -604,7 +604,12 @@ class FixedPointIterator(BaseCouplingIterator):
                 # the Newton MFGResidual so both coupling paths use one convention.
                 if self._fp_sig_params is not None:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self.problem, self._fp_sig_params, self.drift_field, U_new, M_old
+                        self.problem,
+                        self._fp_sig_params,
+                        self.drift_field,
+                        U_new,
+                        M_old,
+                        drift_convention=self._fp_drift_convention,
                     )
                     kwargs.update(drift_kwargs)
                     if use_positional_U:

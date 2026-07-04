@@ -34,7 +34,7 @@ from .source_composition import compose_fp_source, compose_hjb_source
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
 
@@ -126,6 +126,8 @@ class MFGResidual:
         # Cache solver method signatures for parameter passing
         self._hjb_sig_params: set[str] | None = None
         self._fp_sig_params: set[str] | None = None
+        # Issue #1489 (S1): FP solver's declared drift-input convention (routes drift vs potential).
+        self._fp_drift_convention: DriftConvention | None = None
         self._cache_solver_signatures()
 
         # Evaluation counter for diagnostics
@@ -179,6 +181,9 @@ class MFGResidual:
             self._fp_sig_params = set(sig.parameters.keys())
         except AttributeError:
             self._fp_sig_params = None
+
+        # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
+        self._fp_drift_convention = getattr(self.fp_solver, "_drift_convention", None)
 
     def compute_hjb_output(self, M: NDArray, U_prev: NDArray) -> NDArray:
         """
@@ -255,7 +260,9 @@ class MFGResidual:
             if fp_source is not None:
                 kwargs["source_term"] = fp_source
 
-        drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(self.problem, params, self.drift_field, U, M)
+        drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
+            self.problem, params, self.drift_field, U, M, drift_convention=self._fp_drift_convention
+        )
         kwargs.update(drift_kwargs)
 
         if use_positional_U:
