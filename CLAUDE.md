@@ -131,7 +131,7 @@ Deprecated code MUST immediately redirect to the new standard: (1) old API calls
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
 1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
-2. `CHANGELOG.md` — promote `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`, re-add empty `## [Unreleased]`. Keep-a-Changelog categories (`### Added/Changed/Deprecated/Removed (BREAKING)/Fixed`); reference the PR (+ issue if bug-driven).
+2. `CHANGELOG.md` — collate the `changelog.d/` fragments into a new `## [X.Y.Z] - YYYY-MM-DD` section: `python scripts/collate_changelog.py --version X.Y.Z --date $(date +%F)`, paste it under the new heading, then `git rm changelog.d/*.md` (keep the README). Keep-a-Changelog categories. *One-time (#1521):* the pre-#1521 `## [Unreleased]` block is promoted by hand at the first release after #1521; from then on fragments own the changelog.
 
 Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow/__init__.py` (independent subpackage version), backend version reporting (external libs), historical version notes in docstrings. Sanity check: `grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/` — only `pyproject.toml:11` should change.
 
@@ -139,6 +139,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
 - **Never commit directly to `main`** (branch protection enforces this). Create the PR when you push; delete merged branches.
 - **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless. The two pains that made granularity costly — CHANGELOG conflicts and red-main — are being removed by *mechanism* (fragment changelog + a full-suite PR gate; see the enforcement issues), so this stays a convenience call, not a rule to remember.
+- **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the full **Test Suite** is authoritative (see *Pre-commit / pre-merge checks*); a green fast tier alone is not enough.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
