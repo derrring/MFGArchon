@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AdjointConsistentProvider: sigma/diffusion name collision** (Issue #1512, hardcoded-convention). The
+  provider's parameter (and state key) was named `diffusion` but held the SDE volatility σ -- it is
+  squared internally (`-(σ²)/2`) -- colliding with the codebase-wide convention where `problem.diffusion`
+  = D = σ²/2. Wiring `AdjointConsistentProvider(diffusion=problem.diffusion)` would silently give a Robin
+  BC wrong by σ²/4. Reverted the mistaken v0.17.0 `sigma`->`diffusion` rename: **`sigma` is now canonical**
+  (matching `problem.sigma`), and `diffusion` is the deprecated alias (still σ). Found by the repo
+  anti-pattern audit. Pinned by the updated `test_bc_providers`.
+
 - **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
   fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
   np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean

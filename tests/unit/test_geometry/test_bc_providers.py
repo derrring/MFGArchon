@@ -99,10 +99,10 @@ class TestAdjointConsistentProvider:
         with pytest.raises(ValueError, match="side must be one of"):
             AdjointConsistentProvider(side="invalid", diffusion=0.2)
 
-    def test_init_diffusion_optional(self):
-        """Diffusion can be None (read from state)."""
-        provider = AdjointConsistentProvider(side="left", diffusion=None)
-        assert provider.diffusion is None
+    def test_init_sigma_optional(self):
+        """sigma can be None (read from state)."""
+        provider = AdjointConsistentProvider(side="left", sigma=None)
+        assert provider.sigma is None
 
     def test_compute_with_exponential_density(self):
         """Test computation with exponential density m(x) = exp(-x).
@@ -212,14 +212,15 @@ class TestAdjointConsistentProvider:
         repr_str = repr(provider_no_diff)
         assert "from_state" in repr_str
 
-    def test_deprecated_sigma_parameter(self):
-        """Legacy 'sigma' parameter should work with deprecation warning."""
+    def test_deprecated_diffusion_parameter(self):
+        """Issue #1512: 'diffusion' is now the deprecated alias (a misnomer -- it holds sigma, not the
+        PDE D = sigma^2/2); it must still work, emit a deprecation warning, and map to canonical sigma."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            provider = AdjointConsistentProvider(side="left", sigma=0.2)
+            provider = AdjointConsistentProvider(side="left", diffusion=0.2)
             assert len(w) == 1
             assert "deprecated" in str(w[0].message).lower()
-            assert provider.diffusion == 0.2  # Should map to diffusion
+            assert provider.sigma == 0.2  # maps to the canonical sigma
 
 
 # =============================================================================
@@ -387,15 +388,16 @@ class TestProviderEdgeCases:
         expected = -(0.2**2) / 2 * 1.0  # d(ln m)/dn_left ~ 1
         assert abs(g - expected) < 0.01
 
-    def test_sigma_and_diffusion_both_set_diffusion_wins(self):
-        """When both sigma and diffusion are set, diffusion takes priority."""
+    def test_sigma_and_diffusion_both_set_sigma_wins(self):
+        """Issue #1512: sigma is canonical, so when both are set sigma wins and the deprecated
+        diffusion is ignored (passing diffusion at all still triggers the deprecation warning)."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            provider = AdjointConsistentProvider(side="left", diffusion=0.3, sigma=0.5)
-            # sigma triggers warning
+            provider = AdjointConsistentProvider(side="left", sigma=0.5, diffusion=0.3)
+            # diffusion (deprecated) triggers the warning
             assert len(w) == 1
-            # diffusion=0.3 should take priority over sigma=0.5
-            assert provider.diffusion == 0.3
+            # canonical sigma=0.5 wins over the deprecated diffusion=0.3
+            assert provider.sigma == 0.5
 
     def test_resolve_provider_with_ndarray_return(self):
         """resolve_provider should pass through ndarray returns from compute()."""
