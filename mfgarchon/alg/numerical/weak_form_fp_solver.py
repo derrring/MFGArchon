@@ -139,7 +139,22 @@ class WeakFormFPSolver(BaseFPSolver):
         D = self._diffusion_coefficient(volatility_field)
 
         M = np.zeros((Nt + 1, N))
-        M[0] = m_initial[:N] if len(m_initial) >= N else np.pad(m_initial, (0, N - len(m_initial)))
+        # Issue #1489 (S4): the initial density must live on ALL N solver DOFs. The former length-only
+        # reconciliation (truncate if longer, zero-pad if shorter) silently produced a WRONG IC: for P2
+        # the caller resolves m_initial on num_vertices (< n_dof = vertices + edges), so np.pad zero-
+        # filled every edge-midpoint DOF. Fail loud instead of silently mis-placing the density. (A
+        # same-length-but-reordered IC still cannot be detected here — evaluate m_initial on the
+        # solver's dof_coordinates, self._disc.dof_coordinates, upstream.)
+        if len(m_initial) != N:
+            raise ValueError(
+                f"Initial density has {len(m_initial)} entries but the discretization has {N} DOFs. The "
+                f"weak-form FP solver needs m_initial on all {N} DOFs (basis.doflocs / "
+                f"self._disc.dof_coordinates), not a subset — this is the P2-vs-P1 DOF-count mismatch "
+                f"(P2 adds edge/face DOFs beyond the vertices). Silently padding/truncating would zero-fill "
+                f"the missing DOFs and mis-place the density (Issue #1489). Evaluate m_initial on the "
+                f"solver's dof_coordinates."
+            )
+        M[0] = m_initial
 
         A_base = self._M / dt + D * self._K
         A_extra, rhs_extra = self._weak_bc_terms(D)
