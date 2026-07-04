@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **HJB-FDM tensor diffusion applied sigma linearly instead of sigma^2** (Issue #1506, silent-wrong,
+  parallel-path). The anisotropic/tensor path passed raw `sigma_diag` (per-axis sigma) as `axis_weights`
+  into `weighted_laplacian_with_bc`, whose stencil uses the weights LINEARLY and requires `w_d = sigma_d^2`;
+  with the `0.5` factor the effective diffusion was `0.5*sigma` instead of `0.5*sigma^2` (~3.3x wrong at
+  sigma=0.3), so a per-axis / tensor `volatility_field` silently discretized a different HJB PDE than the
+  scalar path (which squares via `diffusion_from_volatility`). The tensor path now routes `sigma_diag`
+  through the same single-source converter. Found by the repo anti-pattern audit. Pinned by
+  `test_hjb_scalar_and_diagonal_tensor_diffusion_agree` (scalar == diag-tensor to machine precision).
+
 - **MLS moment-matrix conditioning guard on the Gauss-assembly path** (Issue #1485). A near-singular MLS
   moment matrix (too few nodes covering a quadrature point's support -> rank-deficient) produced silently
   garbage shape functions that `np.linalg.solve` does not flag (near-, not exactly, singular). The
