@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Paired-solver duality guards: factory conflict + streamline-diffusion mismatch** (Issue #1489).
+  `create_paired_solvers` reconciled the duality-critical meshless keys (`streamline_diffusion_scale`,
+  `delta`, `collocation_points`, `n_gauss`, `nitsche_penalty`, `domain`, ...) only via a fill-missing
+  loop; when a key was set in BOTH configs with CONFLICTING values, both branches fell through and the
+  mismatch was silently kept -> a half-stabilized pair with `A_FP != A_HJB^T`. It now raises on a
+  conflict. Separately, the `FixedPointIterator` now fails loud when a hand-built weak-form pair has
+  mismatched `streamline_diffusion_scale` (the SD block would be added to one side only). Pinned by
+  `test_factory_sd_duality`.
+
 - **FP drift is now routed by the solver-declared `_drift_convention`, failing loud for a
   non-smooth Hamiltonian on a `VALUE_FUNCTION` solver** (Issue #1489 S1; see also #1420).
   `resolve_fp_drift_kwargs` gated `use_velocity` on `"drift_field" in params`, but parameter

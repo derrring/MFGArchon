@@ -161,6 +161,19 @@ class FixedPointIterator(BaseCouplingIterator):
         self.fp_solver = fp_solver
         self.config = config
 
+        # Issue #1489 (SD-duality): a weak-form pair must share streamline_diffusion_scale, else the
+        # symmetric SD block is added to only one side and the Type-A transpose identity A_FP = A_HJB^T
+        # breaks silently. The factory (create_paired_solvers) threads this across the pair; guard the
+        # hand-built case here too. Only weak-form solvers carry `_sd_scale`; others return None (skip).
+        hjb_sd = getattr(hjb_solver, "_sd_scale", None)
+        fp_sd = getattr(fp_solver, "_sd_scale", None)
+        if hjb_sd is not None and fp_sd is not None and hjb_sd != fp_sd:
+            raise ValueError(
+                f"Paired HJB / FP solvers have different streamline_diffusion_scale (HJB={hjb_sd}, "
+                f"FP={fp_sd}); the SD block would be added to only one side and A_FP = A_HJB^T breaks "
+                f"(Issue #1489). Use create_paired_solvers (which threads it), or set the same scale on both."
+            )
+
         # PDE coefficient overrides (Phase 2.3)
         self.volatility_field = volatility_field
         self.drift_field = drift_field
