@@ -466,7 +466,20 @@ class FixedPointIterator(BaseCouplingIterator):
             # shuttles (Nt+1, N) arrays. grid_spacing is a benign unit weight here -- the L2
             # convergence is a *relative* tolerance, so a constant volume element does not change
             # convergence detection (only the absolute L2 value, which is not compared to anything).
-            shape = (int(self.problem.num_spatial_points),)
+            # Issue #1489 (S6): size the state on the SOLVER's DOF count, not num_spatial_points
+            # (= num_vertices). For P2 FEM n_dof = vertices + edges > num_vertices, so a
+            # (Nt+1, num_vertices) state mismatches the (Nt+1, n_dof) the solver returns -> an opaque
+            # broadcast ValueError deep in the damping step. Prefer the solver n_dof and fail loud on a
+            # HJB/FP DOF mismatch (a coupled solve needs a shared DOF layout).
+            fp_n = getattr(self.fp_solver, "n_dof", None)
+            hjb_n = getattr(self.hjb_solver, "n_dof", None)
+            if fp_n is not None and hjb_n is not None and fp_n != hjb_n:
+                raise ValueError(
+                    f"Paired HJB and FP solvers report different DOF counts (HJB n_dof={hjb_n}, "
+                    f"FP n_dof={fp_n}); a coupled solve needs a shared DOF layout (Issue #1489)."
+                )
+            n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
+            shape = (int(n),)
             grid_spacing = 1.0
         else:
             raise ValueError(
@@ -664,6 +677,25 @@ class FixedPointIterator(BaseCouplingIterator):
                     grid_1d = self.problem.geometry.get_spatial_grid().ravel()
                     mu_k = ParticleMeasure.from_density(self.M[-1], grid_1d)
                     measure_field.add_snapshot(mu_k, self.U.copy())
+
+                # Issue #1489 (S5): a FINITE but blown-up density (e.g. the pre-overflow divergence,
+                # total mass ~5.9e4 before it becomes inf) passes the isfinite check below and would be
+                # reported converged/valid. Guard the magnitude too: a total mass that has GROWN by many
+                # orders relative to the initial is diverging (a legitimate solve conserves, or under
+                # absorbing BC decreases — an increase of 1e4x is a blow-up, not a valid state).
+                m0_mass = float(np.sum(np.abs(self.M[0]))) if self.M.size else 0.0
+                m_mass = float(np.sum(np.abs(M_new)))
+                if np.isfinite(m_mass) and m_mass > 1e4 * (m0_mass + 1e-300):
+                    convergence_reason = "diverged_mass_blowup"
+                    logger.warning(
+                        "FP density blew up in iteration %d (total |M|=%.2e, %.1e x the initial); the "
+                        "coupled solve is diverging — enable stabilization. Terminating early (Issue #1489).",
+                        iiter + 1,
+                        m_mass,
+                        m_mass / (m0_mass + 1e-300),
+                    )
+                    self.iterations_run = iiter + 1
+                    break
 
                 # Issue #688: Early termination on NaN/Inf (runtime safety)
                 # Issue #1078: identify HJB vs FP source for triage
