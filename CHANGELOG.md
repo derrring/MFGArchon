@@ -192,6 +192,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FEM HJB Newton correction now condenses with a homogeneous boundary lift** (Issue #1489, S2). The
+  Newton correction `delta` has `delta[dofs]=0` (`U_current` already carries `u=g`), but it was
+  condensed through the linear-solve lifting `rhs_int -= A[int,dofs]@g` with the actual Dirichlet
+  values `g` — the spurious `-A[int,dofs]@g` term corrupted **every interior value** whenever a
+  **nonzero** Dirichlet BC was used with `use_newton=True` (it vanished for `g=0`, which is why every
+  prior FEM Dirichlet test — all `value=0.0` — missed it). `_apply_bc_to_system` /
+  `apply_bc_to_fem_system` gain a `homogeneous` flag; the Newton branch passes `homogeneous=True`,
+  the linear solve keeps `g`. Pinned by `test_fem_newton_dirichlet_s2`. SHARED base (FEM-manifest).
+||||||| dec1f01b
+
 - **Meshless-Galerkin FP gradient recovery now fails loud on a near-zero lumped mass** (Issue #1486 /
   #1252). `MeshlessGalerkinFPSolver._gradient_operators` kept a private copy of the silent clamp
   `M_lumped[M_lumped < 1e-15] = 1e-15` that #1252 **removed** from the shared base

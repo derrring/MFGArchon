@@ -67,8 +67,13 @@ class WeakFormHJBSolver(BaseHJBSolver):
     def _dirichlet_dofs_and_values(self) -> tuple[NDArray, NDArray]:
         raise NotImplementedError
 
-    def _apply_bc_to_system(self, matrix, rhs):
-        """Condense the linear system onto interior dofs for Dirichlet BC."""
+    def _apply_bc_to_system(self, matrix, rhs, homogeneous=False):
+        """Condense the linear system onto interior dofs for Dirichlet BC.
+
+        ``homogeneous=True`` zeroes the boundary lift — used for the Newton CORRECTION, whose boundary
+        increment is 0 (``U_current`` already carries ``u=g``). Lifting the correction by the actual
+        Dirichlet values ``g`` adds a spurious ``-A[int,dofs]@g`` term that corrupts the interior
+        update (Issue #1489)."""
         raise NotImplementedError
 
     def _weak_bc_terms(self, D: float):
@@ -234,7 +239,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
             if condense:
                 residual[d_dofs] = 0.0
-                J_bc, res_bc = self._apply_bc_to_system(J, -residual)
+                # Issue #1489 (S2): the Newton correction has a homogeneous boundary increment
+                # (delta[d_dofs]=0, since U_current already carries u=g from line ~198), so condense
+                # with a ZERO boundary lift. Lifting by g here corrupts every interior value.
+                J_bc, res_bc = self._apply_bc_to_system(J, -residual, homogeneous=True)
                 delta = np.zeros(N)
                 delta[interior] = spsolve(J_bc, res_bc)
             else:

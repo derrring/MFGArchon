@@ -150,10 +150,10 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
         return get_dirichlet_dofs_and_values(self._basis, self._bc)
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(self, matrix, rhs, homogeneous=False):
         from .bc_adapter import apply_bc_to_fem_system
 
-        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, homogeneous=homogeneous)
 
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass
