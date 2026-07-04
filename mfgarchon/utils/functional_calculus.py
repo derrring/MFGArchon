@@ -235,10 +235,14 @@ class FiniteDifferenceFunctionalDerivative(FunctionalDerivative):
                 derivative = (U_perturbed - U_baseline) / self.epsilon
             elif self.method == "central":
                 # Central difference: (U[m + ε/2 δ_y] - U[m - ε/2 δ_y]) / ε
-                # Backward perturbation
+                # Backward perturbation. Issue #1514: do NOT clip to non-negativity here. The forward
+                # perturbation is uncapped and the quotient divides by the full ε, so clipping only the
+                # backward step (which fires when measure[y_idx] < ε/2, i.e. in density tails) makes the
+                # stencil asymmetric -> a silently biased derivative exactly at low-density points. The
+                # module's own contract (see the forward branch above) is that a perturbed measure need
+                # NOT be a probability measure, so the clip is both wrong and unnecessary.
                 backward_measure = measure.copy()
                 backward_measure[y_idx] -= self.epsilon / 2
-                backward_measure = np.maximum(backward_measure, 0)  # Keep non-negative
 
                 U_backward = functional(backward_measure)
 

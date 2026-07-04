@@ -87,6 +87,23 @@ class TestFiniteDifferenceFunctionalDerivative:
         # Central should be more accurate
         assert central_error < forward_error
 
+    def test_central_difference_unbiased_at_low_density_tail(self):
+        """Issue #1514: the central stencil must not clip ONLY the backward perturbation, which biases
+        the derivative where measure[y] < epsilon/2 (density tails). For a LINEAR functional the
+        derivative is exactly V everywhere; the old one-sided np.maximum(.,0) clip gave ~0.6*V at a
+        tail point (backward step truncated to measure[y] while dividing by the full epsilon)."""
+        v = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        def linear_functional(m):
+            return float(np.sum(v * m))
+
+        eps = 1e-4
+        # index 0 is a density tail below epsilon/2 = 5e-5 -> the old clip fired here
+        measure = np.array([1e-5, 0.3, 0.3, 0.2, 0.2])
+        op = FiniteDifferenceFunctionalDerivative(epsilon=eps, method="central")
+        deriv = op.compute(linear_functional, measure, None, np.arange(5))
+        np.testing.assert_allclose(deriv, v, rtol=1e-9)  # exact for a linear functional, incl. the tail
+
     def test_second_order_derivative(self):
         """Test second-order functional derivative computation."""
 
