@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MLS moment-matrix conditioning guard on the Gauss-assembly path** (Issue #1485). A near-singular MLS
+  moment matrix (too few nodes covering a quadrature point's support -> rank-deficient) produced silently
+  garbage shape functions that `np.linalg.solve` does not flag (near-, not exactly, singular). The
+  Gauss-quadrature assembly now passes `check_conditioning=True` to `shape_functions_and_grads` and fails
+  loud (`LinAlgError`) when `cond(M) > 1e12`. The SCNI path leaves the flag `False` — its nodal-smoothed
+  gradients legitimately tolerate poor pointwise conditioning — so the guard is on the caller, NOT the
+  shared basis (SCNI stays exempt). Pinned by `test_mls_conditioning_guard_1485`.
+
 - **FP drift is now routed by the solver-declared `_drift_convention`, failing loud for a
   non-smooth Hamiltonian on a `VALUE_FUNCTION` solver** (Issue #1489 S1; see also #1420).
   `resolve_fp_drift_kwargs` gated `use_velocity` on `"drift_field" in params`, but parameter
