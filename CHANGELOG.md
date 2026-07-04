@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
+  fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
+  np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean
+  field** for the whole run -- 'converged' and returned a policy/Q the user trusts as an MFG solution
+  while the coupling channel that DEFINES a mean-field game was dead. `get_population_state` is a required
+  capability, not optional backend detection, so all six sites (current + next state, across DDPG/TD3/SAC)
+  now fail loud via `getattr` + `callable` + `raise` (the repo's no-hasattr-duck-typing rule). Found by the
+  repo anti-pattern audit. Pinned by `test_mean_field_rl_requires_pop_state_1508`.
+
 - **MLS moment-matrix conditioning guard on the Gauss-assembly path** (Issue #1485). A near-singular MLS
   moment matrix (too few nodes covering a quadrature point's support -> rank-deficient) produced silently
   garbage shape functions that `np.linalg.solve` does not flag (near-, not exactly, singular). The
