@@ -57,5 +57,9 @@ jobs:
 
       - name: Fast test suite
         run: |
+          # Exclude the same platform-specific dirs the main CI excludes (MPS/plotting failures on
+          # Linux runners) — otherwise every version fails identically on a non-version issue.
           pytest tests/unit -q -p no:cacheprovider \
+            --ignore=tests/unit/test_backends/ \
+            --ignore=tests/unit/test_visualization/ \
             -m "not slow and not benchmark and not experimental and not optional_torch and not environment"
