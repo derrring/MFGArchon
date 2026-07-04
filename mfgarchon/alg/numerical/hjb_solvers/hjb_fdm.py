@@ -908,11 +908,20 @@ class HJBFDMSolver(BaseHJBSolver):
 
             bc = self.get_boundary_conditions()
             spacings = list(self.problem.geometry.get_grid_spacing())
+            # Issue #1506: axis_weights are the diffusion diagonal D_d = sigma_d^2/2, NOT raw sigma_d --
+            # weighted_laplacian applies axis_weights LINEARLY (w_d * d2u/dx_d^2). Route sigma_diag through
+            # the SAME single-source converter the scalar path uses (diffusion_from_volatility -> sigma^2/2
+            # elementwise); passing raw sigma_diag with a 0.5 factor silently solved 0.5*sigma instead of
+            # 0.5*sigma^2, so a per-axis/tensor volatility array discretized the wrong HJB PDE.
             aniso_lap = weighted_laplacian_with_bc(
-                U.reshape(self.shape), spacings, axis_weights=sigma_diag, bc=bc, time=time
+                U.reshape(self.shape),
+                spacings,
+                axis_weights=diffusion_from_volatility(sigma_diag, kind="field"),
+                bc=bc,
+                time=time,
             ).ravel()
 
-            H_values_flat = H_convective - 0.5 * aniso_lap
+            H_values_flat = H_convective - aniso_lap
 
         else:
             # Scalar diffusion mode — batch HamiltonianBase (Issue #784)
