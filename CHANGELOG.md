@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MLS moment-matrix conditioning guard on the Gauss-assembly path** (Issue #1485). A near-singular MLS
+  moment matrix (too few nodes covering a quadrature point's support -> rank-deficient) produced silently
+  garbage shape functions that `np.linalg.solve` does not flag (near-, not exactly, singular). The
+  Gauss-quadrature assembly now passes `check_conditioning=True` to `shape_functions_and_grads` and fails
+  loud (`LinAlgError`) when `cond(M) > 1e12`. The SCNI path leaves the flag `False` — its nodal-smoothed
+  gradients legitimately tolerate poor pointwise conditioning — so the guard is on the caller, NOT the
+  shared basis (SCNI stays exempt). Pinned by `test_mls_conditioning_guard_1485`.
+
 - **Paired-solver duality guards: factory conflict + streamline-diffusion mismatch** (Issue #1489).
   `create_paired_solvers` reconciled the duality-critical meshless keys (`streamline_diffusion_scale`,
   `delta`, `collocation_points`, `n_gauss`, `nitsche_penalty`, `domain`, ...) only via a fill-missing
