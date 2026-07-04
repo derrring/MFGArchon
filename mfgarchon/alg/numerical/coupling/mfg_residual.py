@@ -211,10 +211,21 @@ class MFGResidual:
                 kwargs["show_progress"] = False
             if "volatility_field" in self._hjb_sig_params and self.volatility_field is not None:
                 kwargs["volatility_field"] = self.volatility_field
-            if "source_term" in self._hjb_sig_params:
-                hjb_source = compose_hjb_source(self.problem, M, U_prev)
-                if hjb_source is not None:
-                    kwargs["source_term"] = hjb_source
+            # Issue #1430: fail loud like the Picard path (Issue #1424) instead of silently
+            # dropping a composed source the solver cannot accept. Compose unconditionally; if
+            # the problem defines a source but this HJB solver's signature lacks source_term,
+            # raise rather than solve the wrong problem. (Picard: base_mfg._build_hjb_kwargs.)
+            hjb_source = compose_hjb_source(self.problem, M, U_prev)
+            if hjb_source is not None:
+                if "source_term" not in self._hjb_sig_params:
+                    raise NotImplementedError(
+                        f"{type(self.hjb_solver).__name__}.solve_hjb_system does not accept "
+                        f"'source_term', but the problem defines a source / nonlocal / obstacle term. "
+                        f"Silently dropping it in the Newton residual would solve the wrong problem "
+                        f"(Issues #1424, #1430) — the Newton path must fail loud like Picard. Use an "
+                        f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator / obstacle."
+                    )
+                kwargs["source_term"] = hjb_source
 
         return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
 
@@ -255,10 +266,18 @@ class MFGResidual:
         if M is None:
             M = np.broadcast_to(self.M_initial, self.solution_shape) if self.M_initial is not None else U
 
-        if "source_term" in params:
-            fp_source = compose_fp_source(self.problem, M, U)
-            if fp_source is not None:
-                kwargs["source_term"] = fp_source
+        # Issue #1430: fail loud like Picard (Issue #1424) rather than silently dropping a
+        # composed FP source the solver cannot accept.
+        fp_source = compose_fp_source(self.problem, M, U)
+        if fp_source is not None:
+            if "source_term" not in params:
+                raise NotImplementedError(
+                    f"{type(self.fp_solver).__name__}.solve_fp_system does not accept 'source_term', "
+                    f"but the problem defines an FP source term. Silently dropping it in the Newton "
+                    f"residual would solve the wrong problem (Issues #1424, #1430) — the Newton path "
+                    f"must fail loud like Picard. Use an FDM FP solver, or remove source_term_fp."
+                )
+            kwargs["source_term"] = fp_source
 
         drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
             self.problem, params, self.drift_field, U, M, drift_convention=self._fp_drift_convention
