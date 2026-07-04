@@ -244,6 +244,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RuntimeError; request a histogram explicitly via `kde_method` rather than a silent fallback. Found by
   the repo anti-pattern audit. Pinned by `test_nd_kde_failure_fails_loud_like_1d`.
 
+- **Central-difference functional derivative was biased in density tails** (Issue #1514, clipping). The
+  central-mode `FiniteDifferenceFunctionalDerivative` clipped only the BACKWARD perturbation
+  (`np.maximum(., 0)`) while the forward step was uncapped and the quotient divided by the full ε, so at
+  points where `measure[y] < ε/2` (routine in distribution tails) the stencil became asymmetric ->
+  silently biased δU/δm. The clip is dropped: the module's own contract is that a perturbed measure need
+  not be a probability measure. Found by the repo anti-pattern audit. Pinned by
+  `test_central_difference_unbiased_at_low_density_tail`.
+
 - **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
   fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
   np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean
