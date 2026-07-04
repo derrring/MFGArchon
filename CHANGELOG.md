@@ -192,6 +192,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Weak-form FP positivity-clip monitor reports cumulative injection; adjoint clip no longer silent**
+  (Issue #1489, S3). The forward monitor was a one-shot latch that measured only the FIRST
+  threshold-exceeding step (typically the smallest), then stopped — while the clip kept injecting mass
+  every step, silently under-reporting the true conservation violation (observed ~400x under-report in
+  the divergence regime). It now accumulates the injected mass across all steps and logs the CUMULATIVE
+  total + per-step max at solve end. Separately, `solve_fp_step_adjoint_mode` clipped negative density
+  (injecting mass) with NO monitor at all — an adjoint-coupled solve could drift in mass silently; it
+  now warns once per solve. Reporting-only (numerics byte-identical; the clip itself is the disclosed
+  non-M-matrix limitation). Shared base -> FEM + meshless. Pinned by `test_s3_clip_cumulative`.
+
 - **FEM solvers fail loud with a clear message on a non-mesh geometry** (Issue #1489 / #1493).
   `HJBFEMSolver`/`FPFEMSolver.__init__` accessed `problem.geometry.mesh_data` directly, so a
   `TensorProductGrid` (no `mesh_data` attribute) raised a cryptic `AttributeError` *before* the
