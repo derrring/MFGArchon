@@ -40,6 +40,7 @@ def apply_bc_to_fem_system(
     rhs: NDArray,
     basis: skfem.Basis,
     bc: BoundaryConditions | None,
+    homogeneous: bool = False,
 ) -> tuple[sparse.csr_matrix, NDArray]:
     """
     Apply BoundaryConditions to assembled FEM system (A, rhs).
@@ -111,7 +112,11 @@ def apply_bc_to_fem_system(
     if dirichlet_dofs:
         # Condense: eliminate Dirichlet DOFs from system
         dof_array = np.array(dirichlet_dofs, dtype=int)
-        val_array = np.array(dirichlet_values, dtype=float)
+        # Issue #1489 (S2): homogeneous=True zeroes the boundary lift. The Newton CORRECTION has a
+        # homogeneous boundary increment (delta[dofs]=0, since U_current already carries u=g), so
+        # lifting by the actual Dirichlet values g would add a spurious -A[int,dofs]@g term and
+        # corrupt every interior value. The linear solve keeps homogeneous=False (u=g is the solution).
+        val_array = np.zeros(len(dirichlet_dofs)) if homogeneous else np.array(dirichlet_values, dtype=float)
         interior = np.setdiff1d(np.arange(A.shape[0]), dof_array)
 
         A_int = A[np.ix_(interior, interior)]

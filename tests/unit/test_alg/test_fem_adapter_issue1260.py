@@ -144,3 +144,27 @@ def test_tagged_meshdata_to_skfem_no_crash():
     assert mesh.boundaries is not None, "boundaries dict must be populated"
     assert "region_1" in mesh.boundaries, "region_1 must be registered"
     assert "region_2" in mesh.boundaries, "region_2 must be registered"
+
+
+def test_meshdata_to_skfem_fails_loud_on_wrong_node_count():
+    """Issue #1489 (F6): a connectivity whose node count mismatches the element family must raise,
+    not let scikit-fem silently truncate it to a wrong mesh (a 4-node quad mislabeled 'triangle'
+    would be sliced to 3 rows -> a half-domain mesh with no error)."""
+    import pytest
+
+    import numpy as np
+
+    from mfgarchon.alg.numerical.fem.mesh_adapter import meshdata_to_skfem
+    from mfgarchon.geometry.meshes.mesh_data import MeshData
+
+    md = MeshData(
+        vertices=np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        elements=np.array([[0, 1, 2, 3]]),  # 4 nodes -> valid quad, MISLABELED as triangle
+        element_type="triangle",
+        boundary_tags=np.array([], dtype=np.int64),
+        element_tags=np.array([0], dtype=np.int64),
+        boundary_faces=np.empty((0, 2), dtype=np.int64),
+        dimension=2,
+    )
+    with pytest.raises(ValueError, match="expects 3 nodes"):
+        meshdata_to_skfem(md)

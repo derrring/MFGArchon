@@ -96,6 +96,18 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
             f"Supported: {list(mesh_classes.keys())}"
         )
 
+    # Issue #1489 (F6): scikit-fem silently TRUNCATES a connectivity with the wrong node count (e.g. a
+    # 4-node quad mislabeled 'triangle' is sliced to 3 rows -> a wrong half-domain mesh, no error).
+    # Validate the connectivity width against the element family before constructing.
+    expected_nodes = {"triangle": 3, "tetrahedron": 4, "quad": 4, "hexahedron": 8, "line": 2}
+    n_expected = expected_nodes[mesh_data.element_type]
+    if elements.shape[0] != n_expected:
+        raise ValueError(
+            f"element_type '{mesh_data.element_type}' expects {n_expected} nodes per element, but the "
+            f"connectivity has {elements.shape[0]} (elements array shape {tuple(mesh_data.elements.shape)}). "
+            f"scikit-fem would silently truncate this to a wrong mesh (#1489)."
+        )
+
     mesh = mesh_cls(nodes, elements)
 
     # Transfer boundary tags if available (gmsh physical-group path)
@@ -181,7 +193,12 @@ def skfem_to_meshdata(mesh: skfem.Mesh) -> MeshData:
             break
 
     if element_type is None:
-        element_type = "unknown"
+        # Issue #1489 (F8): fail loud rather than stamping 'unknown', which produces a mislabeled
+        # MeshData that only fails (confusingly) on a later re-conversion.
+        raise ValueError(
+            f"Unsupported scikit-fem mesh class {type(mesh).__name__!r} for MeshData conversion "
+            f"(#1489). Supported: MeshTri, MeshTet, MeshQuad, MeshHex, MeshLine."
+        )
 
     dim = mesh.p.shape[0]
 
