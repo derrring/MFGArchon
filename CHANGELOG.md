@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FEEC infrastructure scaffold — mixed structure-preserving discretization** (toward symplectic MFG).
+  New `mfgarchon/alg/numerical/feec/`: a `MixedWeakFormDiscretization` protocol (block-operator contract
+  — the mixed sibling of the scalar-nodal `WeakFormDiscretization`) and `RaviartThomasDiscretization`
+  (`RT0 × P0` on simplicial meshes) providing the structure-preserving building blocks — the divergence
+  coupling `B` (exact per element -> local conservation), the symmetric `H(div)` flux mass, the diagonal
+  `L2` density mass. `SchemeFamily.FEEC` registered. Deliberately a **scaffold**: the coupled saddle-point
+  solve, positivity/limiting, the nonlinear-Hamiltonian coupling, and a symplectic time integrator are
+  research steps and fail loud (not a half-built divergent parallel path). Roadmap + guardrails in the
+  Joplin Dev note "FEEC + symplectic MFG — infrastructure roadmap".
+
 ### Changed
 
 - **FEM mesh adapter fails loud on mismatched connectivity + unsupported mesh class** (Issue #1489,
