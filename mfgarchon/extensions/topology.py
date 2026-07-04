@@ -214,6 +214,14 @@ class NetworkMFGComponents(MFGComponents):
 
     This extends the continuous MFGComponents to handle discrete network structures,
     including support for Lagrangian formulations and trajectory measures.
+
+    Default model
+    -------------
+    When ``hamiltonian_func`` / ``node_interaction_func`` are omitted, the network Hamiltonian defaults
+    to the finite-state quadratic-congestion form
+    ``H = 0.5*sum_j w_ij*max(u_i - u_j, 0)^2 + V(node) + 0.5*m[node]^2`` (control cost + node potential +
+    quadratic node congestion). A ``None`` field means "use this default", **not** "omit the term".
+    Provide the callables to override (see ``NetworkHamiltonian``).
     """
 
     # Network-specific Hamiltonian (depends on node states and edge flows)
@@ -241,9 +249,13 @@ class NetworkMFGComponents(MFGComponents):
     # (Issue #1471) — construct e.g. GridNetwork(..., boundary_conditions=GraphBCConfig(...)). The
     # former `boundary_nodes` / `boundary_values_func` fields bypassed the #1456 BC single source.
 
-    # Flow dynamics parameters
-    diffusion_coefficient: float = 1.0  # Diffusion strength
-    drift_coefficient: float = 1.0  # Drift/advection strength
+    # Flow dynamics parameters — DEAD FIELDS (Issue #1470). Never read by any solver: the network FP
+    # diffusion is FPNetworkSolver's own knob (Issue #1532) and the drift is fp_drift_coefficient, so
+    # setting these on the components is SILENTLY IGNORED. Kept only for dataclass back-compat (a test
+    # still asserts their storage, test_network_mfg_solvers.py); purge in the #1470 Strand A method-knob
+    # cleanup (they are exactly the "solver config leaked onto the problem spec" the scoping flagged).
+    diffusion_coefficient: float = 1.0  # DEAD — never read (see above; #1470)
+    drift_coefficient: float = 1.0  # DEAD — never read (see above; #1470)
 
     # Network-specific coupling
     node_interaction_func: Callable | None = None  # Local node interactions
