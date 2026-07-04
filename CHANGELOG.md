@@ -184,6 +184,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FEM solvers fail loud with a clear message on a non-mesh geometry** (Issue #1489 / #1493).
+  `HJBFEMSolver`/`FPFEMSolver.__init__` accessed `problem.geometry.mesh_data` directly, so a
+  `TensorProductGrid` (no `mesh_data` attribute) raised a cryptic `AttributeError` *before* the
+  `ValueError` that literally names `TensorProductGrid` — the helpful message was unreachable for its
+  own case. Now uses `getattr(..., "mesh_data", None)`, catching both the missing-attribute
+  (non-mesh geometry) and the None (ungenerated `Mesh2D`) cases, and names the actual geometry type.
+  Pinned by `test_fem_solvers_fail_loud_on_non_mesh_geometry`.
+
 - **Weak-form MFG family (FEM + meshless-Galerkin) now single-sources the FP drift from
   `fp_drift_coefficient`** (Issue #1487 / #1420, gotcha G-017). `FPFEMSolver`, `MeshlessGalerkinFPSolver`
   and `MeshlessGalerkinHJBSolver` read the raw `coupling_coefficient` (default 0.5) for the FP advection

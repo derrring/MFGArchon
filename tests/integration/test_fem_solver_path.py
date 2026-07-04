@@ -270,3 +270,29 @@ class TestFEMFacetBoundaryTags:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_fem_solvers_fail_loud_on_non_mesh_geometry():
+    """Issue #1489: a FEM solver on a non-mesh geometry (TensorProductGrid, no mesh_data attribute)
+    must raise a CLEAR ValueError naming the geometry, not a cryptic AttributeError. The prior guard
+    accessed `.mesh_data` directly, so it AttributeError'd before the message that named TensorProductGrid."""
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    comp = MFGComponents(
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+        ),
+    )
+    problem = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+    for solver_cls in (HJBFEMSolver, FPFEMSolver):
+        with pytest.raises(ValueError, match=r"mesh_data|Mesh2D"):
+            solver_cls(problem)
