@@ -135,6 +135,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # _init_solver_signatures. One set per regime k because regimes may use different FP
         # solver types.
         self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        # Issue #1489 (S1): per-regime FP drift-input convention, parallel to _fp_sig_params_k, so
+        # resolve_fp_drift_kwargs routes each regime by convention rather than param presence.
+        self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
         self._max_iter = max_iterations
         self._tol = tolerance
         self._damping = damping
@@ -283,7 +286,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 fp_sig_params_k = self._fp_sig_params_k[k]
                 if fp_sig_params_k is not None:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self._problems[k], fp_sig_params_k, None, Us_new[k], Ms[k]
+                        self._problems[k],
+                        fp_sig_params_k,
+                        None,
+                        Us_new[k],
+                        Ms[k],
+                        drift_convention=self._fp_drift_convention_k[k],
                     )
                     fp_kwargs.update(drift_kwargs)
                     if use_positional_U:

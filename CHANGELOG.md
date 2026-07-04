@@ -192,6 +192,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FP drift is now routed by the solver-declared `_drift_convention`, failing loud for a
+  non-smooth Hamiltonian on a `VALUE_FUNCTION` solver** (Issue #1489 S1; see also #1420).
+  `resolve_fp_drift_kwargs` gated `use_velocity` on `"drift_field" in params`, but parameter
+  presence cannot disambiguate the drift convention: some FP solvers expose `drift_field` as a real
+  VELOCITY channel (`FPFVMSolver`/`FPGFDMSolver`/`FPFDMSolver`), while the weak-form family exposes it
+  as a DEPRECATED ALIAS for `potential_field=U` (`DriftConvention.VALUE_FUNCTION`). For a non-smooth
+  H (L1 / bounded control) on a `VALUE_FUNCTION` solver the old gate fired and set `drift_field=alpha*`
+  (a velocity), which such a solver treats as `U` and differentiates — a silently wrong drift. The
+  coupler now threads each FP solver's `_drift_convention` (cached beside its signature) into
+  `resolve_fp_drift_kwargs` at all coupling call sites (`mfg_residual`, `fixed_point_iterator`,
+  `block_iterators`, `fictitious_play`, `regime_switching_iterator`, `graph_mfg_solver`,
+  `multi_population_iterator`); a `VALUE_FUNCTION` solver with a non-smooth/non-separable H now raises
+  (its optimal control is the Clarke velocity, not `-c*grad(U)`, so `U` cannot represent it) instead of
+  solving the wrong problem. When the convention is not supplied (`drift_convention=None`) the routing
+  falls back byte-for-byte to the pre-#1489 param-presence gate, so the smooth-separable-H path
+  (`potential_field=U`) is unchanged. Pinned by `test_s1_drift_convention_routing.py`.
+
 - **FEM solvers fail loud with a clear message on a non-mesh geometry** (Issue #1489 / #1493).
   `HJBFEMSolver`/`FPFEMSolver.__init__` accessed `problem.geometry.mesh_data` directly, so a
   `TensorProductGrid` (no `mesh_data` attribute) raised a cryptic `AttributeError` *before* the

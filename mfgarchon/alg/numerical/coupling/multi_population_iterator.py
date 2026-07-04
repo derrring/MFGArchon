@@ -21,7 +21,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.multi_population import MultiPopulationProblem
 
@@ -87,6 +87,12 @@ class MultiPopulationIterator:
                 self._fp_sig_params.append(set(inspect.signature(fp.solve_fp_system).parameters))
             except (AttributeError, ValueError, TypeError):
                 self._fp_sig_params.append(None)
+
+        # Issue #1489 (S1): per-population FP drift-input convention, parallel to _fp_sig_params, so
+        # resolve_fp_drift_kwargs routes each population by convention rather than param presence.
+        self._fp_drift_convention: list[DriftConvention | None] = [
+            getattr(fp, "_drift_convention", None) for fp in fp_solvers
+        ]
 
     @property
     def damping_factor(self) -> float:
@@ -195,7 +201,14 @@ class MultiPopulationIterator:
                     M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        prob_k, self._fp_sig_params[k], None, U[k], M[k], h_class=H_k, cross_density=m_all
+                        prob_k,
+                        self._fp_sig_params[k],
+                        None,
+                        U[k],
+                        M[k],
+                        h_class=H_k,
+                        cross_density=m_all,
+                        drift_convention=self._fp_drift_convention[k],
                     )
                     if use_positional_U:
                         M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False)

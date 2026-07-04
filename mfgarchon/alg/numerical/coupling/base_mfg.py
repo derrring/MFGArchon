@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
 else:
@@ -39,6 +40,9 @@ class BaseCouplingIterator(ABC):
         self._solution_computed: bool = False
         self._hjb_sig_params: set[str] | None = None
         self._fp_sig_params: set[str] | None = None
+        # Issue #1489 (S1): the FP solver's declared drift-input convention, cached beside its
+        # signature so resolve_fp_drift_kwargs can route by convention rather than param presence.
+        self._fp_drift_convention: DriftConvention | None = None
         self._hjb_solver_name: str = "<hjb solver>"
         self._fp_solver_name: str = "<fp solver>"
 
@@ -60,6 +64,8 @@ class BaseCouplingIterator(ABC):
             self._fp_sig_params = set(sig.parameters.keys())
         except (AttributeError, ValueError):
             self._fp_sig_params = None
+        # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
+        self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 
     def _build_hjb_kwargs(
         self,

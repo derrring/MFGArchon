@@ -298,7 +298,12 @@ class BlockIterator(BaseCouplingIterator):
             # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
             # incorrect for solvers where drift_field is alpha* (e.g. FPGFDMSolver).
             drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                self.problem, self._fp_sig_params, self.drift_field, U, _M_curr
+                self.problem,
+                self._fp_sig_params,
+                self.drift_field,
+                U,
+                _M_curr,
+                drift_convention=self._fp_drift_convention,
             )
             kwargs.update(drift_kwargs)
             if use_positional_U:
