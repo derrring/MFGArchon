@@ -75,7 +75,7 @@ def apply_bc_to_fem_system(
         if segment.bc_type in (BCType.DIRICHLET,):
             # Find DOFs on this boundary segment
             dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, mesh, dofs)
+            values = _evaluate_segment_values(segment, basis, dofs)
             dirichlet_dofs.extend(dofs)
             dirichlet_values.extend(values)
 
@@ -117,6 +117,21 @@ def apply_bc_to_fem_system(
         # lifting by the actual Dirichlet values g would add a spurious -A[int,dofs]@g term and
         # corrupt every interior value. The linear solve keeps homogeneous=False (u=g is the solution).
         val_array = np.zeros(len(dirichlet_dofs)) if homogeneous else np.array(dirichlet_values, dtype=float)
+        # Issue #1489 (F4): a corner/edge DOF shared by two Dirichlet segments appears twice in the
+        # list; dedup so the condensation lift `A[int,dofs]@val` does not double-count its column (and
+        # the scatter-back is not order-dependent). Fail loud on conflicting values for the same DOF.
+        uniq, first_idx = np.unique(dof_array, return_index=True)
+        if len(uniq) != len(dof_array):
+            if not homogeneous:
+                for d in uniq:
+                    vd = val_array[dof_array == d]
+                    if not np.allclose(vd, vd[0]):
+                        raise ValueError(
+                            f"Conflicting Dirichlet values on shared DOF {int(d)}: {sorted(set(vd.tolist()))} "
+                            f"— two BC segments meet at this corner/edge with different values (Issue #1489)."
+                        )
+            dof_array = uniq
+            val_array = val_array[first_idx]
         interior = np.setdiff1d(np.arange(A.shape[0]), dof_array)
 
         A_int = A[np.ix_(interior, interior)]
@@ -149,7 +164,7 @@ def get_dirichlet_dofs_and_values(
     for segment in bc.segments:
         if segment.bc_type == BCType.DIRICHLET:
             dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, mesh, dofs)
+            values = _evaluate_segment_values(segment, basis, dofs)
             dirichlet_dofs.extend(dofs)
             dirichlet_values.extend(values)
 
@@ -179,30 +194,39 @@ def _find_segment_dofs(
     """
     boundary_name = getattr(segment, "boundary", None)
 
-    # mesh.boundaries is None when no named regions were tagged (mesh_adapter tags axis-aligned
-    # walls x_min/x_max/... for box domains; #607). Guard it so an untagged mesh falls back
-    # cleanly instead of raising "argument of type 'NoneType' is not iterable".
-    if boundary_name and mesh.boundaries and boundary_name in mesh.boundaries:
-        # Named boundary region
-        facets = mesh.boundaries[boundary_name]
-        dofs = basis.get_dofs(facets)
-        return list(dofs.flatten())
+    if boundary_name:
+        # Issue #1489 (F3): a NAMED boundary absent from the mesh is an ERROR — silently falling back
+        # to the WHOLE boundary would over-constrain (a one-wall Dirichlet applied everywhere). The
+        # mesh_adapter auto-tags axis-aligned walls (x_min/x_max/...) for box domains (#607).
+        if not mesh.boundaries or boundary_name not in mesh.boundaries:
+            available = sorted(mesh.boundaries) if mesh.boundaries else "none"
+            raise ValueError(
+                f"Dirichlet segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', "
+                f"but the mesh has no such tagged boundary (available: {available}). A missing named "
+                f"boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489). "
+                f"Tag it, or use boundary=None for the whole boundary."
+            )
+        return list(basis.get_dofs(mesh.boundaries[boundary_name]).flatten())
 
-    # Fallback: use all boundary nodes
-    return list(mesh.boundary_nodes())
+    # Issue #1489 (F2): boundary=None -> the whole boundary. Resolve DOFs via basis.get_dofs on the
+    # boundary FACETS (which includes P2 edge-midpoint DOFs), NOT mesh.boundary_nodes() (vertices only
+    # -> half the P2 boundary is left free -> Dirichlet silently enforced on vertices only).
+    return list(basis.get_dofs(mesh.boundary_facets()).flatten())
 
 
 def _evaluate_segment_values(
     segment,
-    mesh: skfem.Mesh,
+    basis: skfem.Basis,
     dofs: list[int],
 ) -> list[float]:
     """Evaluate BCSegment value at the given DOFs."""
     value = getattr(segment, "value", 0.0)
 
     if callable(value):
-        # Value is a function: evaluate at DOF coordinates
-        coords = mesh.p[:, dofs].T  # (n_dofs, dim)
+        # Issue #1489 (F5): evaluate at the DOF coordinates via basis.doflocs (a coordinate for EVERY
+        # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint
+        # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
+        coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
         return [float(value(x)) for x in coords]
     elif isinstance(value, (int, float)):
         return [float(value)] * len(dofs)

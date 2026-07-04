@@ -253,19 +253,27 @@ class TestFEMFacetBoundaryTags:
         assert np.allclose(fp._skfem_mesh.p[0, dofs], 0.0)
         assert len(dofs) < len(fp._skfem_mesh.boundary_nodes())  # a wall, not all boundary
 
-    def test_untagged_mesh_falls_back_without_crashing(self):
-        """If mesh.boundaries is None (no tagging), _find_segment_dofs must fall back to all
-        boundary nodes, not raise."""
+    def test_named_boundary_untagged_fails_loud_but_none_falls_back(self):
+        """Issue #1489 (F3): a NAMED boundary absent from mesh.boundaries must RAISE (silently applying
+        a one-wall Dirichlet to the whole boundary is the bug); only boundary=None falls back to the
+        whole boundary — and that fallback resolves ALL boundary DOFs, incl. P2 edge DOFs (F2)."""
         from mfgarchon.alg.numerical.fem.assembly import create_basis
         from mfgarchon.alg.numerical.fem.bc_adapter import _find_segment_dofs
         from mfgarchon.geometry.boundary.conditions import BCSegment, BCType
 
         mesh = skfem.MeshTri.init_sqsymmetric().refined(1)  # raw skfem mesh: boundaries is None
         assert mesh.boundaries is None
-        basis = create_basis(mesh, order=1)
-        seg = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
-        dofs = _find_segment_dofs(mesh, basis, seg)  # must not raise
-        assert len(dofs) == len(mesh.boundary_nodes())  # fell back to all boundary nodes
+        basis = create_basis(mesh, order=2)  # P2, so the fallback must include edge DOFs (F2)
+
+        named = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
+        with pytest.raises(ValueError, match=r"no such tagged boundary|entire boundary"):
+            _find_segment_dofs(mesh, basis, named)
+
+        whole = BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary=None, value=0.0)
+        dofs = _find_segment_dofs(mesh, basis, whole)  # boundary=None -> whole boundary, no raise
+        # F2: get_dofs on the boundary facets includes P2 edge-midpoint DOFs (> vertex-only count)
+        assert len(dofs) == len(set(basis.get_dofs(mesh.boundary_facets()).flatten().tolist()))
+        assert len(dofs) > len(mesh.boundary_nodes())  # strictly more than vertices-only (the F2 bug)
 
 
 if __name__ == "__main__":
