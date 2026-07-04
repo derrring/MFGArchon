@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **nD particle KDE failure swallowed to histogram while 1D raises** (Issue #1513, parallel-path). The nD
+  `_estimate_density_from_particles_nd` caught any KDE failure and silently substituted a `histogramdd`
+  estimate (weak warning), while the 1D twin `_estimate_density_from_particles` raises `RuntimeError` for
+  the same failure -- a dimension-dependent raise-vs-swallow divergence that ran a coupled solve on a
+  lower-quality estimator in nD without the user knowing. The nD path now fails loud with the same
+  RuntimeError; request a histogram explicitly via `kde_method` rather than a silent fallback. Found by
+  the repo anti-pattern audit. Pinned by `test_nd_kde_failure_fails_loud_like_1d`.
+
 - **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
   fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
   np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean

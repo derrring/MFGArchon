@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -1197,15 +1196,24 @@ class FPParticleSolver(BaseFPSolver):
             return density_reshaped
 
         except Exception as e:
-            warnings.warn(f"KDE failed in nD: {e}. Returning histogram estimate.")
-            # Fallback to histogram
-            density, _ = np.histogramdd(
-                particles,
-                bins=[len(c) for c in coordinates],
-                range=bounds,
-                density=True,
-            )
-            return density
+            # Issue #1513: fail loud, matching the 1D twin (_estimate_density_from_particles raises
+            # RuntimeError for the same failure). The former histogram fallback silently swapped the
+            # density estimator mid-solve in nD ONLY -- a dimension-dependent raise-vs-swallow
+            # divergence -- so a coupled solve ran on a lower-quality estimate without the user knowing.
+            # Same failure -> same policy. For an explicit histogram estimate, request it via kde_method
+            # rather than relying on a silent fallback.
+            raise RuntimeError(
+                f"KDE density estimation failed in FPParticleSolver (nD): {e}\n"
+                f"Number of particles: {len(particles)}\n"
+                f"Bandwidth: {self.kde_bandwidth}\n"
+                "Possible causes:\n"
+                "  1. Too few particles for reliable KDE (need at least 10-20)\n"
+                "  2. Bandwidth selection failed (try fixed bandwidth like 0.1)\n"
+                "  3. Particles outside domain bounds\n"
+                "Suggestions:\n"
+                "  - Increase number of particles (Np > 100 recommended)\n"
+                "  - Use fixed bandwidth: kde_bandwidth=0.1"
+            ) from e
 
     def _estimate_density_from_particles(self, particles_at_time_t: np.ndarray) -> np.ndarray:
         # Use geometry-aware parameter extraction
