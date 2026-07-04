@@ -1660,7 +1660,20 @@ class HJBGFDMSolver(BaseHJBSolver):
                     # Legacy fallback
                     weights = self._compute_derivative_weights_from_taylor(i)
             else:
-                weights = self._gfdm_operator.get_derivative_weights(i)
+                # Issue #1427: route non-LCR points through the adaptive-aware builder so
+                # D_lap/D_grad and self.neighborhoods share ONE source. On the default
+                # adaptive_neighborhoods=False path the builder reuses the operator's SVD
+                # verbatim, so this is byte-identical (verified: non-LCR grad/lap diff == 0.0).
+                # When adaptive enlargement fires, the builder reflects the ENLARGED
+                # neighborhood (self.neighborhoods[i]); the operator's pre-adaptive weights
+                # would silently diverge from it. Fall back to the operator only when the
+                # builder has no SVD Taylor data (QR-fallback stencils) — byte-identical there.
+                if self._neighborhood_builder is not None:
+                    weights = self._neighborhood_builder.compute_derivative_weights_from_taylor(i)
+                    if weights is None:
+                        weights = self._gfdm_operator.get_derivative_weights(i)
+                else:
+                    weights = self._gfdm_operator.get_derivative_weights(i)
 
             if weights is None:
                 continue
