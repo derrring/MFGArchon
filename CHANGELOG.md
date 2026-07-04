@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FEM mesh adapter fails loud on mismatched connectivity + unsupported mesh class** (Issue #1489,
+  F6/F8). `meshdata_to_skfem` now validates the connectivity node-count against the element family
+  before construction — a 4-node quad mislabeled `triangle` was silently truncated by scikit-fem to
+  3 nodes (a wrong half-domain mesh, no error) — and `skfem_to_meshdata` raises on an unsupported
+  scikit-fem class instead of stamping `element_type="unknown"` (which failed confusingly on a later
+  re-conversion). Pinned by `test_meshdata_to_skfem_fails_loud_on_wrong_node_count`. Found by the
+  FEM infrastructure audit.
+
 - **`HJBSemiLagrangianSolver`, `FPSLJacobianSolver`, `FPGFDMSolver` join the BC-capability gate**
   (Issue #1456, rollout — completes the continuum solvers). Each declares its honest supported set
   `{NO_FLUX, NEUMANN, PERIODIC}` and validates the resolved BC at construction. These were the
@@ -192,6 +200,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prior FEM Dirichlet test — all `value=0.0` — missed it). `_apply_bc_to_system` /
   `apply_bc_to_fem_system` gain a `homogeneous` flag; the Newton branch passes `homogeneous=True`,
   the linear solve keeps `g`. Pinned by `test_fem_newton_dirichlet_s2`. SHARED base (FEM-manifest).
+||||||| dec1f01b
+
+- **Meshless-Galerkin FP gradient recovery now fails loud on a near-zero lumped mass** (Issue #1486 /
+  #1252). `MeshlessGalerkinFPSolver._gradient_operators` kept a private copy of the silent clamp
+  `M_lumped[M_lumped < 1e-15] = 1e-15` that #1252 **removed** from the shared base
+  (`weak_form_hjb_solver._build_gradient_operators`) — the clamp made `1/M_lumped ~1e15` and
+  multiplied the recovered gradient into garbage, silently. It now raises (relative guard
+  `m_min < 1e-12·m_max`, matching the base) — a vanishing MLS row sum means a node whose support
+  barely overlaps the cloud (degenerate / under-covered). A parallel-path single-source regression;
+  pinned by `test_gradient_recovery_fails_loud_on_near_zero_lumped_mass`.
 
 - **Weak-form MFG family (FEM + meshless-Galerkin) now single-sources the FP drift from
   `fp_drift_coefficient`** (Issue #1487 / #1420, gotcha G-017). `FPFEMSolver`, `MeshlessGalerkinFPSolver`
