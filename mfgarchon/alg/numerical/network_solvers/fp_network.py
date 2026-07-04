@@ -23,6 +23,7 @@ Key algorithms:
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -78,7 +79,7 @@ class FPNetworkSolver(BaseFPSolver):
         self,
         problem: NetworkMFGProblem,
         scheme: str = "explicit",
-        diffusion_coefficient: float = 0.1,
+        diffusion_coefficient: float | None = None,
         cfl_factor: float = 0.5,
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
@@ -90,7 +91,9 @@ class FPNetworkSolver(BaseFPSolver):
         Args:
             problem: Network MFG problem instance
             scheme: Time discretization ("explicit", "implicit", "upwind")
-            diffusion_coefficient: Network diffusion coefficient σ²/2
+            diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), falls
+                back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility_field`
+                to solve_fp_system) for correct physics.
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
@@ -115,7 +118,12 @@ class FPNetworkSolver(BaseFPSolver):
             self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
 
         self.scheme = scheme
-        self.diffusion_coefficient = diffusion_coefficient
+        # Issue #1532: no silent physical default. The network diffusion D=sigma^2/2 is decoupled
+        # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
+        # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
+        # falls back to 0.1, but the solve WARNS when that fallback is silently relied on.
+        self._diffusion_was_defaulted = diffusion_coefficient is None
+        self.diffusion_coefficient = 0.1 if diffusion_coefficient is None else diffusion_coefficient
         self.cfl_factor = cfl_factor
         self.max_iterations = max_iterations
         self.tolerance = tolerance
@@ -250,7 +258,17 @@ class FPNetworkSolver(BaseFPSolver):
 
         # Handle volatility_field parameter
         if volatility_field is None:
-            # Use self.diffusion_coefficient (backward compatible)
+            # Issue #1532: warn when the physical diffusion is neither given here nor at construction
+            # — the solve then runs at the D=0.1 fallback, decoupled from the problem's physics.
+            if self._diffusion_was_defaulted:
+                warnings.warn(
+                    "FPNetworkSolver: network diffusion defaulted to D=0.1, decoupled from the "
+                    "problem's physics (NetworkMFGProblem carries no sigma). Pass "
+                    "diffusion_coefficient=... at construction or volatility_field=sigma to "
+                    "solve_fp_system for correct physics (Issue #1532).",
+                    UserWarning,
+                    stacklevel=2,
+                )
             effective_diffusion = self.diffusion_coefficient
         elif isinstance(volatility_field, (int, float)):
             # Issue #1429 (S0-15): volatility_field is the SDE volatility sigma (the base_fp
