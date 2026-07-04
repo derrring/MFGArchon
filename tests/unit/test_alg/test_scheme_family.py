@@ -47,10 +47,11 @@ class TestSchemeFamilyEnum:
     def test_enum_iteration(self):
         """Test that enum can be iterated."""
         families = list(SchemeFamily)
-        assert len(families) == 8
+        assert len(families) == 9  # FDM, SL, FVM, FEM, GFDM, MESHLESS_GALERKIN, FEEC, PINN, GENERIC
         assert SchemeFamily.FDM in families
         assert SchemeFamily.FEM in families
         assert SchemeFamily.MESHLESS_GALERKIN in families
+        assert SchemeFamily.FEEC in families  # Issue #1502 (FEEC scaffold)
         assert SchemeFamily.GENERIC in families
 
 

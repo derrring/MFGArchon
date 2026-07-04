@@ -222,6 +222,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI hotfix: two unreleased-cycle regressions on main** (found by the full CI/CD Pipeline, missed by the
+  fast tier). `SchemeFamily.FEEC` (#1502) made the enum 9 members -> updated `test_enum_iteration`. The
+  SD-duality guard (#1489/#1504) compared `getattr(solver, "_sd_scale", None)`, which resolves to an
+  unequal Mock (not None) for bare `Mock()` test doubles and tripped the guard -> now compares only real
+  numeric SD-scales (`isinstance(., (int, float))`), robust for production and inert for mocks.
+
 - **Mean-field RL (DDPG/TD3/SAC) silently zero-filled the population state** (Issue #1508, silent-wrong,
   fail-silent). A `hasattr(env, 'get_population_state')` guard whose else-branch set `pop_state =
   np.zeros(...)` meant an env lacking the method trained actor/critic on an **identically-zero mean
