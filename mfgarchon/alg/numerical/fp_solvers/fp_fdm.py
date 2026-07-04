@@ -735,9 +735,29 @@ class FPFDMSolver(BaseFPSolver):
         # Solve linear system
         M_next_flat = sparse.linalg.spsolve(A_system, b_rhs)
 
-        # Reshape and ensure non-negativity
+        # Reshape and ensure non-negativity.
         M_next = M_next_flat.reshape(shape)
+        # Issue #1507: A_advection_T (the transposed HJB advection) is NOT an M-matrix, so at high
+        # Péclet the solve undershoots negative; clipping to 0 ADDS mass. The caller stores this raw
+        # with no mass check, so ∫m drifts up across timesteps and the coupled fixed point converges
+        # self-consistently wrong. Renormalize to the pre-step total (the physical density conserves
+        # mass; the operator-level adjoint A_FP=A_HJB^T is unchanged) and warn when the clip is
+        # non-trivial -- matching fp_semi_lagrangian / fp_fdm_time_stepping (Issues #880/#886), so a
+        # diverging solve is surfaced instead of silently reported as a valid conserved density.
+        mass_before = float(M_current.sum())
+        neg_mass = float(-np.minimum(M_next, 0.0).sum())  # magnitude of the clipped negatives (>= 0)
         M_next = np.maximum(M_next, 0.0)
+        mass_after_clip = float(M_next.sum())
+        if mass_after_clip > 1e-15:
+            M_next *= mass_before / mass_after_clip
+        if neg_mass > 1e-9 * max(mass_before, 1e-300):
+            logger.warning(
+                "Strict-adjoint FP step clipped %.3e negative mass (%.1f%% of the total) then "
+                "renormalized: the adjoint advection operator is not an M-matrix at this Péclet number "
+                "(Issue #1507). Persistent large clips indicate a diverging coupled solve.",
+                neg_mass,
+                100.0 * neg_mass / max(mass_before, 1e-300),
+            )
 
         return M_next
 
