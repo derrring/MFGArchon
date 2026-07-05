@@ -224,12 +224,29 @@ class NetworkHamiltonian(HamiltonianBase):
         return grad
 
     def dm(self, x, m, p, t=0.0):
-        """dH/dm at node x."""
+        """dH/dm at node x. Issue #1470 Strand A: the default node congestion has the EXACT analytic
+        derivative ``d/dm (0.5 * m_own[node]^2) = m_own[node]`` (own-population slice, matching
+        ``coupling_value``); a custom ``node_interaction_func`` has no analytic form here, so uses a
+        node-wise central finite difference of the coupling. This is the single source for
+        ``NetworkMFGProblem.hamiltonian_dm``.
+        """
+        node = int(np.asarray(x).flat[0])
         if self._hamiltonian_dm_func is not None:
-            node = int(np.asarray(x).flat[0])
             neighbors = self.network_data.get_neighbors(node)
             return float(self._hamiltonian_dm_func(node, neighbors, np.atleast_1d(m), np.atleast_1d(p), t))
-        return self._finite_diff_dm(x, m, p, t)
+        if self._node_interaction is None:
+            return float(self._extract_own_density(np.atleast_1d(m))[node])
+        # Custom node_interaction_func: central finite difference of the coupling in the OWN node
+        # component of the full density. The base HamiltonianBase._finite_diff_dm collapses m to a
+        # scalar (np.mean), which breaks node-indexed interaction funcs (m[node] on a length-1 array
+        # -> IndexError) — #1537 review. Difference coupling_value on the full vector instead.
+        m_arr = np.atleast_1d(np.asarray(m, dtype=float))
+        eps = 1e-7
+        m_plus = m_arr.copy()
+        m_minus = m_arr.copy()
+        m_plus[node] += eps
+        m_minus[node] -= eps
+        return (self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
 
 
 @dataclass
@@ -273,14 +290,6 @@ class NetworkMFGComponents(MFGComponents):
     # Node boundary conditions are owned by the graph geometry (GraphGeometry), not components
     # (Issue #1471) — construct e.g. GridNetwork(..., boundary_conditions=GraphBCConfig(...)). The
     # former `boundary_nodes` / `boundary_values_func` fields bypassed the #1456 BC single source.
-
-    # Flow dynamics parameters — DEAD FIELDS (Issue #1470). Never read by any solver: the network FP
-    # diffusion is FPNetworkSolver's own knob (Issue #1532) and the drift is fp_drift_coefficient, so
-    # setting these on the components is SILENTLY IGNORED. Kept only for dataclass back-compat (a test
-    # still asserts their storage, test_network_mfg_solvers.py); purge in the #1470 Strand A method-knob
-    # cleanup (they are exactly the "solver config leaked onto the problem spec" the scoping flagged).
-    diffusion_coefficient: float = 1.0  # DEAD — never read (see above; #1470)
-    drift_coefficient: float = 1.0  # DEAD — never read (see above; #1470)
 
     # Network-specific coupling
     node_interaction_func: Callable | None = None  # Local node interactions
@@ -466,12 +475,10 @@ class NetworkMFGProblem(MFGProblem):
         return float(self.hamiltonian_class(node, m, p, t))
 
     def hamiltonian_dm(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
-        """Derivative of Hamiltonian with respect to density."""
-        if self.components.hamiltonian_dm_func is not None:
-            return self.components.hamiltonian_dm_func(node, neighbors, m, p, t)
-
-        # Default: derivative of density coupling term
-        return self._default_density_coupling_derivative(node, m, t)
+        """Derivative of the Hamiltonian w.r.t. density dH/dm. Issue #1470 Strand A: delegates to the
+        wired single-source Hamiltonian object's ``dm`` (which owns the custom ``hamiltonian_dm_func``,
+        the analytic default-congestion derivative, and the finite-difference fallback)."""
+        return float(self.hamiltonian_class.dm(node, m, p, t))
 
     # Lagrangian formulation methods (based on ArXiv 2207.10908v3)
 
@@ -512,10 +519,6 @@ class NetworkMFGProblem(MFGProblem):
         own-population slice (``_extract_own_density``) — matching the Hamiltonian on stacked
         multi-population m instead of re-deriving on the raw ``m[node]``."""
         return float(self.hamiltonian_class.coupling_value(node, m, t))
-
-    def _default_density_coupling_derivative(self, node: int, m: np.ndarray, t: float) -> float:
-        """Derivative of default density coupling."""
-        return m[node]  # d/dm[i] (0.5 * m[i]^2) = m[i]
 
     # Initial and terminal conditions
 

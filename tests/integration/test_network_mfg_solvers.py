@@ -151,13 +151,14 @@ class TestNetworkMFGProblemSetup:
         assert problem.network_geometry is network
 
     def test_network_problem_with_components(self):
-        """Test network problem with custom components."""
+        """Test network problem with custom components (real, functional fields — the dead
+        diffusion_coefficient/drift_coefficient knobs were removed in the #1470 Strand A purge)."""
         network = GridNetwork(width=4, height=4)
         network.create_network()
 
         components = NetworkMFGComponents(
-            diffusion_coefficient=0.5,
-            drift_coefficient=1.0,
+            node_potential_func=lambda n, t: 0.2 * n,
+            node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2,
         )
 
         problem = NetworkMFGProblem(
@@ -167,8 +168,12 @@ class TestNetworkMFGProblemSetup:
             components=components,
         )
 
-        assert problem.components.diffusion_coefficient == 0.5
-        assert problem.components.drift_coefficient == 1.0
+        # The functional components are wired into the single-source Hamiltonian object and reachable
+        # through the delegating problem methods (Issue #1470 Strand A).
+        assert problem.components.node_potential_func is components.node_potential_func
+        assert problem.node_potential(3, 0.0) == pytest.approx(0.6)
+        m = np.ones(problem.num_nodes) / problem.num_nodes
+        assert problem.density_coupling(2, m, 0.0) == pytest.approx(0.3 * m[2] ** 2)
 
 
 @pytest.mark.skip(

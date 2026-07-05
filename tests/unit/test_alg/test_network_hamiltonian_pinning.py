@@ -310,3 +310,50 @@ def test_problem_methods_delegate_to_object():
     for node in range(N):
         assert prob0.node_potential(node, t) == 0.0
         assert prob0.density_coupling(node, m, t) == pytest.approx(0.5 * m[node] ** 2)
+
+
+def test_hamiltonian_dm_single_sourced_analytic():
+    """Issue #1470 Strand A: ``NetworkMFGProblem.hamiltonian_dm`` delegates to the object's ``dm``,
+    which owns the EXACT analytic default-congestion derivative ``d/dm(0.5*m_own^2) = m_own[node]``
+    (own-population slice) — replacing the finite-difference default and the removed
+    ``_default_density_coupling_derivative``.
+    """
+    net = GridNetwork(width=3, height=3)
+    net.create_network()
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=5)
+    H = prob.hamiltonian_class
+    N = prob.num_nodes
+    m = np.linspace(0.1, 0.9, N)
+    p = np.zeros(N)
+    for node in range(N):
+        # analytic default derivative == m[node]; problem method delegates to the object
+        assert H.dm(node, m, p, 0.0) == pytest.approx(m[node])
+        dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
+        assert dm_method == pytest.approx(m[node])
+        assert dm_method == H.dm(node, m, p, 0.0)
+
+    # Multi-population: population 1's dm reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
+    H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
+    m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
+    for node in range(N):
+        assert H1.dm(node, m_stacked, p, 0.0) == pytest.approx(0.9)
+
+
+def test_hamiltonian_dm_custom_interaction_finite_difference():
+    """Issue #1470 Strand A (#1537 review regression): for a custom ``node_interaction_func``, ``dm``
+    uses a node-wise central finite difference of the coupling — NOT the base ``_finite_diff_dm``, which
+    collapses ``m`` to a scalar (``np.mean``) and raised ``IndexError`` on node-indexed interaction funcs
+    (``m[node]`` on a length-1 array). ``d/dm[node] (0.3*m[node]^2) = 0.6*m[node]``.
+    """
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    comps = NetworkMFGComponents(node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2)
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
+    H = prob.hamiltonian_class
+    m = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    p = np.zeros(5)
+    for node in range(5):
+        # no crash for any node, and matches the analytic derivative 0.6*m[node]
+        assert H.dm(node, m, p, 0.0) == pytest.approx(0.6 * m[node], abs=1e-4)
+        dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
+        assert dm_method == pytest.approx(0.6 * m[node], abs=1e-4)
