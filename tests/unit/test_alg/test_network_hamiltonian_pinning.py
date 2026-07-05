@@ -174,17 +174,44 @@ def test_network_policy_iteration_converges_to_rk45():
     assert errs[-1] < 0.55 * errs[0], f"gap must shrink under dt-refinement (N15 plateau closed): {errs}"
 
 
-def test_network_hamiltonian_maximize_fails_loud():
-    """Issue #1474 / #1476: the network finite-state MFG is implemented for ``sense=MINIMIZE`` only.
-    ``sense=MAXIMIZE`` must fail loud rather than silently compute the MINIMIZE (downhill) math. Full
-    MAXIMIZE (reward-to-go / uphill) support — the mirror — is tracked in #1476."""
+def test_network_hamiltonian_maximize_consistency():
+    """Issue #1476: with ``sense=MAXIMIZE`` the finite-state MFG mirrors the MINIMIZE case —
+    reward-to-go, UPHILL control. On a line graph with strictly increasing value ``u = [0,1,2,3,4]``:
+    - control is UPHILL: at node 2, ``alpha* > 0`` toward the HIGHER neighbour 3, ``== 0`` toward the
+      lower neighbour 1 (the exact mirror of the MINIMIZE case);
+    - rates are non-negative (valid conservative generator);
+    - the control part of H equals the envelope ``0.5 * sum(alpha*^2)`` (unit weights);
+    - the method ``NetworkMFGProblem.hamiltonian`` (used by RK45) equals the object ``__call__``.
+    """
     from mfgarchon.core.hamiltonian import OptimizationSense
 
-    net = GridNetwork(width=3, height=1)
+    net = GridNetwork(width=5, height=1)
     net.create_network()
-    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=4)
-    with pytest.raises(NotImplementedError, match="MINIMIZE"):
-        NetworkHamiltonian(network_data=prob.network_data, sense=OptimizationSense.MAXIMIZE)
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=20, sense=OptimizationSense.MAXIMIZE)
+    H = prob.hamiltonian_class
+    assert H is not None
+    assert H.sense_sign == -1.0
+    N = prob.num_nodes
+    u = np.arange(N, dtype=float)
+    m = np.ones(N) / N
+    t = 0.1
+
+    alpha2 = np.atleast_1d(H.optimal_control(np.array([2]), m, u, t))
+    assert alpha2[3] > 0, f"MAXIMIZE control must flow to the HIGHER neighbour (uphill); got {alpha2}"
+    assert alpha2[1] == 0, f"MAXIMIZE control must not flow to the lower neighbour; got {alpha2}"
+
+    for i in range(N):
+        ai = np.atleast_1d(H.optimal_control(np.array([i]), m, u, t))
+        assert (ai >= -1e-12).all(), f"rates must be >= 0 at node {i}: {ai}"
+
+    coupling2 = 0.5 * m[2] ** 2  # default node congestion at node 2
+    control2 = float(H(np.array([2]), m, u, t)) - coupling2
+    envelope2 = 0.5 * float(np.sum(alpha2**2))
+    assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
+    assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
+
+    method2 = prob.hamiltonian(2, prob.get_node_neighbors(2), m, u, t)
+    assert abs(method2 - float(H(np.array([2]), m, u, t))) < 1e-9, "RK45 method H must equal object H"
 
 
 def test_network_hamiltonian_method_equals_object():
@@ -357,3 +384,65 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
         assert H.dm(node, m, p, 0.0) == pytest.approx(0.6 * m[node], abs=1e-4)
         dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
         assert dm_method == pytest.approx(0.6 * m[node], abs=1e-4)
+
+
+def test_network_maximize_policy_iteration_equals_rk45_and_physical():
+    """Issue #1476: for ``sense=MAXIMIZE`` (a) policy iteration and RK45 solve the SAME HJB — they agree
+    closely and the gap shrinks under dt-refinement (mirror of the MINIMIZE N15 check), and (b) the
+    reward-to-go is physical: with a high terminal REWARD at node 4 on a line graph, the value is finite,
+    peaks at the reward node, and increases monotonically toward it (agents move UPHILL to the reward).
+    Contrast MINIMIZE, where the same terminal is a COST and the value stays low away from it.
+    """
+    from mfgarchon.core.hamiltonian import OptimizationSense
+
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])  # terminal reward at node 4
+    errs = []
+    u_rk_fine = None
+    for nt in (20, 40, 80):
+        prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt, sense=OptimizationSense.MAXIMIZE)
+        n = prob.num_nodes
+        m = np.ones((nt + 1, n)) / n
+        u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
+        u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=g)
+        assert np.isfinite(u_pi).all(), "policy-iteration MAXIMIZE value must be finite"
+        assert np.isfinite(u_rk).all(), "RK45 MAXIMIZE value must be finite"
+        errs.append(float(np.max(np.abs(u_pi[0] - u_rk[0]))))
+        u_rk_fine = u_rk
+    assert errs[0] < 0.3, f"PI and RK45 must agree closely for MAXIMIZE (same HJB), got {errs[0]:.3f}"
+    assert errs[-1] < errs[0], f"PI-RK45 gap must shrink under dt-refinement: {errs}"
+
+    # Physicality: reward-to-go peaks at the high-reward node and increases monotonically toward it.
+    u0 = u_rk_fine[0]
+    assert int(u0.argmax()) == 4, f"reward-to-go must peak at the reward node 4; got {u0}"
+    assert np.all(np.diff(u0) > 1e-6), f"reward-to-go must increase toward node 4 (uphill/monotone): {u0}"
+    # ~= terminal reward 10 plus the small accumulated congestion reward (source is added, not subtracted).
+    assert 9.5 < u0[4] < 10.5, f"reward-node value must be near the terminal reward 10; got {u0[4]}"
+
+
+def test_network_maximize_running_reward_attracts():
+    """Issue #1476 (adversarial-verification catch): the SOURCE (node potential V + congestion) is
+    sense-INDEPENDENT — only the control Hamiltonian flips with sense. A running REWARD potential must
+    ATTRACT under MAXIMIZE (reward-to-go peaks at the high-reward node, ~= the integral of V), not repel.
+    This is the diagnostic a spatially-uniform source (V=0) cannot exercise: the earlier bug scaled the
+    source by sense_sign, so a running reward REPELLED (argmin) — yet every V=0 test passed and even
+    policy-iteration agreed with RK45 (both carried the same sign error). This case pins the source sign.
+    """
+    from mfgarchon.core.hamiltonian import OptimizationSense
+
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 2.0 * n)  # running reward, increasing with node
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=40, components=comps, sense=OptimizationSense.MAXIMIZE)
+    n = prob.num_nodes
+    m = np.ones((41, n)) / n
+    g = np.zeros(n)  # no terminal — the SOURCE alone drives the value
+    u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
+    u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=g)
+    u0 = u_rk[0]
+    assert np.isfinite(u0).all()
+    assert int(u0.argmax()) == n - 1, f"MAXIMIZE running reward must ATTRACT to the high-V node, not repel; got {u0}"
+    assert (u0 > 0).all(), f"reward-to-go from a positive running reward must be positive everywhere; got {u0}"
+    assert u0[n - 1] > u0[0] + 2.0, f"reward-to-go must increase strongly toward the reward; got {u0}"
+    assert np.max(np.abs(u_pi[0] - u_rk[0])) < 0.3, "PI must match RK45 with the corrected source sign"
