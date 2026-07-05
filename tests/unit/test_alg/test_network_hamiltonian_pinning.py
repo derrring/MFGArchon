@@ -249,3 +249,64 @@ def test_network_geometry_both_or_neither_fail_loud():
         NetworkMFGProblem(geometry=net, network_geometry=net, T=0.5, Nt=4)
     with pytest.raises(ValueError, match="requires a graph geometry"):
         NetworkMFGProblem(T=0.5, Nt=4)
+
+
+def test_source_term_single_source_and_multipop_slice():
+    """Issue #1470 Strand A: ``NetworkHamiltonian.source_term`` (V + f_m) is the SINGLE source consumed
+    by both ``__call__`` (control + source) and ``hjb_network._source_terms``. Single-population it is
+    ``V + 0.5*m[node]^2``; for stacked multi-population ``m`` it reads the OWN slice
+    (``_extract_own_density``), matching ``__call__`` — the fork the HJB used to carry when it
+    re-derived ``density_coupling`` on the raw stacked ``m``.
+    """
+    net = GridNetwork(width=3, height=3)
+    net.create_network()
+    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.2 * n)  # default congestion
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
+    H = _build_H(prob)
+    N = prob.num_nodes
+    m = np.linspace(0.1, 0.9, N)
+    p = 0.1 * np.arange(N, dtype=float)
+
+    for node in range(N):
+        src = H.source_term(node, m, 0.0)
+        assert src == pytest.approx(0.2 * node + 0.5 * m[node] ** 2)
+        # Decomposition: control = __call__ - source is p-dependent but m-INDEPENDENT (all m-dependence
+        # is in the source), so scaling m does not change (__call__ - source).
+        assert H(node, m, p, 0.0) - src == pytest.approx(H(node, 2 * m, p, 0.0) - H.source_term(node, 2 * m, 0.0))
+
+    # Multi-population: population 1's source reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
+    H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
+    m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
+    for node in range(N):
+        assert H1.source_term(node, m_stacked, 0.0) == pytest.approx(0.5 * 0.9**2)  # own slice; V=0 (no potential)
+
+
+def test_problem_methods_delegate_to_object():
+    """Issue #1470 Strand A inc.2: ``NetworkMFGProblem.node_potential`` / ``density_coupling`` delegate
+    to the wired Hamiltonian object's ``node_potential_value`` / ``coupling_value`` — one source for
+    ALL consumers (HJB, Lagrangian, ...). Byte-identical to the legacy single-population computation.
+    """
+    net = GridNetwork(width=4, height=3)
+    net.create_network()
+    comps = NetworkMFGComponents(
+        node_potential_func=lambda n, t: 0.2 * n + t,
+        node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2,
+    )
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=1.0, Nt=5)
+    H = prob.hamiltonian_class
+    N = prob.num_nodes
+    m = np.linspace(0.1, 0.9, N)
+    t = 0.4
+    for node in range(N):
+        # delegation identity (method == the wired object's accessor)
+        assert prob.node_potential(node, t) == H.node_potential_value(node, t)
+        assert prob.density_coupling(node, m, t) == H.coupling_value(node, m, t)
+        # byte-identical to the legacy computation
+        assert prob.node_potential(node, t) == pytest.approx(0.2 * node + t)
+        assert prob.density_coupling(node, m, t) == pytest.approx(0.3 * m[node] ** 2)
+
+    # default branch (no funcs): V == 0, congestion == 0.5*m[node]^2 (single-pop, own == raw)
+    prob0 = NetworkMFGProblem(geometry=net, T=1.0, Nt=5)
+    for node in range(N):
+        assert prob0.node_potential(node, t) == 0.0
+        assert prob0.density_coupling(node, m, t) == pytest.approx(0.5 * m[node] ** 2)

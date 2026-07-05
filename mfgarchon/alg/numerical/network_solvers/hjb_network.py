@@ -166,12 +166,13 @@ class NetworkHJBSolver(BaseHJBSolver):
         The network Hamiltonian method returns ``control + source``; subtracting this isolates the
         control Hamiltonian.
         """
-        return np.array(
-            [
-                self.network_problem.node_potential(i, t) + self.network_problem.density_coupling(i, m, t)
-                for i in range(self.num_nodes)
-            ]
-        )
+        # Issue #1470: single-source the source (V + f_m) through the WIRED Hamiltonian object — the
+        # SAME computation inside `_evaluate_hamiltonian_batch` (which routes through
+        # `network_problem.hamiltonian` -> `hamiltonian_class`). Previously `node_potential +
+        # density_coupling` re-derived the coupling on the raw stacked `m`, diverging from the object's
+        # `_extract_own_density` for multi-population `m` and corrupting `h_control = h_total - source`.
+        H = self.network_problem.hamiltonian_class
+        return np.array([H.source_term(i, m, t) for i in range(self.num_nodes)])
 
     def _solve_ode(
         self,
