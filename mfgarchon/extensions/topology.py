@@ -226,8 +226,9 @@ class NetworkHamiltonian(HamiltonianBase):
     def dm(self, x, m, p, t=0.0):
         """dH/dm at node x. Issue #1470 Strand A: the default node congestion has the EXACT analytic
         derivative ``d/dm (0.5 * m_own[node]^2) = m_own[node]`` (own-population slice, matching
-        ``coupling_value``); a custom ``node_interaction_func`` has no analytic form here, so falls back
-        to finite difference. This is the single source for ``NetworkMFGProblem.hamiltonian_dm``.
+        ``coupling_value``); a custom ``node_interaction_func`` has no analytic form here, so uses a
+        node-wise central finite difference of the coupling. This is the single source for
+        ``NetworkMFGProblem.hamiltonian_dm``.
         """
         node = int(np.asarray(x).flat[0])
         if self._hamiltonian_dm_func is not None:
@@ -235,7 +236,17 @@ class NetworkHamiltonian(HamiltonianBase):
             return float(self._hamiltonian_dm_func(node, neighbors, np.atleast_1d(m), np.atleast_1d(p), t))
         if self._node_interaction is None:
             return float(self._extract_own_density(np.atleast_1d(m))[node])
-        return self._finite_diff_dm(x, m, p, t)
+        # Custom node_interaction_func: central finite difference of the coupling in the OWN node
+        # component of the full density. The base HamiltonianBase._finite_diff_dm collapses m to a
+        # scalar (np.mean), which breaks node-indexed interaction funcs (m[node] on a length-1 array
+        # -> IndexError) — #1537 review. Difference coupling_value on the full vector instead.
+        m_arr = np.atleast_1d(np.asarray(m, dtype=float))
+        eps = 1e-7
+        m_plus = m_arr.copy()
+        m_minus = m_arr.copy()
+        m_plus[node] += eps
+        m_minus[node] -= eps
+        return (self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
 
 
 @dataclass

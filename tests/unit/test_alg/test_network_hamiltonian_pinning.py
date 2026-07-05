@@ -337,3 +337,23 @@ def test_hamiltonian_dm_single_sourced_analytic():
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
         assert H1.dm(node, m_stacked, p, 0.0) == pytest.approx(0.9)
+
+
+def test_hamiltonian_dm_custom_interaction_finite_difference():
+    """Issue #1470 Strand A (#1537 review regression): for a custom ``node_interaction_func``, ``dm``
+    uses a node-wise central finite difference of the coupling — NOT the base ``_finite_diff_dm``, which
+    collapses ``m`` to a scalar (``np.mean``) and raised ``IndexError`` on node-indexed interaction funcs
+    (``m[node]`` on a length-1 array). ``d/dm[node] (0.3*m[node]^2) = 0.6*m[node]``.
+    """
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    comps = NetworkMFGComponents(node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2)
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
+    H = prob.hamiltonian_class
+    m = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    p = np.zeros(5)
+    for node in range(5):
+        # no crash for any node, and matches the analytic derivative 0.6*m[node]
+        assert H.dm(node, m, p, 0.0) == pytest.approx(0.6 * m[node], abs=1e-4)
+        dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
+        assert dm_method == pytest.approx(0.6 * m[node], abs=1e-4)
