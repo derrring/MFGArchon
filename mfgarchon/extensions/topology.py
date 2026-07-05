@@ -74,19 +74,11 @@ class NetworkHamiltonian(HamiltonianBase):
         population_index: int = 0,
     ):
         super().__init__(sense=sense, population_index=population_index)
-        # Issue #1474/#1476: the finite-state MFG here is implemented for sense=MINIMIZE (cost-to-go,
-        # downhill control) only — the control cost, optimal_control, dp, and the base-solver
-        # integration sign are all hardcoded to the MINIMIZE convention. Fail loud rather than
-        # silently compute MINIMIZE for a MAXIMIZE (reward-to-go, uphill) problem. Full MAXIMIZE
-        # support (the mirror) is tracked in #1476.
-        if sense != OptimizationSense.MINIMIZE:
-            raise NotImplementedError(
-                f"NetworkHamiltonian supports sense=OptimizationSense.MINIMIZE only (finite-state MFG "
-                f"cost-to-go / downhill control); got {sense}. MAXIMIZE (reward-to-go, uphill) is not "
-                f"yet implemented for network problems — see Issue #1476. Its control / H / dp and the "
-                f"base-solver integration sign are the mirror of the MINIMIZE case and need separate "
-                f"validation, so it cannot be silently reused."
-            )
+        # Issue #1474/#1476: the finite-state MFG supports BOTH senses through a single orientation sign
+        # `sense_sign` (+1 MINIMIZE / -1 MAXIMIZE). Cost-to-go (MINIMIZE) sends agents DOWNHILL toward
+        # lower value; reward-to-go (MAXIMIZE) sends them UPHILL toward higher value. Every sense-
+        # dependent piece — control cost, optimal_control, dp, and the base-solver integration sign — is
+        # `s * (MINIMIZE form)`, so `sense_sign` is the single source of the mirror. See `sense_sign`.
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func
@@ -99,6 +91,16 @@ class NetworkHamiltonian(HamiltonianBase):
         if self._num_nodes is None:
             self._num_nodes = self.network_data.num_nodes
         return self._num_nodes
+
+    @property
+    def sense_sign(self) -> float:
+        """Orientation sign of the finite-state control (Issue #1476): ``+1`` for MINIMIZE (cost-to-go,
+        agents move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL
+        toward higher value). Every sense-dependent piece — the control cost in ``_default_hamiltonian``,
+        ``optimal_control``, ``dp``, and the HJB integration sign in ``hjb_network`` — is ``s * (MINIMIZE
+        form)``, so this one property is the single source of the MINIMIZE<->MAXIMIZE mirror.
+        """
+        return 1.0 if self.sense == OptimizationSense.MINIMIZE else -1.0
 
     def _extract_own_density(self, m: np.ndarray) -> np.ndarray:
         """Extract this population's density from stacked m_all.
@@ -137,16 +139,16 @@ class NetworkHamiltonian(HamiltonianBase):
         Custom hamiltonian_func receives full m_all for cross-coupling.
         """
         neighbors = self.network_data.get_neighbors(node)
-        # Finite-state MFG control cost (Issue #1474): one-sided / piecewise-quadratic — the value of
-        # the constrained optimum over rates alpha >= 0 (needed for a valid CTMC generator). For
-        # sense=MINIMIZE (cost-to-go) the agent moves toward LOWER-value neighbors, so only downhill
-        # edges (u_i > u_j) contribute: H_control = 0.5 * sum_j w_ij * max(u_i - u_j, 0)^2. The full
-        # quadratic 0.5*sum w*(u_j-u_i)^2 was the unconstrained (alpha in R) relaxation — invalid
-        # generator, and inconsistent with optimal_control.
+        # Finite-state MFG control cost (Issue #1474/#1476): one-sided / piecewise-quadratic — the value
+        # of the constrained optimum over rates alpha >= 0 (a valid CTMC generator). Only the ACTIVE side
+        # contributes, oriented by sense_sign s: MINIMIZE (s=+1) counts downhill edges u_i>u_j giving
+        # 0.5*sum w*max(u_i-u_j,0)^2; MAXIMIZE (s=-1) counts uphill edges u_j>u_i giving
+        # 0.5*sum w*max(u_j-u_i,0)^2. Consistent with optimal_control (both use max(s*(u_i-u_j),0)).
+        s = self.sense_sign
         control_cost = 0.0
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            du = p[node] - p[neighbor]  # u_i - u_j
+            du = s * (p[node] - p[neighbor])  # oriented: u_i - u_j (MIN) / u_j - u_i (MAX)
             control_cost += 0.5 * w * max(du, 0.0) ** 2
 
         # Issue #1470: the p-independent source (V + coupling) is single-sourced in `source_term` and
@@ -188,39 +190,44 @@ class NetworkHamiltonian(HamiltonianBase):
         return 0.5 * float(self._extract_own_density(m)[node]) ** 2
 
     def optimal_control(self, x, m, p, t=0.0):
-        """Optimal transition rates from node x (Issue #1474).
+        """Optimal transition rates from node x (Issue #1474/#1476).
 
-        Finite-state MFG, sense=MINIMIZE: ``alpha*_ij = w_ij * max(u_i - u_j, 0)`` — the argmax of
-        the one-sided control Hamiltonian, sending agents DOWNHILL toward lower cost-to-go. Rates are
-        non-negative by construction (a valid conservative CTMC generator). ``max(u_j - u_i, 0)``
-        (the previous form) is the MAXIMIZE/uphill branch and transports mass the wrong way.
-        Returns an array of rates to neighbors (zero for non-neighbors).
+        Finite-state MFG: ``alpha*_ij = w_ij * max(s*(u_i - u_j), 0)`` with orientation ``s = sense_sign``
+        — the argmax of the one-sided control Hamiltonian. MINIMIZE (s=+1) sends agents DOWNHILL toward
+        lower cost-to-go (``max(u_i - u_j, 0)``); MAXIMIZE (s=-1) sends them UPHILL toward higher
+        reward-to-go (``max(u_j - u_i, 0)``). Rates are non-negative by construction (a valid
+        conservative CTMC generator). Returns an array of rates to neighbors (zero for non-neighbors).
         """
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
+        s = self.sense_sign
         alpha = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            du = p_arr[node] - p_arr[neighbor]  # u_i - u_j
+            du = s * (p_arr[node] - p_arr[neighbor])  # downhill (MIN) / uphill (MAX)
             alpha[neighbor] = w * max(du, 0.0)
         return alpha
 
     def dp(self, x, m, p, t=0.0):
-        """dH/dp at node x (Issue #1474). Gradient of the one-sided control Hamiltonian: with
-        ``alpha*_ij = w_ij max(u_i - u_j, 0)``, ``dH/du_i = +sum_j alpha*_ij`` and
-        ``dH/du_j = -alpha*_ij`` (so ``dp`` equals the generator action ``-Q^{alpha*} u``)."""
+        """dH/dp at node x (Issue #1474/#1476). Gradient of the one-sided control Hamiltonian
+        ``0.5 sum_j w_ij max(s*(u_i-u_j),0)^2`` with ``s = sense_sign``: differentiating gives
+        ``dH/du_i = +s*sum_j alpha*_ij`` and ``dH/du_j = -s*alpha*_ij`` where
+        ``alpha*_ij = w_ij max(s*(u_i-u_j),0) >= 0``. So both the rate orientation and the gradient sign
+        flip with the sense (MINIMIZE s=+1 downhill; MAXIMIZE s=-1 uphill), and ``dp`` equals the
+        generator action ``-Q^{alpha*} u``."""
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
+        s = self.sense_sign
         grad = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            a = w * max(p_arr[node] - p_arr[neighbor], 0.0)  # alpha*_{i,neighbor} (downhill)
-            grad[neighbor] -= a
-            grad[node] += a
+            a = w * max(s * (p_arr[node] - p_arr[neighbor]), 0.0)  # alpha*_{i,neighbor} (oriented) >= 0
+            grad[neighbor] -= s * a
+            grad[node] += s * a
         return grad
 
     def dm(self, x, m, p, t=0.0):
@@ -343,6 +350,7 @@ class NetworkMFGProblem(MFGProblem):
         problem_name: str = "NetworkMFG",
         *,
         network_geometry: BaseNetworkGeometry | None = None,
+        sense: OptimizationSense = OptimizationSense.MINIMIZE,
     ):
         """
         Initialize network MFG problem.
@@ -389,6 +397,7 @@ class NetworkMFGProblem(MFGProblem):
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,
             node_potential_func=net_components.node_potential_func,
             node_interaction_func=net_components.node_interaction_func,
+            sense=sense,  # Issue #1476: MINIMIZE (cost-to-go) or MAXIMIZE (reward-to-go)
         )
         parent_components = MFGComponents(
             hamiltonian=network_hamiltonian,
