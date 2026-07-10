@@ -51,7 +51,7 @@ class MFGGridConfig(BaseModel):
     xmin: float = Field(0.0, description="Spatial domain minimum")
     xmax: float = Field(1.0, description="Spatial domain maximum")
     T: float = Field(1.0, gt=0.0, le=100.0, description="Final time")
-    sigma: float = Field(0.1, gt=0.0, le=10.0, description="Diffusion coefficient")
+    sigma: float = Field(0.1, gt=0.0, le=10.0, description="SDE volatility sigma (PDE diffusion is D = sigma^2/2)")
 
     @field_validator("xmax")
     @classmethod
@@ -75,8 +75,11 @@ class MFGGridConfig(BaseModel):
 
     @property
     def cfl_number(self) -> float:
-        """CFL number for stability analysis."""
-        return self.sigma**2 * self.dt / (self.dx**2)
+        """Diffusive CFL number D*dt/dx^2 for stability analysis, with the PDE coefficient
+        D = sigma^2/2 (Issue #1550 / #1426-S0-14). `sigma` is the SDE volatility, so the diffusive
+        CFL uses 0.5*sigma^2, matching the corrected solver diagnostics (hjb_fdm/fp_fdm) — not the
+        bare sigma^2 (= 2D) this used to report."""
+        return 0.5 * self.sigma**2 * self.dt / (self.dx**2)
 
     @property
     def grid_shape(self) -> tuple[int, int]:
@@ -97,7 +100,9 @@ class MFGGridConfig(BaseModel):
             if Nx and Nt and xmax > xmin and T > 0:
                 dx = (xmax - xmin) / Nx
                 dt = T / Nt
-                cfl = v**2 * dt / (dx**2)
+                # Diffusive CFL uses the PDE coefficient D = sigma^2/2 (v is the SDE volatility),
+                # not bare sigma^2 (= 2D) — Issue #1550 / #1426-S0-14. Matches hjb_fdm/fp_fdm.
+                cfl = 0.5 * v**2 * dt / (dx**2)
 
                 if cfl > 0.5:
                     warnings.warn(f"CFL number {cfl:.3f} > 0.5 may cause instability", UserWarning)
