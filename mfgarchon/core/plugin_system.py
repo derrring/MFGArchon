@@ -21,10 +21,9 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import pkg_resources
 
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -563,7 +562,10 @@ class PluginManager:
         discovered = []
 
         try:
-            for entry_point in pkg_resources.iter_entry_points("mfgarchon.plugins"):
+            # Issue #1540: importlib.metadata (stdlib) replaces the removed pkg_resources.
+            # entry_points(group=...) is the py3.10+ selectable API; each EntryPoint keeps the
+            # .name / .load() interface pkg_resources used.
+            for entry_point in entry_points(group="mfgarchon.plugins"):
                 try:
                     plugin_class = entry_point.load()
                     if self.register_plugin(plugin_class):
