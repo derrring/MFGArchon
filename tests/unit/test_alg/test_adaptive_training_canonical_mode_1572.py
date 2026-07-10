@@ -14,11 +14,20 @@ a disabled one early-returns ``1.0``. A revert to the raw boolean makes the cano
 
 from __future__ import annotations
 
+import pytest
+
 from mfgarchon.alg.neural.pinn_solvers.adaptive_training import (
+    TORCH_AVAILABLE,
     AdaptiveTrainingConfig,
     AdaptiveTrainingMode,
     AdaptiveTrainingStrategy,
 )
+
+# AdaptiveTrainingStrategy is only the real (stateful) class under `if TORCH_AVAILABLE`; without
+# torch it degrades to a no-op stub, so these behavioral tests require torch (matching the neural
+# test convention). AdaptiveTrainingConfig + uses_* are torch-free but are exercised through the
+# strategy here, so the whole file is torch-gated.
+pytestmark = [pytest.mark.optional_torch, pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")]
 
 
 def _curriculum_complexity_at_epoch0(config: AdaptiveTrainingConfig) -> float:
