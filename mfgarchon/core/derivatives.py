@@ -42,7 +42,7 @@ Usage:
         return 0.5 * np.sum(derivs.grad ** 2)
 
 See Also:
-    docs/NAMING_CONVENTIONS.md - Gradient Notation Standard section
+    archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) - Gradient Notation Standard section
 """
 
 from __future__ import annotations
