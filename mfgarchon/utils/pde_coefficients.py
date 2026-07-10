@@ -33,12 +33,20 @@ def fp_drift_coefficient(problem: Any) -> float:
     (``MFGProblem`` default 0.5), making the coupled solve converge to the wrong fixed point
     (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too wide).
 
-    Falls back to the legacy ``coupling_coefficient`` attribute when there is no quadratic MINIMIZE
-    separable Hamiltonian to source from: a non-``SeparableHamiltonian`` Hamiltonian (e.g.
-    ``QuadraticMFGHamiltonian``, which carries its own ``coupling_coefficient``) or a non-Hamiltonian
-    direct solve. Non-smooth / congestion / MAXIMIZE control costs never reach the ``-c·∇U`` path
-    (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
-    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+    Falls back to the legacy ``coupling_coefficient`` attribute when there is no ``SeparableHamiltonian``
+    at all: a non-``SeparableHamiltonian`` Hamiltonian (e.g. ``QuadraticMFGHamiltonian``, which carries
+    its own ``coupling_coefficient``) or a non-Hamiltonian direct solve.
+
+    Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
+    Phase 0): a ``SeparableHamiltonian`` whose control cost is MAXIMIZE-quadratic or non-quadratic
+    (e.g. Moreau--Yosida-regularized) can reach this function because ``resolve_fp_drift_kwargs`` gates
+    the routing on ``is_smooth()`` alone (sense-blind), so it steers such a Hamiltonian to the
+    ``potential_field=U`` channel where the FP solver forms ``-c·∇U``. But the scalar ``-c·∇U`` form is
+    the optimal control *only* for the quadratic-MINIMIZE case; the true drift is
+    ``α* = H.optimal_control(...)`` (``+p/λ`` for MAXIMIZE, soft-thresholded for a regularized cost).
+    Returning ``coupling_coefficient`` here would advect with the wrong sign / wrong form silently, so
+    this raises ``NotImplementedError`` instead — the caller must route the drift through the velocity
+    channel (Phase 1). This enforces the invariant the docstring previously only asserted.
 
     Fail-loud (Issue #1420 V1): if there is neither a quadratic-MINIMIZE ``SeparableHamiltonian`` to
     source ``1/control_cost`` from nor a ``coupling_coefficient`` on the problem, this raises rather
@@ -54,6 +62,20 @@ def fp_drift_coefficient(problem: Any) -> float:
         and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
     ):
         return 1.0 / h_class.control_cost.lambda_
+    if isinstance(h_class, SeparableHamiltonian):
+        # A SeparableHamiltonian that fell past the quadratic-MINIMIZE branch is MAXIMIZE-quadratic or
+        # a non-quadratic (e.g. regularized) control cost. The scalar drift `-c·∇U` does not represent
+        # its optimal control, so fail loud rather than return `coupling_coefficient` and advect with
+        # the wrong physics (Issue #1542 / RFC #1574 Phase 0).
+        control_cost = h_class.control_cost
+        detail = "MAXIMIZE quadratic" if isinstance(control_cost, QuadraticControlCost) else type(control_cost).__name__
+        raise NotImplementedError(
+            f"fp_drift_coefficient: the scalar FP drift `-c*grad(U)` is defined only for a "
+            f"quadratic-MINIMIZE SeparableHamiltonian, but got a {detail} control cost. Its optimal "
+            f"control is alpha* = H.optimal_control(...), not -c*grad(U) (wrong sign for MAXIMIZE, "
+            f"wrong form for a regularized cost). Route the FP drift through the velocity channel "
+            f"(precomputed alpha*) instead (Issue #1542 / RFC #1574 Phase 1)."
+        )
     cc = getattr(problem, "coupling_coefficient", None)
     if cc is None:
         raise ValueError(
