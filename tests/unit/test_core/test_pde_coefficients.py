@@ -503,6 +503,27 @@ class TestFpDriftCoefficient:
         with pytest.raises(ValueError, match="Cannot determine the FP drift coefficient"):
             fp_drift_coefficient(_Bare())
 
+    def test_maximize_quadratic_separable_h_fails_loud_not_coupling_fallback(self):
+        # Issue #1542 / RFC #1574 Phase 0: a MAXIMIZE-quadratic SeparableHamiltonian reaches this
+        # function (the router gates on is_smooth() alone) but `-c*grad(U)` is the wrong drift for it.
+        # It must fail loud, NOT silently fall back to coupling_coefficient (default 0.5 => wrong-sign
+        # downhill drift). The discriminating check: coupling_coefficient IS set, so a revert to the
+        # old fallback would return 0.5 and this test would catch it.
+        from mfgarchon.core.hamiltonian import OptimizationSense
+
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+        comp = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(lambda_=2.0, sense=OptimizationSense.MAXIMIZE)
+            ),
+        )
+        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, sigma=0.1)
+        assert getattr(prob, "coupling_coefficient", None) is not None  # the trap the old code fell into
+        with pytest.raises(NotImplementedError, match="quadratic-MINIMIZE"):
+            fp_drift_coefficient(prob)
+
 
 class TestResolveDiffusionSource:
     """Issue #1412: the shared single-source volatility (sigma) lookup that HJB and FP
