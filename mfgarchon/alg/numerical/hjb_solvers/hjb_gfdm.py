@@ -1084,13 +1084,19 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if stats.get("n_enlarged", 0) > 0
                 else ""
             )
+            # Issue #1565: the SOCP loop iterates INTERIOR indices only, and the M-matrix-QP
+            # precompute buffer is BOUNDARY-only, so an SOCP-infeasible interior node matches
+            # neither has_stencil branch at solve time and falls through to the bare (non-monotone)
+            # Wendland-Taylor LSQ weights — NOT a Phase-2 M-matrix QP (which never covers interior
+            # nodes). Report the real fallback so the monotone fraction is not over-stated.
             logger.info(
                 f"Precomputed joint SOCP stencils: feasible {stats['n_feasible']}/"
                 f"{stats['n_interior']} interior "
                 f"({stats['n_fast_path']} via Wendland-LSQ fast-path, "
                 f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}{relax_fb_msg}) in "
-                f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} fall "
-                f"back to M-matrix QP (Phase 2)"
+                f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} interior node(s) "
+                f"fall through to bare Wendland-Taylor LSQ (NON-MONOTONE; no Phase-2 QP covers "
+                f"interior nodes)"
             )
 
         # Initialize precomputed M-matrix QP stencils at boundary nodes.
