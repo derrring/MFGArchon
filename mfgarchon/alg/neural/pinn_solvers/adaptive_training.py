@@ -323,7 +323,9 @@ if TORCH_AVAILABLE:
             Returns:
                 Current complexity factor [0, 1]
             """
-            if not self.config.enable_curriculum:
+            # Issue #1572: read the canonical training_mode-derived property, not the raw
+            # deprecated boolean (which is None unless the old kwarg was passed).
+            if not self.config.uses_curriculum:
                 return 1.0
 
             progress = min(1.0, self.state.epoch / self.config.curriculum_epochs)
@@ -405,7 +407,8 @@ if TORCH_AVAILABLE:
             Returns:
                 Dictionary with updated point sets
             """
-            if not self.config.enable_refinement:
+            # Issue #1572: canonical property, not the raw deprecated boolean.
+            if not self.config.uses_refinement:
                 return {"physics_points": current_points}
 
             if self.state.epoch % self.config.adaptive_sampling_frequency == 0:
@@ -475,8 +478,8 @@ if TORCH_AVAILABLE:
 
             updates = {}
 
-            # Update curriculum complexity
-            if self.config.enable_curriculum:
+            # Update curriculum complexity (Issue #1572: canonical property, not raw boolean)
+            if self.config.uses_curriculum:
                 complexity = self.update_curriculum()
                 updates["complexity"] = complexity
 
