@@ -73,7 +73,7 @@ def diffusion_from_volatility(
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` (Issue #811).
 
     Single source of truth for the volatility -> diffusion conversion documented in
-    ``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion". Volatility is a tensor in general
+    ``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion". Volatility is a tensor in general
     (the noise matrix :math:`\Sigma`, shape ``(d, k)``); the scalar :math:`\sigma` is the
     isotropic special case. The diffusion coefficient is
 
@@ -171,7 +171,7 @@ def resolve_volatility(
     Resolution order (canonical first):
 
     1. ``problem_params["sigma"]`` -- the canonical SDE volatility key
-       (``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion"). Returned verbatim; the caller
+       (``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion"). Returned verbatim; the caller
        computes ``D = sigma**2 / 2``. No warning.
     2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
        given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``

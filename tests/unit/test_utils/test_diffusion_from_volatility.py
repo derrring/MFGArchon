@@ -2,7 +2,7 @@
 
 ``diffusion_from_volatility`` is the single source of truth for ``D = (1/2) Sigma Sigma^T``
 (scalar: ``D = sigma^2/2``), replacing ~38 ad-hoc literal ``0.5 * sigma**2`` sites. These
-tests pin the contract documented in NAMING_CONVENTIONS.md "Volatility vs Diffusion":
+tests pin the contract documented in archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) "Volatility vs Diffusion":
 tensor-first, ``Sigma Sigma^T`` (NOT ``Sigma^T Sigma``), byte-identity for the scalar / field
 cases it replaces, and FAIL-LOUD on ambiguous array inputs (no silent (d,d)-tensor-vs-field
 guess -- the same silent-convention class the converter exists to eliminate).

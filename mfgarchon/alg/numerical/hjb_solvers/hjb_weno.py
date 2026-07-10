@@ -1,7 +1,7 @@
 """
 WENO Family HJB Solvers for Mean Field Games
 
-NOTE: API parameter names updated in v0.11.0. See docs/NAMING_CONVENTIONS.md for details.
+NOTE: API parameter names updated in v0.11.0. See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) for details.
 
 This module implements the complete family of WENO (Weighted Essentially Non-Oscillatory)
 schemes for solving Hamilton-Jacobi-Bellman equations in Mean Field Games.

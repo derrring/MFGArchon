@@ -1037,7 +1037,8 @@ def solve_timestep_tensor_explicit(
 
     # Compute tensor diffusion term: div(D * grad(m)).
     # Sigma is the SDE volatility; the diffusion operator needs the PDE diffusion tensor
-    # D = (1/2) Sigma Sigma^T (NAMING_CONVENTIONS "Volatility vs Diffusion", #811). The raw
+    # D = (1/2) Sigma Sigma^T (archon-notes/development/guides/NAMING_CONVENTIONS.md, mfg-research,
+    # private: "Volatility vs Diffusion"; Issue #811). The raw
     # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
