@@ -102,6 +102,9 @@ class FPGFDMSolver(BaseFPSolver):
         boundary_conditions: BoundaryConditions | None = None,
         upwind_scheme: str = "none",
         upwind_strength: float = 0.5,
+        obstacle_sdf: object | None = None,
+        visibility_samples: int = 10,
+        visibility_margin: float = 0.0,
     ):
         """
         Initialize GFDM-based FP solver.
@@ -159,11 +162,18 @@ class FPGFDMSolver(BaseFPSolver):
         # Create GFDM operator using TaylorOperator (Strategy Pattern, Issue #844)
         # TaylorOperator handles neighborhoods and derivative weights
         # BC is handled externally (no ghost particles — cleaner separation)
+        # Issue #1556: thread the obstacle SDF into the operator so the FP density derivatives
+        # (D_lap / D_grad) respect obstacle connectivity, exactly like the HJB-GFDM side (#1124).
+        # Without it, in a coupled obstacle-cloud solve the FP stencils couple through walls while
+        # the HJB stencils are visibility-filtered — asymmetric physics.
         self.gfdm_operator = TaylorOperator(
             points=self.collocation_points,
             delta=self.delta,
             taylor_order=taylor_order,
             weight_function=weight_function,
+            obstacle_sdf=obstacle_sdf,
+            visibility_samples=visibility_samples,
+            visibility_margin=visibility_margin,
         )
         # Store boundary info for solver-level BC enforcement
         self._boundary_indices = boundary_indices
