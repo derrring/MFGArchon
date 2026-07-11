@@ -76,8 +76,9 @@ class TestFPNetworkSolverInitialization:
         assert solver.scheme == "implicit"
         assert solver.fp_method_name == "NetworkFP_implicit"
 
-    def test_upwind_scheme_initialization(self):
-        """Test initialization with upwind scheme."""
+    def test_upwind_scheme_fails_loud(self):
+        """Issue #1541: scheme='upwind' was a physics-free identity map; it now fails loud at
+        construction rather than silently returning an unevolved density."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
@@ -87,10 +88,8 @@ class TestFPNetworkSolverInitialization:
             Nt=10,
         )
 
-        solver = FPNetworkSolver(problem, scheme="upwind")
-
-        assert solver.scheme == "upwind"
-        assert solver.fp_method_name == "NetworkFP_upwind"
+        with pytest.raises(NotImplementedError, match="1541"):
+            FPNetworkSolver(problem, scheme="upwind")
 
     def test_custom_diffusion_coefficient(self):
         """Test initialization with custom diffusion coefficient."""
@@ -345,29 +344,6 @@ class TestFPNetworkSolverSolveFPSystem:
 
         assert np.all(np.isfinite(M_solution))
 
-    def test_solve_with_upwind_scheme(self):
-        """Test solving with upwind scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = FPNetworkSolver(problem, scheme="upwind")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
     def test_solve_with_non_zero_drift(self):
         """Test solving with non-zero drift field."""
         network = GridNetwork(width=3, height=3)
@@ -393,7 +369,8 @@ class TestFPNetworkSolverSolveFPSystem:
         assert np.all(np.isfinite(M_solution))
 
     def test_invalid_scheme_raises_error(self):
-        """Test that invalid scheme raises error."""
+        """Issue #1541: an unsupported scheme is rejected at construction (fail loud), not silently
+        run or discovered at solve time."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
@@ -403,17 +380,8 @@ class TestFPNetworkSolverSolveFPSystem:
             Nt=10,
         )
 
-        solver = FPNetworkSolver(problem, scheme="explicit")
-        solver.scheme = "invalid_scheme"  # Manually set invalid scheme
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        with pytest.raises(ValueError, match="Unknown scheme"):
-            solver.solve_fp_system(m_initial, U_solution)
+        with pytest.raises(NotImplementedError, match="1541"):
+            FPNetworkSolver(problem, scheme="invalid_scheme")
 
 
 class TestFPNetworkSolverNumericalProperties:
@@ -634,7 +602,7 @@ class TestFPNetworkSolverIntegration:
         configs = [
             {"scheme": "explicit", "cfl_factor": 0.4},
             {"scheme": "implicit"},
-            {"scheme": "upwind", "diffusion_coefficient": 0.15},
+            {"scheme": "explicit", "diffusion_coefficient": 0.15},  # was "upwind" (removed, Issue #1541)
         ]
 
         for config in configs:
