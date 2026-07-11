@@ -1209,17 +1209,21 @@ def solve_timestep_full_nd(
                     f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
                     "Expected BoundaryConditions from mfgarchon.geometry.boundary."
                 ) from None
-            # Legacy periodic relies on no-flux boundary assembly + interior wrapping, and legacy
-            # neumann/no_flux ARE no-flux. Fail loud (Issue #1559) for legacy dirichlet/robin
-            # instead of silently coercing them to no-flux: this assembly does not honor them, and
-            # _is_dirichlet_at_point cannot see a legacy BC (it has no is_uniform, so the check
-            # returns False), so a legacy dirichlet would otherwise be silently assembled as no-flux.
-            if legacy_type not in ("periodic", "neumann", "no_flux"):
+            # Only legacy neumann/no_flux are correctly honored here (they ARE no-flux). Fail loud
+            # (Issue #1559) for every other legacy type -- dirichlet, robin, AND periodic -- instead
+            # of silently coercing to no-flux. _is_dirichlet_at_point cannot see a legacy BC (no
+            # is_uniform, so it returns False), so a legacy dirichlet is silently assembled as no-flux;
+            # and despite the old "relies on no-flux + interior wrapping" claim, a legacy periodic gets
+            # NO wrap here -- it is byte-identical to legacy no_flux and differs from canonical
+            # periodic_bc by O(1) once mass reaches the wall (verified with an off-center bump).
+            # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
+            if legacy_type not in ("neumann", "no_flux"):
                 raise NotImplementedError(
-                    f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not supported by the "
-                    f"FP-FDM time-stepping assembly (only periodic/neumann/no_flux); it would be silently "
-                    f"assembled as no-flux. Use mfgarchon.geometry.boundary (dirichlet_bc / robin_bc / "
-                    f"no_flux_bc) with the modern BoundaryConditions instead (Issue #1559)."
+                    f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not honored by the "
+                    f"FP-FDM time-stepping assembly (only neumann/no_flux are); it would be silently "
+                    f"assembled as no-flux (a legacy 'periodic' does NOT wrap). Use "
+                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / robin_bc / no_flux_bc) "
+                    f"with the modern BoundaryConditions instead (Issue #1559)."
                 ) from None
             is_no_flux = True
             is_uniform = False

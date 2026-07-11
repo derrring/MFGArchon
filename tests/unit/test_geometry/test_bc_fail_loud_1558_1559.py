@@ -64,11 +64,13 @@ def _small_1d_problem(n=11):
     return MFGProblem(geometry=grid, T=0.1, Nt=2, sigma=0.3, components=comps)
 
 
-def test_legacy_dirichlet_bc_fails_loud():
+def test_legacy_mishandled_bc_fails_loud():
     """#1559: the FP-FDM time-stepping assembly treated ANY legacy fdm_bc_1d BoundaryConditions as
     no-flux (the except-AttributeError branch). _is_dirichlet_at_point can't see a legacy BC (no
-    is_uniform -> returns False), so a legacy dirichlet was silently assembled as no-flux. It must
-    raise for legacy dirichlet/robin while legacy periodic/neumann/no_flux still assemble."""
+    is_uniform -> returns False), so a legacy dirichlet was silently assembled as no-flux; a legacy
+    'periodic' likewise gets NO wrap (byte-identical to legacy no_flux, O(1) off canonical periodic
+    once mass reaches the wall). It must raise for legacy dirichlet/robin/periodic; only legacy
+    neumann/no_flux (which ARE no-flux) still assemble."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
     from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions as LegacyBC
 
@@ -76,13 +78,14 @@ def test_legacy_dirichlet_bc_fails_loud():
     n = 11
     m0 = np.ones(n)
     drift = np.zeros((prob.Nt + 1, n))
-
     solver = FPFDMSolver(prob)
-    solver.boundary_conditions = LegacyBC(type="dirichlet", left_value=0.0, right_value=0.0)
-    with pytest.raises(NotImplementedError, match="1559"):
-        solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
 
-    # Legacy periodic must still assemble (it relies on the no-flux assembly + interior wrapping).
-    solver.boundary_conditions = LegacyBC(type="periodic")
+    for legacy_type in ("dirichlet", "periodic"):
+        solver.boundary_conditions = LegacyBC(type=legacy_type, left_value=0.0, right_value=0.0)
+        with pytest.raises(NotImplementedError, match="1559"):
+            solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
+
+    # Legacy neumann/no_flux ARE no-flux -> still assemble (finite, no raise).
+    solver.boundary_conditions = LegacyBC(type="neumann", left_value=0.0, right_value=0.0)
     M = solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
     assert np.all(np.isfinite(M))
