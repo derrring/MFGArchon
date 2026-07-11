@@ -34,6 +34,26 @@ if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
 
 
+def _reject_nonzero_volatility(volatility_field: float | np.ndarray | None) -> None:
+    """Fail loud if a diffusive volatility is requested (Issue #1544).
+
+    The network HJB solvers have NO viscous term -- they solve the deterministic-control game on the
+    graph and ignore volatility_field (the stored graph Laplacian is unused). A nonzero volatility
+    would produce a value function inconsistent with the diffusive network FP forward equation
+    (``D * Lap_G(m)``), i.e. a non-adjoint, self-consistent WRONG equilibrium -- consistent only at
+    D = 0. Reject it instead of silently ignoring it, until the ``+ D * Lap_G(u)`` viscous term is
+    implemented (the natural fix).
+    """
+    if volatility_field is not None and np.any(np.asarray(volatility_field, dtype=float) != 0.0):
+        raise NotImplementedError(
+            "Network HJB solver has no viscous (diffusion) term, so it cannot honor a nonzero "
+            "volatility_field; solving anyway would give a value function inconsistent with the "
+            "diffusive network FP (D*Lap_G(m)) -- a non-adjoint, self-consistent wrong equilibrium. "
+            "Use volatility_field=None / 0 (deterministic-control graph game, D=0); a diffusive graph "
+            "HJB (+ D*Lap_G(u)) is not yet implemented (Issue #1544)."
+        )
+
+
 class NetworkHJBSolver(BaseHJBSolver):
     """
     HJB solver for Mean Field Games on networks.
@@ -141,11 +161,13 @@ class NetworkHJBSolver(BaseHJBSolver):
             M_density: (Nt+1, num_nodes) density evolution from FP solver
             U_terminal: Terminal condition u(T, i)
             U_coupling_prev: Previous Picard iterate for coupling
-            volatility_field: Diffusion coefficient (not yet used in network solver)
+            volatility_field: Must be None / 0 -- the network HJB has no viscous term (Issue #1544);
+                a nonzero value is rejected rather than silently ignored.
 
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
+        _reject_nonzero_volatility(volatility_field)
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -319,6 +341,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         volatility_field: float | np.ndarray | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration."""
+        _reject_nonzero_volatility(volatility_field)
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
