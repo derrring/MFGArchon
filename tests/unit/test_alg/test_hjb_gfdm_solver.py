@@ -528,13 +528,10 @@ class TestHJBGFDMSolverSolveHJBSystem:
         U_final = np.zeros(Nx)
         U_prev = np.zeros((Nt, Nx))
 
-        # Solve (may not converge perfectly, but should return correct shape)
-        try:
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-            assert U_solution.shape == (Nt, Nx)
-        except Exception:
-            # If it fails due to problem setup, that's okay for this test
-            pytest.skip("Solver setup issue - shape test inconclusive")
+        # Solve (may not converge perfectly, but must return the correct shape).
+        # No try/except -> skip: a solver raise is a real failure here (Issue #1567).
+        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
+        assert U_solution.shape == (Nt, Nx)
 
     @pytest.mark.slow
     def test_solve_hjb_system_final_condition(self, standard_problem):
@@ -555,12 +552,10 @@ class TestHJBGFDMSolverSolveHJBSystem:
         U_final = x_coords**2  # Quadratic final condition
         U_prev = np.zeros((Nt, Nx))
 
-        try:
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-            # Final time step should match final condition (approximately)
-            assert np.allclose(U_solution[-1, :], U_final, rtol=0.1)
-        except Exception:
-            pytest.skip("Solver convergence issue - test inconclusive")
+        # No try/except -> skip: a solver raise is a real failure here (Issue #1567).
+        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
+        # Final time step should match final condition (approximately)
+        assert np.allclose(U_solution[-1, :], U_final, rtol=0.1)
 
 
 class TestHJBGFDMSolverIntegration:
