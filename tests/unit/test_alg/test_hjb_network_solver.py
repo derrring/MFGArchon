@@ -168,6 +168,24 @@ class TestNetworkHJBSolverSolveHJBSystem:
         assert U_solution.shape == (Nt, num_nodes)
         assert np.all(np.isfinite(U_solution))
 
+    def test_nonzero_volatility_rejected(self):
+        """Issue #1544: the network HJB has no viscous term, so a nonzero volatility_field must be
+        rejected (not silently ignored -- ignoring it solves a non-adjoint, self-consistent WRONG
+        equilibrium against the diffusive network FP). volatility_field=None / 0 solves normally."""
+        network = GridNetwork(width=3, height=3)
+        network.create_network()
+        problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=10)
+        Nt, num_nodes = problem.Nt + 1, problem.num_nodes
+        M_density, U_final = np.ones((Nt, num_nodes)), np.zeros(num_nodes)
+
+        for cls in (NetworkHJBSolver, NetworkPolicyIterationHJBSolver):
+            solver = cls(problem, scheme="BDF") if cls is NetworkHJBSolver else cls(problem)
+            with pytest.raises(NotImplementedError, match="1544"):
+                solver.solve_hjb_system(M_density, U_final, volatility_field=0.3)
+            # None and 0.0 are the deterministic-control (D=0) case -> no raise.
+            assert solver.solve_hjb_system(M_density, U_final, volatility_field=None).shape == (Nt, num_nodes)
+            assert solver.solve_hjb_system(M_density, U_final, volatility_field=0.0).shape == (Nt, num_nodes)
+
     def test_solve_hjb_system_final_condition(self):
         """Test that final condition is preserved."""
         network = GridNetwork(width=3, height=3)

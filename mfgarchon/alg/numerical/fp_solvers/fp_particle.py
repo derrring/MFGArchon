@@ -940,14 +940,24 @@ class FPParticleSolver(BaseFPSolver):
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
         """
-        Issue #1083: infer per-axis bounds for KDE reflection from solver BC.
+        Issue #1083: decide whether KDE reflection applies, from the solver BC.
 
-        Returns the subset of `bounds` for axes whose BC is reflective
-        (NO_FLUX / REFLECTING / NEUMANN). Returns None if no axis is reflective
-        — caller falls back to standard KDE without ghost reflection.
+        Returns ALL of `bounds` if there is no explicit BC (no `boundary_conditions` or no
+        segments -- the legacy reflect-everywhere default) OR if ANY segment is reflective
+        (NO_FLUX / REFLECTING / NEUMANN); returns None only when segments exist and NONE is
+        reflective (caller falls back to standard KDE without ghost reflection). This is an
+        all-or-nothing gate keyed on "is any wall reflective", NOT a per-axis subset.
 
-        For axes with non-reflective BC (DIRICHLET absorbing exit, periodic),
-        reflection ghosts are mathematically wrong, so they are excluded.
+        LIMITATION (Issue #1557): when a domain mixes reflective and non-reflective faces
+        (e.g. reflecting walls + a Dirichlet absorbing exit, or a periodic axis), this still
+        returns every axis, so `reflection_kde` creates ghosts on the non-reflective faces
+        too -- where they are mathematically wrong: ghost mass is mirrored back within ~1
+        bandwidth and flattens the density dip an absorbing exit should produce. True per-face
+        masking needs the segment -> axis/side mapping threaded into the density estimator;
+        because that changes the density near absorbing exits (the evacuation regime), it is
+        gated together with the mass-channel fix #1552 (mfg-research exp09 validation), not
+        made here. The earlier "Returns the subset ... excluded" wording described that intended
+        end state, not this code -- corrected to match the actual behavior (kernel doc honesty).
         """
         bc = self.boundary_conditions
         if bc is None or not getattr(bc, "segments", None):

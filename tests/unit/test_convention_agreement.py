@@ -82,9 +82,16 @@ class TestSigmaToDiffusionAgreement:
 
     @pytest.mark.parametrize("sigma", SIGMAS)
     def test_backend_literal_equals_single_source(self, sigma):
-        """Several backends apply D via the literal ``0.5 * sigma**2`` rather than the converter
-        (numpy/jax/numba/torch). Pin that the literal is bit-equal to the single source so a
-        backend edit that drifts from sigma**2/2 fails here."""
+        """Pin that the converter's scalar branch IS the literal ``0.5 * sigma**2`` bit-for-bit,
+        i.e. code that legitimately inlines that literal (rather than importing the converter)
+        computes the identical IEEE value -- so an inline ``0.5*sigma**2`` is a faithful copy of
+        the single source, not a silent fork.
+
+        Scope (Issue #1569): this is an identity of the ``0.5*sigma**2`` expression, NOT a guard on
+        any backend kernel -- no numpy/jax/numba/torch code is imported or called here, so a backend
+        that drifted its own literal to ``0.5*sigma`` would NOT trip this. The numpy path's D
+        *application* is pinned behaviorally by ``test_diffusion_magnitude_gate.py``; the jax/numba/
+        torch D-application (optional, off-paper backends) has no convention pin yet."""
         assert 0.5 * sigma**2 == diffusion_from_volatility(sigma)
 
     def test_hjb_scalar_and_diagonal_tensor_diffusion_agree(self):

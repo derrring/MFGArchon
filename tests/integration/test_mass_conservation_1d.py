@@ -106,10 +106,8 @@ class TestMassConservation1D:
             fp_solver=fp_solver,
         )
 
-        try:
-            result = mfg_solver.solve(max_iterations=50, tolerance=1e-3)
-        except Exception as e:
-            pytest.skip(f"MFG solver raised exception: {str(e)[:100]}")
+        # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
+        result = mfg_solver.solve(max_iterations=50, tolerance=1e-3)
 
         m_solution = result.M
 
@@ -159,10 +157,8 @@ class TestMassConservation1D:
             fp_solver=fp_solver,
         )
 
-        try:
-            result = mfg_solver.solve(max_iterations=50, tolerance=1e-3)
-        except Exception as e:
-            pytest.skip(f"MFG solver raised exception: {str(e)[:100]}")
+        # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
+        result = mfg_solver.solve(max_iterations=50, tolerance=1e-3)
 
         m_solution = result.M
 
@@ -203,10 +199,8 @@ class TestMassConservation1D:
         hjb_solver_1 = HJBFDMSolver(problem)
         mfg_solver_1 = FixedPointIterator(problem, hjb_solver=hjb_solver_1, fp_solver=fp_solver_1)
 
-        try:
-            result_1 = mfg_solver_1.solve(max_iterations=50, tolerance=1e-3)
-        except Exception as e:
-            pytest.skip(f"FDM solver raised exception: {str(e)[:100]}")
+        # Issue #1567: no try/except -> skip; a solver raise must fail this cross-solver test.
+        result_1 = mfg_solver_1.solve(max_iterations=50, tolerance=1e-3)
 
         # Solver 2: FP Particle + HJB GFDM
         fp_solver_2 = FPParticleSolver(
@@ -219,10 +213,8 @@ class TestMassConservation1D:
         hjb_solver_2 = HJBGFDMSolver(problem, collocation_points=collocation_points, delta=0.3)
         mfg_solver_2 = FixedPointIterator(problem, hjb_solver=hjb_solver_2, fp_solver=fp_solver_2)
 
-        try:
-            result_2 = mfg_solver_2.solve(max_iterations=50, tolerance=1e-3)
-        except Exception as e:
-            pytest.skip(f"GFDM solver raised exception: {str(e)[:100]}")
+        # Issue #1567: no try/except -> skip; a solver raise must fail this cross-solver test.
+        result_2 = mfg_solver_2.solve(max_iterations=50, tolerance=1e-3)
 
         dx = problem.geometry.get_grid_spacing()[0]
         Nt_points = problem.Nt + 1
@@ -279,10 +271,8 @@ class TestMassConservation1D:
             backend=None,
         )
 
-        try:
-            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
-        except Exception as e:
-            pytest.skip(f"Solver convergence issue with {num_particles} particles: {str(e)[:100]}")
+        # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
+        result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
 
         dx = problem.geometry.get_grid_spacing()[0]
         Nt_points = problem.Nt + 1
@@ -343,10 +333,8 @@ class TestMassConservation1D:
                 backend=None,
             )
 
-            try:
-                result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
-            except Exception as e:
-                pytest.skip(f"Solver convergence issue for {name}: {str(e)[:100]}")
+            # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
+            result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
 
             dx = problem.geometry.get_grid_spacing()[0]
             Nt_points = problem.Nt + 1
@@ -356,6 +344,40 @@ class TestMassConservation1D:
             print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max error = {max_error:.6e}")
 
             assert max_error < 0.1, f"Mass conservation failed for {name}: {max_error:.6e}"
+
+    def test_coupled_fdm_mass_conservation_fast_tier(self):
+        """Fast-tier (non-@slow) coupled MFG mass-conservation gate (Issue #1567).
+
+        Every other coupled mass test in this class is @slow (5000-particle stochastic KDE),
+        so the only mass check the PR gate ran was the analytic pure-diffusion one -- a coupled
+        regression that leaked mass would surface only on the nightly tier. This runs a small,
+        deterministic coupled FDM solve (HJB-FDM + FP-FDM, no-flux, n=21, Nt=8, 3 Picard steps,
+        ~1s) and asserts total mass is preserved across every time step. Mass conservation here
+        is structural (the column-conservative no-flux FP stencil, #1184), so it holds regardless
+        of Picard convergence -- a real leak (a broken no-flux stencil, a lost normalization)
+        trips it, but non-convergence does not."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+
+        n, nt, T, sigma = 21, 8, 0.5, 0.3
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: np.asarray(m),
+            coupling_dm=lambda m: np.ones_like(np.asarray(m)),
+        )
+        comps = MFGComponents(
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x),
+            hamiltonian=H,
+        )
+        prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, coupling_coefficient=1.0, components=comps)
+        mfg_solver = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob))
+        result = mfg_solver.solve(max_iterations=3, tolerance=1e-4)
+
+        dx = prob.geometry.get_grid_spacing()[0]
+        masses = np.array([compute_total_mass(result.M[t, :], dx) for t in range(nt + 1)])
+        drift = np.max(np.abs(masses - masses[0])) / masses[0]
+        assert drift < 1e-10, f"coupled FDM mass drift {drift:.2e} across time (no-flux must conserve)"
 
 
 class TestExplicitDriftNoFluxDiffusionConservation:
