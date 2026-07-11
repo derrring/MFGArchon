@@ -942,10 +942,11 @@ class FPParticleSolver(BaseFPSolver):
         """
         Issue #1083: decide whether KDE reflection applies, from the solver BC.
 
-        Returns ALL of `bounds` if ANY segment is reflective (NO_FLUX / REFLECTING /
-        NEUMANN); otherwise None (caller falls back to standard KDE without ghost
-        reflection). This is an all-or-nothing gate keyed on "is any wall reflective",
-        NOT a per-axis subset.
+        Returns ALL of `bounds` if there is no explicit BC (no `boundary_conditions` or no
+        segments -- the legacy reflect-everywhere default) OR if ANY segment is reflective
+        (NO_FLUX / REFLECTING / NEUMANN); returns None only when segments exist and NONE is
+        reflective (caller falls back to standard KDE without ghost reflection). This is an
+        all-or-nothing gate keyed on "is any wall reflective", NOT a per-axis subset.
 
         LIMITATION (Issue #1557): when a domain mixes reflective and non-reflective faces
         (e.g. reflecting walls + a Dirichlet absorbing exit, or a periodic axis), this still
