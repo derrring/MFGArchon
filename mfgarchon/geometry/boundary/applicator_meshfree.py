@@ -655,13 +655,18 @@ class SDFParticleBCHandler:
 
         # Normalize
         norm = np.linalg.norm(grad)
-        if norm > 1e-12:
-            return grad / norm
-        else:
-            # Degenerate case: return arbitrary unit vector
-            result = np.zeros(self.dimension)
-            result[0] = 1.0
-            return result
+        if norm <= 1e-12:
+            # Fail loud (Issue #1558): a vanishing SDF gradient has no well-defined outward
+            # normal. Fabricating [1, 0, ...] reflects the particle along a geometry-independent
+            # direction -- a silent-wrong that corrupts particle stepping. Mirror the #1047 raise
+            # in project_to_domain rather than manufacturing a normal.
+            raise RuntimeError(
+                f"SDFParticleBCHandler: vanishing SDF gradient (|grad| = {norm:.3e}) at point "
+                f"{point.ravel()}; the outward normal is undefined there. This indicates a "
+                f"degenerate geometry (locally flat / saddle SDF, or a point on the medial axis). "
+                f"Check geometry.signed_distance for correctness near this point."
+            )
+        return grad / norm
 
     def contains(
         self,

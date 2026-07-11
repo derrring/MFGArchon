@@ -831,14 +831,15 @@ class TensorProductGrid(
         properly propagated to solvers that call this method.
 
         Args:
-            bc_type: Standard boundary condition type (only used if no BC stored):
-                - "dirichlet_zero": Zero Dirichlet on all boundaries
-                - "neumann_zero": Zero Neumann (no-flux) on all boundaries
+            bc_type: Standard boundary condition type (only used if no BC stored). Supported:
                 - "periodic": Periodic on all boundaries
-                - "periodic_x", "periodic_y", "periodic_z": Periodic in one direction
-                - "periodic_both": Periodic in all directions (2D/3D)
-                - "mixed": Mixed conditions (implementation-dependent)
-            custom_conditions: Optional dict with custom BC specifications
+                - "dirichlet_zero": Zero Dirichlet on all boundaries
+                - "neumann_zero" / "no_flux": Zero Neumann (no-flux) on all boundaries
+                - "neumann": Zero Neumann (nD only)
+                An unrecognized bc_type raises ValueError (Issue #1558) rather than silently
+                defaulting to periodic (1D) / neumann (nD). Per-axis / mixed BC are NOT created
+                here -- build a BoundaryConditions and store it on the grid (Priority 1) instead.
+            custom_conditions: Optional dict with custom BC specifications (1D only)
 
         Returns:
             Boundary condition handler appropriate for grid dimension
@@ -886,7 +887,13 @@ class TensorProductGrid(
         elif custom_conditions:
             return BoundaryConditions(**custom_conditions)
         else:
-            return BoundaryConditions(type="periodic")  # Safe default
+            # Fail loud (Issue #1558): an unrecognized bc_type previously fell through to a
+            # periodic "safe default", silently substituting the wrong BC. Periodic on a domain
+            # meant to reflect/absorb is a different problem, not a safe default.
+            raise ValueError(
+                f"Unsupported 1D bc_type {bc_type!r}. Supported: {sorted(bc_map)}. For per-axis "
+                f"or mixed BC, build a BoundaryConditions and store it on the grid instead."
+            )
 
     def _create_bc_nd(self, bc_type: str):
         """Create nD boundary conditions using unified BC framework."""
@@ -904,8 +911,15 @@ class TensorProductGrid(
             "dirichlet_zero": lambda dimension=None: dirichlet_bc(value=0.0, dimension=dimension),
             "no_flux": no_flux_bc,
         }
-        factory = bc_factory.get(bc_type, neumann_bc)
-        return factory(dimension=self._dimension)
+        # Fail loud (Issue #1558): an unrecognized bc_type previously fell through to neumann_bc,
+        # silently substituting the wrong BC (and the advertised periodic_x/periodic_both/mixed
+        # keys were never in this factory, so they all silently became Neumann).
+        if bc_type not in bc_factory:
+            raise ValueError(
+                f"Unsupported {self._dimension}D bc_type {bc_type!r}. Supported: {sorted(bc_factory)}. "
+                f"For per-axis or mixed BC, build a BoundaryConditions and store it on the grid instead."
+            )
+        return bc_factory[bc_type](dimension=self._dimension)
 
     # ============================================================================
     # Boundary Trait Implementations (Issue #590 - Phase 1.2)
