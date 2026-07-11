@@ -49,3 +49,25 @@ def test_particles_robin_neumann_like_reflects_not_absorbs():
     assert out.shape[0] == 1, f"reflecting must keep the particle, got {out.shape[0]} (0 == absorbed bug)"
     x = float(out.ravel()[0])
     assert 0.0 <= x <= 1.0, f"reflected particle must be inside the domain, got {x}"
+
+
+def test_validate_bc_compatibility_emits_no_bc_type_verdict():
+    """#1558 defect 3: validate_bc_compatibility no longer emits a per-discretization BC-type verdict.
+
+    The old hardcoded table was a second, contradictory capability source: it flagged Robin as
+    "limited" for GFDM while hjb_gfdm._SUPPORTED_BC_TYPES actually includes Robin (the #1456 single
+    source). A uniform robin_bc has default_bc=ROBIN, so the old code returned that wrong verdict;
+    now the function checks only dimension compatibility, so it returns [].
+    """
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc, robin_bc
+    from mfgarchon.geometry.boundary.dispatch import validate_bc_compatibility
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    robin = robin_bc(dimension=1, alpha=1.0, beta=1.0)
+    assert validate_bc_compatibility(robin, grid, discretization="GFDM") == []  # old table said "limited"
+    assert validate_bc_compatibility(robin, grid, discretization="FDM") == []
+
+    # The one real check still fires: a 2D BC on a 1D geometry is a genuine dimension mismatch.
+    issues = validate_bc_compatibility(no_flux_bc(dimension=2), grid, discretization="FDM")
+    assert any("Dimension mismatch" in m for m in issues)
