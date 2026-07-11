@@ -131,10 +131,14 @@ class HJBWENOSolver(BaseHJBSolver):
 
     _scheme_family = SchemeFamily.FDM  # WENO is FDM variant
 
-    # BoundaryCapable protocol (Issue #1456): WENO5 ghost buffers handle Dirichlet / Neumann /
-    # no-flux / periodic; Robin, Reflecting and Extrapolation are not faithfully supported (the
-    # ghost path would silently reflect / degrade them) and fail loud.
-    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
+    # BoundaryCapable protocol (Issue #1456 / #1562): WENO5 ghost buffers handle Neumann / no-flux /
+    # periodic. DIRICHLET is NOT faithfully supported and is dropped here (Issue #1562): the ghost
+    # fill writes only ghost cells and the solve loop evolves the boundary node from the PDE RHS
+    # without pinning it to g, so Dirichlet is only weakly enforced (~O(h^1.5), not machine-zero /
+    # 5th order) and IC/BC-inconsistent data blows the degree-5 Vandermonde ghost to NaN. Robin,
+    # Reflecting and Extrapolation are likewise unsupported. All fail loud rather than silently
+    # mis-enforcing. (Strong boundary-node enforcement is a follow-up before re-declaring Dirichlet.)
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
 
     @property
     def supported_bc_types(self) -> frozenset:
