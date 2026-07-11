@@ -16,6 +16,25 @@ else:
     pass
 
 
+def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
+    """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
+
+    RFC #1574 / Issue #1563: only ``FixedPointIterator`` resolves a ``BCValueProvider`` (e.g.
+    ``AdjointConsistentProvider``) stored in a ``BCSegment.value`` -- it calls
+    ``problem.using_resolved_bc(state)`` each Picard step (fixed_point_iterator.py). The other
+    coupling loops do not, so a provider would otherwise reach the solver unresolved: a deep GFDM
+    row-builder ``ValueError``, or a silent miss on a non-Robin provider segment. Raise up front
+    (naming the loop) instead of surfacing the failure deep in the solver, or not at all.
+    """
+    if problem.get_boundary_conditions().has_providers():
+        raise NotImplementedError(
+            f"{iterator_name} does not resolve dynamic BC providers (a BCValueProvider stored in a "
+            f"BCSegment.value, e.g. AdjointConsistentProvider). Only FixedPointIterator resolves them "
+            f"per iteration (Issue #625/#1563). Use FixedPointIterator for a provider-based "
+            f"(adjoint-consistent) boundary condition, or a statically-valued BC with this loop."
+        )
+
+
 class BaseCouplingIterator(ABC):
     """
     Abstract base class for iterative coupling solvers (Picard, block, fictitious play).

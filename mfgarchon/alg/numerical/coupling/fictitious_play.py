@@ -42,7 +42,7 @@ from mfgarchon.utils.iteration.schedules import (
 )
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator
+from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable
 from .fixed_point_utils import (
     check_convergence_criteria,
     initialize_cold_start,
@@ -126,6 +126,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         drift_field: np.ndarray | Any | None = None,
     ):
         super().__init__(problem)
+        assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
         self.backend = backend
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver

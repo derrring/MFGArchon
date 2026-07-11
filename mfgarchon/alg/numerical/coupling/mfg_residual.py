@@ -28,6 +28,7 @@ import numpy as np
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .base_mfg import assert_bc_providers_resolvable
 from .fixed_point_utils import resolve_fp_drift_kwargs
 from .source_composition import compose_fp_source, compose_hjb_source
 
@@ -108,6 +109,7 @@ class MFGResidual:
             drift_field: Optional drift override for non-MFG problems
         """
         self.problem = problem
+        assert_bc_providers_resolvable(self.problem, "MFGResidual (NewtonMFGSolver)")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         self.volatility_field = volatility_field

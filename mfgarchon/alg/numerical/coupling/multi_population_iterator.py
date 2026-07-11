@@ -20,6 +20,8 @@ import numpy as np
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .base_mfg import assert_bc_providers_resolvable
+
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
@@ -71,6 +73,10 @@ class MultiPopulationIterator:
         self.fp_solvers = fp_solvers
         self.relaxation = relaxation
         K = multi_problem.K
+        for _k in range(K):
+            assert_bc_providers_resolvable(
+                multi_problem.get_population(_k), f"MultiPopulationIterator[population {_k}]"
+            )
 
         if len(hjb_solvers) != K:
             raise ValueError(f"Need {K} HJB solvers, got {len(hjb_solvers)}")
