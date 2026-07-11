@@ -351,6 +351,32 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # diffusion). None (BC resolved later) is a no-op; SL re-reads get_boundary_conditions().
         self._validate_bc_support(self.get_boundary_conditions())
 
+        # Issue #1560 / RFC #1574 Phase 0: even when every segment type is individually supported, the
+        # SL characteristic fold and ADI diffusion collapse a MIXED per-axis BC to segments[0]'s single
+        # geometric operation (reflect vs wrap) applied to ALL axes (get_bc_type_string returns only the
+        # first segment) — so e.g. no-flux walls on one axis + periodic on another is silently reduced
+        # to one op, and reordering the segments flips the physics. Per-axis handling is a follow-up;
+        # for now fail loud when the segments do not agree on a single geometric operation.
+        _sl_bc = self.get_boundary_conditions()
+        _sl_segments = getattr(_sl_bc, "segments", None)
+        if _sl_segments:
+            _sl_ops = set()
+            for _seg in _sl_segments:
+                _seg_type = str(getattr(_seg.bc_type, "value", _seg.bc_type))
+                _sl_ops.add(bc_type_to_geometric_operation(_seg_type))
+            _sl_default = getattr(_sl_bc, "default_bc", None)
+            if _sl_default is not None:
+                _d = str(getattr(_sl_default, "value", _sl_default))
+                _sl_ops.add(bc_type_to_geometric_operation(_d))
+            if len(_sl_ops) > 1:
+                raise NotImplementedError(
+                    f"HJBSemiLagrangianSolver does not support a mixed per-axis boundary condition whose "
+                    f"segments map to different geometric operations ({sorted(_sl_ops)}). The characteristic "
+                    f"fold and ADI diffusion apply the FIRST segment's single operation to every axis "
+                    f"(order-sensitive silent collapse). Use a single BC type across axes, or HJB-FDM/GFDM "
+                    f"which resolve BC per wall (Issue #1560 / RFC #1574 Phase 0)."
+                )
+
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
     def _setup_jax_functions(self):
