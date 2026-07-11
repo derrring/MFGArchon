@@ -1200,6 +1200,30 @@ class HJBFDMSolver(BaseHJBSolver):
             - Issue #706 (adjoint discretization)
             - compute_hjb_jacobian() in base_hjb.py (1D Newton solver version)
         """
+        # Issue #1564 / RFC #1574 Phase 0: the linearized operator hardcodes no-flux at every
+        # boundary (both 1D and nD skip boundary rows as no-flux). HJBFDMSolver declares DIRICHLET/
+        # PERIODIC supported for the NORMAL FDM solve (which honors them via its own assembly), but
+        # THIS operator -- consumed only by the strict-adjoint BlockIterator (jacobian_transpose,
+        # #707) as A_FP = A_HJB^T -- does not. A declared Dirichlet outflow would be silently treated
+        # as mass-conserving no-flux. Fail loud on any BC this operator does not honor rather than
+        # advect with the wrong wall physics (mirrors the HJBGFDMSolver Howard gate).
+        bc = self.get_boundary_conditions()
+        if bc is not None:
+            honored = {BCType.NEUMANN, BCType.NO_FLUX}
+            requested = {seg.bc_type for seg in getattr(bc, "segments", [])}
+            default_bc = getattr(bc, "default_bc", None)
+            if default_bc is not None:
+                requested.add(default_bc)
+            unsupported = requested - honored
+            if unsupported:
+                names = ", ".join(sorted(str(getattr(t, "value", t)) for t in unsupported))
+                raise NotImplementedError(
+                    f"build_linearized_operator (strict-adjoint FP operator, Issue #707) hardcodes "
+                    f"no-flux at every boundary and does not honor {{{names}}}. The declared BC would "
+                    f"be silently treated as no-flux, leaking no mass where a Dirichlet outflow should. "
+                    f"Use the standard coupling path (FixedPointIterator) for non-Neumann boundaries, "
+                    f"or a Neumann/no-flux BC on the strict-adjoint path (Issue #1564 / RFC #1574)."
+                )
         if self.dimension == 1:
             return self._build_linearized_operator_1d(U, M, time)
         else:
