@@ -227,25 +227,20 @@ def adi_diffusion_step(
         # Diagonal anisotropic: different sigma per direction
         sigma_vec = np.asarray(sigma)
     elif hasattr(sigma, "ndim") and sigma.ndim == 2:  # Issue #543 acceptable
-        # Full tensor diffusion. Convention: sigma_tensor = covariance matrix (sigma*sigma^T).
-        # Diagonal ADI uses D_d = sigma_tensor[d,d]/2 (via diffusion_from_volatility on
-        # sqrt of diagonal). Explicit cross-derivative uses coefficient sigma_tensor[i,j]
-        # for each i<j pair (the factor-of-2 from symmetry and 1/2 in D_ij cancel exactly;
-        # see apply_cross_diffusion_explicit docstring and Issue #1261 fix).
-        # Convention assert (Issue #1079): sigma_tensor must be symmetric so that both
-        # paths are consistent. An asymmetric tensor means the caller is passing something
-        # other than a covariance matrix, which makes the convention undefined.
-        sigma_tensor = np.asarray(sigma)
-        if not np.allclose(sigma_tensor, sigma_tensor.T, rtol=1e-5, atol=1e-8):
-            max_asym = float(np.max(np.abs(sigma_tensor - sigma_tensor.T)))
-            raise ValueError(
-                f"adi_diffusion_step: sigma_tensor must be symmetric (covariance "
-                f"convention: sigma_tensor = sigma*sigma^T). Max asymmetry = {max_asym:.3e}. "
-                f"Diagonal ADI uses D_d = sigma_tensor[d,d]/2; explicit cross-derivative "
-                f"uses coefficient sigma_tensor[i,j] for i<j pair. Both require a "
-                f"symmetric covariance matrix as input (Issue #1079)."
-            )
-        sigma_vec = np.sqrt(np.diag(sigma_tensor))  # Diagonal part for ADI
+        # Full tensor diffusion. The (d,d) input is the SDE VOLATILITY matrix Sigma -- the package
+        # convention for problem.sigma, and the same reading the 1-D branch above uses (per-axis
+        # volatility) -- NOT the covariance. Form the covariance C = Sigma @ Sigma^T (Issue #1548),
+        # then drive both the diagonal ADI (D_d = C[d,d]/2, via diffusion_from_volatility on
+        # sqrt(diag C)) and the explicit cross-derivative (coefficient C[i,j] per i<j pair; the
+        # factor-of-2 from symmetry and the 1/2 in D_ij cancel -- see apply_cross_diffusion_explicit
+        # + Issue #1261) from C. C is symmetric PSD by construction, so Sigma itself need NOT be
+        # symmetric (a Cholesky factor is lower-triangular). The former symmetry assert (Issue #1079)
+        # both rejected a valid volatility Sigma and, for a symmetric Sigma, silently over-diffused
+        # by treating it as the covariance -- D = Sigma/2 instead of Sigma@Sigma^T/2 (e.g. 0.3*I gave
+        # 0.15 not the correct 0.045).
+        Sigma = np.asarray(sigma, dtype=float)
+        sigma_tensor = Sigma @ Sigma.T
+        sigma_vec = np.sqrt(np.diag(sigma_tensor))  # per-axis volatility from the covariance diagonal
     else:
         # Issue #1286, 2026-06-11 survey: fail-fast — never silently default sigma.
         # A wrong sigma type causes adi_diffusion_step to solve a different PDE.

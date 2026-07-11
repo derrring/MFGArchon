@@ -1198,6 +1198,37 @@ class TestADIDiffusionMagnitude:
             f"ADI 3D under/over-diffuses: factor {adi_fac:.6f} vs analytic {analytic_fac:.6f}"
         )
 
+    def test_tensor_sigma_is_volatility_not_covariance(self):
+        """Issue #1548: a (d,d) sigma is the SDE VOLATILITY matrix Sigma (D = Sigma@Sigma^T/2), the
+        package convention for problem.sigma and the same reading the scalar/1-D paths use -- NOT the
+        covariance. An isotropic Sigma = c*I must decay exactly like the scalar c (D = c^2/2). Before
+        #1548 the (d,d) branch treated the input as the covariance -> D = c/2 (a 0.3->0.15-vs-0.045
+        over-diffusion), and a Cholesky (lower-triangular) volatility tripped the symmetry assert."""
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
+
+        N, L, c, dt = 81, 1.0, 0.7, 1e-3
+        D = 0.5 * c**2
+        x = np.linspace(0.0, L, N)
+        X, Y = np.meshgrid(x, x, indexing="ij")
+        k = np.pi
+        u0 = np.cos(k * X) * np.cos(k * Y)
+        dx = L / (N - 1)
+        spacing, shape = np.array([dx, dx]), (N, N)
+
+        u_scalar = adi_diffusion_step(u0.copy(), dt, c, spacing, shape, "neumann")
+        u_tensor = adi_diffusion_step(u0.copy(), dt, c * np.eye(2), spacing, shape, "neumann")
+        i, j = N // 3, N // 4
+        analytic = np.exp(-D * (2 * k**2) * dt)
+        assert self._decay_relerr(u_tensor[i, j] / u0[i, j], analytic) < 0.02, (
+            "isotropic volatility Sigma=c*I must decay at D=c^2/2, not c/2 (covariance misread)"
+        )
+        # Sigma = c*I (volatility) is byte-identical to the scalar-c path.
+        np.testing.assert_allclose(u_tensor, u_scalar, rtol=0, atol=1e-12)
+        # A non-symmetric (Cholesky-factor) volatility must no longer raise; C = L L^T is symmetric.
+        L_chol = np.array([[c, 0.0], [0.1, c]])
+        out = adi_diffusion_step(u0.copy(), dt, L_chol, spacing, shape, "neumann")
+        assert np.all(np.isfinite(out))
+
 
 class TestReflectIntoDomain:
     """Regression guard for the reflecting-BC characteristic-foot fold (Issues #1161/#1048/#1054).
