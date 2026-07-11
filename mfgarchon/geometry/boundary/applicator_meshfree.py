@@ -41,6 +41,20 @@ from .applicator_base import BaseMeshfreeApplicator
 from .types import BCType
 
 
+def _robin_alpha_beta(boundary_conditions) -> tuple[float, float]:
+    """Read Robin (alpha, beta) from the BCSegment that carries them (Issue #1558).
+
+    alpha/beta live on ``BCSegment``, not on ``BoundaryConditions`` -- the previous
+    ``getattr(boundary_conditions, "beta", 0.0)`` always read the 0.0 default, silently collapsing
+    every Robin BC to pure Dirichlet (field path: hard ``u = g/alpha``; particle path: absorbing).
+    Read them from the segment whose type is ROBIN (for a uniform Robin BC this is the sole segment).
+    """
+    robin_seg = next((s for s in boundary_conditions.segments if s.bc_type == BCType.ROBIN), None)
+    if robin_seg is None:
+        raise ValueError("Robin BC resolved but no BCSegment carries the Robin alpha/beta coefficients.")
+    return float(robin_seg.alpha), float(robin_seg.beta)
+
+
 class MeshfreeApplicator(BaseMeshfreeApplicator):
     """
     Boundary condition applicator for meshfree methods.
@@ -376,8 +390,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         elif bc_type == BCType.ROBIN:
             # Robin BC: α*u + β*du/dn = g
             # For meshfree without derivative info, use penalty approximation
-            alpha = getattr(boundary_conditions, "alpha", 1.0)
-            beta = getattr(boundary_conditions, "beta", 0.0)
+            alpha, beta = _robin_alpha_beta(boundary_conditions)
             bc_value = boundary_conditions.default_value
             if bc_value is None:
                 bc_value = 0.0
@@ -461,8 +474,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
 
         elif bc_type == BCType.ROBIN:
             # Robin: behavior depends on α/β ratio
-            alpha = getattr(boundary_conditions, "alpha", 1.0)
-            beta = getattr(boundary_conditions, "beta", 0.0)
+            alpha, beta = _robin_alpha_beta(boundary_conditions)
 
             if np.isclose(beta, 0.0):
                 # Pure Dirichlet-like → absorbing
