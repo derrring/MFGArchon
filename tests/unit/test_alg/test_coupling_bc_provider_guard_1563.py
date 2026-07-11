@@ -91,3 +91,37 @@ def test_fictitious_play_rejects_provider_bc():
 
     # A static-BC problem constructs fine (the guard is scoped to providers only).
     FictitiousPlayIterator(plain, hjb_solver=hjb, fp_solver=fp)
+
+
+def test_single_problem_loops_reject_provider_bc():
+    """BlockIterator and MFGResidual (the other two single-self.problem loops) also fail loud."""
+    from mfgarchon.alg.numerical.coupling.block_iterators import BlockJacobiIterator
+    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+
+    plain = _plain_problem()
+    hjb, fp = HJBFDMSolver(plain), FPFDMSolver(plain)
+    for cls in (BlockJacobiIterator, MFGResidual):
+        with pytest.raises(NotImplementedError, match="1563"):
+            cls(_provider_problem(), hjb_solver=hjb, fp_solver=fp)
+
+
+def test_regime_switching_guards_every_regime_not_just_the_first():
+    """Load-bearing claim: RegimeSwitchingIterator guards EVERY regime's problem, not just
+    problems[0] (which is the representative self.problem). A provider on the SECOND regime must
+    raise, naming 'regime 1' -- a revert to guarding only problems[0] would let it through."""
+    from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+    from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+    plain = _plain_problem()
+    # regime 0 = static, regime 1 = provider-bearing. Solvers built on the static problem (the guard
+    # fires on the problems list before any solver is used).
+    problems = [plain, _provider_problem()]
+    config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]]))
+    hjbs = [HJBFDMSolver(plain), HJBFDMSolver(plain)]
+    fps = [FPFDMSolver(plain), FPFDMSolver(plain)]
+    with pytest.raises(NotImplementedError, match="regime 1"):
+        RegimeSwitchingIterator(problems=problems, regime_config=config, hjb_solvers=hjbs, fp_solvers=fps)
