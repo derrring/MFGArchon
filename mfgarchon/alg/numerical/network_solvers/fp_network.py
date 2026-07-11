@@ -90,7 +90,8 @@ class FPNetworkSolver(BaseFPSolver):
 
         Args:
             problem: Network MFG problem instance
-            scheme: Time discretization ("explicit", "implicit", "upwind")
+            scheme: Time discretization ("explicit" or "implicit"). "upwind"/"flow" were removed
+                (Issue #1541): "upwind" was an identity map and "flow" was never implemented.
             diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), falls
                 back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility_field`
                 to solve_fp_system) for correct physics.
@@ -118,6 +119,20 @@ class FPNetworkSolver(BaseFPSolver):
             self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
 
         self.scheme = scheme
+        # Issue #1541 / RFC #1574: scheme="upwind" was an identity map (the paired edge flows cancel
+        # to exactly zero net drift and the step has no diffusion term, so the density never evolves),
+        # and "flow" was never implemented. A correctly-implemented conservative upwind would be
+        # byte-identical to "explicit" (which already sources transition rates via H.optimal_control in
+        # inflow-outflow form + a diffusion term), i.e. a single-source duplicate. Fail loud at
+        # construction rather than silently returning a physics-free density (matches the #1426
+        # dead-knob precedent already in this file).
+        if scheme not in ("explicit", "implicit"):
+            raise NotImplementedError(
+                f"FPNetworkSolver(scheme={scheme!r}) is not supported (Issue #1541). Only 'explicit' "
+                f"and 'implicit' are implemented; 'upwind' was a proven identity map (no transport) "
+                f"and would duplicate 'explicit' if fixed, and 'flow' was never implemented. "
+                f"Use scheme='explicit'."
+            )
         # Issue #1532: no silent physical default. The network diffusion D=sigma^2/2 is decoupled
         # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
         # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
@@ -326,15 +341,11 @@ class FPNetworkSolver(BaseFPSolver):
                 # Issue #913: precompute transition rates via H.optimal_control
                 self._current_rates = self._precompute_transition_rates(M[n, :], u_current, t)
 
-                # Solve single time step
+                # Solve single time step (scheme validated to {explicit, implicit} at __init__, #1541)
                 if self.scheme == "explicit":
                     M[n + 1, :] = self._explicit_step(M[n, :], u_current, t)
-                elif self.scheme == "implicit":
+                else:  # implicit
                     M[n + 1, :] = self._implicit_step(M[n, :], u_current, t)
-                elif self.scheme == "upwind":
-                    M[n + 1, :] = self._upwind_step(M[n, :], u_current, t)
-                else:
-                    raise ValueError(f"Unknown scheme: {self.scheme}")
 
                 # Enforce non-negativity
                 M[n + 1, :] = np.maximum(M[n + 1, :], 0)
@@ -414,30 +425,6 @@ class FPNetworkSolver(BaseFPSolver):
 
         return m_next
 
-    def _upwind_step(self, m_current: np.ndarray, u_current: np.ndarray, t: float) -> np.ndarray:
-        """Upwind scheme for network FP equation (conservation-preserving)."""
-        m_next = m_current.copy()
-
-        # Compute flows between neighboring nodes
-        for i in range(self.num_nodes):
-            neighbors = self.divergence_ops[i]
-
-            net_flow = 0.0
-
-            for j in neighbors:
-                # Compute flow from j to i
-                flow_ji = self._compute_edge_flow(j, i, m_current, u_current, t)
-                # Compute flow from i to j
-                flow_ij = self._compute_edge_flow(i, j, m_current, u_current, t)
-
-                # Net flow into node i
-                net_flow += flow_ji - flow_ij
-
-            # Update with net flow
-            m_next[i] = m_current[i] + self.dt * net_flow
-
-        return m_next
-
     def _precompute_transition_rates(self, m: np.ndarray, u: np.ndarray, t: float) -> dict:
         """Precompute transition rates alpha[i][j] for all nodes.
 
@@ -486,30 +473,6 @@ class FPNetworkSolver(BaseFPSolver):
             "(self._current_rates is None). Call solve_fp_system (which precomputes rates via "
             "H.optimal_control each step) rather than stepping directly (Issue #1546 / #1474)."
         )
-
-    def _compute_edge_flow(self, node_from: int, node_to: int, m: np.ndarray, u: np.ndarray, t: float) -> float:
-        """Compute flow along edge from node_from to node_to."""
-        if node_from == node_to:
-            return 0.0
-
-        # Check if edge exists
-        edge_weight = self.network_problem.network_data.get_edge_weight(node_from, node_to)
-        if edge_weight == 0:
-            return 0.0
-
-        # Upwind density selection
-        du = u[node_to] - u[node_from]
-
-        if du > 0:  # Flow from node_from to node_to
-            density = m[node_from]
-        else:  # Flow from node_to to node_from
-            density = m[node_to]
-            du = -du
-
-        # Flow magnitude
-        flow = edge_weight * density * du
-
-        return flow
 
     def forward_step(self, m_prev: np.ndarray, u_current: np.ndarray, dt: float) -> np.ndarray:
         """Single forward time step — NOT IMPLEMENTED (Issue #1546).
