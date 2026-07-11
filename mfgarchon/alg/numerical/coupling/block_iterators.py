@@ -41,7 +41,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator
+from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable
 from .fixed_point_utils import (
     apply_damping,
     check_convergence_criteria,
@@ -147,6 +147,7 @@ class BlockIterator(BaseCouplingIterator):
             relaxation_M = damping_factor_M
 
         super().__init__(problem)
+        assert_bc_providers_resolvable(self.problem, type(self).__name__)
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
