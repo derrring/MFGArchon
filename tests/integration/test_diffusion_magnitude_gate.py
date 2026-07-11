@@ -17,12 +17,19 @@ intact — so this gate FAILS on exactly the bugs that shipped:
 
   - #1152  weak-form used ``volatility_field`` directly as ``D`` (skipped the /2)
   - #1178  ADI applied ``dt/dimension`` -> only ``1/dim`` of the diffusion
-  - #1183  explicit-drift FP collapsed spatially-varying sigma to its mean
-  - #1169  anisotropic off-diagonal sigma dropped
+  - #1073  GFDM re-squared ``problem.diffusion`` -> ``(sigma^2/2)^2``
+
+Scope (Issue #1569): the cosine eigenmode is evolved under CONSTANT ISOTROPIC sigma, so
+this gate catches only constant-isotropic *magnitude* (factor) errors as above. It does
+NOT catch the two varying/anisotropic bugs of the same audit -- a constant-sigma eigenmode
+cannot see them (``mean(const) == const``; no off-diagonal to drop): #1183 (explicit-drift
+FP mean-collapse of spatially-varying sigma) is guarded in ``test_operators/test_diffusion.py``
+and #1169 (anisotropic off-diagonal dropped) in ``test_fp_particle_anisotropic_sigma_1256.py``.
 
 Coverage: ADI diffusion step (standalone; also the SL HJB default diffusion path,
 which delegates to it) over 1D/2D/3D, the FP-FDM explicit-drift and implicit
-per-point diffusion paths, and the HJB-GFDM per-point Newton path (the production
+per-point diffusion paths, the weak-form (FEM Galerkin) FP path via ``FPFEMSolver``
+(the #1152 solver, Issue #1566), and the HJB-GFDM per-point Newton path (the production
 ``joint_socp`` + ``precompute`` stack) via MMS source-cancellation. Constant sigma
 (the clean eigenmode invariant).
 
@@ -135,6 +142,54 @@ def test_fp_fdm_diffusion_magnitude(path):
     factor, analytic = _fp_pure_diffusion_decay(path, sigma=0.3)
     assert _decay_relerr(factor, analytic) < 0.03, (
         f"FP {path} diffusion magnitude wrong: factor {factor:.6f} vs analytic {analytic:.6f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Weak-form (FEM Galerkin) FP diffusion magnitude -- the #1152 path the gate names (Issue #1566)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.tier2
+@pytest.mark.integration
+def test_weak_form_fem_fp_diffusion_magnitude():
+    """The weak-form (FEM Galerkin) FP solver must decay a cosine eigenmode at exp(-D*k^2*T)
+    with D = sigma^2/2. This is the #1152 path named in this module's own docstring ("weak-form
+    used volatility_field directly as D -- skipped the /2"): a factor error doubles the decay
+    rate. No prior test instantiated ``WeakFormFPSolver`` (Issue #1566), so the paper solver's
+    magnitude was named-but-unpinned; ``FPFEMSolver`` inherits ``_diffusion_coefficient`` /
+    ``solve_fp_system`` from ``WeakFormFPSolver`` unchanged, so this exercises that magnitude path.
+    Pure diffusion (zero coupling, no potential) keeps ``1 + a*cos(2*pi*x)`` positive, so the
+    positivity clip never fires and the recovered decay reads the diffusion coefficient directly."""
+    pytest.importorskip("skfem", reason="scikit-fem required for the weak-form FEM FP solver")
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+    from mfgarchon.geometry import Mesh1D
+
+    sigma, T, nt, ne = 0.3, 0.2, 40, 80
+    D = 0.5 * sigma**2
+    geom = Mesh1D(bounds=(0.0, 1.0), num_elements=ne)
+    geom.generate_mesh()
+    geom.boundary_conditions = no_flux_bc(dimension=1)
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: np.asarray(m) * 0.0,
+        coupling_dm=lambda m: np.asarray(m) * 0.0,
+    )
+    comps = MFGComponents(
+        m_initial=lambda xx: 1.0 + 0.4 * np.cos(_K * np.asarray(xx)),
+        u_terminal=lambda xx: np.asarray(xx) * 0.0,
+        hamiltonian=H,
+    )
+    prob = MFGProblem(geometry=geom, T=T, Nt=nt, sigma=sigma, components=comps, coupling_coefficient=0.0)
+    solver = FPFEMSolver(prob, order=1)
+    x = solver._disc.dof_coordinates[:, 0]
+    m0 = 1.0 + 0.4 * np.cos(_K * x)
+    M = solver.solve_fp_system(m0.copy(), potential_field=None, volatility_field=sigma)
+    amp0, ampT = M[0] - 1.0, M[-1] - 1.0
+    i = int(np.argmax(np.abs(amp0)))
+    factor, analytic = ampT[i] / amp0[i], np.exp(-D * _K**2 * T)
+    assert _decay_relerr(factor, analytic) < 0.05, (
+        f"weak-form FEM FP diffusion magnitude wrong: factor {factor:.6f} vs analytic {analytic:.6f}"
     )
 
 
