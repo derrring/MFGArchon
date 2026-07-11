@@ -73,10 +73,10 @@ class MultiPopulationIterator:
         self.fp_solvers = fp_solvers
         self.relaxation = relaxation
         K = multi_problem.K
-        for _k in range(K):
-            assert_bc_providers_resolvable(
-                multi_problem.get_population(_k), f"MultiPopulationIterator[population {_k}]"
-            )
+        _get_pop = getattr(multi_problem, "get_population", None)
+        if callable(_get_pop):
+            for _k in range(K):
+                assert_bc_providers_resolvable(_get_pop(_k), f"MultiPopulationIterator[population {_k}]")
 
         if len(hjb_solvers) != K:
             raise ValueError(f"Need {K} HJB solvers, got {len(hjb_solvers)}")
