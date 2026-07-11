@@ -56,3 +56,14 @@ def test_actor_critic_missing_population_channel_fails_loud():
     algo = MeanFieldActorCritic(env=_EnvWithoutPopState(), state_dim=2, action_dim=3, population_dim=4)
     with pytest.raises(AttributeError, match="1508"):
         algo.train(num_episodes=1)
+
+    # Both raise-paths of _extract_population must fire (else a revert to a zeros default on either
+    # would re-introduce the silent non-MFG training): (a) ndarray with no tail past state_dim, and
+    # (b) dict lacking both 'local_density' and 'population'.
+    with pytest.raises(AttributeError, match="1508"):
+        algo._extract_population(np.zeros(2))  # len == state_dim -> no population tail
+    with pytest.raises(AttributeError, match="1508"):
+        algo._extract_population({"state": np.zeros(2)})  # dict without a population channel
+    # A dict that DOES carry the population returns it (no raise).
+    pop = algo._extract_population({"local_density": np.arange(4.0)})
+    assert np.array_equal(pop, np.arange(4.0))
