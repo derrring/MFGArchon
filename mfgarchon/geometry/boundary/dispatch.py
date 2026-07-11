@@ -237,58 +237,42 @@ def validate_bc_compatibility(
     discretization: DiscretizationType | str = DiscretizationType.FDM,
 ) -> list[str]:
     """
-    Validate that boundary conditions are compatible with geometry and discretization.
+    Validate that boundary conditions are dimensionally compatible with the geometry.
 
     Args:
         boundary_conditions: BC specification to validate
         geometry: Target geometry
-        discretization: Discretization method
+        discretization: Discretization method (accepted for API stability; BC-type support is NOT
+            validated here -- see Note)
 
     Returns:
-        List of warning/error messages (empty if valid)
+        List of warning/error messages (empty if compatible)
+
+    Note:
+        BC-**type** support (which BC types a discretization honors) is NOT checked here. The
+        authoritative source is each solver's ``supported_bc_types`` (the #1456 gate), enforced at
+        solve time. This function only checks the BC/geometry dimension match. (Issue #1558: the
+        former per-discretization support table was a dead no-op -- it read ``default_bc``, which is
+        None for segment-based BCs -- and a second, contradictory capability source, e.g. it flagged
+        Robin as "limited" for GFDM while ``hjb_gfdm._SUPPORTED_BC_TYPES`` includes Robin.)
 
     Example:
         >>> from mfgarchon.geometry import TensorProductGrid
-        >>> from mfgarchon.geometry.boundary import robin_bc
+        >>> from mfgarchon.geometry.boundary import robin_bc, no_flux_bc
         >>> from mfgarchon.geometry.boundary.dispatch import validate_bc_compatibility
         >>>
-        >>> grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[11])
+        >>> grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
         >>> bc = robin_bc(dimension=1, alpha=1.0, beta=1.0)
-        >>> issues = validate_bc_compatibility(bc, grid, discretization="FDM")
-        >>> # Robin BC is supported for FDM, so issues == []
+        >>> issues = validate_bc_compatibility(bc, grid)  # dimensions match -> issues == []
     """
     issues = []
 
-    # Normalize discretization
-    if isinstance(discretization, str):
-        discretization = DiscretizationType[discretization.upper()]
-
-    # Check dimension match
+    # Dimension match (the one real check; BC-type support is the solver's supported_bc_types, #1456).
     if boundary_conditions.dimension != geometry.dimension:
         issues.append(
             f"Dimension mismatch: BC dimension ({boundary_conditions.dimension}) "
             f"!= geometry dimension ({geometry.dimension})"
         )
-
-    # Check BC type support by discretization
-    from .types import BCType
-
-    # Issue #543: Use getattr() for optional attribute instead of hasattr
-    bc_type = getattr(boundary_conditions, "default_bc", None)
-
-    if discretization == DiscretizationType.FDM:
-        # FDM supports: Dirichlet, Neumann, Robin, Periodic, No-flux
-        unsupported_fdm = {BCType.REFLECTING}  # Reflecting is for particles
-        if bc_type in unsupported_fdm:
-            issues.append(f"BC type {bc_type} is not supported for FDM discretization")
-
-    elif discretization in (DiscretizationType.GFDM, DiscretizationType.MESHFREE):
-        # GFDM: primarily Dirichlet and Neumann
-        limited_gfdm = {BCType.ROBIN, BCType.REFLECTING}
-        if bc_type in limited_gfdm:
-            issues.append(
-                f"BC type {bc_type} has limited support for GFDM/Meshfree. Consider Dirichlet or Neumann instead."
-            )
 
     return issues
 
