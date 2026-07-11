@@ -476,14 +476,16 @@ class FPNetworkSolver(BaseFPSolver):
             )
             return inflow - outflow
 
-        # Legacy fallback
-        neighbors = self.divergence_ops.get(node, [])
-        drift = 0.0
-        for neighbor in neighbors:
-            du = u[neighbor] - u[node]
-            edge_weight = self.network_problem.network_data.get_edge_weight(node, neighbor)
-            drift += edge_weight * m[node] * du
-        return drift
+        # Issue #1546 / #1474: no silent legacy fallback. solve_fp_system always precomputes
+        # self._current_rates (via H.optimal_control) before each step, so reaching here means the
+        # caller stepped without precomputing (the removed forward_step path). The old fallback used
+        # the wrong-signed, non-conservative uphill drift `w*m[node]*(u_j-u_i)` that #1474 replaced;
+        # fail loud instead of resurrecting it.
+        raise RuntimeError(
+            "FPNetworkSolver._compute_drift_term: transition rates were not precomputed "
+            "(self._current_rates is None). Call solve_fp_system (which precomputes rates via "
+            "H.optimal_control each step) rather than stepping directly (Issue #1546 / #1474)."
+        )
 
     def _compute_edge_flow(self, node_from: int, node_to: int, m: np.ndarray, u: np.ndarray, t: float) -> float:
         """Compute flow along edge from node_from to node_to."""
@@ -510,41 +512,20 @@ class FPNetworkSolver(BaseFPSolver):
         return flow
 
     def forward_step(self, m_prev: np.ndarray, u_current: np.ndarray, dt: float) -> np.ndarray:
+        """Single forward time step — NOT IMPLEMENTED (Issue #1546).
+
+        This "interface compatibility" stub never called _precompute_transition_rates, so it (a) hit
+        the wrong-signed legacy drift on a fresh solver and (b) reused stale last-timestep rates after
+        a solve, and it also skipped the geometry-owned node-BC (_node_applicator.apply_fp) and the
+        #1478 mass-changing-BC renorm gate, manufacturing false conservation under an ABSORBING node.
+        It has no callers. Rather than ship a silently-wrong single-step API, fail loud; use
+        solve_fp_system, which precomputes rates and honors the node BC each step.
         """
-        Single forward time step (interface compatibility).
-
-        Args:
-            m_prev: Density at previous time step
-            u_current: Current value function
-            dt: Time step size
-
-        Returns:
-            Updated density distribution
-        """
-        # Temporarily adjust dt for this step
-        original_dt = self.dt
-        self.dt = dt
-
-        t = 0.0  # Dummy time (should be passed properly in full implementation)
-
-        if self.scheme == "explicit":
-            result = self._explicit_step(m_prev, u_current, t)
-        elif self.scheme == "implicit":
-            result = self._implicit_step(m_prev, u_current, t)
-        else:
-            result = self._upwind_step(m_prev, u_current, t)
-
-        # Restore original dt
-        self.dt = original_dt
-
-        # Enforce constraints
-        result = np.maximum(result, 0)
-        if self.enforce_mass_conservation:
-            total_mass = np.sum(result)
-            if total_mass > 1e-12:
-                result /= total_mass
-
-        return result
+        raise NotImplementedError(
+            "FPNetworkSolver.forward_step is not implemented consistently with solve_fp_system "
+            "(it skips rate precomputation and the node-BC / mass-renorm gate, Issue #1546). "
+            "Use solve_fp_system(M_initial=..., ...) for network FP time stepping."
+        )
 
 
 # Alias for backward compatibility
