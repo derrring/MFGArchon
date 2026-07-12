@@ -238,7 +238,18 @@ class DiffusionOperator(LinearOperator):
             return coeff, "constant_tensor"
 
         if coeff.shape == (*self.field_shape, d, d):
-            # Spatially varying tensor Σ(x)
+            # Spatially varying tensor D(x). Gate symmetry (RFC #1596), vectorized over the field:
+            # the downstream kernel reads D[...,i,j] and D[...,j,i] independently, so an asymmetric
+            # D_field would inject a spurious antisymmetric-advection term. Per-point PSD is left to
+            # the caller (an O(N) eigendecomposition per grid point is too costly here); symmetry is
+            # the load-bearing check and is one cheap array op.
+            max_asym = float(np.max(np.abs(coeff - np.swapaxes(coeff, -1, -2)))) if coeff.size else 0.0
+            if max_asym > 1e-10:
+                raise ValueError(
+                    f"DiffusionOperator spatially-varying diffusion tensor D(x) must be symmetric at "
+                    f"every point (it is 1/2 S S^T for a std-dev matrix S; RFC #1596). "
+                    f"Max asymmetry |D - D^T| = {max_asym:.3e}."
+                )
             return coeff, "varying_tensor"
 
         raise ValueError(

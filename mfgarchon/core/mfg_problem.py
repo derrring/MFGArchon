@@ -47,7 +47,9 @@ def _diffusion_to_volatility(
 
     Scalar:   D = sigma^2/2  =>  sigma = sqrt(2D)
     Diagonal: D_i = sigma_i^2/2  =>  sigma_i = sqrt(2 D_i)
-    Tensor:   D = (1/2) Sigma Sigma^T  =>  Sigma = cholesky(2D)
+    Tensor:   D = (1/2) S S^T  =>  S = symmetric matrix square root of 2D (RFC #1596;
+              the SYMMETRIC square root, not a Cholesky factor, so the volatility->D->volatility
+              round-trip lands on a symmetric std-dev matrix that passes validate_symmetric_psd).
 
     Args:
         D: PDE diffusion coefficient (non-negative scalar, 1D diagonal, or 2D SPD tensor).
