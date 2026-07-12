@@ -459,25 +459,37 @@ class LevelSetEvolver:
 
         self.h_min = min(self.spacing)  # Minimum spacing (for CFL)
 
-        # Get gradient operators (upwind scheme)
-        self.grad_ops = geometry.get_gradient_operator(scheme="upwind")
-
         logger.debug(
             f"LevelSetEvolver initialized: {geometry.dimension}D, scheme={scheme}, "
             f"time_integrator={time_integrator}, spacing={self.spacing}, CFL_max={cfl_max}"
         )
 
-    def _compute_godunov_gradient_magnitude(self, phi: NDArray[np.float64]) -> NDArray[np.float64]:
+    def _compute_godunov_gradient_magnitude(
+        self,
+        phi: NDArray[np.float64],
+        velocity: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
         """
-        Compute Godunov upwind gradient magnitude: |∇φ|.
+        First-order Godunov upwind gradient magnitude |∇φ|, flux selected by the
+        VELOCITY sign (Osher-Sethian / Rouy-Tourin).
 
-        Godunov scheme:
-            |∇φ| = √( max(D⁻ₓφ, 0)² + min(D⁺ₓφ, 0)² + ... )
+        Per axis, with backward/forward differences D⁻, D⁺:
+            V > 0: |∇φ|² += max(D⁻, 0)² + min(D⁺, 0)²
+            V < 0: |∇φ|² += max(D⁺, 0)² + min(D⁻, 0)²
 
         This is monotone and entropy-satisfying for Hamilton-Jacobi equations.
 
+        Issue #1602: the previous implementation selected the one-sided stencil
+        from sign(∇φ) (via the shared ``gradient_upwind`` operator), which equals
+        the correct Godunov magnitude only for V > 0 and gives the downwind
+        (wrong-viscosity) update for V < 0 -- a shrinking domain then persists
+        past its true extinction time. This is the first-order analogue of the
+        weno5 path (:meth:`_compute_weno5_gradient_magnitude`), which already
+        selects on the velocity sign.
+
         Args:
             phi: Level set function, shape (Nx, Ny, ...)
+            velocity: Velocity field, same shape as phi.
 
         Returns:
             Gradient magnitude |∇φ|, same shape as phi
@@ -485,14 +497,27 @@ class LevelSetEvolver:
         Reference:
             Osher & Fedkiw (2003), Chapter 6.1 - Godunov's Method
         """
-        # Compute gradient components using upwind operators
-        grad_components = [grad_op(phi) for grad_op in self.grad_ops]
+        from mfgarchon.operators.stencils.finite_difference import (
+            gradient_backward,
+            gradient_forward,
+        )
 
-        # Godunov upwind: For level set evolution, we use standard gradient magnitude
-        # (The upwind bias is already built into the operators from get_gradient_operator)
-        grad_mag = np.linalg.norm(grad_components, axis=0)
+        ndim = phi.ndim
+        grad_mag_sq = np.zeros_like(phi)
+        pos_mask = velocity > 0
 
-        return grad_mag
+        for d in range(ndim):
+            h = float(self.spacing[d])
+            d_minus = gradient_backward(phi, axis=d, h=h)
+            d_plus = gradient_forward(phi, axis=d, h=h)
+
+            contrib = np.zeros_like(phi)
+            contrib[pos_mask] = np.maximum(d_minus[pos_mask], 0.0) ** 2 + np.minimum(d_plus[pos_mask], 0.0) ** 2
+            contrib[~pos_mask] = np.maximum(d_plus[~pos_mask], 0.0) ** 2 + np.minimum(d_minus[~pos_mask], 0.0) ** 2
+
+            grad_mag_sq += contrib
+
+        return np.sqrt(grad_mag_sq)
 
     def _compute_weno5_gradient_magnitude(
         self,
@@ -562,7 +587,7 @@ class LevelSetEvolver:
         if self.scheme == "weno5":
             grad_mag = self._compute_weno5_gradient_magnitude(phi, V_array)
         else:
-            grad_mag = self._compute_godunov_gradient_magnitude(phi)
+            grad_mag = self._compute_godunov_gradient_magnitude(phi, V_array)
         return -V_array * grad_mag
 
     def _step_tvd_rk3(

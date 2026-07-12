@@ -188,6 +188,43 @@ class TestLevelSetEvolver:
 
         assert area1 > area0, "Circle should expand with positive velocity"
 
+    def test_upwind_inward_collapse_matches_analytic_extinction(self):
+        """Issue #1602: default 'upwind' must track inward (V<0) normal motion.
+
+        phi0 = |x| - 1 on [-2, 2] collapses toward the kink at x=0; with inward
+        speed |V|=1 the half-width shrinks linearly and the domain extinguishes at
+        the analytic t* = 1.0. The pre-fix upwind selected the one-sided stencil
+        from sign(grad phi), not the velocity sign, which over-collapses early and
+        then stalls at the kink core, persisting to ~2.8*t*. The velocity-sign
+        Godunov (this fix) tracks the analytic collapse.
+
+        Discriminating (mutation-checked): reverting to the sign(grad phi) stencil
+        makes both assertions fail (area ~16 at t=0.5; ~4 cells never extinguish).
+        """
+        grid = TensorProductGrid(bounds=[(-2.0, 2.0)], Nx=[400], boundary_conditions=no_flux_bc(dimension=1))
+        x = grid.coordinates[0]
+        phi0 = np.abs(x) - 1.0
+        area0 = int(np.sum(phi0 < 0))
+
+        evolver = LevelSetEvolver(grid, scheme="upwind")
+        V, dt = -1.0, 0.004
+
+        def evolve_to(T):
+            phi = phi0.copy()
+            for _ in range(round(T / dt)):
+                phi = evolver.evolve_step(phi, velocity=V, dt=dt)
+            return phi
+
+        # Linear collapse: half-width 1.0 -> 0.5 at t=0.5, so area ~ area0/2.
+        area_half = int(np.sum(evolve_to(0.5) < 0))
+        assert abs(area_half - area0 / 2) < 0.15 * area0, (
+            f"inward collapse off analytic rate: area(t=0.5)={area_half}, expected ~{area0 / 2:.0f}"
+        )
+
+        # Fully extinguished past the analytic extinction time t*=1.0.
+        area_late = int(np.sum(evolve_to(1.5) < 0))
+        assert area_late == 0, f"domain persists past extinction: area(t=1.5)={area_late}, expected 0"
+
 
 class TestTimeDependentDomain:
     """Test TimeDependentDomain for managing φ(t) history."""
