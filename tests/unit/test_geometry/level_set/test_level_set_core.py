@@ -225,6 +225,37 @@ class TestLevelSetEvolver:
         area_late = int(np.sum(evolve_to(1.5) < 0))
         assert area_late == 0, f"domain persists past extinction: area(t=1.5)={area_late}, expected 0"
 
+    def test_upwind_planar_front_no_boundary_phantom(self):
+        """Issue #1602 (review): a non-symmetric interface must not grow a phantom
+        interface at the domain boundary.
+
+        phi0 = x on [-2, 2] has phi[0]=-2 != phi[-1]=+2 and a single interface at
+        x=0; under outward V=+0.5 it moves to x=0.5 while the right boundary stays
+        positive. The velocity-sign Godunov uses periodic-roll one-sided
+        differences, so without a no-flux (Neumann-ghost) edge correction the wrap
+        injects a spurious O(1/h) gradient that flips phi[-1] negative and creates
+        a second, phantom interface.
+
+        Discriminating: raw np.roll stencils (no edge correction) give phi[-1]<0
+        and two sign changes; the Neumann-ghost fix keeps phi[-1]~+1.5 and exactly
+        one interface. Symmetric configs (centered circle, |x|-1) never exercise
+        this because phi[0]==phi[-1].
+        """
+        grid = TensorProductGrid(bounds=[(-2.0, 2.0)], Nx_points=[401], boundary_conditions=no_flux_bc(dimension=1))
+        x = grid.coordinates[0]
+        phi = x.copy()  # single interface at x=0, non-symmetric across the edges
+
+        evolver = LevelSetEvolver(grid, scheme="upwind")
+        V, dt = 0.5, 0.004
+        for _ in range(250):  # t = 1.0
+            phi = evolver.evolve_step(phi, velocity=V, dt=dt)
+
+        # Right boundary must remain positive (no phantom interface from edge wrap).
+        assert phi[-1] > 0.5, f"boundary flipped -> phantom interface: phi[-1]={phi[-1]:.3f}"
+        # Exactly one strict sign change (the real interface near x=0.5), not two.
+        crossings = int(np.sum(phi[:-1] * phi[1:] < 0))
+        assert crossings == 1, f"expected 1 interface, found {crossings}"
+
 
 class TestTimeDependentDomain:
     """Test TimeDependentDomain for managing φ(t) history."""

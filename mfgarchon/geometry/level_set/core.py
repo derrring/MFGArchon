@@ -483,9 +483,19 @@ class LevelSetEvolver:
         from sign(∇φ) (via the shared ``gradient_upwind`` operator), which equals
         the correct Godunov magnitude only for V > 0 and gives the downwind
         (wrong-viscosity) update for V < 0 -- a shrinking domain then persists
-        past its true extinction time. This is the first-order analogue of the
-        weno5 path (:meth:`_compute_weno5_gradient_magnitude`), which already
-        selects on the velocity sign.
+        past its true extinction time. In the interior this is the first-order
+        analogue of the weno5 path (:meth:`_compute_weno5_gradient_magnitude`),
+        which already selects on the velocity sign.
+
+        Boundary handling: ``gradient_backward``/``gradient_forward`` wrap
+        periodically (np.roll), so at a domain edge the one-sided difference that
+        references the far boundary is spurious. Under the no-flux/Neumann
+        convention the ghost node equals the boundary value, so that difference
+        is zero -- we zero those wrapped edge entries. This reproduces the
+        BC-aware boundary of the previous ``get_gradient_operator`` path exactly
+        (convention-agreement verified on phi=x: interior 1, low/high edge 0/1)
+        and avoids a phantom boundary interface on non-symmetric fields
+        (#1602 review).
 
         Args:
             phi: Level set function, shape (Nx, Ny, ...)
@@ -510,6 +520,16 @@ class LevelSetEvolver:
             h = float(self.spacing[d])
             d_minus = gradient_backward(phi, axis=d, h=h)
             d_plus = gradient_forward(phi, axis=d, h=h)
+
+            # No-flux (Neumann-ghost) boundary: the backward difference at the low
+            # edge and the forward difference at the high edge each reference a
+            # periodic-wrapped ghost node; under no-flux the ghost equals the
+            # boundary value, so the difference is zero. Without this the wrap
+            # injects a spurious O(1/h) edge gradient (#1602 review).
+            low_edge = tuple(0 if k == d else slice(None) for k in range(ndim))
+            high_edge = tuple(-1 if k == d else slice(None) for k in range(ndim))
+            d_minus[low_edge] = 0.0
+            d_plus[high_edge] = 0.0
 
             contrib = np.zeros_like(phi)
             contrib[pos_mask] = np.maximum(d_minus[pos_mask], 0.0) ** 2 + np.minimum(d_plus[pos_mask], 0.0) ** 2
