@@ -47,7 +47,9 @@ def _diffusion_to_volatility(
 
     Scalar:   D = sigma^2/2  =>  sigma = sqrt(2D)
     Diagonal: D_i = sigma_i^2/2  =>  sigma_i = sqrt(2 D_i)
-    Tensor:   D = (1/2) Sigma Sigma^T  =>  Sigma = cholesky(2D)
+    Tensor:   D = (1/2) S S^T  =>  S = symmetric matrix square root of 2D (RFC #1596;
+              the SYMMETRIC square root, not a Cholesky factor, so the volatility->D->volatility
+              round-trip lands on a symmetric std-dev matrix that passes validate_symmetric_psd).
 
     Args:
         D: PDE diffusion coefficient (non-negative scalar, 1D diagonal, or 2D SPD tensor).
@@ -77,8 +79,20 @@ def _diffusion_to_volatility(
             raise ValueError("Diffusion coefficient array must be non-negative")
         return np.sqrt(2.0 * D_arr)
     if D_arr.ndim == 2:
-        # Full tensor: D = (1/2) Sigma Sigma^T => Sigma = cholesky(2D)
-        return np.linalg.cholesky(2.0 * D_arr)
+        # Full tensor: D = (1/2) S S^T => S = symmetric square root of 2D. Emit the SYMMETRIC
+        # square root (not a Cholesky factor): the volatility convention is that a (d,d) sigma is
+        # the symmetric std-dev matrix (RFC #1596), so the round-trip volatility->D->volatility
+        # must land back on a symmetric S that passes validate_symmetric_psd. Cholesky returns a
+        # lower-triangular (asymmetric) factor and would be rejected by the grid consumers.
+        two_D = 2.0 * D_arr
+        eigvals, eigvecs = np.linalg.eigh(0.5 * (two_D + two_D.T))  # symmetrize guards fp asymmetry
+        if float(np.min(eigvals)) < -1e-10:
+            raise ValueError(
+                f"Diffusion tensor must be positive semi-definite to take a real square root; "
+                f"got min eigenvalue {float(np.min(eigvals)):.6e} (RFC #1596)."
+            )
+        sqrt_eigvals = np.sqrt(np.clip(eigvals, 0.0, None))
+        return (eigvecs * sqrt_eigvals) @ eigvecs.T
 
     raise ValueError(f"Unsupported diffusion shape: {D_arr.shape}")
 

@@ -141,6 +141,47 @@ def diffusion_from_volatility(
     raise ValueError(f"kind must be 'field' or 'tensor' (or None for scalar sigma), got {kind!r}.")
 
 
+def validate_symmetric_psd(
+    S: np.ndarray,
+    *,
+    name: str = "sigma tensor",
+    tolerance: float = 1e-10,
+) -> None:
+    r"""Consumer-side admissibility gate for a ``(d, d)`` tensor VOLATILITY input (RFC #1596).
+
+    A ``(d, d)`` volatility is the **symmetric** standard-deviation matrix ``S`` -- the symmetric
+    square root of the covariance ``C`` (``C = S S^T = S^2``), so the diffusion is
+    ``D = 1/2 S S^T = 1/2 C``. An asymmetric or non-PSD ``(d, d)`` input is caller confusion
+    (passing a Cholesky factor, a raw covariance, or a malformed matrix), so this fails loud.
+
+    Grid consumers that assemble a per-axis + cross-derivative diffusion on a tensor grid
+    (``adi_diffusion_step``, ``DiffusionOperator`` tensor path) call this immediately before
+    :func:`diffusion_from_volatility` ``(kind="tensor")``. The converter itself stays
+    symmetry-agnostic: ``D = 1/2 S S^T`` is the covariance of *any* noise matrix, and the
+    particle solver legitimately drives particles with an asymmetric ``(d, k)`` noise matrix
+    (RFC #1596: symmetry is a consumer admissibility constraint, not a kernel identity).
+
+    Raises ``ValueError`` if ``S`` is not square ``(d, d)``, not symmetric within ``tolerance``,
+    or has an eigenvalue below ``-tolerance``.
+    """
+    S = np.asarray(S, dtype=float)
+    if S.ndim != 2 or S.shape[0] != S.shape[1]:
+        raise ValueError(f"{name} must be a square (d, d) matrix, got shape {S.shape}.")
+    max_asymmetry = float(np.max(np.abs(S - S.T))) if S.size else 0.0
+    if max_asymmetry > tolerance:
+        raise ValueError(
+            f"{name} must be symmetric: it is the standard-deviation matrix (symmetric square "
+            f"root of the covariance), not a covariance or a Cholesky factor (RFC #1596). "
+            f"Max asymmetry |S - S^T| = {max_asymmetry:.3e} > tolerance {tolerance:.2e}."
+        )
+    min_eigenvalue = float(np.min(np.linalg.eigvalsh(S))) if S.size else 0.0
+    if min_eigenvalue < -tolerance:
+        raise ValueError(
+            f"{name} must be positive semi-definite (a std-dev matrix has non-negative "
+            f"eigenvalues). Found min eigenvalue {min_eigenvalue:.6e} < 0 (RFC #1596)."
+        )
+
+
 def diffusion_from_volatility_torch(sigma: Any) -> Any:
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
 
@@ -851,38 +892,13 @@ class CoefficientField:
         """
         Check that a single d×d tensor is symmetric and positive semi-definite.
 
-        Parameters
-        ----------
-        tensor : ndarray
-            Tensor of shape (d, d)
-        tolerance : float
-            Numerical tolerance for symmetry and eigenvalue checks
+        Single-sourced through :func:`validate_symmetric_psd` (RFC #1596), the same
+        symmetric-std-dev-matrix gate the grid diffusion consumers (``adi_diffusion_step``,
+        ``DiffusionOperator`` tensor path) use, so the admissibility check has one owner.
 
-        Raises
-        ------
-        ValueError
-            If tensor is not symmetric or has negative eigenvalues
+        Raises ``ValueError`` if the tensor is not symmetric or has a negative eigenvalue.
         """
-        # Check symmetry
-        symmetric_diff = np.abs(tensor - tensor.T)
-        max_asymmetry = np.max(symmetric_diff)
-
-        if max_asymmetry > tolerance:
-            raise ValueError(
-                f"{self.name} must be symmetric. "
-                f"Max asymmetry |Σ - Σᵀ| = {max_asymmetry:.2e} > tolerance {tolerance:.2e}"
-            )
-
-        # Check positive semi-definite via eigenvalues
-        eigenvalues = np.linalg.eigvalsh(tensor)  # Hermitian/symmetric eigenvalues
-        min_eigenvalue = np.min(eigenvalues)
-
-        if min_eigenvalue < -tolerance:
-            raise ValueError(
-                f"{self.name} must be positive semi-definite. "
-                f"Found negative eigenvalue: λ_min = {min_eigenvalue:.6e} < 0. "
-                f"All eigenvalues: {eigenvalues}"
-            )
+        validate_symmetric_psd(tensor, name=self.name, tolerance=tolerance)
 
 
 def check_adi_compatibility(

@@ -1,10 +1,12 @@
 """
 Unit tests for DiffusionOperator and apply_diffusion.
 
-Tests the unified diffusion operator div(Sigma * grad(u)) that handles:
-- Scalar coefficients: sigma -> sigma^2 * Laplacian(u)
-- Constant tensor coefficients: Sigma -> div(Sigma * grad(u))
-- Spatially varying tensor coefficients: Sigma(x) -> div(Sigma(x) * grad(u))
+Tests the unified diffusion operator div(D * grad(u)) that handles (RFC #1596, Path A: the
+coefficient is the PDE diffusion tensor D, applied directly with no internal squaring):
+- Scalar coefficients: D -> D * Laplacian(u)
+- Constant tensor coefficients: D -> div(D * grad(u))
+- Spatially varying tensor coefficients: D(x) -> div(D(x) * grad(u))
+- from_volatility(sigma): routes sigma -> D through diffusion_from_volatility (Issue #811)
 
 Created: 2026-02-13 (Issue #768 - Test coverage for operators/)
 """
@@ -47,38 +49,52 @@ def _2d_grid(nx=50, ny=50):
 
 
 class TestIsotropicDiffusion:
-    """Tests for scalar coefficient: sigma^2 * Laplacian(u)."""
+    """Tests for scalar coefficient (RFC #1596, Path A): D * Laplacian(u), no internal squaring."""
 
     @pytest.mark.unit
     def test_1d_quadratic_exact(self):
-        """sigma^2 * Laplacian(x^2) = sigma^2 * 2 at interior."""
+        """D * Laplacian(x^2) = D * 2 at interior (coefficient is D, not sigma)."""
         x, dx = _1d_grid(100)
         u = x**2
-        sigma = 0.5
+        D_coef = 0.25
 
         bc = neumann_bc(dimension=1)
-        D = DiffusionOperator(coefficient=sigma, spacings=[dx], field_shape=(100,), bc=bc)
+        D = DiffusionOperator(coefficient=D_coef, spacings=[dx], field_shape=(100,), bc=bc)
         Du = D(u)
 
         assert Du.shape == (100,)
-        # sigma^2 * 2 = 0.25 * 2 = 0.5
-        expected = sigma**2 * 2.0
+        expected = D_coef * 2.0
+        error = np.max(np.abs(Du[5:-5] - expected))
+        assert error < 1e-8
+
+    @pytest.mark.unit
+    def test_from_volatility_scalar_matches_half_sigma_sq(self):
+        """from_volatility(sigma) applies D = sigma^2/2 (single-source converter, Issue #811)."""
+        x, dx = _1d_grid(100)
+        u = x**2
+        sigma = 0.5  # D = sigma^2/2 = 0.125
+
+        bc = neumann_bc(dimension=1)
+        D = DiffusionOperator.from_volatility(sigma, spacings=[dx], field_shape=(100,), bc=bc)
+        Du = D(u)
+
+        expected = (sigma**2 / 2.0) * 2.0  # D * Laplacian(x^2) = 0.125 * 2
         error = np.max(np.abs(Du[5:-5] - expected))
         assert error < 1e-8
 
     @pytest.mark.unit
     def test_2d_quadratic_exact(self):
-        """sigma^2 * Laplacian(x^2 + y^2) = sigma^2 * 4 at interior."""
+        """D * Laplacian(x^2 + y^2) = D * 4 at interior."""
         X, Y, dx, dy = _2d_grid(50, 50)
         u = X**2 + Y**2
-        sigma = 1.0
+        D_coef = 1.0
 
         bc = neumann_bc(dimension=2)
-        D = DiffusionOperator(coefficient=sigma, spacings=[dx, dy], field_shape=(50, 50), bc=bc)
+        D = DiffusionOperator(coefficient=D_coef, spacings=[dx, dy], field_shape=(50, 50), bc=bc)
         Du = D(u)
 
         assert Du.shape == (50, 50)
-        expected = sigma**2 * 4.0
+        expected = D_coef * 4.0
         error = np.max(np.abs(Du[5:-5, 5:-5] - expected))
         assert error < 1e-8
 
@@ -96,18 +112,18 @@ class TestIsotropicDiffusion:
 
     @pytest.mark.unit
     def test_periodic_sin(self):
-        """sigma^2 * Laplacian(sin(2pi*x)) = -sigma^2 * 4pi^2 * sin(2pi*x)."""
+        """D * Laplacian(sin(2pi*x)) = -D * 4pi^2 * sin(2pi*x)."""
         n = 100
         x = np.linspace(0, 1, n, endpoint=False)
         dx = x[1] - x[0]
         u = np.sin(2 * np.pi * x)
-        sigma = 1.0
+        D_coef = 1.0
 
         bc = periodic_bc(dimension=1)
-        D = DiffusionOperator(coefficient=sigma, spacings=[dx], field_shape=(n,), bc=bc)
+        D = DiffusionOperator(coefficient=D_coef, spacings=[dx], field_shape=(n,), bc=bc)
         Du = D(u)
 
-        expected = -((2 * np.pi) ** 2) * np.sin(2 * np.pi * x)
+        expected = -D_coef * ((2 * np.pi) ** 2) * np.sin(2 * np.pi * x)
         error = np.max(np.abs(Du - expected))
         # O(h^2) error for 2nd-order central diff
         assert error < 0.5
@@ -225,15 +241,16 @@ class TestConstantTensorDiffusion:
 
     @pytest.mark.unit
     def test_1d_tensor_scalar_equivalence(self):
-        """1D tensor [[sigma^2]] should match scalar sigma diffusion."""
+        """1D tensor [[D]] should match scalar D diffusion (RFC #1596: coefficient is D on both,
+        no branch squares -- this is the scalar==tensor consistency the #1549 flip violated)."""
         x, dx = _1d_grid(80)
         u = x**2
-        sigma = 0.7
+        D_coef = 0.49
 
         bc = neumann_bc(dimension=1)
-        D_scalar = DiffusionOperator(coefficient=sigma, spacings=[dx], field_shape=(80,), bc=bc)
+        D_scalar = DiffusionOperator(coefficient=D_coef, spacings=[dx], field_shape=(80,), bc=bc)
         D_tensor = DiffusionOperator(
-            coefficient=np.array([[sigma**2]]),
+            coefficient=np.array([[D_coef]]),
             spacings=[dx],
             field_shape=(80,),
             bc=bc,
@@ -242,7 +259,7 @@ class TestConstantTensorDiffusion:
         Du_scalar = D_scalar(u)
         Du_tensor = D_tensor(u)
 
-        # Should match at interior (both compute sigma^2 * d^2u/dx^2)
+        # Should match at interior (both compute D * d^2u/dx^2)
         np.testing.assert_allclose(Du_scalar[5:-5], Du_tensor[5:-5], atol=1e-8)
 
 

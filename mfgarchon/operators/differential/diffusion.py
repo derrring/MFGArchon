@@ -77,19 +77,29 @@ else:
 
 class DiffusionOperator(LinearOperator):
     """
-    Unified diffusion operator ∇·(Σ∇u) for tensor product grids.
+    Unified diffusion operator ∇·(D∇u) for tensor product grids.
 
-    Handles both isotropic (scalar) and anisotropic (tensor) diffusion
-    with automatic dispatch based on coefficient type:
-        - scalar σ      → isotropic:  σ²Δu
-        - (d,d) matrix  → constant anisotropic: ∇·(Σ∇u)
+    Path A (RFC #1596): the ``coefficient`` is the already-converted PDE **diffusion tensor D**
+    (D = σ²/2 for a scalar volatility σ; D = ½ S Sᵀ for a std-dev matrix S). The operator applies
+    D directly with NO internal squaring on any branch — squaring/conversion σ→D lives in the one
+    owner ``diffusion_from_volatility`` (Issue #811). If you have a VOLATILITY σ, construct via
+    :meth:`from_volatility`, which routes the conversion through that single source.
+
+    Dispatch on ``coefficient`` shape (all values are D, used directly):
+        - scalar D      → isotropic:  D·Δu
+        - (d,) vector   → diagonal anisotropic: diag(D)·∂²  (D_i per axis)
+        - (d,d) matrix  → constant anisotropic: ∇·(D∇u)  (D symmetric PSD, gated)
         - (*shape,d,d)  → spatially varying anisotropic
+
+    (Before RFC #1596 the scalar branch squared its input (σ→σ²) while the vector/tensor branches
+    used the input directly, so identical isotropic physics gave a 10× different result depending
+    on whether it was written as a scalar, vector, or diagonal matrix — the #1549 shape-flip.)
 
     Implements scipy.sparse.linalg.LinearOperator interface for compatibility
     with iterative solvers and operator composition.
 
     Attributes:
-        coefficient: Diffusion coefficient (scalar, tensor, or field)
+        coefficient: PDE diffusion tensor D (scalar, diagonal vector, tensor, or field)
         spacings: Grid spacing per dimension [h₀, h₁, ..., hd₋₁]
         field_shape: Shape of input field (N₀, N₁, ...)
         bc: Boundary conditions
@@ -97,23 +107,21 @@ class DiffusionOperator(LinearOperator):
         dtype: Data type (float64)
 
     Usage:
-        >>> # Isotropic diffusion (scalar σ)
-        >>> D = DiffusionOperator(coefficient=0.1, spacings=[0.1, 0.1],
-        ...                       field_shape=(50, 50), bc=bc)
-        >>> Du = D(u)  # Computes 0.01 * Δu
+        >>> # Isotropic diffusion — coefficient is D (= σ²/2 for volatility σ)
+        >>> Dop = DiffusionOperator(coefficient=0.005, spacings=[0.1, 0.1],
+        ...                         field_shape=(50, 50), bc=bc)
+        >>> Du = Dop(u)  # Computes 0.005 * Δu
         >>>
-        >>> # Anisotropic diffusion (constant tensor)
-        >>> Sigma = np.array([[0.2, 0.0], [0.0, 0.05]])
-        >>> D = DiffusionOperator(coefficient=Sigma, spacings=[0.1, 0.1],
-        ...                       field_shape=(50, 50), bc=bc)
-        >>> Du = D(u)  # Computes ∇·(Σ∇u)
+        >>> # Same physics from a volatility σ=0.1 via the single-source converter
+        >>> Dop = DiffusionOperator.from_volatility(0.1, spacings=[0.1, 0.1],
+        ...                                         field_shape=(50, 50), bc=bc)
+        >>> Du = Dop(u)  # Computes (0.1²/2) * Δu = 0.005 * Δu (identical to above)
         >>>
-        >>> # Spatially varying tensor
-        >>> Sigma_field = np.zeros((50, 50, 2, 2))
-        >>> Sigma_field[..., 0, 0] = sigma_xx  # σ_xx(x, y)
-        >>> Sigma_field[..., 1, 1] = sigma_yy  # σ_yy(x, y)
-        >>> D = DiffusionOperator(coefficient=Sigma_field, spacings=[0.1, 0.1],
-        ...                       field_shape=(50, 50), bc=bc)
+        >>> # Anisotropic diffusion (constant diffusion tensor D, symmetric PSD)
+        >>> Dtensor = np.array([[0.02, 0.0], [0.0, 0.005]])
+        >>> Dop = DiffusionOperator(coefficient=Dtensor, spacings=[0.1, 0.1],
+        ...                         field_shape=(50, 50), bc=bc)
+        >>> Du = Dop(u)  # Computes ∇·(D∇u)
     """
 
     def __init__(
@@ -128,10 +136,12 @@ class DiffusionOperator(LinearOperator):
         Initialize diffusion operator.
 
         Args:
-            coefficient: Diffusion coefficient:
-                - scalar σ: Treated as σ² for isotropic diffusion (Σ = σ²I)
-                - (d, d) array: Constant diffusion tensor Σ
-                - (*field_shape, d, d) array: Spatially varying tensor Σ(x)
+            coefficient: PDE diffusion tensor D, applied directly (RFC #1596; no internal
+                squaring — pass D = σ²/2, or use :meth:`from_volatility` for a volatility σ):
+                - scalar D: isotropic diffusion D·Δu
+                - (d,) array: diagonal anisotropic, D_i per axis
+                - (d, d) array: constant diffusion tensor D (symmetric PSD, validated)
+                - (*field_shape, d, d) array: spatially varying tensor D(x)
             spacings: Grid spacing per dimension [h₀, h₁, ..., hd₋₁]
             field_shape: Shape of field arrays (N₀, N₁, ...) or N for 1D
             bc: Boundary conditions (None for periodic)
@@ -163,6 +173,39 @@ class DiffusionOperator(LinearOperator):
         N = int(np.prod(field_shape))
         super().__init__(shape=(N, N), dtype=np.float64)
 
+    @classmethod
+    def from_volatility(
+        cls,
+        sigma: float | NDArray,
+        spacings: Sequence[float],
+        field_shape: tuple[int, ...] | int,
+        bc: BoundaryConditions | None = None,
+        time: float = 0.0,
+    ) -> DiffusionOperator:
+        """Construct from SDE **volatility** σ (a standard deviation), converting σ→D through the
+        single-source :func:`diffusion_from_volatility` (Issue #811, RFC #1596).
+
+        Use this when you hold a volatility; the plain constructor takes the already-converted
+        diffusion tensor D directly (Path A). Shapes: scalar σ → D = σ²/2; ``(d,)`` per-axis σ →
+        D_i = σ_i²/2; ``(d, d)`` symmetric std-dev matrix S → D = ½ S Sᵀ (S gated symmetric PSD).
+        """
+        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
+
+        if np.isscalar(sigma):
+            D: float | NDArray = diffusion_from_volatility(float(sigma))
+        else:
+            S = np.asarray(sigma, dtype=float)
+            if S.ndim == 0:
+                D = diffusion_from_volatility(S)
+            elif S.ndim == 1:
+                D = diffusion_from_volatility(S, kind="field")
+            elif S.ndim == 2:
+                validate_symmetric_psd(S, name="DiffusionOperator volatility")
+                D = diffusion_from_volatility(S, kind="tensor")
+            else:
+                D = diffusion_from_volatility(S, kind="tensor")  # (*spatial, d, d) noise matrix
+        return cls(D, spacings, field_shape, bc=bc, time=time)
+
     def _process_coefficient(self, coeff: float | NDArray) -> tuple[float | NDArray, str]:
         """
         Process coefficient and determine type.
@@ -183,15 +226,30 @@ class DiffusionOperator(LinearOperator):
             return float(coeff), "scalar"
 
         if coeff.ndim == 1 and len(coeff) == d:
-            # Diagonal tensor: [σ₀², σ₁², ...] → Σ = diag(σ²)
+            # Diagonal diffusion tensor: [D₀, D₁, ...] → diag(D) (values are D_i, used directly).
             return np.diag(coeff), "constant_tensor"
 
         if coeff.ndim == 2 and coeff.shape == (d, d):
-            # Constant tensor Σ
+            # Constant diffusion tensor D. Gate symmetry + PSD (RFC #1596): a diffusion tensor
+            # is symmetric PSD; an asymmetric input is caller confusion (e.g. a Cholesky factor).
+            from mfgarchon.utils.pde_coefficients import validate_symmetric_psd
+
+            validate_symmetric_psd(coeff, name="DiffusionOperator diffusion tensor D")
             return coeff, "constant_tensor"
 
         if coeff.shape == (*self.field_shape, d, d):
-            # Spatially varying tensor Σ(x)
+            # Spatially varying tensor D(x). Gate symmetry (RFC #1596), vectorized over the field:
+            # the downstream kernel reads D[...,i,j] and D[...,j,i] independently, so an asymmetric
+            # D_field would inject a spurious antisymmetric-advection term. Per-point PSD is left to
+            # the caller (an O(N) eigendecomposition per grid point is too costly here); symmetry is
+            # the load-bearing check and is one cheap array op.
+            max_asym = float(np.max(np.abs(coeff - np.swapaxes(coeff, -1, -2)))) if coeff.size else 0.0
+            if max_asym > 1e-10:
+                raise ValueError(
+                    f"DiffusionOperator spatially-varying diffusion tensor D(x) must be symmetric at "
+                    f"every point (it is 1/2 S S^T for a std-dev matrix S; RFC #1596). "
+                    f"Max asymmetry |D - D^T| = {max_asym:.3e}."
+                )
             return coeff, "varying_tensor"
 
         raise ValueError(
@@ -245,15 +303,16 @@ class DiffusionOperator(LinearOperator):
 
     def _apply_scalar_diffusion(self, u: NDArray) -> NDArray:
         """
-        Apply isotropic diffusion: σ²Δu.
+        Apply isotropic diffusion: D·Δu (RFC #1596: coefficient is the diffusion D, not σ;
+        no internal squaring — conversion σ→D lives in ``diffusion_from_volatility``).
 
         Uses stencil-based Laplacian with BC handling.
         """
         from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 
-        sigma_sq = float(self.coefficient) ** 2
+        D = float(self.coefficient)
         lap = laplacian_with_bc(u, self.spacings, bc=self.bc, time=self.time)
-        return sigma_sq * lap
+        return D * lap
 
     def _apply_tensor_diffusion(self, u: NDArray) -> NDArray:
         """
