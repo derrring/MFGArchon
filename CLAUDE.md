@@ -141,6 +141,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless. The two pains that made granularity costly — CHANGELOG conflicts and red-main — are being removed by *mechanism* (fragment changelog + a full-suite PR gate; see the enforcement issues), so this stays a convenience call, not a rule to remember.
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the full **Test Suite** is authoritative (see *Pre-commit / pre-merge checks*); a green fast tier alone is not enough.
+- **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises; re-review after applying fixes. Local-green ≠ correct: this has caught real bugs a passing suite hid (e.g. a level-set boundary regression invisible to symmetric test configs, #1602/#1605). Cf. axiom `feedback_pre_pr_adversarial_review`.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
 
@@ -224,7 +225,7 @@ Rich-only backend (v0.16.15+; external tqdm removed — legacy alias kept). Use 
 ---
 
 ## 📜 Solo Maintainer's Protocol
-1. Propose in issue → 2. implement in a feature-branch PR → 3. AI-assisted self-review against these standards → 4. **verify issue completion** → 5. merge only after all checks pass. Enforced by branch protection on `main`.
+1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge only after review is MERGE-OK **and** all checks pass. Enforced by branch protection on `main`.
 
 **Issue-completion verification** ⚠️ (before closing an issue / opening a PR): read the *original* issue (not commit messages); check every acceptance criterion; answer every discussion point; confirm all subtasks; document deviations (update the issue before closing). Anti-pattern: closing on commit messages without re-reading the requirements.
 
