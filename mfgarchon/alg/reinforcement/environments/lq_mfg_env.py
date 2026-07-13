@@ -235,9 +235,10 @@ class LQMFGEnv(ContinuousMFGEnvBase):
 
         # Issue #1600: read the actual population histogram instead of the -c_m*x^2 placeholder.
         # Bin centres match get_population_state's np.histogram(range=(-x_max, x_max)); the discrete
-        # form of the advertised integral is c_m * sum_b (x - y_b)^2 m_b. This reduces EXACTLY to the
-        # old -c_m*x^2 when the population concentrates at the origin (m = delta_0), so it generalises
-        # rather than replaces the prior behaviour.
+        # form of the advertised integral is c_m * sum_b (x - y_b)^2 m_b. When the population
+        # concentrates in one bin b0 (m -> delta_{b0}) it reduces to -c_m*(x - y_{b0})^2, i.e. the old
+        # -c_m*x^2 up to the origin bin-centre offset y_{b0} (O(bin_width); zero only if a bin centre
+        # lands on 0) -- so it generalises the prior behaviour rather than replacing it.
         edges = np.linspace(-self.x_max, self.x_max, self.population_bins + 1)
         bin_centers = 0.5 * (edges[:-1] + edges[1:])
         mean_field_cost = self.cost_mean_field * float(np.sum((x - bin_centers) ** 2 * population))
