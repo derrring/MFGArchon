@@ -1408,7 +1408,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     + dt * H_control(p_i) - dt * (V + f)
                   = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
 
-        with y_k^pm = x_i - (dH/dp)_i * dt +/- sigma * sqrt(dt) * e_k. (The prior
+        with y_k^pm = x_i - (dH/dp)_i * dt +/- sqrt(d) * sigma * sqrt(dt) * e_k (the
+        sqrt(d) restores the full (sigma^2/2) Lap(u) under the 1/(2d) average, Issue #1543). (The prior
         `alpha* = -nabla u` foot with `- dt*H` was lambda=1-only on the foot and
         double-counted the kinetic term ~3x; see Issue #575/#1413.)
 
@@ -1458,9 +1459,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Issue #1050: unifies the former ``_stochastic_sl_step_1d`` and
         ``_stochastic_sl_step_nd`` into one method handling d ∈ {1, 2, 3, ...}.
         One Brownian-quadrature step: ``2*d`` departures per node (a
-        ``±σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``),
-        interpolate ``u^{n+1}`` at each foot, average over the ``2*d``
-        directions, subtract ``dt·H``.
+        ``±√d·σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``; the
+        ``√d`` makes the ``1/(2d)`` average recover the full ``(σ²/2)Δu``,
+        Issue #1543), interpolate ``u^{n+1}`` at each foot, average over the
+        ``2*d`` directions, subtract ``dt·H``.
 
         The shared structure (drift + Brownian departures, boundary fold,
         averaging, batch Hamiltonian) is written once, so the 1D fixes
