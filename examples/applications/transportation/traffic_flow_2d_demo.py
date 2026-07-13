@@ -43,8 +43,8 @@ import numpy as np
 
 # Multi-dimensional infrastructure
 from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import neumann_bc
 from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
-from mfgarchon.visualization import MultiDimVisualizer
 
 
 def create_traffic_problem():
@@ -66,6 +66,7 @@ def create_traffic_problem():
     grid = TensorProductGrid(
         bounds=[(0.0, L), (0.0, L)],
         Nx_points=[Nx, Ny],
+        boundary_conditions=neumann_bc(dimension=2),
     )
 
     # Physical parameters
@@ -237,63 +238,109 @@ def solve_traffic_mfg_simple(problem):
 def visualize_results(solution, output_dir="traffic_flow_2d"):
     """
     Create comprehensive visualizations of traffic flow solution.
+
+    Solution-field plotting is done with matplotlib directly: the
+    ``mfgarchon.visualization`` module provides convergence/diagnostics
+    plotting and rendering-free data extraction, and points to
+    matplotlib/plotly/pyvista for solution-field figures.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
     u = solution["u"]
     m = solution["m"]
     grid = solution["grid"]
+
+    # Physical coordinates (indexing="ij": X varies along axis 0, Y along axis 1)
+    X, Y = grid.meshgrid(indexing="ij")
 
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
     print(f"\nCreating visualizations in {output_dir}/...")
 
-    # Create visualizer
-    viz = MultiDimVisualizer(grid, backend="plotly", colorscale="Viridis")
-
-    # 1. Value function at final time
+    # 1. Value function at final time (3D surface)
     print("  - Value function surface plot...")
-    fig_u = viz.surface_plot(
-        u[-1, :, :], title="Value Function u(x,y) at Final Time", xlabel="x (km)", ylabel="y (km)", zlabel="Cost-to-go"
-    )
-    viz.save(fig_u, output_path / "value_function.html")
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot_surface(X, Y, u[-1, :, :], cmap="viridis")
+    ax.set_title("Value Function u(x,y) at Final Time")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    ax.set_zlabel("Cost-to-go")
+    fig.savefig(output_path / "value_function.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 2. Density at initial time
+    # 2. Density at initial time (heatmap)
     print("  - Initial density heatmap...")
-    fig_m0 = viz.heatmap(m[0, :, :], title="Initial Vehicle Density m₀(x,y)", xlabel="x (km)", ylabel="y (km)")
-    viz.save(fig_m0, output_path / "density_initial.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, m[0, :, :], cmap="viridis", shading="gouraud")
+    ax.set_title("Initial Vehicle Density m0(x,y)")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "density_initial.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 3. Density at final time
+    # 3. Density at final time (heatmap)
     print("  - Final density heatmap...")
-    fig_mT = viz.heatmap(m[-1, :, :], title="Final Vehicle Density m(T,x,y)", xlabel="x (km)", ylabel="y (km)")
-    viz.save(fig_mT, output_path / "density_final.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, m[-1, :, :], cmap="viridis", shading="gouraud")
+    ax.set_title("Final Vehicle Density m(T,x,y)")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "density_final.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # 4. Contour plot of value function
     print("  - Value function contour plot...")
-    fig_contour = viz.contour_plot(
-        u[-1, :, :], title="Value Function Contours", xlabel="x (km)", ylabel="y (km)", levels=20
-    )
-    viz.save(fig_contour, output_path / "value_contours.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    cs = ax.contour(X, Y, u[-1, :, :], levels=20, cmap="viridis")
+    ax.clabel(cs, inline=True, fontsize=7)
+    ax.set_title("Value Function Contours")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.savefig(output_path / "value_contours.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 5. Slice along y=5 (middle)
+    # 5. Slice along y=5 km (middle grid line)
     print("  - Cross-section plot...")
-    fig_slice = viz.slice_plot(u[-1, :, :], slice_dim=1, slice_index=25, title="Value Function along y=5 km")
-    viz.save(fig_slice, output_path / "value_slice.html")
+    slice_index = u.shape[2] // 2
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(X[:, slice_index], u[-1, :, slice_index])
+    ax.set_title("Value Function along y=5 km")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("Cost-to-go")
+    ax.grid(True)
+    fig.savefig(output_path / "value_slice.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 6. Time evolution animation
+    # 6. Time evolution animation of density
     print("  - Time evolution animation...")
-    fig_anim = viz.animation(
-        m, title="Vehicle Density Evolution m(t,x,y)", xlabel="x (km)", ylabel="y (km)", zlabel="Density", fps=5
-    )
-    viz.save(fig_anim, output_path / "density_evolution.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, m[0, :, :], cmap="viridis", shading="gouraud", vmin=0.0, vmax=float(m.max()))
+    fig.colorbar(pcm, ax=ax)
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+
+    def _update(frame):
+        pcm.set_array(m[frame, :, :].ravel())
+        ax.set_title(f"Vehicle Density Evolution m(t,x,y) - step {frame}")
+        return (pcm,)
+
+    anim = FuncAnimation(fig, _update, frames=m.shape[0], blit=False)
+    anim.save(output_path / "density_evolution.gif", writer=PillowWriter(fps=5))
+    plt.close(fig)
 
     print(f"\n[OK] Visualizations saved to {output_dir}/")
     print("\nGenerated files:")
-    print("  - value_function.html: 3D surface plot of cost-to-go")
-    print("  - density_initial.html: Initial vehicle distribution")
-    print("  - density_final.html: Final vehicle distribution")
-    print("  - value_contours.html: Level sets of value function")
-    print("  - value_slice.html: Cross-sectional view")
-    print("  - density_evolution.html: Interactive time animation")
+    print("  - value_function.png: 3D surface plot of cost-to-go")
+    print("  - density_initial.png: Initial vehicle distribution")
+    print("  - density_final.png: Final vehicle distribution")
+    print("  - value_contours.png: Level sets of value function")
+    print("  - value_slice.png: Cross-sectional view")
+    print("  - density_evolution.gif: Time animation of density")
 
 
 def main():

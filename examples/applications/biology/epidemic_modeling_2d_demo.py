@@ -57,8 +57,8 @@ import numpy as np
 
 # Multi-dimensional infrastructure
 from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
-from mfgarchon.visualization import MultiDimVisualizer
 
 
 def create_epidemic_problem():
@@ -80,6 +80,7 @@ def create_epidemic_problem():
     grid = TensorProductGrid(
         bounds=[(0.0, L), (0.0, L)],
         Nx_points=[Nx, Ny],
+        boundary_conditions=no_flux_bc(dimension=2),
     )
 
     # Epidemic parameters
@@ -331,97 +332,120 @@ def solve_epidemic_mfg_simple(problem):
 def visualize_results(solution, problem, output_dir="epidemic_modeling_2d"):
     """
     Create comprehensive visualizations of epidemic MFG solution.
+
+    Solution-field plotting is done with matplotlib directly: the
+    ``mfgarchon.visualization`` module provides convergence/diagnostics
+    plotting and rendering-free data extraction, and points to
+    matplotlib/plotly/pyvista for solution-field figures.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
     u = solution["u"]
     m = solution["m"]
     infected = solution["infected"]
     grid = solution["grid"]
+
+    # Physical coordinates (indexing="ij": X varies along axis 0, Y along axis 1)
+    X, Y = grid.meshgrid(indexing="ij")
 
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
     print(f"\nCreating visualizations in {output_dir}/...")
 
-    # Create visualizer (use red-based colorscale for infections)
-    viz = MultiDimVisualizer(grid, backend="plotly", colorscale="Reds")
-
-    # 1. Initial infection map
+    # 1. Initial infection map (heatmap; red colormap for infections)
     print("  - Initial infection heatmap...")
-    fig_I0 = viz.heatmap(
-        infected[0, :, :],
-        title="Initial Infection Distribution I₀(x,y)",
-        xlabel="x (km)",
-        ylabel="y (km)",
-    )
-    viz.save(fig_I0, output_path / "infection_initial.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, infected[0, :, :], cmap="Reds", shading="gouraud")
+    ax.set_title("Initial Infection Distribution I0(x,y)")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "infection_initial.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # 2. Final infection map
     print("  - Final infection heatmap...")
-    fig_IT = viz.heatmap(
-        infected[-1, :, :],
-        title="Final Infection Distribution I(T,x,y)",
-        xlabel="x (km)",
-        ylabel="y (km)",
-    )
-    viz.save(fig_IT, output_path / "infection_final.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, infected[-1, :, :], cmap="Reds", shading="gouraud")
+    ax.set_title("Final Infection Distribution I(T,x,y)")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "infection_final.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 3. Peak infection map (find time of max total infections)
+    # 3. Peak infection map (time of maximum total infections)
     total_infections = [np.sum(infected[n, :, :]) for n in range(len(infected))]
-    peak_time = np.argmax(total_infections)
-    print(f"  - Peak infection map (day {peak_time * problem['T'] / problem['Nt']:.1f})...")
-    fig_peak = viz.heatmap(
-        infected[peak_time, :, :],
-        title=f"Peak Infection (Day {peak_time * problem['T'] / problem['Nt']:.1f})",
-        xlabel="x (km)",
-        ylabel="y (km)",
-    )
-    viz.save(fig_peak, output_path / "infection_peak.html")
+    peak_time = int(np.argmax(total_infections))
+    peak_day = peak_time * problem["T"] / problem["Nt"]
+    print(f"  - Peak infection map (day {peak_day:.1f})...")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, infected[peak_time, :, :], cmap="Reds", shading="gouraud")
+    ax.set_title(f"Peak Infection (Day {peak_day:.1f})")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "infection_peak.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 4. Infection evolution animation
+    # 4. Infection spread animation
     print("  - Infection spread animation...")
-    fig_anim_I = viz.animation(
-        infected,
-        title="Infection Spread Evolution I(t,x,y)",
-        xlabel="x (km)",
-        ylabel="y (km)",
-        zlabel="Infected Density",
-        fps=5,
-    )
-    viz.save(fig_anim_I, output_path / "infection_evolution.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, infected[0, :, :], cmap="Reds", shading="gouraud", vmin=0.0, vmax=float(infected.max()))
+    cbar = fig.colorbar(pcm, ax=ax)
+    cbar.set_label("Infected Density")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
 
-    # 5. Value function (cost-to-go with epidemic)
+    def _update_infection(frame):
+        pcm.set_array(infected[frame, :, :].ravel())
+        ax.set_title(f"Infection Spread Evolution I(t,x,y) - step {frame}")
+        return (pcm,)
+
+    anim_I = FuncAnimation(fig, _update_infection, frames=infected.shape[0], blit=False)
+    anim_I.save(output_path / "infection_evolution.gif", writer=PillowWriter(fps=5))
+    plt.close(fig)
+
+    # 5. Value function (cost-to-go with epidemic) as 3D surface
     print("  - Value function surface...")
-    viz_value = MultiDimVisualizer(grid, backend="plotly", colorscale="Viridis")
-    fig_u = viz_value.surface_plot(
-        u[-1, :, :],
-        title="Value Function u(x,y) - Epidemic Risk Cost",
-        xlabel="x (km)",
-        ylabel="y (km)",
-        zlabel="Cost-to-go",
-    )
-    viz_value.save(fig_u, output_path / "value_function.html")
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot_surface(X, Y, u[-1, :, :], cmap="viridis")
+    ax.set_title("Value Function u(x,y) - Epidemic Risk Cost")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+    ax.set_zlabel("Cost-to-go")
+    fig.savefig(output_path / "value_function.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 6. Population distribution evolution
+    # 6. Population distribution evolution animation
     print("  - Population movement animation...")
-    viz_pop = MultiDimVisualizer(grid, backend="plotly", colorscale="Blues")
-    fig_anim_m = viz_pop.animation(
-        m,
-        title="Population Distribution Evolution m(t,x,y)",
-        xlabel="x (km)",
-        ylabel="y (km)",
-        zlabel="Population Density",
-        fps=5,
-    )
-    viz_pop.save(fig_anim_m, output_path / "population_evolution.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(X, Y, m[0, :, :], cmap="Blues", shading="gouraud", vmin=0.0, vmax=float(m.max()))
+    cbar = fig.colorbar(pcm, ax=ax)
+    cbar.set_label("Population Density")
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("y (km)")
+
+    def _update_population(frame):
+        pcm.set_array(m[frame, :, :].ravel())
+        ax.set_title(f"Population Distribution Evolution m(t,x,y) - step {frame}")
+        return (pcm,)
+
+    anim_m = FuncAnimation(fig, _update_population, frames=m.shape[0], blit=False)
+    anim_m.save(output_path / "population_evolution.gif", writer=PillowWriter(fps=5))
+    plt.close(fig)
 
     print(f"\nVisualizations saved to {output_dir}/")
     print("\nGenerated files:")
-    print("  - infection_initial.html: Initial outbreak location")
-    print("  - infection_final.html: Final infection distribution")
-    print("  - infection_peak.html: Peak infection snapshot")
-    print("  - infection_evolution.html: Disease spread animation")
-    print("  - value_function.html: Optimal movement cost with epidemic")
-    print("  - population_evolution.html: Population movement response")
+    print("  - infection_initial.png: Initial outbreak location")
+    print("  - infection_final.png: Final infection distribution")
+    print("  - infection_peak.png: Peak infection snapshot")
+    print("  - infection_evolution.gif: Disease spread animation")
+    print("  - value_function.png: Optimal movement cost with epidemic")
+    print("  - population_evolution.gif: Population movement response")
 
 
 def main():

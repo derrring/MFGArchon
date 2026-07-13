@@ -51,8 +51,9 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
-from mfgarchon import MFGProblem
+from mfgarchon import MFGComponents, MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.numerical import create_lq_policy_problem
@@ -102,10 +103,22 @@ def solve_lq_mfg_with_value_iteration():
     print("Baseline: Value Iteration (Fixed-Point) Approach")
     print("=" * 80)
 
-    # Create 1D LQ-MFG problem
+    # Create 1D LQ-MFG problem.
+    # H(x, p, m) = (1/2)|p|^2 + 0.5*m  (quadratic control cost + congestion coupling).
+    # u_terminal/m_initial are required by MFGComponents (Issue #670: no silent defaults).
+    lq_hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: 0.5 * m,
+        coupling_dm=lambda m: 0.5,
+    )
     problem = MFGProblem(
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0)], Nx_points=[100 + 1], boundary_conditions=no_flux_bc(dimension=1)
+        ),
+        components=MFGComponents(
+            hamiltonian=lq_hamiltonian,
+            u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,  # cost to deviate from center
+            m_initial=lambda x: np.ones_like(x),  # uniform baseline density
         ),
         Nt=50,
         T=1.0,
