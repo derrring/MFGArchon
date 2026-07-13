@@ -160,6 +160,7 @@ class HJBFDMSolver(BaseHJBSolver):
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
         on_newton_failure: NewtonFailurePolicy = "raise",
+        analytic_jacobian: bool = False,
         # Deprecated parameter (decorator handles warnings)
         damping_factor: float | None = None,
         backend: str | None = None,
@@ -187,6 +188,17 @@ class HJBFDMSolver(BaseHJBSolver):
                 Only meaningful when solver_type="newton" and dimension > 1.
                 - 'raise': Raise ConvergenceError (default, fail-fast).
                 - 'warn_and_fallback': Emit warning and retry with Value Iteration.
+            analytic_jacobian: Opt-in inner-Newton HJB Jacobian assembly (#1607).
+                Default False keeps the per-point finite-difference Jacobian
+                (byte-identical to prior releases; the robust default). True routes
+                single-population solves through the batch analytic (chain-rule)
+                Jacobian -- the same path multi-population solves already use --
+                avoiding the O(Nx^2) per-column gradient recomputes (measured ~17x
+                faster per solve). When it converges it reaches the same fixed point
+                as the FD Jacobian (to tolerance); however the frozen-upwind analytic
+                Jacobian has a SMALLER convergence basin, so on some problems it
+                returns converged=False where the default converges -- fall back to
+                the default there. NumPy backend only (raises otherwise).
             backend: 'numpy', 'torch', or None
         """
         import warnings
@@ -197,6 +209,19 @@ class HJBFDMSolver(BaseHJBSolver):
         from mfgarchon.backends import create_backend
 
         self.backend = create_backend(backend or "numpy")
+
+        # #1607: opt-in analytic inner-Newton Jacobian. The batch analytic path in
+        # compute_hjb_jacobian is gated on backend is None; routing single-pop solves
+        # through it (effective_backend=None in solve_hjb_system) swaps the O(Nx^2)
+        # FD-assembled Jacobian for the O(Nx) chain-rule one. NumPy-only: the None
+        # path assumes numpy arrays (no to_numpy), so fail loud rather than silently
+        # mis-run torch/jax.
+        self._analytic_jacobian = bool(analytic_jacobian)
+        if self._analytic_jacobian and type(self.backend).__name__ != "NumPyBackend":
+            raise ValueError(
+                "analytic_jacobian=True is a NumPy-only inner-Newton Jacobian assembly "
+                f"(got backend={type(self.backend).__name__}); use the default backend='numpy'."
+            )
 
         # Validate and store advection scheme
         valid_schemes = {"gradient_centered", "gradient_upwind"}
@@ -450,7 +475,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # only a scalar own-population density and cannot express cross-population coupling. The
             # batch path is numerically equivalent to the per-point path (Issue #789), so this
             # changes nothing for single-population solves (cross_density None => self.backend).
-            effective_backend = None if cross_density is not None else self.backend
+            # #1607: the analytic_jacobian opt-in also routes single-pop solves through backend=None
+            # to use the O(Nx) analytic Jacobian instead of the O(Nx^2) FD fallback.
+            effective_backend = None if (cross_density is not None or self._analytic_jacobian) else self.backend
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
