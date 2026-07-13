@@ -218,30 +218,29 @@ class LQMFGEnv(ContinuousMFGEnvBase):
         r"""
         Compute mean field interaction term.
 
-        Quadratic repulsion from population:
-        $r_{\text{MF}}(x) = -c_m \int (x - y)^2 m(y) dy$
+        Quadratic coordination cost against the population density $m$:
+        $r_{\text{MF}}(x) = -c_m \int (x - y)^2 m(y) \, dy$
 
-        For discrete population:
-        $r_{\text{MF}}(x) = -c_m \frac{1}{N} \sum_i (x - x_i)^2$
-
-        This penalizes being near other agents (congestion cost).
+        The cost is minimised when the agent sits at the population barycentre, so it rewards
+        staying with the crowd (coordination), and grows as the agent moves away from the mass.
 
         Args:
             state: Current state (x, v)
-            population: Population histogram (not used in current implementation)
+            population: Population histogram $m$ over position bins (Issue #1600: now read)
 
         Returns:
-            Mean field coupling term (negative congestion cost)
+            Mean field coupling term (negative coordination cost)
         """
-        # For simplicity, use a placeholder computation
-        # In full implementation, would compute integral over population histogram
-        # For now, assume uniform distribution near origin creates constant baseline cost
+        x = float(state[0])
 
-        x = state[0]
-
-        # Simplified: quadratic penalty proportional to squared position
-        # This approximates repulsion from population centered at origin
-        mean_field_cost = self.cost_mean_field * (x**2)
+        # Issue #1600: read the actual population histogram instead of the -c_m*x^2 placeholder.
+        # Bin centres match get_population_state's np.histogram(range=(-x_max, x_max)); the discrete
+        # form of the advertised integral is c_m * sum_b (x - y_b)^2 m_b. This reduces EXACTLY to the
+        # old -c_m*x^2 when the population concentrates at the origin (m = delta_0), so it generalises
+        # rather than replaces the prior behaviour.
+        edges = np.linspace(-self.x_max, self.x_max, self.population_bins + 1)
+        bin_centers = 0.5 * (edges[:-1] + edges[1:])
+        mean_field_cost = self.cost_mean_field * float(np.sum((x - bin_centers) ** 2 * population))
 
         # Return negative cost (reward)
         return float(-mean_field_cost)

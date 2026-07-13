@@ -367,67 +367,20 @@ class ResourceAllocationEnv(ContinuousMFGEnvBase):
 
         return histogram
 
-    def step(
-        self, action: NDArray[np.floating[Any]]
-    ) -> tuple[NDArray[np.floating[Any]], float, bool, bool, dict[str, Any]]:
+    def _postprocess_next_states(self, next_states: NDArray[np.floating[Any]]) -> NDArray[np.floating[Any]]:
+        """Enforce the portfolio constraints on EVERY advanced agent: project each agent's allocation
+        block to the probability simplex and clamp asset values >= 0.
+
+        Overrides the base identity hook rather than the whole ``step()`` (Issue #1600). The base
+        ``_advance_population`` stays the single Euler-Maruyama driver, so the population-frozen and
+        constant-dim-noise fixes reach the resource env too -- the prior ``step()`` override was a
+        full copy of the base step that advanced only agent 0 and re-drew noise on every dim.
         """
-        Execute one timestep with simplex projection.
-
-        Overrides base class to enforce simplex constraints on allocations.
-
-        Args:
-            action: Action (rebalancing)
-
-        Returns:
-            Tuple (observation, reward, terminated, truncated, info)
-        """
-        if self.agent_states is None:
-            raise RuntimeError("Environment not initialized. Call reset() first.")
-
-        # Clip action to bounds
-        action = np.clip(action, self.action_bounds[0], self.action_bounds[1])
-
-        # Get representative agent state
-        state = self.agent_states[0]
-
-        # Get current population distribution
-        population = self.get_population_state()
-
-        # Apply dynamics
-        drift = self._drift(state, action, population)
-        noise = self.rng.normal(0, self.noise_std * np.sqrt(self.dt), size=state.shape)
-        next_state = state + drift * self.dt + noise
-
-        # Clip to state bounds
-        state_low, state_high = self._get_state_bounds()
-        next_state = np.clip(next_state, state_low, state_high)
-
-        # CRITICAL: Project allocations to simplex
-        allocations = next_state[: self.num_assets]
-        allocations = self._project_to_simplex(allocations)
-        next_state[: self.num_assets] = allocations
-
-        # Ensure asset values are non-negative
-        next_state[self.num_assets :] = np.maximum(next_state[self.num_assets :], 0.0)
-
-        # Compute reward
-        reward = self._compute_reward(state, action, next_state, population)
-
-        # Update agent state
-        self.agent_states[0] = next_state
-
-        # Check termination
-        terminated = self._is_terminated(next_state)
-        truncated = self.current_step >= self.max_steps - 1
-
-        self.current_step += 1
-
-        info = {
-            "step": self.current_step,
-            "population_mass": np.sum(population),
-        }
-
-        return next_state.astype(np.float32), float(reward), terminated, truncated, info
+        out = np.array(next_states, dtype=float, copy=True)
+        for i in range(out.shape[0]):
+            out[i, : self.num_assets] = self._project_to_simplex(out[i, : self.num_assets])
+        out[:, self.num_assets :] = np.maximum(out[:, self.num_assets :], 0.0)
+        return out
 
     def _compute_reward(
         self,
