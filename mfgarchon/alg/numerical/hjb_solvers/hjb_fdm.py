@@ -206,7 +206,7 @@ class HJBFDMSolver(BaseHJBSolver):
         super().__init__(problem)
 
         # Initialize backend
-        from mfgarchon.backends import create_backend
+        from mfgarchon.backends import NumPyBackend, create_backend
 
         self.backend = create_backend(backend or "numpy")
 
@@ -215,9 +215,10 @@ class HJBFDMSolver(BaseHJBSolver):
         # through it (effective_backend=None in solve_hjb_system) swaps the O(Nx^2)
         # FD-assembled Jacobian for the O(Nx) chain-rule one. NumPy-only: the None
         # path assumes numpy arrays (no to_numpy), so fail loud rather than silently
-        # mis-run torch/jax.
+        # mis-run torch/jax. isinstance (not a class-name string) so a legitimate
+        # NumPyBackend subclass is accepted while any genuine non-NumPy backend raises.
         self._analytic_jacobian = bool(analytic_jacobian)
-        if self._analytic_jacobian and type(self.backend).__name__ != "NumPyBackend":
+        if self._analytic_jacobian and not isinstance(self.backend, NumPyBackend):
             raise ValueError(
                 "analytic_jacobian=True is a NumPy-only inner-Newton Jacobian assembly "
                 f"(got backend={type(self.backend).__name__}); use the default backend='numpy'."
