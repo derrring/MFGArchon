@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable
+from mfgarchon.alg.numerical.coupling.base_mfg import (
+    BaseCouplingIterator,
+    assert_bc_providers_resolvable,
+    assert_paired_solver_sigma,
+)
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
@@ -158,6 +162,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         if len(fp_solvers) != K:
             msg = f"Need {K} FP solvers for {K} regimes, got {len(fp_solvers)}"
             raise ValueError(msg)
+        # RFC #1574 C14 / Issue #1603: each regime HJB-FP pair is an adjoint pair; guard every pair
+        # AFTER the count validation above, so a wrong-length list raises the clean count error first.
+        for _k in range(K):
+            assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"RegimeSwitchingIterator[regime {_k}]")
 
         regime_config.validate()
         self._last_result: RegimeSwitchingResult | None = None

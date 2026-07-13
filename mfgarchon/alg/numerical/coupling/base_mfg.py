@@ -40,6 +40,35 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
         )
 
 
+def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
+    """Fail loud if a coupled HJB / FP solver pair was built from problems with different ``sigma``.
+
+    Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads sigma from its OWN embedded
+    problem (``hjb_solver.problem.sigma``, ``fp_solver.problem.sigma``). A coupled HJB-FP pair is an
+    adjoint pair and must share the volatility; if the two problems' sigma disagree, HJB and FP
+    diffuse at different rates with no warning and the fixed point is neither problem's MFG.
+
+    Extracted from ``FixedPointIterator`` (Issue #1603) to a single owner so EVERY coupling loop --
+    FixedPoint, Block, FictitiousPlay, Newton, and the regime / multi-population / graph lists (which
+    had no guard) -- shares one check. For a list-based iterator, call once per sub-problem pair
+    (naming the sub-problem in ``context``). Compares only real scalars, so Mock test doubles whose
+    auto-resolved ``.sigma`` is not a number do not trip the guard (#1489).
+    """
+    hjb_sigma = getattr(getattr(hjb_solver, "problem", None), "sigma", None)
+    fp_sigma = getattr(getattr(fp_solver, "problem", None), "sigma", None)
+    if (
+        isinstance(hjb_sigma, (int, float))
+        and isinstance(fp_sigma, (int, float))
+        and abs(float(hjb_sigma) - float(fp_sigma)) > 1e-12
+    ):
+        raise ValueError(
+            f"{context}: paired HJB / FP solvers were built from problems with different sigma "
+            f"(HJB={hjb_sigma}, FP={fp_sigma}); a coupled MFG pair is an adjoint pair and must share "
+            f"the volatility -- the Picard fixed point would correspond to neither problem. Build both "
+            f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
+        )
+
+
 class BaseCouplingIterator(ABC):
     """
     Abstract base class for iterative coupling solvers (Picard, block, fictitious play).
