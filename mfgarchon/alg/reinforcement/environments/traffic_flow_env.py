@@ -229,6 +229,13 @@ class TrafficFlowEnv(ContinuousMFGEnvBase):
 
         return np.array([dx_dt, dv_dt, dt_rem_dt], dtype=np.float32)
 
+    def _noise_mask(self) -> NDArray[np.floating[Any]]:
+        """Time-remaining (dim 2) is a deterministic countdown (``_drift`` = -1), not a diffusion, so
+        it must NOT receive Brownian noise (Issue #1600): noise would make the deadline random."""
+        mask = np.ones(self.state_dim, dtype=np.float64)
+        mask[2] = 0.0
+        return mask
+
     def _compute_local_density(self, position: float, population: NDArray[np.floating[Any]]) -> float:
         """
         Compute local density at given position from population distribution.

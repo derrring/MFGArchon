@@ -255,6 +255,14 @@ class PriceFormationEnv(ContinuousMFGEnvBase):
 
         return np.array([dq_dt, dp_dt, d_price_vel_dt, dmarket_depth_dt], dtype=np.float32)
 
+    def _noise_mask(self) -> NDArray[np.floating[Any]]:
+        """Market depth (dim 3) has zero drift -- it is updated from the population, not diffused --
+        so it must NOT receive Brownian noise (Issue #1600), which would inject a spurious random
+        walk into a quantity the dynamics treat as externally set."""
+        mask = np.ones(self.state_dim, dtype=np.float64)
+        mask[3] = 0.0
+        return mask
+
     def _individual_reward(
         self,
         state: NDArray[np.floating[Any]],
