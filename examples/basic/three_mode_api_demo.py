@@ -183,19 +183,21 @@ def compare_schemes():
     return results
 
 
-def plot_results(result):
+def plot_results(result, problem):
     """Visualize the solution from any mode."""
     print("\n" + "=" * 70)
     print("VISUALIZATION")
     print("=" * 70)
 
     _, axes = plt.subplots(1, 2, figsize=(12, 4))
+    # SolverResult has no `.problem`; take the time horizon from the problem.
+    t = np.linspace(0.0, problem.T, result.U.shape[0])
 
     # Plot value function
     ax = axes[0]
     x = np.linspace(0, 1, result.U.shape[1])
     for t_idx in [0, result.U.shape[0] // 2, -1]:
-        ax.plot(x, result.U[t_idx, :], label=f"t={t_idx * result.problem.T / result.U.shape[0]:.2f}")
+        ax.plot(x, result.U[t_idx, :], label=f"t={t[t_idx]:.2f}")
     ax.set_xlabel("x")
     ax.set_ylabel("U(t, x)")
     ax.set_title("Value Function")
@@ -205,7 +207,7 @@ def plot_results(result):
     # Plot density
     ax = axes[1]
     for t_idx in [0, result.M.shape[0] // 2, -1]:
-        ax.plot(x, result.M[t_idx, :], label=f"t={t_idx * result.problem.T / result.M.shape[0]:.2f}")
+        ax.plot(x, result.M[t_idx, :], label=f"t={t[t_idx]:.2f}")
     ax.set_xlabel("x")
     ax.set_ylabel("m(t, x)")
     ax.set_title("Density")
@@ -241,7 +243,7 @@ def main():
     compare_schemes()
 
     # Visualize one result
-    plot_results(result_safe)
+    plot_results(result_safe, create_problem())
 
     print("\n" + "=" * 70)
     print("SUMMARY")

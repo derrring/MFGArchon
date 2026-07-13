@@ -68,7 +68,7 @@ logger = get_logger(__name__)
 # =============================================================================
 # These functions provide the classic Linear-Quadratic MFG setup that was
 # previously built-in. Users must now explicitly import and use them.
-# See examples/basic/lq_mfg_classic.py for usage.
+# See examples/tutorials/01_hello_mfg.py for usage.
 
 
 def lq_mfg_terminal_cost(Lx: float = 1.0):
