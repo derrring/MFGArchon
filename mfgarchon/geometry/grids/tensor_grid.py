@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.geometry.base import CartesianGrid
+from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.protocol import GeometryType
 from mfgarchon.geometry.protocols import (
@@ -1084,27 +1084,11 @@ class TensorProductGrid(
             elif side == "max":
                 projected[:, dim_idx] = max_coords[dim_idx]
         else:
-            # Project to closest boundary (clamp all coordinates)
-            projected = np.clip(projected, min_coords, max_coords)
-
-            # For points inside, project to closest face
-            for i in range(len(projected)):
-                point = points[i]
-                # Find closest boundary
-                dist_to_min = point - min_coords
-                dist_to_max = max_coords - point
-
-                # Find minimum distance to any boundary
-                all_dists = np.concatenate([dist_to_min, dist_to_max])
-                min_dist_idx = np.argmin(np.abs(all_dists))
-
-                if min_dist_idx < self._dimension:
-                    # Closest to min boundary
-                    projected[i, min_dist_idx] = min_coords[min_dist_idx]
-                else:
-                    # Closest to max boundary
-                    dim_idx = min_dist_idx - self._dimension
-                    projected[i, dim_idx] = max_coords[dim_idx]
+            # Project to the closest boundary. Single source (Issue #1574) shared with the base
+            # Geometry default: the nearest point on the axis-aligned box boundary. The prior loop
+            # snapped by the ORIGINAL point's unbounded-plane distance, so exterior points landed
+            # non-nearest ([1.2, 0.1] -> [1.0, 0.0] instead of [1.0, 0.1]).
+            projected = nearest_point_on_box_boundary(points, min_coords, max_coords)
 
         if single_point:
             return projected[0]
