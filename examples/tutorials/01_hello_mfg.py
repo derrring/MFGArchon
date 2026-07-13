@@ -54,9 +54,12 @@ if __name__ == "__main__":
     # Step 2: Define the Domain (spatial arena)
     # ==============================================================================
 
+    # A deliberately small grid keeps this "hello world" fast to run end-to-end.
+    # (Finer grids are correct but slow on the default FDM solver -- the inner
+    # Newton assembles its Jacobian by O(Nx^2) finite differences; tracked in #1607.)
     domain = TensorProductGrid(
         bounds=[(0.0, 1.0)],  # Domain [0, 1]
-        Nx_points=[51],  # 51 grid points (50 intervals)
+        Nx_points=[21],  # 21 grid points (20 intervals)
         boundary_conditions=no_flux_bc(dimension=1),
     )
 
@@ -85,7 +88,7 @@ if __name__ == "__main__":
     # Step 4: Create and Solve the Problem
     # ==============================================================================
 
-    problem = MFGProblem(model=model, domain=domain, conditions=conditions, Nt=50)
+    problem = MFGProblem(model=model, domain=domain, conditions=conditions, Nt=20)
 
     print("Solving MFG system...")
     print()
@@ -207,7 +210,7 @@ if __name__ == "__main__":
     print("  1. Model: game rules (Hamiltonian + sigma)")
     print("  2. Domain: spatial grid (TensorProductGrid)")
     print("  3. Conditions: problem data (u_terminal, m_initial, T)")
-    print("  4. MFGProblem(model, domain, conditions, Nt=50)")
+    print("  4. MFGProblem(model, domain, conditions, Nt=20)")
     print("  5. result = problem.solve()")
     print("  6. Parameter variation: problem.with_model(), problem.with_conditions()")
     print()
