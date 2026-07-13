@@ -86,7 +86,7 @@ def scenario_porous_medium():
         problem,
         hjb_solver,
         fp_solver,
-        damping_factor=0.5,
+        relaxation=0.5,
         volatility_field=porous_medium_diffusion,  # State-dependent!
     )
 
@@ -147,7 +147,7 @@ def scenario_crowd_dynamics():
         problem,
         hjb_solver,
         fp_solver,
-        damping_factor=0.5,
+        relaxation=0.5,
         volatility_field=crowd_diffusion,
     )
 
@@ -204,7 +204,7 @@ def scenario_spatially_varying():
         problem,
         hjb_solver,
         fp_solver,
-        damping_factor=0.5,
+        relaxation=0.5,
         volatility_field=spatial_diffusion,
     )
 

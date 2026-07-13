@@ -69,20 +69,24 @@ class GradientDescentMFGSolver:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
 
-        # Get problem dimensions using geometry-first API
-        grid_shape = problem.geometry.get_grid_shape()  # (Nt_points, Nx_points)
-        Nt_points = grid_shape[0]
-        Nx_points = grid_shape[1]
+        # Get problem dimensions. geometry.get_grid_shape() carries the spatial
+        # grid only (Nx_points,); the temporal discretization lives on the
+        # problem (problem.Nt intervals over horizon problem.T).
+        grid_shape = problem.geometry.get_grid_shape()  # (Nx_points,)
+        Nx_points = grid_shape[0]
+        Nt_points = problem.Nt + 1
 
         # Store dimensions (Nt, Nx are counts without +1)
-        self.Nt = Nt_points - 1
+        self.Nt = problem.Nt
         self.Nx = Nx_points - 1
 
         # Get spatial/temporal spacing and diffusion coefficient
-        spacing = problem.geometry.get_grid_spacing()
-        self.Dt = spacing[0]  # Temporal spacing
-        self.Dx = spacing[1]  # Spatial spacing
-        self.sigma = problem.diffusion
+        self.Dx = problem.geometry.get_grid_spacing()[0]  # Spatial spacing
+        self.Dt = problem.T / problem.Nt  # Temporal spacing
+        # sigma is the SDE volatility; the HJB/FP diffusion term below is written
+        # as (sigma^2 / 2) * second_derivative, so this must hold sigma, not the
+        # PDE diffusion D = sigma^2/2 (repo convention #811/#1412/#1512).
+        self.sigma = problem.sigma
 
         # Get initial/final conditions
         self.m_initial = problem.get_initial_m()
@@ -250,10 +254,10 @@ class WrapperSolver:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
 
-        # Use fast solver factory for actual computation
-        from mfgarchon.factory import create_fast_solver
-
-        self.reference_solver = create_fast_solver(problem, method="fixed_point")
+        # Delegate actual computation to the problem's built-in solver. The
+        # standalone create_*_solver factories were removed; Auto Mode
+        # (problem.solve()) selects a dual HJB-FP scheme automatically.
+        self.reference_solver = problem
 
     def solve(self) -> SolverResult:
         """
@@ -496,13 +500,33 @@ if __name__ == "__main__":
     print("Example Solver Plugin Demonstration")
     print("=" * 70)
 
-    # Create test problem using modern API
-    from mfgarchon import MFGProblem
+    # Create test problem using modern v1.0 API (Model + Conditions + domain).
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.core.plugin_system import get_plugin_manager
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
 
-    problem = MFGProblem()  # Uses default 1D problem
-    grid_shape = problem.geometry.get_grid_shape()
-    print(f"\nTest problem: 1D, Nx={grid_shape[1] - 1}, Nt={grid_shape[0] - 1}, T={problem.T}")
+    hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: 0.5 * m,
+        coupling_dm=lambda m: 0.5,
+    )
+    model = Model(hamiltonian=hamiltonian, sigma=0.1)
+    domain = TensorProductGrid(
+        bounds=[(0.0, 1.0)],
+        Nx_points=[21],
+        boundary_conditions=no_flux_bc(dimension=1),
+    )
+    conditions = Conditions(
+        u_terminal=lambda x: (x - 0.5) ** 2,
+        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        T=1.0,
+    )
+    problem = MFGProblem(model=model, domain=domain, conditions=conditions, Nt=20)
+
+    grid_shape = problem.geometry.get_grid_shape()  # (Nx_points,)
+    print(f"\nTest problem: 1D, Nx={grid_shape[0] - 1}, Nt={problem.Nt}, T={problem.T}")
 
     # Register plugin manually for testing
     plugin_manager = get_plugin_manager()

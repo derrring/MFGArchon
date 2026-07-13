@@ -23,8 +23,10 @@ sys.path.insert(0, str(project_root))
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
+from mfgarchon import BoundaryConditions  # noqa: E402
 from mfgarchon.alg.neural.dgm.base_dgm import DGMConfig  # noqa: E402
-from mfgarchon.core.mfg_problem import BoundaryConditions, MFGProblem  # noqa: E402
+from mfgarchon.core.mfg_problem import MFGProblem  # noqa: E402
+from mfgarchon.geometry.boundary import BCType  # noqa: E402
 
 # Check if PyTorch is available
 try:
@@ -57,9 +59,7 @@ class Simple2DMFG(MFGProblem):
         self.time_domain = (0, 1.0)
 
         # Boundary conditions (homogeneous Neumann for validation)
-        self.boundary_conditions = BoundaryConditions(
-            value_bc=lambda t, x: np.zeros(len(x)), density_bc=lambda t, x: np.zeros(len(x)), bc_type="neumann"
-        )
+        self.boundary_conditions = BoundaryConditions(dimension=2, default_bc=BCType.NEUMANN)
 
     def hamiltonian(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
         """
