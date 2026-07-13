@@ -272,7 +272,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         k_neighbors: int | None = None,
         neighborhood_mode: str = "hybrid",
         # New GFDM infrastructure parameters
-        derivative_method: str = "taylor",  # "taylor" or "rbf"
+        derivative_method: str = "taylor",  # "taylor"; "rbf" unsupported since #1526 (raises, #1553)
         rbf_kernel: str = "phs3",  # For RBF-FD: "phs3", "phs5", "gaussian"
         rbf_poly_degree: int = 2,  # Polynomial augmentation degree for RBF-FD
         use_new_infrastructure: bool = True,  # Use new Strategy Pattern (recommended)
@@ -387,8 +387,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 - "hybrid": Use delta, but ensure at least k neighbors (default, most robust)
             derivative_method: Method for computing spatial derivatives:
                 - "taylor": Standard GFDM with Taylor polynomial basis (default)
-                - "rbf": RBF-FD with polyharmonic splines (better conditioning)
-            rbf_kernel: Kernel for RBF-FD method (only used when derivative_method="rbf"):
+                - "rbf": UNSUPPORTED since #1526 (raises NotImplementedError, Issue #1553) --
+                  the RBF branch has no working differentiation-weight builder. Use "taylor".
+            rbf_kernel: Kernel for RBF-FD method (reserved for the future "rbf" build-out, #1553):
                 - "phs3": r³ polyharmonic spline (most common)
                 - "phs5": r⁵ polyharmonic spline (higher accuracy)
                 - "gaussian": Gaussian RBF (requires shape parameter tuning)
@@ -779,6 +780,21 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Store new infrastructure parameters
         self._use_new_infrastructure = use_new_infrastructure
+        # Issue #1553: fail loud at construction rather than deep in Newton-Jacobian assembly.
+        # (An unrecognized derivative_method is already rejected at construction by the operator
+        # dispatch's else-branch below, so only 'rbf' needs an explicit guard here.)
+        # Since #1526 the non-LCR weight path routes through NeighborhoodBuilder's Taylor-SVD builder,
+        # which consumes SVD factors LocalRBFOperator.get_taylor_data does not provide (a dummy shim
+        # returning None), so every real 'rbf' solve raises an undiagnostic
+        # ``'NoneType' object has no attribute 'T'``. Repairing it also owes threading obstacle_sdf
+        # (the pre-#1124 wall-coupling seam). Until a genuine RBF weight-builder + convergence test
+        # lands, 'rbf' is unsupported: a half-working parallel path is worse than none.
+        if derivative_method == "rbf":
+            raise NotImplementedError(
+                "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the "
+                "RBF branch has no working differentiation-weight builder and would reopen the #1124 "
+                "obstacle seam. Use derivative_method='taylor' (the default)."
+            )
         self._derivative_method = derivative_method
         self._rbf_kernel = rbf_kernel
         self._rbf_poly_degree = rbf_poly_degree
