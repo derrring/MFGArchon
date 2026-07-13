@@ -200,14 +200,9 @@ class ContinuousLQMFGEnv:
         counts, _ = np.histogram(self.agent_positions, bins=self.bin_edges)
         self.population_density = counts / self.num_agents  # Normalize
 
-    def get_population_state(self) -> Any:
-        """Get population state for mean field algorithms."""
-
-        class PopState:
-            def __init__(self, density):
-                self.density_histogram = density
-
-        return PopState(self.population_density.astype(np.float32))
+    def get_population_state(self) -> np.ndarray:
+        """Population density as a flat NDArray (#1570 canonical env->algo contract)."""
+        return self.population_density.astype(np.float32)
 
 
 def train_algorithm(algo_class, algo_name: str, env, num_episodes: int, config: dict | None = None) -> dict:
