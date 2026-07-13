@@ -293,9 +293,15 @@ class ContinuousActionMazeEnvironment:
         goal_pos = np.array(self.goal_positions[agent_idx % len(self.goal_positions)])
         return bool(np.linalg.norm(pos - goal_pos) < 1.0)  # Within 1 cell
 
-    def get_population_state(self) -> PopulationState:
-        """Get current population state."""
-        return self.population_state
+    def get_population_state(self) -> NDArray[np.floating[Any]]:
+        """Current population density as a flat histogram.
+
+        #1570 (Option A): the canonical env->algo population-state contract is a
+        flat ``NDArray`` (matching ``ContinuousMFGEnvBase.get_population_state``),
+        so mean-field DDPG/TD3/SAC consume every env identically. ``PopulationState``
+        remains this env's internal density container (``self.population_state``).
+        """
+        return self.population_state.density_histogram.flatten()
 
     def render(self) -> NDArray | None:
         """Render environment (returns maze with agent positions)."""

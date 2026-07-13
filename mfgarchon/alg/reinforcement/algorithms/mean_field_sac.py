@@ -449,7 +449,7 @@ class MeanFieldSAC:
                         f"would train on an identically-zero mean field and silently return a non-MFG "
                         f"policy (Issue #1508)."
                     )
-                pop_state = _pop_getter().density_histogram.flatten()
+                pop_state = _pop_getter()  # #1570: get_population_state() returns a flat NDArray for every env
 
                 # Select action (stochastic during training)
                 action = self.select_action(state, pop_state, training=True)
@@ -462,7 +462,7 @@ class MeanFieldSAC:
                 _pop_getter = getattr(self.env, "get_population_state", None)
                 if not callable(_pop_getter):
                     raise AttributeError(f"{type(self.env).__name__} has no get_population_state() (Issue #1508).")
-                next_pop_state = _pop_getter().density_histogram.flatten()
+                next_pop_state = _pop_getter()  # #1570: get_population_state() returns a flat NDArray for every env
 
                 # Store transition
                 if isinstance(reward, int | float | np.floating):
