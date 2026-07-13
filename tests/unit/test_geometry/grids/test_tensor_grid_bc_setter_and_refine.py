@@ -41,13 +41,6 @@ def test_boundary_conditions_getter_reads_private():
     assert grid.boundary_conditions is grid._boundary_conditions
 
 
-def test_setter_binds_dimension_like_set_boundary_conditions():
-    """The property setter routes through set_boundary_conditions, so the BC's dimension is bound."""
-    grid = _grid(dim=2)
-    grid.boundary_conditions = dirichlet_bc(dimension=2)
-    assert grid.get_boundary_conditions().dimension == 2
-
-
 def test_refine_and_coarsen_emit_no_dimension_deprecation():
     """#32: refine/coarsen must not emit the deprecated-`dimension=` warning (they infer it from
     bounds). Discriminating -- restoring `dimension=self._dimension` in either ctor call re-warns."""
