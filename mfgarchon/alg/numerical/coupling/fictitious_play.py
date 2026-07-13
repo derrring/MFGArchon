@@ -42,7 +42,7 @@ from mfgarchon.utils.iteration.schedules import (
 )
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable
+from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
 from .fixed_point_utils import (
     check_convergence_criteria,
     initialize_cold_start,
@@ -130,6 +130,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.backend = backend
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "FictitiousPlayIterator")
         self.config = config
 
         # Fictitious play parameters

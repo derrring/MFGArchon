@@ -20,7 +20,7 @@ import numpy as np
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import assert_bc_providers_resolvable
+from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -82,6 +82,10 @@ class MultiPopulationIterator:
             raise ValueError(f"Need {K} HJB solvers, got {len(hjb_solvers)}")
         if len(fp_solvers) != K:
             raise ValueError(f"Need {K} FP solvers, got {len(fp_solvers)}")
+        # RFC #1574 C14 / Issue #1603: each population HJB-FP pair is an adjoint pair; guard every
+        # pair, not just population 0, against silent sigma desync.
+        for _k in range(K):
+            assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"MultiPopulationIterator[population {_k}]")
 
         # Issue #1043: cache each FP solver's solve_fp_system signature so the drift/potential
         # convention can be resolved via the shared resolve_fp_drift_kwargs (same as single-pop).

@@ -21,7 +21,7 @@ from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator
+from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
 from .fixed_point_utils import (
     check_convergence_criteria,
     initialize_cold_start,
@@ -209,31 +209,10 @@ class FixedPointIterator(BaseCouplingIterator):
                 stacklevel=2,
             )
 
-        # Issue #1603: each paired solver reads sigma from its OWN embedded
-        # problem (hjb_solver.problem.sigma, fp_solver.problem.sigma). If the two
-        # solvers were built from different MFGProblems whose sigma disagree, HJB
-        # and FP diffuse at different rates with no warning and the Picard fixed
-        # point is neither problem's MFG. The #1081 guard above only covers the
-        # volatility_field kwarg, not this two-problem path. A coupled HJB-FP pair
-        # is an adjoint pair and must share the volatility, so this is a hard error
-        # (cf. the #1489 SD-scale guard above), not a warning. Compare only real
-        # scalars so Mock test doubles -- whose auto-resolved .sigma is not a
-        # number -- do not trip the guard (#1489).
-        hjb_problem_sigma = getattr(getattr(hjb_solver, "problem", None), "sigma", None)
-        fp_problem_sigma = getattr(getattr(fp_solver, "problem", None), "sigma", None)
-        if (
-            isinstance(hjb_problem_sigma, (int, float))
-            and isinstance(fp_problem_sigma, (int, float))
-            and abs(float(hjb_problem_sigma) - float(fp_problem_sigma)) > 1e-12
-        ):
-            raise ValueError(
-                f"Paired HJB / FP solvers were built from problems with different "
-                f"sigma (HJB={hjb_problem_sigma}, FP={fp_problem_sigma}); a coupled "
-                f"MFG pair is an adjoint pair and must share the volatility. The "
-                f"Picard fixed point would correspond to neither problem. Build both "
-                f"solvers from the same MFGProblem, or use create_paired_solvers. "
-                f"Issue #1603."
-            )
+        # Issue #1603: a coupled HJB-FP pair is an adjoint pair and must share the volatility. The
+        # #1081 guard above only covers the volatility_field kwarg, not this two-problem path.
+        # Single-sourced to assert_paired_solver_sigma (RFC #1574 C14) so every coupling loop shares it.
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator")
 
         # Anderson acceleration support
         self.use_anderson = use_anderson
