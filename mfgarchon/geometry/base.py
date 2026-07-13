@@ -46,16 +46,16 @@ def nearest_point_on_box_boundary(points: NDArray, min_coords: NDArray, max_coor
     lo = np.asarray(min_coords, dtype=float)
     hi = np.asarray(max_coords, dtype=float)
     clipped = np.clip(pts, lo, hi)  # nearest point in the box; on the boundary iff pts was exterior
-    strictly_inside = np.all((pts > lo) & (pts < hi), axis=1)
+    # Snap the coordinate nearest to its face. Exterior/on-boundary points already have a coordinate
+    # sitting exactly on a face after the clip (distance 0 == the argmin), so the snap writes back the
+    # same value there -- a no-op; only strictly-interior points are actually moved onto the boundary.
     dist_lo = clipped - lo
     dist_hi = hi - clipped
     snap_dim = np.argmin(np.minimum(dist_lo, dist_hi), axis=1)
     rows = np.arange(len(pts))
     snap_to_hi = dist_hi[rows, snap_dim] < dist_lo[rows, snap_dim]
     result = clipped.copy()
-    face = np.where(snap_to_hi, hi[snap_dim], lo[snap_dim])
-    inside = rows[strictly_inside]  # only interior points need a coordinate snapped to a face
-    result[inside, snap_dim[strictly_inside]] = face[strictly_inside]
+    result[rows, snap_dim] = np.where(snap_to_hi, hi[snap_dim], lo[snap_dim])
     return result
 
 
