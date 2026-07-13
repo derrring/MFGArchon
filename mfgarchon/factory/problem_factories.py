@@ -252,11 +252,14 @@ def create_mfg_problem(
         components.problem_type = problem_type
 
     if use_unified:
-        # New unified API - create MFGProblem directly
+        # New unified API - create MFGProblem directly.
+        # MFGProblem's constructor takes T / Nt; passing time_horizon /
+        # num_timesteps would fall into **kwargs and be silently dropped
+        # (T, Nt then default to 1.0 / 51). Map the factory's names.
         return MFGProblem(
             geometry=geometry,
-            time_horizon=time_horizon,
-            num_timesteps=num_timesteps,
+            T=time_horizon,
+            Nt=num_timesteps,
             components=components,
             **kwargs,
         )
@@ -274,8 +277,8 @@ def create_mfg_problem(
 
             return NetworkMFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -284,8 +287,8 @@ def create_mfg_problem(
 
             return VariationalMFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -294,8 +297,8 @@ def create_mfg_problem(
 
             return StochasticMFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -304,8 +307,8 @@ def create_mfg_problem(
             # Use MFGProblem with spatial_bounds and spatial_discretization instead
             return MFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -313,8 +316,8 @@ def create_mfg_problem(
             # Standard MFG
             return MFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
