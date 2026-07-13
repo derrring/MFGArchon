@@ -96,6 +96,48 @@ def test_create_lq_problem(simple_domain):
     assert problem.components.hamiltonian is not None
 
 
+def test_factory_respects_time_horizon_and_num_timesteps(simple_domain, simple_2d_domain):
+    """Factories must honor time_horizon / num_timesteps.
+
+    Regression: create_mfg_problem built MFGProblem(time_horizon=, num_timesteps=), but
+    MFGProblem takes T / Nt, so both fell into **kwargs and were silently dropped (T, Nt
+    defaulting to 1.0 / 51). Discriminating: reverting the T=/Nt= mapping makes these
+    assertions fail (T=1.0, Nt=51 regardless of the requested values).
+    """
+    lq = create_lq_problem(
+        geometry=simple_domain,
+        terminal_cost=lambda x: 0.0,
+        initial_density=lambda x: 1.0,
+        time_horizon=2.5,
+        num_timesteps=7,
+    )
+    assert (lq.T, lq.Nt) == (2.5, 7)
+
+    ham = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: m,
+        coupling_dm=lambda m: 1.0,
+    )
+    std = create_standard_problem(
+        hamiltonian=ham,
+        terminal_cost=lambda x: 0.0,
+        initial_density=lambda x: 1.0,
+        geometry=simple_domain,
+        time_horizon=3.0,
+        num_timesteps=9,
+    )
+    assert (std.T, std.Nt) == (3.0, 9)
+
+    crowd = create_crowd_problem(
+        geometry=simple_2d_domain,
+        target_location=np.array([0.8, 0.8]),
+        initial_density=lambda x: 1.0,
+        time_horizon=1.5,
+        num_timesteps=6,
+    )
+    assert (crowd.T, crowd.Nt) == (1.5, 6)
+
+
 def test_create_crowd_problem(simple_2d_domain):
     """Test crowd dynamics MFG problem creation (Issue #673 class-based Hamiltonian)."""
     target = np.array([0.8, 0.8])
