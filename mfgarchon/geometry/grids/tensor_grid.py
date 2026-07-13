@@ -546,8 +546,7 @@ class TensorProductGrid(
         new_Nx_points = [(n - 1) * f + 1 for n, f in zip(self._Nx_points, factors, strict=False)]
 
         return TensorProductGrid(
-            dimension=self._dimension,
-            bounds=self.bounds,
+            bounds=self.bounds,  # dimension inferred from len(bounds) (#676); do not pass the deprecated kwarg
             Nx_points=new_Nx_points,
             spacing_type=self.spacing_type,
             boundary_conditions=self._boundary_conditions,
@@ -572,8 +571,7 @@ class TensorProductGrid(
         new_Nx_points = [(n - 1) // f + 1 for n, f in zip(self._Nx_points, factors, strict=False)]
 
         return TensorProductGrid(
-            dimension=self._dimension,
-            bounds=self.bounds,
+            bounds=self.bounds,  # dimension inferred from len(bounds) (#676); do not pass the deprecated kwarg
             Nx_points=new_Nx_points,
             spacing_type=self.spacing_type,
             boundary_conditions=self._boundary_conditions,
@@ -691,6 +689,23 @@ class TensorProductGrid(
             # Validate dimension if BC has one set
             bc = bc.bind_dimension(self._dimension)
         self._boundary_conditions = bc
+
+    @property
+    def boundary_conditions(self):
+        """The grid's boundary conditions (SSOT for spatial BC).
+
+        The read path (``get_boundary_handler`` / ``get_boundary_conditions``) uses
+        ``_boundary_conditions``. This property exposes it and, on assignment, routes through
+        ``set_boundary_conditions`` (which binds the dimension). Issue #674 silent-BC trap: a bare
+        ``grid.boundary_conditions = bc`` -- as the ``get_boundary_handler`` docstring shows --
+        previously created a DEAD instance attribute the handlers ignored, so the assignment
+        silently did nothing and the grid kept its old BC.
+        """
+        return self._boundary_conditions
+
+    @boundary_conditions.setter
+    def boundary_conditions(self, bc) -> None:
+        self.set_boundary_conditions(bc)
 
     # ============================================================================
     # CartesianGrid ABC implementation (grid-specific utilities)
