@@ -209,8 +209,8 @@ def evaluate_policy(env: ContinuousActionMazeEnvironment, algo: MeanFieldDDPG, n
         steps = 0
 
         while not done and steps < env.config.max_steps:
-            # Get population state
-            pop_state = env.get_population_state().density_histogram.flatten()
+            # Get population state (#1570: now a flat NDArray for every env)
+            pop_state = env.get_population_state()
 
             # Select actions for all agents (use first agent's state for demo)
             actions = []

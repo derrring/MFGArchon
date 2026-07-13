@@ -44,6 +44,51 @@ def test_missing_get_population_state_fails_loud(module_name, class_name):
         algo.train(num_episodes=1)
 
 
+class _EnvWithPopState:
+    """Minimal env exposing the #1570 canonical contract: get_population_state() -> flat NDArray.
+    step() terminates after one transition so train() stays cheap."""
+
+    def __init__(self, state_dim: int = 2, pop_dim: int = 4):
+        self._sd, self._pd = state_dim, pop_dim
+
+    def reset(self):
+        return np.zeros(self._sd, dtype=np.float32), {}
+
+    def step(self, action):
+        return np.zeros(self._sd, dtype=np.float32), 0.0, True, False, {}
+
+    def get_population_state(self):
+        return np.zeros(self._pd, dtype=np.float32)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "class_name"),
+    [
+        ("mfgarchon.alg.reinforcement.algorithms.mean_field_ddpg", "MeanFieldDDPG"),
+        ("mfgarchon.alg.reinforcement.algorithms.mean_field_td3", "MeanFieldTD3"),
+        ("mfgarchon.alg.reinforcement.algorithms.mean_field_sac", "MeanFieldSAC"),
+    ],
+)
+def test_algo_trains_with_ndarray_population(module_name, class_name):
+    """#1601 / #1570: with the canonical flat-NDArray population contract, every algo runs against an
+    env whose get_population_state() returns an ndarray. Pre-fix the algos did
+    ``get_population_state().density_histogram.flatten()``, so an ndarray -- the declared contract for
+    the whole ContinuousMFGEnvBase family -- raised AttributeError on the first step (15 algo x env
+    pairings dead). Discriminating: reverting to ``.density_histogram.flatten()`` makes this raise
+    AttributeError('numpy.ndarray' object has no attribute 'density_histogram')."""
+    import importlib
+
+    algo_cls = getattr(importlib.import_module(module_name), class_name)
+    algo = algo_cls(
+        env=_EnvWithPopState(state_dim=2, pop_dim=4),
+        state_dim=2,
+        action_dim=1,
+        population_dim=4,
+        action_bounds=(-1.0, 1.0),
+    )
+    algo.train(num_episodes=1)  # must NOT raise (pre-fix: AttributeError on .density_histogram)
+
+
 def test_actor_critic_missing_population_channel_fails_loud():
     """Issue #1568: MeanFieldActorCritic reads the population from the OBSERVATION (it never calls
     env.get_population_state()), so #1508's env-side guard never covered it -- ``_extract_population``
