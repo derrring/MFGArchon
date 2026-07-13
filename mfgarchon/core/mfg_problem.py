@@ -1869,7 +1869,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 "u_terminal (terminal condition) must be provided in MFGComponents. "
                 "Example: MFGComponents(u_terminal=lambda x: ..., m_initial=lambda x: ...). "
-                "See examples/basic/lq_mfg_classic.py for the classic LQ-MFG setup."
+                "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
         # === m_initial: MUST be in MFGComponents (Issue #670: no silent default) ===
@@ -1879,7 +1879,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 "m_initial (initial density) must be provided in MFGComponents. "
                 "Example: MFGComponents(u_terminal=lambda x: ..., m_initial=lambda x: ...). "
-                "See examples/basic/lq_mfg_classic.py for the classic LQ-MFG setup."
+                "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
         # === Potential: V(x,t) - defaults to zero (Issue #671: explicit default) ===
