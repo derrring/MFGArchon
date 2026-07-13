@@ -1360,6 +1360,35 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     # === Carlini-Silva stochastic-characteristic SL (Issue #1026) ===
 
+    def _brownian_foot_offset(self, sqrt_dt: float) -> np.ndarray:
+        """Per-axis Brownian foot offset ``c_ax`` for the 2d-departure SL diffusion quadrature.
+
+        Both the ``'stochastic'`` and ``'canonical_cs'`` SL steps place ``2d`` feet
+        ``x ± c_ax·e_ax`` (one ± pair per axis) and average them with uniform weight ``1/(2d)``.
+        Taylor: ``(1/2d)·Σ_ax[u(x + c_ax e_ax) + u(x − c_ax e_ax)] = u + (1/2d)·Σ_ax c_ax²·∂²u/∂x_ax² + O(c⁴)``.
+        Recovering the canonical anisotropic viscosity ``(1/2)·Σ_ax σ_ax²·∂²u/∂x_ax²·dt`` — the
+        ``-(σ²/2)·Δu`` term of the HJB residual (``base_hjb.py``) — requires
+        ``c_ax = √d·σ_ax·√dt`` (weak-Euler direction tree: ``E[ξ ξᵀ] = I·dt`` over the ``2d``
+        one-axis feet). The ``√d`` is an exact identity at ``d = 1`` and restores the ``1/d``
+        diffusion deficit that under-diffused every ``d ≥ 2`` SL solve (Issue #1543: 2× in 2D,
+        3× in 3D). ``diffusion_method='adi'`` is a separate path and is unaffected.
+
+        Single owner for the departure offset — the ``'stochastic'`` and ``'canonical_cs'`` paths
+        must not re-derive ``σ·√dt`` independently (the divergence that was Issue #1543).
+        """
+        d = self.dimension
+        sigma = self.problem.sigma
+        if isinstance(sigma, np.ndarray):
+            sigma_diag = np.asarray(sigma, dtype=float).ravel()
+            if sigma_diag.size != d:
+                raise ValueError(
+                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
+                    "Full-tensor sigma not supported by semi-Lagrangian SL."
+                )
+        else:
+            sigma_diag = np.full(d, float(sigma))
+        return np.sqrt(d) * sigma_diag * sqrt_dt
+
     def _solve_timestep_stochastic_sl(
         self,
         U_next: np.ndarray,
@@ -1379,7 +1408,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     + dt * H_control(p_i) - dt * (V + f)
                   = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
 
-        with y_k^pm = x_i - (dH/dp)_i * dt +/- sigma * sqrt(dt) * e_k. (The prior
+        with y_k^pm = x_i - (dH/dp)_i * dt +/- sqrt(d) * sigma * sqrt(dt) * e_k (the
+        sqrt(d) restores the full (sigma^2/2) Lap(u) under the 1/(2d) average, Issue #1543). (The prior
         `alpha* = -nabla u` foot with `- dt*H` was lambda=1-only on the foot and
         double-counted the kinetic term ~3x; see Issue #575/#1413.)
 
@@ -1429,9 +1459,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Issue #1050: unifies the former ``_stochastic_sl_step_1d`` and
         ``_stochastic_sl_step_nd`` into one method handling d ∈ {1, 2, 3, ...}.
         One Brownian-quadrature step: ``2*d`` departures per node (a
-        ``±σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``),
-        interpolate ``u^{n+1}`` at each foot, average over the ``2*d``
-        directions, subtract ``dt·H``.
+        ``±√d·σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``; the
+        ``√d`` makes the ``1/(2d)`` average recover the full ``(σ²/2)Δu``,
+        Issue #1543), interpolate ``u^{n+1}`` at each foot, average over the
+        ``2*d`` directions, subtract ``dt·H``.
 
         The shared structure (drift + Brownian departures, boundary fold,
         averaging, batch Hamiltonian) is written once, so the 1D fixes
@@ -1493,17 +1524,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 flat_input = False
             grid_coords = tuple(self.grid.coordinates)
 
-        # --- Diagonal volatility σ_ax (SDE volatility, mfg_problem.py:39) ---
-        sigma = self.problem.sigma
-        if isinstance(sigma, np.ndarray):
-            sigma_diag = np.asarray(sigma, dtype=float).ravel()
-            if sigma_diag.size != d:
-                raise ValueError(
-                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
-                    f"Full-tensor sigma not yet supported by stochastic SL."
-                )
-        else:
-            sigma_diag = np.full(d, float(sigma))
+        # --- Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source) ---
+        foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         # Optimal control α* = -p where p = ∇u^{n+1}; drift foot x_drift = x − p·dt.
         grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped)
@@ -1534,7 +1556,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         all_departures = np.empty((2 * d * n_total, d), dtype=float)
         for ax in range(d):
             offset = np.zeros(d)
-            offset[ax] = sigma_diag[ax] * sqrt_dt
+            offset[ax] = foot_offset[ax]
             block_start = 2 * ax * n_total
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
@@ -1702,17 +1724,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 return x_min + (points - x_min) % span
             return np.clip(points, x_min, x_max)
 
-        # Diagonal volatility sigma_ax (SDE volatility), as in the stochastic SL path.
-        sigma = self.problem.sigma
-        if isinstance(sigma, np.ndarray):
-            sigma_diag = np.asarray(sigma, dtype=float).ravel()
-            if sigma_diag.size != d:
-                raise ValueError(
-                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
-                    f"Full-tensor sigma not supported by canonical CS SL."
-                )
-        else:
-            sigma_diag = np.full(d, float(sigma))
+        # Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source; shared with stochastic SL).
+        foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         H_class = self.problem.hamiltonian_class
         # Issue #1420: control-cost lambda from the single source. The DPP running cost is
@@ -1726,7 +1739,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if d == 1:
             Nx = len(U_next)
-            diff_off = float(sigma_diag[0]) * sqrt_dt
+            diff_off = float(foot_offset[0])
             bound = float(alpha_bound[0])
 
             # h_i = H(x_i, m_i, p=0, t_n): potential + coupling, single-source via H_class.
@@ -1803,8 +1816,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         grid_coords = tuple(self.grid.coordinates)
         interp_fn = RegularGridInterpolator(grid_coords, U_shaped, method="linear", bounds_error=False, fill_value=None)
 
-        # The 2*d departure offsets: +/- sigma_ax * sqrt(dt) along each axis -> (2d, d).
-        axis_offsets = np.diag(sigma_diag * sqrt_dt)  # (d, d), row k = offset along axis k
+        # The 2*d departure offsets: +/- c_ax along each axis -> (2d, d); c_ax = √d·σ_ax·√dt (Issue #1543).
+        axis_offsets = np.diag(foot_offset)  # (d, d), row k = offset along axis k
         depart_offsets = np.concatenate([axis_offsets, -axis_offsets], axis=0)  # (2d, d)
 
         # h batch over all nodes: h(x_i, m_i) = H(x_i, m_i, p=0, t_n).
