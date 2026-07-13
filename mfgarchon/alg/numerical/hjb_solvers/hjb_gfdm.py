@@ -780,9 +780,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Store new infrastructure parameters
         self._use_new_infrastructure = use_new_infrastructure
-        if derivative_method not in ("taylor", "rbf"):
-            raise ValueError(f"Unknown derivative_method: {derivative_method!r} (expected 'taylor' or 'rbf').")
         # Issue #1553: fail loud at construction rather than deep in Newton-Jacobian assembly.
+        # (An unrecognized derivative_method is already rejected at construction by the operator
+        # dispatch's else-branch below, so only 'rbf' needs an explicit guard here.)
         # Since #1526 the non-LCR weight path routes through NeighborhoodBuilder's Taylor-SVD builder,
         # which consumes SVD factors LocalRBFOperator.get_taylor_data does not provide (a dummy shim
         # returning None), so every real 'rbf' solve raises an undiagnostic

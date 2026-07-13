@@ -52,7 +52,9 @@ def test_taylor_derivative_method_still_builds():
 
 
 def test_unknown_derivative_method_fails_loud():
-    """An unrecognized method fails loud at construction too (not a silent fall-through)."""
+    """An unrecognized method fails loud at construction (via the operator-dispatch else-branch, which
+    runs in __init__) -- a regression pin of that pre-existing contract, so #1553's rbf guard did not
+    need to duplicate it."""
     problem, points = _problem_and_points()
     with pytest.raises(ValueError, match="Unknown derivative_method"):
         HJBGFDMSolver(problem=problem, collocation_points=points, derivative_method="bogus")
