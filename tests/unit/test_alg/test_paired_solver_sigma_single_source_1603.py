@@ -95,3 +95,19 @@ def test_multipopulation_raises_on_per_pair_sigma_mismatch():
     fps = [FPFDMSolver(pop0), FPFDMSolver(_make_problem(sigma=0.8))]  # population-1 FP: different sigma
     with pytest.raises(ValueError, match="population 1"):
         MultiPopulationIterator(multi, hjbs, fps)
+
+
+def test_regime_switching_raises_on_per_regime_sigma_mismatch():
+    """Same per-pair guard, second list iterator: regime 1's HJB (sigma=0.2) / FP (sigma=0.8) mismatch
+    must raise, naming the regime (RegimeSwitchingIterator and GraphMFGSolver share the identical wired
+    loop; this pins that the loop discriminates for the regime path too, not only multi-population)."""
+    from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+    p0 = _make_problem(sigma=0.3)
+    p1 = _make_problem(sigma=0.2)
+    config = RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]]))
+    hjbs = [HJBFDMSolver(p0), HJBFDMSolver(p1)]
+    fps = [FPFDMSolver(p0), FPFDMSolver(_make_problem(sigma=0.8))]  # regime-1 FP: different sigma
+    with pytest.raises(ValueError, match="regime 1"):
+        RegimeSwitchingIterator(problems=[p0, p1], regime_config=config, hjb_solvers=hjbs, fp_solvers=fps)
