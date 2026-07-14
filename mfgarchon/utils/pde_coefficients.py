@@ -21,6 +21,66 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
+    """Fail loud if ``problem.hamiltonian_class`` is a ``SeparableHamiltonian`` whose control cost is
+    NOT quadratic-MINIMIZE -- the one case where the scalar FP drift ``-c*grad(U)`` misrepresents the
+    optimal control (Issue #1542 / RFC #1574 Phase 0).
+
+    The scalar ``c = 1/control_cost`` closure (and the byte-identical ``-p/control_cost`` the
+    Hamiltonian owner returns for it) is the true optimal control ``alpha*`` only for a
+    quadratic-MINIMIZE ``SeparableHamiltonian``. A MAXIMIZE-quadratic cost has ``alpha* = +p/lambda``
+    (opposite sign) and a regularized (e.g. Moreau--Yosida) cost is soft-thresholded, so advecting
+    with ``-c*grad(U)`` would silently transport mass with the wrong physics.
+
+    This is the guard the FVM / FEM / meshless-Galerkin FP families inherited implicitly through
+    :func:`fp_drift_coefficient`. Extracting it keeps that fail-loud after those families route the
+    drift through ``H.optimal_control`` directly (Issue #1528 PR-1) instead of reading the scalar --
+    a routing change that is byte-neutral for the quadratic-MINIMIZE case but would otherwise let a
+    MAXIMIZE / non-quadratic ``SeparableHamiltonian`` run silently (a capability change deferred to
+    Phase 1, not this byte-safe refactor).
+
+    No-op (returns ``None``) for a quadratic-MINIMIZE ``SeparableHamiltonian`` (its scalar
+    ``-c*grad(U)`` and the byte-identical ``H.optimal_control`` owner are both the true optimal
+    control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
+    guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
+    no-op depends on the caller: :func:`fp_drift_coefficient`'s own callers fall through to the legacy
+    scalar ``coupling_coefficient``; the velocity-channel FP solvers (FVM / FEM / meshless-Galerkin)
+    do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
+    non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
+    site (Issue #1528).
+
+    Parameters
+    ----------
+    problem : Any
+        The MFG problem; its ``hamiltonian_class`` attribute is inspected (absent -> no-op).
+    context : str
+        Caller tag prepended to the error message (e.g. the solver name) so the raised
+        ``NotImplementedError`` names the site that could not honor the non-quadratic cost.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``hamiltonian_class`` is a ``SeparableHamiltonian`` with a MAXIMIZE-quadratic or
+        non-quadratic control cost.
+    """
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    h_class = getattr(problem, "hamiltonian_class", None)
+    if not isinstance(h_class, SeparableHamiltonian):
+        return
+    control_cost = h_class.control_cost
+    if isinstance(control_cost, QuadraticControlCost) and control_cost.sign == 1:  # OptimizationSense.MINIMIZE
+        return
+    detail = "MAXIMIZE quadratic" if isinstance(control_cost, QuadraticControlCost) else type(control_cost).__name__
+    raise NotImplementedError(
+        f"{context}: the scalar FP drift `-c*grad(U)` is defined only for a "
+        f"quadratic-MINIMIZE SeparableHamiltonian, but got a {detail} control cost. Its optimal "
+        f"control is alpha* = H.optimal_control(...), not -c*grad(U) (wrong sign for MAXIMIZE, "
+        f"wrong form for a regularized cost). Route the FP drift through the velocity channel "
+        f"(precomputed alpha*) instead (Issue #1542 / RFC #1574 Phase 1)."
+    )
+
+
 def fp_drift_coefficient(problem: Any) -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
     control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
@@ -62,20 +122,12 @@ def fp_drift_coefficient(problem: Any) -> float:
         and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
     ):
         return 1.0 / h_class.control_cost.lambda_
-    if isinstance(h_class, SeparableHamiltonian):
-        # A SeparableHamiltonian that fell past the quadratic-MINIMIZE branch is MAXIMIZE-quadratic or
-        # a non-quadratic (e.g. regularized) control cost. The scalar drift `-c·∇U` does not represent
-        # its optimal control, so fail loud rather than return `coupling_coefficient` and advect with
-        # the wrong physics (Issue #1542 / RFC #1574 Phase 0).
-        control_cost = h_class.control_cost
-        detail = "MAXIMIZE quadratic" if isinstance(control_cost, QuadraticControlCost) else type(control_cost).__name__
-        raise NotImplementedError(
-            f"fp_drift_coefficient: the scalar FP drift `-c*grad(U)` is defined only for a "
-            f"quadratic-MINIMIZE SeparableHamiltonian, but got a {detail} control cost. Its optimal "
-            f"control is alpha* = H.optimal_control(...), not -c*grad(U) (wrong sign for MAXIMIZE, "
-            f"wrong form for a regularized cost). Route the FP drift through the velocity channel "
-            f"(precomputed alpha*) instead (Issue #1542 / RFC #1574 Phase 1)."
-        )
+    # A SeparableHamiltonian that fell past the quadratic-MINIMIZE branch is MAXIMIZE-quadratic or a
+    # non-quadratic (e.g. regularized) control cost. The scalar drift `-c·∇U` does not represent its
+    # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
+    # and advect with the wrong physics (Issue #1542 / RFC #1574 Phase 0). The guard is a no-op for a
+    # non-separable / absent Hamiltonian, which falls through to the `coupling_coefficient` lookup.
+    assert_quadratic_minimize_drift(problem, context="fp_drift_coefficient")
     cc = getattr(problem, "coupling_coefficient", None)
     if cc is None:
         raise ValueError(

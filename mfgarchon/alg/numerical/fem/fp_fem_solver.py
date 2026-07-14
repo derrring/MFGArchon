@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
 
 from .discretization import FEMDiscretization
 from .mesh_adapter import meshdata_to_skfem
@@ -103,7 +103,7 @@ class FPFEMSolver(WeakFormFPSolver):
 
     # --- advection from drift via exact quadrature-point gradient of U --------
     def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
-        r"""Assemble the mass-conserving FP advection block for drift $v = -\text{coupling}\cdot\nabla U_n$.
+        r"""Assemble the mass-conserving FP advection block for drift $v = \alpha^* = H.\text{optimal\_control}(\nabla U_n)$.
 
         The raw convective form $C_{ij} = \int \phi_i\,(v\cdot\nabla\phi_j)\,dx$ (gradient on the
         TRIAL function) does NOT conserve mass: its column sums are
@@ -121,19 +121,56 @@ class FPFEMSolver(WeakFormFPSolver):
         from skfem import BilinearForm
 
         dim = self._skfem_mesh.p.shape[0]
-        # Issue #1487/#1420 (G-017): the FP drift scale is the HJB optimal-control scale 1/control_cost,
-        # single-sourced via fp_drift_coefficient — NOT the raw coupling_coefficient (which defaults to
-        # 0.5 and silently diverges from 1/control_cost -> wrong equilibrium). Matches the 7 FDM/FVM/
-        # particle/SL solvers; the weak-form family was the lone holdout.
-        coupling = fp_drift_coefficient(self.problem)
+        # Issue #1528 (PR-1): the FP advective drift has ONE owner -- the problem's Hamiltonian
+        # primitive alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -c*grad(U) with a
+        # private scalar c = fp_drift_coefficient = 1/control_cost. For a quadratic-MINIMIZE
+        # SeparableHamiltonian optimal_control(p) = -p/lambda, so feeding the SAME quadrature-point
+        # gradient du.grad reproduces the old -c*grad(U) bit-for-bit for dyadic lambda (the paper's
+        # control_cost=1.0 => byte-identical) and within <= 1 ULP for non-dyadic lambda (#1487/#1420
+        # G-017 single-source, superseded here by the owner). MAXIMIZE/regularized costs now get the
+        # correct alpha* (+p/lambda, soft-threshold) instead of the wrong-sign scalar form.
+        H = getattr(self.problem, "hamiltonian_class", None)
+        if H is None:
+            raise ValueError(
+                "FPFEMSolver._build_advection needs the problem's Hamiltonian to source the FP drift "
+                "alpha* = H.optimal_control(...), but problem.hamiltonian_class is None. Set a "
+                "SeparableHamiltonian (e.g. QuadraticControlCost) on the problem's components (Issue #1528)."
+            )
+        # Issue #1528 review-nit: this advection routes through H.optimal_control(x, m, p, t), which is
+        # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
+        # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
+        # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
+        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
+        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a MAXIMIZE Separable still
+        # hits the #1542 guard below.
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+        if not isinstance(H, SeparableHamiltonian):
+            raise NotImplementedError(
+                f"FP FEM advection routes the drift through H.optimal_control(x, m, p, t), which is "
+                f"single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
+                f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or supply the "
+                f"precomputed optimal-control velocity alpha* through the velocity channel instead "
+                f"(Issue #1528 / RFC #1574 Phase 1)."
+            )
+        # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
+        # `fp_drift_coefficient` read carried -- a MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
+        # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
+        assert_quadratic_minimize_drift(self.problem, context="FP FEM advection")
         du = self._basis.interpolate(U_n)
+        # x at quadrature points, same (dim, nelems, nqp) layout as du.grad (= p). The density m and
+        # timestep t are inert for the SeparableHamiltonian owner (optimal_control depends only on p);
+        # the base time-stepping loop threads neither the density DOFs nor the step index n into
+        # _build_advection, so m/t are passed as None/0.0.
+        x_qp = self._basis.global_coordinates().value
+        alpha = H.optimal_control(x_qp, None, du.grad, 0.0)
 
         @BilinearForm
         def advection_form(u, v, w):
             result = 0.0
             for d in range(dim):
-                v_d = -coupling * du.grad[d]
-                result += v_d * u.grad[d]
+                result += alpha[d] * u.grad[d]
             return result * v.value
 
         c_matrix = skfem.asm(advection_form, self._basis)

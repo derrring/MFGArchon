@@ -32,7 +32,7 @@ from scipy import sparse
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
-from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -130,12 +130,54 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         )
 
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
-        # Issue #1487/#1420 (G-017): FP drift scale = 1/control_cost, single-sourced (not raw
-        # coupling_coefficient). Same read as the paired HJB Newton advection -> A_FP = A_HJB^T.
-        coupling = fp_drift_coefficient(self.problem)
+        # Issue #1528 (G-017 single-source, supersedes the #1487/#1420 scalar read): the FP advective
+        # drift has ONE owner -- the problem's Hamiltonian optimal-control primitive
+        # alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
+        # For a quadratic-MINIMIZE SeparableHamiltonian the owner returns -p/control_cost, which is
+        # byte-identical to the old -c*grad(U) for dyadic control_cost (incl. the paper's control_cost=1.0,
+        # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for MAXIMIZE /
+        # regularized costs it is the correct alpha* (+p/lambda, soft-threshold) that the scalar -c*grad(U)
+        # could not represent. This is the SAME primitive the paired HJB Newton advection reads, so
+        # A_FP = A_HJB^T is preserved.
+        H = getattr(self.problem, "hamiltonian_class", None)
+        if H is None:
+            raise ValueError(
+                "MeshlessGalerkinFPSolver._build_advection needs the problem's Hamiltonian to source the "
+                "FP drift alpha* = H.optimal_control(...), but problem.hamiltonian_class is None. Set a "
+                "SeparableHamiltonian (e.g. QuadraticControlCost) on the problem's components (Issue #1528: "
+                "the FP advective drift is single-sourced from the Hamiltonian optimal-control owner)."
+            )
+        # Issue #1528 review-nit: this advection routes through H.optimal_control(x, m, p, t), which is
+        # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
+        # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
+        # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
+        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
+        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a MAXIMIZE Separable still
+        # hits the #1542 guard below.
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+        if not isinstance(H, SeparableHamiltonian):
+            raise NotImplementedError(
+                f"FP meshless-Galerkin advection routes the drift through H.optimal_control(x, m, p, t), which "
+                f"is single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
+                f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or supply the "
+                f"precomputed optimal-control velocity alpha* through the velocity channel instead "
+                f"(Issue #1528 / RFC #1574 Phase 1)."
+            )
+        # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
+        # `fp_drift_coefficient` read carried -- a MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
+        # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
+        assert_quadratic_minimize_drift(self.problem, context="FP meshless-Galerkin advection")
         G = self._gradient_operators()
-        grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim)
-        velocity = (-coupling * grad_U).T  # (dim, N): v = -coupling * grad(U)
+        grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim) = p at the collocation nodes
+        # x, m, t at the collocation nodes. The parent hook threads only U_n (neither the density nor the
+        # timestep reaches _build_advection), so m/t are unavailable here; a SeparableHamiltonian's optimal
+        # control depends on p alone, so alpha* is exact for this family's supported (separable) Hamiltonians.
+        # Feed the IDENTICAL grad_U the solver already recovered -- that is what preserves byte-identity.
+        velocity = H.optimal_control(
+            self._disc.dof_coordinates, None, grad_U, 0.0
+        ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where
         # C_b[i,j] = integral(phi_i (b . grad phi_j)). The TRANSPOSE is the
