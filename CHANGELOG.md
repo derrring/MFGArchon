@@ -5,6 +5,287 @@ All notable changes to MFGArchon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-07-14
+
+### Added
+
+- **`visualization.extract` — rendering-free plot-ready data** (Issue #1362). New
+  `mfgarchon/visualization/extract.py`: `extract_convergence_history`, `extract_density_slices`,
+  `extract_value_slices`, `extract_mass_history`, `extract_graph_trajectories` return tidy numpy/pandas
+  artifacts (importing **no** matplotlib/plotly/pyvista/meshio) so you can plot with any backend or build
+  paper figures without re-deriving the shaping logic. Fail-fast on shape/length mismatch and unknown
+  slice times (no silent nearest-time snap). Exposes the mass-over-time series behind the scalar
+  `mass_conservation_error`, and tidies `GraphMFGResult`'s per-node list-of-arrays.
+- **Network MFG supports `sense=MAXIMIZE`** (Issue #1476). The finite-state network Hamiltonian now
+  handles reward-to-go / uphill control as well as cost-to-go / downhill, closing a network-vs-continuum
+  gap (the continuum `SeparableHamiltonian` already respected `sense`). The MINIMIZE↔MAXIMIZE mirror is
+  single-sourced through one orientation sign `NetworkHamiltonian.sense_sign` (+1 / −1): the **control**
+  terms flip with `s` — control cost, `optimal_control`, `dp`, the RK45 backward-integration control
+  term, and the policy-iteration control cost — while the **source** (node potential + congestion) is
+  sense-independent (a running payoff accumulates identically whether you minimise or maximise). Pass
+  `sense` to `NetworkMFGProblem(...)`; the previous fail-loud on MAXIMIZE is removed. MINIMIZE is
+  byte-identical (`s=+1`). Validated: MAXIMIZE control consistency (uphill, α≥0, envelope, method==object),
+  reward-to-go physicality for both a terminal reward and a running-reward potential (value peaks at /
+  increases toward the reward), and policy-iteration agrees with RK45 for both senses.
+- **Convention-agreement pin for the FP drift** (Issue #1528). A regression guard locking the FP solvers'
+  scalar-drift form `-fp_drift_coefficient·grad(U)` to the Hamiltonian's optimal control
+  `H.optimal_control(grad U) = -p/lambda` for the quadratic-separable-MINIMIZE regime (the only one that
+  path serves). Catches both a revert of `fp_drift_coefficient` to the legacy `coupling_coefficient` copy
+  (G-017) and any future divergence of the hand-written form from the Hamiltonian. The structural fix
+  (route the FP drift through the Hamiltonian so there is one source, not two that happen to agree) remains
+  the larger #1071 program.
+- **Diffusion-magnitude gate now pins the weak-form (FEM) FP solver** (Issue #1566). The standing
+  `test_diffusion_magnitude_gate.py` docstring named `#1152` (weak-form used `volatility_field`
+  directly as `D`, skipping the `/2`) among the bugs it catches, but no test instantiated
+  `WeakFormFPSolver` — the paper solver's diffusion magnitude was named-but-unpinned. Added
+  `test_weak_form_fem_fp_diffusion_magnitude`: a cosine eigenmode under pure diffusion on a 1D
+  `FPFEMSolver` must decay at `exp(-D k^2 T)` with `D = sigma^2/2`; mutation-verified to fail on the
+  `#1152` factor error. Coverage note updated to list the weak-form path.
+- **Opt-in analytic inner-Newton Jacobian for `HJBFDMSolver`** (Issue #1607). New `analytic_jacobian=False` keyword. `HJBFDMSolver.__init__` always injects a NumPy backend, so `compute_hjb_jacobian`'s fast analytic chain-rule path — gated on `backend is None` — never fired for a single-population solve; every inner Newton step fell back to the O(Nx²) per-point finite-difference Jacobian. Setting `analytic_jacobian=True` routes single-population solves through the same `backend=None` path multi-population solves already use (batch residual + O(Nx) analytic Jacobian), ~17× faster per solve (measured 57.0s→3.3s at Nx=31/Nt=15). The default stays False (FD Jacobian, byte-identical to prior releases): the frozen-upwind analytic Jacobian reaches the same fixed point (to tolerance) but has a smaller convergence basin, so on some problems it returns `converged=False` where the default converges. NumPy backend only — raises `ValueError` on any other backend rather than silently ignoring the flag. (#1607)
+
+### Changed
+
+- **Network derivative dH/dm single-sourced** (Issue #1470 Strand A). `NetworkMFGProblem.hamiltonian_dm`
+  now delegates to the wired Hamiltonian object's `dm`, which gained the EXACT analytic derivative for the
+  default node congestion (`d/dm(0.5*m_own^2) = m_own[node]`, own-population slice) instead of finite
+  difference. The dead `_default_density_coupling_derivative` helper (raw `m[node]`, reachable only via the
+  uncalled `hamiltonian_dm`) is removed. Byte-identical single-population; own-slice for multi-population.
+- **Network FP diffusion no longer silently defaults** (Issue #1532). `FPNetworkSolver.diffusion_coefficient`
+  was an arbitrary hardcoded `0.1`, decoupled from the problem's physics and used silently when no
+  `volatility_field` was given. The default is now `None`; when the `0.1` fallback is silently relied on,
+  the solve emits a `UserWarning` pointing at explicit `diffusion_coefficient=` / `volatility_field=`.
+  Value-preserving (still 0.1, no result change) — only the silence is fixed. Sourcing the diffusion from
+  the problem is the #1470 Strand C follow-up.
+- **The Fokker–Planck advective drift now has a single owner (`H.optimal_control`) in the FVM, FEM, meshless-Galerkin, and particle solvers (#1528, phase 1).** Those solvers previously each hand-wrote the drift as `-fp_drift_coefficient(problem)·∇U` — a per-solver re-derivation of `∂_pH` (the axiom's "Hamiltonian as single source of truth" anti-pattern, the FP-side sibling of the HJB `#1411`). They now feed the same locally-computed gradient into `H.optimal_control`, which is the sense/regularization-aware control law. **Byte-identical on the quadratic-MINIMIZE path** (the owner divides by `λ` where the old form multiplied by `fl(1/λ)`, so it is bit-identical for dyadic `1/λ` — including every `control_cost=1.0` paper config — and ≤2 ULP, ~12 orders below discretization, for non-dyadic `λ`). Validated in `mfg-research/experiments/fp_drift_hamiltonian_routing/` (regression byte-identity + correctness for MAXIMIZE and Moreau–Yosida where `-c∇U` is wrong). This phase is behaviour-neutral: the `#1542` fail-loud on a non-quadratic-MINIMIZE `SeparableHamiltonian` is preserved uniformly across all four families via a new single-sourced guard `assert_quadratic_minimize_drift` (extracted from `fp_drift_coefficient`); lifting the guard to make those regimes run through `H.optimal_control`, plus the SL/FDM families and the router, is the deliberate follow-up phase.
+- **Pin mypy `<2.2` in the dev extras.** mypy 2.2.0 false-positives on valid `list[str]` slices
+  (e.g. `config/omegaconf_manager.py` `keys[:i+1]`) via a typeshed `slice`-overload regression that
+  2.1.0 does not have, reddening the blocking config type-gate on every PR. Narrow upper bound until
+  mypy 2.2.1 fixes it (then lift to `<2.3`).
+- **Fail-fast ratchet baseline tightened.** `scripts/fail_fast_baseline.json` re-baselined to current
+  counts (hasattr 172->164, silent_pass 70->60) so the monotone CI ratchet bites again; it had gone
+  stale after the v0.21.0 fail-loud fixes reduced live counts below the recorded ceiling.
+- Unified the `sigma -> D` tensor convention through the single-source converter `diffusion_from_volatility` (RFC #1596, folds #1548 and #1549, re-founds #1079). A `(d, d)` volatility is the **symmetric standard-deviation matrix** S (symmetric square root of the covariance), so `D = 1/2 S S^T`; squaring is universal and symmetry is a consumer-side admissibility gate (`validate_symmetric_psd`). Fixes: `adi_diffusion_step` no longer read a `(d, d)` sigma as an un-squared covariance; `DiffusionOperator` no longer squared a scalar coefficient while using vector/tensor coefficients raw (a silent 10x diffusion flip for identical isotropic physics written as scalar vs diagonal).
+- **Breaking (pre-1.0):** `DiffusionOperator` is now a pure `div(D grad u)` operator (Path A) — its `coefficient` is the PDE diffusion tensor `D`, applied directly with no internal squaring on any branch. Callers holding an SDE volatility `sigma` should use the new `DiffusionOperator.from_volatility(sigma, ...)` classmethod, which routes `sigma -> D` through `diffusion_from_volatility`. No in-package solver instantiated `DiffusionOperator`, so no solver behavior changed.
+- `MFGProblem`'s `diffusion -> volatility` inverse now returns the symmetric matrix square root (not an asymmetric Cholesky factor) for a `(d, d)` diffusion tensor, so a `volatility -> D -> volatility` round-trip passes the symmetric-std-dev gate.
+
+### Removed (BREAKING)
+
+- **Removed dead `NetworkMFGComponents.diffusion_coefficient` / `drift_coefficient`** (Issue #1470 Strand A).
+  Neither field was ever read by any solver — the network FP diffusion is `FPNetworkSolver`'s own knob
+  (#1532) and the FP drift is `fp_drift_coefficient` — so setting them on the components was silently
+  ignored. Removed (flagged DEAD in #1535). Minor breaking change: passing them now raises `TypeError`,
+  but the kwargs never had any effect.
+
+### Fixed
+
+- **Network source term single-sourced** (Issue #1470 Strand A). The p-independent source `V + f(m)` was
+  computed on diverging paths — `NetworkHamiltonian` (own-population slice via `_extract_own_density`)
+  vs the live `NetworkMFGProblem.density_coupling` / `hjb_network._source_terms` (raw stacked `m[node]`)
+  — silently wrong for multi-population `m`, corrupting the HJB control isolation `h_total - source`.
+  Now `NetworkHamiltonian` owns it via `source_term` / `node_potential_value` / `coupling_value`, and
+  `_default_hamiltonian`, `hjb_network._source_terms`, and `NetworkMFGProblem.node_potential` /
+  `density_coupling` all route through the wired object. Byte-identical single-population; fixes the
+  multi-population fork on every consumer.
+- **plugin_system migrated off the removed pkg_resources** (Issue #1540). `mfgarchon.core.plugin_system`
+  did a module-level `import pkg_resources`, which raises `ModuleNotFoundError` on setuptools >= 81
+  (pkg_resources removed) — undetected because nothing in the package imports the module (CI, incl. the
+  compat matrix, never loaded it). It now uses the stdlib `importlib.metadata.entry_points(group=...)`
+  (py3.10+ selectable API; same `.name`/`.load()` interface). Added an import + discover smoke test.
+- **FPNetworkSolver removes the identity-map "upwind" scheme and fails loud** (Issue #1541, RFC #1574).
+  `scheme="upwind"` was a silent identity map — `_compute_edge_flow` returned the same positive flow
+  for both edge orientations, so the paired flows cancelled to exactly zero net drift and the step had
+  no diffusion term, leaving the density unevolved — and `"flow"` was never implemented. A correctly-
+  implemented conservative upwind would be byte-identical to `"explicit"` (which already sources rates
+  via `H.optimal_control` in inflow-outflow form + diffusion), a single-source duplicate. `scheme` is
+  now validated to `{explicit, implicit}` at construction (`NotImplementedError` otherwise) and the
+  dead `_upwind_step` / `_compute_edge_flow` methods are removed.
+- **FP drift coefficient fails loud on a smooth non-quadratic-MINIMIZE Hamiltonian** (Issue #1542,
+  RFC #1574 Phase 0). `fp_drift_coefficient` silently fell back to `coupling_coefficient` (default 0.5)
+  for a MAXIMIZE-quadratic or Moreau-Yosida-regularized `SeparableHamiltonian` — regimes the drift
+  router steers to the scalar `-c*grad(U)` path (it gates on `is_smooth()` alone), where that form is
+  the wrong optimal control (wrong sign for MAXIMIZE, wrong form for a regularized cost). It now raises
+  `NotImplementedError` naming the case instead of advecting with silently-wrong physics. The
+  quadratic-MINIMIZE path (every stock/published config) is unchanged; only the previously silent-wrong
+  regimes are affected.
+- **Network HJB solvers reject a nonzero `volatility_field` instead of silently ignoring it** (Issue
+  #1544). `NetworkHJBSolver` / `NetworkPolicyIterationHJBSolver` have no viscous term — they solve the
+  deterministic-control game on the graph and never use the stored graph Laplacian — but accepted a
+  `volatility_field` documented "not yet used". A coupled network solve with `D > 0` therefore
+  converged to a self-consistent equilibrium of a **mismatched** system (the diffusive network FP
+  applies `D*Lap_G(m)` while the HJB solves the `D = 0` game — non-adjoint, consistent only at `D = 0`).
+  A nonzero `volatility_field` now raises `NotImplementedError` up front. Stock `NetworkMFGProblem`
+  (σ = 0) is unaffected. **Scope**: this catches only a volatility explicitly threaded into
+  `solve_hjb_system`; the graph coupler (`graph_mfg_solver`) does not thread one, so the *stock*
+  coupled mismatch — `FPNetworkSolver`'s default `D = 0.1` against the `D = 0` HJB — is still reachable
+  and is NOT rejected here (guarding it would break every network coupled solve). Fully closing #1544
+  needs the natural fix: implement the `+ D*Lap_G(u)` viscous term to restore HJB↔FP duality on graphs
+  (open, blocked on #1470-C).
+- **FPNetworkSolver.forward_step fails loud instead of silently mis-stepping** (Issue #1546). The
+  "interface compatibility" single-step stub never precomputed transition rates, so a fresh solver hit
+  the wrong-signed legacy drift, a post-solve call reused stale rates, and it skipped the node-BC /
+  #1478 mass-renorm gate (false conservation under an ABSORBING node). It has no callers; it now raises
+  NotImplementedError directing callers to solve_fp_system. The legacy fallback in _compute_drift_term
+  (reachable only off the solve_fp_system path, which always precomputes) also raises rather than
+  resurrecting the #1474 wrong-signed uphill drift.
+- **HJB semi-Lagrangian fails loud on a MAXIMIZE control cost** (Issue #1547, RFC #1574 Phase 0). The
+  characteristic-foot velocity dH/dp = p/lambda is hardcoded MINIMIZE-signed (alpha* = -grad(u)/lambda);
+  a MAXIMIZE control cost (alpha* = +grad(u)/lambda) would trace the feet in the wrong direction, and
+  because the MAXIMIZE-quadratic Hamiltonian is smooth the non-smooth DPP reroute never fires — so the
+  wrong scheme ran silently. Construction now raises NotImplementedError (mirroring the GFDM Howard
+  gate). MINIMIZE (every published config) is unaffected. The canonical_cs + non-quadratic gap remains
+  a separate Phase-0 item on #1547.
+- **Config CFL number uses the PDE coefficient D = sigma^2/2** (Issue #1550). `MFGGridConfig.cfl_number`
+  and `validate_cfl_stability` computed the diffusive CFL with bare `sigma^2` (= 2D), so the
+  stability warning fired at twice the correct threshold and `cfl_number` disagreed with the
+  #1426/S0-14-corrected solver diagnostics (hjb_fdm/fp_fdm). Both now use `0.5*sigma^2`. The `sigma`
+  field description is corrected to "SDE volatility" (it was mislabelled "Diffusion coefficient").
+  Diagnostic/validation-only; no solve numerics change.
+- **FPGFDMSolver threads obstacle_sdf into its TaylorOperator** (Issue #1556, G-004 FP residue). The FP
+  GFDM operator was built with no obstacle SDF, so its density-derivative stencils (D_lap / D_grad)
+  coupled straight through obstacle walls while the HJB-GFDM side was visibility-filtered (#1124) —
+  asymmetric physics on the same cloud in a coupled obstacle solve. `FPGFDMSolver` now accepts
+  `obstacle_sdf` / `visibility_samples` / `visibility_margin` and passes them to `TaylorOperator`,
+  matching the HJB side. Default `None` is inert (no change without an obstacle).
+- **Corrected the false `_infer_reflect_bounds` docstring** (Issue #1557, partial). The FP-particle
+  helper's Returns section claimed it returns "the subset of `bounds` for axes whose BC is reflective"
+  and that non-reflective axes "are excluded", but the code returns ALL bounds whenever ANY segment is
+  reflective (an all-or-nothing gate, not per-axis). Rewrote the docstring to describe the actual
+  behavior and to mark the per-face limitation explicitly: on a mixed reflecting/absorbing domain,
+  reflection ghosts are still created at the absorbing exit, mirroring mass back within ~1 bandwidth.
+  The per-face numerics fix is gated with the mass-channel fix #1552 (mfg-research exp09 validation),
+  since it shifts the density in the evacuation regime; only the doc is corrected here.
+- **Three silent-wrong boundary-condition paths now fail loud** (Issues #1558, #1559; all off
+  published numerics). (1) `SDFParticleBCHandler._compute_normal` raised a `RuntimeError` instead of
+  fabricating an arbitrary `[1,0,...]` outward normal when the finite-difference SDF gradient vanishes
+  — the fabricated normal reflected particles along a geometry-independent direction (mirrors the
+  #1047 `project_to_domain` raise). (2) `TensorProductGrid.get_boundary_handler(bc_type)` now raises
+  `ValueError` on an unrecognized `bc_type` instead of silently defaulting to periodic (1D) / neumann
+  (nD); the docstring's advertised `periodic_x`/`periodic_both`/`mixed` keys were never implemented in
+  the factory and silently became the default — the docstring is corrected to the keys actually
+  supported. (3) The FP-FDM time-stepping assembly now raises `NotImplementedError` for a legacy
+  `fdm_bc_1d` dirichlet/robin/**periodic** BC instead of silently assembling it as no-flux (only legacy
+  neumann/no_flux, which ARE no-flux, still assemble). `_is_dirichlet_at_point` cannot see a legacy BC,
+  so a legacy dirichlet was silently coerced; and despite the old "relies on no-flux + interior wrapping"
+  claim, a legacy `periodic` gets NO wrap here — it is byte-identical to legacy no_flux and differs from
+  canonical `periodic_bc` by O(1) once mass reaches the wall (verified with an off-center bump). Each
+  carries a mutation-verified discriminating test.
+- **`MeshfreeApplicator` now reads Robin coefficients from the BCSegment that carries them** (Issue
+  #1558, defect 1). `alpha`/`beta` live on `BCSegment`, not on `BoundaryConditions`, so the previous
+  `getattr(boundary_conditions, "beta", 0.0)` always read `0.0` — silently collapsing every Robin BC
+  to pure Dirichlet: `apply()` forced a hard `u = g/alpha` instead of the penalty blend, and
+  `apply_particles()` always absorbed instead of reflecting. Both paths now read `(alpha, beta)` from
+  the ROBIN segment via a single-source helper, so a Robin BC with `beta != 0` behaves as a Robin BC.
+  Behavior change on the meshfree Robin path only; off published numerics (published adjoint-consistent
+  Robin runs through the `hjb_gfdm` row builder, not `MeshfreeApplicator`). Two mutation-verified tests
+  (field penalty-blend, particle reflect-not-absorb).
+- **`validate_bc_compatibility` no longer emits a contradictory BC-type verdict** (Issue #1558,
+  defect 3). Its per-discretization support table was a second capability source that disagreed with
+  the #1456 single source (`solver.supported_bc_types`): it flagged Robin as "limited" for GFDM while
+  `hjb_gfdm._SUPPORTED_BC_TYPES` includes Robin, and allowed Robin for FDM while `hjb_fdm` excludes it
+  (and read `default_bc`, which is None for segment-based BCs, so for those it silently returned no
+  issues). Trimmed to the one real check — BC/geometry dimension compatibility; BC-type support is
+  authoritatively enforced at solve time by each solver's `supported_bc_types`. `discretization` is
+  kept in the signature for API stability.
+- **RFC #1574 Phase-0 capability-honesty guards** (Issues #1560, #1564). Two solvers declared/dispatched
+  a boundary-condition surface broader than the code that honors it and silently mis-handled the gap;
+  both now fail loud. (1) `HJBSemiLagrangianSolver` raises when a mixed per-axis BC has segments mapping
+  to different geometric operations (e.g. no-flux + periodic) — the characteristic fold and ADI
+  diffusion collapse it to the first segment's single op applied to all axes (order-sensitive). (2)
+  `HJBFDMSolver.build_linearized_operator` (the strict-adjoint FP operator, #707) raises on any non-
+  Neumann/no-flux BC — it hardcodes no-flux at every boundary while the solver declares DIRICHLET for
+  the normal solve, so a Dirichlet outflow was silently treated as mass-conserving. Per-axis / adjoint-
+  Dirichlet support remains a follow-up.
+- **HJB-WENO drops the unfaithful DIRICHLET capability** (Issue #1562, RFC #1574 Phase 0). WENO
+  declared DIRICHLET and its comment claimed the ghost buffers "handle it faithfully", but the solve
+  loop evolves the boundary node from the PDE RHS without pinning it to g, so Dirichlet was only weakly
+  enforced (~O(h^1.5), not machine-zero / 5th order) and IC/BC-inconsistent data blew the degree-5
+  Vandermonde ghost to NaN. DIRICHLET is removed from `_SUPPORTED_BC_TYPES` so it now fails loud at
+  construction like Robin/Reflecting, rather than silently mis-enforcing. Strong boundary-node
+  enforcement is a follow-up before Dirichlet is re-declared.
+- **Coupling loops that cannot resolve dynamic BC providers now fail loud** (Issue #1563, RFC #1574).
+  Only `FixedPointIterator` resolves a `BCValueProvider` (e.g. `AdjointConsistentProvider`) stored in a
+  `BCSegment.value` — it calls `problem.using_resolved_bc()` each Picard step. The other five coupling
+  loops (`FictitiousPlayIterator`, `BlockIterator`/`BlockJacobi`/`BlockGaussSeidel`, `MFGResidual`/
+  `NewtonMFGSolver`, `MultiPopulationIterator`, `RegimeSwitchingIterator`) do not, so a provider-based
+  boundary condition previously reached the solver unresolved — a deep GFDM row-builder `ValueError`,
+  or a silent miss on a non-Robin provider segment. They now raise `NotImplementedError` up front,
+  naming the loop, via a single-source guard `assert_bc_providers_resolvable` (one owner in
+  `base_mfg.py`, called at construction by all five). `RegimeSwitchingIterator` and
+  `MultiPopulationIterator` guard EVERY sub-problem, not just the representative `problems[0]`. This
+  adds no coupling behavior and is off published numerics (every published path uses
+  `FixedPointIterator`). Wiring the two clean single-problem Picard loops to actually resolve
+  providers is a follow-up gated behind a validation experiment.
+- **GFDM precompute log names the real SOCP-infeasible fallback** (Issue #1565). The
+  post-precompute INFO log claimed SOCP-infeasible nodes "fall back to M-matrix QP (Phase 2)", but
+  the SOCP loop iterates interior nodes only and the M-matrix-QP buffer is boundary-only, so an
+  infeasible interior node actually falls through to the bare (non-monotone) Wendland-Taylor LSQ
+  weights. The message now says so, so the monotone fraction of the cloud is not over-stated.
+  Diagnostic-only; no numerics change.
+- **Removed `except Exception: pytest.skip` masks around solver calls; added a fast-tier coupled
+  mass-conservation gate** (Issue #1567). Ten sites wrapped `solver.solve()` / `solve_hjb_system()`
+  in `try/except -> pytest.skip`, converting a solver raise into a green skip (the testing analogue
+  of a fail-silent fallback). Un-masked all ten (`test_mass_conservation_1d.py` x6,
+  `test_hjb_gfdm_solver.py` x2, `test_collocation_gfdm_hjb.py` x1) so a solver raise now fails the
+  test. The one live-skipping site drove the GFDM solve through an incomplete hand-rolled mock
+  (missing `T` / `dimension`); rebuilt it on a real `MFGProblem`. Added
+  `test_coupled_fdm_mass_conservation_fast_tier`: a small deterministic HJB-FDM + FP-FDM coupled
+  solve (~1s, non-`@slow`) that pins total-mass conservation on every PR — previously every coupled
+  mass test was `@slow`, so the paper-critical invariant was checked only on the nightly tier.
+- **`MeanFieldActorCritic` now fails loud when the observation carries no population channel**
+  (Issue #1568, extends #1508). `_extract_population` silently zero-filled the mean-field state when
+  the observation lacked a `local_density`/`population` key (dict) or a tail slice past `state_dim`
+  (array) — training on an identically-zero mean field and returning a policy the user trusts as
+  MFG-coupled while the coupling that DEFINES the game was never present. #1508 fixed exactly this
+  for DDPG/TD3/SAC (env-side `get_population_state` guard) but did not cover ActorCritic, which reads
+  the population from the observation rather than querying the env. It now raises `AttributeError`
+  citing #1508/#1568, with a hint that adapts to whether the env exposes `get_population_state()`.
+  Note: the raise keys on "observation has no population channel" (not on "env lacks
+  get_population_state"), so it also catches the shipped `crowd_navigation_env` pairing — that env
+  *does* expose `get_population_state()` yet its observation omits the population, which the issue's
+  literal env-only condition would have missed.
+- **Corrected three single-source pin docstrings that overclaimed their discrimination** (Issue
+  #1569). No regression was unguarded (a companion test discriminates in every case), but a lying
+  pin docstring erodes the single-source guard layer. Fixed: (1) `test_backend_literal_equals_single_source`
+  is an IEEE identity of `0.5*sigma**2`, not a backend-kernel guard — no backend is imported; the
+  numpy D-application is pinned behaviorally by the magnitude gate. (2) `test_compute_normal_from_bounds_default_tol_is_onwall_tol`
+  pins the default's VALUE only — a signature default is the evaluated value, so a bare-literal revert
+  passes it; the import-vs-literal re-fork is caught by the companion source-grep test. (3) The
+  magnitude-gate header no longer lists `#1169` (anisotropic off-diagonal) / `#1183` (varying-sigma
+  mean-collapse) as caught here — a constant-isotropic eigenmode cannot see them; named the tests that
+  actually guard them.
+- **PINN HJB residual uses the backward-HJB time sign** (Issue #1571). Both `HJBPINNSolver` and
+  `MFGPINNSolver` assembled `+du/dt + H - (sigma^2/2) u_xx = 0`, mirroring the FORWARD Fokker-Planck
+  diffusion sign onto the time derivative of the BACKWARD HJB (terminal condition at t=T, t fed
+  un-reversed). That fits the wrong PDE (e.g. H=const c, D=0 gave u(0)=g+cT instead of g-cT). The
+  residual is now `-du/dt + H - (sigma^2/2) u_xx = 0`. A discriminating test pins the sign via the
+  residual difference of `u=+c*t` vs `u=-c*t`. Off the published FDM/GFDM/particle paths.
+- **AdaptiveTrainingStrategy reads the canonical training_mode, not the raw deprecated booleans**
+  (Issue #1572). The strategy gated curriculum/refinement on the raw `self.config.enable_*` booleans,
+  which default to `None`; `__post_init__` maps them to `training_mode` but never back-fills them. So a
+  canonical `training_mode=CURRICULUM` (and the default `FULL_ADAPTIVE`) silently skipped the features —
+  the inverse of the #616 trap (the canonical API was the silent no-op). The consumer now reads the
+  `uses_curriculum` / `uses_refinement` properties. The deprecated boolean redirect is unchanged.
+- **Repoint the dangling `NAMING_CONVENTIONS.md` references** (Issue #1573). The convention doc was
+  moved to `mfg-research/docs/archon-notes/development/guides/NAMING_CONVENTIONS.md` (#852) but 8 files
+  (12 references, incl. the load-bearing Riccati-provenance comment in `test_hjb_howard_solver.py`)
+  still pointed at the deleted in-repo `docs/NAMING_CONVENTIONS.md`. All now point at the new location.
+  The Howard test's expected values remain provenanced by their inline derivation, not the external doc.
+- **Repaired 8 user-facing examples broken by API drift; each now runs end-to-end past its break.** Fixes grouped by break class: (1) *`MultiDimVisualizer` removed from `mfgarchon.visualization`* — `traffic_flow_2d_demo`, `epidemic_modeling_2d_demo`, and `portfolio_optimization_2d_demo` now plot with inline matplotlib (the package's sanctioned "use matplotlib/plotly directly" path), producing `.png`/`.gif` instead of the removed Plotly helper; each also gained the now-required explicit `boundary_conditions=` on its `TensorProductGrid`. (2) *`damping_factor=` removed (#1070)* — renamed to `relaxation=` in `state_dependent_diffusion` and `mass_conservation_visualization`. (3) *construction API* — `policy_iteration_lq_demo` now supplies the required `MFGComponents` (hamiltonian + `u_terminal`/`m_initial`, no silent defaults), and `custom_solver_plugin_demo` is modernized to the `Model`/`Conditions` construction and the current solver interface (also corrects a σ-vs-`D=σ²/2` mix-up in its educational solver, per the #811/#1412/#1512 convention). (4) *import-path drift* — `dgm_simple_validation` updated to the current `BoundaryConditions`/`BCType` API (the DGM solver itself remains experimentally gated by #1342; the example now imports cleanly and reports the gated status gracefully). Six further examples surfaced by the same sweep (`diagonal_tensor_mfg`, `acceleration_comparison`, `el_farol_bar_demo`, `2d_crowd_motion_fdm`, `pinn_bayesian_mfg_demo`, `network_mfg_comparison_example`) are broken beyond a mechanical fix (numerical divergence / removed factory-mutation pattern / network-solver geometry rejection / advection-CFL instability / config-API cascades) and are tracked separately (#1624) rather than shipped half-fixed.
+The problem factories (`create_lq_problem`, `create_standard_problem`, `create_crowd_problem`, and the shared `create_mfg_problem`) no longer silently drop `time_horizon` and `num_timesteps`. `create_mfg_problem` constructed `MFGProblem(time_horizon=, num_timesteps=)`, but `MFGProblem` takes `T`/`Nt`, so both fell into `**kwargs` and were ignored — every factory-built problem used `T=1.0, Nt=51` regardless of the requested values. The factory now maps `time_horizon → T` and `num_timesteps → Nt` at every construction site. **Behavior change:** a factory call that does not pass `num_timesteps` now uses the factory's declared default `Nt=100` (previously the dropped value resolved to `Nt=51`); pass `num_timesteps=` for an explicit value. (#1609)
+- **`HJBGFDMSolver(derivative_method='rbf')` now fails loud at construction** instead of crashing deep in Newton-Jacobian assembly (Issue #1553). Since #1526 the non-LCR differentiation-weight path routes through `NeighborhoodBuilder`'s Taylor-SVD weight builder, which consumes SVD factors that `LocalRBFOperator.get_taylor_data` does not provide (a dummy shim returning `None`), so every real `'rbf'` solve raised an undiagnostic `AttributeError: 'NoneType' object has no attribute 'T'` — the documented option was 100% unusable with no test to catch it. It now raises `NotImplementedError` at construction with a diagnostic message (an unrecognized `derivative_method` was already rejected at construction by the operator dispatch, so only `'rbf'` needed the explicit guard). `derivative_method='taylor'` (the default, and the only path the paper baseline uses) is unchanged. A genuine RBF weight-builder (plus `obstacle_sdf` threading for the #1124 seam and a convergence test) remains future work — a half-working parallel path is worse than none. (#1553)
+`examples/tutorials/01_hello_mfg.py` now completes in ~2 minutes instead of timing out. It solves three LQ-MFG problems, and on the default FDM solver each solve was ~3 minutes (≈9 min total) because the inner-Newton HJB Jacobian is assembled by O(Nx²) finite differences (tracked in #1607). Shrinking the tutorial grid to a small demo resolution (Nx 51→21, Nt 50→20) keeps all three solves converging (mass-conserving, error ~5e-7) while running end-to-end. The run was never diverging — the alarming residual climb in the verbose output is a transient overshoot that then contracts monotonically. (#1598)
+`FixedPointIterator` now raises when its paired HJB and FP solvers were built from `MFGProblem`s with different `sigma`. Previously the two solvers desynced silently — HJB and FP diffused at different rates and the Picard fixed point corresponded to neither problem, with no warning. The existing #1081 guard only covered the `volatility_field` kwarg, not this two-problem path; a coupled HJB–FP pair is an adjoint pair and must share the volatility. (#1603)
+`LevelSetEvolver`'s default first-order `upwind` scheme now selects the Godunov one-sided stencil from the **velocity sign** (Osher–Sethian / Rouy–Tourin), matching the `weno5` path. Previously it selected from `sign(∇φ)` via the shared `gradient_upwind` operator, which is the correct Godunov magnitude only for outward (V>0) motion; for inward (V<0) normal motion it took the downwind stencil, over-collapsing early and then stalling at the interface kink so a shrinking domain persisted well past its true extinction time (≈2.8× the analytic time on `|x|-1`). Isolated to the level-set caller — the shared `gradient_upwind` operator (used by the FDM advection schemes) is untouched. (#1602)
+- **The HJB-FP two-problem sigma-mismatch guard now protects every coupling iterator, not just `FixedPointIterator`** (Issue #1603 / RFC #1574 C14). A coupled HJB-FP pair is an adjoint pair and must share the volatility; if the two paired solvers were built from `MFGProblem`s whose `sigma` disagree, HJB and FP diffuse at different rates with no warning and the fixed point is neither problem's MFG. #1603 raised only inside `FixedPointIterator`; the `BlockIterator` (and its Jacobi/Gauss-Seidel subclasses), `FictitiousPlayIterator`, `NewtonMFGSolver`, and the `RegimeSwitchingIterator` / `MultiPopulationIterator` / `GraphMFGSolver` list iterators had **no** guard — a silent-wrong gap. The check is now single-sourced in `base_mfg.assert_paired_solver_sigma` and called by all of them (once per sub-problem pair for the list iterators, after their length validation so a wrong-length list still raises the clean count error first). The `FixedPointIterator` behavior is byte-identical (its inline block was replaced by the shared helper). The guard compares only real scalars, so array/callable/Mock `sigma` values do not trip it (#1489). (#1603)
+- **`project_to_boundary` now returns the true nearest point on the box boundary, single-sourced** (sweep-plan S2 / RFC #1574). Two divergent, both-wrong axis-aligned implementations existed: the base `Geometry` default snapped one coordinate to its nearest face *without clipping the others*, so an exterior query near a corner returned a point **off the boundary** (e.g. box `[0,1]²`, point `(1.5, 1.5)` → `(1.0, 1.5)`); the `TensorProductGrid` override clipped but then face-snapped by the **original** point's unbounded-plane distance, giving a **non-nearest** result (`[1.2, 0.1]` → `[1.0, 0.0]` instead of `[1.0, 0.1]`). Both now route through one `nearest_point_on_box_boundary` helper (base.py), correct for interior (snap the nearest face), exterior, and on-boundary (clip-to-box lands on the boundary and is the nearest boundary point) queries. The `TensorProductGrid` `boundary_name` feature (project to a specific named face) is preserved. No production solver calls this — the callers are collocation / particle / level-set boundary handling.
+- **Continuous-MFG RL environments now deliver a real mean field** (Issue #1600). The `ContinuousMFGEnvBase` family shipped a mean field that was not real, on three counts, all fixed: (1) `compute_mean_field_coupling` ignored the `population` argument in `LQMFGEnv` (used `-c_m·x²`) and `CrowdNavigationEnv` (used a fixed distance-to-center proxy while its docstring advertised a Gaussian kernel `ρ(x)=Σ_i K(x,x_i)`) — both now evaluate the advertised formula against the actual population histogram (the LQ form reduces to `-c_m·(x−y₀)²` when the population concentrates in one bin, i.e. the old `-c_m·x²` up to the origin bin-center offset `y₀`, so it generalizes rather than replaces); (2) `step()` advanced only `agent_states[0]`, freezing agents `1..N-1` at their reset sample so the empirical density `get_population_state()` bins stayed ≈ `m₀` forever — a new base `_advance_population` driver advances the whole population each step (the ego agent stays `agent_states[0]`; a self-consistent fictitious-play equilibrium remains #1570/#887 scope); (3) Brownian noise was applied to every state dim including declared-constant ones (crowd goal coordinates, price market depth, traffic time-remaining), silently corrupting e.g. goal-reached termination — a base-owned, per-env `_noise_mask()` now zeroes the constant dims. The `ResourceAllocationEnv` dropped its duplicated `step()` override (a full copy of the base step) for a `_postprocess_next_states` hook on the single base driver, so the population-frozen and constant-dim-noise fixes cannot re-diverge across two copies. The `get_population_state()` flat-NDArray contract (#1615) is preserved; `diffusion_method`-style numerics and the published pipeline are unaffected (RL is opt-in). (#1600)
+Mean-field DDPG/TD3/SAC no longer crash when paired with the `ContinuousMFGEnvBase` environment family. The algorithms read the population via `env.get_population_state().density_histogram.flatten()`, but the base ABC and its 5 subclasses (lq/crowd/traffic/price/resource) return a bare `NDArray` with no `.density_histogram`, so every algorithm × ABC-env pairing raised `AttributeError` on the first training step. The env→algorithm population-state contract is now unified on a flat `NDArray` (#1570, Option A): `ContinuousActionMazeEnvironment.get_population_state()` returns its flattened density histogram (byte-identical to the previously wired DDPG+maze pairing), and the algorithms consume the array directly. (#1601)
+- **nD semi-Lagrangian HJB steps no longer under-apply diffusion by a factor `d`** (Issue #1543). The `diffusion_method='stochastic'` and `'canonical_cs'` SL schemes place `2d` Brownian feet `x ± c·e_ax` (one ± pair per axis) and average them with weight `1/(2d)`, which recovers `(c²/2d)·Δu`. With the shipped offset `c = σ·√dt` that gave `(σ²/2d)·Δu·dt` — a factor-`1/d` deficit vs the canonical `(σ²/2)·Δu·dt` (2× under-diffusion in 2D, 3× in 3D; `d=1` was exact, so every 1D convergence gate passed and the bug hid). The offset is now single-sourced in `HJBSemiLagrangianSolver._brownian_foot_offset` as `c = √d·σ·√dt` (weak-Euler direction tree, `E[ξξᵀ] = I·dt`), consumed by both SL paths so they can no longer diverge. Byte-identical at `d=1` (`√1 = 1`); `diffusion_method='adi'` (the default) was already correct and is untouched. No published numbers shift — the exp08 pipeline uses the GFDM/Howard stack, not SL. Validated in `mfg-research/experiments/cs_sl_diffusion_1543` (operator ratio 0.5→1.0 in 2D, 0.33→1.0 in 3D); regression-pinned by `tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py` (SL-vs-ADI convention agreement, d=2,3). (#1543)
+Rewrote `examples/basic/core_infrastructure/solve_mfg_demo.py`, which crashed on the first line of every demo (`MFGProblem()` and the deprecated `MFGProblem(geometry=, T=, Nt=)` signature both fail the #670 mandatory-component guards). The demos now build a small, well-posed 1D LQ-MFG via the v1.0 API (`Model` / `domain` / `Conditions`) and showcase Auto, Safe (explicit `scheme=`), and Expert (injected HJB/FP solvers) modes — replacing the removed `create_standard_solver` import. All four demos converge and run headless. (#1599)
+Fixed two stale user-facing example references. The `MFGProblem` mandatory-component error messages and a factory comment pointed at `examples/basic/lq_mfg_classic.py`, which does not exist; they now point at the real classic LQ-MFG example `examples/tutorials/01_hello_mfg.py`. And `examples/basic/three_mode_api_demo.py` no longer crashes in its plot step — `plot_results` used `result.problem.T` (`SolverResult` has no `.problem`); it now takes the horizon from the problem and labels frames via a proper time array (also fixing a negative time label on the last frame). (#1611)
+- **`TensorProductGrid.boundary_conditions` assignment now takes effect (was a silent no-op), and `refine`/`coarsen` no longer emit a spurious deprecation warning.** Two `TensorProductGrid` fixes: (1) *silent wrong-BC* — `get_boundary_handler`'s docstring shows `grid.boundary_conditions = bc`, but the class read only `_boundary_conditions`, so a bare assignment created a **dead instance attribute** the handlers ignored and the grid silently kept its old BC; `boundary_conditions` is now a property whose setter routes through `set_boundary_conditions` (binding the dimension), so the documented usage works. (2) *spurious deprecation* — `refine`/`coarsen` passed the deprecated `dimension=` kwarg to their own constructor, so every legitimate call emitted a `DeprecationWarning` blaming the caller; the dimension is inferred from `len(bounds)` (#676) and the kwarg is gone.
+- **Tutorial `02_custom_hamiltonian.ipynb` now runs under NumPy 2.x.** Its `CongestionHamiltonian` returned `0.5 * p**2` (a length-1 array in 1D), which the pointwise HJB path feeds to `float(...)` — silently coerced under NumPy <2.0 but a hard `TypeError: only 0-dimensional arrays can be converted to Python scalars` under NumPy 2.x. The custom Hamiltonian now reduces the momentum over its component axis (`H = (1/2 + lambda*m)|p|^2` with `|p|^2 = sum_i p_i^2`) so it is scalar-per-point, and `dH/dp` broadcasts the scalar-per-point density onto `p`'s component axis so it stays shape-correct in the batched FP optimal-control path too. Mathematically identical Hamiltonian; the notebook now solves end-to-end (congested and baseline cases) with finite output.
+
 ## [0.21.0] - 2026-07-04
 
 ### Added
