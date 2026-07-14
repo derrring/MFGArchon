@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.21.0"  # v0.21.0: Python 3.13/3.14 support (CI-verified) + FEEC scaffold + #1489 weak-form audit campaign + fragment changelog + GFDM non-LCR / Newton-source single-source fixes
+version = "0.21.1"  # v0.21.1: RFC-#1574 phase-0 fail-loud guards (BC/SL/network capability honesty) + network MAXIMIZE + single-source consolidations (FP-drift #1528 ph1, sigma-tensor, project-to-boundary, paired-sigma) + examples/tutorials remediation + RL mean-field fixes + opt-in analytic Jacobian
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
