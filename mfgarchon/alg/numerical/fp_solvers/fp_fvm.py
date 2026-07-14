@@ -65,7 +65,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift, diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -237,21 +237,89 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     # Interface velocity
     # ------------------------------------------------------------------
-    def _face_velocity_from_potential(self, u_slice: np.ndarray):
-        """alpha_{i+1/2} = -coupling*(U_{i+1} - U_i)/dx per axis (+ periodic wrap face)."""
-        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
-        # (single source), not the independent coupling_coefficient field.
-        coupling = fp_drift_coefficient(self.problem)
+    def _face_velocity_from_potential(self, u_slice: np.ndarray, m_slice: np.ndarray, t: float):
+        """alpha_{i+1/2} = H.optimal_control(x_{i+1/2}, m_{i+1/2}, (U_{i+1}-U_i)/dx, t) per axis.
+
+        Routes the interface velocity through the single owner of the control law -- the problem
+        Hamiltonian's ``optimal_control`` (Issue #1528 / G-017) -- rather than the hand-coded
+        ``-fp_drift_coefficient(problem)*grad(U)`` second-velocity fork. The forward-difference
+        face gradient ``p_{i+1/2} = (U_{i+1}-U_i)/dx`` is the exact stencil
+        ``compute_fp_velocity_field`` uses, so both velocity paths stay a single source.
+
+        For a quadratic-MINIMIZE control cost ``optimal_control`` returns ``-p/lambda``,
+        byte-identical to the old ``-c*grad(U)`` (``c = 1/lambda``) for dyadic lambda (incl. the
+        paper's ``control_cost=1.0``) and within 2 ULP otherwise -- the face path composes TWO
+        divisions ``(U_{i+1}-U_i)/dx`` then ``/lambda`` (vs. the old single multiply-by-``c``), so
+        the non-dyadic rounding envelope is 2 ULP, not the single-op 1 ULP of the FEM/meshless/
+        particle families. For a MAXIMIZE or regularized cost it is the correct ``+p/lambda`` /
+        soft-thresholded drift instead of the wrong-sign (MAXIMIZE) / wrong-form (regularized)
+        scalar. ``x``/``m`` are ignored by a separable control cost but passed face-consistently
+        for a general (x/m-dependent) Hamiltonian.
+        """
+        H = getattr(self.problem, "hamiltonian_class", None)
+        if H is None:
+            raise ValueError(
+                "FP FVM potential_field path needs problem.hamiltonian_class to source the "
+                "advective drift alpha* = H.optimal_control(...); the problem has none. Pass a "
+                "precomputed drift_field, or set a Hamiltonian on the problem (Issue #1528)."
+            )
+        # Issue #1528 review-nit: this potential-field path routes through H.optimal_control(x, m, p, t),
+        # which is single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
+        # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
+        # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
+        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
+        # keep no-op'ing for non-separable H so fp_drift_coefficient's coupling_coefficient fallback stays
+        # intact. Ordered before the #1542 assert so a MAXIMIZE Separable still hits the #1542 guard below.
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+        if not isinstance(H, SeparableHamiltonian):
+            raise NotImplementedError(
+                f"FP FVM potential_field drift routes through H.optimal_control(x, m, p, t), which is "
+                f"single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
+                f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or pass the "
+                f"precomputed optimal-control velocity alpha* through the drift_field channel instead "
+                f"(Issue #1528 / RFC #1574 Phase 1)."
+            )
+        # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
+        # `fp_drift_coefficient` read carried. A MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # scalar `-c*grad(U)` form, so raise here rather than silently advect H.optimal_control's
+        # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
+        assert_quadratic_minimize_drift(self.problem, context="FP FVM potential_field")
         spacing = list(self.problem.geometry.get_grid_spacing())
+        bounds = self.problem.geometry.get_bounds()
         ndim = u_slice.ndim
+        shape = u_slice.shape
         alpha_faces: list[np.ndarray] = []
         alpha_wrap: list[np.ndarray | None] = []
         for d in range(ndim):
             dx = spacing[d]
-            alpha_faces.append(-coupling * np.diff(u_slice, axis=d) / dx)
+            # Same forward-difference face gradient the old -c*grad(U) fork used; the coefficient
+            # owner changes (multiply-by-c -> H.optimal_control). The drift is byte-identical for
+            # dyadic control_cost (incl. control_cost=1.0, where alpha* = -grad(U)) and within 2 ULP
+            # otherwise -- materializing p_d = (U_{i+1}-U_i)/dx then dividing by lambda is two
+            # divisions vs. the old multiply-then-divide (Issue #1528).
+            p_d = np.diff(u_slice, axis=d) / dx
+            nodes_d = np.linspace(bounds[0][d], bounds[1][d], shape[d])
+            face_coord = 0.5 * (nodes_d[:-1] + nodes_d[1:])
+            coord_shape = [1] * ndim
+            coord_shape[d] = shape[d] - 1
+            x_faces = np.broadcast_to(face_coord.reshape(coord_shape), p_d.shape)
+            lo = [slice(None)] * ndim
+            hi = [slice(None)] * ndim
+            lo[d] = slice(0, shape[d] - 1)
+            hi[d] = slice(1, shape[d])
+            m_faces = 0.5 * (m_slice[tuple(lo)] + m_slice[tuple(hi)])
+            alpha_d = np.asarray(H.optimal_control(x_faces, m_faces, p_d, t)).reshape(p_d.shape)
+            alpha_faces.append(alpha_d)
             if self._bc_types[d] == "periodic":
                 wrap = np.take(u_slice, 0, axis=d) - np.take(u_slice, -1, axis=d)
-                alpha_wrap.append(-coupling * wrap / dx)
+                p_wrap = wrap / dx
+                # Seam face between x[-1] and x[0]+L; position is unused by a separable H but kept
+                # face-consistent for a general (x-dependent) control cost.
+                x_wrap = np.broadcast_to(np.asarray(nodes_d[-1] + 0.5 * dx), p_wrap.shape)
+                m_wrap = 0.5 * (np.take(m_slice, 0, axis=d) + np.take(m_slice, -1, axis=d))
+                alpha_w = np.asarray(H.optimal_control(x_wrap, m_wrap, p_wrap, t)).reshape(p_wrap.shape)
+                alpha_wrap.append(alpha_w)
             else:
                 alpha_wrap.append(None)
         return alpha_faces, alpha_wrap
@@ -431,7 +499,9 @@ class FPFVMSolver(BaseFPSolver):
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
             if velocity_mode == "potential":
-                alpha_faces, alpha_wrap = self._face_velocity_from_potential(field[idx])
+                # t = n*dt at timestep n (matches compute_fp_velocity_field); m is the current
+                # density (own-population face density for a general x/m-dependent control cost).
+                alpha_faces, alpha_wrap = self._face_velocity_from_potential(field[idx], m, k * dt)
             elif velocity_mode == "drift":
                 alpha_faces, alpha_wrap = self._face_velocity_from_drift(field[idx], shape)
             else:
