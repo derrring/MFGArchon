@@ -539,7 +539,8 @@ class TensorProductGrid(
 
         Example:
             >>> grid = TensorProductGrid(bounds=[(0,1), (0,1)], Nx=[10, 10], boundary_conditions=no_flux_bc(dimension=2))
-            >>> fine_grid = grid.refine(2)  # Now 20×20 intervals (21×21 points)
+            >>> grid.refine(2).Nx  # [20, 20]
+            >>> grid.refine(2).Nx_points  # [21, 21]
         """
         if isinstance(factor, int):
             factors = [factor] * self._dimension

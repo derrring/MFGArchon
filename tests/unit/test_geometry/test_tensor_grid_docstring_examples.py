@@ -96,7 +96,9 @@ def _annotated_expressions(code: str) -> list[tuple[str, str]]:
         if not expr or "=" in expr.replace("==", "") or expr.endswith((",", "(")):
             continue
         # "2 (inferred from len(bounds))" -> "2"; "True" -> "True"
-        literal = re.split(r"\(|--|\s-\s|\bif\b|,\s*but\b", comment)[0].strip().rstrip(".")
+        # `\s\(` not `\(`: the latter also decapitates a leading tuple, silently skipping
+        # every `# (11, 6)` shape -- which is exactly what a `.shape` comment looks like.
+        literal = re.split(r"\s\(|--|\s-\s|\bif\b|,\s*but\b", comment)[0].strip().rstrip(".")
         try:
             ast.literal_eval(literal)
         except (ValueError, SyntaxError):
@@ -153,7 +155,12 @@ def test_annotated_example_values_are_truthful(lineno, expr, expected):
     elif isinstance(want, (int, float)) or (isinstance(want, list) and want and isinstance(want[0], (int, float))):
         # Strings must not float-coerce: `np.asarray('2').astype(float)` would pass for `# 2`.
         assert not isinstance(actual, str), message
-        assert np.all(np.isclose(np.asarray(actual, dtype=float), np.asarray(want, dtype=float), rtol=1e-12)), message
+        # atol=0: np.isclose is atol + rtol*|want|, and the default atol=1e-8 binds for
+        # every value in this file (rtol only dominates above |want| ~ 1e4). Without this
+        # the effective floor is 1e-8 absolute, not the 1e-12 relative the rtol implies.
+        assert np.all(
+            np.isclose(np.asarray(actual, dtype=float), np.asarray(want, dtype=float), rtol=1e-12, atol=0.0)
+        ), message
     else:
         assert actual == want, message
 
