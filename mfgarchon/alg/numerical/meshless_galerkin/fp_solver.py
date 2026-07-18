@@ -5,10 +5,13 @@ Thin subclass over ``WeakFormFPSolver`` on a scattered collocation cloud. Forwar
 time stepping and mass-conserving structure are inherited; this class supplies the
 discretization, Neumann BC, and the advection matrix.
 
-Advection follows the current weak-form-family convention (option b, drift = U):
-the velocity v = -coupling * grad(U) is recovered at the nodes via the
-mass-lumped gradient projection and assembled with the protocol's advection.
-(Convention alignment to drift = v = -grad_p H is tracked under #1043.)
+Advection is single-sourced from the Hamiltonian's optimal-control primitive
+(Issue #1528): the velocity alpha* = H.optimal_control(x, m, p, t) is recovered at
+the nodes via the mass-lumped gradient projection and assembled with the protocol's
+advection. This is the same primitive the paired HJB Newton advection reads, so
+A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
+(option b, the hand-coded scalar v = -coupling * grad(U)), which could not represent
+alpha* for MAXIMIZE or regularized control costs.
 
 Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
 absorbing ``m = 0`` on Dirichlet faces via symmetric Nitsche (#1138). The Nitsche
