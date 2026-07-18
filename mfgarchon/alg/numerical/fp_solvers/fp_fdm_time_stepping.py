@@ -118,6 +118,32 @@ _INTERIOR_HANDLERS: dict[str, Any] = {
     "divergence_upwind": add_interior_entries_divergence_upwind,
 }
 
+# Legacy scheme names -> canonical names (single source for both the outer driver's
+# velocity-support check and the per-timestep assembly).
+_SCHEME_ALIASES = {
+    "centered": "gradient_centered",
+    "upwind": "gradient_upwind",
+    "flux": "divergence_upwind",
+}
+
+_VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
+
+# Schemes whose assembly handlers actually read `interface_velocity`. The other three
+# accept the parameter and ignore it, re-deriving the drift from U -- so passing a
+# velocity_field with them silently advects with the U-gradient (zero, when the driver
+# supplies the zero-U dispatcher) and discards the caller's velocity entirely. Verified:
+# with velocity (2.5, -1.7) vs (0, 0) the three non-consuming schemes return bit-identical
+# densities. Supplying a velocity that is dropped is silent-wrong physics, so the driver
+# rejects the combination rather than honoring the parameter only sometimes.
+_INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
+
+# Marker for "the scalar drift coefficient does not apply on this path": the velocity
+# channel carries alpha* per face and the consuming handler never reads the coefficient.
+# NaN rather than 0.0 so that a scheme added to _INTERFACE_VELOCITY_SCHEMES without a
+# real interface_velocity branch fails loudly through the per-timestep NaN guard
+# (Issue #881) instead of silently advecting at rate zero.
+_COEFFICIENT_NOT_APPLICABLE = float("nan")
+
 
 # =============================================================================
 # Dirichlet BC support for nD (Issue #859)
@@ -671,7 +697,20 @@ def solve_fp_nd_full_system(
     dt = problem.dt
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
     # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
-    coupling_coefficient = fp_drift_coefficient(problem)
+    #
+    # Issue #1528 phase 2: resolve it lazily, at the point of use. fp_drift_coefficient
+    # raises for any Hamiltonian whose optimal control is not -∇U/control_cost (MAXIMIZE,
+    # non-quadratic, regularized). Resolving it eagerly here made that raise fire before
+    # the drift channel was even consulted, so a MAXIMIZE problem could not run through
+    # the nD FDM solver *even when supplying velocity_field* -- the channel that exists
+    # precisely to carry a precomputed alpha* for those Hamiltonians.
+    _resolved_coefficient: list[float] = []
+
+    def resolve_coupling_coefficient() -> float:
+        """Drift coefficient c in alpha* = -c*grad(U), resolved once, only if consumed."""
+        if not _resolved_coefficient:
+            _resolved_coefficient.append(fp_drift_coefficient(problem))
+        return _resolved_coefficient[0]
 
     # Get grid spacing and geometry
     spacing = problem.geometry.get_grid_spacing()
@@ -684,6 +723,16 @@ def solve_fp_nd_full_system(
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
     if velocity_field is not None:
+        # Reject a velocity the assembly would silently drop (see _INTERFACE_VELOCITY_SCHEMES).
+        _canonical_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
+        if _canonical_scheme not in _INTERFACE_VELOCITY_SCHEMES:
+            raise ValueError(
+                f"advection_scheme='{advection_scheme}' does not consume velocity_field: its assembly "
+                f"handlers ignore interface_velocity and re-derive the drift from U, so the supplied "
+                f"velocity would be silently discarded (advecting at rate zero when U is unavailable). "
+                f"Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)}, or pass the drift through "
+                f"U_solution_for_drift / drift_field instead."
+            )
         Nt = velocity_field.shape[0]
         # Create a zero-U dispatcher (U is unused when interface_velocity is set)
         drift = _DriftDispatcher(drift_field=None, Nt=Nt, spatial_shape=shape, dimension=ndim)
@@ -857,7 +906,9 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 tensor_base,
-                coupling_coefficient,
+                # The tensor path has no interface_velocity parameter and derives its
+                # advection from U, so it genuinely consumes the coefficient.
+                resolve_coupling_coefficient(),
                 spacing,
                 grid,
                 ndim,
@@ -899,7 +950,10 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                coupling_coefficient,
+                # Issue #1528 phase 2: with a velocity_field the handlers read
+                # interface_velocity per face and never touch the coefficient, so
+                # do not resolve (and reject) one that will not be used.
+                _COEFFICIENT_NOT_APPLICABLE if vel_at_k is not None else resolve_coupling_coefficient(),
                 spacing,
                 grid,
                 ndim,
@@ -1138,18 +1192,11 @@ def solve_timestep_full_nd(
     np.ndarray
         Next density field. Shape: (N1, N2, ..., Nd)
     """
-    # Map legacy scheme names to new names
-    scheme_aliases = {
-        "centered": "gradient_centered",
-        "upwind": "gradient_upwind",
-        "flux": "divergence_upwind",
-    }
-    advection_scheme = scheme_aliases.get(advection_scheme, advection_scheme)
+    advection_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
 
     # Validate scheme name
-    valid_schemes = {"gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"}
-    if advection_scheme not in valid_schemes:
-        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(valid_schemes)}")
+    if advection_scheme not in _VALID_SCHEMES:
+        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
     # Total number of unknowns
     N_total = int(np.prod(shape))
 
