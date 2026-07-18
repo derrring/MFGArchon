@@ -154,12 +154,20 @@ def test_reported_line_numbers_are_correct(checker, tmp_path):
         "\n"  # 7
         "def h(o):\n"  # 8
         '    return hasattr(o, "x")\n'  # 9  <- hasattr
+        "\n"  # 10
+        "\n"  # 11
+        "def k():\n"  # 12
+        "    try:\n"  # 13
+        "        g()\n"  # 14
+        "    except:\n"  # 15 <- bare
+        "        h()\n"  # 16
     )
     results = _scan(checker, tmp_path, source)
 
     assert results["broad_except"][0].endswith("sample.py:4: Broad 'except Exception:'")
     assert results["silent_pass"][0].endswith("sample.py:4: Silent 'pass' in except block")
     assert results["hasattr"][0].endswith("sample.py:9: hasattr() call")
+    assert results["bare_except"][0].endswith("sample.py:15: Bare 'except:'")
 
 
 def test_violations_found_in_nested_and_async_scopes(checker, tmp_path):
