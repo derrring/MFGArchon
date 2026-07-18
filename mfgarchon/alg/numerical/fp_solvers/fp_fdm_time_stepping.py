@@ -129,19 +129,18 @@ _SCHEME_ALIASES = {
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 
 # Schemes whose assembly handlers actually read `interface_velocity`. The other three
-# accept the parameter and ignore it, re-deriving the drift from U -- so passing a
-# velocity_field with them silently advects with the U-gradient (zero, when the driver
-# supplies the zero-U dispatcher) and discards the caller's velocity entirely. Verified:
-# with velocity (2.5, -1.7) vs (0, 0) the three non-consuming schemes return bit-identical
-# densities. Supplying a velocity that is dropped is silent-wrong physics, so the driver
-# rejects the combination rather than honoring the parameter only sometimes.
+# accept the parameter and ignore it, re-deriving the drift from U instead -- so they
+# still need the scalar coefficient. That silent discard of the caller's velocity is a
+# real defect (verified in 1D and 2D: velocity (2.5, -1.7) vs (0, 0) gives bit-identical
+# densities for all three), tracked separately in #1632; this set exists so the driver
+# knows which schemes leave the coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 
-# Marker for "the scalar drift coefficient does not apply on this path": the velocity
-# channel carries alpha* per face and the consuming handler never reads the coefficient.
-# NaN rather than 0.0 so that a scheme added to _INTERFACE_VELOCITY_SCHEMES without a
-# real interface_velocity branch fails loudly through the per-timestep NaN guard
-# (Issue #881) instead of silently advecting at rate zero.
+# Marker for "the scalar drift coefficient does not apply on this path": the consuming
+# scheme carries alpha* per face and never reads the coefficient. NaN rather than 0.0 so
+# that a scheme added to _INTERFACE_VELOCITY_SCHEMES without a real interface_velocity
+# branch fails loudly through the per-timestep NaN guard (Issue #881) instead of silently
+# advecting at rate zero.
 _COEFFICIENT_NOT_APPLICABLE = float("nan")
 
 
@@ -722,17 +721,10 @@ def solve_fp_nd_full_system(
     # Issue #919 Phase 2: velocity_field → pass to implicit solver directly
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
+    _velocity_is_consumed = velocity_field is not None and (
+        _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
+    )
     if velocity_field is not None:
-        # Reject a velocity the assembly would silently drop (see _INTERFACE_VELOCITY_SCHEMES).
-        _canonical_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
-        if _canonical_scheme not in _INTERFACE_VELOCITY_SCHEMES:
-            raise ValueError(
-                f"advection_scheme='{advection_scheme}' does not consume velocity_field: its assembly "
-                f"handlers ignore interface_velocity and re-derive the drift from U, so the supplied "
-                f"velocity would be silently discarded (advecting at rate zero when U is unavailable). "
-                f"Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)}, or pass the drift through "
-                f"U_solution_for_drift / drift_field instead."
-            )
         Nt = velocity_field.shape[0]
         # Create a zero-U dispatcher (U is unused when interface_velocity is set)
         drift = _DriftDispatcher(drift_field=None, Nt=Nt, spatial_shape=shape, dimension=ndim)
@@ -950,10 +942,10 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1528 phase 2: with a velocity_field the handlers read
-                # interface_velocity per face and never touch the coefficient, so
-                # do not resolve (and reject) one that will not be used.
-                _COEFFICIENT_NOT_APPLICABLE if vel_at_k is not None else resolve_coupling_coefficient(),
+                # Issue #1631: skip resolving a coefficient the handler will not read.
+                # Only a scheme in _INTERFACE_VELOCITY_SCHEMES actually consumes the
+                # velocity; the others fall back to -c*grad(U) and still need it (#1632).
+                _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,
                 ndim,

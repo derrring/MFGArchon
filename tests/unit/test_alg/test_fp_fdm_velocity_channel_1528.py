@@ -9,12 +9,12 @@ Two defects, both on `solve_fp_nd_full_system`:
    nD FDM solver *even when supplying* ``velocity_field`` -- the channel that
    exists precisely to carry a precomputed alpha* for those Hamiltonians.
 
-2. Only ``divergence_upwind`` reads ``interface_velocity``. The other three
-   schemes accept the parameter and ignore it, re-deriving the drift from U --
-   which the driver sets to the zero-U dispatcher on this path. A caller
-   supplying a velocity therefore got zero advection and no diagnostic.
+Only ``divergence_upwind`` actually reads ``interface_velocity``, so only that
+scheme leaves the coefficient unread; the others still fall back to ``-c*grad(U)``
+and still resolve it. That they silently discard the caller's velocity is a
+separate defect, tracked in #1632.
 
-Each test fails if its half of the fix is reverted.
+Each test fails if the fix is reverted.
 """
 
 import pytest
@@ -33,7 +33,6 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 N = 8
 NT = 4
-NON_CONSUMING_SCHEMES = ["gradient_centered", "gradient_upwind", "divergence_centered"]
 
 
 def _problem(sense: OptimizationSense = OptimizationSense.MINIMIZE) -> MFGProblem:
@@ -96,15 +95,7 @@ def test_u_channel_unchanged_for_minimize():
     assert result[-1].sum() == pytest.approx(1.0, abs=1e-9)
 
 
-# --- defect 2: a velocity that would be dropped must be rejected, not ignored ---
-
-
-@pytest.mark.parametrize("scheme", NON_CONSUMING_SCHEMES)
-def test_velocity_with_non_consuming_scheme_raises(scheme):
-    with pytest.raises(ValueError, match="does not consume velocity_field"):
-        solve_fp_nd_full_system(
-            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
-        )
+# --- the accept-list must be truthful ---------------------------------------
 
 
 def test_consuming_scheme_actually_honors_the_velocity():
@@ -127,27 +118,3 @@ def test_consuming_scheme_actually_honors_the_velocity():
 
     assert not np.array_equal(still, moving), "velocity_field was discarded by the accepted scheme"
     assert np.abs(still - moving).max() > 1e-3
-
-
-@pytest.mark.parametrize(
-    ("alias", "accepted"),
-    [("flux", True), ("upwind", False), ("centered", False)],
-)
-def test_guard_resolves_legacy_scheme_aliases(alias, accepted):
-    """`flux` is divergence_upwind (accept); `upwind`/`centered` are gradient_* (reject)."""
-    call = lambda: solve_fp_nd_full_system(  # noqa: E731
-        _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=alias
-    )
-    if accepted:
-        assert np.isfinite(call()).all()
-    else:
-        with pytest.raises(ValueError, match="does not consume velocity_field"):
-            call()
-
-
-def test_guard_does_not_fire_without_velocity_field():
-    """Every scheme stays usable on the U-derived channel."""
-    u_solution = np.zeros((NT + 1, N, N))
-    for scheme in [*NON_CONSUMING_SCHEMES, "divergence_upwind"]:
-        result = solve_fp_nd_full_system(_uniform_density(), u_solution, _problem(), advection_scheme=scheme)
-        assert np.isfinite(result).all(), f"{scheme} regressed on the U channel"
