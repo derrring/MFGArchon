@@ -95,6 +95,40 @@ def test_u_channel_unchanged_for_minimize():
     assert result[-1].sum() == pytest.approx(1.0, abs=1e-9)
 
 
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_non_consuming_scheme_still_receives_a_real_coefficient(scheme):
+    """The skip must be scheme-aware, not merely velocity-aware.
+
+    Only `divergence_upwind` reads `interface_velocity`; the others still fall back
+    to -c*grad(U) and so still need the coefficient. Dropping the scheme test from
+    `_velocity_is_consumed` -- resolving nothing whenever a velocity is present --
+    hands them NaN and the density goes non-finite. That is the exact regression
+    that forced this PR to be narrowed, so pin it here rather than relying on
+    tests/integration/test_fdm_centered_conservation.py to catch it.
+    """
+    result = solve_fp_nd_full_system(
+        _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+    )
+    assert np.isfinite(result).all(), f"{scheme} received a non-applicable coefficient"
+
+
+def test_callable_drift_channel_also_runs_for_maximize():
+    """The callable-drift channel never consumes the coefficient either, so it widens too.
+
+    `solve_timestep_explicit_with_drift` takes no coupling coefficient, so lazy
+    resolution legitimately skips it here as well -- a second (correct) widening
+    beyond the velocity_field case the issue was filed for.
+    """
+    result = solve_fp_nd_full_system(
+        _uniform_density(),
+        None,
+        _problem(OptimizationSense.MAXIMIZE),
+        drift_field=lambda t, x, m: np.zeros((2, N, N)),
+    )
+    assert np.isfinite(result).all()
+    assert result[-1].sum() == pytest.approx(1.0, abs=1e-9)
+
+
 # --- the accept-list must be truthful ---------------------------------------
 
 
