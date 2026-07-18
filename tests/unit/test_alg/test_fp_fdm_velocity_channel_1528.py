@@ -68,9 +68,17 @@ def _velocity(vx: float = 0.0, vy: float = 0.0) -> np.ndarray:
 
 
 @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
-def test_velocity_channel_runs_for_both_senses(sense):
-    """MAXIMIZE previously raised NotImplementedError from the eager coefficient read."""
-    result = solve_fp_nd_full_system(_uniform_density(), None, _problem(sense), velocity_field=_velocity(vx=0.3))
+@pytest.mark.parametrize("scheme", ["divergence_upwind", "flux"])
+def test_velocity_channel_runs_for_both_senses(sense, scheme):
+    """MAXIMIZE previously raised NotImplementedError from the eager coefficient read.
+
+    Parametrized over the legacy alias too: the skip resolves `flux` -> `divergence_upwind`
+    before testing membership, so keying it on the raw scheme name would silently un-do the
+    widening for anyone spelling the scheme the old way.
+    """
+    result = solve_fp_nd_full_system(
+        _uniform_density(), None, _problem(sense), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+    )
 
     assert result.shape == (NT + 1, N, N)
     assert np.isfinite(result).all()
