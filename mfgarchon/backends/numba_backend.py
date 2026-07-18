@@ -385,25 +385,12 @@ class NumbaBackend(BaseBackend):
         # single-source resolver (no legacy key) so all four backends share one lookup.
         sigma = resolve_volatility(problem_params, default=1.0)
 
-        if NUMBA_AVAILABLE:
-            return self._fpk_step_kernel(M, U, dt, dx, sigma)
-        else:
-            # Fallback NumPy implementation
-            M_new = np.copy(M)
-            nx = len(M)
-
-            for i in range(1, nx - 1):
-                # Flux computation (simplified)
-                flux_div = 0.0  # Placeholder for proper flux divergence
-
-                # Diffusion
-                M_xx = (M[i + 1] - 2.0 * M[i] + M[i - 1]) / (dx * dx)
-                diffusion = 0.5 * sigma * sigma * M_xx
-
-                M_new[i] = M[i] + dt * (-flux_div + diffusion)
-                M_new[i] = max(M_new[i], 0.0)
-
-            return M_new
+        # No NUMBA_AVAILABLE branch: this module raises ImportError at import time when
+        # numba is missing, so the flag is only ever True and the former NumPy fallback
+        # was unreachable. It also dropped advection outright (`flux_div = 0.0`, a
+        # placeholder), so relaxing the import guard would have silently solved pure
+        # diffusion instead of the FP equation. Deleted rather than left as a trap.
+        return self._fpk_step_kernel(M, U, dt, dx, sigma)
 
     # Performance and Compilation
     def compile_function(self, func, *args, **kwargs):

@@ -1,14 +1,14 @@
-"""DEPRECATED: Use mfgarchon.utils.convergence.schedules instead.
+"""DEPRECATED: Use mfgarchon.utils.iteration.schedules instead.
 
-This module is a compatibility shim. Will be removed in v0.20.0.
+This module is a compatibility shim. Will be removed in v0.22.0.
 """
 
 import warnings
 
 warnings.warn(
     "Importing from mfgarchon.alg.iterative.schedules is deprecated. "
-    "Use mfgarchon.utils.convergence.schedules instead. "
-    "Will be removed in v0.20.0.",
+    "Use mfgarchon.utils.iteration.schedules instead. "
+    "Will be removed in v0.22.0.",
     DeprecationWarning,
     stacklevel=2,
 )
