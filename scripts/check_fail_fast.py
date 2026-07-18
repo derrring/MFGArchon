@@ -36,6 +36,11 @@ def check_fail_fast_violations(start_path="."):
     104 of 115 sites) and every multi-line/tuple form, while counting `hasattr`
     mentions inside docstrings and comments as if they were calls (40 of 164).
     An AST walk sees exactly the code, which is the thing the policy governs.
+
+    Note the `hasattr` unit changed with that switch: the regex counted matching
+    *lines*, this counts *calls*, so two calls on one line now count twice. The
+    repo has 129 calls across 124 distinct lines -- a `grep -c` will not reconcile
+    with the baseline, and counting calls is the correct unit for the policy.
     """
 
     issues = {"hasattr": [], "silent_pass": [], "bare_except": [], "broad_except": []}

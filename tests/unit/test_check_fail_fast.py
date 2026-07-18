@@ -34,9 +34,13 @@ def checker():
     return _load_checker()
 
 
-def _counts(checker, tmp_path: Path, source: str) -> dict[str, int]:
+def _scan(checker, tmp_path: Path, source: str) -> dict[str, list[str]]:
     (tmp_path / "sample.py").write_text(source, encoding="utf-8")
-    return {category: len(items) for category, items in checker.check_fail_fast_violations(str(tmp_path)).items()}
+    return checker.check_fail_fast_violations(str(tmp_path))
+
+
+def _counts(checker, tmp_path: Path, source: str) -> dict[str, int]:
+    return {category: len(items) for category, items in _scan(checker, tmp_path, source).items()}
 
 
 # --- broad handlers -----------------------------------------------------------
@@ -51,11 +55,20 @@ def _counts(checker, tmp_path: Path, source: str) -> dict[str, int]:
         "except BaseException as exc:",
         "except (ValueError, Exception):",  # regex-invisible: tuple form
         "except (ValueError, Exception) as err:",
+        "except err.Exception:",  # qualified form -- pins the ast.Attribute branch
+        "except pkg.mod.BaseException as e:",
+        "except (ValueError, err.Exception):",
     ],
 )
 def test_broad_handler_forms_all_counted(checker, tmp_path, handler):
     counts = _counts(checker, tmp_path, f"def f():\n    try:\n        g()\n    {handler}\n        h()\n")
     assert counts["broad_except"] == 1, f"{handler!r} was not counted as a broad handler"
+
+
+def test_qualified_narrow_handler_is_not_broad(checker, tmp_path):
+    """The Attribute branch must match on the attribute name, not merely be qualified."""
+    source = "def f():\n    try:\n        g()\n    except np.linalg.LinAlgError as e:\n        h(e)\n"
+    assert _counts(checker, tmp_path, source)["broad_except"] == 0
 
 
 def test_narrow_handler_is_not_broad(checker, tmp_path):
@@ -126,6 +139,45 @@ def test_shadowed_hasattr_attribute_access_not_counted(checker, tmp_path):
     assert _counts(checker, tmp_path, "def f(mod, o):\n    return mod.hasattr(o)\n")["hasattr"] == 0
 
 
+# --- reported locations -------------------------------------------------------
+
+
+def test_reported_line_numbers_are_correct(checker, tmp_path):
+    """The location is what a developer follows to fix the violation; pin it, not just the count."""
+    source = (
+        "def f(o):\n"  # 1
+        "    try:\n"  # 2
+        "        g()\n"  # 3
+        "    except Exception as e:\n"  # 4  <- broad
+        "        pass\n"  # 5  (silent pass, same handler)
+        "\n"  # 6
+        "\n"  # 7
+        "def h(o):\n"  # 8
+        '    return hasattr(o, "x")\n'  # 9  <- hasattr
+    )
+    results = _scan(checker, tmp_path, source)
+
+    assert results["broad_except"][0].endswith("sample.py:4: Broad 'except Exception:'")
+    assert results["silent_pass"][0].endswith("sample.py:4: Silent 'pass' in except block")
+    assert results["hasattr"][0].endswith("sample.py:9: hasattr() call")
+
+
+def test_violations_found_in_nested_and_async_scopes(checker, tmp_path):
+    """Handlers are found wherever they sit, not only at module/function top level."""
+    source = (
+        "class C:\n"
+        "    async def m(self, o):\n"
+        "        try:\n"
+        "            await g()\n"
+        "        except Exception as e:\n"
+        "            h(e)\n"
+        "        return hasattr(o, 'x')\n"
+    )
+    counts = _counts(checker, tmp_path, source)
+    assert counts["broad_except"] == 1
+    assert counts["hasattr"] == 1
+
+
 # --- unparseable input must not be silently reported as clean -----------------
 
 
@@ -139,10 +191,25 @@ def test_syntax_error_raises_rather_than_reporting_zero(checker, tmp_path):
 
 
 def test_repo_baseline_is_current(checker):
-    """The committed baseline must equal live counts, or the ratchet is measuring fiction."""
+    """The committed baseline must equal live counts, or the ratchet is measuring fiction.
+
+    This fires in both directions on purpose. An inflated baseline is *headroom* --
+    exactly defect 3 of #1629, where 40 phantom `hasattr` entries would have let 40
+    real ones be added with CI green. So fixing a violation must come with a baseline
+    regeneration in the same commit; the ratchet itself only prints an advisory.
+    """
     import json
 
     repo_root = _SCRIPT.parent.parent
-    baseline = json.loads((repo_root / "scripts" / "fail_fast_baseline.json").read_text())
+    baseline_path = repo_root / "scripts" / "fail_fast_baseline.json"
+    baseline = json.loads(baseline_path.read_text())
     results = checker.check_fail_fast_violations(str(repo_root / "mfgarchon"))
-    assert {category: len(items) for category, items in results.items()} == baseline
+    live = {category: len(items) for category, items in results.items()}
+
+    assert live == baseline, (
+        f"Committed fail-fast baseline is stale.\n"
+        f"  committed: {baseline}\n"
+        f"  live:      {live}\n"
+        f"If you fixed violations (counts went down), regenerate it in the same commit:\n"
+        f"  python scripts/check_fail_fast.py --path mfgarchon --write-baseline scripts/fail_fast_baseline.json"
+    )
