@@ -1013,6 +1013,47 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         return U_solution
 
+    def _advect_pointwise(
+        self,
+        U_next: np.ndarray,
+        M_next: np.ndarray,
+        grad_u: np.ndarray,
+        t_val: float,
+        dt: float,
+    ) -> np.ndarray:
+        """One backward semi-Lagrangian advection sweep, node by node.
+
+        Issue #1413: lambda-scaled foot (x - dt*dH/dp = x - dt*p/lambda) followed by the
+        Lax-Oleinik value update, matching the vectorized batch path.
+
+        Single owner for the two byte-identical copies of this loop (Issue #1635): the
+        rk4/other fallback of the fixed-dt path, and the CFL-substepping path.
+
+        A per-node failure propagates. The previous handlers caught Exception and assigned
+        ``U_star[i] = U_next[i]`` -- the value at t^{n+1}, i.e. no update at all for that
+        node. That substitution is finite by construction, so the NaN/Inf guard in
+        solve_hjb_system could not see it and the solver returned a plausible, silently
+        wrong value function with no machine-readable trace. The nD siblings already
+        surface their per-node failures rather than hiding them.
+        """
+        lam = self._control_cost_lambda()
+        Nx = len(U_next)
+        U_star = np.zeros(Nx)
+        for i in range(Nx):
+            x_i = self.x_grid[i]
+            try:
+                vel_i = grad_u[i] / lam
+                x_departure = self._trace_characteristic_backward(x_i, vel_i, dt)
+                u_departure = self._interpolate_value(U_next, x_departure)
+                U_star[i] = self._sl_value_update(
+                    u_departure, np.array([x_i]), M_next[i], np.array([grad_u[i]]), t_val, dt
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Semi-Lagrangian update failed at grid point {i} (x={x_i:.6g}, t={t_val:.6g}, dt={dt:.6g}): {e}"
+                ) from e
+        return U_star
+
     def _solve_timestep_semi_lagrangian(
         self,
         U_next: np.ndarray,
@@ -1050,7 +1091,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if self.dimension == 1:
             # 1D solve with operator splitting: characteristics + Crank-Nicolson diffusion
-            Nx = len(U_next)
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
@@ -1104,20 +1144,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             else:
                 # Fallback: per-point loop for rk4 or other methods. Issue #1413: λ-scaled foot
                 # (x - dt·∂H/∂p = x - dt·p/λ) + Lax-Oleinik value update, matching the batch path.
-                lam = self._control_cost_lambda()
-                t_val = time_idx * self.dt
-                U_star = np.zeros(Nx)
-                for i in range(Nx):
-                    try:
-                        vel_i = grad_u[i] / lam
-                        x_departure = self._trace_characteristic_backward(self.x_grid[i], vel_i, self.dt)
-                        u_departure = self._interpolate_value(U_next, x_departure)
-                        U_star[i] = self._sl_value_update(
-                            u_departure, np.array([self.x_grid[i]]), M_next[i], np.array([grad_u[i]]), t_val, self.dt
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error at grid point {i}: {e}")
-                        U_star[i] = U_next[i]
+                U_star = self._advect_pointwise(U_next, M_next, grad_u, time_idx * self.dt, self.dt)
 
             # Step 2: Diffusion (using configured method)
             U_current = self._apply_diffusion(U_star, self.dt)
@@ -1259,31 +1286,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if self.dimension == 1:
             # 1D solve with operator splitting
-            Nx = len(U_next)
-            U_star = np.zeros(Nx)
 
             # Compute gradient for optimal control
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_u = self._compute_gradient(U_next, check_cfl=False, t_idx=time_idx, m_density=M_next)
 
             # Step 1: Advection along characteristics (Issue #1413: λ-scaled foot + Lax-Oleinik)
-            lam = self._control_cost_lambda()
-            t_val = time_idx * self.dt
-            for i in range(Nx):
-                x_current = self.x_grid[i]
-                m_current = M_next[i]
-
-                try:
-                    vel_i = grad_u[i] / lam
-                    x_departure = self._trace_characteristic_backward(x_current, vel_i, dt)
-                    u_departure = self._interpolate_value(U_next, x_departure)
-                    U_star[i] = self._sl_value_update(
-                        u_departure, np.array([x_current]), m_current, np.array([grad_u[i]]), t_val, dt
-                    )
-
-                except Exception as e:
-                    logger.warning(f"Error at grid point {i}: {e}")
-                    U_star[i] = U_next[i]
+            U_star = self._advect_pointwise(U_next, M_next, grad_u, time_idx * self.dt, dt)
 
             # Step 2: Diffusion with custom dt
             U_current = self._apply_diffusion(U_star, dt)
