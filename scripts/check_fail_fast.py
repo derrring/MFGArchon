@@ -1,8 +1,26 @@
 import argparse
+import ast
 import json
 import os
-import re
 import sys
+
+# Handler types counted as "broad": they swallow programming errors, not just the
+# specific failure the caller anticipated.
+BROAD_EXCEPTION_NAMES = frozenset({"Exception", "BaseException"})
+
+
+def _exception_names(node: ast.expr | None) -> list[str]:
+    """Names caught by one `except` clause (`E`, `pkg.E`, or a tuple of either)."""
+    if node is None:
+        return []
+    parts = node.elts if isinstance(node, ast.Tuple) else [node]
+    names = []
+    for part in parts:
+        if isinstance(part, ast.Name):
+            names.append(part.id)
+        elif isinstance(part, ast.Attribute):
+            names.append(part.attr)
+    return names
 
 
 def check_fail_fast_violations(start_path="."):
@@ -12,18 +30,16 @@ def check_fail_fast_violations(start_path="."):
     2. Silent 'pass' in except blocks
     3. Bare 'except:' (catches everything, including SystemExit)
     4. Broad 'except Exception:' (hides bugs)
+
+    Detection is AST-based, not textual. Regex scanning was both blind and
+    over-eager here: it missed every *bound* handler (`except Exception as e:`,
+    104 of 115 sites) and every multi-line/tuple form, while counting `hasattr`
+    mentions inside docstrings and comments as if they were calls (40 of 164).
+    An AST walk sees exactly the code, which is the thing the policy governs.
     """
 
-    # Patterns
-    hasattr_pattern = re.compile(r"hasattr\s*\(")
-    silent_pass_pattern = re.compile(r"except\s*(?:[a-zA-Z0-9_,\\s().]+)?:\s*(?:\n\s*)?pass\b", re.MULTILINE)
-    bare_except_pattern = re.compile(r"except\s*:")
-    broad_except_pattern = re.compile(r"except\s+Exception\s*:")
-
-    # Counters and storage
     issues = {"hasattr": [], "silent_pass": [], "bare_except": [], "broad_except": []}
 
-    # Walk directories
     for root, dirs, files in os.walk(start_path):
         # Ignore hidden dirs and venv
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "venv" and d != "__pycache__"]
@@ -37,30 +53,27 @@ def check_fail_fast_violations(start_path="."):
                 continue
 
             path = os.path.join(root, file)
-            try:
-                with open(path, encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
-                continue  # Skip files we can't read
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
 
-            # Check hasattr (line by line for context)
-            lines = content.splitlines()
-            for i, line in enumerate(lines):
-                if hasattr_pattern.search(line):
-                    issues["hasattr"].append(f"{path}:{i + 1}: {line.strip()}")
+            # A file that cannot be parsed cannot be audited. Fail loud rather
+            # than silently reporting zero violations for it.
+            tree = ast.parse(content, filename=path)
 
-            # Check regexes against full content
-            for match in silent_pass_pattern.finditer(content):
-                line_num = content[: match.start()].count("\n") + 1
-                issues["silent_pass"].append(f"{path}:{line_num}: Silent 'pass' in except block")
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "hasattr":
+                    issues["hasattr"].append(f"{path}:{node.lineno}: hasattr() call")
 
-            for match in bare_except_pattern.finditer(content):
-                line_num = content[: match.start()].count("\n") + 1
-                issues["bare_except"].append(f"{path}:{line_num}: Bare 'except:'")
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
 
-            for match in broad_except_pattern.finditer(content):
-                line_num = content[: match.start()].count("\n") + 1
-                issues["broad_except"].append(f"{path}:{line_num}: Broad 'except Exception:'")
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                    issues["silent_pass"].append(f"{path}:{node.lineno}: Silent 'pass' in except block")
+
+                if node.type is None:
+                    issues["bare_except"].append(f"{path}:{node.lineno}: Bare 'except:'")
+                elif BROAD_EXCEPTION_NAMES.intersection(_exception_names(node.type)):
+                    issues["broad_except"].append(f"{path}:{node.lineno}: Broad 'except Exception:'")
 
     return issues
 
