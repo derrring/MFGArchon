@@ -170,8 +170,12 @@ def test_site_a_is_reached_only_by_rk4_below_the_cfl_limit():
     assert rk4_calls > 0, "rk4 below the CFL limit must route through the shared helper (site A)"
 
 
-def test_site_a_preserves_t_val_and_lambda():
-    """Site A's arguments, pinned where site A is the only consumer of the helper."""
+def test_site_a_preserves_t_val():
+    """Site A's `t_val`, pinned where site A is the only consumer of the helper.
+
+    Lambda for site A is pinned by `test_characteristic_foot_is_scaled_by_one_over_lambda`,
+    which asserts on the owner directly.
+    """
     time_dependent = lambda x, t=0.0: 5.0 * float(t) * float(np.asarray(x).reshape(-1)[0])  # noqa: E731
 
     u_time_dep = _solve_gentle(_gentle_problem(time_dependent), characteristic_solver="rk4")
@@ -209,41 +213,30 @@ def test_characteristic_foot_is_scaled_by_one_over_lambda(control_cost):
     )
 
 
-@pytest.mark.parametrize("solver_kwargs", [{}, {"characteristic_solver": "rk4"}], ids=["substepping", "rk4"])
-def test_consolidation_preserves_t_val_and_lambda_at_both_sites(solver_kwargs):
-    """Pinning test the consolidation owes (repo rule: one owner + a pinning test).
+def test_site_b_preserves_t_val_under_substepping():
+    """Site B's `t_val`, pinned on the substepping path.
 
-    `_advect_pointwise` is the single owner of `t_val`, the substep `dt` and the
-    control-cost `lambda` for BOTH call sites. Nothing else notices if a call site
-    drifts: passing `t_val=0.0` or dropping the `1/lambda` foot scaling leaves all
-    388 pre-existing SL tests green.
-
-    Parametrized over both entry points because they reach different sites: the
-    default (`explicit_euler`) takes the vectorized batch path and reaches the shared
-    helper only via CFL substepping, while `rk4` routes every node through it. A test
-    that exercised only one would leave the other's arguments unpinned -- and a
-    lambda difference observed on the default path leaks in through the batch path,
-    so it must be measured where the helper is the only consumer.
+    Named for site B specifically. Under a steep terminal cost, substepping is active
+    and handles every timestep, so BOTH `explicit_euler` and `rk4` enter the shared
+    helper only via site B -- measured, siteA=0 / siteB=94 for each. Parametrizing this
+    test over `rk4` would therefore add cost and no coverage; site A is pinned above,
+    where CFL <= 1 makes it the only consumer.
     """
     time_dependent = lambda x, t=0.0: 5.0 * float(t) * float(np.asarray(x).reshape(-1)[0])  # noqa: E731
 
-    u_time_dep = _solve(_problem(time_dependent), **solver_kwargs)
-    u_time_indep = _solve(_problem(lambda x, t=0.0: 0.0), **solver_kwargs)
-    assert not np.allclose(u_time_dep, u_time_indep), (
-        "t_val is not reaching the Hamiltonian: a time-dependent potential changed nothing"
-    )
-
-    u_cheap = _solve(_problem(control_cost=1.0), **solver_kwargs)
-    u_costly = _solve(_problem(control_cost=3.0), **solver_kwargs)
-    assert not np.allclose(u_cheap, u_costly), "the 1/lambda foot scaling is not reaching the characteristic trace"
+    u_time_dep = _solve(_problem(time_dependent))
+    u_time_indep = _solve(_problem(lambda x, t=0.0: 0.0))
+    assert not np.allclose(u_time_dep, u_time_indep), "site B is not transporting t_val"
 
 
 def test_clean_solve_actually_advances_the_value_function():
     """`solve_hjb_system` must transport information, not merely return finite arrays.
 
-    A no-op advection -- compute the update, discard it, return U_next unchanged --
-    passes a shape+finite assertion. Pin that the backward solve moves u away from
-    the terminal condition.
+    Catches a solver that returns the terminal condition at every level. It does NOT
+    catch a discarded advection: with the update thrown away, diffusion and boundary
+    enforcement still move u (measured max|u[0]-u[-1]| = 1.08, vs 4.74 pristine), so
+    this assertion still holds. That case is caught by the t_val pins instead, which
+    go dead once the update stops mattering.
     """
     result = _solve(_problem())
 

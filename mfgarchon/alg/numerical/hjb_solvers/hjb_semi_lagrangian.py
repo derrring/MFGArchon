@@ -1033,8 +1033,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         ``U_star[i] = U_next[i]`` -- the value at t^{n+1}, i.e. no update at all for that
         node. That substitution is finite by construction, so the NaN/Inf guard in
         solve_hjb_system could not see it and the solver returned a plausible, silently
-        wrong value function with no machine-readable trace. The nD siblings already
-        surface their per-node failures rather than hiding them.
+        wrong value function with no machine-readable trace. The nD siblings catch no
+        exceptions at all; they do still substitute a stale value on NaN/Inf, but count
+        the affected nodes and escalate to a raise past a threshold, so the failure is
+        at least visible. Making that path fail loud too is tracked separately.
         """
         lam = self._control_cost_lambda()
         Nx = len(U_next)
