@@ -11,7 +11,8 @@ the nodes via the mass-lumped gradient projection and assembled with the protoco
 advection. This is the same primitive the paired HJB Newton advection reads, so
 A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
 (option b, the hand-coded scalar v = -coupling * grad(U)), which could not represent
-alpha* for MAXIMIZE or regularized control costs.
+alpha* for MAXIMIZE or regularized control costs. (Routing them end-to-end is #1528
+Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_minimize_drift`.)
 
 Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
 absorbing ``m = 0`` on Dirichlet faces via symmetric Nitsche (#1138). The Nitsche

@@ -108,6 +108,17 @@ def _annotated_expressions(code: str) -> list[tuple[str, str]]:
 ANNOTATED = [(ln, expr, expected) for ln, code in CONSTRUCTOR_BLOCKS for expr, expected in _annotated_expressions(code)]
 
 
+def test_value_assertions_were_actually_collected():
+    """Guards the premise of the truthfulness test, which is otherwise silently skippable.
+
+    If the literal parser stops matching -- the shape a future regex edit takes --
+    `ANNOTATED` empties, the parametrized test degrades to a skip, and the file goes
+    green having asserted nothing. Same blind spot `test_the_examples_were_actually_found`
+    exists to close, one level down.
+    """
+    assert len(ANNOTATED) >= 9, f"only {len(ANNOTATED)} value assertions collected; the literal parser regressed"
+
+
 @pytest.mark.parametrize(("lineno", "expr", "expected"), ANNOTATED, ids=lambda v: str(v)[:30])
 def test_annotated_example_values_are_truthful(lineno, expr, expected):
     """An example that runs can still teach something false.
@@ -133,11 +144,18 @@ def test_annotated_example_values_are_truthful(lineno, expr, expected):
 
     actual = eval(compile(expr, f"{_SOURCE}:{lineno}", "eval"), namespace)
     want = ast.literal_eval(expected)
-    assert (
-        np.all(np.isclose(np.asarray(actual, dtype=object).astype(float), np.asarray(want, dtype=float)))
-        if (isinstance(want, (int, float)) or (isinstance(want, list) and want and isinstance(want[0], (int, float))))
-        else actual == want
-    ), f"{_SOURCE}:{lineno}: `{expr}` -> {actual!r}, but the comment claims {want!r}"
+    message = f"{_SOURCE}:{lineno}: `{expr}` -> {actual!r}, but the comment claims {want!r}"
+
+    # bool before int, in both directions: `isinstance(True, int)` is True, so a numeric
+    # comparison accepts 1 for a `# True` comment, and True for a `# 1` comment.
+    if isinstance(want, bool) or isinstance(actual, bool):
+        assert actual is want, message
+    elif isinstance(want, (int, float)) or (isinstance(want, list) and want and isinstance(want[0], (int, float))):
+        # Strings must not float-coerce: `np.asarray('2').astype(float)` would pass for `# 2`.
+        assert not isinstance(actual, str), message
+        assert np.all(np.isclose(np.asarray(actual, dtype=float), np.asarray(want, dtype=float), rtol=1e-12)), message
+    else:
+        assert actual == want, message
 
 
 def test_no_positional_constructor_examples_remain():
