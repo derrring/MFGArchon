@@ -899,7 +899,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # Issue #1071 / fail-fast: a missing Hamiltonian must fail loud HERE, before the
         # timestep loop — otherwise the batch path silently zeros H (pure transport of the
-        # terminal data) and the per-point loops' broad except swallows the per-point raise.
+        # terminal data). (The per-point loops used to swallow the resulting per-point raise
+        # as well; since #1635 they propagate it, but the batch path still needs this gate.)
         # MFGProblem construction requires a Hamiltonian, so this only fires on a duck-typed
         # or externally-nulled problem; it must not silently solve the wrong physics.
         if self.problem.hamiltonian_class is None:
@@ -1034,9 +1035,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         node. That substitution is finite by construction, so the NaN/Inf guard in
         solve_hjb_system could not see it and the solver returned a plausible, silently
         wrong value function with no machine-readable trace. The nD siblings catch no
-        exceptions at all; they do still substitute a stale value on NaN/Inf, but count
-        the affected nodes and escalate to a raise past a threshold, so the failure is
-        at least visible. Making that path fail loud too is tracked separately.
+        exceptions at all; they do still substitute a stale value on NaN/Inf, counting the
+        affected nodes and escalating to a raise past a 10% threshold -- though the with-dt
+        sibling logs nothing below it, leaving that path as invisible as this one was.
+        Tracked in #1641.
         """
         lam = self._control_cost_lambda()
         Nx = len(U_next)
