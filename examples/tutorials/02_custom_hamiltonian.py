@@ -11,7 +11,7 @@ What you'll learn:
 
 Mathematical Problem:
     A crowd evacuation problem with congestion:
-    - Hamiltonian: H(x, p, m) = (1/2)|p|^2 + lambda*m*|p|^2 (congestion slows movement)
+    - Hamiltonian: H(x, p, m) = |p|^2 / (2*(1 + lambda*m)) (congestion slows movement)
     - Terminal cost: Distance to exit at x=1
     - Initial density: Uniform distribution (crowd at rest)
 """
@@ -37,9 +37,13 @@ if __name__ == "__main__":
         """
         Custom Hamiltonian for crowd evacuation with congestion.
 
-        H(x, m, p) = (1/2)|p|^2 + lambda*m*|p|^2
+        H(x, m, p) = |p|^2 / (2 * (1 + lambda*m))
 
-        The congestion term lambda*m*|p|^2 makes movement harder in crowded areas.
+        The density sits in the DENOMINATOR, so a denser crowd raises the effective
+        cost of moving: the optimal speed |alpha*| = |p| / (1 + lambda*m) falls as m
+        grows. Putting m in the numerator instead would make crowds speed agents up.
+
+        This is the Legendre transform of L(x, m, alpha) = (1/2)(1 + lambda*m)|alpha|^2.
         """
 
         def __init__(self, congestion_strength: float = 2.0):
@@ -54,6 +58,9 @@ if __name__ == "__main__":
             """
             Evaluate H(x, m, p, t).
 
+            Sum over p's momentum-component axis so H is a scalar per grid point
+            (the solver evaluates H pointwise). |p|^2 = sum_i p_i^2.
+
             Args:
                 x: Spatial position(s)
                 m: Density
@@ -63,29 +70,28 @@ if __name__ == "__main__":
             Returns:
                 Hamiltonian value
             """
-            # Standard LQ term: (1/2)|p|^2
-            standard_cost = 0.5 * p**2
-
-            # Congestion term: lambda*m*|p|^2
-            congestion_cost = self.congestion_strength * m * p**2
-
-            return standard_cost + congestion_cost
+            p_sq = np.sum(np.square(p), axis=-1)
+            return p_sq / (2.0 * (1.0 + self.congestion_strength * m))
 
         def dp(self, x, m, p, t=0.0):
             """
-            Derivative of H w.r.t. momentum: dH/dp.
+            Derivative of H w.r.t. momentum: dH/dp = p / (1 + lambda*m).
 
-            Used to compute optimal control: alpha* = -dH/dp
+            Used to compute optimal control: alpha* = -dH/dp. Its magnitude
+            decreases with m, which is what makes a crowd slow agents down.
             """
-            return p + 2 * self.congestion_strength * m * p
+            # Broadcast the scalar-per-point density m onto p's component axis.
+            m_b = np.reshape(m, np.shape(p)) if np.size(m) == np.size(p) else m
+            return p / (1.0 + self.congestion_strength * m_b)
 
         def dm(self, x, m, p, t=0.0):
             """
-            Derivative of H w.r.t. density: dH/dm.
+            Derivative of H w.r.t. density: dH/dm = -lambda*|p|^2 / (2*(1 + lambda*m)^2).
 
             Appears in the Fokker-Planck equation drift term.
             """
-            return self.congestion_strength * p**2
+            p_sq = np.sum(np.square(p), axis=-1)
+            return -self.congestion_strength * p_sq / (2.0 * (1.0 + self.congestion_strength * m) ** 2)
 
     # ==============================================================================
     # Step 2: Define Problem Components
