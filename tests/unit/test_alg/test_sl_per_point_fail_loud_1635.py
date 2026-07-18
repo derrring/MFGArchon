@@ -244,7 +244,17 @@ def test_clean_solve_actually_advances_the_value_function():
 
 
 def test_both_loops_share_one_owner():
-    """Consolidation pin: a re-fork would reintroduce the divergence this issue is about."""
+    """Pins exactly one `_advect_pointwise` definition and no stale-value substitution.
+
+    Scope, stated precisely because it is narrower than "re-fork protection": this
+    catches a second *named* helper, and any reappearance of `U_star[i] = U_next[i]`
+    in executable code. It does NOT catch an inline, behaviour-identical copy of the
+    loop at a call site -- that leaves one `_advect_pointwise` and raises rather than
+    substituting, so both checks pass. Deliberate: such a copy produces no wrong
+    answer, it only re-creates the conditions for future divergence, and the pins that
+    would catch it (call-site counts, per-solve invocation counts) break on legitimate
+    refactors while a determined re-fork routes around them anyway.
+    """
     import ast
     import inspect
 
