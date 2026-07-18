@@ -229,11 +229,14 @@ if __name__ == "__main__":
 
         # Value function comparison
         ax = axes[1, 1]
-        ax.plot(x, result.U[-1, :], "b-", linewidth=2, label=f"lambda={congestion_strength}")
-        ax.plot(x, result_baseline.U[-1, :], "r--", linewidth=2, label="lambda=0")
+        # u[0] -- the value at t=0. u[-1] is the terminal condition (x-1)^2, which is
+        # model-independent, so plotting it draws the two curves exactly on top of
+        # each other and shows nothing about congestion.
+        ax.plot(x, result.U[0, :], "b-", linewidth=2, label=f"lambda={congestion_strength}")
+        ax.plot(x, result_baseline.U[0, :], "r--", linewidth=2, label="lambda=0")
         ax.set_xlabel("x")
-        ax.set_ylabel("u(T, x)")
-        ax.set_title("Terminal Value Function Comparison")
+        ax.set_ylabel("u(0, x)")
+        ax.set_title("Value Function at t=0")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -265,8 +268,8 @@ if __name__ == "__main__":
     print("  4. Bundle with Model/Conditions and solve")
     print()
     print("Key insight:")
-    print("  Congestion (lambda*m*|p|^2) slows evacuation by making movement")
-    print("  costlier in crowded areas, causing agents to spread out.")
+    print("  Congestion (|p|^2 / (2*(1 + lambda*m))) slows evacuation by making")
+    print("  movement costlier in crowded areas, causing agents to spread out.")
     print()
     print("Next: Tutorial 03 - 2D Geometry")
     print("=" * 70)
