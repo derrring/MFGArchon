@@ -10,6 +10,7 @@ Nothing executed them, so the rot was invisible. This test executes them.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -73,12 +74,70 @@ def test_constructor_docstring_example_runs(lineno, code):
         "BoundaryConditions": BoundaryConditions,
         "BCType": BCType,
     }
-    # Drop bare expression lines whose value is only shown as a comment ("# True").
     body = "\n".join(line for line in code.split("\n") if line.strip())
     try:
         exec(compile(body, f"{_SOURCE}:{lineno}", "exec"), namespace)
     except Exception as exc:  # the whole point is to report which example broke
         pytest.fail(f"{_SOURCE}:{lineno} docstring example failed: {type(exc).__name__}: {exc}\n---\n{body}")
+
+
+def _annotated_expressions(code: str) -> list[tuple[str, str]]:
+    """``>>> expr  # <literal>`` pairs, where the comment states the expected value.
+
+    Only comments that parse as a Python literal are checked; prose comments
+    ("# Get coordinate matrices") carry no assertion.
+    """
+    pairs = []
+    for line in code.split("\n"):
+        if "#" not in line or line.lstrip().startswith(("#", "...")):
+            continue
+        expr, _, comment = line.partition("#")
+        expr, comment = expr.strip(), comment.strip()
+        if not expr or "=" in expr.replace("==", "") or expr.endswith((",", "(")):
+            continue
+        # "2 (inferred from len(bounds))" -> "2"; "True" -> "True"
+        literal = re.split(r"\(|--|\s-\s|\bif\b|,\s*but\b", comment)[0].strip().rstrip(".")
+        try:
+            ast.literal_eval(literal)
+        except (ValueError, SyntaxError):
+            continue
+        pairs.append((expr, literal))
+    return pairs
+
+
+ANNOTATED = [(ln, expr, expected) for ln, code in CONSTRUCTOR_BLOCKS for expr, expected in _annotated_expressions(code)]
+
+
+@pytest.mark.parametrize(("lineno", "expr", "expected"), ANNOTATED, ids=lambda v: str(v)[:30])
+def test_annotated_example_values_are_truthful(lineno, expr, expected):
+    """An example that runs can still teach something false.
+
+    The repair of these docstrings initially added `no_flux_bc` to three examples
+    whose prose said "periodic", so they executed cleanly while demonstrating the
+    opposite of what they claimed. Running is not enough; where a comment states a
+    value, that value must be what the expression returns.
+    """
+    namespace = {
+        "np": np,
+        "TensorProductGrid": TensorProductGrid,
+        "no_flux_bc": no_flux_bc,
+        "dirichlet_bc": dirichlet_bc,
+        "neumann_bc": neumann_bc,
+        "periodic_bc": periodic_bc,
+        "BoundaryConditions": BoundaryConditions,
+        "BCType": BCType,
+    }
+    block = dict(CONSTRUCTOR_BLOCKS)[lineno]
+    setup = "\n".join(line for line in block.split("\n") if line.strip() and not line.strip().startswith(expr))
+    exec(compile(setup, f"{_SOURCE}:{lineno}", "exec"), namespace)
+
+    actual = eval(compile(expr, f"{_SOURCE}:{lineno}", "eval"), namespace)
+    want = ast.literal_eval(expected)
+    assert (
+        np.all(np.isclose(np.asarray(actual, dtype=object).astype(float), np.asarray(want, dtype=float)))
+        if (isinstance(want, (int, float)) or (isinstance(want, list) and want and isinstance(want[0], (int, float))))
+        else actual == want
+    ), f"{_SOURCE}:{lineno}: `{expr}` -> {actual!r}, but the comment claims {want!r}"
 
 
 def test_no_positional_constructor_examples_remain():

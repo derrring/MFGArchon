@@ -539,7 +539,7 @@ class TensorProductGrid(
 
         Example:
             >>> grid = TensorProductGrid(bounds=[(0,1), (0,1)], Nx=[10, 10], boundary_conditions=no_flux_bc(dimension=2))
-            >>> fine_grid = grid.refine(2)  # Now 21×21 intervals (22×22 points)
+            >>> fine_grid = grid.refine(2)  # Now 20×20 intervals (21×21 points)
         """
         if isinstance(factor, int):
             factors = [factor] * self._dimension
@@ -1396,9 +1396,8 @@ class TensorProductGrid(
 
         Example:
             >>> # Assuming periodic BC
-            >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=no_flux_bc(dimension=1))
-            >>> periods = grid.get_periods()
-            >>> # Returns {0: 2*pi} if periodic in x
+            >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=periodic_bc(dimension=1))
+            >>> grid.get_periods()[0]  # 6.283185307179586
         """
         periodic_dims = self.periodic_dimensions
         periods = {}
@@ -1424,9 +1423,8 @@ class TensorProductGrid(
 
         Example:
             >>> # Assuming 1D periodic domain [0, 2π)
-            >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=no_flux_bc(dimension=1))
-            >>> x_wrapped = grid.wrap_coordinates(np.array([3*np.pi]))
-            >>> # Returns [π] if periodic
+            >>> grid = TensorProductGrid(bounds=[(0, 2*np.pi)], Nx=[100], boundary_conditions=periodic_bc(dimension=1))
+            >>> float(grid.wrap_coordinates(np.array([3 * np.pi]))[0])  # 3.141592653589793
         """
         # Handle single point
         single_point = points.ndim == 1
@@ -1465,11 +1463,9 @@ class TensorProductGrid(
 
         Example:
             >>> # 1D periodic [0, 1)
-            >>> grid = TensorProductGrid(bounds=[(0, 1)], Nx=[100], boundary_conditions=no_flux_bc(dimension=1))
-            >>> x1 = np.array([0.1])
-            >>> x2 = np.array([0.9])
-            >>> dist = grid.compute_periodic_distance(x1, x2)
-            >>> # Returns 0.2 (wrapped distance) if periodic, 0.8 otherwise
+            >>> grid = TensorProductGrid(bounds=[(0, 1)], Nx=[100], boundary_conditions=periodic_bc(dimension=1))
+            >>> # Wrapped distance: 0.2 under periodic BC, 0.8 under no-flux.
+            >>> float(grid.compute_periodic_distance(np.array([0.1]), np.array([0.9])))  # 0.2
         """
         # Handle single point
         single_point = points1.ndim == 1
