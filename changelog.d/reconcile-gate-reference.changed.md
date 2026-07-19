@@ -1,0 +1,1 @@
+- Reconciled `CLAUDE.md`'s PR-granularity note with the gate relocation: it still described red-main as being prevented by "a full-suite PR gate", which stopped being true when the full suite moved to `scripts/local_ci.sh`.
