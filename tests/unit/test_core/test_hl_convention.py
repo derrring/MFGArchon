@@ -11,26 +11,21 @@ asserted in its conjugate form, ``sup_alpha { p.alpha - L } == H``.
 Which tests carry that pin, precisely -- a conjugate round trip only
 discriminates when the two sides have INDEPENDENT sources for V and f:
 
-- ``TestSeparableRoundTrip.test_separable_fork_gap_is_exactly_two_v_plus_f``
-  (3 tests, one (V, f) point, one per control cost). Both sides come from the
-  same ``SeparableLagrangian``, so this cannot be a round-trip assertion; it
-  instead quantifies the Issue #1645 fork as an exact 2(V+f) gap, constant in p.
-  This is the load-bearing pin on the Separable side.
+- ``TestSeparableRoundTrip.test_conjugate_of_lagrangian_recovers_hamiltonian``
+  -- its 9 ``V + f != 0`` rows (3 control costs x 3 non-zero (V, f) cells). These
+  carried strict xfail until Issue #1645 (B2) flipped the sign in
+  ``SeparableLagrangian.__call__``; they are now the load-bearing pin on the
+  Separable side. Its 3 ``V0_f0`` rows are non-discriminating by construction,
+  the disputed term being identically zero there.
 - ``TestCongestionRoundTrip`` (12 tests = 3 costs x 4 (V, f) cells). The L side
   is an analytic closed form written out in this module, NOT
   ``H.legendre_transform()``, so V and f are independently sourced and a sign
   error in ``CongestionHamiltonian`` breaks the identity by 2(V+f).
 
-``test_conjugate_of_lagrangian_recovers_hamiltonian`` is NOT part of that pin:
-its V != 0 rows are strict xfail (Issue #1645) and its V0_f0 rows are
-non-discriminating by construction, the disputed term being identically zero.
-It is retained to hold the xfail markers, which flip to XPASS and fail the suite
-when B2 lands.
-
 What these tests catch:
 
-- Adding V and f to BOTH H and L (the ``SeparableLagrangian`` fork): breaks the
-  identity by exactly 2(V+f), constant in p. Recorded as strict xfail, Issue #1645.
+- Adding V and f to BOTH H and L (the pre-B2 ``SeparableLagrangian`` fork):
+  breaks the identity by exactly 2(V+f), constant in p (Issue #1645).
 - A (V, f) sign error in ``CongestionHamiltonian.__call__``.
 - A conjugate/optimization box that ignores the admissible control set: for
   ``L1ControlCost(lambda_=0.5)`` at p=5 an unrestricted sup returns 225.0
@@ -197,29 +192,6 @@ class TestSeparableRoundTrip:
             got = _conjugate(L, p, bounds=box)
             assert got == pytest.approx(expected, abs=1e-6), (
                 f"{cost_name} p={p}: conjugate of L gave {got}, H gave {expected}"
-            )
-
-    @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))
-    def test_separable_fork_gap_is_closed(self, cost_name):
-        """The Issue #1645 fork is closed: the self-conjugacy gap is ZERO, not 2(V+f).
-
-        This is the shape that catches a re-fork. Reverting `__call__` to
-        ``L_ctrl + V + f`` reopens a gap of exactly ``2(V+f)``, constant in p, and
-        every row here fails. The p-sweep matters independently: a p-DEPENDENT gap
-        would mean the control term is wrong too, not just the (V, f) sign, so a
-        single-point assertion could not tell those apart.
-        """
-        cost = CONTROL_COSTS[cost_name]()
-        L = SeparableLagrangian(control_cost=cost, potential=_potential, coupling=_coupling)
-        H = L.as_hamiltonian()
-        box = _search_box(cost)
-        reopened_gap = 2.0 * (V_NONZERO + F_SLOPE * M_VALUE)
-
-        gaps = [float(H(X_POINT, M_VALUE, np.array([p]))) - _conjugate(L, p, bounds=box) for p in P_SWEEP]
-        for p, gap in zip(P_SWEEP, gaps, strict=True):
-            assert gap == pytest.approx(0.0, abs=1e-5), (
-                f"{cost_name} p={p}: self-conjugacy gap {gap} != 0; a gap of "
-                f"{reopened_gap} means the Issue #1645 sign was reverted"
             )
 
     @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))
