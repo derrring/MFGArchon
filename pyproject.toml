@@ -126,6 +126,7 @@ all = [
     # Profiling
     "memory-profiler",
     "line-profiler",
+    "cvxpy>=1.4",
 ]
 
 # Development tools (not user-facing)
@@ -146,6 +147,14 @@ dev = [
 ]
 
 # Documentation (not user-facing)
+# Convex-optimisation solvers. `joint_socp.py` raises ImportError without cvxpy
+# (joint_socp.py:573). nightly.yml referenced a `numerical` extra for 3.5 months
+# while it did not exist, so the SOCP gate failed on ImportError every night and
+# burned one of ten --maxfail slots (Issue #1658).
+numerical = [
+    "cvxpy>=1.4",
+]
+
 docs = [
     "sphinx>=7.0",
     "sphinx-rtd-theme",
