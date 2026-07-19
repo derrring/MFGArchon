@@ -873,6 +873,76 @@ class TestControlCostRegularize:
         assert smooth.is_smooth()
 
 
+class TestMoreauYosidaPenaltyAggregation:
+    """The Moreau penalty must be counted once, not once per component.
+
+    H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps) is a functional of the whole
+    momentum vector. Base control costs disagree on whether evaluate() returns one
+    value per component (L1, bounded) or a total already summed over axis=-1
+    (quadratic), so adding a summed penalty to a per-component base term multiplied
+    the penalty by the dimension: exact at d=1, wrong for every d>1. Every other
+    test in this class is 1-D, where the defect is invisible.
+    """
+
+    EPSILON = 0.1
+
+    @staticmethod
+    def _bases():
+        return {
+            "l1": L1ControlCost(lambda_=0.5),
+            "bounded": BoundedControlCost(lambda_=1.0, max_control=1.0),
+        }
+
+    @pytest.mark.parametrize("dimension", [1, 2, 3])
+    # 0.2 sits inside the prox region (zero penalty), the rest span the
+    # soft-threshold and saturated branches where the penalty is nonzero.
+    @pytest.mark.parametrize("p_magnitude", [0.2, 0.52, 0.8, 2.0])
+    @pytest.mark.parametrize("base_id", ["l1", "bounded"])
+    def test_envelope_equals_base_total_plus_one_penalty(self, base_id, p_magnitude, dimension):
+        base = self._bases()[base_id]
+        smooth = base.regularize(self.EPSILON)
+        p = np.full(dimension, p_magnitude)
+        q = smooth._prox_h(p)
+
+        expected = np.sum(base.evaluate(q)) + np.sum((p - q) ** 2) / (2 * self.EPSILON)
+        assert float(np.sum(smooth.evaluate(p))) == pytest.approx(expected, rel=0.0, abs=1e-15)
+
+    @pytest.mark.parametrize("p_magnitude", [0.52, 0.8, 2.0])
+    @pytest.mark.parametrize("base_id", ["l1", "bounded"])
+    def test_envelope_is_additive_over_components(self, base_id, p_magnitude):
+        """A constant momentum vector must cost exactly d times the 1-D value.
+
+        Reference-free: H_eps is separable here, so H_eps(full(d, v)) = d*H_eps([v])
+        with no appeal to prox. A penalty counted per-component gives d^2 instead of
+        d, so this separates the two aggregations without recomputing either.
+        """
+        smooth = self._bases()[base_id].regularize(self.EPSILON)
+        one_d = float(np.sum(smooth.evaluate(np.full(1, p_magnitude))))
+
+        for dimension in (2, 3, 5):
+            got = float(np.sum(smooth.evaluate(np.full(dimension, p_magnitude))))
+            assert got == pytest.approx(dimension * one_d, rel=1e-14)
+
+    @pytest.mark.parametrize("base_id", ["l1", "bounded"])
+    def test_batch_evaluate_returns_one_value_per_point(self, base_id):
+        """Batch input (N, d) must reduce over components, as the callers assume.
+
+        SeparableHamiltonian.__call__ sums evaluate()'s result only for
+        single-point input; for batch it adds V and f(m) of shape (N,) directly.
+        """
+        base = self._bases()[base_id]
+        smooth = base.regularize(self.EPSILON)
+        p_batch = np.array([[0.8, 0.8], [1.2, 0.3]])
+        q_batch = smooth._prox_h(p_batch)
+
+        values = smooth.evaluate(p_batch)
+        expected = np.sum(base.evaluate(q_batch), axis=-1) + np.sum((p_batch - q_batch) ** 2, axis=-1) / (
+            2 * self.EPSILON
+        )
+        assert values.shape == (2,)
+        np.testing.assert_allclose(values, expected, rtol=0.0, atol=1e-15)
+
+
 class TestControlCostLambda:
     """Tests for lambda_ attribute and deprecation."""
 
