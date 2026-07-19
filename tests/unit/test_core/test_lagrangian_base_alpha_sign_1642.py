@@ -150,6 +150,16 @@ class TestOptimalControlSign:
         """Asymmetric L: alpha* = -(p - 0.3), not -(p + 0.3) and not +(p - 0.3).
 
         Pins that the sign is applied to the maximizer rather than to p.
+
+        CONVENTION-PINNING, NOT PHYSICS (Issue #1652). The library pairs
+        H = sup{p.a - L} with alpha* = -sign*dH/dp, which are jointly correct
+        only when L is even in alpha. This L is not, so the value asserted here
+        is what the library's convention produces, not the agent's true optimal
+        control: at p=2 the true minimizer of {p.a + L(a)} is -2.3 = -(p + 0.3)
+        -- the very expression this docstring excludes -- attaining -2.645
+        against -2.465. Every shipped control cost is even, so no in-repo result
+        depends on the difference. When #1652 resolves the convention, this
+        assertion inverts.
         """
         L = AsymmetricL(sense=OptimizationSense.MINIMIZE)
         for p_val in (2.0, -1.5, 0.0):
