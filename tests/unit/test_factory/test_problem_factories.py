@@ -259,5 +259,61 @@ def test_problem_type_detection():
     assert problem.components.problem_type == "stochastic"
 
 
+def _variational_components():
+    """MFGComponents for the variational-branch tests (Issue #1642, capability D1)."""
+    return MFGComponents(
+        hamiltonian=_default_hamiltonian(),
+        u_terminal=lambda x: x**2,
+        m_initial=lambda x: np.exp(-(x**2)),
+        problem_type="variational",
+    )
+
+
+def test_variational_legacy_branch_raises_actionable_error(simple_domain):
+    """Legacy variational branch must fail with a diagnostic, not ModuleNotFoundError.
+
+    Before #1642 (D1) this branch imported ``mfgarchon.solvers.variational``, a module
+    that has never existed, so a documented public call raised ModuleNotFoundError with
+    no guidance. Routing it to the real
+    ``mfgarchon.alg.optimization.variational_problem.VariationalMFGProblem`` is not a
+    fix either: that class takes ``(xmin, xmax, Nx, ...)`` plus VariationalMFGComponents,
+    so ``geometry`` would fall into ``**kwargs`` and the domain would silently default to
+    [0, 1] with Nx=51. The branch therefore refuses.
+
+    Catches: (a) a regression to the ghost import (ModuleNotFoundError is not a subclass
+    of NotImplementedError, so the raises-check fails); (b) a "fix" that silently returns
+    a problem on the wrong domain (no exception at all).
+    """
+    with (
+        pytest.warns(DeprecationWarning, match="deprecated"),
+        pytest.raises(NotImplementedError) as excinfo,
+    ):
+        create_mfg_problem(
+            "variational",
+            _variational_components(),
+            geometry=simple_domain,
+            use_unified=False,
+        )
+
+    message = str(excinfo.value)
+    # The diagnostic must name where the real class lives and which issue blocks the stack.
+    assert "mfgarchon.alg.optimization.variational_problem" in message
+    assert "VariationalMFGComponents" in message
+    assert "#1342" in message
+    assert "use_unified=True" in message
+
+
+def test_variational_unified_path_still_builds_a_problem(simple_domain):
+    """Only the legacy specialized branch is narrowed; the unified path is untouched.
+
+    Catches over-removal: narrowing the whole "variational" problem_type instead of the
+    dead ``use_unified=False`` branch would break this.
+    """
+    problem = create_mfg_problem("variational", _variational_components(), geometry=simple_domain)
+
+    assert isinstance(problem, MFGProblem)
+    assert problem.components.problem_type == "variational"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

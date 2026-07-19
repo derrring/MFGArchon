@@ -28,7 +28,9 @@ Functional Derivatives:
 Approximation Methods:
     1. Finite Differences: δU/δm ≈ (U[m + εδ_y] - U[m]) / ε
     2. Particle Approximation: m ≈ (1/N)Σᵢ δ_{yᵢ}, represent m by particles
-    3. Automatic Differentiation: Use JAX/PyTorch for exact gradients
+
+    An automatic-differentiation route (JAX/PyTorch) is not implemented here; see
+    Issue #1642 (capability E2) if one becomes necessary.
 
 References:
     - Cardaliaguet et al. (2019): The Master Equation and Convergence Problem
@@ -38,15 +40,12 @@ References:
 
 from __future__ import annotations
 
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
-
-from .numerical.autodiff import AutoDiffBackend
 
 # Type definitions
 MeasureDensity = NDArray  # Probability density on spatial domain
@@ -66,43 +65,10 @@ class FunctionalDerivativeConfig:
     num_particles: int = 50  # Number of particles to represent measure
     particle_method: str = "uniform"  # "uniform" | "adaptive" | "quasi_random"
 
-    # Automatic differentiation (new enum-based API)
-    backend: AutoDiffBackend = AutoDiffBackend.NUMPY  # Autodiff backend selection
-
-    # DEPRECATED: Use backend parameter instead
-    use_jax: bool | None = None  # DEPRECATED - Use backend=AutoDiffBackend.JAX
-    use_pytorch: bool | None = None  # DEPRECATED - Use backend=AutoDiffBackend.PYTORCH
-
     # Numerical stability
     regularization: float = 1e-10  # Small regularization to avoid division by zero
     clip_gradients: bool = True  # Clip large gradients
     max_gradient: float = 1e6  # Maximum gradient value
-
-    def __post_init__(self) -> None:
-        """Handle deprecated boolean parameters and validate configuration."""
-        # Handle deprecated use_jax parameter
-        if self.use_jax is not None:
-            warnings.warn(
-                "Parameter 'use_jax' is deprecated, use 'backend=AutoDiffBackend.JAX' instead",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            if self.use_jax and self.backend == AutoDiffBackend.NUMPY:
-                self.backend = AutoDiffBackend.JAX
-
-        # Handle deprecated use_pytorch parameter
-        if self.use_pytorch is not None:
-            warnings.warn(
-                "Parameter 'use_pytorch' is deprecated, use 'backend=AutoDiffBackend.PYTORCH' instead",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            if self.use_pytorch and self.backend == AutoDiffBackend.NUMPY:
-                self.backend = AutoDiffBackend.PYTORCH
-
-        # Validate: can't have both JAX and PyTorch enabled via deprecated params
-        if self.use_jax and self.use_pytorch:
-            raise ValueError("Cannot use both JAX and PyTorch backends simultaneously")
 
 
 class FunctionalDerivative(ABC):

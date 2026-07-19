@@ -8,7 +8,9 @@ Extensions provide optional problem formulations beyond the core MFGProblem:
 Import from here for extended functionality:
     from mfgarchon.extensions import NetworkMFGProblem, MultiPopulationMFGProblem
 
-Note: Variational MFG has been moved to mfgarchon.solvers.variational
+Note: Variational MFG lives in mfgarchon.alg.optimization.variational_problem
+(VariationalMFGProblem, VariationalMFGComponents). Its solver stack is
+experimental and blocked by Issue #1342.
 """
 
 from .multi_population import MultiPopulationMFGProblem, MultiPopulationMFGProtocol
