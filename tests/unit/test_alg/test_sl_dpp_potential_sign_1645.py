@@ -58,11 +58,16 @@ def test_the_dpp_path_is_actually_exercised():
 def test_dpp_error_does_not_grow_with_the_potential(v_amp):
     """The load-bearing assertion: the error must be INDEPENDENT of the potential amplitude.
 
-    Pre-fix it was ``V + 0.0054`` -- so this fails at V=1, 2 and 5 and passes at V=0, which is
-    exactly the discrimination a single-amplitude test would miss.
+    Pre-fix the error was ``V + O(h)`` -- so this fails at V=1, 2 and 5 and passes at V=0, which
+    is exactly the discrimination a single-amplitude test would miss.
+
+    The grid is deliberately COARSE. Because the defect is mesh-INDEPENDENT, refining buys no
+    detection power: measured on the pristine tree the V=2 minus V=0 spread is 2.0000 at
+    nx=41/nt=20, at 61/30 and at 81/40 alike, while the cost goes 2.6s -> 6.1s -> 11.1s. Paying
+    for a finer grid here would slow the PR gate without making the test any sharper.
     """
-    sl = _solve(HJBSemiLagrangianSolver, v_amp, nx=81, nt=40)
-    fdm = _solve(HJBFDMSolver, v_amp, nx=81, nt=40)
+    sl = _solve(HJBSemiLagrangianSolver, v_amp, nx=41, nt=20)
+    fdm = _solve(HJBFDMSolver, v_amp, nx=41, nt=20)
     err = float(np.abs(sl - fdm).max())
 
     assert err < 0.05, (
@@ -71,10 +76,14 @@ def test_dpp_error_does_not_grow_with_the_potential(v_amp):
     )
 
 
+@pytest.mark.slow
 def test_dpp_error_converges_under_refinement():
     """Convergence, not just smallness: the pre-fix error PLATEAUED (ratios 1.0018 / 1.0007).
 
     A tolerance at one resolution cannot distinguish a wrong limit from a merely-small error.
+
+    Marked ``slow`` -- it needs genuinely fine grids to make a convergence statement, which the
+    detection tests above do not. The PR gate keeps the discrimination; nightly keeps the rate.
     """
     errors = []
     for nx, nt in ((81, 40), (161, 80)):
