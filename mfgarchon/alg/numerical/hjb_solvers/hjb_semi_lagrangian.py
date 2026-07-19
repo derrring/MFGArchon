@@ -1929,27 +1929,37 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_star = np.zeros(Nx)
 
             # Detect special structure for fast paths
-            from mfgarchon.core.hamiltonian import (
-                BoundedControlCost,
-                L1ControlCost,
-                QuadraticControlCost,
-                SeparableLagrangian,
-            )
+            from mfgarchon.core.hamiltonian import L1ControlCost, SeparableLagrangian
 
+            # The admissible set A is READ from its single owner,
+            # ControlCostBase.effective_domain() (Issue #1642, B3) -- it is never
+            # re-derived here. This previously carried its own ladder holding a
+            # bang-bang interval literal for L1 and reading the max-control
+            # attribute off Bounded directly, i.e. a second owner of A that could
+            # drift from the first and that a regularized cost silently defeated.
+            #
+            # What remains local is only QUADRATURE -- how densely to sample A --
+            # which is a genuine structural distinction, not a duplicated
+            # quantity: a piecewise-linear L_ctrl is optimized at a vertex of A
+            # or at its kink, a quadratic one needs interior samples. Narrowing
+            # that last isinstance to a control-cost capability is Issue #1651.
             fast_candidates = None
             if isinstance(L_class, SeparableLagrangian):
                 cc = L_class.control_cost
-                if isinstance(cc, L1ControlCost):
-                    # Bang-bang: compare alpha in {-1, 0, 1}
-                    fast_candidates = np.array([-1.0, 0.0, 1.0])
-                elif isinstance(cc, BoundedControlCost):
-                    # Sample endpoints + zero + a few interior points
-                    a_max = cc.max_control
-                    fast_candidates = np.linspace(-a_max, a_max, 11)
-                elif isinstance(cc, QuadraticControlCost):
-                    # Quadratic has closed-form: alpha* = -grad_u / lambda
-                    # DPP reduces to H-based SL. Use grad_u path for efficiency.
-                    fast_candidates = None  # fall through to scalar optimization
+                domain = cc.effective_domain()
+                if domain is None:
+                    # A = R^d: no box to sample. QuadraticControlCost lands here
+                    # and has the closed form alpha* = -grad_u/lambda anyway, so
+                    # fall through to the scalar optimization path.
+                    fast_candidates = None
+                elif isinstance(cc, L1ControlCost):
+                    # Bang-bang: L_ctrl is piecewise linear, so the optimum sits
+                    # at an endpoint of A or at the kink alpha = 0.
+                    fast_candidates = np.array([domain[0], 0.0, domain[1]])
+                else:
+                    # Quadratic-on-A costs (BoundedControlCost, and its
+                    # Moreau-Yosida envelope): sample endpoints + interior.
+                    fast_candidates = np.linspace(domain[0], domain[1], 11)
 
             for i in range(Nx):
                 x_i = self.x_grid[i]
