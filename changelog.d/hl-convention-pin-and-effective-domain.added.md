@@ -12,4 +12,4 @@ unwrapped cost, and wrapped costs do not reach the DPP path (`_use_dpp` requires
 
 The `(V, f)` sign convention between H and L (`L = L_ctrl - V - f`) is documented with its
 derivation on `MFGOperatorBase` and pinned by `tests/unit/test_core/test_hl_convention.py`;
-the `SeparableLagrangian` rows are strict-xfail pending Issue #1645.
+the `SeparableLagrangian` rows were strict-xfail pending Issue #1645, which landed in the same release and turned them green.

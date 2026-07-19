@@ -780,11 +780,10 @@ class MFGOperatorBase(ABC):
     holds if and only if W = -(V + f). Adding V and f to BOTH H and L breaks
     conjugacy by exactly 2(V + f), constant in p.
 
-    ``canonical_cs`` (``hjb_semi_lagrangian.py``) and the ``Dual*`` pair follow
-    this convention. ``SeparableLagrangian.__call__`` does NOT -- it returns
-    L_ctrl + V + f and is not self-conjugate against its own
-    ``evaluate_hamiltonian``. That fork is tracked as Issue #1645 and recorded
-    as strict xfails in ``tests/unit/test_core/test_hl_convention.py``.
+    ``canonical_cs`` (``hjb_semi_lagrangian.py``), the ``Dual*`` pair, and
+    ``SeparableLagrangian.__call__`` all follow this convention. The last of
+    those did not until Issue #1645 (B2): it returned L_ctrl + V + f and was not
+    self-conjugate against its own ``evaluate_hamiltonian``, by exactly 2(V+f).
 
     Where this convention is actually pinned, named precisely, because a
     conjugate round trip only discriminates when the two sides source V and f
@@ -792,16 +791,18 @@ class MFGOperatorBase(ABC):
     yields H** == H for every convex H whatever the signs are, which asserts
     convexity and not a convention:
 
-    - ``TestSeparableRoundTrip.test_separable_fork_gap_is_exactly_two_v_plus_f``
-      -- 3 tests at one (V, f) point, one per control cost. Quantifies the
-      Issue #1645 fork as an exact 2(V+f) gap, constant in p.
+    - ``TestSeparableRoundTrip.test_conjugate_of_lagrangian_recovers_hamiltonian``
+      -- its 9 V + f != 0 rows (3 control costs x 3 non-zero (V, f) cells). These
+      carried strict xfail until Issue #1645 (B2) closed the fork; they are now
+      the primary discriminating pin. Its 3 V0_f0 rows are non-discriminating,
+      the disputed term being identically zero there.
     - ``TestCongestionRoundTrip`` -- 12 tests, 3 control costs x 4 (V, f) cells,
       conjugating an analytic Lagrangian written out in the test module against
       ``CongestionHamiltonian``.
-
-    ``test_conjugate_of_lagrangian_recovers_hamiltonian`` is not part of that
-    pin: its V != 0 rows are strict xfail and its V0_f0 rows are
-    non-discriminating, the disputed term being identically zero there.
+    - ``tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py`` -- the numerical
+      end of the same pin: on the semi-Lagrangian DPP path the pre-B2 error
+      against HJB-FDM was V + O(h), mesh-independent and linear in the potential
+      amplitude.
 
     Note on the alpha sign. This class documents H = sup_alpha { p . alpha - L },
     while ``optimal_control`` returns the drift alpha* = -dH/dp (MINIMIZE). The
@@ -1837,7 +1838,11 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(x, alpha, m, t) = L_control(alpha) + V(x, t) + f(m).
+    """Separable Lagrangian: L(x, alpha, m, t) = L_control(alpha) - V(x, t) - f(m).
+
+    The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
+    class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).
+    See the convention block on ``MFGOperatorBase`` for the derivation.
 
     Mirrors SeparableHamiltonian. Uses ControlCostBase for the control term,
     providing closed-form optimal_control, evaluate_hamiltonian, and proximal.
@@ -1867,11 +1872,20 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
 
     def __call__(self, x, alpha, m, t=0.0):
-        """L = L_control(alpha) + V(x, t) + f(m)."""
+        """L = L_control(alpha) - V(x, t) - f(m).
+
+        The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
+        H = sup_alpha { p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
+        because every shipped L_ctrl is even in alpha -- Issue #1652), so if L = L_ctrl + W then
+        H = H_ctrl - W; the repo's HJB is
+        -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
+        carrying +f), which forces W = -(V + f). Carrying +V+f on both sides made this class
+        non-self-conjugate against its own evaluate_hamiltonian by exactly 2(V+f).
+        """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = float(self._potential(x, t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
-        return L_ctrl + V + f_m
+        return L_ctrl - V - f_m
 
     def optimal_control(self, x, m, p, t=0.0):
         """Delegates to control_cost.optimal_control(p). Analytic."""
