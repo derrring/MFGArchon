@@ -370,6 +370,20 @@ class TestFallbackBoxTruncationIsLoud:
         with pytest.raises(ValueError, match=r"fallback box"):
             L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, -100.0]), T)
 
+    def test_nd_partial_truncation_raises(self):
+        """One component truncated, one interior -- the case that discriminates any from all.
+
+        test_nd_branch_also_raises drives both components to the same bound, so it passes
+        identically whether the guard quantifies with np.any or np.all. A partially
+        truncated result is still a truncated result: the returned vector is not the argmax,
+        so it must not be handed back silently. With lambda=0.01 the unconstrained maximizer
+        is (10000.0, 1.0) -- component 0 is pinned to the fallback edge while component 1 sits
+        interior at 1.0.
+        """
+        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"fallback box"):
+            L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, 0.01]), T)
+
     def test_proximal_raises_on_the_same_hazard(self):
         """Same fallback box, same truncation, same owner (_resolve_search_bounds)."""
         L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
