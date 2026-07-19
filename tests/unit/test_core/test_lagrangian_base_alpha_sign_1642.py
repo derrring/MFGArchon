@@ -77,14 +77,14 @@ class AsymmetricL(LagrangianBase):
         return 0.5 * (p - cls.OFFSET) ** 2
 
     @classmethod
-    def conjugate_argmax(cls, p: float) -> float:
+    def analytic_argmax(cls, p: float) -> float:
         return p - cls.OFFSET
 
 
 class TestOptimalControlSign:
     """alpha* = -sign * dH/dp, matching HamiltonianBase and SeparableLagrangian.
 
-    Reverting ``optimal_control`` to ``return self._conjugate_argmax(...)`` flips
+    Reverting ``optimal_control`` to ``return self.conjugate_argmax(...)`` flips
     every MINIMIZE row here.
     """
 
@@ -99,7 +99,7 @@ class TestOptimalControlSign:
         """MAXIMIZE: alpha* = +p/lambda -- unchanged by #1642.
 
         Pins that the fix is sense-aware rather than an unconditional negation:
-        a ``return -self._conjugate_argmax(...)`` would break this row.
+        a ``return -self.conjugate_argmax(...)`` would break this row.
         """
         L = PlainQuadraticL(2.0, sense=OptimizationSense.MAXIMIZE)
         np.testing.assert_allclose(L.optimal_control(X, M, p, T), [p[0] / 2.0], atol=1e-6)
@@ -155,7 +155,7 @@ class TestOptimalControlSign:
         for p_val in (2.0, -1.5, 0.0):
             np.testing.assert_allclose(
                 L.optimal_control(X, M, np.array([p_val]), T),
-                [-AsymmetricL.conjugate_argmax(p_val)],
+                [-AsymmetricL.analytic_argmax(p_val)],
                 atol=1e-6,
             )
 
@@ -191,7 +191,7 @@ class TestEvaluateHamiltonianValue:
     """H = sup_alpha {p.alpha - L} = L*(p), independent of OptimizationSense (#1185).
 
     Reverting ``evaluate_hamiltonian`` to evaluate at ``self.optimal_control(...)``
-    instead of ``self._conjugate_argmax(...)`` flips every MINIMIZE row here (and
+    instead of ``self.conjugate_argmax(...)`` flips every MINIMIZE row here (and
     produces a value that is neither L*(p) nor L*(-p) for asymmetric L).
     """
 
@@ -268,3 +268,142 @@ class TestSitesAreIndependentlyPinned:
             dH_dp = -L._sign * alpha_star
             reconstructed = float(np.sum(np.atleast_1d(p) * dH_dp)) - float(L(X, dH_dp, M, T))
             np.testing.assert_allclose(reconstructed, L.evaluate_hamiltonian(X, M, p, T), atol=1e-9)
+
+
+class AnalyticUnboundedL(LagrangianBase):
+    """L(alpha) = 0.5|alpha|^2 on A = R^d, supplying the closed-form maximizer.
+
+    Exactly the shape no in-repo subclass has: an analytic override plus
+    ``control_bounds() -> None``. SeparableLagrangian overrides every consumer
+    and DualLagrangian overrides none, so without this class the public
+    extension point has no caller and a regression on it is invisible to CI.
+
+    Closed form: argmax_alpha {p.alpha - 0.5|alpha|^2} = p, so L*(p) = 0.5|p|^2,
+    which is unbounded -- p=100 puts the maximizer far outside the (-10, 10)
+    fallback box that the numerical default would otherwise silently truncate.
+    """
+
+    def __call__(self, x, alpha, m, t=0.0):
+        return float(0.5 * np.sum(np.atleast_1d(alpha) ** 2))
+
+    def conjugate_argmax(self, x, m, p, t=0.0):
+        return np.atleast_1d(p).astype(float)
+
+    def control_bounds(self):
+        return None
+
+
+class TestAnalyticOverrideReachesBothConsumers:
+    """conjugate_argmax() is THE extension point: overriding it must reach
+    optimal_control() AND evaluate_hamiltonian().
+
+    Routing evaluate_hamiltonian() through the private maximizer while
+    optimal_control() advertised itself as the override point sent
+    analytic subclasses through the (-10, 10) numerical fallback: at p=100 it
+    returned 949.999 for an exact 5000.0 (81% low), with no warning.
+    """
+
+    # p=25 and p=100 put the true maximizer outside (-10, 10); p=5 stays inside,
+    # so it passes either way and cannot discriminate -- it is the control row.
+    @pytest.mark.parametrize("p_val", [5.0, 25.0, 100.0])
+    def test_evaluate_hamiltonian_uses_the_analytic_maximizer(self, p_val):
+        """H(p) = 0.5 p^2 exactly, not the fallback-truncated value."""
+        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
+        np.testing.assert_allclose(got, 0.5 * p_val**2, rtol=1e-12)
+
+    @pytest.mark.parametrize("p_val", [5.0, 25.0, 100.0])
+    def test_optimal_control_uses_the_analytic_maximizer(self, p_val):
+        """alpha* = -sign * argmax = -p under MINIMIZE, exact at every magnitude."""
+        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        np.testing.assert_allclose(L.optimal_control(X, M, np.array([p_val]), T), [-p_val], rtol=1e-12)
+
+    def test_both_consumers_read_one_source(self):
+        """Byte-identical agreement, so the two cannot re-fork onto private copies."""
+        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        for p_val in (5.0, 25.0, 100.0):
+            p = np.array([p_val])
+            dH_dp = L.conjugate_argmax(X, M, p, T)
+            from_control = -L._sign * L.optimal_control(X, M, p, T)
+            assert from_control.tobytes() == dH_dp.tobytes()
+            expected = float(np.sum(p * dH_dp)) - float(L(X, dH_dp, M, T))
+            assert L.evaluate_hamiltonian(X, M, p, T) == expected
+
+
+class TestFallbackBoxTruncationIsLoud:
+    """A search terminating on the (-10, 10) fallback edge must raise.
+
+    The box stands in for control_bounds() returning None; a maximizer on its
+    edge is truncated, not optimal. Returning it silently is the fail-silent
+    pattern that produced the 81% error above.
+    """
+
+    def test_conjugate_argmax_raises_when_the_fallback_box_binds(self):
+        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"control_bounds\(\)"):
+            L.conjugate_argmax(X, M, np.array([100.0]), T)
+
+    def test_evaluate_hamiltonian_propagates_the_raise(self):
+        """The consumer must not swallow it -- this is the silent-81% path."""
+        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"fallback box"):
+            L.evaluate_hamiltonian(X, M, np.array([100.0]), T)
+
+    def test_optimal_control_propagates_the_raise(self):
+        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"fallback box"):
+            L.optimal_control(X, M, np.array([100.0]), T)
+
+    def test_nd_branch_also_raises(self):
+        """The L-BFGS-B branch is a separate code path from the 1D scalar one."""
+        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"fallback box"):
+            L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, -100.0]), T)
+
+    def test_proximal_raises_on_the_same_hazard(self):
+        """Same fallback box, same truncation, same owner (_resolve_search_bounds)."""
+        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"control_bounds\(\)"):
+            L.proximal(1.0, np.array([50.0]))
+
+    def test_declared_bounds_at_the_edge_do_not_raise(self):
+        """A real active constraint is legitimate -- only the FALLBACK box is
+        a stand-in. Guarding on the value alone would break bounded controls."""
+
+        class BoundedL(PlainQuadraticL):
+            def control_bounds(self):
+                return (-1.0, 1.0)
+
+        L = BoundedL(2.0, sense=OptimizationSense.MINIMIZE)
+        argmax = L.conjugate_argmax(X, M, np.array([100.0]), T)
+        np.testing.assert_allclose(argmax, [1.0], atol=1e-5)
+        np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [1.0], atol=1e-5)
+
+    def test_declared_bounds_equal_to_the_fallback_are_still_honored(self):
+        """The sharp case: A = [-10, 10] DECLARED coincides with the fallback box.
+
+        The two are then indistinguishable by value -- only provenance separates
+        them. A real control set whose optimum is on its own boundary is a valid
+        active constraint and must return, so the guard has to key on
+        ``control_bounds() is None``, not on the numbers. Pins
+        ``_resolve_search_bounds``'s used_fallback flag and the guard's early
+        return; without either, this legitimate model raises.
+        """
+
+        class DeclaredWideL(PlainQuadraticL):
+            def control_bounds(self):
+                return (-10.0, 10.0)
+
+        L = DeclaredWideL(0.01, sense=OptimizationSense.MINIMIZE)
+        np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([100.0]), T), [10.0], atol=1e-4)
+        np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [10.0], atol=1e-4)
+
+        # Same numbers, no declaration -> the box is a stand-in -> must raise.
+        undeclared = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        with pytest.raises(ValueError, match=r"control_bounds\(\)"):
+            undeclared.conjugate_argmax(X, M, np.array([100.0]), T)
+
+    def test_interior_maximizer_is_unaffected(self):
+        """The guard must not fire on the ordinary in-box case."""
+        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([2.0]), T), [1.0], atol=1e-6)

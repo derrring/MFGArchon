@@ -1417,6 +1417,12 @@ class HamiltonianBase(MFGOperatorBase):
 # Lagrangian: Running cost L(x, α, m, t) with Legendre transform - Issue #651
 # =============================================================================
 
+#: Search box used by the numerical fallbacks when ``control_bounds()`` returns
+#: None (A = R^d). It is a solver convenience, NOT a modelling statement: a
+#: maximizer/minimizer landing on its edge means the box truncated the answer,
+#: so the numerics raise rather than return a silently truncated value.
+_FALLBACK_CONTROL_BOUNDS: tuple[float, float] = (-10.0, 10.0)
+
 
 class LagrangianBase(MFGOperatorBase):
     """
@@ -1458,9 +1464,54 @@ class LagrangianBase(MFGOperatorBase):
         """Evaluate L(x, alpha, m, t)."""
         ...
 
+    # === Numerical search box: one owner for the control_bounds() fallback ===
+
+    def _resolve_search_bounds(self) -> tuple[tuple[float, float], bool]:
+        """Return ((a_min, a_max), used_fallback) for the numerical routines.
+
+        Single owner of the ``control_bounds() or _FALLBACK_CONTROL_BOUNDS``
+        decision, shared by conjugate_argmax() and proximal() so the two cannot
+        drift apart on either the box or the truncation check.
+        """
+        declared = self.control_bounds()
+        if declared is None:
+            return _FALLBACK_CONTROL_BOUNDS, True
+        return declared, False
+
+    def _reject_fallback_truncation(
+        self,
+        alpha: NDArray,
+        used_fallback: bool,
+        routine: str,
+    ) -> None:
+        """Raise if a fallback-box search terminated on the box edge.
+
+        When control_bounds() declares a real control set, hitting the edge is a
+        genuine active constraint and is left alone. When the box is the
+        _FALLBACK_CONTROL_BOUNDS stand-in, the edge carries no modelling meaning:
+        the returned value is truncated, not optimal, so it must not be returned
+        silently (Issue #1642 review).
+        """
+        if not used_fallback:
+            return
+        lo, hi = _FALLBACK_CONTROL_BOUNDS
+        # scipy's bounded minimizers stop ~xatol (1e-5) shy of a binding bound;
+        # 1e-5 * range gives ~20x margin over that without flagging the interior.
+        tol = 1e-5 * (hi - lo)
+        alpha_arr = np.atleast_1d(alpha)
+        if np.any((alpha_arr <= lo + tol) | (alpha_arr >= hi - tol)):
+            raise ValueError(
+                f"{type(self).__name__}.{routine}: the numerical search hit the edge of "
+                f"the fallback box {_FALLBACK_CONTROL_BOUNDS} at alpha={alpha_arr.tolist()}. "
+                "control_bounds() returned None (A = R^d), so this box is a solver "
+                "stand-in, not the control set -- the result is truncated, not optimal. "
+                "Either override control_bounds() with the real admissible set, or "
+                "override conjugate_argmax()/proximal() with the closed form."
+            )
+
     # === Conjugate maximizer: the single owner of the numerical Legendre step ===
 
-    def _conjugate_argmax(
+    def conjugate_argmax(
         self,
         x: NDArray,
         m: float | NDArray,
@@ -1469,6 +1520,12 @@ class LagrangianBase(MFGOperatorBase):
     ) -> NDArray:
         """argmax_alpha { p . alpha - L(x, alpha, m, t) } -- the maximizer of L*(p).
 
+        **This is THE extension point for analytic subclasses.** Both
+        optimal_control() and evaluate_hamiltonian() derive from it, so
+        overriding it here supplies the closed form to both at once and keeps
+        them on one sign convention. Overriding optimal_control() alone leaves
+        evaluate_hamiltonian() on the numerical fallback.
+
         By the envelope theorem this equals dH/dp, which is NOT alpha*: the optimal
         control is alpha* = -sign * dH/dp (Issue #1642, capability B5). Keeping the
         maximization in one place is what stops optimal_control() and
@@ -1476,14 +1533,15 @@ class LagrangianBase(MFGOperatorBase):
         before #1642 they held opposite ones, and only the two errors cancelling
         made evaluate_hamiltonian() return the right number.
 
-        Default: 1D scalar optimization via scipy, L-BFGS-B in nD.
+        Default: 1D scalar optimization via scipy, L-BFGS-B in nD. Raises if the
+        search terminates on the edge of the control_bounds() fallback box.
         """
         from scipy.optimize import minimize_scalar
 
         p_arr = np.atleast_1d(p)
         d = p_arr.shape[-1] if p_arr.ndim >= 2 else (1 if p_arr.ndim == 0 else len(p_arr))
 
-        bounds = self.control_bounds() or (-10.0, 10.0)
+        bounds, used_fallback = self._resolve_search_bounds()
 
         if d == 1:
             p_val = float(p_arr.flat[0])
@@ -1493,7 +1551,9 @@ class LagrangianBase(MFGOperatorBase):
                 return -(p_val * a - float(self(x, alpha, m, t)))
 
             res = minimize_scalar(neg_objective, bounds=bounds, method="bounded")
-            return np.array([res.x])
+            argmax = np.array([res.x])
+            self._reject_fallback_truncation(argmax, used_fallback, "conjugate_argmax")
+            return argmax
 
         # nD: scipy.optimize.minimize
         from scipy.optimize import minimize as scipy_minimize
@@ -1503,6 +1563,7 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        self._reject_fallback_truncation(res.x, used_fallback, "conjugate_argmax")
         return res.x
 
     # === Optimal control (same signature AND same convention as HamiltonianBase) ===
@@ -1526,9 +1587,13 @@ class LagrangianBase(MFGOperatorBase):
         Before #1642 this returned the bare argmax -- i.e. +p/lambda under
         MINIMIZE where HamiltonianBase and SeparableLagrangian both return
         -p/lambda -- so a subclass that did not override it got a drift of the
-        wrong sign. Override for analytic (SeparableLagrangian does).
+        wrong sign.
+
+        Derives from conjugate_argmax(); **override that instead** for an
+        analytic subclass. evaluate_hamiltonian() reads conjugate_argmax()
+        directly, so an override placed here alone would not reach it.
         """
-        return -self._sign * self._conjugate_argmax(x, m, p, t)
+        return -self._sign * self.conjugate_argmax(x, m, p, t)
 
     # === On-the-fly H evaluation ===
 
@@ -1545,13 +1610,14 @@ class LagrangianBase(MFGOperatorBase):
         DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
         the value does not depend on OptimizationSense (Issue #1185).
 
-        Evaluated at ``_conjugate_argmax``, NOT at ``optimal_control`` -- those
+        Evaluated at ``conjugate_argmax``, NOT at ``optimal_control`` -- those
         differ by the sense sign, so substituting one for the other flips the
-        Hamiltonian's sign under MINIMIZE (Issue #1642).
+        Hamiltonian's sign under MINIMIZE (Issue #1642). Analytic subclasses
+        therefore override ``conjugate_argmax``, which both consumers read.
 
         Computes the Hamiltonian value on-the-fly without DualHamiltonian.
         """
-        dH_dp = self._conjugate_argmax(x, m, p, t)
+        dH_dp = self.conjugate_argmax(x, m, p, t)
         p_dot_alpha = float(np.sum(np.atleast_1d(p) * dH_dp))
         return p_dot_alpha - float(self(x, dH_dp, m, t))
 
@@ -1572,12 +1638,15 @@ class LagrangianBase(MFGOperatorBase):
 
         For separable L, only the control cost term matters (V, f don't
         depend on alpha), so x and m are unused.
+
+        Raises if the search terminates on the edge of the control_bounds()
+        fallback box -- the same truncation hazard as conjugate_argmax().
         """
         from scipy.optimize import minimize_scalar
 
         z_arr = np.atleast_1d(z)
         d = len(z_arr) if z_arr.ndim == 1 else 1
-        bounds = self.control_bounds() or (-10.0, 10.0)
+        bounds, used_fallback = self._resolve_search_bounds()
 
         # Dummy x, m if not provided
         if x is None:
@@ -1593,7 +1662,9 @@ class LagrangianBase(MFGOperatorBase):
                 return float(self(x, alpha, m, t)) + (a - z_val) ** 2 / (2 * tau)
 
             res = minimize_scalar(objective, bounds=bounds, method="bounded")
-            return np.array([res.x])
+            prox = np.array([res.x])
+            self._reject_fallback_truncation(prox, used_fallback, "proximal")
+            return prox
 
         from scipy.optimize import minimize as scipy_minimize
 
@@ -1602,6 +1673,7 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(z_arr, bounds[0], bounds[1])
         res = scipy_minimize(objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        self._reject_fallback_truncation(res.x, used_fallback, "proximal")
         return res.x
 
     # === Semi-Lagrangian interface ===
