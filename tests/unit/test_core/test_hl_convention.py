@@ -6,13 +6,32 @@ B1 pins the (V, f) sign convention documented on ``MFGOperatorBase``:
 
     L(x, alpha, m, t) = L_ctrl(alpha) - V(x, t) - f(m)
 
-asserted in its conjugate form, ``sup_alpha { p.alpha - L } == H``, over
-(Separable, Congestion) x (Quadratic, Bounded, L1) x (V=0, V!=0) x (f=0, f!=0).
+asserted in its conjugate form, ``sup_alpha { p.alpha - L } == H``.
+
+Which tests carry that pin, precisely -- a conjugate round trip only
+discriminates when the two sides have INDEPENDENT sources for V and f:
+
+- ``TestSeparableRoundTrip.test_separable_fork_gap_is_exactly_two_v_plus_f``
+  (3 tests, one (V, f) point, one per control cost). Both sides come from the
+  same ``SeparableLagrangian``, so this cannot be a round-trip assertion; it
+  instead quantifies the Issue #1645 fork as an exact 2(V+f) gap, constant in p.
+  This is the load-bearing pin on the Separable side.
+- ``TestCongestionRoundTrip`` (12 tests = 3 costs x 4 (V, f) cells). The L side
+  is an analytic closed form written out in this module, NOT
+  ``H.legendre_transform()``, so V and f are independently sourced and a sign
+  error in ``CongestionHamiltonian`` breaks the identity by 2(V+f).
+
+``test_conjugate_of_lagrangian_recovers_hamiltonian`` is NOT part of that pin:
+its V != 0 rows are strict xfail (Issue #1645) and its V0_f0 rows are
+non-discriminating by construction, the disputed term being identically zero.
+It is retained to hold the xfail markers, which flip to XPASS and fail the suite
+when B2 lands.
 
 What these tests catch:
 
 - Adding V and f to BOTH H and L (the ``SeparableLagrangian`` fork): breaks the
   identity by exactly 2(V+f), constant in p. Recorded as strict xfail, Issue #1645.
+- A (V, f) sign error in ``CongestionHamiltonian.__call__``.
 - A conjugate/optimization box that ignores the admissible control set: for
   ``L1ControlCost(lambda_=0.5)`` at p=5 an unrestricted sup returns 225.0
   against a true H of 4.5 (50x), because ``lagrangian()`` omits the indicator.
@@ -93,6 +112,56 @@ CONTROL_COSTS = {
     "bounded": lambda: BoundedControlCost(lambda_=1.0, max_control=2.0),
     "l1": lambda: L1ControlCost(lambda_=0.5),
 }
+
+CONGESTION_SLOPE = 3.0
+
+
+def _congestion_factor(m):
+    return 1.0 + CONGESTION_SLOPE * m
+
+
+# Analytic control part of L for CongestionHamiltonian, written out by hand.
+#
+# H_kin(p) = g(p) / c(m) with g = control_cost.evaluate, so the control part of L
+# is the conjugate (g/c)*(alpha) = g*(c*alpha) / c. The lambda_ values below
+# restate those of CONTROL_COSTS deliberately: an independent transcription is
+# the point, so that these formulas share no source with the Hamiltonian.
+#
+#   quadratic  g* = lambda/2 |a|^2          -> lambda*c/2 |a|^2,   A = R
+#   bounded    g* = lambda/2 |a|^2 + I_A    -> lambda*c/2 |a|^2,   A/c
+#   l1         g* = lambda |a| + I_A        -> lambda |a|,         A/c
+CONGESTION_L_CTRL = {
+    "quadratic": lambda a, c_m: 0.5 * 2.0 * c_m * a**2,
+    "bounded": lambda a, c_m: 0.5 * 1.0 * c_m * a**2,
+    "l1": lambda a, c_m: 0.5 * abs(a),
+}
+
+
+def _congestion_lagrangian(cost_name, potential, coupling):
+    """Analytic L(x, alpha, m, t) = L_ctrl^{c(m)}(alpha) - V(x, t) - f(m).
+
+    Independently sourced from ``CongestionHamiltonian`` -- see the note on
+    ``TestCongestionRoundTrip`` for why that independence is what makes the
+    round trip discriminating.
+    """
+    l_ctrl = CONGESTION_L_CTRL[cost_name]
+
+    def L(x, alpha, m, t=0.0):
+        v = potential(x, t) if potential is not None else 0.0
+        f = coupling(m) if coupling is not None else 0.0
+        return l_ctrl(float(np.atleast_1d(alpha)[0]), _congestion_factor(m)) - v - f
+
+    return L
+
+
+def _congestion_box(cost) -> tuple[float, float]:
+    """A / c(m). Congestion SHRINKS the admissible set: dom((g/c)*) = dom(g*)/c."""
+    domain = cost.effective_domain()
+    if domain is None:
+        return (-50.0, 50.0)
+    c_m = _congestion_factor(M_VALUE)
+    return (domain[0] / c_m, domain[1] / c_m)
+
 
 # (V, f) grid. The separable fork is invisible when V + f == 0, so the
 # (zero, zero) cell must pass today and the other three must not.
@@ -179,35 +248,44 @@ class TestSeparableRoundTrip:
 
 
 class TestCongestionRoundTrip:
-    """H -> L -> H involution for the non-separable congestion Hamiltonian.
+    """sup_alpha { p.alpha - L } == H for the non-separable CongestionHamiltonian.
 
-    There is no analytic CongestionLagrangian (Issue #1642, B6 owns that), so the
-    L side is the numerical ``DualLagrangian``. The tolerance below is set by
-    NESTED numerical optimization (an outer sup over alpha of an inner sup over
-    p), NOT by the convention: the fork this guards against is 2(V+f) = 2.6,
-    two orders of magnitude above the tolerance.
+    The L side is the ANALYTIC Lagrangian built by ``_congestion_lagrangian``,
+    deliberately not ``H.legendre_transform()``. That method returns a
+    ``DualLagrangian``, which computes L = sup_p { p.alpha - H } from the SAME H
+    object, so the round trip collapses to ``H** == H`` -- true for every convex
+    H whatever the (V, f) signs are. Such a test asserts convexity, not a
+    convention, and stays green under a sign flip in
+    ``CongestionHamiltonian.__call__``.
+
+    Sourcing V and f independently here is what gives the assertion teeth: a
+    sign error on either term shifts H by 2V or 2f while the conjugate stays
+    put. There is no shipped analytic CongestionLagrangian to import (Issue
+    #1642, B6 owns that), hence the closed forms in this module.
+
+    Tolerance is 1e-6, set by the single bounded scalar sup; the errors measured
+    are ~4e-8. The fork this guards against is 2(V+f) = 2.6.
     """
 
-    NESTED_OPT_TOL = 5e-2
-
-    @pytest.mark.parametrize("cost_name", ["quadratic", "bounded"])
+    @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))
     @pytest.mark.parametrize(("vf_name", "vf"), list(VF_GRID.items()))
-    def test_dual_lagrangian_round_trips(self, cost_name, vf_name, vf):
+    def test_analytic_conjugate_recovers_hamiltonian(self, cost_name, vf_name, vf):
         potential, coupling = vf
         cost = CONTROL_COSTS[cost_name]()
         H = CongestionHamiltonian(
             control_cost=cost,
-            congestion_factor=lambda m: 1.0 + 3.0 * m,
+            congestion_factor=_congestion_factor,
             potential=potential,
             coupling=coupling,
         )
-        L = H.legendre_transform(p_bounds=(-200.0, 200.0), n_search=400)
+        L = _congestion_lagrangian(cost_name, potential, coupling)
+        box = _congestion_box(cost)
 
-        for p in [0.0, 0.5, 1.5, 3.0]:
+        for p in P_SWEEP:
             expected = float(H(X_POINT, M_VALUE, np.array([p])))
-            got = _conjugate(L, p, bounds=(-50.0, 50.0))
-            assert got == pytest.approx(expected, abs=self.NESTED_OPT_TOL), (
-                f"{cost_name}/{vf_name} p={p}: round-trip gave {got}, H gave {expected}"
+            got = _conjugate(L, p, bounds=box)
+            assert got == pytest.approx(expected, abs=1e-6), (
+                f"{cost_name}/{vf_name} p={p}: conjugate of the analytic L gave {got}, H gave {expected}"
             )
 
 

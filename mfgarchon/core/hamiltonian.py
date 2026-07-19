@@ -262,7 +262,14 @@ class ControlCostBase(ABC):
         Every consumer that needs to bound a control -- optimization boxes,
         conjugate/Legendre sups, semi-Lagrangian control sweeps -- must read
         it from here rather than re-deriving it. ``SeparableLagrangian.control_bounds()``
-        delegates to this method; do not add a second isinstance ladder.
+        and ``HJBSemiLagrangianSolver._solve_timestep_dpp`` both delegate to this
+        method; do not add a second isinstance ladder.
+
+        Scope of that claim, stated exactly: consumers own how densely they
+        SAMPLE A (a quadrature choice -- the DPP sweep still selects three points
+        for a piecewise-linear L_ctrl against eleven for a quadratic one). What
+        they may not do is decide what A IS. Narrowing that last sampling
+        isinstance to a control-cost capability is Issue #1651.
 
         Returns
         -------
@@ -767,6 +774,23 @@ class MFGOperatorBase(ABC):
     L_ctrl + V + f and is not self-conjugate against its own
     ``evaluate_hamiltonian``. That fork is tracked as Issue #1645 and recorded
     as strict xfails in ``tests/unit/test_core/test_hl_convention.py``.
+
+    Where this convention is actually pinned, named precisely, because a
+    conjugate round trip only discriminates when the two sides source V and f
+    INDEPENDENTLY -- a Lagrangian obtained from H via ``legendre_transform()``
+    yields H** == H for every convex H whatever the signs are, which asserts
+    convexity and not a convention:
+
+    - ``TestSeparableRoundTrip.test_separable_fork_gap_is_exactly_two_v_plus_f``
+      -- 3 tests at one (V, f) point, one per control cost. Quantifies the
+      Issue #1645 fork as an exact 2(V+f) gap, constant in p.
+    - ``TestCongestionRoundTrip`` -- 12 tests, 3 control costs x 4 (V, f) cells,
+      conjugating an analytic Lagrangian written out in the test module against
+      ``CongestionHamiltonian``.
+
+    ``test_conjugate_of_lagrangian_recovers_hamiltonian`` is not part of that
+    pin: its V != 0 rows are strict xfail and its V0_f0 rows are
+    non-discriminating, the disputed term being identically zero there.
 
     Note on the alpha sign. This class documents H = sup_alpha { p . alpha - L },
     while ``optimal_control`` returns the drift alpha* = -dH/dp (MINIMIZE). The
