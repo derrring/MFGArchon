@@ -38,7 +38,9 @@ from .energy_functionals import (
     PotentialEnergy,
     QuadraticInteractionEnergy,
     as_single_population,
+    energy_functional_members,
     flat_derivative_from_energy_gradient,
+    missing_energy_functional_members,
     validate_weights,
 )
 from .kernels import (
@@ -69,4 +71,6 @@ __all__ = [
     "flat_derivative_from_energy_gradient",
     "as_single_population",
     "validate_weights",
+    "energy_functional_members",
+    "missing_energy_functional_members",
 ]

@@ -32,7 +32,9 @@ from mfgarchon.operators.interaction.energy_functionals import (
     PotentialEnergy,
     QuadraticInteractionEnergy,
     as_single_population,
+    energy_functional_members,
     flat_derivative_from_energy_gradient,
+    missing_energy_functional_members,
     validate_weights,
 )
 from mfgarchon.operators.interaction.kernels import GaussianKernel, WendlandKernel
@@ -377,6 +379,75 @@ class TestWeightsOntology:
     def test_nonfinite_weights_refused(self):
         with pytest.raises(ValueError, match="finite"):
             validate_weights(np.array([1.0, np.nan]), "test")
+
+    def test_validated_weights_are_read_only_and_not_an_alias(self):
+        """``weights`` is public contract surface; it must not alias operator internals.
+
+        ``np.asarray(w).ravel()`` is a *view* for a float64 contiguous input, so
+        the pre-fix accessor published a live handle: ``E.weights[0] = 99``
+        reached ``conv.as_dense()[0, 0]``, changed the energy by ~70x, and
+        defeated the strict-positivity guarantee validated at construction.
+        """
+        source = np.full(6, 0.25)
+        w = validate_weights(source, "test")
+        assert not w.flags.writeable
+        assert not np.shares_memory(w, source)
+        with pytest.raises(ValueError, match="read-only"):
+            w[0] = 99.0
+
+    @pytest.mark.parametrize("build", ["quadratic", "potential", "combined"])
+    def test_public_weights_member_cannot_corrupt_the_owner(self, build):
+        N = 24
+        x, dx = _grid(N)
+        conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
+        potential = PotentialEnergy(np.cos(np.pi * x), np.full(N, dx))
+        energy = {
+            "quadratic": lambda: QuadraticInteractionEnergy(conv),
+            "potential": lambda: potential,
+            "combined": lambda: CombinedEnergy([QuadraticInteractionEnergy(conv), potential]),
+        }[build]()
+
+        m = np.sin(np.pi * x) + 1.2
+        before = energy.energy(m)
+
+        assert not np.shares_memory(energy.weights, conv.weights)
+        with pytest.raises(ValueError, match="read-only"):
+            energy.weights[0] = 99.0
+
+        assert energy.energy(m) == pytest.approx(before, rel=0, abs=0)
+        assert conv.as_dense()[0, 0] == pytest.approx(conv.kernel_matrix()[0, 0] * dx)
+
+
+class TestContractMembership:
+    """D-6: the required member set is introspectable, so a near-miss can be named."""
+
+    def test_member_set_matches_the_frozen_contract(self):
+        assert energy_functional_members() == ("energy", "flat_derivative", "second_variation", "weights")
+
+    def test_shipped_classes_are_missing_nothing(self):
+        N = 12
+        _, dx = _grid(N)
+        conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
+        potential = PotentialEnergy(np.ones(N), np.full(N, dx))
+        for obj in (QuadraticInteractionEnergy(conv), potential, CombinedEnergy([potential])):
+            assert missing_energy_functional_members(obj) == ()
+
+    def test_near_miss_names_exactly_what_is_absent(self):
+        class ThreeOfFour:
+            weights = np.ones(3)
+
+            def energy(self, m, *, t=0.0):
+                return 0.0
+
+            def flat_derivative(self, m, *, t=0.0):
+                return np.zeros(3)
+
+        assert missing_energy_functional_members(ThreeOfFour()) == ("second_variation",)
+        assert not isinstance(ThreeOfFour(), EnergyFunctional)
+
+    def test_unrelated_object_is_missing_everything(self):
+        assert missing_energy_functional_members(object()) == energy_functional_members()
+        assert missing_energy_functional_members(lambda m: 0.0) == energy_functional_members()
 
 
 class TestSecondVariation:

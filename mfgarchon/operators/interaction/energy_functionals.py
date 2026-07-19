@@ -86,7 +86,9 @@ class EnergyFunctional(Protocol):
     weights : NDArray
         Quadrature weights of the measure representation, shape ``(N,)``: cell
         volumes on a grid, particle masses for an empirical measure. Strictly
-        positive.
+        positive, and **read-only** -- the array the shipped classes expose is
+        frozen (``writeable=False``) so that a caller cannot reach into operator
+        internals through the public member (see :func:`validate_weights`).
 
     Notes
     -----
@@ -127,21 +129,55 @@ class EnergyFunctional(Protocol):
 
 
 def validate_weights(weights: NDArray, owner: str) -> NDArray:
-    """Return ``weights`` as a validated 1-D float array.
+    """Return ``weights`` as a validated, read-only 1-D float array.
 
     Quadrature weights must be finite and strictly positive: the FD bridge
     divides by them (:func:`flat_derivative_from_energy_gradient`) and a zero
     or negative cell volume is a broken discretization, not a degenerate case
     to absorb.
+
+    The returned array is a **copy with ``writeable=False``**. ``weights`` is a
+    public Protocol member, so returning ``np.asarray(...).ravel()`` -- a *view*
+    for an already-float64 contiguous input -- published a mutable alias into
+    operator internals: ``E.weights[0] = 99.0`` reached
+    ``conv.as_dense()[0, 0]`` and silently defeated the strict-positivity
+    guarantee validated here. Freezing turns that into a loud
+    ``ValueError: assignment destination is read-only``.
     """
-    w = np.asarray(weights, dtype=float).ravel()
+    w = np.array(weights, dtype=float).ravel()
     if w.size == 0:
         raise ValueError(f"{owner}: weights must be non-empty")
     if not np.all(np.isfinite(w)):
         raise ValueError(f"{owner}: weights must be finite, got non-finite entries")
     if not np.all(w > 0.0):
         raise ValueError(f"{owner}: quadrature weights must be strictly positive, got min {w.min()!r}")
+    w.flags.writeable = False
     return w
+
+
+_ABSENT = object()
+
+
+def energy_functional_members() -> tuple[str, ...]:
+    """Return the required :class:`EnergyFunctional` member names, sorted.
+
+    Read off the Protocol itself, so the diagnostic in
+    :func:`missing_energy_functional_members` cannot drift from the contract
+    when a member is added or removed.
+    """
+    return tuple(sorted(EnergyFunctional.__protocol_attrs__))
+
+
+def missing_energy_functional_members(obj: object) -> tuple[str, ...]:
+    """Return the required :class:`EnergyFunctional` members ``obj`` lacks, sorted.
+
+    Empty means ``obj`` satisfies the Protocol structurally. A *non-empty but
+    proper* subset is the dangerous case -- a near-miss that ``isinstance``
+    rejects wholesale, so a dispatcher can silently fall through to a different
+    code path. Callers use this to name the missing members instead of guessing
+    (Issue #1642 D-6).
+    """
+    return tuple(n for n in energy_functional_members() if getattr(obj, n, _ABSENT) is _ABSENT)
 
 
 def as_single_population(m: NDArray, weights: NDArray, owner: str) -> NDArray:

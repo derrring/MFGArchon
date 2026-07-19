@@ -26,18 +26,30 @@ Mathematical background:
     differences or particle approximation, making this bridge agnostic
     to the specific coupling form.
 
+Convention
+----------
+The HJB source slot holds the **pointwise** flat derivative
+``delta F / delta m``, and ``F[m]`` is the **physical** (mesh-independent)
+energy. Both paths of :func:`create_lions_source` return that same object; see
+:mod:`mfgarchon.operators.interaction.energy_functionals` for the discretization
+convention ``integral g m dx = sum_k w_k g_k m_k``. In particular the double
+integral above discretizes with **two** quadrature factors,
+``F[m] = (1/2) sum_ij w_i w_j W_ij m_i m_j``, and its flat derivative is
+``(delta F / delta m)_i = sum_j W_ij w_j m_j`` -- one factor, not zero and not
+two.
+
 Usage:
     >>> from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
     >>> from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     >>>
-    >>> # Define nonlocal energy functional
+    >>> # Define nonlocal energy functional (physical: both quadrature factors)
     >>> W = ...  # interaction kernel matrix (Nx, Nx)
     >>> dx = 1.0 / Nx
     >>> def energy(m):
-    ...     return 0.5 * np.sum(m * (W @ m)) * dx
+    ...     return 0.5 * np.sum(m * (W @ m)) * dx**2
     >>>
     >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-    >>> source_hjb = create_lions_source(energy, fd)
+    >>> source_hjb = create_lions_source(energy, fd, weights=dx)
     >>>
     >>> problem = MFGProblem(..., source_term_hjb=source_hjb)
     >>> result = problem.solve()
@@ -80,6 +92,8 @@ def _spatial_density(m: NDArray) -> NDArray:
 def create_lions_source(
     energy_functional: FunctionalOnMeasures | EnergyFunctional,
     functional_derivative: FunctionalDerivative | None = None,
+    *,
+    weights: NDArray | float | None = None,
 ) -> Callable[[NDArray, NDArray, NDArray, float], NDArray]:
     """Create a source_term_hjb from a measure-dependent energy functional.
 
@@ -87,34 +101,48 @@ def create_lions_source(
     source_term_hjb interface by computing delta F / delta m[m](x)
     at each Picard iteration.
 
-    Two paths, selected from the first argument:
+    Two paths, selected from the first argument. **Both return the same object**:
+    the pointwise flat derivative ``delta F / delta m`` of the physical energy
+    ``F[m]``.
 
     1. **Analytic** (Issue #1023, Phase 2): if ``energy_functional`` is an
-       :class:`~mfgarchon.operators.interaction.energy_functionals.EnergyFunctional`
-       (provides ``.flat_derivative``), its exact derivative is used and the FD
-       path is skipped. ``functional_derivative`` is then ignored. The
-       per-slice ``t`` is forwarded to ``flat_derivative``.
+       :class:`~mfgarchon.operators.interaction.energy_functionals.EnergyFunctional`,
+       its exact derivative is used and the FD path is skipped.
+       ``functional_derivative`` is then ignored and ``weights`` must not be
+       passed -- the functional already carries them. The per-slice ``t`` is
+       forwarded to ``flat_derivative``.
     2. **Finite difference** (original path): if ``energy_functional`` is a plain
-       ``F[m] -> float`` callable, ``functional_derivative`` is required and
-       ``delta F / delta m`` is approximated by finite differences.
+       ``F[m] -> float`` callable, both ``functional_derivative`` **and**
+       ``weights`` are required.
 
-    The two paths agree for an ``EnergyFunctional`` whose analytic
-    ``flat_derivative`` matches the FD gradient of its ``.energy`` **divided by
-    the quadrature weights** -- the FD engine perturbs an unweighted Dirac
-    ``m_k += epsilon``, so its output is ``w_k * (delta F / delta m)_k``. The
-    conversion has one owner,
+    ``weights`` is required on the FD path because the FD engine perturbs an
+    *unweighted* Dirac ``m_k += epsilon``, so it returns the entry gradient
+    ``d F / d m_k = w_k * (delta F / delta m)_k`` -- a factor ``w_k`` away from
+    the pointwise object the HJB slot needs. Dividing it out is the *only* way
+    the two paths agree, and it has one owner,
     :func:`~mfgarchon.operators.interaction.energy_functionals.flat_derivative_from_energy_gradient`
-    (Issue #1642 A2).
+    (Issue #1642 A2), applied here. There is no default: silently assuming
+    ``w = 1`` makes the interaction coupling scale with the mesh and switch off
+    under refinement, with no error.
+
+    An object that provides *some* but not all of the ``EnergyFunctional``
+    members is refused loudly rather than downgraded to the FD path, where its
+    exact ``flat_derivative`` would never be called (Issue #1642 D-6).
 
     Args:
         energy_functional: Either an ``EnergyFunctional`` (analytic path) or a
-            plain ``F[m] -> float`` callable depending on the full measure
+            plain ``F[m] -> float`` callable returning the **physical** energy
             (FD path). Density arrays have shape (Nx,).
         functional_derivative: FunctionalDerivative instance for the FD path
             (FiniteDifferenceFunctionalDerivative or
             ParticleApproximationFunctionalDerivative). Required only when
             ``energy_functional`` is a plain callable; ignored for an
             ``EnergyFunctional``.
+        weights: Quadrature weights of the measure representation for the FD
+            path — cell volumes on a grid, particle masses for an empirical
+            measure. Either shape ``(Nx,)`` or a scalar broadcast to the density
+            length at call time. Strictly positive. Required on the FD path;
+            rejected on the analytic path.
 
     Returns:
         source_term_hjb(x, m, v, t) -> NDArray compatible with
@@ -125,22 +153,35 @@ def create_lions_source(
         >>> import numpy as np
         >>> from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
         >>>
-        >>> # Quadratic interaction: F[m] = (1/2) int m(x)^2 dx
+        >>> # Quadratic interaction: F[m] = (1/2) int m(x)^2 dx = (1/2) sum_k w_k m_k^2
         >>> dx = 0.02
         >>> def energy(m):
         ...     return 0.5 * np.sum(m**2) * dx
         >>>
         >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-        >>> source = create_lions_source(energy, fd)
+        >>> source = create_lions_source(energy, fd, weights=dx)
         >>>
-        >>> # source(x, m, v, t) returns delta F / delta m = m(x) * dx
+        >>> # source(x, m, v, t) returns delta F / delta m = m(x)
         >>> m = np.ones(50) / 50
         >>> result = source(np.linspace(0, 1, 50), m, np.zeros(50), 0.0)
     """
-    # Analytic path: EnergyFunctional carries its own exact Lions derivative.
-    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
+    # Analytic path: EnergyFunctional carries its own exact flat derivative.
+    from mfgarchon.operators.interaction.energy_functionals import (
+        EnergyFunctional,
+        energy_functional_members,
+        flat_derivative_from_energy_gradient,
+        missing_energy_functional_members,
+        validate_weights,
+    )
 
     if isinstance(energy_functional, EnergyFunctional):
+        if weights is not None:
+            raise ValueError(
+                "create_lions_source: weights= is for the finite-difference path only. "
+                f"{type(energy_functional).__name__} is an EnergyFunctional and carries its "
+                "own quadrature weights, so a second set here would be a silent second source "
+                "of the same quantity."
+            )
         analytic = energy_functional
 
         def source_term_hjb_analytic(
@@ -149,17 +190,58 @@ def create_lions_source(
             v: NDArray,
             t: float,
         ) -> NDArray:
-            """Evaluate the analytic Lions correction delta F / delta m[m](x)."""
+            """Evaluate the analytic correction delta F / delta m[m](x)."""
             m_flat = _spatial_density(m)
             return np.asarray(analytic.flat_derivative(m_flat, t=t)).ravel()
 
         return source_term_hjb_analytic
+
+    # Not an EnergyFunctional. Distinguish "almost one" from "not one at all":
+    # a near-miss that happens to be callable would otherwise take the FD path
+    # with its exact flat_derivative never called, and no diagnostic.
+    missing = missing_energy_functional_members(energy_functional)
+    if missing and len(missing) < len(energy_functional_members()):
+        provided = [n for n in energy_functional_members() if n not in missing]
+        raise TypeError(
+            f"create_lions_source: {type(energy_functional).__name__} provides "
+            f"{provided} but is missing {list(missing)}, so it is not an EnergyFunctional. "
+            "Refusing rather than falling through to the finite-difference path, which would "
+            "never call its exact flat_derivative. Implement the missing members -- or "
+            "subclass EnergyFunctional to inherit the second_variation default -- or pass a "
+            "plain F[m] -> float callable together with functional_derivative= and weights=."
+        )
+    if not callable(energy_functional):
+        raise TypeError(
+            f"create_lions_source: expected an EnergyFunctional or a plain F[m] -> float "
+            f"callable, got {type(energy_functional).__name__}, which provides none of "
+            f"{list(energy_functional_members())} and is not callable."
+        )
 
     if functional_derivative is None:
         raise ValueError(
             "functional_derivative is required when energy_functional is a plain "
             "callable (FD path); pass an EnergyFunctional to use the analytic path"
         )
+    if weights is None:
+        raise ValueError(
+            "create_lions_source: weights= is required on the finite-difference path. "
+            "The FD engine perturbs an unweighted Dirac (m_k += epsilon), so it returns the "
+            "entry gradient dF/dm_k = w_k * (delta F / delta m)_k, while the HJB source slot "
+            "holds the pointwise delta F / delta m. Pass the quadrature weights of the measure "
+            "representation (cell volumes on a grid, particle masses for an empirical measure) "
+            "so the conversion can be applied. There is no default: assuming w = 1 makes the "
+            "interaction coupling scale with the mesh and switch off under refinement, with no "
+            "error (Issue #1642 A2). Pass an EnergyFunctional to use the analytic path instead."
+        )
+
+    w_input = np.asarray(weights, dtype=float)
+    w_scalar = float(w_input) if w_input.ndim == 0 else None
+    # Validate eagerly: a non-positive or non-finite weight is a broken
+    # discretization, and it should fail at wiring time, not mid-Picard.
+    w_array = validate_weights(
+        np.full(1, w_scalar) if w_scalar is not None else w_input,
+        "create_lions_source (finite-difference path)",
+    )
 
     def source_term_hjb(
         x: NDArray,
@@ -167,7 +249,7 @@ def create_lions_source(
         v: NDArray,
         t: float,
     ) -> NDArray:
-        """Evaluate Lions correction delta F / delta m[m](x).
+        """Evaluate the correction delta F / delta m[m](x).
 
         Args:
             x: Spatial grid points, shape (Nx,) or (Nx, d)
@@ -183,18 +265,19 @@ def create_lions_source(
         m_flat = _spatial_density(m)
         Nx = len(m_flat)
 
-        # Compute delta F / delta m at each grid point
+        # Compute dF/dm_k at each grid point
         # y_points = all grid indices (perturb at each point)
         y_indices = np.arange(Nx)
 
-        deriv = functional_derivative.compute(
+        gradient = functional_derivative.compute(
             energy_functional,
             m_flat,
             x_points=x,
             y_points=y_indices,
         )
 
-        return np.asarray(deriv).ravel()
+        w = np.full(Nx, w_scalar) if w_scalar is not None else w_array
+        return flat_derivative_from_energy_gradient(gradient, w)
 
     return source_term_hjb
 
@@ -225,7 +308,7 @@ def create_nonlocal_source(
         >>> # Gaussian interaction kernel
         >>> x = np.linspace(0, 1, 50)
         >>> W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.1**2))
-        >>> source = create_nonlocal_source(W, dx=x[1] - x[0])
+        >>> source = create_nonlocal_source(W, grid_spacing=x[1] - x[0])
     """
     W = interaction_kernel
     dx = grid_spacing

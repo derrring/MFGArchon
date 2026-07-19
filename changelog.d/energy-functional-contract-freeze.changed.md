@@ -35,6 +35,31 @@ owner of the factor between the two derivative conventions —
 `FiniteDifferenceFunctionalDerivative` perturbs an unweighted Dirac
 `m_k += epsilon`, so its output is `w_k * (delta F / delta m)_k`.
 
+**Breaking: `create_lions_source`'s finite-difference path now requires
+`weights=`.** Both branches of the function now return the same object, the
+pointwise `delta F / delta m` of the *physical* `F[m]`. Previously the FD branch
+returned the raw entry gradient `w_k * (delta F / delta m)_k` and the analytic
+branch the pointwise derivative, so feeding one energy object through the two
+documented paths disagreed by exactly the cell volume — an interaction coupling
+that weakened under refinement with no error. The FD branch now applies
+`flat_derivative_from_energy_gradient`, which requires it to know the quadrature
+weights. There is no default: `w = 1` is what silently reintroduces the fork.
+`create_lions_source(F, fd)` -> `create_lions_source(F, fd, weights=w)`, with
+`w` a scalar cell volume or an `(N,)` array; passing `weights=` alongside an
+`EnergyFunctional` is refused (it already carries them).
+
+An object providing *some* but not all `EnergyFunctional` members is now refused
+by `create_lions_source` with the missing members named, instead of falling
+through to the finite-difference path — where, if it happened to be callable,
+its exact `flat_derivative` was never called and nothing said so.
+
+`EnergyFunctional.weights` is now a read-only array. `validate_weights` returns a
+frozen copy rather than a view, so the public member can no longer alias operator
+internals: `E.weights[0] = 99.0` reached `conv.as_dense()[0, 0]` and defeated the
+strict-positivity precondition; it now raises. New introspection helpers
+`energy_functional_members()` / `missing_energy_functional_members(obj)` expose
+the required member set for diagnostics.
+
 `ConvolutionCouplingOperator` gains `weights` (always an `(N,)` array) and
 `kernel_matrix()` (the unweighted `W`); the scalar-or-array `cell_volume`
 property is removed in favour of the single spelling. The `cell_volume=`
