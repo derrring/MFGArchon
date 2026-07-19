@@ -17,7 +17,9 @@ import pytest
 import numpy as np
 
 from mfgarchon.core.hamiltonian import (
+    BoundedControlCost,
     HamiltonianBase,
+    L1ControlCost,
     QuadraticControlCost,
     SeparableHamiltonian,
 )
@@ -27,6 +29,7 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary.conditions import no_flux_bc
 from mfgarchon.utils.validation import (
     ValidationError,
+    ValidationSeverity,
     validate_custom_functions,
     validate_drift,
     validate_hamiltonian,
@@ -134,22 +137,29 @@ def test_hamiltonian_consistency_passes():
 
 
 @pytest.mark.unit
-def test_hamiltonian_consistency_warning():
-    """Inconsistent dH_dm should produce a warning."""
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
-    )
+def test_hamiltonian_consistency_gates_on_dm_witness():
+    """A grossly wrong dH_dm invalidates the result (Issue #1642, C1).
+
+    Catches: the validator regressing to warning-only, which made the caller's
+    `if not result.is_valid: raise` branch structurally dead.
+    """
+    H = _hamiltonian()
     geom = _geometry()
 
-    # Provide a wrong derivative: constant 42.0 instead of -2m
     def wrong_dm(x, m, p, t=0.0):
         return 42.0
 
     result = validate_hamiltonian_consistency(H, wrong_dm, geom)
-    warnings = [i for i in result.issues if "inconsistent" in str(i).lower()]
-    assert len(warnings) > 0
+    assert not result.is_valid
+    errors = [i for i in result.issues if i.severity is ValidationSeverity.ERROR]
+    assert len(errors) == 1
+    assert errors[0].location == "dH_dm"
+    # The diagnostic must exhibit the witness, not just say "inconsistent".
+    message = errors[0].message
+    assert "42" in message
+    assert "x=" in message
+    assert "m=" in message
+    assert "p=" in message
 
 
 @pytest.mark.unit
@@ -158,23 +168,133 @@ def test_hamiltonian_dp_consistency_passes():
     H = _hamiltonian()
     geom = _geometry()
     result = validate_hamiltonian_consistency(H, H.dm, geom, dH_dp=H.dp)
-    inconsistent_warnings = [i for i in result.issues if "inconsistent" in str(i).lower()]
-    assert len(inconsistent_warnings) == 0
+    assert result.is_valid
+    assert result.issues == []
 
 
 @pytest.mark.unit
-def test_hamiltonian_dp_consistency_warning():
-    """Inconsistent dH_dp should produce a warning."""
+def test_hamiltonian_consistency_gates_on_dp_witness():
+    """A grossly wrong dH_dp invalidates the result and names the values."""
     H = _hamiltonian()
     geom = _geometry()
 
-    # Provide a wrong dp: constant 99.0 instead of p/control_cost
     def wrong_dp(x, m, p, t=0.0):
         return np.array([99.0])
 
     result = validate_hamiltonian_consistency(H, H.dm, geom, dH_dp=wrong_dp)
-    warnings = [i for i in result.issues if "dH_dp" in str(i)]
-    assert len(warnings) > 0
+    assert not result.is_valid
+    errors = [i for i in result.issues if i.severity is ValidationSeverity.ERROR]
+    assert [i.location for i in errors] == ["dH_dp[0]"]
+    assert "99" in errors[0].message
+
+
+@pytest.mark.unit
+def test_small_discrepancy_warns_but_does_not_gate():
+    """A 0.1% derivative discrepancy is a warning, never a gate.
+
+    Catches: widening the witness predicate until it fires on discrepancies a
+    finite-difference stencil cannot distinguish from a modelling choice. Raising
+    on a false positive is worse than warning.
+    """
+    H = _hamiltonian()
+    geom = _geometry()
+
+    def slightly_off_dm(x, m, p, t=0.0):
+        return -2.0 * m * 1.001
+
+    result = validate_hamiltonian_consistency(H, slightly_off_dm, geom)
+    assert result.is_valid
+    warnings = [i for i in result.issues if i.severity is ValidationSeverity.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].location == "dH_dm"
+
+
+@pytest.mark.unit
+def test_kink_at_probe_point_warns_but_does_not_gate():
+    """A subgradient at a kink of H must not gate.
+
+    H(p) = |p - 0.4157| is non-differentiable exactly at one probe magnitude; the
+    claimed derivative is exact away from the kink and picks the +1 subgradient at
+    it. Catches: dropping the one-sided-slope smoothness guard, which would make
+    every non-smooth control cost (L1, bounded) refusable at construction.
+    """
+    kink = 0.4157
+
+    def H(x, m, p, t=0.0):
+        return float(abs(np.atleast_1d(p)[0] - kink))
+
+    def dH_dm(x, m, p, t=0.0):
+        return 0.0
+
+    def dH_dp(x, m, p, t=0.0):
+        return np.array([1.0 if np.atleast_1d(p)[0] >= kink else -1.0])
+
+    result = validate_hamiltonian_consistency(H, dH_dm, _geometry(), dH_dp=dH_dp)
+    assert result.is_valid
+    assert [i.severity for i in result.issues] == [ValidationSeverity.WARNING]
+    assert "differentiable" in result.issues[0].message
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("potential_magnitude", [1e8, 1e14], ids=["warn-floor", "witness-floor"])
+def test_large_magnitude_hamiltonian_is_silent(potential_magnitude):
+    """A correct H with a huge potential must not warn or gate.
+
+    Central-difference roundoff is ~ eps_mach * |H| / step, so problem magnitude
+    alone manufactures an apparent discrepancy: ~1e-3 relative at |H|=1e8 (which
+    the warning floor must absorb) and O(1) absolute at |H|=1e14, where the m-term
+    is lost to cancellation entirely (which the witness floor must absorb).
+    Catches: dropping either roundoff floor, which turns problem magnitude into a
+    spurious inconsistency report -- and at 1e14 into a refused construction.
+    """
+    H = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: -(m**2),
+        coupling_dm=lambda m: -2 * m,
+        potential=lambda x, t=0.0, magnitude=potential_magnitude: magnitude,
+    )
+    result = validate_hamiltonian_consistency(H, H.dm, _geometry(), dH_dp=H.dp)
+    assert result.is_valid
+    assert result.issues == []
+
+
+@pytest.mark.unit
+def test_probe_grid_catches_derivative_correct_only_at_m_equals_one():
+    """dH_dm = -2 is exact at m=1 and wrong elsewhere; the m-probe must catch it.
+
+    Catches: shrinking the probe grid back to the single point (m=1, p=0), which
+    made this class of error invisible.
+    """
+    H = _hamiltonian()
+
+    def dm_right_only_at_one(x, m, p, t=0.0):
+        return -2.0
+
+    result = validate_hamiltonian_consistency(H, dm_right_only_at_one, _geometry())
+    assert not result.is_valid
+
+
+@pytest.mark.unit
+def test_probe_grid_catches_derivative_correct_only_at_p_zero():
+    """A dH_dm error carried by the |p|^2 term is invisible at p=0.
+
+    Congestion Hamiltonians have dH_dm proportional to |p|^2, so probing only p=0
+    cannot see a wrong congestion derivative. Catches: dropping the nonzero-p probes.
+    """
+
+    def H(x, m, p, t=0.0):
+        return float(np.dot(np.atleast_1d(p), np.atleast_1d(p))) / (2.0 * (1.0 + 3.0 * m))
+
+    def dH_dm_wrong(x, m, p, t=0.0):
+        # Correct value is -3|p|^2 / (2 (1+3m)^2); zero is right only at p = 0.
+        return 0.0
+
+    result = validate_hamiltonian_consistency(H, dH_dm_wrong, _geometry())
+    assert not result.is_valid
+    errors = [i for i in result.issues if i.severity is ValidationSeverity.ERROR]
+    assert errors[0].location == "dH_dm"
+    # The witness must be at nonzero momentum -- p = 0 cannot expose this error.
+    assert any(component != 0.0 for component in result.context["dH_dm_witness_p"])
 
 
 # ===========================================================================
@@ -209,6 +329,49 @@ def test_validate_custom_functions_with_consistency():
         check_consistency=True,
     )
     assert result.is_valid
+
+
+@pytest.mark.unit
+def test_validate_custom_functions_defaults_to_checking_consistency():
+    """The aggregate runs the consistency check unless explicitly told not to.
+
+    Catches: the call site or the default reverting to check_consistency=False,
+    which leaves the capability unreachable even when the validator can gate.
+    """
+    H = _hamiltonian()
+    geom = _geometry()
+
+    def wrong_dm(x, m, p, t=0.0):
+        return 42.0
+
+    assert not validate_custom_functions(hamiltonian=H, dH_dm=wrong_dm, dH_dp=H.dp, geometry=geom).is_valid
+    assert validate_custom_functions(
+        hamiltonian=H, dH_dm=wrong_dm, dH_dp=H.dp, geometry=geom, check_consistency=False
+    ).is_valid
+
+
+@pytest.mark.unit
+def test_validate_custom_functions_propagates_consistency_invalidity():
+    """The aggregate must forward is_valid, not only the issue list.
+
+    Catches: the aggregate extending cons_result.issues while dropping
+    cons_result.is_valid -- a second, independent way for the raise branch to die.
+    """
+    H = _hamiltonian()
+    geom = _geometry()
+
+    def wrong_dm(x, m, p, t=0.0):
+        return 42.0
+
+    result = validate_custom_functions(
+        hamiltonian=H,
+        dH_dm=wrong_dm,
+        dH_dp=H.dp,
+        geometry=geom,
+        check_consistency=True,
+    )
+    assert not result.is_valid
+    assert any(i.severity is ValidationSeverity.ERROR for i in result.issues)
 
 
 # ===========================================================================
@@ -304,3 +467,57 @@ def test_mfg_problem_nan_hamiltonian_rejected():
             u_terminal=lambda x: x**2,
             hamiltonian=NaNHamiltonian(),
         )
+
+
+@pytest.mark.unit
+def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
+    """End-to-end: construction refuses a Hamiltonian whose dm is not dH/dm.
+
+    This is the live consumer the capability exists for (mfg_problem.py). Catches:
+    the call site passing check_consistency=False again, the aggregate dropping
+    is_valid, or the validator regressing to warning-only -- any one of which
+    re-kills the raise branch.
+    """
+
+    class WrongDmHamiltonian(SeparableHamiltonian):
+        def dm(self, x, m, p, t=0.0):
+            return 42.0
+
+    with pytest.raises(ValidationError, match="dH_dm"):
+        _problem(
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: x**2,
+            hamiltonian=WrongDmHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: -(m**2),
+                coupling_dm=lambda m: -2 * m,
+            ),
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "control_cost",
+    [
+        QuadraticControlCost(control_cost=1.0),
+        L1ControlCost(control_cost=1.0),
+        BoundedControlCost(control_cost=1.0, max_control=2.0),
+    ],
+    ids=["quadratic", "l1", "bounded"],
+)
+def test_mfg_problem_accepts_every_shipped_control_cost(control_cost):
+    """Turning the gate on must not refuse any Hamiltonian the library ships.
+
+    L1 and bounded costs are non-smooth; this is the false-positive regression
+    test for the gate as a whole.
+    """
+    problem = _problem(
+        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+        u_terminal=lambda x: x**2,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=control_cost,
+            coupling=lambda m: -(m**2),
+            coupling_dm=lambda m: -2 * m,
+        ),
+    )
+    assert problem is not None
