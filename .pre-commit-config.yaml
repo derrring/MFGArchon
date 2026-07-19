@@ -52,9 +52,26 @@ repos:
   # Core typing validation maintained through direct `mypy mfgarchon --ignore-missing-imports`
   # This preserves the strategic typing holy grail achievement while allowing research flexibility
 
+  # THE TEST GATE (2026-07-19). The full suite no longer runs on GitHub for PRs --
+  # it exceeded a 25-minute step budget while taking ~141 s locally -- so this hook
+  # is where it actually runs. Pre-PUSH, not pre-commit: it is ~2.5 min, which is
+  # right before a push and wrong before every commit.
+  - repo: local
+    hooks:
+      - id: local-ci-gate
+        name: Full test gate (scripts/local_ci.sh)
+        entry: scripts/local_ci.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
 # Performance optimizations
 default_language_version:
   python: python3.12
 
 default_stages: [pre-commit]
-minimum_pre_commit_version: "3.0.0"
+# pre-push must be installed explicitly; `pre-commit install` alone does NOT wire it:
+#   pre-commit install --hook-type pre-commit --hook-type pre-push
+default_install_hook_types: [pre-commit, pre-push]
+minimum_pre_commit_version: "3.2.0"
