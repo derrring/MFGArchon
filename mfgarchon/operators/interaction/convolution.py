@@ -204,9 +204,20 @@ class ConvolutionCouplingOperator(LinearOperator):
         """Return the full operator matrix ``M = W @ diag(w)`` (shape ``(N, N)``).
 
         ``F[m] = M @ m`` exactly. For a regular grid with uniform cell volume,
-        ``M = cell_volume * W`` is symmetric.
+        ``M = cell_volume * W`` is symmetric; with per-point weights it is not.
         """
         return self._dense_matrix() * self._w[None, :]
+
+    def kernel_matrix(self) -> NDArray:
+        """Return the raw kernel matrix ``W_ij = K(|x_i - x_j|)`` (shape ``(N, N)``).
+
+        Unweighted and symmetric for a radial kernel -- the quadrature factor
+        lives in :attr:`weights`, so ``as_dense() == kernel_matrix() * weights``.
+        This is the second variation ``delta^2 F / delta m^2`` of the quadratic
+        interaction energy. Returns a copy; allocates ``(N, N)`` even on the FFT
+        path, which otherwise never forms a dense matrix.
+        """
+        return self._dense_matrix().copy()
 
     @property
     def points(self) -> NDArray:
@@ -214,9 +225,15 @@ class ConvolutionCouplingOperator(LinearOperator):
         return self._points
 
     @property
-    def cell_volume(self) -> float | NDArray:
-        """Scalar cell volume (uniform weights) or per-point weight array."""
-        return self._cell_volume if self._cell_volume is not None else self._w
+    def weights(self) -> NDArray:
+        """Quadrature weights of the point set, shape ``(N,)``.
+
+        Always an array, whether the operator was built from ``spacings`` (grid
+        cell volume, uniform) or from a scalar/array ``cell_volume`` (scattered
+        cloud). The single spelling of this quantity: a scalar-vs-array
+        polymorphic accessor invites two conventions for one number.
+        """
+        return self._w
 
     @property
     def uses_fft(self) -> bool:

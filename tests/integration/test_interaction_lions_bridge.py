@@ -155,7 +155,7 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
     )
     g = problem.geometry.get_spatial_grid().ravel()
     dx = g[1] - g[0]
-    potential = PotentialEnergy(bowl * (g - 0.5) ** 2)  # attractive bowl (cost away from centre)
+    potential = PotentialEnergy(bowl * (g - 0.5) ** 2, dx)  # attractive bowl (cost away from centre)
     if grid_only:
         energy = potential
     else:

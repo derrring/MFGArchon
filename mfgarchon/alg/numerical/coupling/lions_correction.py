@@ -91,15 +91,20 @@ def create_lions_source(
 
     1. **Analytic** (Issue #1023, Phase 2): if ``energy_functional`` is an
        :class:`~mfgarchon.operators.interaction.energy_functionals.EnergyFunctional`
-       (provides ``.lions_derivative``), its exact derivative is used and the FD
-       path is skipped. ``functional_derivative`` is then ignored.
+       (provides ``.flat_derivative``), its exact derivative is used and the FD
+       path is skipped. ``functional_derivative`` is then ignored. The
+       per-slice ``t`` is forwarded to ``flat_derivative``.
     2. **Finite difference** (original path): if ``energy_functional`` is a plain
        ``F[m] -> float`` callable, ``functional_derivative`` is required and
        ``delta F / delta m`` is approximated by finite differences.
 
-    The two paths are equivalent for an ``EnergyFunctional`` whose analytic
-    derivative matches the FD gradient of its ``.energy`` (verified by tests),
-    so this extension is backward-compatible.
+    The two paths agree for an ``EnergyFunctional`` whose analytic
+    ``flat_derivative`` matches the FD gradient of its ``.energy`` **divided by
+    the quadrature weights** -- the FD engine perturbs an unweighted Dirac
+    ``m_k += epsilon``, so its output is ``w_k * (delta F / delta m)_k``. The
+    conversion has one owner,
+    :func:`~mfgarchon.operators.interaction.energy_functionals.flat_derivative_from_energy_gradient`
+    (Issue #1642 A2).
 
     Args:
         energy_functional: Either an ``EnergyFunctional`` (analytic path) or a
@@ -146,7 +151,7 @@ def create_lions_source(
         ) -> NDArray:
             """Evaluate the analytic Lions correction delta F / delta m[m](x)."""
             m_flat = _spatial_density(m)
-            return np.asarray(analytic.lions_derivative(m_flat)).ravel()
+            return np.asarray(analytic.flat_derivative(m_flat, t=t)).ravel()
 
         return source_term_hjb_analytic
 
