@@ -71,11 +71,27 @@ def test_ghost_package_is_not_importable() -> None:
 
 @pytest.mark.parametrize("relative_path", REMOVED_OPTIMIZATION_PACKAGES)
 def test_empty_optimization_packages_are_gone(relative_path: str) -> None:
-    """The three zero-byte optimization solver packages must not come back."""
+    """The three zero-byte optimization solver packages must not come back.
+
+    Pins the absence of Python modules, not of the directory. Git leaves a directory
+    behind when it still holds untracked content, so any working copy that imported a
+    pre-#1642 commit keeps an empty ``<package>/__pycache__/`` after checking this
+    branch out -- with a clean ``git status``. Asserting ``package_dir.exists()`` would
+    therefore fail on the maintainer's tree while CI's fresh clone stayed green.
+
+    Globbing ``*.py`` rather than checking ``__init__.py`` alone: without an
+    ``__init__.py`` the directory is still a PEP 420 namespace package, so a bare
+    ``primal_dual/solver.py`` imports fine on an editable install (verified) while
+    ``setuptools.find_packages()`` omits it from a wheel -- resurrection that works for
+    the author and breaks for every installed user.
+    """
     package_dir = PACKAGE_ROOT / relative_path
-    assert not package_dir.exists(), (
-        f"{relative_path} is an empty package advertising a solver family that does not "
-        f"exist (Issue #1342). It was removed by #1642 capability D1."
+    modules = sorted(path.name for path in package_dir.glob("*.py"))
+    assert modules == [], (
+        f"{relative_path} carries Python modules again: {modules}. That directory is an "
+        f"empty package advertising a solver family that does not exist (Issue #1342); "
+        f"#1642 capability D1 removed it. Add the solver implementation somewhere real, "
+        f"not the empty package. (A leftover __pycache__/ alone is not a failure.)"
     )
 
 

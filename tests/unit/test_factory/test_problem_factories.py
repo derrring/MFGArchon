@@ -281,8 +281,11 @@ def test_variational_legacy_branch_raises_actionable_error(simple_domain):
     [0, 1] with Nx=51. The branch therefore refuses.
 
     Catches: (a) a regression to the ghost import (ModuleNotFoundError is not a subclass
-    of NotImplementedError, so the raises-check fails); (b) a "fix" that silently returns
-    a problem on the wrong domain (no exception at all).
+    of NotImplementedError, so the raises-check fails); (b) a "fix" that forwards to the
+    real VariationalMFGProblem -- ``geometry`` lands in ``**kwargs``, the domain silently
+    defaults to [0, 1] with Nx=51, and construction then dies on the components contract
+    (``AttributeError: 'MFGComponents' object has no attribute 'lagrangian_func'``).
+    Neither exception is NotImplementedError, so the raises-check fails on both.
     """
     with (
         pytest.warns(DeprecationWarning, match="deprecated"),
