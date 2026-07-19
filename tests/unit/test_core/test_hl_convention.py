@@ -174,23 +174,11 @@ VF_GRID = {
 
 
 def _separable_params():
-    """Cartesian product, xfailing exactly the cells where V + f != 0."""
+    """Cartesian product. Every cell passes since Issue #1645 (B2) closed the fork."""
     params = []
     for cost_name in CONTROL_COSTS:
         for vf_name, (pot, coup) in VF_GRID.items():
-            marks = ()
-            if (pot, coup) != (None, None):
-                marks = pytest.mark.xfail(
-                    strict=True,
-                    reason=(
-                        "Issue #1645 (B2): SeparableLagrangian.__call__ returns "
-                        "L_ctrl + V + f instead of L_ctrl - V - f, so it is not "
-                        "self-conjugate; the gap is exactly 2(V+f). Flip the sign "
-                        "in B2 and this xfail becomes an XPASS (strict=True fails "
-                        "the suite) -- remove the mark then."
-                    ),
-                )
-            params.append(pytest.param(cost_name, pot, coup, marks=marks, id=f"{cost_name}-{vf_name}"))
+            params.append(pytest.param(cost_name, pot, coup, id=f"{cost_name}-{vf_name}"))
     return params
 
 
@@ -212,22 +200,26 @@ class TestSeparableRoundTrip:
             )
 
     @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))
-    def test_separable_fork_gap_is_exactly_two_v_plus_f(self, cost_name):
-        """Quantify the Issue #1645 fork rather than only marking it xfail.
+    def test_separable_fork_gap_is_closed(self, cost_name):
+        """The Issue #1645 fork is closed: the self-conjugacy gap is ZERO, not 2(V+f).
 
-        Pins the gap at 2(V+f) and pins that it is CONSTANT in p -- a p-dependent
-        gap would mean the control term is also wrong, not just the (V, f) sign.
+        This is the shape that catches a re-fork. Reverting `__call__` to
+        ``L_ctrl + V + f`` reopens a gap of exactly ``2(V+f)``, constant in p, and
+        every row here fails. The p-sweep matters independently: a p-DEPENDENT gap
+        would mean the control term is wrong too, not just the (V, f) sign, so a
+        single-point assertion could not tell those apart.
         """
         cost = CONTROL_COSTS[cost_name]()
         L = SeparableLagrangian(control_cost=cost, potential=_potential, coupling=_coupling)
         H = L.as_hamiltonian()
         box = _search_box(cost)
-        expected_gap = 2.0 * (V_NONZERO + F_SLOPE * M_VALUE)
+        reopened_gap = 2.0 * (V_NONZERO + F_SLOPE * M_VALUE)
 
         gaps = [float(H(X_POINT, M_VALUE, np.array([p]))) - _conjugate(L, p, bounds=box) for p in P_SWEEP]
         for p, gap in zip(P_SWEEP, gaps, strict=True):
-            assert gap == pytest.approx(expected_gap, abs=1e-5), (
-                f"{cost_name} p={p}: gap {gap} != 2(V+f) {expected_gap}"
+            assert gap == pytest.approx(0.0, abs=1e-5), (
+                f"{cost_name} p={p}: self-conjugacy gap {gap} != 0; a gap of "
+                f"{reopened_gap} means the Issue #1645 sign was reverted"
             )
 
     @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))

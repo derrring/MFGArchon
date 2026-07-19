@@ -1867,11 +1867,18 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
 
     def __call__(self, x, alpha, m, t=0.0):
-        """L = L_control(alpha) + V(x, t) + f(m)."""
+        """L = L_control(alpha) - V(x, t) - f(m).
+
+        The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
+        H = sup_alpha{-p.alpha - L}, so if L = L_ctrl + W then H = H_ctrl - W; the repo's HJB is
+        -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
+        carrying +f), which forces W = -(V + f). Carrying +V+f on both sides made this class
+        non-self-conjugate against its own evaluate_hamiltonian by exactly 2(V+f).
+        """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = float(self._potential(x, t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
-        return L_ctrl + V + f_m
+        return L_ctrl - V - f_m
 
     def optimal_control(self, x, m, p, t=0.0):
         """Delegates to control_cost.optimal_control(p). Analytic."""
