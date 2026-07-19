@@ -21,7 +21,7 @@ from mfgarchon.utils.numerical.integration import trapezoid
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from mfgarchon.solvers.variational import VariationalMFGProblem
+    from mfgarchon.alg.optimization.variational_problem import VariationalMFGProblem
 
 logger = get_logger(__name__)
 

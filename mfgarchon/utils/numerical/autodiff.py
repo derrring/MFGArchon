@@ -22,8 +22,9 @@ class AutoDiffBackend(str, Enum):
 
     Example:
         >>> from mfgarchon.utils.numerical.autodiff import AutoDiffBackend
-        >>> config = FunctionalDerivativeConfig(backend=AutoDiffBackend.JAX)
-        >>> # Instead of: use_jax=True, use_pytorch=False
+        >>> backend = AutoDiffBackend.JAX
+        >>> backend.get_dependency_name()
+        'jax'
     """
 
     NUMPY = "numpy"  # Default: finite differences, no autodiff

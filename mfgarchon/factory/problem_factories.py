@@ -158,19 +158,6 @@ def create_mfg_problem(
 
 @overload
 def create_mfg_problem(
-    problem_type: Literal["variational"],
-    components: MFGComponents,
-    *,
-    geometry: Domain,
-    time_horizon: float = 1.0,
-    num_timesteps: int = 100,
-    use_unified: Literal[False],
-    **kwargs: Any,
-) -> Any: ...  # VariationalMFGProblem
-
-
-@overload
-def create_mfg_problem(
     problem_type: Literal["stochastic"],
     components: MFGComponents,
     *,
@@ -283,14 +270,22 @@ def create_mfg_problem(
                 **kwargs,
             )
         elif problem_type == "variational":
-            from mfgarchon.solvers.variational import VariationalMFGProblem
-
-            return VariationalMFGProblem(
-                geometry=geometry,
-                T=time_horizon,
-                Nt=num_timesteps,
-                components=components,
-                **kwargs,
+            # Issue #1642 (D1): this branch used to import a variational module under a
+            # package that has never existed, so it raised ModuleNotFoundError. The real
+            # VariationalMFGProblem lives in mfgarchon.alg.optimization.variational_problem
+            # but takes an incompatible contract, so this factory cannot forward its
+            # arguments -- geometry would land in **kwargs and the domain would silently
+            # fall back to [0, 1] with Nx=51. Refuse loudly instead.
+            raise NotImplementedError(
+                "create_mfg_problem('variational', ..., use_unified=False) has no "
+                "specialized class to return. Construct "
+                "mfgarchon.alg.optimization.variational_problem.VariationalMFGProblem "
+                "directly: it takes (xmin, xmax, Nx, T, Nt) plus a "
+                "VariationalMFGComponents, not a Domain geometry plus MFGComponents, so "
+                "this factory cannot forward geometry or components without discarding "
+                "them. Use use_unified=True for a variational-tagged MFGProblem. The "
+                "variational solver stack itself is experimental and blocked "
+                "(Issue #1342). Refs #1642."
             )
         elif problem_type == "stochastic":
             from mfgarchon.core.stochastic.stochastic_problem import StochasticMFGProblem
