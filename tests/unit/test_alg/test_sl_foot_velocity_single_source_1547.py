@@ -122,7 +122,8 @@ def test_congestion_solve_tracks_an_independent_fdm_reference():
     sl = _solve(HJBSemiLagrangianSolver, hamiltonian, nx, nt)[0]
     fdm = _solve(HJBFDMSolver, hamiltonian, nx, nt)[0]
 
-    assert np.isfinite(sl).all() and np.isfinite(fdm).all()
+    assert np.isfinite(sl).all()
+    assert np.isfinite(fdm).all()
     assert np.abs(sl - fdm).max() < 5e-3, (
         f"SL deviates from the FDM reference by {np.abs(sl - fdm).max():.6f}; the "
         f"characteristic foot is not carrying dH/dp (pre-fix this was ~0.08 and did not "
