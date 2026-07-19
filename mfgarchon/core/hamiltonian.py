@@ -1458,21 +1458,25 @@ class LagrangianBase(MFGOperatorBase):
         """Evaluate L(x, alpha, m, t)."""
         ...
 
-    # === Optimal control (same signature as HamiltonianBase) ===
+    # === Conjugate maximizer: the single owner of the numerical Legendre step ===
 
-    def optimal_control(
+    def _conjugate_argmax(
         self,
         x: NDArray,
         m: float | NDArray,
         p: NDArray,
         t: float = 0.0,
     ) -> NDArray:
-        """Compute alpha* = argmax_alpha { p . alpha - L(x, alpha, m, t) }.
+        """argmax_alpha { p . alpha - L(x, alpha, m, t) } -- the maximizer of L*(p).
 
-        Same alpha* as HamiltonianBase.optimal_control(). Computed directly
-        from L without constructing DualHamiltonian.
+        By the envelope theorem this equals dH/dp, which is NOT alpha*: the optimal
+        control is alpha* = -sign * dH/dp (Issue #1642, capability B5). Keeping the
+        maximization in one place is what stops optimal_control() and
+        evaluate_hamiltonian() from re-forking into private sign conventions --
+        before #1642 they held opposite ones, and only the two errors cancelling
+        made evaluate_hamiltonian() return the right number.
 
-        Default: 1D scalar optimization via scipy. Override for analytic.
+        Default: 1D scalar optimization via scipy, L-BFGS-B in nD.
         """
         from scipy.optimize import minimize_scalar
 
@@ -1501,6 +1505,31 @@ class LagrangianBase(MFGOperatorBase):
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
         return res.x
 
+    # === Optimal control (same signature AND same convention as HamiltonianBase) ===
+
+    def optimal_control(
+        self,
+        x: NDArray,
+        m: float | NDArray,
+        p: NDArray,
+        t: float = 0.0,
+    ) -> NDArray:
+        """Compute the optimal control alpha*, the drift the agent applies.
+
+        Same convention as HamiltonianBase.optimal_control() (Issue #1642):
+        - MINIMIZE: alpha* = -dH/dp
+        - MAXIMIZE: alpha* = +dH/dp
+
+        with dH/dp = argmax_alpha { p . alpha - L(x, alpha, m, t) }. Computed
+        directly from L without constructing DualHamiltonian.
+
+        Before #1642 this returned the bare argmax -- i.e. +p/lambda under
+        MINIMIZE where HamiltonianBase and SeparableLagrangian both return
+        -p/lambda -- so a subclass that did not override it got a drift of the
+        wrong sign. Override for analytic (SeparableLagrangian does).
+        """
+        return -self._sign * self._conjugate_argmax(x, m, p, t)
+
     # === On-the-fly H evaluation ===
 
     def evaluate_hamiltonian(
@@ -1510,13 +1539,21 @@ class LagrangianBase(MFGOperatorBase):
         p: NDArray,
         t: float = 0.0,
     ) -> float | NDArray:
-        """H(x, m, p, t) = p . alpha*(p) - L(x, alpha*(p), m, t).
+        """H(x, m, p, t) = sup_alpha { p . alpha - L(x, alpha, m, t) } = L*(p).
 
-        Computes Hamiltonian value on-the-fly without DualHamiltonian.
+        The convex conjugate, evaluated at its own maximizer. Matches
+        DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
+        the value does not depend on OptimizationSense (Issue #1185).
+
+        Evaluated at ``_conjugate_argmax``, NOT at ``optimal_control`` -- those
+        differ by the sense sign, so substituting one for the other flips the
+        Hamiltonian's sign under MINIMIZE (Issue #1642).
+
+        Computes the Hamiltonian value on-the-fly without DualHamiltonian.
         """
-        alpha_star = self.optimal_control(x, m, p, t)
-        p_dot_alpha = float(np.sum(np.atleast_1d(p) * alpha_star))
-        return p_dot_alpha - float(self(x, alpha_star, m, t))
+        dH_dp = self._conjugate_argmax(x, m, p, t)
+        p_dot_alpha = float(np.sum(np.atleast_1d(p) * dH_dp))
+        return p_dot_alpha - float(self(x, dH_dp, m, t))
 
     # === ADMM / variational interface ===
 

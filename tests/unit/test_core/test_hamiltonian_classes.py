@@ -1076,7 +1076,16 @@ class TestLagrangianBaseNumerical:
     """Test LagrangianBase default numerical methods (non-separable case)."""
 
     def test_numerical_optimal_control(self):
-        """Custom Lagrangian uses scipy fallback for optimal_control."""
+        """Custom Lagrangian uses scipy fallback for optimal_control.
+
+        Issue #1642 (capability B5) corrected the expected value here from +1 to -1.
+        This test previously asserted the conjugate maximizer and called it alpha*:
+        its stationarity condition ``p = dL/dalpha = alpha^3 -> alpha = p^(1/3) = 1``
+        solves ``argmax_alpha {p.alpha - L}``, which is ``dH/dp``, not the control.
+        Under MINIMIZE the optimal control is ``alpha* = -dH/dp`` -- the convention
+        ``HamiltonianBase.optimal_control`` and ``SeparableLagrangian.optimal_control``
+        have always used, and which the base class now matches.
+        """
         from mfgarchon.core.hamiltonian import LagrangianBase, OptimizationSense
 
         class QuarticLagrangian(LagrangianBase):
@@ -1085,9 +1094,14 @@ class TestLagrangianBaseNumerical:
 
         L = QuarticLagrangian(sense=OptimizationSense.MINIMIZE)
         x, m, p = np.array([0.0]), 0.0, np.array([1.0])
-        alpha = L.optimal_control(x, m, p, 0.0)
-        # For L = |alpha|^4/4, optimal: p = dL/dalpha = alpha^3, so alpha = p^(1/3) = 1
-        np.testing.assert_allclose(alpha, [1.0], atol=0.05)
+        # dH/dp solves p = alpha^3 -> alpha = p^(1/3) = 1; alpha* = -dH/dp = -1.
+        np.testing.assert_allclose(L.optimal_control(x, m, p, 0.0), [-1.0], atol=0.05)
+        # MAXIMIZE takes the other branch: alpha* = +dH/dp = +1.
+        L_max = QuarticLagrangian(sense=OptimizationSense.MAXIMIZE)
+        np.testing.assert_allclose(L_max.optimal_control(x, m, p, 0.0), [1.0], atol=0.05)
+        # The Hamiltonian value is sense-independent: H = p.(dH/dp) - L(dH/dp) = 0.75.
+        np.testing.assert_allclose(L.evaluate_hamiltonian(x, m, p, 0.0), 0.75, atol=0.05)
+        np.testing.assert_allclose(L_max.evaluate_hamiltonian(x, m, p, 0.0), 0.75, atol=0.05)
 
     def test_numerical_proximal(self):
         """Custom Lagrangian uses scipy fallback for proximal."""
