@@ -1875,7 +1875,9 @@ class SeparableLagrangian(LagrangianBase):
         """L = L_control(alpha) - V(x, t) - f(m).
 
         The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
-        H = sup_alpha{-p.alpha - L}, so if L = L_ctrl + W then H = H_ctrl - W; the repo's HJB is
+        H = sup_alpha { p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
+        because every shipped L_ctrl is even in alpha -- Issue #1652), so if L = L_ctrl + W then
+        H = H_ctrl - W; the repo's HJB is
         -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
         carrying +f), which forces W = -(V + f). Carrying +V+f on both sides made this class
         non-self-conjugate against its own evaluate_hamiltonian by exactly 2(V+f).

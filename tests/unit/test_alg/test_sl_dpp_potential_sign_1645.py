@@ -71,19 +71,21 @@ def test_dpp_error_does_not_grow_with_the_potential(v_amp):
     err = float(np.abs(sl - fdm).max())
 
     assert err < 0.05, (
-        f"V={v_amp}: max|SL-FDM| = {err:.6f}. Pre-fix this was V + 0.0054, i.e. the DPP running "
-        f"cost carried +V instead of -V (Issue #1645)."
+        f"V={v_amp}: max|SL-FDM| = {err:.6f}. Pre-fix this was V + O(h) -- V + 0.0141 at this "
+        f"grid -- i.e. the DPP running cost carried +V instead of -V (Issue #1645)."
     )
 
 
-@pytest.mark.slow
 def test_dpp_error_converges_under_refinement():
     """Convergence, not just smallness: the pre-fix error PLATEAUED (ratios 1.0018 / 1.0007).
 
-    A tolerance at one resolution cannot distinguish a wrong limit from a merely-small error.
+    A tolerance at one resolution cannot distinguish a wrong limit from a merely-small error, so
+    this guards a failure class the coarse detection tests above cannot: a wrong limit whose
+    magnitude happens to sit under their tolerance.
 
-    Marked ``slow`` -- it needs genuinely fine grids to make a convergence statement, which the
-    detection tests above do not. The PR gate keeps the discrimination; nightly keeps the rate.
+    Deliberately NOT marked ``slow``. It costs +3.4 s on the local gate under ``-n auto`` (xdist
+    absorbs its ~39 s serial cost), and ``@slow`` currently means "runs nowhere": nightly aborts
+    at ``--maxfail=10`` having reached ~2.5% of the suite, never arriving at tests/unit/test_alg.
     """
     errors = []
     for nx, nt in ((81, 40), (161, 80)):
