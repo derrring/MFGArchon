@@ -493,9 +493,26 @@ class TestInterpolationMethods:
         rel_error = np.linalg.norm(U_cubic - U_linear) / np.linalg.norm(U_linear)
         assert rel_error < 0.25  # Within 25% (updated after gradient fix)
 
-    @pytest.mark.xfail(reason="Cubic interpolation produces NaN values - see issue #583")
-    def test_cubic_improves_smoothness(self):
-        """Test that cubic interpolation produces smoother solutions."""
+    def test_cubic_interpolation_method_produces_a_finite_solution(self):
+        """``interpolation_method='cubic'`` solves without NaN.
+
+        Renamed from ``test_cubic_improves_smoothness``, which claimed more than it checks:
+        it asserts finiteness and a shape, never smoothness, and never compares against a
+        non-cubic run. The former xfail cited Issue #583 ("cubic produces NaN"), CLOSED
+        2026-02-05; the test has been XPASSing silently ever since because pytest.ini set no
+        ``xfail_strict`` (Issue #1663).
+
+        The marker is stale for the ordinary reason: #583 was FIXED. Its fix was to route
+        ``interpolation_method='cubic'`` through PCHIP -- monotonicity-preserving cubic
+        Hermite -- rather than a natural cubic spline, precisely to stop the Runge
+        oscillations that produced the NaNs (``hjb_sl_interpolation.py:79-85``, and pinned
+        for the nD path by ``test_2d_cubic_stochastic_uses_pchip``). Measured here: 2976
+        ``PchipInterpolator`` constructions, zero ``CubicSpline``. That is the intended
+        implementation, not a discrepancy.
+
+        What remains true is only the narrower point in the name: this asserts finiteness and
+        shape, never smoothness, and never compares against a non-cubic run.
+        """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=20, components=_default_components())
 
@@ -563,9 +580,21 @@ class TestRBFInterpolationFallback:
             solver = HJBSemiLagrangianSolver(problem, use_rbf_fallback=True, rbf_kernel=kernel)
             assert solver.rbf_kernel == kernel
 
-    @pytest.mark.xfail(reason="Numerical instability with RBF thin_plate_spline on steep gradients - see Issue #583")
-    def test_rbf_fallback_produces_valid_solution(self):
-        """Test that solver with RBF fallback produces valid solution."""
+    def test_enabling_rbf_fallback_does_not_break_the_solve(self):
+        """Constructing with ``use_rbf_fallback=True`` still yields a finite solution.
+
+        Renamed from ``test_rbf_fallback_produces_valid_solution``: it does NOT exercise the
+        RBF path. Counter instrumentation over this exact configuration -- 1D,
+        ``use_rbf_fallback=True``, ``rbf_kernel='thin_plate_spline'``, ``rk2`` -- records
+        ``interpolate_value_rbf_fallback`` invoked **0** times against
+        ``interpolate_value_1d`` **5177** times. The fallback is structurally unreachable
+        from here, so the former xfail reason ("numerical instability with RBF
+        thin_plate_spline") described a path the test never entered.
+
+        What it does verify is narrower and still worth keeping: enabling the flag does not
+        break an otherwise ordinary solve. That RBF has no test reaching it at all is a real
+        gap, tracked separately.
+        """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
         solver = HJBSemiLagrangianSolver(
