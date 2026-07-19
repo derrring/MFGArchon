@@ -121,35 +121,24 @@ def validate_custom_functions(
     Issue #686: Custom function validation
     Issue #1642 (C1): consistency findings propagate to is_valid
     """
-    result = ValidationResult()
+    results: list[ValidationResult] = []
 
     if hamiltonian is not None:
-        h_result = validate_hamiltonian(hamiltonian, geometry)
-        result.issues.extend(h_result.issues)
-        if not h_result.is_valid:
-            result.is_valid = False
+        results.append(validate_hamiltonian(hamiltonian, geometry))
 
     if dH_dm is not None:
-        dm_result = validate_hamiltonian_derivative(dH_dm, geometry, "dH_dm")
-        result.issues.extend(dm_result.issues)
-        if not dm_result.is_valid:
-            result.is_valid = False
+        results.append(validate_hamiltonian_derivative(dH_dm, geometry, "dH_dm"))
 
     if dH_dp is not None:
-        dp_result = validate_hamiltonian_derivative(dH_dp, geometry, "dH_dp")
-        result.issues.extend(dp_result.issues)
-        if not dp_result.is_valid:
-            result.is_valid = False
+        results.append(validate_hamiltonian_derivative(dH_dp, geometry, "dH_dp"))
 
     # Check consistency if requested and all functions provided
     if check_consistency and hamiltonian is not None and dH_dm is not None:
-        cons_result = validate_hamiltonian_consistency(hamiltonian, dH_dm, geometry, dH_dp=dH_dp)
-        result.issues.extend(cons_result.issues)
-        result.context.update(cons_result.context)
-        if not cons_result.is_valid:
-            result.is_valid = False
+        results.append(validate_hamiltonian_consistency(hamiltonian, dH_dm, geometry, dH_dp=dH_dp))
 
-    return result
+    # ValidationResult.combine is the one implementation of this merge: issues
+    # concatenated, contexts merged, is_valid False if any part is False.
+    return ValidationResult.combine(results)
 
 
 def validate_hamiltonian(

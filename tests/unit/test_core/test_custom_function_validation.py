@@ -163,29 +163,121 @@ def test_hamiltonian_consistency_gates_on_dm_witness():
 
 
 @pytest.mark.unit
-def test_hamiltonian_dp_consistency_passes():
-    """Correct dH_dp should pass consistency check."""
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_hamiltonian_dp_consistency_passes(dimension):
+    """Correct dH_dp should pass consistency check, in 1-D and 2-D."""
     H = _hamiltonian()
-    geom = _geometry()
+    geom = _geometry(dimension=dimension)
     result = validate_hamiltonian_consistency(H, H.dm, geom, dH_dp=H.dp)
     assert result.is_valid
     assert result.issues == []
 
 
 @pytest.mark.unit
-def test_hamiltonian_consistency_gates_on_dp_witness():
-    """A grossly wrong dH_dp invalidates the result and names the values."""
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_hamiltonian_consistency_gates_on_dp_witness(dimension):
+    """A grossly wrong dH_dp invalidates the result and names the values.
+
+    Only the LAST component is wrong, so in 2-D the per-component loop has to
+    compare component 1 against component 1. Catches a loop that compares every
+    component against `dp_analytical[0]` -- which is indistinguishable from the
+    correct loop in 1-D, the only dimension the rest of this module exercises.
+    """
     H = _hamiltonian()
-    geom = _geometry()
+    geom = _geometry(dimension=dimension)
+    wrong_index = dimension - 1
 
     def wrong_dp(x, m, p, t=0.0):
-        return np.array([99.0])
+        claimed = np.atleast_1d(H.dp(x, m, p, t)).astype(float).copy()
+        claimed[wrong_index] = 99.0
+        return claimed
 
     result = validate_hamiltonian_consistency(H, H.dm, geom, dH_dp=wrong_dp)
     assert not result.is_valid
     errors = [i for i in result.issues if i.severity is ValidationSeverity.ERROR]
-    assert [i.location for i in errors] == ["dH_dp[0]"]
+    assert [i.location for i in errors] == [f"dH_dp[{wrong_index}]"]
     assert "99" in errors[0].message
+
+
+@pytest.mark.unit
+def test_error_reports_the_witness_probe_not_an_earlier_warning():
+    """The ERROR must carry the witness probe's values, not an earlier probe's.
+
+    `_report` grades on `witness is not None` but formats whichever comparison it
+    selected; if those decouple, the message asserts "exceeds 0.01 relative"
+    while quoting a 0.5% discrepancy -- a diagnostic that names innocent values.
+    Probe order is m=0.5 before m=1.0, so the warning-grade point is seen first.
+    """
+    H = _hamiltonian()
+    geom = _geometry()
+
+    def wrong_dm(x, m, p, t=0.0):
+        if m == 1.0:
+            return -42.0  # witness grade: 21x off
+        return -2.0 * m * 1.005  # warning grade: 0.5% off, seen first
+
+    result = validate_hamiltonian_consistency(H, wrong_dm, geom)
+    assert not result.is_valid
+    errors = [i for i in result.issues if i.severity is ValidationSeverity.ERROR]
+    assert [i.location for i in errors] == ["dH_dm"]
+
+    message = errors[0].message
+    assert "analytical=-42" in message
+    assert "m=1," in message
+    assert "-1.005" not in message
+    assert result.context["dH_dm_analytical"] == -42.0
+    assert result.context["dH_dm_witness_m"] == 1.0
+
+
+@pytest.mark.unit
+def test_consistency_context_reaches_validate_custom_functions():
+    """The witness values must survive the merge into the aggregate result.
+
+    Catches dropping the consistency result's `context`, which silently strips
+    the machine-readable witness from every caller that goes through
+    `validate_custom_functions` -- the only path `MFGProblem` uses.
+    """
+    H = _hamiltonian()
+    geom = _geometry()
+
+    def wrong_dm(x, m, p, t=0.0):
+        return 42.0
+
+    result = validate_custom_functions(hamiltonian=H, dH_dm=wrong_dm, dH_dp=H.dp, geometry=geom)
+    assert not result.is_valid
+    assert result.context["dH_dm_analytical"] == 42.0
+    assert result.context["dH_dm_witness_m"] in (0.5, 1.0)
+    assert "dH_dm_witness_p" in result.context
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_regularized_hamiltonian_constructs_in_every_dimension(dimension):
+    """A Moreau-Yosida-regularized control cost must survive construction.
+
+    The gate is live on this path, so any dH_dp/H disagreement in the regularized
+    Hamiltonian becomes a hard construction failure rather than wrong numbers.
+    Catches a per-component Moreau penalty, which is exact at d=1 and off by a
+    factor of d above it.
+    """
+    base = SeparableHamiltonian(
+        control_cost=BoundedControlCost(control_cost=1.0, max_control=1.0),
+        coupling=lambda m: -(m**2),
+        coupling_dm=lambda m: -2 * m,
+    )
+    H = base.regularize(0.1)
+    geom = _geometry(dimension=dimension)
+
+    result = validate_custom_functions(hamiltonian=H, dH_dm=H.dm, dH_dp=H.dp, geometry=geom)
+    assert result.is_valid, [str(i) for i in result.issues]
+
+    components = MFGComponents(
+        hamiltonian=H,
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+    )
+    problem = MFGProblem(geometry=geom, components=components, T=0.1, Nt=3)
+    assert problem is not None
 
 
 @pytest.mark.unit
