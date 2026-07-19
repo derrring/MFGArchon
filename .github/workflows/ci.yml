@@ -174,7 +174,7 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     needs: import-validation
-    timeout-minutes: 45  # Comprehensive serial test suite (~4770 tests; see PR step budget below)
+    timeout-minutes: 45  # release path runs the full suite; the PR path is a smoke subset
 
     strategy:
       fail-fast: true  # Stop on first failure
@@ -201,27 +201,24 @@ jobs:
         echo "Testing package imports..."
         python -c "import mfgarchon; print('✅ Package imports successfully')"
 
-    - name: Run tests with coverage (skip slow tests on PRs)
+    # PR path: a SMOKE subset, not the full suite. The full run is the local gate
+    # (scripts/local_ci.sh, ~2.5 min) plus nightly.yml. Measured 2026-07-19: the
+    # full suite is ~141 s locally and exceeded the 25-min step budget here --
+    # coverage accounts for 1.5x, the runner itself for the rest. Online execution
+    # of the full suite was buying latency, not signal.
+    - name: Smoke tests (fast subset; the full suite is the local gate + nightly)
       if: github.event_name != 'release'
-      timeout-minutes: 25  # parallel (-n auto) suite under coverage; ~2.3x faster than the old 38-min serial budget
+      timeout-minutes: 12
       env:
-        # Pin BLAS/OpenMP to 1 thread per worker: xdist already saturates cores,
-        # so per-process BLAS parallelism would oversubscribe and slow the run.
         OMP_NUM_THREADS: 1
         OPENBLAS_NUM_THREADS: 1
         MKL_NUM_THREADS: 1
       run: |
-        # Note: test_backends/ and test_visualization/ excluded due to platform-specific failures
-        # (MPS device tests on non-Mac, legacy plotting issues)
-        # -n auto: pytest-xdist parallelism. Confirmed equivalent to serial
-        # (same pass/skip/xfail counts, no isolation failures) before enabling.
-        pytest tests/ -v \
+        pytest tests/unit/test_core tests/unit/test_config -v \
           -n auto \
-          --ignore=tests/unit/test_backends/ \
-          --ignore=tests/unit/test_visualization/ \
           -m "not slow and not optional_torch and not benchmark and not experimental and not environment" \
-          --cov=mfgarchon --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --maxfail=50 \
-          --durations=20
+          --junitxml=junit.xml -o junit_family=legacy --maxfail=10 \
+          --durations=10
 
     - name: Run all tests with coverage (including slow tests on releases)
       if: github.event_name == 'release'

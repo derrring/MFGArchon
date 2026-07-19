@@ -1,53 +1,26 @@
-# Pull Request
+<!--
+The full test suite does NOT run on GitHub for PRs (see CLAUDE.md, "CI shape").
+A green checks list here means lint + imports + a smoke subset -- not your tests.
+-->
 
-## 🎯 **Summary**
-<!-- Brief description of what this PR accomplishes -->
+## Local gate
 
-## 📋 **Changes Made**
-<!-- List the main changes in this PR -->
-- [ ]
-- [ ]
-- [ ]
+<!-- Paste the last lines of ./scripts/local_ci.sh. Required. -->
 
-## 🔗 **Related Issues**
-<!-- Link to related GitHub issues -->
-Fixes #
-Relates to #
+```
+```
 
-## 🧪 **Testing**
-<!-- Describe how changes were tested -->
-- [ ] Local testing completed
-- [ ] All existing tests pass
-- [ ] New tests added for new functionality
-- [ ] Manual testing performed
+- [ ] `./scripts/local_ci.sh` is **GATE GREEN** on this branch's head
+- [ ] Any new pinning test was **mutation-checked** (break what it pins, confirm it goes red, restore)
 
-## 📚 **Documentation**
-<!-- Documentation updates -->
-- [ ] Code comments updated
-- [ ] README.md updated (if needed)
-- [ ] Documentation files updated (if needed)
-- [ ] Examples updated (if needed)
+## What changed
 
-## ✅ **Review Checklist**
-<!-- For reviewer and author -->
-- [ ] Code follows project style guidelines
-- [ ] No breaking changes (or properly documented)
-- [ ] Backward compatibility maintained
-- [ ] Performance implications considered
-- [ ] Security implications reviewed
-- [ ] All CI checks pass
+## Why
 
-## 🏷️ **Labels Applied**
-<!-- Ensure proper labels are applied -->
-- [ ] Priority: `priority: high/medium/low`
-- [ ] Area: `area: algorithms/geometry/performance/config/visualization`
-- [ ] Size: `size: small/medium/large`
-- [ ] Type: `bug/enhancement/documentation/type-checking`
+## Evidence
 
-## 📝 **Additional Notes**
-<!-- Any additional context, concerns, or notes for reviewers -->
+<!-- Measurements, before/after numbers, the failure this would have caught. -->
 
----
+## Not done
 
-**Reviewer**: Please ensure all checklist items are verified before approval.
-**Author**: Please complete all applicable checklist items before requesting review.
+<!-- What you deliberately left, and why. Adjacent defects noticed but not fixed go here. -->

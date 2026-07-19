@@ -140,7 +140,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Never commit directly to `main`** (branch protection enforces this). Create the PR when you push; delete merged branches.
 - **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless. The two pains that made granularity costly — CHANGELOG conflicts and red-main — are being removed by *mechanism* (fragment changelog + a full-suite PR gate; see the enforcement issues), so this stays a convenience call, not a rule to remember.
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
-- **Before merge**: the full **Test Suite** is authoritative (see *Pre-commit / pre-merge checks*); a green fast tier alone is not enough.
+- **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises; re-review after applying fixes. Local-green ≠ correct: this has caught real bugs a passing suite hid (e.g. a level-set boundary regression invisible to symmetric test configs, #1602/#1605). Cf. axiom `feedback_pre_pr_adversarial_review`.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
@@ -163,13 +163,25 @@ Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examp
 ### Pre-commit / pre-merge checks
 ```bash
 pytest tests/unit/test_affected_module.py            # iterate on the affected module
-pytest tests/ -n auto -m "not slow and not benchmark and not experimental and not optional_torch and not environment"   # full local sign-off — MATCH CI (parallel + skip slow)
+./scripts/local_ci.sh                                # THE GATE: ruff + ratchet + full suite (~2.5 min)
+./scripts/local_ci.sh --fast                         # lint/format/ratchet only, while iterating
 ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affected_module.py
 mypy mfgarchon/affected_module.py
 ```
-⚠️ Run the full suite **the way CI does** — `-n auto` (xdist parallel) + skip `slow`. A bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop.
+⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
-**CI shape (light gate):** the fast **`ci.yml` Test Suite** (parallel, skip-slow) gates PRs; **`nightly.yml`** runs the full suite incl. `@slow` at 03:00. So *fast-tier-green ≠ full-green* — a slow-only or `@slow`-only regression surfaces in nightly, not on the PR. Before a release, run the full suite locally or trigger nightly on demand.
+**CI shape — the full suite runs LOCALLY, not on GitHub (2026-07-19):**
+
+| Tier | What | Where | Cost |
+|:-----|:-----|:------|:-----|
+| Gate (authoritative) | full suite, CI marker set, `-n auto`, no coverage | **local**, `./scripts/local_ci.sh` | ~2.5 min |
+| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_config`) | GitHub `ci.yml` | ~3 min |
+| Backstop | full suite **incl. `@slow`** | GitHub `nightly.yml`, 03:00 | 45 min budget |
+| Release | full suite incl. `@slow`, with coverage | GitHub `ci.yml` on `release` | 35 min budget |
+
+Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** on a GitHub runner. Measured — coverage accounts for 1.5x, the runner itself for the rest (~7x slower than an M-series Mac). Online execution of the full suite was buying latency, not signal.
+
+**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. `./scripts/local_ci.sh` before every push is the gate; state its result in the PR. A regression outside `test_core`/`test_config` will otherwise reach `main` and only surface in nightly.
 
 ---
 
