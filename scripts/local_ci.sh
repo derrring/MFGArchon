@@ -28,6 +28,21 @@ ruff format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 ruff check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
 
+step "Workflow YAML"
+"$PY" -c "
+import sys, yaml, pathlib
+bad = []
+for f in sorted(pathlib.Path('.github/workflows').glob('*.yml')):
+    try:
+        yaml.safe_load(open(f))
+    except Exception as e:
+        bad.append(f'{f}: {e}')
+for b in bad:
+    print(b)
+sys.exit(1 if bad else 0)
+"
+check $? "all .github/workflows/*.yml parse"
+
 step "Fail-fast ratchet"
 "$PY" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"

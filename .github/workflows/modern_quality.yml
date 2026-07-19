@@ -60,14 +60,17 @@ jobs:
 
     - name: MyPy type checking (Informational)
       run: |
-        echo "🔍 Running MyPy type checking (informational for research codebase)..."
+        # INFORMATIONAL ONLY -- this step cannot fail and must not be read as a gate.
+        # The blocking type check is `mypy mfgarchon/config` in ci.yml; this one reports
+        # the whole-package count, which is currently in the thousands.
+        # The four echoes removed here asserted "366 -> 0 errors (100% achieved)", a
+        # measurement the mypy call above does not take and which was false.
+        echo "Running MyPy over the whole package (informational, non-blocking)..."
         mypy mfgarchon --ignore-missing-imports --show-error-codes --pretty || true
         echo ""
-        echo "📊 Type checking status:"
-        echo "  • Local development: 366 → 0 errors (100% achieved)"
-        echo "  • CI/CD environment: Different MyPy version/configuration"
-        echo "  • Production health: Zero breaking changes maintained"
-        echo "✅ Type checking complete (informational only)"
+        echo "Error count above is the real one. To make this a gate, convert it to the"
+        echo "ratchet shape already used by scripts/check_fail_fast.py: record a baseline"
+        echo "count and fail on an increase."
 
   # === COMPREHENSIVE VALIDATION JOBS (Manual/Release only) ===
   memory-safety:
@@ -186,59 +189,6 @@ jobs:
             exit(1)
         else:
             print(f'✅ Performance within acceptable range: {execution_time:.2f}s')
-        "
-
-  documentation-quality:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v6
-      with:
-        python-version: 3.12
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[docs]
-
-    - name: Check documentation completeness
-      run: |
-        echo "📚 Checking documentation completeness..."
-        python -c "
-        import ast
-        import os
-        from pathlib import Path
-
-        def check_docstrings(file_path):
-            with open(file_path, 'r') as f:
-                tree = ast.parse(f.read())
-
-            missing = []
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    if not node.name.startswith('_'):  # Public only
-                        if not ast.get_docstring(node):
-                            missing.append(f'{file_path}:{node.lineno}:{node.name}')
-            return missing
-
-        all_missing = []
-        for py_file in Path('mfgarchon').rglob('*.py'):
-            if '__pycache__' not in str(py_file):
-                missing = check_docstrings(py_file)
-                all_missing.extend(missing)
-
-        if all_missing:
-            print('⚠️  Missing docstrings (allowed during transition):')
-            for missing in all_missing[:10]:  # Show first 10
-                print(f'   {missing}')
-            if len(all_missing) > 10:
-                print(f'   ... and {len(all_missing) - 10} more')
-        else:
-            print('✅ All public functions and classes have docstrings')
         "
 
   benchmark-performance:

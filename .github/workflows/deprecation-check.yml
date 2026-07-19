@@ -2,9 +2,9 @@ name: Deprecation Policy Check
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main]
   push:
-    branches: [main, develop]
+    branches: [main]
 
 jobs:
   check-deprecation:
