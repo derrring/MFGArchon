@@ -166,9 +166,6 @@ class TestHJBSemiLagrangianSolveHJBSystem:
 class TestHJBSemiLagrangianNumericalProperties:
     """Test numerical properties of the semi-Lagrangian method."""
 
-    @pytest.mark.skip(
-        reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations (Issue #600)"
-    )
     def test_solution_finiteness(self):
         """Test that solution remains finite throughout."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -187,7 +184,6 @@ class TestHJBSemiLagrangianNumericalProperties:
         # All values should be finite
         assert np.all(np.isfinite(U_solution))
 
-    @pytest.mark.skip(reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations")
     def test_solution_smoothness(self):
         """Test that solution has reasonable smoothness."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -203,9 +199,16 @@ class TestHJBSemiLagrangianNumericalProperties:
 
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
-        # Check spatial smoothness - finite differences shouldn't be too large
-        U_diff = np.diff(U_solution, axis=1)
-        assert np.max(np.abs(U_diff)) < 100.0
+        # The solution should be no rougher than the terminal data it propagates back from.
+        # A hardcoded bound does not express this: the previous 100.0 sat 9626x above the
+        # measured value, so the solve had to degrade by four orders of magnitude to fail it.
+        # Scaling to the terminal condition tracks the grid and stays discriminating.
+        terminal_roughness = np.max(np.abs(np.diff(U_final)))
+        solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
+        assert solution_roughness < 10 * terminal_roughness, (
+            f"solution roughness {solution_roughness:.3e} exceeds 10x the terminal data's "
+            f"{terminal_roughness:.3e}; measured ratio on a healthy solve is 1.06"
+        )
 
 
 class TestHJBSemiLagrangianIntegration:
