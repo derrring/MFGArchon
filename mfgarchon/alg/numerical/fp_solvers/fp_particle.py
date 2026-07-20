@@ -129,6 +129,12 @@ class FPParticleSolver(BaseFPSolver):
         {BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.PERIODIC, BCType.DIRICHLET}
     )
 
+    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
+    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
+    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
+    #: silently discarded. Flip this to True in the same commit that implements it.
+    honors_inhomogeneous_neumann: bool = False
+
     @property
     def supported_bc_types(self) -> frozenset:
         """BC types this solver supports (BoundaryCapable protocol)."""

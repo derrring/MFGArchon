@@ -235,6 +235,12 @@ class BaseMFGSolver(ABC):
         # No BC found
         return None
 
+    #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
+    #: its type? Every FP family currently reads the type and drops the value, so they override
+    #: this to False. Declaring the type without honouring the value is the RFC #1574 class:
+    #: a declared surface broader than the honoured code, silent in the gap.
+    honors_inhomogeneous_neumann: bool = True
+
     def _validate_bc_support(self, bc: Any) -> None:
         """Fail loud if ``bc`` requests a ``BCType`` this solver does not declare in
         ``supported_bc_types`` (the ``BoundaryCapable`` protocol; Issue #1456).
@@ -255,6 +261,34 @@ class BaseMFGSolver(ABC):
         default = getattr(bc, "default_bc", None)
         if default is not None:
             requested.add(default)
+        if not self.honors_inhomogeneous_neumann:
+            from mfgarchon.geometry.boundary import BCType
+
+            # Issue #1686: declaring BCType.NEUMANN is not the same as honouring the value
+            # attached to it. Every FP solver declares NEUMANN and then reads only the type --
+            # `neumann_bc(value=g)` with g != 0 is applied by the HJB side and silently dropped
+            # by the FP side, so the coupled solve integrates a pair that is not adjoint and
+            # still reports converged=True. Until the inhomogeneous flux wall exists, refuse the
+            # problem rather than solve a different one.
+            ignored = sorted(
+                {
+                    float(seg.value)
+                    for seg in segments
+                    if seg.bc_type is BCType.NEUMANN
+                    and isinstance(getattr(seg, "value", None), (int, float))
+                    and float(seg.value) != 0.0
+                }
+            )
+            if ignored:
+                raise NotImplementedError(
+                    f"{type(self).__name__} declares BCType.NEUMANN but honours only the "
+                    f"homogeneous case; the value(s) {ignored} would be silently discarded "
+                    "(Issue #1686). On the FP side a Neumann value is a prescribed flux "
+                    "J.n = g, and no FP solver implements an inhomogeneous flux wall yet. Use "
+                    "g = 0 (equivalently no_flux_bc()), or a Dirichlet segment if you meant a "
+                    "prescribed density."
+                )
+
         unsupported = requested - set(supported)
         if unsupported:
             raise NotImplementedError(
