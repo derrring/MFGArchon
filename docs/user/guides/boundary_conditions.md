@@ -30,13 +30,37 @@ bc = dirichlet_bc(dimension=2, value=lambda t: np.sin(t))
 
 ## BC Types
 
-| Type | Mathematical Form | Typical Use |
-|------|-------------------|-------------|
-| `DIRICHLET` | u = g | Fixed value at boundary |
-| `NEUMANN` | du/dn = g | Fixed flux at boundary |
-| `NO_FLUX` | du/dn = 0 | Reflecting/insulating boundary |
-| `ROBIN` | alpha*u + beta*du/dn = g | Mixed condition |
-| `PERIODIC` | u(x_min) = u(x_max) | Wrap-around domain |
+A BC type is applied to **both** equations of the MFG system, and for two of them the
+condition is *not the same equation on both sides*. This is the HJB/FP adjoint duality, not an
+inconsistency: `u` is a value function and `m` is a density, and a reflecting wall for the density
+is a Neumann condition for the value function.
+
+| Type | HJB side (on `u`) | FP side (on `m`) | Typical use |
+|------|-------------------|------------------|-------------|
+| `DIRICHLET` | `u = g` | `m = g` | Fixed value at boundary |
+| `NEUMANN` | `du/dn = g` | see note below | Prescribed boundary data |
+| `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
+| `ROBIN` | `alpha*u + beta*du/dn = g` | same form on `m` | Mixed condition |
+| `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
+
+**`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
+two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
+divergence-form discretisation enforces the boundary flux as exactly zero
+(`fp_fdm_alg_divergence_centered.py:273`), which is what conserves mass. Choosing `du/dn = 0` on
+the density instead would leak mass wherever the drift is non-zero at the boundary.
+
+The calculator classes name this distinction explicitly:
+
+| class | condition |
+|---|---|
+| `ZeroGradientCalculator` | `du/dn = 0` |
+| `ZeroFluxCalculator` | `J.n = 0` (mass conservation) |
+| `NoFluxCalculator` | **deprecated since v0.16.11** — an alias for `ZeroGradientCalculator`. Pick one of the two above explicitly |
+
+> **Note on `NEUMANN` with a non-zero value.** `neumann_bc(value=g)` with `g != 0` is honoured by
+> the HJB side and **silently ignored by every FP solver** — see
+> [Issue #1686](https://github.com/derrring/MFGArchon/issues/1686). Until that is fixed, only
+> `g = 0` (equivalently `no_flux_bc()`) behaves consistently across the coupled system.
 
 ## Mixed Boundary Conditions
 
@@ -195,7 +219,7 @@ For cell-centered grids with boundary at cell face:
 
 - **Dirichlet** (u = g): `u_ghost = 2*g - u_interior`
 - **Neumann** (du/dn = g): `u_ghost = u_interior + 2*dx*g` (outward normal)
-- **No-flux** (du/dn = 0): `u_ghost = u_interior`
+- **No-flux** (du/dn = 0): `u_ghost = u_interior` -- this is the **zero-gradient** ghost, correct for `u` and for the default applicator path. It is *not* the FP mass-conserving wall; see [FP Solvers (FDM)](#fp-solvers-fdm) below.
 
 ## Corner Handling
 
@@ -277,8 +301,19 @@ Ghost values are used for upwind gradient computation:
 
 ### FP Solvers (FDM)
 
-Ghost values ensure mass conservation at boundaries:
-- No-flux BC: ghost = interior (zero gradient)
+**Mass conservation at a no-flux wall does not come from ghost values.** The divergence-form
+discretisation writes a conservation row for the wall cell with the wall-face flux set to zero
+(`fp_fdm_alg_divergence_centered.py:350-431`), which is what makes `J.n = 0` exact. That row does
+not constrain `dm/dn`, and with drift at the wall the density gradient is large: measured with
+`v = -1`, `D = 0.045` on 201 points, mass drifts `1.5e-13` while `dm/dx` at the wall is `-443`,
+matching the analytic `exp(v*x/D)` profile to `1e-3`.
+
+`ghost = interior` is the **zero-gradient** construction, and it is not mass-conserving for the FP
+equation: it gives `J.n = v*m_interior`, which vanishes only when `v = 0`. It is what
+`ZeroGradientCalculator` does, and what the default applicator path uses; `ZeroFluxCalculator`
+(`ghost_cells.py:361`) is the one that constructs `ghost = interior*(2D + v*dx)/(2D - v*dx)` so
+that the total flux vanishes.
+
 - Dirichlet BC: ghost reflects the boundary value
 
 ### Particle Methods

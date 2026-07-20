@@ -286,7 +286,18 @@ class TestNumericalStability:
         assert np.all(result.M >= -1e-10), "Density should remain non-negative"
 
     def test_centered_fdm_may_oscillate(self):
-        """Test that centered FDM runs (may have mild oscillations)."""
+        """Centered FDM oscillates here, and the FP solver now refuses rather than repairing it.
+
+        This asserted only ``np.all(np.isfinite(...))`` and passed, because the non-negativity
+        clip silently raised every negative density to zero -- fabricating 0.013% of the total
+        mass per firing at this configuration, while leaving the output finite and non-negative
+        (Issue #1671). ``isfinite`` cannot distinguish that from a healthy solve; only mass can.
+
+        With the guard in place the same configuration raises, so the test now pins the refusal.
+        That is the intended behaviour: at sigma=0.1 on this grid the cell Peclet number puts
+        ``divergence_centered`` in its oscillatory regime, and the honest outcome is a diagnostic,
+        not a plausible-looking answer.
+        """
         problem = MFGProblem(
             geometry=TensorProductGrid(
                 bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
@@ -297,15 +308,12 @@ class TestNumericalStability:
             components=_default_components(),
         )
 
-        result = problem.solve(
-            scheme=NumericalScheme.FDM_CENTERED,
-            max_iterations=20,
-            verbose=False,
-        )
-
-        # Should not blow up (though may oscillate for high Peclet)
-        assert np.all(np.isfinite(result.U)), "U should remain finite"
-        assert np.all(np.isfinite(result.M)), "M should remain finite"
+        with pytest.raises(ValueError, match="would fabricate"):
+            problem.solve(
+                scheme=NumericalScheme.FDM_CENTERED,
+                max_iterations=20,
+                verbose=False,
+            )
 
 
 if __name__ == "__main__":
