@@ -105,7 +105,7 @@ class BaseBackend(ABC):
 
         The convention is part of the contract, not left to the backing library. NumPy and
         JAX default to ``ddof=0``; PyTorch defaults to Bessel-corrected ``unbiased=True``
-        (``N-1``). Leaving it unstated let three implementers each inherit their own
+        (``N-1``). Leaving it unstated let four implementers each inherit their own
         library's default, and TorchBackend silently returned a different quantity --
         measured 0.314315110 against 0.312755227 for the same input, a ratio of exactly
         ``sqrt(N/(N-1))``.

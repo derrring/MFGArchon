@@ -1,7 +1,7 @@
 """Every backend must agree on the reduction conventions (Issue #1663).
 
 `BaseBackend` declares `mean`, `std`, `max`, `min` and `trapezoid` as abstract, but its
-docstrings originally said only what each computes, never under which convention. Three
+docstrings originally said only what each computes, never under which convention. Four
 implementers each inherited their own library's default, and `TorchBackend.std` silently
 returned the Bessel-corrected `N-1` quantity where NumPy and JAX returned `N`.
 
@@ -17,14 +17,19 @@ This file is the pin that was missing: same input, every backend, every contract
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 import numpy as np
 
 from mfgarchon.backends import create_backend
 
-# Every backend the factory can build, not a hand-written list -- numba was missed by one, and
-# a hand-enumerated set is exactly what dropped tests/regression from the nightly shard matrix.
+# Hand-maintained, deliberately. The obvious self-deriving fix does not work:
+# BaseBackend.__subclasses__() returns only three after a plain `import mfgarchon.backends`,
+# because numba_backend is imported lazily -- so deriving from it would silently reproduce the
+# very undercount this file exists to catch. test_candidates_covers_every_backend_module below
+# guards the tuple against the filesystem instead, which is independent of both.
 _CANDIDATES = ("numpy", "torch", "jax", "numba")
 
 REDUCTIONS = ("mean", "std", "max", "min")
@@ -32,8 +37,9 @@ REDUCTIONS = ("mean", "std", "max", "min")
 # A backend may legitimately run at float32 -- on Apple Silicon the torch backend is forced to
 # it, with a warning, because MPS has no float64. So the tolerance must admit float32 epsilon
 # (~1e-7) while still catching a convention divergence. The one this file exists to pin was
-# 5e-3 relative (Bessel N-1 vs N), roughly 50000x larger than float32 noise, so 1e-5 separates
-# them with four orders of margin either way.
+# 5e-3 relative (Bessel N-1 vs N). Measured on this file's fixture: float32 noise reaches
+# 7.06e-8, so 1e-5 sits 2.15 orders above it, and the divergence is 4.9876e-3, 2.70 orders
+# below. Margin either way, but two orders, not four.
 RTOL = 1e-5
 
 
@@ -94,7 +100,7 @@ def test_reductions_agree_across_backends(op, field):
 
 
 def test_std_is_the_population_convention(field):
-    """Pin the convention itself, not merely agreement -- three backends agreeing on the
+    """Pin the convention itself, not merely agreement -- every backend agreeing on the
     WRONG convention would satisfy the test above."""
     expected = float(np.std(field, ddof=0))
     bessel = float(np.std(field, ddof=1))
@@ -107,3 +113,19 @@ def test_std_is_the_population_convention(field):
             f"backend {name!r} std={got!r}; expected the population value {expected!r} "
             f"(ddof=0), not the Bessel-corrected {bessel!r} (ddof=1)"
         )
+
+
+def test_candidates_covers_every_backend_module():
+    """A fifth backend must fail here until _CANDIDATES names it.
+
+    This is what licenses the hand-maintained tuple: the filesystem is an independent
+    source, unlike __subclasses__(), which under-reports lazily imported backends.
+    """
+    import mfgarchon.backends
+
+    pkg = pathlib.Path(mfgarchon.backends.__file__).parent
+    found = {p.stem.removesuffix("_backend") for p in pkg.glob("*_backend.py")} - {"base"}
+    assert found == set(_CANDIDATES), (
+        f"backend modules on disk {sorted(found)} do not match _CANDIDATES "
+        f"{sorted(_CANDIDATES)}; add the new backend to _CANDIDATES so it gets pinned"
+    )
