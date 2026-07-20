@@ -341,9 +341,13 @@ class TorchBackend(BaseBackend):
         return torch.mean(a_tensor, dim=axis)
 
     def std(self, a, axis=None):
-        """Compute standard deviation."""
+        """Compute the population standard deviation (see BaseBackend.std for the convention).
+
+        ``correction=0`` is required: torch defaults to Bessel-corrected ``N-1`` while NumPy
+        and JAX default to ``N``, so the default silently returned a different quantity.
+        """
         a_tensor = self._to_torch(a)
-        return torch.std(a_tensor, dim=axis)
+        return torch.std(a_tensor, dim=axis, correction=0)
 
     def max(self, a, axis=None):
         """Maximum values along axis."""
