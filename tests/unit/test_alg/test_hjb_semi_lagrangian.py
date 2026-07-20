@@ -166,9 +166,6 @@ class TestHJBSemiLagrangianSolveHJBSystem:
 class TestHJBSemiLagrangianNumericalProperties:
     """Test numerical properties of the semi-Lagrangian method."""
 
-    @pytest.mark.skip(
-        reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations (Issue #600)"
-    )
     def test_solution_finiteness(self):
         """Test that solution remains finite throughout."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -187,7 +184,6 @@ class TestHJBSemiLagrangianNumericalProperties:
         # All values should be finite
         assert np.all(np.isfinite(U_solution))
 
-    @pytest.mark.skip(reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations")
     def test_solution_smoothness(self):
         """Test that solution has reasonable smoothness."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -203,9 +199,24 @@ class TestHJBSemiLagrangianNumericalProperties:
 
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
-        # Check spatial smoothness - finite differences shouldn't be too large
-        U_diff = np.diff(U_solution, axis=1)
-        assert np.max(np.abs(U_diff)) < 100.0
+        # The solution should be no rougher than the terminal data it propagates back from.
+        # A hardcoded bound does not express this: the previous 100.0 sat 9626x above the
+        # measured value, so the solve had to degrade by four orders of magnitude to fail it.
+        # Scaling to the terminal condition tracks the grid: the ratio stays in 1.03-1.09 over
+        # Nx 31-101 with Nt = Nx-1, so 2x leaves ~1.85x headroom. It catches a linear-to-
+        # nearest interpolation regression (hjb_semi_lagrangian.py:1149) at every one of those
+        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's Nt = Nx-1 convention,
+        # which every sibling test at T = 1.0 uses (27 of 27; the 16 that do not are all at
+        # T < 1.0 and pin Nt at 20). Pinning Nt at 50 while varying Nx breaks the
+        # correspondence and the catch becomes intermittent -- a property of that sweep,
+        # not of the bound.
+        terminal_roughness = np.max(np.abs(np.diff(U_final)))
+        solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
+        assert solution_roughness < 2 * terminal_roughness, (
+            f"solution roughness {solution_roughness:.3e} exceeds 2x the terminal data's "
+            f"{terminal_roughness:.3e}; healthy ratio is 1.03-1.09 over Nx 31-101, and a "
+            f"linear-to-nearest interpolation regression reaches 2.62-3.17 over that range"
+        )
 
 
 class TestHJBSemiLagrangianIntegration:
