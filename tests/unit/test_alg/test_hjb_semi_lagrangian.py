@@ -205,9 +205,11 @@ class TestHJBSemiLagrangianNumericalProperties:
         # Scaling to the terminal condition tracks the grid: the ratio stays in 1.03-1.09 over
         # Nx 31-101 with Nt = Nx-1, so 2x leaves ~1.85x headroom. It catches a linear-to-
         # nearest interpolation regression (hjb_semi_lagrangian.py:1149) at every one of those
-        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's own Nt = Nx-1 convention;
-        # pinning Nt at 50 while varying Nx breaks the correspondence and the catch becomes
-        # intermittent, which is a property of that sweep, not of the bound.
+        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's Nt = Nx-1 convention,
+        # which every sibling test at T = 1.0 uses (27 of 27; the 16 that do not are all at
+        # T < 1.0 and pin Nt at 20). Pinning Nt at 50 while varying Nx breaks the
+        # correspondence and the catch becomes intermittent -- a property of that sweep,
+        # not of the bound.
         terminal_roughness = np.max(np.abs(np.diff(U_final)))
         solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
         assert solution_roughness < 2 * terminal_roughness, (
