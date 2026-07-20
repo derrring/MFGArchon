@@ -219,7 +219,7 @@ For cell-centered grids with boundary at cell face:
 
 - **Dirichlet** (u = g): `u_ghost = 2*g - u_interior`
 - **Neumann** (du/dn = g): `u_ghost = u_interior + 2*dx*g` (outward normal)
-- **No-flux** (du/dn = 0): `u_ghost = u_interior`
+- **No-flux** (du/dn = 0): `u_ghost = u_interior` -- this is the **zero-gradient** ghost, correct for `u` and for the default applicator path. It is *not* the FP mass-conserving wall; see [FP Solvers (FDM)](#fp-solvers-fdm) below.
 
 ## Corner Handling
 
@@ -301,8 +301,19 @@ Ghost values are used for upwind gradient computation:
 
 ### FP Solvers (FDM)
 
-Ghost values ensure mass conservation at boundaries:
-- No-flux BC: ghost = interior (zero gradient)
+**Mass conservation at a no-flux wall does not come from ghost values.** The divergence-form
+discretisation writes a conservation row for the wall cell with the wall-face flux set to zero
+(`fp_fdm_alg_divergence_centered.py:350-431`), which is what makes `J.n = 0` exact. That row does
+not constrain `dm/dn`, and with drift at the wall the density gradient is large: measured with
+`v = -1`, `D = 0.045` on 201 points, mass drifts `1.5e-13` while `dm/dx` at the wall is `-443`,
+matching the analytic `exp(v*x/D)` profile to `1e-3`.
+
+`ghost = interior` is the **zero-gradient** construction, and it is not mass-conserving for the FP
+equation: it gives `J.n = v*m_interior`, which vanishes only when `v = 0`. It is what
+`ZeroGradientCalculator` does, and what the default applicator path uses; `ZeroFluxCalculator`
+(`ghost_cells.py:361`) is the one that constructs `ghost = interior*(2D + v*dx)/(2D - v*dx)` so
+that the total flux vanishes.
+
 - Dirichlet BC: ghost reflects the boundary value
 
 ### Particle Methods
