@@ -4,6 +4,8 @@ Unit tests for Backend Factory.
 Tests backend registration, discovery, creation, and auto-selection logic.
 """
 
+import sys
+
 import pytest
 
 from mfgarchon.backends import (
@@ -150,56 +152,79 @@ class TestCreateBackend:
             create_backend("nonexistent_backend")
 
     def test_create_backend_torch_when_unavailable(self, monkeypatch):
-        """Test error when requesting torch but it's not available."""
-        available = get_available_backends()
-        if available["torch"]:
-            pytest.skip("PyTorch is available, cannot test unavailable scenario")
+        """Requesting PyTorch without it installed raises a diagnostic ImportError.
 
-        # Mock torch as unavailable by removing from registry
+        This used to `pytest.skip` whenever PyTorch WAS installed, so it never ran on a
+        developer machine, and its body popped 'torch' from `_BACKENDS` -- which simulates
+        nothing, because `create_backend` re-imports and re-registers on demand
+        (`backends/__init__.py`, the `if backend_name not in _BACKENDS` branch). Verified:
+        after the pop, `create_backend('torch')` still returns a TorchBackend.
+
+        Blocking the module import is what actually simulates absence, so the test now runs
+        everywhere. The `monkeypatch` fixture was already in the signature and unused
+        (Issue #1663).
+        """
         import mfgarchon.backends as backends_module
 
-        original = backends_module._BACKENDS.copy()
-        backends_module._BACKENDS.pop("torch", None)
+        monkeypatch.setitem(sys.modules, "mfgarchon.backends.torch_backend", None)
+        monkeypatch.setattr(
+            backends_module,
+            "_BACKENDS",
+            {k: v for k, v in backends_module._BACKENDS.items() if k != "torch"},
+        )
 
-        try:
-            with pytest.raises(ImportError, match="PyTorch is required for TorchBackend"):
-                create_backend("torch")
-        finally:
-            backends_module._BACKENDS = original
+        with pytest.raises(ImportError, match="PyTorch backend requested but not available"):
+            create_backend("torch")
 
     def test_create_backend_jax_when_unavailable(self, monkeypatch):
-        """Test error when requesting jax but it's not available."""
-        available = get_available_backends()
-        if available["jax"]:
-            pytest.skip("JAX is available, cannot test unavailable scenario")
+        """Requesting JAX without it installed raises a diagnostic ImportError.
 
+        This used to `pytest.skip` whenever JAX WAS installed, so it never ran on a
+        developer machine, and its body popped 'jax' from `_BACKENDS` -- which simulates
+        nothing, because `create_backend` re-imports and re-registers on demand
+        (`backends/__init__.py`, the `if backend_name not in _BACKENDS` branch). Verified:
+        after the pop, `create_backend('jax')` still returns a JAXBackend.
+
+        Blocking the module import is what actually simulates absence, so the test now runs
+        everywhere. The `monkeypatch` fixture was already in the signature and unused
+        (Issue #1663).
+        """
         import mfgarchon.backends as backends_module
 
-        original = backends_module._BACKENDS.copy()
-        backends_module._BACKENDS.pop("jax", None)
+        monkeypatch.setitem(sys.modules, "mfgarchon.backends.jax_backend", None)
+        monkeypatch.setattr(
+            backends_module,
+            "_BACKENDS",
+            {k: v for k, v in backends_module._BACKENDS.items() if k != "jax"},
+        )
 
-        try:
-            with pytest.raises(ImportError, match="JAX backend requested"):
-                create_backend("jax")
-        finally:
-            backends_module._BACKENDS = original
+        with pytest.raises(ImportError, match="JAX backend requested but not available"):
+            create_backend("jax")
 
     def test_create_backend_numba_when_unavailable(self, monkeypatch):
-        """Test error when requesting numba but it's not available."""
-        available = get_available_backends()
-        if available["numba"]:
-            pytest.skip("Numba is available, cannot test unavailable scenario")
+        """Requesting Numba without it installed raises a diagnostic ImportError.
 
+        This used to `pytest.skip` whenever Numba WAS installed, so it never ran on a
+        developer machine, and its body popped 'numba' from `_BACKENDS` -- which simulates
+        nothing, because `create_backend` re-imports and re-registers on demand
+        (`backends/__init__.py`, the `if backend_name not in _BACKENDS` branch). Verified:
+        after the pop, `create_backend('numba')` still returns a NumbaBackend.
+
+        Blocking the module import is what actually simulates absence, so the test now runs
+        everywhere. The `monkeypatch` fixture was already in the signature and unused
+        (Issue #1663).
+        """
         import mfgarchon.backends as backends_module
 
-        original = backends_module._BACKENDS.copy()
-        backends_module._BACKENDS.pop("numba", None)
+        monkeypatch.setitem(sys.modules, "mfgarchon.backends.numba_backend", None)
+        monkeypatch.setattr(
+            backends_module,
+            "_BACKENDS",
+            {k: v for k, v in backends_module._BACKENDS.items() if k != "numba"},
+        )
 
-        try:
-            with pytest.raises(ImportError, match="Numba backend requested"):
-                create_backend("numba")
-        finally:
-            backends_module._BACKENDS = original
+        with pytest.raises(ImportError, match="Numba backend requested but not available"):
+            create_backend("numba")
 
     def test_kwargs_passed_to_backend(self):
         """Test that kwargs are passed to backend constructor."""
