@@ -110,3 +110,21 @@ def test_the_flag_is_what_decides():
         honors_inhomogeneous_neumann = True
 
     _Claims(problem)  # must not raise: the refusal is driven by the flag, not by the class
+
+
+@pytest.mark.parametrize("solver_cls", FP_FAMILIES)
+def test_a_time_dependent_neumann_value_is_also_refused(solver_cls):
+    """`isinstance(value, (int, float))` alone lets a callable through.
+
+    A first version of this gate guarded with that check, so
+    `neumann_bc(value=lambda t: 5.0)` was accepted and discarded silently -- the behaviour the
+    gate exists to stop, reintroduced by the guard itself. A callable cannot be shown identically
+    zero here, so it is refused rather than assumed homogeneous, and the message says so.
+    """
+    with pytest.raises(NotImplementedError, match="time-dependent value cannot be checked"):
+        _construct(solver_cls, _problem(neumann_bc(value=lambda t: 5.0, dimension=1)))
+
+
+def test_hjb_still_accepts_a_time_dependent_neumann_value():
+    """The HJB side honours `du/dn = g(t)`; the refusal must not reach it."""
+    HJBFDMSolver(_problem(neumann_bc(value=lambda t: 5.0, dimension=1)))

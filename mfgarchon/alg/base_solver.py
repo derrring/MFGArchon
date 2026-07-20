@@ -270,23 +270,34 @@ class BaseMFGSolver(ABC):
             # by the FP side, so the coupled solve integrates a pair that is not adjoint and
             # still reports converged=True. Until the inhomogeneous flux wall exists, refuse the
             # problem rather than solve a different one.
-            ignored = sorted(
-                {
-                    float(seg.value)
-                    for seg in segments
-                    if seg.bc_type is BCType.NEUMANN
-                    and isinstance(getattr(seg, "value", None), (int, float))
-                    and float(seg.value) != 0.0
-                }
-            )
+            # A time-dependent value is a callable, so it cannot be compared to zero here.
+            # Refuse it rather than let it through: `isinstance(value, (int, float))` alone
+            # would accept `neumann_bc(value=lambda t: 5.0)` and discard it silently, which is
+            # the behaviour this gate exists to stop.
+            ignored: list[object] = []
+            for seg in segments:
+                if seg.bc_type is not BCType.NEUMANN:
+                    continue
+                value = getattr(seg, "value", None)
+                if callable(value):
+                    ignored.append("<time-dependent>")
+                elif value is not None and float(value) != 0.0:
+                    ignored.append(float(value))
             if ignored:
+                ignored = sorted(set(ignored), key=repr)
+                timed = "<time-dependent>" in ignored
+                detail = (
+                    "a time-dependent value cannot be checked for being identically zero here, "
+                    "so it is refused rather than assumed homogeneous; pass 0.0 if it is"
+                    if timed
+                    else f"the value(s) {ignored} would be silently discarded"
+                )
                 raise NotImplementedError(
                     f"{type(self).__name__} declares BCType.NEUMANN but honours only the "
-                    f"homogeneous case; the value(s) {ignored} would be silently discarded "
-                    "(Issue #1686). On the FP side a Neumann value is a prescribed flux "
-                    "J.n = g, and no FP solver implements an inhomogeneous flux wall yet. Use "
-                    "g = 0 (equivalently no_flux_bc()), or a Dirichlet segment if you meant a "
-                    "prescribed density."
+                    f"homogeneous case: {detail} (Issue #1686). On the FP side a Neumann value "
+                    "is a prescribed flux J.n = g, and no FP solver implements an inhomogeneous "
+                    "flux wall yet. Use g = 0 (equivalently no_flux_bc()), or a Dirichlet "
+                    "segment if you meant a prescribed density."
                 )
 
         unsupported = requested - set(supported)
