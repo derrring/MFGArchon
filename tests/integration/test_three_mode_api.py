@@ -105,10 +105,13 @@ class TestSafeMode:
         strict=True,
         reason=(
             "Issue #1671: FDM_CENTERED grows total mass 1.0 -> 6378.77 through problem.solve(), "
-            "while the same divergence_centered scheme conserves to 2.2e-16 when the FP solver is "
-            "called in isolation with the identical U. The defect is in the coupling layer, not "
-            "the scheme. This marker is strict (pytest.ini xfail_strict, Issue #1665), so fixing "
-            "#1671 will turn it into an XPASS and fail the build until the marker is removed."
+            "while FDM_UPWIND on the same path drifts 2.2e-16. The cause is not established -- "
+            "the isolated-FP measurements previously quoted here transport four orders of "
+            "magnitude less than the coupled run (max|M[-1]-M[0]| of 3.1 against 1.2e+05), so "
+            "they do not show the scheme is clean at the magnitude where it fails. This marker "
+            "is strict (pytest.ini xfail_strict, Issue #1665), so fixing #1671 will turn it into "
+            "an XPASS and fail the build until the marker is removed. Note it also XPASSes if "
+            "scheme dispatch regresses so FDM_CENTERED is silently not used."
         ),
     )
     def test_safe_mode_fdm_centered(self):
@@ -131,7 +134,7 @@ class TestSafeMode:
         _assert_is_a_plausible_solution(result, problem)
 
     def test_safe_mode_sl_linear(self):
-        """Safe Mode with SL_LINEAR: the scheme is honoured and the solve is mass-conserving.
+        """Safe Mode with SL_LINEAR: the solve runs and is mass-conserving.
 
         The ``@pytest.mark.skip(reason="Pre-existing bug in SL solver (NaN/Inf issue)")`` this
         carried is stale -- the defect it named is fixed. Removing the marker leaves the test
@@ -252,7 +255,7 @@ class TestExpertMode:
                 verbose=True,  # Verbose needed for logger warning
             )
 
-        assert solve_result is not None
+        _assert_is_a_plausible_solution(solve_result, problem)
 
     def test_expert_mode_partial_injection_raises_error(self):
         """Test Expert Mode with only one solver raises error."""
