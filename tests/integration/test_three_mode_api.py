@@ -36,6 +36,48 @@ def _default_components():
     )
 
 
+def _assert_is_a_plausible_solution(result, problem, *, mass_rtol: float = 1e-9) -> None:
+    """Assert the solve produced a solution, not merely an object (Issue #1663).
+
+    Before this existed, every solve-invoking test in this file asserted only
+    ``result is not None`` plus two ``hasattr`` checks. Poisoning the fixed-point iterator to
+    return all-NaN for both U and M left **15 of 16 tests passing**. The file verified that
+    ``solve()`` returns something shaped like a result, never that it solved anything.
+
+    The assertion that matters here is MASS CONSERVATION, and that is not obvious -- the
+    natural choice, ``np.isfinite``, would not have helped. Measured across the three schemes
+    this file exercises, at 5 iterations on the shared fixture:
+
+        scheme          finite   M>=0    mass drift
+        FDM_UPWIND      True     True    2.220e-16
+        FDM_CENTERED    True     True    6.378e+03     <-- Issue #1671
+        SL_LINEAR       True     True    2.220e-16
+
+    A 6378x mass blow-up is finite, has non-negative density, and a non-constant U. Only the
+    mass check separates it. ``result.mass_conservation_error`` cannot be used for this: it is
+    never populated on the ``problem.solve()`` path and reads ``0.0`` even for that solve
+    (Issue #1672), so it is computed here from ``result.M`` directly.
+    """
+    assert result is not None, "solve() returned None"
+
+    U = np.asarray(result.U)
+    M = np.asarray(result.M)
+
+    assert np.isfinite(U).all(), f"U contains {(~np.isfinite(U)).sum()} non-finite entries"
+    assert np.isfinite(M).all(), f"M contains {(~np.isfinite(M)).sum()} non-finite entries"
+    assert (M >= -1e-12).all(), f"density went negative: min(M) = {M.min():.3e}"
+    assert U.std() > 1e-6, "U is constant; a solver returning a fixed array would pass every other check"
+
+    bounds = problem.geometry.get_bounds()
+    dx = (bounds[1][0] - bounds[0][0]) / (M.shape[1] - 1)
+    mass = M.sum(axis=1) * dx
+    drift = float(np.abs(mass - mass[0]).max())
+    assert drift <= mass_rtol * max(abs(float(mass[0])), 1.0), (
+        f"mass drifted by {drift:.3e} over the horizon (t0={mass[0]:.6f}, "
+        f"max={mass.max():.6e}); the FP step is not conservative on this path"
+    )
+
+
 class TestSafeMode:
     """Test Safe Mode: problem.solve(scheme=...)."""
 
@@ -57,11 +99,18 @@ class TestSafeMode:
             verbose=False,
         )
 
-        # Should create result
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Issue #1671: FDM_CENTERED grows total mass 1.0 -> 6378.77 through problem.solve(), "
+            "while the same divergence_centered scheme conserves to 2.2e-16 when the FP solver is "
+            "called in isolation with the identical U. The defect is in the coupling layer, not "
+            "the scheme. This marker is strict (pytest.ini xfail_strict, Issue #1665), so fixing "
+            "#1671 will turn it into an XPASS and fail the build until the marker is removed."
+        ),
+    )
     def test_safe_mode_fdm_centered(self):
         """Test Safe Mode with FDM_CENTERED scheme."""
         problem = MFGProblem(
@@ -79,13 +128,16 @@ class TestSafeMode:
             verbose=False,
         )
 
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
-    @pytest.mark.skip(reason="Pre-existing bug in SL solver (NaN/Inf issue), unrelated to #580")
     def test_safe_mode_sl_linear(self):
-        """Test Safe Mode with SL_LINEAR scheme."""
+        """Safe Mode with SL_LINEAR: the scheme is honoured and the solve is mass-conserving.
+
+        The ``@pytest.mark.skip(reason="Pre-existing bug in SL solver (NaN/Inf issue)")`` this
+        carried is stale -- the defect it named is fixed. Removing the marker leaves the test
+        passing, and passing under the mass-conservation assertion below, not merely
+        not-crashing: measured drift 2.220e-16 (Issue #1663).
+        """
         problem = MFGProblem(
             geometry=TensorProductGrid(
                 bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
@@ -101,9 +153,7 @@ class TestSafeMode:
             verbose=False,
         )
 
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
     def test_safe_mode_string_scheme(self):
         """Test Safe Mode with string scheme name."""
@@ -123,7 +173,7 @@ class TestSafeMode:
             verbose=False,
         )
 
-        assert result is not None
+        _assert_is_a_plausible_solution(result, problem)
 
     def test_safe_mode_invalid_string_scheme(self):
         """Test Safe Mode with invalid string scheme."""
@@ -166,9 +216,7 @@ class TestExpertMode:
             verbose=False,
         )
 
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
     def test_expert_mode_mismatched_solvers_warning(self):
         """Test Expert Mode with mismatched solvers emits warning."""
@@ -246,9 +294,7 @@ class TestAutoMode:
         # Auto Mode: No scheme or solvers specified
         result = problem.solve(max_iterations=5, verbose=False)
 
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
     def test_auto_mode_verbose_shows_selection(self, caplog):
         """Test Auto Mode logs scheme selection when verbose."""
@@ -273,7 +319,7 @@ class TestAutoMode:
             result = problem.solve(max_iterations=5, verbose=True)
 
         # Should log which scheme was selected
-        assert result is not None
+        _assert_is_a_plausible_solution(result, problem)
 
         # Check if Auto Mode or scheme name appears in logs
         # Note: May not log if logger handler isn't configured, so make this optional
@@ -350,9 +396,7 @@ class TestBackwardCompatibility:
         # Old pattern: Just call solve()
         result = problem.solve(max_iterations=5, verbose=False)
 
-        assert result is not None
-        assert hasattr(result, "U")
-        assert hasattr(result, "M")
+        _assert_is_a_plausible_solution(result, problem)
 
     def test_solve_with_tolerance_and_iterations(self):
         """Test that specifying tolerance and iterations still works."""
@@ -371,7 +415,7 @@ class TestBackwardCompatibility:
             verbose=False,
         )
 
-        assert result is not None
+        _assert_is_a_plausible_solution(result, problem)
 
 
 class TestConfigIntegration:
@@ -399,7 +443,7 @@ class TestConfigIntegration:
             verbose=False,
         )
 
-        assert result is not None
+        _assert_is_a_plausible_solution(result, problem)
 
     @pytest.mark.slow
     def test_expert_mode_with_config(self):
@@ -426,7 +470,7 @@ class TestConfigIntegration:
             verbose=False,
         )
 
-        assert result is not None
+        _assert_is_a_plausible_solution(result, problem)
 
 
 if __name__ == "__main__":
@@ -443,19 +487,19 @@ if __name__ == "__main__":
         components=_default_components(),
     )
     result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=3, verbose=False)
-    assert result is not None
+    _assert_is_a_plausible_solution(result, problem)
     print("✓ Safe Mode works")
 
     # Test Expert Mode
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem)
     result = problem.solve(hjb_solver=hjb, fp_solver=fp, max_iterations=3, verbose=False)
-    assert result is not None
+    _assert_is_a_plausible_solution(result, problem)
     print("✓ Expert Mode works")
 
     # Test Auto Mode
     result = problem.solve(max_iterations=3, verbose=False)
-    assert result is not None
+    _assert_is_a_plausible_solution(result, problem)
     print("✓ Auto Mode works")
 
     print("\nAll smoke tests passed! ✓")
