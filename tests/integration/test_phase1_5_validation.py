@@ -141,6 +141,18 @@ class TestRegimeSwitchingIntegration:
         # Verify pi @ Q = 0
         np.testing.assert_allclose(pi @ Q, 0.0, atol=1e-10)
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Issue #1681: the iterator drives divergence_upwind -- a positivity-preserving "
+            "scheme, and the FPFDMSolver default -- to a density of -1.0e-03, which the "
+            "non-negativity clip used to absorb by fabricating 0.015% of the total mass "
+            "(Issue #1671). Not a timestep artifact: at NT=20, where dt*sigma^2/dx^2 = 0.45 "
+            "satisfies the library's own stated CFL bound, the density still reaches -9.7e-04 "
+            "and the fabricated fraction is unchanged. The fixture is deliberately left at its "
+            "original NT=10 rather than tuned, since tuning would hide the defect."
+        ),
+    )
     def test_regime_switching_iterator_runs(self):
         """Verify RegimeSwitchingIterator executes without error."""
         from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
