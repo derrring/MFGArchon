@@ -272,15 +272,19 @@ def test_backend_factory_integration():
             status = "✅" if rel_error < 1e-10 else "⚠️"
             print(f"{status} {name}: {value:.12f} (rel error: {rel_error:.2e})")
             # 1e-5, not 1e-6: a backend may legitimately run at float32 (on Apple Silicon the
-            # torch backend is forced to it, with a warning, because MPS has no float64). The
-            # divergence this guards against -- a std convention split, Bessel N-1 vs N -- is
-            # 5e-3 relative, so this separates them with orders of margin either way.
+            # torch backend is forced to it, with a warning, because MPS has no float64).
+            # Measured float32 noise here is 2.6e-8 to 1.6e-7, so 1e-5 sits ~1.8 orders above
+            # it. This assertion compares `mean`, where no Bessel question arises -- the std
+            # convention pin lives in tests/unit/test_backends/test_backend_reduction_conventions.py.
             assert rel_error < 1e-5, f"Backend {name}: rel error {rel_error:.2e} >= 1e-5"
     elif len(results) == 1:
         pytest.skip(f"only {list(results)} constructible; a cross-backend comparison needs two")
     else:
-        # Reachable only if every backend reported available and then produced nothing --
-        # the state the old swallowing except() turned into a misleading "only one backend".
+        # Defensive only: with the swallow removed, a backend that produces nothing raises
+        # before reaching here, and numpy is unconditionally constructible -- so `results`
+        # cannot in fact be empty. Kept as a loud floor rather than a silent fall-through,
+        # because "empty results" was precisely the state the old except() disguised as
+        # "only one backend available".
         raise AssertionError(
             f"no backend produced a result, though get_available_backends() reported "
             f"{[k for k, v in available.items() if v]}"

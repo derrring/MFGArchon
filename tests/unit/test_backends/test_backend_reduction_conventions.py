@@ -23,6 +23,10 @@ import numpy as np
 
 from mfgarchon.backends import create_backend
 
+# Every backend the factory can build, not a hand-written list -- numba was missed by one, and
+# a hand-enumerated set is exactly what dropped tests/regression from the nightly shard matrix.
+_CANDIDATES = ("numpy", "torch", "jax", "numba")
+
 REDUCTIONS = ("mean", "std", "max", "min")
 
 # A backend may legitimately run at float32 -- on Apple Silicon the torch backend is forced to
@@ -35,19 +39,28 @@ RTOL = 1e-5
 
 def _available() -> list[str]:
     out = []
-    for name in ("numpy", "torch", "jax"):
+    for name in _CANDIDATES:
         try:
             create_backend(name)
             out.append(name)
-        except Exception:
-            pass  # absence of an optional backend is not a failure here
+        except ImportError:
+            # Not installed. Anything ELSE -- a backend that is present but fails to
+            # construct -- must propagate: swallowing it is the defect this PR removes
+            # from test_cross_backend_consistency.py.
+            pass
     return out
 
 
 @pytest.fixture(scope="module")
 def field() -> np.ndarray:
     """A deterministic non-symmetric field. Non-constant, so std cannot be trivially zero."""
-    return np.sin(np.linspace(0.0, np.pi, 101)) + 0.3 * np.linspace(0.0, 1.0, 101)
+    # The +0.5 keeps every reduction's reference away from zero. Without it min() is exactly
+    # 0.0, which makes pytest.approx(0.0, rel=...) degenerate to an absolute 1e-12 -- a
+    # different tolerance than documented -- and makes the failure message's value/reference
+    # raise ZeroDivisionError instead of printing. std is translation-invariant, so the
+    # convention pin below is unaffected. This is the same degenerate-reference defect this
+    # PR removes from test_cross_backend_consistency.py, reintroduced here and caught in review.
+    return np.sin(np.linspace(0.0, np.pi, 101)) + 0.3 * np.linspace(0.0, 1.0, 101) + 0.5
 
 
 def test_at_least_one_backend_is_constructible():
