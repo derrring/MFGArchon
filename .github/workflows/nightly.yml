@@ -68,6 +68,27 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev,numerical]"
 
+    - name: Assert the shard matrix covers every tests/ subdirectory
+      # tests/regression was silently dropped from an earlier three-shard matrix -- it holds the
+      # atol=1e-9 byte-identity golden master. Nothing stopped that, so this does: a new tests/
+      # subdirectory fails the run instead of quietly going uncovered.
+      run: |
+        python - <<'PYEOF'
+        import pathlib, sys, yaml
+        wf = yaml.safe_load(open('.github/workflows/nightly.yml'))
+        covered = {m['path'].rstrip('/') for m in wf['jobs']['full-test-suite']['strategy']['matrix']['shard']}
+        present = {
+            f'tests/{p.name}' for p in pathlib.Path('tests').iterdir()
+            if p.is_dir() and not p.name.startswith(('_', '.'))
+        }
+        missing = sorted(present - covered)
+        if missing:
+            print(f'Shard matrix does not cover: {missing}')
+            print(f'  covered: {sorted(covered)}')
+            sys.exit(1)
+        print(f'All {len(present)} tests/ subdirectories covered by the shard matrix.')
+        PYEOF
+
     - name: Run ${{ matrix.shard.name }} shard (including slow tests)
       id: suite
       env:
@@ -115,7 +136,9 @@ jobs:
   # on a real scheduled failure -- silently, which is the defect this whole workflow fixes.
   notify-on-failure:
     needs: full-test-suite
-    if: failure()
+    # NOT `failure()`: a shard that blows the timeout is reported `cancelled`, not `failed`,
+    # and `failure()` is false for a cancelled dependency -- which was 98 of 108 historical runs.
+    if: ${{ always() && needs.full-test-suite.result != 'success' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/github-script@v9
