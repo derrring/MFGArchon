@@ -31,6 +31,8 @@ tests. Whether that matters is untested, and is the cheapest thing to vary first
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
@@ -161,6 +163,14 @@ def section_d(gamma=100.0):
 
 
 if __name__ == "__main__":
+    # This script's artifact IS its stdout, and sections C and D take minutes. Python
+    # block-buffers when stdout is a pipe, so without this a backgrounded or redirected run
+    # prints nothing until the process exits -- which happened while writing this and read as a
+    # hang. Line buffering is what per-stage persistence means for a script whose product is a
+    # table; a JSON checkpoint would duplicate a helper that lives in the research repo and
+    # cannot be imported across the dependency direction.
+    sys.stdout.reconfigure(line_buffering=True)
+
     print(__doc__.split("\n\n")[0], "\n")
     section_a()
     section_b()
