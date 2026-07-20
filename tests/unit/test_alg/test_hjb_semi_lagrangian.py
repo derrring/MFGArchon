@@ -493,25 +493,31 @@ class TestInterpolationMethods:
         rel_error = np.linalg.norm(U_cubic - U_linear) / np.linalg.norm(U_linear)
         assert rel_error < 0.25  # Within 25% (updated after gradient fix)
 
-    def test_cubic_interpolation_method_produces_a_finite_solution(self):
-        """``interpolation_method='cubic'`` solves without NaN.
+    def test_cubic_improves_smoothness(self):
+        """Cubic interpolation is not markedly rougher than linear, measured on second differences.
 
-        Renamed from ``test_cubic_improves_smoothness``, which claimed more than it checks:
-        it asserts finiteness and a shape, never smoothness, and never compares against a
-        non-cubic run. The former xfail cited Issue #583 ("cubic produces NaN"), CLOSED
-        2026-02-05; the test has been XPASSing silently ever since because pytest.ini set no
-        ``xfail_strict`` (Issue #1663).
+        Formerly ``@pytest.mark.xfail(reason="Cubic interpolation produces NaN values - see
+        issue #583")``. #583 is CLOSED and the test passes, so the marker was stale; it had been
+        XPASSing unnoticed because pytest.ini set no ``xfail_strict`` (Issue #1663).
 
-        The marker is stale for the ordinary reason: #583 was FIXED. Its fix was to route
-        ``interpolation_method='cubic'`` through PCHIP -- monotonicity-preserving cubic
-        Hermite -- rather than a natural cubic spline, precisely to stop the Runge
-        oscillations that produced the NaNs (``hjb_sl_interpolation.py:79-85``, and pinned
-        for the nD path by ``test_2d_cubic_stochastic_uses_pchip``). Measured here: 2976
-        ``PchipInterpolator`` constructions, zero ``CubicSpline``. That is the intended
-        implementation, not a discrepancy.
+        **Why it passes is not established.** An earlier version of this docstring asserted that
+        #583's fix -- routing ``interpolation_method='cubic'`` through PCHIP rather than a natural
+        cubic spline (``hjb_sl_interpolation.py:79-86``) -- was the reason. That is refuted by
+        counterfactual: aliasing ``PchipInterpolator`` to ``scipy.interpolate.CubicSpline`` and
+        re-running leaves this class **passing** (5 passed). PCHIP dispatch is real and
+        deliberate, but it is not what makes this test green. #583's own remaining-work note
+        attributes the NaNs to ``p**2`` overflow rather than to Runge oscillations. Do not
+        substitute a mechanism here without testing it.
 
-        What remains true is only the narrower point in the name: this asserts finiteness and
-        shape, never smoothness, and never compares against a non-cubic run.
+        The name is restored: a previous rename to ``..._produces_a_finite_solution`` described
+        the body as asserting "finiteness and a shape, never smoothness, and never comparing
+        against a non-cubic run". All three clauses were false -- the body builds a
+        ``interpolation_method='linear'`` solver, computes ``mean|second difference|`` for both,
+        and asserts ``smoothness_cubic < smoothness_linear * 2.0``. The original name was the
+        more accurate of the two.
+
+        What is fair to say about the assertion: the ``* 2.0`` slack makes it a
+        not-much-worse check rather than an improves check.
         """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=20, components=_default_components())
@@ -581,19 +587,22 @@ class TestRBFInterpolationFallback:
             assert solver.rbf_kernel == kernel
 
     def test_enabling_rbf_fallback_does_not_break_the_solve(self):
-        """Constructing with ``use_rbf_fallback=True`` still yields a finite solution.
+        """Enabling ``use_rbf_fallback`` leaves an ordinary 1D solve finite -- and the flag is INERT here.
 
-        Renamed from ``test_rbf_fallback_produces_valid_solution``: it does NOT exercise the
-        RBF path. Counter instrumentation over this exact configuration -- 1D,
-        ``use_rbf_fallback=True``, ``rbf_kernel='thin_plate_spline'``, ``rk2`` -- records
-        ``interpolate_value_rbf_fallback`` invoked **0** times against
-        ``interpolate_value_1d`` **5177** times. The fallback is structurally unreachable
-        from here, so the former xfail reason ("numerical instability with RBF
-        thin_plate_spline") described a path the test never entered.
+        Formerly ``@pytest.mark.xfail(reason="Numerical instability with RBF thin_plate_spline on
+        steep gradients - see Issue #583")``, XPASSing silently for want of ``xfail_strict``
+        (Issue #1663). That reason described a path this test never enters.
 
-        What it does verify is narrower and still worth keeping: enabling the flag does not
-        break an otherwise ordinary solve. That RBF has no test reaching it at all is a real
-        gap, tracked separately.
+        Counter instrumentation over this exact configuration records
+        ``interpolate_value_rbf_fallback`` invoked **0** times against ``interpolate_value_1d``
+        **5177** times. Code-traced: ``hjb_semi_lagrangian.py`` returns ``interpolate_value_1d``
+        unconditionally on the 1D branch, and the only RBF call site is in the nD ``else``. So in
+        1D the flag is structurally inert -- this test would pass identically with
+        ``use_rbf_fallback=False``, or with the RBF function deleted.
+
+        Kept, narrowly, as a regression pin that constructing with the flag does not break the
+        solve. It is largely redundant with ``test_rbf_consistency_with_no_fallback``, which at
+        least compares two runs. That RBF has no test reaching it at all is Issue #1664.
         """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
