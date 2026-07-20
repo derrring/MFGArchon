@@ -105,10 +105,11 @@ class TestSafeMode:
         strict=True,
         reason=(
             "Issue #1671: FDM_CENTERED grows total mass 1.0 -> 6378.77 through problem.solve(), "
-            "while FDM_UPWIND on the same path drifts 2.2e-16. The cause is not established -- "
-            "the isolated-FP measurements previously quoted here transport four orders of "
-            "magnitude less than the coupled run (max|M[-1]-M[0]| of 3.1 against 1.2e+05), so "
-            "they do not show the scheme is clean at the magnitude where it fails. This marker "
+            "while FDM_UPWIND on the same path drifts 2.2e-16. The scheme is implicated: run in "
+            "isolation with the same advection_scheme the factory dispatches to "
+            "(divergence_centered, not the FPFDMSolver default divergence_upwind) and fed the "
+            "coupled U, the FP solver grows mass 2.085e+03 on its own. Earlier notes here "
+            "claimed the opposite because they measured the upwind default. This marker "
             "is strict (pytest.ini xfail_strict, Issue #1665), so fixing #1671 will turn it into "
             "an XPASS and fail the build until the marker is removed. Note it also XPASSes if "
             "scheme dispatch regresses so FDM_CENTERED is silently not used."
