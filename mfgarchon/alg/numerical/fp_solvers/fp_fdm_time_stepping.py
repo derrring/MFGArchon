@@ -100,6 +100,12 @@ from .fp_fdm_operators import is_boundary_point
 
 logger = get_logger(__name__)
 
+# Issue #1671: the largest fraction of total mass the non-negativity clip may fabricate before
+# the solve is treated as failed rather than repaired. Round-off negatives from a
+# positivity-preserving scheme sit around 1e-15 of the mass; a scheme that has gone unstable
+# reaches O(1). Anything between is a discretisation problem the caller needs to see.
+_MAX_CLIP_MASS_FABRICATION = 1e-8
+
 # =============================================================================
 # Scheme dispatch tables (Issue #859: replace if/elif chains)
 # =============================================================================
@@ -967,15 +973,47 @@ def solve_fp_nd_full_system(
                 "Check CFL condition: dt * sigma^2 / dx^2 should be < 0.5 for explicit schemes."
             )
 
-        # Issue #880: Enforce non-negativity with diagnostic warning
+        # Issue #880 / #1671: clip round-off negatives, but refuse to manufacture mass.
+        #
+        # #880 added this guard for what it described as "small negative values (e.g. -1e-15)"
+        # leaking out of a positivity-preserving scheme. Clipping those is mass-neutral. The clip
+        # was written unbounded, so it also absorbed scheme failures: divergence_centered at high
+        # cell Peclet reaches densities near -1e+05, and raising each of those to zero ADDS that
+        # mass. Measured on Nx=21/Nt=10/T=1.0/FDM_CENTERED, that compounded to a total mass of
+        # 6378.77 while min(M) read +0.037 -- non-negative, finite, and entirely wrong.
+        #
+        # The test is the invariant itself, not a proxy for it: how much mass would the clip
+        # fabricate, relative to the mass present. Round-off gives ~1e-15; a failed scheme O(1).
         min_val = np.min(M_next)
         if min_val < 0:
+            negative_mass = -float(np.sum(M_next[M_next < 0]))
+            positive_mass = float(np.sum(M_next[M_next > 0]))
+            fabricated = negative_mass / positive_mass if positive_mass > 0 else np.inf
+
+            if fabricated > _MAX_CLIP_MASS_FABRICATION:
+                remedy = (
+                    "'divergence_centered' is not positivity-preserving: it oscillates at "
+                    "cell-Peclet > 2. Switch to 'divergence_upwind', add diffusion (sigma > 0), "
+                    "or refine the grid."
+                    if advection_scheme == "divergence_centered"
+                    else "'divergence_upwind' preserves positivity only under a CFL-type "
+                    "restriction on dt. Reduce dt (increase Nt), refine the grid, or add "
+                    "diffusion (sigma > 0)."
+                )
+                raise ValueError(
+                    f"FP solver: density went to {min_val:.3e} at timestep {k + 1}/{Nt - 1}. "
+                    f"Clipping it to zero would fabricate {fabricated:.3%} of the total mass, "
+                    "so the solve is stopped rather than silently repaired (Issue #1671). "
+                    f"advection_scheme={advection_scheme!r}: {remedy}"
+                )
+
             if min_val < -1e-10:
                 logger.warning(
-                    "FP solver: negative density clipped at timestep %d (min=%.2e). "
-                    "This may indicate discretization issues.",
+                    "FP solver: negative density clipped at timestep %d (min=%.2e, "
+                    "fabricating %.2e of total mass). This may indicate discretization issues.",
                     k + 1,
                     min_val,
+                    fabricated,
                 )
             M_solution[k + 1] = np.maximum(M_solution[k + 1], 0)
 
