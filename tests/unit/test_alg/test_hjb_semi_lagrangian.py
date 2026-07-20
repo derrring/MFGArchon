@@ -203,16 +203,17 @@ class TestHJBSemiLagrangianNumericalProperties:
         # A hardcoded bound does not express this: the previous 100.0 sat 9626x above the
         # measured value, so the solve had to degrade by four orders of magnitude to fail it.
         # Scaling to the terminal condition tracks the grid: the ratio stays in 1.03-1.09 over
-        # Nx 31-101, so 2x leaves ~1.85x headroom. It catches a linear-to-nearest
-        # interpolation regression on this grid (2.76) and at Nx=101 (3.17), but not at Nx=31
-        # (1.11) or Nx=81 (1.76) -- the mutation's effect is grid-dependent, so this is one
-        # regression the bound happens to catch here, not a general interpolation guard.
+        # Nx 31-101 with Nt = Nx-1, so 2x leaves ~1.85x headroom. It catches a linear-to-
+        # nearest interpolation regression (hjb_semi_lagrangian.py:1149) at every one of those
+        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's own Nt = Nx-1 convention;
+        # pinning Nt at 50 while varying Nx breaks the correspondence and the catch becomes
+        # intermittent, which is a property of that sweep, not of the bound.
         terminal_roughness = np.max(np.abs(np.diff(U_final)))
         solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
         assert solution_roughness < 2 * terminal_roughness, (
             f"solution roughness {solution_roughness:.3e} exceeds 2x the terminal data's "
             f"{terminal_roughness:.3e}; healthy ratio is 1.03-1.09 over Nx 31-101, and a "
-            f"linear-to-nearest interpolation regression reaches 2.76 on this grid"
+            f"linear-to-nearest interpolation regression reaches 2.62-3.17 over that range"
         )
 
 
