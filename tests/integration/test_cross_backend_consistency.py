@@ -226,9 +226,13 @@ def test_backend_factory_integration():
 
     available = get_available_backends()
 
-    # Test data
+    # Test data. The +2.0 offset matters: a full-period sine averages to ~0 by symmetry, and
+    # the comparison below is a RELATIVE error, so a near-zero reference makes it meaningless --
+    # numpy's mean came out at -3e-17 and torch's at -7e-10, giving a "relative error" of 2.3e7
+    # between two answers that are both correct. Offsetting makes the reference O(1). This only
+    # surfaced once the test stopped skipping (Issue #1663).
     x = np.linspace(0, 1, 100)
-    y = np.sin(2 * np.pi * x)
+    y = np.sin(2 * np.pi * x) + 2.0
 
     results = {}
 
@@ -238,22 +242,23 @@ def test_backend_factory_integration():
             print(f"\n{backend_name}: ❌ Not available")
             continue
 
-        try:
-            backend = create_backend(backend_name)
-            print(f"\n{backend_name}: ✅ Created successfully")
-            print(f"   Name: {backend.name}")
-            print(f"   Device: {backend.device}")
-            print(f"   Precision: {backend.precision}")
+        # No try/except here. This test previously wrapped the block below in
+        # `except Exception as e: print(...)`, and it called `backend.sum()` -- a method
+        # that has never been part of the BaseBackend contract (the abstract reductions
+        # are mean/std/max/min/trapezoid). Every backend therefore raised AttributeError,
+        # the print swallowed it, `results` stayed empty, and the comparison below was
+        # skipped with "Only one backend available" while all three had constructed fine.
+        # A backend that errors here must fail the test, not narrate the error (Issue #1663).
+        backend = create_backend(backend_name)
+        print(f"\n{backend_name}: created")
+        print(f"   Name: {backend.name}")
+        print(f"   Device: {backend.device}")
+        print(f"   Precision: {backend.precision}")
 
-            # Test basic operations
-            arr = backend.array(y)
-            result = backend.sum(arr)
-            results[backend_name] = float(result)
+        arr = backend.array(y)
+        results[backend_name] = float(backend.mean(arr))
 
-            print(f"   Sum test: {result:.6f}")
-
-        except Exception as e:
-            print(f"\n{backend_name}: ⚠️ Error: {e}")
+        print(f"   mean: {results[backend_name]:.6f}")
 
     # Cross-backend comparison
     if len(results) > 1:
@@ -266,9 +271,24 @@ def test_backend_factory_integration():
             rel_error = abs(value - reference) / abs(reference)
             status = "✅" if rel_error < 1e-10 else "⚠️"
             print(f"{status} {name}: {value:.12f} (rel error: {rel_error:.2e})")
-            assert rel_error < 1e-6, f"Backend {name}: rel error {rel_error:.2e} >= 1e-6"
+            # 1e-5, not 1e-6: a backend may legitimately run at float32 (on Apple Silicon the
+            # torch backend is forced to it, with a warning, because MPS has no float64).
+            # Measured float32 noise here is 2.6e-8 to 1.6e-7, so 1e-5 sits ~1.8 orders above
+            # it. This assertion compares `mean`, where no Bessel question arises -- the std
+            # convention pin lives in tests/unit/test_backends/test_backend_reduction_conventions.py.
+            assert rel_error < 1e-5, f"Backend {name}: rel error {rel_error:.2e} >= 1e-5"
+    elif len(results) == 1:
+        pytest.skip(f"only {list(results)} constructible; a cross-backend comparison needs two")
     else:
-        pytest.skip("Only one backend available, nothing to compare")
+        # Defensive only: with the swallow removed, a backend that produces nothing raises
+        # before reaching here, and numpy is unconditionally constructible -- so `results`
+        # cannot in fact be empty. Kept as a loud floor rather than a silent fall-through,
+        # because "empty results" was precisely the state the old except() disguised as
+        # "only one backend available".
+        raise AssertionError(
+            f"no backend produced a result, though get_available_backends() reported "
+            f"{[k for k, v in available.items() if v]}"
+        )
 
 
 @pytest.mark.skipif(not TORCH_IMPORTS_AVAILABLE, reason="PyTorch not available (optional dependency)")

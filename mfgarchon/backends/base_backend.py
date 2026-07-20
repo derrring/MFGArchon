@@ -101,7 +101,19 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def std(self, a, axis=None):
-        """Compute standard deviation."""
+        """Compute the POPULATION standard deviation (denominator ``N``, i.e. ``ddof=0``).
+
+        The convention is part of the contract, not left to the backing library. NumPy and
+        JAX default to ``ddof=0``; PyTorch defaults to Bessel-corrected ``unbiased=True``
+        (``N-1``). Leaving it unstated let four implementers each inherit their own
+        library's default, and TorchBackend silently returned a different quantity --
+        measured 0.314315110 against 0.312755227 for the same input, a ratio of exactly
+        ``sqrt(N/(N-1))``.
+
+        Population is chosen because two of the three already did it, and because these
+        arrays are discretised fields rather than samples from a population -- there is no
+        sampling correction to make.
+        """
 
     @abstractmethod
     def max(self, a, axis=None):
