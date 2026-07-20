@@ -13,36 +13,48 @@ library refuses the problem rather than solving a different one.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 import numpy as np
 
+import mfgarchon.alg.numerical.fp_solvers as _fp_pkg
 from mfgarchon import MFGProblem
-from mfgarchon.alg.numerical.fp_solvers import (
-    FPFDMSolver,
-    FPFVMSolver,
-    FPGFDMSolver,
-    FPParticleSolver,
-    FPSLAdjointSolver,
-    FPSLSolver,
-)
+from mfgarchon.alg.base_solver import BaseMFGSolver
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver, FPGFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc
+from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BCType,
+    BoundaryConditions,
+    neumann_bc,
+    no_flux_bc,
+)
 
-# All six families that declare BCType.NEUMANN. Enumerated from the package exports rather
-# than hand-listed: a first attempt at this file guessed the module names and missed two of
-# them (fp_particle's multi-line declaration and fp_semi_lagrangian_adjoint entirely).
-FP_FAMILIES = [
-    FPFDMSolver,
-    FPFVMSolver,
-    FPGFDMSolver,
-    FPParticleSolver,
-    FPSLSolver,
-    FPSLAdjointSolver,
-]
+
+# Derived, not hand-listed. Two earlier attempts got this wrong in opposite ways: the first
+# hardcoded five module names and missed `fp_particle` and `fp_semi_lagrangian_adjoint`; the
+# second listed `FPSLSolver` and `FPSLAdjointSolver` -- both from the *adjoint* module -- and
+# omitted `FPSLJacobianSolver` entirely, so deleting that module's flag left every test green.
+# Walking the package makes the list follow the code instead of my memory.
+def _fp_families_that_decline_the_value() -> list[type]:
+    families = []
+    for _name in dir(_fp_pkg):
+        obj = getattr(_fp_pkg, _name)
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, BaseMFGSolver)
+            and getattr(obj, "honors_inhomogeneous_neumann", True) is False
+        ):
+            families.append(obj)
+    return sorted(families, key=lambda c: c.__name__)
+
+
+FP_FAMILIES = _fp_families_that_decline_the_value()
 
 
 def _construct(solver_cls, problem):
@@ -128,3 +140,68 @@ def test_a_time_dependent_neumann_value_is_also_refused(solver_cls):
 def test_hjb_still_accepts_a_time_dependent_neumann_value():
     """The HJB side honours `du/dn = g(t)`; the refusal must not reach it."""
     HJBFDMSolver(_problem(neumann_bc(value=lambda t: 5.0, dimension=1)))
+
+
+def test_every_fp_module_declaring_neumann_is_covered():
+    """The derived family list must cover every module that declares BCType.NEUMANN.
+
+    Pins the enumeration itself. Without this, dropping the flag from one module leaves the
+    whole file green -- which is exactly what happened to `fp_semi_lagrangian.py`.
+    """
+    import pathlib
+
+    pkg_dir = pathlib.Path(_fp_pkg.__file__).parent
+    declaring = {f.stem for f in pkg_dir.glob("fp_*.py") if "_SUPPORTED_BC_TYPES" in f.read_text()}
+    covered = {pathlib.Path(sys.modules[c.__module__].__file__).stem for c in FP_FAMILIES}
+
+    assert declaring == covered, (
+        f"modules declaring BCType.NEUMANN {sorted(declaring)} are not the modules covered by "
+        f"FP_FAMILIES {sorted(covered)}; a family is unpinned"
+    )
+
+
+def _neumann_segment(value):
+    return BoundaryConditions(
+        default_bc=BCType.NO_FLUX,
+        dimension=1,
+        segments=[BCSegment(name="wall", bc_type=BCType.NEUMANN, value=value, boundary="x_min")],
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "should_refuse", "label"),
+    [
+        (np.zeros(21), False, "all-zero array is g = 0"),
+        (np.ones(21), True, "non-zero array"),
+        (None, False, "unset value"),
+        (0.0, False, "scalar zero"),
+    ],
+)
+def test_values_float_cannot_handle_do_not_escape_as_typeerror(value, should_refuse, label):
+    """A capability gate must not raise TypeError from inside `float()`.
+
+    The first version guarded only `None` and `callable`, so an array reached `float()` and
+    raised `TypeError: only 0-dimensional arrays can be converted to Python scalars` -- and an
+    all-zero array is a legitimate ``g = 0`` that was crashing rather than being accepted.
+    """
+    problem = _problem(_neumann_segment(value))
+    if should_refuse:
+        with pytest.raises(NotImplementedError, match="honours only the homogeneous case"):
+            FPFDMSolver(problem)
+    else:
+        FPFDMSolver(problem)
+
+
+def test_the_uniform_default_is_checked_too():
+    """`default_bc=NEUMANN, default_value=g` is a value like any other.
+
+    Checking only `segments` left the original silent discard reachable through the default.
+    """
+    bc = BoundaryConditions(
+        default_bc=BCType.NEUMANN,
+        default_value=5.0,
+        dimension=1,
+        segments=[BCSegment(name="wall", bc_type=BCType.NEUMANN, value=None)],
+    )
+    with pytest.raises(NotImplementedError, match="honours only the homogeneous case"):
+        FPFDMSolver(_problem(bc))

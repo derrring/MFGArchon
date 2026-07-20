@@ -262,7 +262,10 @@ class BaseMFGSolver(ABC):
         if default is not None:
             requested.add(default)
         if not self.honors_inhomogeneous_neumann:
+            import numpy as np
+
             from mfgarchon.geometry.boundary import BCType
+            from mfgarchon.geometry.boundary.providers import is_provider
 
             # Issue #1686: declaring BCType.NEUMANN is not the same as honouring the value
             # attached to it. Every FP solver declares NEUMANN and then reads only the type --
@@ -274,18 +277,44 @@ class BaseMFGSolver(ABC):
             # Refuse it rather than let it through: `isinstance(value, (int, float))` alone
             # would accept `neumann_bc(value=lambda t: 5.0)` and discard it silently, which is
             # the behaviour this gate exists to stop.
+            def _describe(value: Any) -> object | None:
+                """Return a description if this value is not verifiably zero, else None.
+
+                Anything that cannot be compared to zero here is refused rather than assumed
+                homogeneous. `float()` is reached only for things it accepts: an array or a
+                BCValueProvider would otherwise raise TypeError out of a capability gate, and
+                an all-zero array is a legitimate g = 0 that must not crash.
+                """
+                if value is None:
+                    return None
+                if is_provider(value):
+                    return "<provider>"
+                if callable(value):
+                    return "<callable>"
+                if isinstance(value, np.ndarray):
+                    return None if not value.any() else "<array>"
+                try:
+                    return None if float(value) == 0.0 else float(value)
+                except (TypeError, ValueError):
+                    return f"<unrecognised {type(value).__name__}>"
+
             ignored: list[object] = []
             for seg in segments:
                 if seg.bc_type is not BCType.NEUMANN:
                     continue
-                value = getattr(seg, "value", None)
-                if callable(value):
-                    ignored.append("<time-dependent>")
-                elif value is not None and float(value) != 0.0:
-                    ignored.append(float(value))
+                described = _describe(getattr(seg, "value", None))
+                if described is not None:
+                    ignored.append(described)
+
+            # Issue #1686: the uniform default is a value too. Checking only `segments` left the
+            # original silent discard reachable through `default_bc=NEUMANN, default_value=g`.
+            if getattr(bc, "default_bc", None) is BCType.NEUMANN:
+                described = _describe(getattr(bc, "default_value", None))
+                if described is not None:
+                    ignored.append(described)
             if ignored:
                 ignored = sorted(set(ignored), key=repr)
-                timed = "<time-dependent>" in ignored
+                timed = any(isinstance(v, str) for v in ignored)
                 detail = (
                     "a time-dependent value cannot be checked for being identically zero here, "
                     "so it is refused rather than assumed homogeneous; pass 0.0 if it is"
