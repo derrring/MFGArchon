@@ -110,7 +110,7 @@ class BaseBackend(ABC):
         measured 0.314315110 against 0.312755227 for the same input, a ratio of exactly
         ``sqrt(N/(N-1))``.
 
-        Population is chosen because two of the three already did it, and because these
+        Population is chosen because three of the four already did it, and because these
         arrays are discretised fields rather than samples from a population -- there is no
         sampling correction to make.
         """
