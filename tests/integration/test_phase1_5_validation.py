@@ -151,7 +151,8 @@ class TestRegimeSwitchingIntegration:
             "0.45 satisfies the library's own stated CFL bound, the density still reaches "
             "-9.7e-04, and the guard still raises at NT=320 -- a 32x refinement. The run maximum "
             "does decay first-order in dt, so 'not a timestep artifact' would be too strong; it "
-            "is a first-order one that would need NT ~ 1e5 to clear the threshold. The fixture "
+            "is a first-order one: measured, the run maximum is 4.95e-05 at NT=640, so clearing "
+            "1e-8 extrapolates to NT ~ 3e6. The fixture "
             "is deliberately left at its original NT=10, since retuning would only hide it."
         ),
     )
