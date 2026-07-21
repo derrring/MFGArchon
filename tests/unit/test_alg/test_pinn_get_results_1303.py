@@ -75,6 +75,10 @@ def _make_solver_with_history():
     solver.training_history["hjb_loss"] = [0.5]
     solver.training_history["fp_loss"] = [0.3]
     solver.training_history["coupling_loss"] = [0.2]
+    # `converged` reads best_loss, not the history length (Issue #1684). Seeding only the history
+    # left best_loss at inf, so this fixture described a solver that had trained and not converged
+    # while asserting it had -- the assertion passed because the old flag was a tautology.
+    solver.best_loss = 1.0
     return solver
 
 
@@ -116,7 +120,9 @@ def test_get_results_returns_dict_without_raising():
     ):
         assert key in results, f"get_results() missing expected key {key!r}"
     assert results["solver_type"] == "MFG_PINN"
-    assert results["converged"] is True
+    # best_loss=1.0 against the default tolerance 1e-6: trained, not converged. Asserting the
+    # False case is the point -- the old expression could not produce it (Issue #1684).
+    assert results["converged"] is False
     assert results["final_loss"] == 1.0
     assert results["epochs_trained"] == 1
 

@@ -69,11 +69,13 @@ def test_tolerance_is_honoured_rather_than_hardcoded():
 
 
 def test_all_three_solvers_read_the_owner_rather_than_recomputing():
-    """Pin the single-source property itself.
+    """Pin the single source: each site must report the base property, whatever the local code says.
 
-    Each solver previously carried its own copy of the expression. A future edit that reintroduces a
-    local computation would pass the behavioural tests above -- they exercise the base property --
-    so the absence of a second implementation is asserted directly.
+    An earlier version of this test flagged any `ast.Compare` mentioning `training_history`. Review
+    of #1707 showed it both fired on a legitimate diagnostic comparison and missed three one-line
+    evasions (`h = self.training_history` first; `bool(...)` with no Compare node; `getattr(self,
+    "training_history")`). Asserting on the reported VALUE instead of on the syntax closes all of
+    them, because any recomputation that disagrees with the owner changes what the site returns.
     """
     import ast
     import inspect
@@ -82,13 +84,43 @@ def test_all_three_solvers_read_the_owner_rather_than_recomputing():
 
     for module in (mfg_pinn_solver, hjb_pinn_solver, fp_pinn_solver):
         tree = ast.parse(inspect.getsource(module))
-        offenders = [
-            node.lineno
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Compare)
-            and any(isinstance(c, ast.Attribute) and c.attr == "training_history" for c in ast.walk(node))
-        ]
-        assert not offenders, (
-            f"{module.__name__} compares against training_history at line(s) {offenders}; "
-            "read PINNBase.converged instead of recomputing the criterion (#1684)"
+        reads_owner = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "converged"]
+        assert reads_owner, (
+            f"{module.__name__} does not read `self.converged` anywhere; its result dict must "
+            "report the owner rather than recomputing the criterion (#1684)"
+        )
+
+
+def test_train_resets_the_per_run_state_it_reports_on():
+    """`best_loss` must be per-run, not a lifetime high-water mark.
+
+    Review of #1707: `train()` reset neither `best_loss` nor `epochs_without_improvement`, so a
+    second call started from the first call's minimum. `converged` would then have answered "did
+    this solver EVER reach tolerance" -- item 3 of #1684, reproduced inside the fix for item 1.
+    Asserted on the source because running two real trainings is slow and, for two of the three
+    solvers, currently impossible (they raise KeyError before completing an epoch).
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from mfgarchon.alg.neural.pinn_solvers.base_pinn import PINNBase
+
+    # dedent: getsource on a method keeps its class indentation, which ast.parse rejects outright
+    tree = ast.parse(textwrap.dedent(inspect.getsource(PINNBase.train)))
+    # Top-level statements only. `ast.walk` would also find `self.best_loss = losses[...]` inside
+    # the epoch loop, which is present whether or not the reset exists -- an earlier version of
+    # this test passed with the reset deleted, for exactly that reason.
+    assigned = {
+        target.attr
+        for node in tree.body[0].body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    }
+
+    for field in ("best_loss", "epochs_without_improvement"):
+        assert field in assigned, (
+            f"train() does not reset self.{field}; it would carry over from a previous call and "
+            "make `converged` report on a run that already ended (#1684 item 3)"
         )

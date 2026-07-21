@@ -769,6 +769,14 @@ class PINNBase(BaseNeuralSolver, ABC):
         Returns:
             Training history with loss evolution
         """
+        # Per-run state. Without this reset `best_loss` is a high-water mark over every train()
+        # call an instance has ever made, so `converged` would answer "did this solver EVER reach
+        # tolerance" -- the same defect as the summary reporting "ever converged" (Issue #1684,
+        # item 3). `epochs_without_improvement` carried the same staleness into early stopping: a
+        # second train() started with a counter left over from the first.
+        self.best_loss = float("inf")
+        self.epochs_without_improvement = 0
+
         if verbose:
             print(f"Starting PINN training on {self.device}")
             print(
