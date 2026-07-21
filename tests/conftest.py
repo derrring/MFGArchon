@@ -61,24 +61,14 @@ def _default_test_components(Lx: float = 1.0) -> MFGComponents:
 
 
 def pytest_configure(config):
-    """Configure pytest with custom markers and settings."""
-    # Core test type markers
-    config.addinivalue_line("markers", "unit: Unit tests (fast, isolated)")
-    config.addinivalue_line("markers", "integration: Integration tests (slower, cross-component)")
-    config.addinivalue_line("markers", "performance: Performance tests (may be slow)")
-    config.addinivalue_line("markers", "mathematical: Mathematical property validation tests")
-    config.addinivalue_line("markers", "slow: Slow tests (may take >30 seconds)")
+    """Configure pytest.
 
-    # Test tier markers (for CI pipeline control)
-    config.addinivalue_line("markers", "tier1: Fast unit tests (<1s) - run on every commit")
-    config.addinivalue_line("markers", "tier2: Medium tests (1-30s) - run on PRs")
-    config.addinivalue_line("markers", "tier3: Slow integration tests (>30s) - run on merge to main")
-    config.addinivalue_line("markers", "tier4: Performance/stress tests - run weekly or manually")
-
-    # Domain-specific markers
-    config.addinivalue_line("markers", "network: Tests requiring network/graph geometry")
-    config.addinivalue_line("markers", "stochastic: Tests for stochastic MFG solvers")
-    config.addinivalue_line("markers", "numerical: Tests for numerical algorithms")
+    Markers are declared in pytest.ini and only there. This function used to re-declare twelve of
+    them with `addinivalue_line`, which made `pytest.ini` look like the source while the real
+    registration happened here -- deleting a declaration from the ini removed nothing, and
+    `scripts/check_markers.py` reported a clean census over seven markers that were still live
+    (#1706).
+    """
 
 
 def pytest_collection_modifyitems(config, items):

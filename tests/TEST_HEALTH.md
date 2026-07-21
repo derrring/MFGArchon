@@ -42,28 +42,32 @@ These tests are skipped when optional dependencies aren't installed:
 | Factory signatures | 7 | Issue #277 |
 | Voronoi maze | 1 | Module not implemented |
 
-## Test Tiers
+## Which tier runs what
 
-Tests are organized into tiers for CI efficiency:
+The `tier1`-`tier4` markers were deleted (#1706). They declared a schedule -- "every commit",
+"on PRs", "on merge to main", "weekly or manually" -- that **no selector implemented**, so a test
+marked `tier4` to defer it ran in every tier instead. `scripts/check_markers.py` now rejects any
+declaration that promises a schedule without a selector to enforce it.
 
-| Tier | Description | CI Trigger |
-|:-----|:------------|:-----------|
-| tier1 | Fast unit tests (<1s) | Every commit |
-| tier2 | Medium tests (1-30s) | PRs |
-| tier3 | Slow integration (>30s) | Merge to main |
-| tier4 | Performance tests | Weekly/manual |
+The markers that actually route are:
+
+| Marker | Excluded from |
+|:-------|:--------------|
+| `slow` | the local gate, the PR smoke subset |
+| `manual` | every automatic tier -- local gate, nightly, and release |
+| `optional_torch`, `benchmark`, `experimental`, `environment` | the local gate, nightly, PR checks |
 
 ## Running Tests
 
 ```bash
-# Quick validation (PRs)
-pytest tests/ -m "not slow" --maxfail=10
+# The authoritative gate (what a PR must pass)
+./scripts/local_ci.sh
 
-# Full suite (main branch)
-pytest tests/ -m "not tier4"
+# What nightly runs
+pytest tests/ -m "not optional_torch and not benchmark and not experimental and not environment and not manual"
 
-# Only fast tests
-pytest tests/ -m "tier1"
+# The manual-only set, which no automatic tier runs
+pytest -m manual
 
 # Skip optional dependencies
 pytest tests/ --ignore=tests/unit/test_alg/test_neural

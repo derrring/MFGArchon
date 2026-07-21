@@ -21,15 +21,14 @@ hand. Their descriptions are descriptive, not promissory, so they pass the secon
 usefulness would need a standard this script does not have.
 
 Usage:
-    python scripts/check_markers.py                  # report; exit 1 on any violation
-    python scripts/check_markers.py --json           # machine-readable census
+    python scripts/check_markers.py        # report; exit 1 on any violation
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-import json
+import configparser
 import pathlib
 import re
 import sys
@@ -37,7 +36,9 @@ import sys
 # Wording that claims a marker changes WHEN a test runs. Kept small and literal on purpose: a
 # broader vocabulary would start flagging descriptive text like "may take >30 seconds".
 SCHEDULE_PROMISES = (
-    "run on",
+    "run on every",
+    "run on prs",
+    "run on merge",
     "run every",
     "run weekly",
     "run daily",
@@ -52,18 +53,47 @@ SELECTOR_FILES = (".github/workflows/*.yml", ".github/workflows/*.yaml", "script
 
 
 def declared_markers(root: pathlib.Path) -> dict[str, str]:
-    """Marker name -> description, from pytest.ini's `markers` linelist."""
-    ini = (root / "pytest.ini").read_text()
-    if "markers =" not in ini:
-        raise SystemExit("pytest.ini has no `markers =` block; this checker assumes one exists")
-    block = ini.split("markers =", 1)[1]
-    out = {}
-    for line in block.splitlines():
-        if line.strip() and not line.startswith((" ", "\t")):
-            break  # left the indented block
-        m = re.match(r"\s+(\w+)\s*:\s*(.*)", line)
-        if m:
-            out[m.group(1)] = m.group(2).strip()
+    """Marker name -> description, from EVERY place a marker can be registered.
+
+    `pytest.ini`'s linelist is not the only one: `conftest.py` can call
+    `config.addinivalue_line("markers", ...)`, and that registration is what `--strict-markers`
+    actually consults. Reading only the ini made this checker report a clean census while seven
+    markers -- including the whole promissory `tier1`-`tier4` family -- were still live and still
+    accepted (#1706). A checker blind to a registration path is worse than none, because its OK
+    is taken as evidence.
+    """
+    out: dict[str, str] = {}
+
+    # pytest.ini, parsed by configparser rather than by hand: a hand parser silently dropped a
+    # description-less declaration, which could then never be flagged unreachable.
+    parser = configparser.ConfigParser()
+    parser.read(root / "pytest.ini")
+    if not parser.has_option("pytest", "markers"):
+        raise SystemExit("pytest.ini has no `markers` option; this checker assumes one exists")
+    for line in parser.get("pytest", "markers").splitlines():
+        if not line.strip():
+            continue
+        name, _, description = line.partition(":")
+        out[name.strip()] = description.strip()
+
+    # conftest.py addinivalue_line("markers", "name: description")
+    for conftest in sorted(root.rglob("conftest.py")):
+        try:
+            tree = ast.parse(conftest.read_text())
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) != 2:
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "addinivalue_line"):
+                continue
+            key, value = node.args
+            if not (isinstance(key, ast.Constant) and key.value == "markers"):
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                name, _, description = value.value.partition(":")
+                out.setdefault(name.strip(), description.strip())
     return out
 
 
@@ -124,25 +154,20 @@ def census(root: pathlib.Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", default=".", help="repository root")
-    parser.add_argument("--json", action="store_true", help="emit the census as JSON")
     args = parser.parse_args()
 
     root = pathlib.Path(args.path).resolve()
     rows = census(root)
 
-    if args.json:
-        print(json.dumps(rows, indent=2, sort_keys=True))
-
     unreachable = sorted(n for n, r in rows.items() if r["unreachable"])
     false_promise = sorted(n for n, r in rows.items() if r["false_promise"])
 
-    if not args.json:
-        print(f"{len(rows)} declared markers\n")
-        print(f"{'marker':22s} {'uses':>5s}  selectors")
-        for name, row in rows.items():
-            sel = ", ".join(row["selectors"]) or "--"
-            print(f"{name:22s} {row['uses']:5d}  {sel}")
-        print()
+    print(f"{len(rows)} declared markers\n")
+    print(f"{'marker':22s} {'uses':>5s}  selectors")
+    for name, row in rows.items():
+        sel = ", ".join(row["selectors"]) or "--"
+        print(f"{name:22s} {row['uses']:5d}  {sel}")
+    print()
 
     if unreachable:
         print(f"UNREACHABLE ({len(unreachable)}): {', '.join(unreachable)}")
@@ -156,8 +181,7 @@ def main() -> int:
 
     if unreachable or false_promise:
         return 1
-    if not args.json:
-        print("OK -- every declared marker is reachable, and none promises an unimplemented schedule.")
+    print("OK -- every declared marker is reachable, and none promises an unimplemented schedule.")
     return 0
 
 
