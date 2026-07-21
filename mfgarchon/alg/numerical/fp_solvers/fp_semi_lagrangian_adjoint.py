@@ -222,18 +222,6 @@ class FPSLSolver(BaseFPSolver):
         # (Dirichlet/Robin would otherwise be silently collapsed to the zero-flux Neumann stencil).
         self._validate_bc_support(self.get_boundary_conditions())
 
-    def _get_boundary_conditions_from_problem(self) -> BoundaryConditions | None:
-        """Get boundary conditions from problem or geometry."""
-        try:
-            return self.problem.geometry.boundary_conditions
-        except AttributeError:
-            pass
-        try:
-            return self.problem.geometry.get_boundary_conditions()
-        except AttributeError:
-            pass
-        return None
-
     def _get_bc_operation_type(self) -> str:
         """
         Get boundary operation type from boundary conditions.
