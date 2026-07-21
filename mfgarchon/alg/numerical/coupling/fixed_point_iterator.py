@@ -866,6 +866,43 @@ class FixedPointIterator(BaseCouplingIterator):
                 "; ".join(str(i) for i in output_validation.issues),
             )
 
+        # Issue #1672: the field defaulted to 0.0 and nothing on this path wrote it, so every
+        # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case
+        # whose mass reached 6378 (Issue #1671). Measured here, where M and the geometry are
+        # both in hand, using the geometry's own volume element rather than a second
+        # hand-rolled dx so the quantity has one owner.
+        # Measured as DRIFT from the initial mass, not as deviation from 1.0. Those differ
+        # whenever the cell measure that normalised m0 is not the one the geometry reports, and
+        # they do differ today: MFGProblem._initialize_functions normalises with
+        # prod(L_i / Nx_points_i) while volume_element() returns prod(L_i / (Nx_points_i - 1)) --
+        # points against intervals. Against a 1.0 target that fork reports (N/(N-1))**d - 1, which
+        # is 21% on an 11-point 2D grid whose mass is in fact flat to 4e-16, and which shrinks
+        # like d/N so it reads as a first-order-convergent "mass error" -- the same
+        # silent-value-faking-a-rate shape as the 0.0 this field used to report. A ratio is
+        # invariant to the choice of measure and is what the field's name claims to quantify.
+        # The normalisation fork itself is pre-existing and tracked separately.
+        mass_conservation_error: float | None
+        try:
+            # Called as a gate, not as a factor: a geometry with no volume element cannot express
+            # a total mass, so no conservation error is meaningful for it. A uniform cell measure
+            # cancels out of the ratio below, so it is deliberately not multiplied in -- writing it
+            # in would suggest the answer depends on it.
+            self.problem.geometry.volume_element()
+
+            spatial_axes = tuple(range(1, self.M.ndim))
+            mass_per_step = np.sum(self.M, axis=spatial_axes)
+            initial_mass = float(mass_per_step[0])
+            if not np.isfinite(initial_mass) or initial_mass <= 0.0:
+                raise ValueError(
+                    f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
+                    "mass conservation is undefined and the solve that produced it is already wrong"
+                )
+            mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
+        except (AttributeError, NotImplementedError):
+            # A geometry without a volume element cannot express the integral; None says
+            # "not measured" rather than fabricating a zero.
+            mass_conservation_error = None
+
         # Construct result
         result = SolverResult(
             U=self.U,
@@ -876,6 +913,7 @@ class FixedPointIterator(BaseCouplingIterator):
             solver_name=self.name,
             converged=converged,
             metadata=metadata,
+            mass_conservation_error=mass_conservation_error,
         )
 
         # Return tuple for backward compatibility if requested

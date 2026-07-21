@@ -38,7 +38,14 @@ class SolverResult:
         metadata: Additional solver-specific information
         ergodic_constant: Ergodic constant lambda for stationary MFG (Issue #875)
         policy: Optimal control policy alpha*(t, x) as callable (Issue #875)
-        mass_conservation_error: max|sum(m) - 1| over time steps (Issue #875)
+        mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
+            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
+            when no solver on this path measured it (Issue #1672). ``None`` and ``0.0`` are
+            different statements: the second says the solve conserved mass exactly, and for
+            three years every solve reported it because the field defaulted to ``0.0`` and
+            the coupling path had no writer. For boundary conditions that remove mass --
+            Dirichlet or absorbing walls -- the deviation is physical outflow rather than an
+            error, so read it against the boundary condition in use.
     """
 
     U: NDArray[np.floating]
@@ -52,7 +59,7 @@ class SolverResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     ergodic_constant: float | None = None
     policy: Any | None = None
-    mass_conservation_error: float = 0.0
+    mass_conservation_error: float | None = None
 
     def __init__(
         self,
@@ -67,7 +74,7 @@ class SolverResult:
         metadata: dict[str, Any] | None = None,
         ergodic_constant: float | None = None,
         policy: Any | None = None,
-        mass_conservation_error: float = 0.0,
+        mass_conservation_error: float | None = None,
     ):
         """
         Initialize SolverResult.
@@ -84,7 +91,8 @@ class SolverResult:
             metadata: Additional solver-specific information
             ergodic_constant: Ergodic constant lambda for stationary MFG
             policy: Optimal control policy alpha*(t, x) as callable
-            mass_conservation_error: max|sum(m) - 1| over time steps
+            mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
+            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
         """
         # Initialize dataclass fields
         self.U = U
