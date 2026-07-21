@@ -74,6 +74,41 @@ except ImportError:
     JAX_AVAILABLE = False
 
 
+def _checked_bc_type_string(bc) -> str:
+    """Collapse ``bc`` to the single BC type the SL fold applies to every axis, or refuse.
+
+    Issue #1560: ``get_bc_type_string`` returns the FIRST segment's type by contract, and the
+    characteristic fold and ADI diffusion then apply that single operation ('reflect' | 'wrap' |
+    ...) to all axes. For a mixed per-axis BC -- no-flux walls on one axis, periodic on another --
+    that silently drops one transform, and reordering the segments changes the physics.
+
+    This is the one owner of that collapse. It raises when the segments disagree, so the refusal
+    happens where the value is used rather than only at construction: the solver re-reads
+    ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
+    a BC that is unset when the solver is built, or replaced afterwards.
+
+    Per-axis handling is the actual fix and remains open on #1560; until then the library refuses
+    the configuration rather than solving a different one.
+    """
+    ops = set()
+    for seg in getattr(bc, "segments", None) or ():
+        ops.add(bc_type_to_geometric_operation(str(getattr(seg.bc_type, "value", seg.bc_type))))
+    default = getattr(bc, "default_bc", None)
+    if default is not None:
+        ops.add(bc_type_to_geometric_operation(str(getattr(default, "value", default))))
+
+    if len(ops) > 1:
+        raise NotImplementedError(
+            "HJBSemiLagrangianSolver does not support a mixed per-axis boundary condition whose "
+            f"segments map to different geometric operations ({sorted(ops)}). The characteristic "
+            "fold and ADI diffusion apply a single operation to every axis (order-sensitive "
+            "silent collapse). Use one BC type across axes, or HJB-FDM/GFDM which resolve BC per "
+            "wall (Issue #1560 / RFC #1574 Phase 0)."
+        )
+
+    return get_bc_type_string(bc)
+
+
 class HJBSemiLagrangianSolver(BaseHJBSolver):
     """
     Semi-Lagrangian method for solving Hamilton-Jacobi-Bellman equations.
@@ -1126,8 +1161,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
                 # Apply boundary conditions (vectorized)
                 bc = self.get_boundary_conditions()
-                bc_type_str = get_bc_type_string(bc)
-                bc_op = bc_type_to_geometric_operation(bc_type_str)
+                bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
                 if bc_op == "reflect":
@@ -1559,8 +1593,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # wrap for periodic. reflect_into_domain is the correct per-axis fold
         # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
-        bc_type_str = get_bc_type_string(bc)
-        bc_op = bc_type_to_geometric_operation(bc_type_str)
+        bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -1735,7 +1768,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Boundary fold for the stochastic departures (reflect = no-flux/Neumann, the CS
         # setting; wrap = periodic; clamp otherwise). Shared with the stochastic SL path.
         bc = self.get_boundary_conditions()
-        bc_op = bc_type_to_geometric_operation(get_bc_type_string(bc))
+        bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -2061,7 +2094,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         xmin, xmax = bounds[0][0], bounds[1][0]
 
         bc = self.get_boundary_conditions()
-        bc_type = get_bc_type_string(bc)
+        bc_type = _checked_bc_type_string(bc)
         bc_op = bc_type_to_geometric_operation(bc_type)
 
         return apply_boundary_conditions_1d(x, xmin=xmin, xmax=xmax, bc_type=bc_op)
@@ -2199,7 +2232,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Apply boundary conditions
             # Issue #702: Use centralized bc_utils for consistent BC handling
             bc = self.get_boundary_conditions()
-            bc_type = get_bc_type_string(bc)
+            bc_type = _checked_bc_type_string(bc)
             bc_op = bc_type_to_geometric_operation(bc_type)
 
             bounds = self.problem.geometry.get_bounds()
@@ -2225,7 +2258,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Issue #702: Use centralized bc_utils for consistent BC handling
             bc = self.get_boundary_conditions()
-            bc_type = get_bc_type_string(bc)
+            bc_type = _checked_bc_type_string(bc)
             bc_op = bc_type_to_geometric_operation(bc_type)
 
             return apply_boundary_conditions_nd(
@@ -2588,7 +2621,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     def _get_diffusion_bc_type(self) -> str:
         """Get BC type string for diffusion step ('neumann' or 'periodic')."""
         bc = self.get_boundary_conditions()
-        bc_type = get_bc_type_string(bc)
+        bc_type = _checked_bc_type_string(bc)
         if bc_type == "periodic":
             return "periodic"
         return "neumann"
