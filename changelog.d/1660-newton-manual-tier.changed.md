@@ -8,5 +8,8 @@ the 900 s timeout that is 8% of headroom, so under `-n auto` the workers contend
 crosses it. Eight tests at that duration also occupied roughly two hours of the integration shard,
 so failures behind them were never reached.
 
-The cost is stated rather than absorbed: nothing will now report when these break. The `manual`
-marker's declared description says so, and the module docstring carries the measurement.
+Scope: the three Newton solver classes and the parameter class, ten tests. `TestMFGResidualComputation` is deliberately excluded -- its two tests cost 0.11 s combined and pin the residual pack/unpack identity, so quarantining them would fail the marker's own criterion.
+
+`ci.yml`'s release-only `pytest tests/` carried no marker filter and was therefore the last automatic tier still selecting these; it now passes `-m "not manual"`. Its last five runs had all timed out at the 35-minute budget against a ~2 h manual set. `CLAUDE.md`'s tier table is updated so it no longer claims nightly and release cover the full `@slow` set.
+
+The cost is stated rather than absorbed: nothing will now report when these break. The `manual` marker's declared description says so, and the module docstring carries the measurement.

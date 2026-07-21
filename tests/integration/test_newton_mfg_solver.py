@@ -8,10 +8,20 @@ Tests the Newton's method solver for coupled HJB-FP systems:
 - Comparison with Picard (FixedPointIterator)
 - Output format and structure
 
-Note: Newton solver tests are marked as slow because Jacobian computation
-via finite differences is computationally expensive. Run with:
-    pytest -m slow  # to include slow tests
-    pytest -m "not slow"  # to exclude slow tests
+MOST OF THIS MODULE RUNS IN NO AUTOMATIC TIER (Issue #1660). The three Newton solver classes
+carry `manual` in addition to `slow`, so neither the local gate, nightly, nor the release job
+selects them. Run them deliberately:
+
+    pytest tests/integration/test_newton_mfg_solver.py
+    pytest -m manual
+
+Measured 2026-07-21: `test_newton_solver_executes` takes 822 s at dcb8be82 and 842 s at c1a29a12,
+passing serially at both, against the global 900 s cap at pytest.ini:9 -- 8% of headroom, which
+nightly's `-n auto` contention consumes. Nothing will report when these break; that is the trade.
+
+`TestMFGResidualComputation` is deliberately NOT manual: those two tests cost 0.11 s combined and
+pin the residual pack/unpack round-trip identity, so quarantining them would fail the marker's own
+criterion.
 """
 
 import pytest
@@ -60,10 +70,11 @@ def _default_components():
 # The honest cost: nothing will now tell us when these break. That is the trade being made, not
 # an oversight -- the alternative was a tier that reports a scheduling artefact as a correctness
 # failure every night and buries everything after it.
-pytestmark = [pytest.mark.slow, pytest.mark.manual]
+_newton = pytest.mark.manual  # see the module docstring; paired with slow per class
 
 
 @pytest.mark.slow
+@_newton
 class TestNewtonMFGSolverBasic:
     """Basic functionality tests for NewtonMFGSolver."""
 
@@ -141,6 +152,8 @@ class TestNewtonMFGSolverBasic:
         assert np.all(M >= -1e-6), f"M has negative values: min={np.min(M)}"
 
 
+@pytest.mark.slow
+@_newton
 class TestNewtonMFGSolverHybrid:
     """Tests for hybrid Picard warm-up + Newton strategy."""
 
@@ -213,6 +226,8 @@ class TestNewtonMFGSolverHybrid:
         assert np.all(np.isfinite(M))
 
 
+@pytest.mark.slow
+@_newton
 class TestNewtonVsPicard:
     """Compare Newton solver against Picard (FixedPointIterator)."""
 
@@ -267,6 +282,8 @@ class TestNewtonVsPicard:
         assert M_diff < 0.5, f"M solutions differ by {M_diff * 100:.1f}%"
 
 
+@pytest.mark.slow
+@_newton
 class TestNewtonMFGSolverParameters:
     """Test Newton solver parameter variations."""
 
