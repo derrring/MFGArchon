@@ -646,16 +646,41 @@ class BaseRLSolver(BaseMFGSolver):
         """Train the RL agents to reach Nash equilibrium."""
 
     def evaluate_nash_gap(self) -> float:
-        """Evaluate the Nash equilibrium gap."""
-        # Default implementation - should be overridden
-        return 0.0
+        """Evaluate the Nash equilibrium gap.
+
+        Issue #1688: this returned ``0.0`` -- the report "exact equilibrium reached" -- from a
+        body that reads nothing. A Nash gap is the quantity an RL caller trusts to decide whether
+        training converged, and a default of zero is the strongest possible claim about it. There
+        are no overrides and no callers today, so this is a trap laid rather than a wrong answer
+        shipped; it is raised now, before the RL subtree grows and something inherits it
+        silently.
+
+        Subclasses must override. The pattern matches the variational / OT / neural family, which
+        raises for the same kind of unimplemented hook rather than fabricating a passing metric.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement evaluate_nash_gap(). It previously "
+            "returned 0.0, which reports an exact Nash equilibrium (Issue #1688). Override it "
+            "with a real computation, or do not call it."
+        )
 
     def scale_to_mean_field(self) -> Any:
-        """Convert finite-population solution to mean field limit."""
+        """Convert a finite-population solution to the mean field limit.
+
+        Issue #1688: both branches returned ``self.solution`` unchanged, so for a finite
+        population the "conversion" was the identity while the name and docstring promised a
+        limit. The infinite-population branch is genuinely the identity -- the mean field limit
+        of an infinite population is itself -- and is kept.
+        """
         if self.population_size is None or self.population_size == float("inf"):
             return self.solution
-        # Default implementation - should be overridden by specific solvers
-        return self.solution
+
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement scale_to_mean_field() for a finite "
+            f"population (population_size={self.population_size}). It previously returned the "
+            "finite-population solution unchanged, presenting it as the mean field limit "
+            "(Issue #1688)."
+        )
 
     def get_environment_boundary_config(self) -> dict[str, Any]:
         """
