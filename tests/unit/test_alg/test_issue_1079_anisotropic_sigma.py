@@ -9,10 +9,11 @@ Three sites were identified. Two remain open after earlier partial fixes:
     used as an isotropic coefficient. No error, no warning.
     Fix: raise NotImplementedError at HJBGFDMSolver construction.
 
-  Site 4 — HJB-SL-ADI: the convention is sigma_tensor = covariance matrix
-    (sigma*sigma^T). Diagonal ADI and explicit cross-derivative both assume
-    symmetry. A non-symmetric tensor silently produces wrong results.
-    Fix: raise ValueError if sigma_tensor is not symmetric.
+  Site 4 — HJB-SL-ADI: the (d,d) sigma is the SYMMETRIC standard-deviation matrix S
+    (the symmetric square root of the covariance), D = 1/2 S S^T (RFC #1596, re-founding
+    the original #1079 "covariance" reading). Diagonal ADI and explicit cross-derivative
+    both require symmetry. A non-symmetric tensor is caller confusion and silently produces
+    wrong results. Fix: reject a non-symmetric (d,d) sigma (validate_symmetric_psd).
 
 Both tests FAIL on pre-fix code (silent wrong result) and PASS after the fix.
 Refs #1079.
@@ -32,17 +33,20 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step
 
 
 class TestADIAsymmetricSigmaRaises:
-    """Issue #1079, Site 4: adi_diffusion_step must reject non-symmetric sigma_tensor.
+    """Issue #1079 Site 4, re-founded by RFC #1596: adi_diffusion_step must reject a
+    non-symmetric (d,d) sigma.
 
-    Convention: sigma_tensor = covariance (sigma*sigma^T), which is always
-    symmetric. An asymmetric tensor means the caller is violating the convention;
-    letting it through silently produces wrong cross-derivative coefficients.
-
-    FAILS on pre-fix code (no symmetry check) and PASSES after fix (ValueError raised).
+    Convention (RFC #1596): the (d,d) sigma is the SYMMETRIC standard-deviation matrix S
+    (the symmetric square root of the covariance), so D = 1/2 S S^T. An asymmetric tensor
+    is caller confusion (a Cholesky factor, a raw covariance, or a malformed matrix), which
+    would silently produce wrong cross-derivative coefficients. The raise is UNCHANGED from
+    the original #1079 fix; only its rationale flips from "covariance must be symmetric" to
+    "the volatility std-dev matrix must be symmetric" (PR #1548 had wrongly *removed* this
+    raise; RFC #1596 keeps it and routes the squaring through the single-source converter).
     """
 
-    def test_asymmetric_2d_sigma_raises_value_error(self) -> None:
-        """Non-symmetric (d,d) sigma_tensor must raise ValueError, not silently proceed."""
+    def test_asymmetric_2d_volatility_rejected(self) -> None:
+        """Non-symmetric (d,d) sigma must raise ValueError, not silently proceed (RFC #1596)."""
         Nx, Ny = 8, 8
         dx, dy = 0.1, 0.1
         grid_shape = (Nx, Ny)

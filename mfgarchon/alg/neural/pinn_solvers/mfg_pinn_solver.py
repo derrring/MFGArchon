@@ -307,11 +307,14 @@ class MFGPINNSolver(PINNBase):
         H = self.compute_hamiltonian(u_x, x, m)
 
         # Viscous term: D*u_xx where D = sigma^2/2 — Issue #1281 fix (2026-06-11 survey)
-        # Convention mirrors FP: fp_residual subtracts D*m_xx. Issue #1189: route through D.
+        # Convention mirrors FP diffusion sign only: fp_residual subtracts D*m_xx. Issue #1189: route through D.
         viscous_term = diffusion_from_volatility_torch(self.sigma) * u_xx
 
-        # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
-        hjb_residual = u_t + H - viscous_term
+        # Backward-HJB residual: -du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0 (Issue #1571).
+        # The HJB is backward (terminal u(T)=g, t un-reversed) so the time derivative enters as
+        # -du/dt; the earlier +du/dt mirrored the FORWARD FP sign onto the backward HJB and fit the
+        # wrong PDE. Only the diffusion sign mirrors FP.
+        hjb_residual = -u_t + H - viscous_term
 
         # For FP equation, we need the drift: b = -∇H_p = -∇u (for quadratic H)
         drift = -u_x

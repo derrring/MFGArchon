@@ -3,6 +3,11 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver as GFDMHJBSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 class MockGeometry:
@@ -191,19 +196,34 @@ class TestGFDMHJBSolver:
         assert u_modified[9] == 1.0
 
     def test_solve_hjb_system_shape(self):
-        """Test that solve_hjb_system returns correct shape."""
-        # Create test inputs
-        M_density = np.ones((5, 10)) * 0.1
-        U_final = np.ones(10)
-        U_prev = np.ones((5, 10))
+        """solve_hjb_system on a REAL problem returns U of shape (Nt, Nx).
 
-        # Solve (this may not converge perfectly but should return correct shape)
-        try:
-            U_solution = self.solver.solve_hjb_system(M_density, U_final, U_prev)
-            assert U_solution.shape == (5, 10)
-        except Exception as e:
-            # If solver fails, that's okay for this basic test
-            pytest.skip(f"Solver failed: {e}")
+        Issue #1567: the previous version drove ``solve_hjb_system`` through the hand-rolled
+        ``MockMFGProblem`` and wrapped it in ``try/except -> pytest.skip``. The mock lacks the
+        attributes a full solve needs (``T``, ``dimension``, ...), so the call always raised and
+        the skip swallowed it -- the integration-tier solve-shape contract was never verified.
+        Rebuilt on a real ``MFGProblem`` (the mock is kept for the unit-surface tests in this
+        file that only exercise neighborhoods / Taylor stencils). No ``try/except -> skip``: a
+        solver raise is a real failure now."""
+        n = 21
+        domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        components = MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: np.asarray(x) * 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        )
+        problem = MFGProblem(geometry=domain, T=1.0, Nt=5, sigma=0.3, components=components)
+        collocation_points = np.linspace(0.0, 1.0, n).reshape(-1, 1)
+        solver = GFDMHJBSolver(problem, collocation_points, delta=0.3, monotonicity_scheme="none")
+
+        Nt, Nx = problem.Nt, n
+        M_density = np.ones((Nt, Nx)) * 0.1
+        U_final = np.zeros(Nx)
+        U_prev = np.zeros((Nt, Nx))
+
+        # Solve (may not converge perfectly, but must return the correct shape).
+        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
+        assert U_solution.shape == (Nt, Nx)
 
     def test_weight_functions(self):
         """Test different weight functions for GFDM weighting (integration test)."""

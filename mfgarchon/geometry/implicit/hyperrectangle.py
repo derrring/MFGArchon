@@ -203,12 +203,21 @@ class Hyperrectangle(ImplicitDomain):
 
     def signed_distance(self, x: NDArray[np.float64]) -> float | NDArray[np.float64]:
         """
-        Compute exact signed distance to hyperrectangle.
+        Compute the signed distance to the hyperrectangle.
 
         For a point x and hyperrectangle [a, b]:
             φ(x) = max(max(a - x), max(x - b))
 
-        This gives exact Euclidean distance to the boundary.
+        Exact Euclidean distance in the interior and on the boundary. In the
+        exterior it is the per-axis (Chebyshev) form, a strict lower bound off the
+        face normals: at (2, 2) for the unit box it returns 1.0 where the true
+        distance is √2 (probed; likewise 3.0 vs 3.606 at (3, 4)). Directly off a
+        face it is exact -- (2, 0.5) gives 1.0, which is correct.
+
+        Sign and the zero level set are exact everywhere, so level-set geometry,
+        inside/outside tests and boundary detection are unaffected; only the
+        exterior *magnitude* is approximate. Where an exact exterior distance is
+        needed, use ``np.linalg.norm(x - project_to_boundary(x))``.
 
         Args:
             x: Point(s) - shape (d,) or (N, d)

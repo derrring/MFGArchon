@@ -47,8 +47,8 @@ import numpy as np
 
 # Multi-dimensional infrastructure
 from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils import SparseMatrixBuilder, SparseSolver
-from mfgarchon.visualization import MultiDimVisualizer
 
 
 def create_portfolio_problem():
@@ -73,6 +73,7 @@ def create_portfolio_problem():
     grid = TensorProductGrid(
         bounds=[(W_min, W_max), (alpha_min, alpha_max)],
         Nx_points=[NW, Nalpha],
+        boundary_conditions=no_flux_bc(dimension=2),
     )
 
     # Financial parameters
@@ -280,92 +281,109 @@ def solve_portfolio_mfg_simple(problem):
 def visualize_results(solution, problem, output_dir="portfolio_optimization_2d"):
     """
     Create comprehensive visualizations of portfolio optimization solution.
+
+    Solution-field plotting is done with matplotlib directly: the
+    ``mfgarchon.visualization`` module provides convergence/diagnostics
+    plotting and rendering-free data extraction, and points to
+    matplotlib/plotly/pyvista for solution-field figures.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
     u = solution["u"]
     m = solution["m"]
     grid = solution["grid"]
+
+    # Physical coordinates (indexing="ij": W varies along axis 0, alpha along axis 1)
+    W, Alpha = grid.meshgrid(indexing="ij")
 
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
     print(f"\nCreating visualizations in {output_dir}/...")
 
-    # Create visualizer
-    viz = MultiDimVisualizer(grid, backend="plotly", colorscale="RdYlGn")
-
     # 1. Value function surface (optimal value-to-go)
     print("  - Value function surface...")
-    fig_u = viz.surface_plot(
-        u[-1, :, :],
-        title="Portfolio Value Function u(W,alpha)",
-        xlabel="Wealth W",
-        ylabel="Stock Allocation alpha",
-        zlabel="Value-to-go",
-    )
-    viz.save(fig_u, output_path / "value_function.html")
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot_surface(W, Alpha, u[-1, :, :], cmap="RdYlGn")
+    ax.set_title("Portfolio Value Function u(W,alpha)")
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Stock Allocation alpha")
+    ax.set_zlabel("Value-to-go")
+    fig.savefig(output_path / "value_function.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 2. Initial investor distribution
+    # 2. Initial investor distribution (heatmap)
     print("  - Initial distribution heatmap...")
-    fig_m0 = viz.heatmap(
-        m[0, :, :],
-        title="Initial Investor Distribution m_0(W,alpha)",
-        xlabel="Wealth W",
-        ylabel="Stock Allocation alpha",
-    )
-    viz.save(fig_m0, output_path / "distribution_initial.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(W, Alpha, m[0, :, :], cmap="RdYlGn", shading="gouraud")
+    ax.set_title("Initial Investor Distribution m_0(W,alpha)")
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Stock Allocation alpha")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "distribution_initial.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    # 3. Final investor distribution
+    # 3. Final investor distribution (heatmap)
     print("  - Final distribution heatmap...")
-    fig_mT = viz.heatmap(
-        m[-1, :, :],
-        title="Final Investor Distribution m(T,W,alpha)",
-        xlabel="Wealth W",
-        ylabel="Stock Allocation alpha",
-    )
-    viz.save(fig_mT, output_path / "distribution_final.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(W, Alpha, m[-1, :, :], cmap="RdYlGn", shading="gouraud")
+    ax.set_title("Final Investor Distribution m(T,W,alpha)")
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Stock Allocation alpha")
+    fig.colorbar(pcm, ax=ax)
+    fig.savefig(output_path / "distribution_final.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # 4. Value function contours (indifference curves)
     print("  - Value function contours...")
-    fig_contour = viz.contour_plot(
-        u[-1, :, :],
-        title="Portfolio Indifference Curves",
-        xlabel="Wealth W",
-        ylabel="Stock Allocation alpha",
-        levels=25,
-    )
-    viz.save(fig_contour, output_path / "indifference_curves.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    cs = ax.contour(W, Alpha, u[-1, :, :], levels=25, cmap="RdYlGn")
+    ax.clabel(cs, inline=True, fontsize=7)
+    ax.set_title("Portfolio Indifference Curves")
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Stock Allocation alpha")
+    fig.savefig(output_path / "indifference_curves.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # 5. Wealth slice (alpha = 0.6, typical diversified portfolio)
     print("  - Wealth slice plot...")
     alpha_idx = int(0.6 * grid.num_points[1])  # 60% stocks
-    fig_slice = viz.slice_plot(
-        u[-1, :, :],
-        slice_dim=1,
-        slice_index=alpha_idx,
-        title="Value Function at alpha=0.6 (Diversified Portfolio)",
-    )
-    viz.save(fig_slice, output_path / "value_wealth_slice.html")
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(W[:, alpha_idx], u[-1, :, alpha_idx])
+    ax.set_title("Value Function at alpha=0.6 (Diversified Portfolio)")
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Value-to-go")
+    ax.grid(True)
+    fig.savefig(output_path / "value_wealth_slice.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # 6. Time evolution animation
     print("  - Time evolution animation...")
-    fig_anim = viz.animation(
-        m,
-        title="Investor Distribution Evolution m(t,W,alpha)",
-        xlabel="Wealth W",
-        ylabel="Stock Allocation alpha",
-        zlabel="Density",
-        fps=5,
-    )
-    viz.save(fig_anim, output_path / "distribution_evolution.html")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    pcm = ax.pcolormesh(W, Alpha, m[0, :, :], cmap="RdYlGn", shading="gouraud", vmin=0.0, vmax=float(m.max()))
+    fig.colorbar(pcm, ax=ax)
+    ax.set_xlabel("Wealth W")
+    ax.set_ylabel("Stock Allocation alpha")
+
+    def _update(frame):
+        pcm.set_array(m[frame, :, :].ravel())
+        ax.set_title(f"Investor Distribution Evolution m(t,W,alpha) - step {frame}")
+        return (pcm,)
+
+    anim = FuncAnimation(fig, _update, frames=m.shape[0], blit=False)
+    anim.save(output_path / "distribution_evolution.gif", writer=PillowWriter(fps=5))
+    plt.close(fig)
 
     print(f"\nVisualizations saved to {output_dir}/")
     print("\nGenerated files:")
-    print("  - value_function.html: 3D surface of optimal value-to-go")
-    print("  - distribution_initial.html: Initial investor distribution")
-    print("  - distribution_final.html: Final investor distribution")
-    print("  - indifference_curves.html: Portfolio indifference curves")
-    print("  - value_wealth_slice.html: Value function for diversified portfolio")
-    print("  - distribution_evolution.html: Interactive time animation")
+    print("  - value_function.png: 3D surface of optimal value-to-go")
+    print("  - distribution_initial.png: Initial investor distribution")
+    print("  - distribution_final.png: Final investor distribution")
+    print("  - indifference_curves.png: Portfolio indifference curves")
+    print("  - value_wealth_slice.png: Value function for diversified portfolio")
+    print("  - distribution_evolution.gif: Time animation of density")
 
 
 def main():

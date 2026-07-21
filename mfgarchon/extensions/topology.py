@@ -19,6 +19,7 @@ Key differences from continuous MFG:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -57,8 +58,9 @@ class NetworkHamiltonian(HamiltonianBase):
         Custom dH/dm.
     node_potential_func : callable or None
         V(node, t) -> float.
-    congestion_func : callable or None
-        f(node, m, t) -> float.
+    node_interaction_func : callable or None
+        f(node, m, t) -> float. Read on the FULL density, matching the live
+        ``NetworkMFGProblem.density_coupling`` (Issue #1470 reconciliation).
     """
 
     def __init__(
@@ -67,16 +69,21 @@ class NetworkHamiltonian(HamiltonianBase):
         hamiltonian_func=None,
         hamiltonian_dm_func=None,
         node_potential_func=None,
-        congestion_func=None,
+        node_interaction_func=None,
         sense=OptimizationSense.MINIMIZE,
         population_index: int = 0,
     ):
         super().__init__(sense=sense, population_index=population_index)
+        # Issue #1474/#1476: the finite-state MFG supports BOTH senses through a single orientation sign
+        # `sense_sign` (+1 MINIMIZE / -1 MAXIMIZE). Cost-to-go (MINIMIZE) sends agents DOWNHILL toward
+        # lower value; reward-to-go (MAXIMIZE) sends them UPHILL toward higher value. Every sense-
+        # dependent piece — control cost, optimal_control, dp, and the base-solver integration sign — is
+        # `s * (MINIMIZE form)`, so `sense_sign` is the single source of the mirror. See `sense_sign`.
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func
         self._node_potential = node_potential_func
-        self._congestion = congestion_func
+        self._node_interaction = node_interaction_func
         self._num_nodes: int | None = None
 
     @property
@@ -84,6 +91,16 @@ class NetworkHamiltonian(HamiltonianBase):
         if self._num_nodes is None:
             self._num_nodes = self.network_data.num_nodes
         return self._num_nodes
+
+    @property
+    def sense_sign(self) -> float:
+        """Orientation sign of the finite-state control (Issue #1476): ``+1`` for MINIMIZE (cost-to-go,
+        agents move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL
+        toward higher value). Every sense-dependent piece — the control cost in ``_default_hamiltonian``,
+        ``optimal_control``, ``dp``, and the HJB integration sign in ``hjb_network`` — is ``s * (MINIMIZE
+        form)``, so this one property is the single source of the MINIMIZE<->MAXIMIZE mirror.
+        """
+        return 1.0 if self.sense == OptimizationSense.MINIMIZE else -1.0
 
     def _extract_own_density(self, m: np.ndarray) -> np.ndarray:
         """Extract this population's density from stacked m_all.
@@ -122,69 +139,138 @@ class NetworkHamiltonian(HamiltonianBase):
         Custom hamiltonian_func receives full m_all for cross-coupling.
         """
         neighbors = self.network_data.get_neighbors(node)
+        # Finite-state MFG control cost (Issue #1474/#1476): one-sided / piecewise-quadratic — the value
+        # of the constrained optimum over rates alpha >= 0 (a valid CTMC generator). Only the ACTIVE side
+        # contributes, oriented by sense_sign s: MINIMIZE (s=+1) counts downhill edges u_i>u_j giving
+        # 0.5*sum w*max(u_i-u_j,0)^2; MAXIMIZE (s=-1) counts uphill edges u_j>u_i giving
+        # 0.5*sum w*max(u_j-u_i,0)^2. Consistent with optimal_control (both use max(s*(u_i-u_j),0)).
+        s = self.sense_sign
         control_cost = 0.0
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p[neighbor] - p[node]
-            control_cost += 0.5 * w * dp**2
+            du = s * (p[node] - p[neighbor])  # oriented: u_i - u_j (MIN) / u_j - u_i (MAX)
+            control_cost += 0.5 * w * max(du, 0.0) ** 2
 
-        V = float(self._node_potential(node, t)) if self._node_potential else 0.0
-        # Extract own population density for congestion (avoids silent wrong result
-        # when m is stacked K*N from multi-population)
-        m_own = self._extract_own_density(m)
-        f_m = float(self._congestion(node, m_own, t)) if self._congestion else 0.0
-        return control_cost + V + f_m
+        # Issue #1470: the p-independent source (V + coupling) is single-sourced in `source_term` and
+        # consumed both here (control + source) and by the HJB solver's control isolation.
+        return control_cost + self.source_term(node, m, t)
+
+    def source_term(self, x, m, t=0.0):
+        """The p-independent source ``V(node) + f(node, m)`` — the RHS in ``-u_t + H_control = source``.
+
+        Single source consumed by ``_default_hamiltonian`` (as ``control + source``) AND by
+        ``hjb_network._source_terms`` (Issue #1470): computing it once here removes the multi-population
+        fork where the HJB used to re-derive ``V + density_coupling`` on the raw stacked ``m`` while the
+        Hamiltonian used ``_extract_own_density`` — so ``h_control = h_total - source`` now isolates the
+        control exactly. Coupling ``f(node, m, t)`` reads ``node_interaction_func`` on the FULL density
+        (cross-coupling), else defaults to quadratic node congestion ``0.5 * m_own[node]^2``.
+        ``_extract_own_density`` is the identity for single-population ``m`` (byte-identical) and slices
+        the own population for stacked ``K*N`` ``m``.
+        """
+        return self.node_potential_value(x, t) + self.coupling_value(x, m, t)
+
+    def node_potential_value(self, x, t=0.0):
+        """Node potential ``V(node, t)`` — the single source for ``NetworkMFGProblem.node_potential``
+        (Issue #1470 Strand A). ``0.0`` when no ``node_potential_func`` is set.
+        """
+        node = int(np.asarray(x).flat[0])
+        return float(self._node_potential(node, t)) if self._node_potential else 0.0
+
+    def coupling_value(self, x, m, t=0.0):
+        """Density coupling ``f(node, m, t)`` — the single source for
+        ``NetworkMFGProblem.density_coupling`` (Issue #1470 Strand A). Reads ``node_interaction_func``
+        on the FULL density (cross-coupling), else the default quadratic node congestion
+        ``0.5 * m_own[node]^2`` on the OWN-population slice. ``_extract_own_density`` is the identity for
+        single-population ``m`` (byte-identical to the legacy raw ``m[node]``) and slices the own
+        population for stacked ``K*N`` ``m``.
+        """
+        node = int(np.asarray(x).flat[0])
+        if self._node_interaction is not None:
+            return float(self._node_interaction(node, m, t))
+        return 0.5 * float(self._extract_own_density(m)[node]) ** 2
 
     def optimal_control(self, x, m, p, t=0.0):
-        """Optimal transition rates from node x.
+        """Optimal transition rates from node x (Issue #1474/#1476).
 
-        For quadratic H: alpha_{ij} = w_ij * (p_j - p_i)_+ (upwind).
-        Transition rates are non-negative by construction, ensuring
-        the generator Q preserves positivity of m.
-        Returns array of rates to neighbors (zero for non-neighbors).
+        Finite-state MFG: ``alpha*_ij = w_ij * max(s*(u_i - u_j), 0)`` with orientation ``s = sense_sign``
+        — the argmax of the one-sided control Hamiltonian. MINIMIZE (s=+1) sends agents DOWNHILL toward
+        lower cost-to-go (``max(u_i - u_j, 0)``); MAXIMIZE (s=-1) sends them UPHILL toward higher
+        reward-to-go (``max(u_j - u_i, 0)``). Rates are non-negative by construction (a valid
+        conservative CTMC generator). Returns an array of rates to neighbors (zero for non-neighbors).
         """
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
+        s = self.sense_sign
         alpha = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p_arr[neighbor] - p_arr[node]
-            # Issue #914: upwind truncation ensures alpha >= 0
-            alpha[neighbor] = w * max(dp, 0.0)
+            du = s * (p_arr[node] - p_arr[neighbor])  # downhill (MIN) / uphill (MAX)
+            alpha[neighbor] = w * max(du, 0.0)
         return alpha
 
     def dp(self, x, m, p, t=0.0):
-        """dH/dp at node x. For quadratic: sum_j w_ij * (p_j - p_i) per component."""
+        """dH/dp at node x (Issue #1474/#1476). Gradient of the one-sided control Hamiltonian
+        ``0.5 sum_j w_ij max(s*(u_i-u_j),0)^2`` with ``s = sense_sign``: differentiating gives
+        ``dH/du_i = +s*sum_j alpha*_ij`` and ``dH/du_j = -s*alpha*_ij`` where
+        ``alpha*_ij = w_ij max(s*(u_i-u_j),0) >= 0``. So both the rate orientation and the gradient sign
+        flip with the sense (MINIMIZE s=+1 downhill; MAXIMIZE s=-1 uphill), and ``dp`` equals the
+        generator action ``-Q^{alpha*} u``."""
         node = int(np.asarray(x).flat[0])
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
+        s = self.sense_sign
         grad = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
-            dp = p_arr[neighbor] - p_arr[node]
-            grad[neighbor] += w * dp
-            grad[node] -= w * dp
+            a = w * max(s * (p_arr[node] - p_arr[neighbor]), 0.0)  # alpha*_{i,neighbor} (oriented) >= 0
+            grad[neighbor] -= s * a
+            grad[node] += s * a
         return grad
 
     def dm(self, x, m, p, t=0.0):
-        """dH/dm at node x."""
+        """dH/dm at node x. Issue #1470 Strand A: the default node congestion has the EXACT analytic
+        derivative ``d/dm (0.5 * m_own[node]^2) = m_own[node]`` (own-population slice, matching
+        ``coupling_value``); a custom ``node_interaction_func`` has no analytic form here, so uses a
+        node-wise central finite difference of the coupling. This is the single source for
+        ``NetworkMFGProblem.hamiltonian_dm``.
+        """
+        node = int(np.asarray(x).flat[0])
         if self._hamiltonian_dm_func is not None:
-            node = int(np.asarray(x).flat[0])
             neighbors = self.network_data.get_neighbors(node)
             return float(self._hamiltonian_dm_func(node, neighbors, np.atleast_1d(m), np.atleast_1d(p), t))
-        return self._finite_diff_dm(x, m, p, t)
+        if self._node_interaction is None:
+            return float(self._extract_own_density(np.atleast_1d(m))[node])
+        # Custom node_interaction_func: central finite difference of the coupling in the OWN node
+        # component of the full density. The base HamiltonianBase._finite_diff_dm collapses m to a
+        # scalar (np.mean), which breaks node-indexed interaction funcs (m[node] on a length-1 array
+        # -> IndexError) — #1537 review. Difference coupling_value on the full vector instead.
+        m_arr = np.atleast_1d(np.asarray(m, dtype=float))
+        eps = 1e-7
+        m_plus = m_arr.copy()
+        m_minus = m_arr.copy()
+        m_plus[node] += eps
+        m_minus[node] -= eps
+        return (self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
 
 
 @dataclass
-class NetworkMFGComponents:
+class NetworkMFGComponents(MFGComponents):
     """
     Components for defining MFG problems on networks.
 
     This extends the continuous MFGComponents to handle discrete network structures,
     including support for Lagrangian formulations and trajectory measures.
+
+    Default model
+    -------------
+    When ``hamiltonian_func`` / ``node_interaction_func`` are omitted, the network Hamiltonian defaults
+    to the finite-state quadratic-congestion form
+    ``H = 0.5*sum_j w_ij*max(u_i - u_j, 0)^2 + V(node) + 0.5*m[node]^2`` (control cost + node potential +
+    quadratic node congestion). A ``None`` field means "use this default", **not** "omit the term".
+    Provide the callables to override (see ``NetworkHamiltonian``).
     """
 
     # Network-specific Hamiltonian (depends on node states and edge flows)
@@ -208,13 +294,9 @@ class NetworkMFGComponents:
     initial_node_density_func: Callable | None = None  # m_0(node)
     terminal_node_value_func: Callable | None = None  # u_T(node)
 
-    # Network boundary conditions
-    boundary_nodes: list[int] | None = None  # Nodes with boundary conditions
-    boundary_values_func: Callable | None = None  # Boundary values
-
-    # Flow dynamics parameters
-    diffusion_coefficient: float = 1.0  # Diffusion strength
-    drift_coefficient: float = 1.0  # Drift/advection strength
+    # Node boundary conditions are owned by the graph geometry (GraphGeometry), not components
+    # (Issue #1471) — construct e.g. GridNetwork(..., boundary_conditions=GraphBCConfig(...)). The
+    # former `boundary_nodes` / `boundary_values_func` fields bypassed the #1456 BC single source.
 
     # Network-specific coupling
     node_interaction_func: Callable | None = None  # Local node interactions
@@ -222,6 +304,17 @@ class NetworkMFGComponents:
 
     # Problem parameters
     problem_params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Issue #1470 (Problem/Components unification, Layer Ψ): NetworkMFGComponents IS-A
+        # MFGComponents so ``isinstance`` holds and the #1456 BC-capability gate stops silently
+        # no-op'ing on network problems. But it specifies the MFG with the network-native fields
+        # (hamiltonian_func, node_interaction_func, boundary_nodes, ...), not the continuum ones,
+        # so the parent __post_init__ — which requires a class-based Hamiltonian / m_initial /
+        # u_terminal at construction — does not apply. The network Hamiltonian needs graph
+        # structure and is bound by NetworkMFGProblem, not the components. The init=False
+        # ``_hamiltonian_class`` / ``_lagrangian_class`` fields default to None regardless.
+        pass
 
 
 class NetworkMFGProblem(MFGProblem):
@@ -250,22 +343,46 @@ class NetworkMFGProblem(MFGProblem):
 
     def __init__(
         self,
-        network_geometry: BaseNetworkGeometry,
+        geometry: BaseNetworkGeometry | None = None,
         T: float = 1.0,
         Nt: int = 100,
         components: NetworkMFGComponents | None = None,
         problem_name: str = "NetworkMFG",
+        *,
+        network_geometry: BaseNetworkGeometry | None = None,
+        sense: OptimizationSense = OptimizationSense.MINIMIZE,
     ):
         """
         Initialize network MFG problem.
 
         Args:
-            network_geometry: Network structure and geometry
+            geometry: Graph geometry (network structure). Named ``geometry`` to align with
+                ``MFGProblem`` — geometry is the axis of variation (Issue #1472).
             T: Terminal time
             Nt: Number of time steps
             components: Network MFG components (optional)
             problem_name: Problem identifier
+            network_geometry: Deprecated alias for ``geometry`` (Issue #1472); redirects identically.
         """
+        # Issue #1472: the canonical constructor param is `geometry` (aligned with MFGProblem, toward
+        # the Problem/Components unification). `network_geometry=` is a deprecated alias that redirects
+        # identically (equivalence-tested); it will be removed after the deprecation window.
+        if network_geometry is not None:
+            if geometry is not None:
+                raise ValueError(
+                    "Pass the graph geometry via geometry=; network_geometry= is a deprecated alias — do not pass both."
+                )
+            warnings.warn(
+                "NetworkMFGProblem(network_geometry=...) is deprecated (Issue #1472); use geometry=. "
+                "The alias redirects identically and is removed after the deprecation window.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            geometry = network_geometry
+        if geometry is None:
+            raise ValueError("NetworkMFGProblem requires a graph geometry (pass geometry=...).")
+        network_geometry = geometry  # local name; the remainder of __init__ uses network_geometry
+
         # Network properties - set first before calling super()
         self.network_geometry = network_geometry
         self.network_data = network_geometry.network_data
@@ -279,7 +396,8 @@ class NetworkMFGProblem(MFGProblem):
             hamiltonian_func=net_components.hamiltonian_func,
             hamiltonian_dm_func=net_components.hamiltonian_dm_func,
             node_potential_func=net_components.node_potential_func,
-            congestion_func=net_components.congestion_func,
+            node_interaction_func=net_components.node_interaction_func,
+            sense=sense,  # Issue #1476: MINIMIZE (cost-to-go) or MAXIMIZE (reward-to-go)
         )
         parent_components = MFGComponents(
             hamiltonian=network_hamiltonian,
@@ -295,7 +413,26 @@ class NetworkMFGProblem(MFGProblem):
             components=parent_components,
         )
 
-        self.components = components or NetworkMFGComponents()  # type: ignore[assignment]
+        # Issue #1474: store the SAME NetworkMFGComponents instance the NetworkHamiltonian was built
+        # from, and wire the object as the single-source Hamiltonian (`hamiltonian_class`). Previously
+        # `self.components` was overwritten with a fresh instance, orphaning the object
+        # (`hamiltonian_class == None`), so FP / policy iteration fell to divergent legacy paths while
+        # RK45 used the method — the three solved different HJBs. Now all read one Hamiltonian.
+        self.components = net_components  # type: ignore[assignment]
+        self.components.hamiltonian = network_hamiltonian
+        self.components._hamiltonian_class = network_hamiltonian
+
+        # Issue #1471: node boundary conditions are owned by the graph geometry (GraphGeometry),
+        # not by components. Resolve the geometry's GraphBCConfig once into the single-source
+        # GraphApplicator (the single applier — the pin logic is not re-forked here). Explicit-init
+        # None when the geometry carries no node-BC.
+        self._node_applicator = None
+        node_bc = network_geometry.get_boundary_conditions()
+        if node_bc is not None:
+            from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
+
+            self._node_applicator = GraphApplicator.from_config(node_bc, num_nodes=network_geometry.num_spatial_points)
+
         self.problem_name = problem_name
 
         # Phase 3.1 integration: geometry is already set by parent
@@ -334,57 +471,23 @@ class NetworkMFGProblem(MFGProblem):
     # Network-specific MFG components
 
     def hamiltonian(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
+        """Network Hamiltonian at a node — delegates to the single-source ``NetworkHamiltonian``.
+
+        Issue #1472: the value is computed by the wired ``hamiltonian_class`` — the SAME object the FP
+        and policy-iteration solvers use (via ``optimal_control``) — so the RK45 base solver reads the
+        identical Hamiltonian rather than a second hand-synced copy. This removes the former
+        ``_default_network_hamiltonian`` duplicate, which had to be kept in lockstep with the object by
+        hand (the #1474/N15 divergence risk). ``neighbors`` is accepted for signature compatibility;
+        the object recomputes the neighborhood from ``network_data``. Byte-identical (pinned by
+        ``test_network_hamiltonian_method_equals_object``).
         """
-        Network Hamiltonian function.
-
-        Args:
-            node: Current node index
-            neighbors: List of neighboring nodes
-            m: Density vector at all nodes
-            p: Co-state vector at all nodes
-            t: Current time
-
-        Returns:
-            Hamiltonian value at the node
-        """
-        if self.components.hamiltonian_func is not None:
-            return self.components.hamiltonian_func(node, neighbors, m, p, t)
-
-        # Default quadratic Hamiltonian with network structure
-        return self._default_network_hamiltonian(node, neighbors, m, p, t)
-
-    def _default_network_hamiltonian(
-        self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float
-    ) -> float:
-        """Default network Hamiltonian implementation."""
-        # Quadratic control cost + potential + density coupling
-        control_cost = 0.0
-
-        # Sum over possible moves to neighbors
-        for neighbor in neighbors:
-            if self.network_data is None:
-                edge_weight = 1.0  # Default weight
-            else:
-                edge_weight = self.network_data.get_edge_weight(node, neighbor)
-            # Control cost for moving to neighbor
-            dp = p[neighbor] - p[node]  # Discrete gradient
-            control_cost += 0.5 * edge_weight * dp**2
-
-        # Node potential
-        potential = self.node_potential(node, t)
-
-        # Density coupling (congestion effects)
-        coupling = self.density_coupling(node, m, t)
-
-        return control_cost + potential + coupling
+        return float(self.hamiltonian_class(node, m, p, t))
 
     def hamiltonian_dm(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
-        """Derivative of Hamiltonian with respect to density."""
-        if self.components.hamiltonian_dm_func is not None:
-            return self.components.hamiltonian_dm_func(node, neighbors, m, p, t)
-
-        # Default: derivative of density coupling term
-        return self._default_density_coupling_derivative(node, m, t)
+        """Derivative of the Hamiltonian w.r.t. density dH/dm. Issue #1470 Strand A: delegates to the
+        wired single-source Hamiltonian object's ``dm`` (which owns the custom ``hamiltonian_dm_func``,
+        the analytic default-congestion derivative, and the finite-difference fallback)."""
+        return float(self.hamiltonian_class.dm(node, m, p, t))
 
     # Lagrangian formulation methods (based on ArXiv 2207.10908v3)
 
@@ -414,113 +517,17 @@ class NetworkMFGProblem(MFGProblem):
 
         return float(kinetic_energy + potential + interaction)
 
-    def trajectory_cost(
-        self,
-        trajectory: list[int],
-        velocities: np.ndarray,
-        m_evolution: np.ndarray,
-        times: np.ndarray,
-    ) -> float:
-        """
-        Compute cost along a network trajectory.
-
-        Args:
-            trajectory: Sequence of nodes visited
-            velocities: Velocity at each time step
-            m_evolution: Density evolution over time
-            times: Time points
-
-        Returns:
-            Total trajectory cost
-        """
-        if self.components.trajectory_cost_func is not None:  # type: ignore[attr-defined]
-            return self.components.trajectory_cost_func(trajectory, velocities, m_evolution, times)  # type: ignore[attr-defined]
-
-        # Default: integrate Lagrangian along trajectory
-        total_cost = 0.0
-        dt = times[1] - times[0] if len(times) > 1 else 1.0
-
-        for i, (node, t) in enumerate(zip(trajectory, times, strict=False)):
-            if i < len(velocities):
-                velocity = velocities[i] if velocities.ndim > 1 else np.array([velocities[i]])
-                m_current = m_evolution[i] if m_evolution.ndim > 1 else m_evolution
-                lagrangian_value = self.lagrangian(node, velocity, m_current, t)
-                total_cost += lagrangian_value * dt
-
-        return total_cost
-
-    def compute_relaxed_equilibrium(self, trajectory_measures: list[Callable]):
-        """
-        Compute relaxed equilibrium as probability measures on trajectories.
-
-        Based on the relaxed equilibria concept from ArXiv 2207.10908v3.
-
-        Args:
-            trajectory_measures: List of probability measures on trajectory space
-
-        Returns:
-            NetworkSolveResult with U (value function) and M (density)
-
-        Note:
-            Backward compatible: Supports tuple unpacking via `u, m = result`
-        """
-        # This is a placeholder for advanced trajectory measure computation
-        # Full implementation would require sophisticated measure theory
-
-        u = np.zeros((self.Nt + 1, self.num_nodes))
-        m = np.zeros((self.Nt + 1, self.num_nodes))
-
-        # Initialize with uniform distribution
-        m[0, :] = 1.0 / self.num_nodes
-
-        # Simple trajectory-based computation (to be enhanced)
-        for t_idx in range(self.Nt):
-            # Update based on trajectory measures
-            for node in range(self.num_nodes):
-                # Aggregate trajectory contributions
-                total_measure = 0.0
-                for measure in trajectory_measures:
-                    total_measure += measure(node, t_idx)
-                m[t_idx + 1, node] = total_measure
-
-        # Normalize density
-        for t_idx in range(self.Nt + 1):
-            total = np.sum(m[t_idx, :])
-            if total > 1e-12:
-                m[t_idx, :] /= total
-
-        from mfgarchon.types.solver_types import NetworkSolveResult
-
-        return NetworkSolveResult(U=u, M=m)
-
     def node_potential(self, node: int, t: float) -> float:
-        """Potential function at network nodes."""
-        if self.components.node_potential_func is not None:  # type: ignore[attr-defined]
-            return self.components.node_potential_func(node, t)  # type: ignore[attr-defined]
-        return 0.0
+        """Potential function V(node, t) at network nodes. Issue #1470 Strand A: delegates to the wired
+        single-source Hamiltonian object so every consumer reads ONE computation."""
+        return float(self.hamiltonian_class.node_potential_value(node, t))
 
     def density_coupling(self, node: int, m: np.ndarray, t: float) -> float:
-        """Density coupling/interaction at nodes."""
-        if self.components.node_interaction_func is not None:  # type: ignore[attr-defined]
-            return self.components.node_interaction_func(node, m, t)  # type: ignore[attr-defined]
-
-        # Default: quadratic congestion at nodes
-        return 0.5 * m[node] ** 2
-
-    def _default_density_coupling_derivative(self, node: int, m: np.ndarray, t: float) -> float:
-        """Derivative of default density coupling."""
-        return m[node]  # d/dm[i] (0.5 * m[i]^2) = m[i]
-
-    def edge_cost(self, node_from: int, node_to: int, t: float) -> float:
-        """Cost of moving along network edges."""
-        if self.components.edge_cost_func is not None:  # type: ignore[attr-defined]
-            return self.components.edge_cost_func(node_from, node_to, t)  # type: ignore[attr-defined]
-
-        # Default: unit cost weighted by edge weight
-        if self.network_data is None:
-            return 1.0  # Default weight
-        edge_weight = self.network_data.get_edge_weight(node_from, node_to)
-        return edge_weight
+        """Density coupling f(node, m, t) at nodes. Issue #1470 Strand A: delegates to the wired
+        single-source Hamiltonian object (``coupling_value``), so the default congestion uses the
+        own-population slice (``_extract_own_density``) — matching the Hamiltonian on stacked
+        multi-population m instead of re-deriving on the raw ``m[node]``."""
+        return float(self.hamiltonian_class.coupling_value(node, m, t))
 
     # Initial and terminal conditions
 
@@ -541,88 +548,24 @@ class NetworkMFGProblem(MFGProblem):
         # Default: zero terminal values
         return np.zeros(self.num_nodes)
 
-    # Network-specific operators
-
-    def compute_graph_gradient(self, u: np.ndarray) -> np.ndarray:
-        """
-        Compute discrete gradient on network.
-
-        For each node, computes differences to neighboring nodes.
-
-        Args:
-            u: Node values
-
-        Returns:
-            Gradient information (implementation dependent)
-        """
-        gradients = np.zeros((self.num_nodes, self.num_nodes))
-
-        for i in range(self.num_nodes):
-            if self.network_data is None:
-                neighbors = []  # No neighbors if no network data
-            else:
-                neighbors = self.network_data.get_neighbors(i)
-            for j in neighbors:
-                gradients[i, j] = u[j] - u[i]
-
-        return gradients
-
-    def compute_graph_divergence(self, flow: np.ndarray) -> np.ndarray:
-        """
-        Compute discrete divergence on network.
-
-        Args:
-            flow: Edge flow values
-
-        Returns:
-            Divergence at each node
-        """
-        # Simplified: divergence as sum of incoming/outgoing flows
-        divergence = np.zeros(self.num_nodes)
-
-        # This is a simplified implementation
-        # Full implementation would handle edge-based flows properly
-        for i in range(self.num_nodes):
-            if self.network_data is None:
-                neighbors = []  # No neighbors if no network data
-            else:
-                neighbors = self.network_data.get_neighbors(i)
-            div_i = 0.0
-            for j in neighbors:
-                # Flow from j to i minus flow from i to j
-                div_i += flow[j] - flow[i]  # Simplified
-            divergence[i] = div_i
-
-        return divergence
-
-    def apply_graph_laplacian(self, u: np.ndarray, coefficient: float = 1.0) -> np.ndarray:
-        """
-        Apply graph Laplacian operator to node values.
-
-        Args:
-            u: Node values
-            coefficient: Diffusion coefficient
-
-        Returns:
-            Laplacian applied to u
-        """
-        return np.asarray(coefficient * (self.laplacian_matrix @ u))
+    # Graph operators (gradient / divergence / Laplacian) are owned by the geometry
+    # (GraphGeometry, Issue #1472) — the graph structural data lives there, not on the problem. The
+    # problem previously reimplemented three of them (compute_graph_gradient / compute_graph_divergence
+    # / apply_graph_laplacian); they had zero callers and are removed to keep a single source.
 
     # Boundary conditions for networks
 
     def apply_boundary_conditions(self, u: np.ndarray, t: float) -> np.ndarray:
-        """Apply boundary conditions to network nodes."""
-        u_bc = u.copy()
+        """Apply the geometry-owned node boundary conditions to the value field (Issue #1471).
 
-        if self.components.boundary_nodes is not None:  # type: ignore[attr-defined]
-            for node in self.components.boundary_nodes:  # type: ignore[attr-defined]
-                if self.components.boundary_values_func is not None:  # type: ignore[attr-defined]
-                    u_bc[node] = self.components.boundary_values_func(node, t)  # type: ignore[attr-defined]
-                else:
-                    # Default: zero boundary values
-                    u_bc[node] = 0.0
-
-        return u_bc
+        Node-BC lives on the graph geometry and is resolved once into a single-source
+        ``GraphApplicator``; this delegates the value-field (HJB) DIRICHLET pin to it (which copies
+        the input, so ``u`` is not mutated). No-op when the geometry carries no node-BC. The previous
+        ``components.boundary_nodes`` channel (which bypassed the #1456 BC single source) is retired.
+        """
+        if self._node_applicator is None:
+            return u
+        return self._node_applicator.apply_hjb(u, t)
 
     # Legacy interface compatibility
 
@@ -634,25 +577,10 @@ class NetworkMFGProblem(MFGProblem):
         """Get terminal value function (legacy interface)."""
         return self.get_terminal_value()
 
-    @property
-    def Nx(self) -> int:
-        """Number of spatial points (nodes in network)."""
-        return self.num_nodes - 1
-
-    @property
-    def xmin(self) -> float:
-        """Minimum spatial coordinate (dummy for networks)."""
-        return 0.0
-
-    @property
-    def xmax(self) -> float:
-        """Maximum spatial coordinate (dummy for networks)."""
-        return float(self.num_nodes - 1)
-
-    @property
-    def Dx(self) -> float:
-        """Spatial step size (dummy for networks)."""
-        return 1.0
+    # The continuum spatial fields Nx / xmin / xmax / Dx are not defined here (Issue #1472). They are
+    # not part of the base MFGProblem interface and no network-path consumer reads them — the network
+    # solvers use num_nodes; graph geometry has no continuum coordinates. The former dummies (Nx =
+    # num_nodes - 1, xmin = 0, xmax = num_nodes - 1, Dx = 1) invited nonsense continuum code paths.
 
     # Network-specific properties
 
@@ -720,7 +648,7 @@ def create_grid_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,
@@ -745,7 +673,7 @@ def create_random_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,
@@ -770,7 +698,7 @@ def create_scale_free_mfg_problem(
     components = NetworkMFGComponents(**kwargs)
 
     return NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,

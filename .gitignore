@@ -146,6 +146,8 @@ dkms.conf
 #===============================================
 # Prerequisites
 *.d
+# changelog fragments dir (Issue #1521) — not a C .d file
+!changelog.d/
 
 # Compiled Object files
 *.slo

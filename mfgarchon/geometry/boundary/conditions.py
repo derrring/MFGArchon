@@ -968,9 +968,22 @@ def neumann_bc(
 
 def no_flux_bc(dimension: int | None = None, domain_bounds: np.ndarray | None = None) -> BoundaryConditions:
     """
-    Create no-flux boundary conditions (zero normal derivative).
+    Create no-flux boundary conditions.
 
-    Equivalent to Neumann BC with value=0. Common for Fokker-Planck equations.
+    The condition differs by equation, and both are what "no flux" should mean on that side:
+
+    - **FP side**: zero total flux, ``J.n = 0`` with ``J = v*m - D*grad(m)``. This is the
+      mass-conserving wall, and it is what the divergence-form discretisation enforces. With
+      drift at the boundary it implies ``D dm/dn = (v.n) m``, so the normal derivative of the
+      density is generally **not** zero.
+    - **HJB side**: zero normal derivative, ``du/dn = 0`` -- the adjoint of a reflecting wall.
+
+    Common for Fokker-Planck equations, where it is the correct choice for conserving mass.
+
+    .. note::
+       ``NoFluxCalculator`` is a deprecated alias for ``ZeroGradientCalculator`` (``du/dn = 0``)
+       and is **not** the flux condition described here; use ``ZeroFluxCalculator`` if selecting a
+       calculator directly.
 
     Args:
         dimension: Spatial dimension. If None, dimension will be inferred when

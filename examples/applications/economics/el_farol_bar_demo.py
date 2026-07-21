@@ -161,13 +161,11 @@ def create_el_farol_problem(
         initial_node_density_func=initial_density_func,
         node_potential_func=node_potential_func,
         node_interaction_func=node_interaction_func,
-        diffusion_coefficient=0.05,  # Small diffusion for discrete states
-        drift_coefficient=1.0,
     )
 
     # Create problem
     problem = NetworkMFGProblem(
-        network_geometry=network,
+        geometry=network,
         T=T,
         Nt=Nt,
         components=components,

@@ -28,6 +28,37 @@ from .protocol import GeometryType
 from .traits import BoundaryDef, ConnectivityType, StructureType
 
 
+def nearest_point_on_box_boundary(points: NDArray, min_coords: NDArray, max_coords: NDArray) -> NDArray:
+    """Nearest point on the boundary of an axis-aligned box ``[min_coords, max_coords]``.
+
+    Single source for the closest-boundary projection across the axis-aligned geometries. The base
+    ``Geometry`` default and ``TensorProductGrid`` previously carried two divergent, both-wrong
+    versions: one snapped a coordinate without clipping the others (returned points OFF the boundary
+    for exterior queries near a corner), the other snapped by the ORIGINAL point's unbounded-plane
+    distance (non-nearest, e.g. ``[1.2, 0.1] -> [1.0, 0.0]`` instead of ``[1.0, 0.1]``).
+
+    Correct for interior, exterior, and on-boundary points:
+      - exterior / on-boundary: clipping to the box lands ON the boundary and IS the nearest boundary
+        point (a point past a corner clips to the corner);
+      - strictly interior: snap the single coordinate nearest to its face.
+    """
+    pts = np.atleast_2d(np.asarray(points, dtype=float))
+    lo = np.asarray(min_coords, dtype=float)
+    hi = np.asarray(max_coords, dtype=float)
+    clipped = np.clip(pts, lo, hi)  # nearest point in the box; on the boundary iff pts was exterior
+    # Snap the coordinate nearest to its face. Exterior/on-boundary points already have a coordinate
+    # sitting exactly on a face after the clip (distance 0 == the argmin), so the snap writes back the
+    # same value there -- a no-op; only strictly-interior points are actually moved onto the boundary.
+    dist_lo = clipped - lo
+    dist_hi = hi - clipped
+    snap_dim = np.argmin(np.minimum(dist_lo, dist_hi), axis=1)
+    rows = np.arange(len(pts))
+    snap_to_hi = dist_hi[rows, snap_dim] < dist_lo[rows, snap_dim]
+    result = clipped.copy()
+    result[rows, snap_dim] = np.where(snap_to_hi, hi[snap_dim], lo[snap_dim])
+    return result
+
+
 class Geometry(ABC):
     """
     Unified abstract base class for all MFG geometries.
@@ -653,27 +684,10 @@ class Geometry(ABC):
             return points.copy()
 
         min_coords, max_coords = bounds_result
-        projected = points.copy()
-        n_points = len(points)
-        d = self.dimension
-
-        # Compute distances to all 2d boundaries (d min + d max) - shape: (n, 2d)
-        dist_to_min = np.abs(points - min_coords)  # shape: (n, d)
-        dist_to_max = np.abs(points - max_coords)  # shape: (n, d)
-        all_distances = np.hstack([dist_to_min, dist_to_max])  # shape: (n, 2d)
-
-        # Find nearest boundary for each point
-        nearest_idx = np.argmin(all_distances, axis=1)  # shape: (n,)
-
-        # Determine which dimension and which side (min or max)
-        is_min_boundary = nearest_idx < d
-        dim_idx = np.where(is_min_boundary, nearest_idx, nearest_idx - d)
-
-        # Apply projection: set the relevant coordinate to boundary value
-        row_indices = np.arange(n_points)
-        projected[row_indices, dim_idx] = np.where(is_min_boundary, min_coords[dim_idx], max_coords[dim_idx])
-
-        return projected
+        # Single source (Issue #1574): nearest point on the axis-aligned box boundary, correct for
+        # interior / exterior / on-boundary. The prior body snapped one coordinate without clipping
+        # the others, returning off-boundary points for exterior queries near a corner.
+        return nearest_point_on_box_boundary(points, min_coords, max_coords)
 
     def project_to_interior(
         self,
@@ -1769,6 +1783,21 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         >>> grid = maze.get_maze_array()  # Returns 2D grid array
     """
 
+    def __init__(self, boundary_conditions=None):
+        """Graph geometry owns the node boundary conditions (Issue #1471).
+
+        Node-BC lives at this abstraction so NetworkGeometry (grid/random/scale-free) and
+        MazeGeometry inherit it uniformly (graph is the highest abstraction over both). The carrier
+        is a ``GraphBCConfig`` (multi-region node/edge BC: DIRICHLET / ABSORBING / SOURCE / NEUMANN);
+        ``None`` means no explicit BC (the NEUMANN / zero-flux default), matching the prior behaviour.
+
+        Parameters
+        ----------
+        boundary_conditions : GraphBCConfig or None
+            Declarative node boundary conditions, or ``None``.
+        """
+        self._node_bc = boundary_conditions
+
     @property
     def dimension(self) -> int:
         """
@@ -2208,18 +2237,23 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         return (self.num_spatial_points,)
 
     def get_boundary_conditions(self):
-        """
-        Get boundary conditions for graph.
+        """Node boundary conditions owned by the graph geometry (Issue #1471).
 
-        Returns:
-            None - graphs don't have inherent spatial boundary conditions.
-
-        Notes:
-            For graphs, "boundary" typically refers to boundary nodes
-            (dead ends, exit nodes, or explicitly marked boundaries).
-            Specify via problem.boundary_conditions or node attributes.
+        Returns a ``GraphBCConfig`` (node/edge BC over node sets) or ``None``. This is the graph
+        analogue of the continuum ``BoundaryConditions`` on ``TensorProductGrid`` — the boundary
+        *locus* on a graph is a node set, not a wall segment, so the two BC representations are
+        genuinely different types (the accessor is polymorphic by geometry, consumed through the
+        geometry's applicator, not by type-assumption).
         """
-        return None
+        return getattr(self, "_node_bc", None)
+
+    def has_explicit_boundary_conditions(self) -> bool:
+        """True when an explicit node-BC config is set (Issue #1471); mirrors the continuum gate."""
+        return getattr(self, "_node_bc", None) is not None
+
+    def set_boundary_conditions(self, boundary_conditions) -> None:
+        """Set/replace the node-BC config at runtime (Issue #1471)."""
+        self._node_bc = boundary_conditions
 
     def get_collocation_points(self) -> NDArray:
         """

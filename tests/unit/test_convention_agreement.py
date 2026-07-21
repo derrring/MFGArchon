@@ -82,10 +82,52 @@ class TestSigmaToDiffusionAgreement:
 
     @pytest.mark.parametrize("sigma", SIGMAS)
     def test_backend_literal_equals_single_source(self, sigma):
-        """Several backends apply D via the literal ``0.5 * sigma**2`` rather than the converter
-        (numpy/jax/numba/torch). Pin that the literal is bit-equal to the single source so a
-        backend edit that drifts from sigma**2/2 fails here."""
+        """Pin that the converter's scalar branch IS the literal ``0.5 * sigma**2`` bit-for-bit,
+        i.e. code that legitimately inlines that literal (rather than importing the converter)
+        computes the identical IEEE value -- so an inline ``0.5*sigma**2`` is a faithful copy of
+        the single source, not a silent fork.
+
+        Scope (Issue #1569): this is an identity of the ``0.5*sigma**2`` expression, NOT a guard on
+        any backend kernel -- no numpy/jax/numba/torch code is imported or called here, so a backend
+        that drifted its own literal to ``0.5*sigma`` would NOT trip this. The numpy path's D
+        *application* is pinned behaviorally by ``test_diffusion_magnitude_gate.py``; the jax/numba/
+        torch D-application (optional, off-paper backends) has no convention pin yet."""
         assert 0.5 * sigma**2 == diffusion_from_volatility(sigma)
+
+    def test_hjb_scalar_and_diagonal_tensor_diffusion_agree(self):
+        """Issue #1506: the HJB-FDM scalar and tensor diffusion paths must apply the SAME power of
+        sigma. The tensor path passed raw sigma_diag (sigma) as axis_weights into a stencil that uses
+        them linearly (needs sigma^2), while the scalar path squares via diffusion_from_volatility ->
+        a per-axis volatility silently solved 0.5*sigma instead of 0.5*sigma^2. For an isotropic
+        diagonal tensor diag([sigma, sigma]) the two paths must now produce the same Hamiltonian."""
+        import numpy as np
+
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
+        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry.boundary import no_flux_bc
+
+        geom = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        comp = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+            ),
+        )
+        prob = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+        solver = HJBFDMSolver(prob)
+        xx, yy = np.meshgrid(np.linspace(0, 1, 11), np.linspace(0, 1, 11), indexing="ij")
+        u = (xx**2 + 0.5 * yy**2).ravel()  # nonzero, unequal second derivatives per axis
+        m = np.ones_like(u)
+        grads = solver._compute_gradients_nd(u)
+        sigma = 0.3
+        h_scalar = solver._evaluate_hamiltonian_vectorized(u, m, grads, sigma_at_n=sigma)
+        h_tensor = solver._evaluate_hamiltonian_vectorized(u, m, grads, Sigma_at_n=np.diag([sigma, sigma]))
+        np.testing.assert_allclose(h_tensor, h_scalar, rtol=0, atol=1e-13)  # was ~3.3x off (sigma vs sigma^2)
 
 
 class TestGeometryBoundsAccessor:

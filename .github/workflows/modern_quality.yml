@@ -39,47 +39,15 @@ on:
     types: [published]
 
 jobs:
-  modern-quality:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[dev]  # Standard dev dependencies
-
-    - name: MyPy type checking (Informational)
-      run: |
-        echo "🔍 Running MyPy type checking (informational for research codebase)..."
-        mypy mfgarchon --ignore-missing-imports --show-error-codes --pretty || true
-        echo ""
-        echo "📊 Type checking status:"
-        echo "  • Local development: 366 → 0 errors (100% achieved)"
-        echo "  • CI/CD environment: Different MyPy version/configuration"
-        echo "  • Production health: Zero breaking changes maintained"
-        echo "✅ Type checking complete (informational only)"
-
-  # === COMPREHENSIVE VALIDATION JOBS (Manual/Release only) ===
   memory-safety:
     runs-on: ubuntu-latest
-    needs: modern-quality
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
 
     steps:
     - uses: actions/checkout@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: 3.12
 
@@ -134,14 +102,13 @@ jobs:
 
   performance-regression:
     runs-on: ubuntu-latest
-    needs: modern-quality
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
 
     steps:
     - uses: actions/checkout@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: 3.12
 
@@ -188,68 +155,14 @@ jobs:
             print(f'✅ Performance within acceptable range: {execution_time:.2f}s')
         "
 
-  documentation-quality:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v6
-      with:
-        python-version: 3.12
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[docs]
-
-    - name: Check documentation completeness
-      run: |
-        echo "📚 Checking documentation completeness..."
-        python -c "
-        import ast
-        import os
-        from pathlib import Path
-
-        def check_docstrings(file_path):
-            with open(file_path, 'r') as f:
-                tree = ast.parse(f.read())
-
-            missing = []
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    if not node.name.startswith('_'):  # Public only
-                        if not ast.get_docstring(node):
-                            missing.append(f'{file_path}:{node.lineno}:{node.name}')
-            return missing
-
-        all_missing = []
-        for py_file in Path('mfgarchon').rglob('*.py'):
-            if '__pycache__' not in str(py_file):
-                missing = check_docstrings(py_file)
-                all_missing.extend(missing)
-
-        if all_missing:
-            print('⚠️  Missing docstrings (allowed during transition):')
-            for missing in all_missing[:10]:  # Show first 10
-                print(f'   {missing}')
-            if len(all_missing) > 10:
-                print(f'   ... and {len(all_missing) - 10} more')
-        else:
-            print('✅ All public functions and classes have docstrings')
-        "
-
   benchmark-performance:
     runs-on: ubuntu-latest
-    needs: modern-quality
 
     steps:
     - uses: actions/checkout@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: 3.12
 

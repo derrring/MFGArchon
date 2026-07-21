@@ -9,10 +9,64 @@ if TYPE_CHECKING:
 
     import numpy as np
 
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
 else:
     pass
+
+
+def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> None:
+    """Fail loud if ``problem`` carries a dynamic BC provider this coupling loop cannot resolve.
+
+    RFC #1574 / Issue #1563: only ``FixedPointIterator`` resolves a ``BCValueProvider`` (e.g.
+    ``AdjointConsistentProvider``) stored in a ``BCSegment.value`` -- it calls
+    ``problem.using_resolved_bc(state)`` each Picard step (fixed_point_iterator.py). The other
+    coupling loops do not, so a provider would otherwise reach the solver unresolved: a deep GFDM
+    row-builder ``ValueError``, or a silent miss on a non-Robin provider segment. Raise up front
+    (naming the loop) instead of surfacing the failure deep in the solver, or not at all.
+    """
+    # A problem without grid BC resolution (a network problem, or a lightweight test stub) cannot
+    # carry a grid BCValueProvider, so there is nothing to guard -- skip rather than AttributeError.
+    _get_bc = getattr(problem, "get_boundary_conditions", None)
+    if not callable(_get_bc):
+        return
+    if _get_bc().has_providers():
+        raise NotImplementedError(
+            f"{iterator_name} does not resolve dynamic BC providers (a BCValueProvider stored in a "
+            f"BCSegment.value, e.g. AdjointConsistentProvider). Only FixedPointIterator resolves them "
+            f"per iteration (Issue #625/#1563). Use FixedPointIterator for a provider-based "
+            f"(adjoint-consistent) boundary condition, or a statically-valued BC with this loop."
+        )
+
+
+def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
+    """Fail loud if a coupled HJB / FP solver pair was built from problems with different ``sigma``.
+
+    Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads sigma from its OWN embedded
+    problem (``hjb_solver.problem.sigma``, ``fp_solver.problem.sigma``). A coupled HJB-FP pair is an
+    adjoint pair and must share the volatility; if the two problems' sigma disagree, HJB and FP
+    diffuse at different rates with no warning and the fixed point is neither problem's MFG.
+
+    Extracted from ``FixedPointIterator`` (Issue #1603) to a single owner so EVERY coupling loop --
+    FixedPoint, Block, FictitiousPlay, Newton, and the regime / multi-population / graph lists (which
+    had no guard) -- shares one check. For a list-based iterator, call once per sub-problem pair
+    (naming the sub-problem in ``context``). Compares only real scalars, so Mock test doubles whose
+    auto-resolved ``.sigma`` is not a number do not trip the guard (#1489).
+    """
+    hjb_sigma = getattr(getattr(hjb_solver, "problem", None), "sigma", None)
+    fp_sigma = getattr(getattr(fp_solver, "problem", None), "sigma", None)
+    if (
+        isinstance(hjb_sigma, (int, float))
+        and isinstance(fp_sigma, (int, float))
+        and abs(float(hjb_sigma) - float(fp_sigma)) > 1e-12
+    ):
+        raise ValueError(
+            f"{context}: paired HJB / FP solvers were built from problems with different sigma "
+            f"(HJB={hjb_sigma}, FP={fp_sigma}); a coupled MFG pair is an adjoint pair and must share "
+            f"the volatility -- the Picard fixed point would correspond to neither problem. Build both "
+            f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
+        )
 
 
 class BaseCouplingIterator(ABC):
@@ -39,6 +93,9 @@ class BaseCouplingIterator(ABC):
         self._solution_computed: bool = False
         self._hjb_sig_params: set[str] | None = None
         self._fp_sig_params: set[str] | None = None
+        # Issue #1489 (S1): the FP solver's declared drift-input convention, cached beside its
+        # signature so resolve_fp_drift_kwargs can route by convention rather than param presence.
+        self._fp_drift_convention: DriftConvention | None = None
         self._hjb_solver_name: str = "<hjb solver>"
         self._fp_solver_name: str = "<fp solver>"
 
@@ -60,6 +117,8 @@ class BaseCouplingIterator(ABC):
             self._fp_sig_params = set(sig.parameters.keys())
         except (AttributeError, ValueError):
             self._fp_sig_params = None
+        # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
+        self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 
     def _build_hjb_kwargs(
         self,

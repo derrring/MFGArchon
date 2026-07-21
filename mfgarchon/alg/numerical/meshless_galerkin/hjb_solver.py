@@ -25,6 +25,7 @@ import numpy as np
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -95,7 +96,10 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         if self._sd_scale <= 0.0:
             return None
         self._build_gradient_operators()
-        coupling = self.problem.coupling_coefficient  # same read as the paired FP (duality)
+        # Issue #1487/#1420 (G-017): single-source the drift scale = 1/control_cost (not the raw
+        # coupling_coefficient). The paired FP reads the SAME fp_drift_coefficient, so A_FP = A_HJB^T
+        # (the adjoint-consistency thesis) AND both match the HJB optimal control.
+        coupling = fp_drift_coefficient(self.problem)
         velocity = (-coupling * np.column_stack([G_d @ u for G_d in self._G_grad])).T
         return self._disc.streamline_diffusion(velocity, D, c_scale=self._sd_scale)
 

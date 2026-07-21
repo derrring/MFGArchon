@@ -26,13 +26,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 
-from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_H_batch
+from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     get_bc_type_string,
 )
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
 
@@ -56,6 +57,8 @@ from .hjb_sl_interpolation import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
@@ -106,6 +109,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     from mfgarchon.alg.base_solver import SchemeFamily
 
     _scheme_family = SchemeFamily.SL
+
+    # BoundaryCapable protocol (Issue #1456): the SL diffusion sub-step (CN/ADI) is zero-flux
+    # (no-flux / Neumann g=0) and the characteristic foot wraps for periodic; Dirichlet / Robin /
+    # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
 
     def __init__(
         self,
@@ -245,6 +258,23 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
 
+        # Issue #1547 / RFC #1574 Phase 0: the characteristic-foot velocity dH/dp = p/lambda traces
+        # departures x - (grad_u/lambda)*dt, i.e. alpha* = -grad_u/lambda (MINIMIZE). A MAXIMIZE
+        # control cost has alpha* = +grad_u/lambda, so the feet would be traced in the wrong
+        # direction; the MAXIMIZE-quadratic H is smooth so the non-smooth DPP reroute never fires and
+        # the wrong-signed foot path is taken silently. Fail loud (mirrors the HJBGFDMSolver Howard
+        # gate) rather than run the wrong scheme. MAXIMIZE support on the SL path is deferred.
+        _sl_h_class = getattr(self.problem, "hamiltonian_class", None)
+        _sl_control_cost = getattr(_sl_h_class, "control_cost", None)
+        if _sl_control_cost is not None and getattr(_sl_control_cost, "sign", 1) != 1:
+            raise NotImplementedError(
+                "HJBSemiLagrangianSolver traces characteristic feet with the MINIMIZE-signed velocity "
+                "alpha* = -grad(u)/lambda, but the Hamiltonian's control cost is MAXIMIZE "
+                "(alpha* = +grad(u)/lambda). The feet would move in the wrong direction and the solve "
+                "would converge to a different equilibrium. MAXIMIZE is not yet supported on the "
+                "semi-Lagrangian path (Issue #1547 / RFC #1574); use HJB-FDM/GFDM, or MINIMIZE."
+            )
+
         # Gradient clipping statistics tracking
         self._reset_gradient_stats()
 
@@ -317,6 +347,37 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Setup JAX functions if available
         if self.use_jax:
             self._setup_jax_functions()
+
+        # Issue #1456: fail loud now if the (geometry/problem) BC requests a type SL cannot honor
+        # (Dirichlet/Robin/absorbing — otherwise silently collapsed to the zero-flux Neumann
+        # diffusion). None (BC resolved later) is a no-op; SL re-reads get_boundary_conditions().
+        self._validate_bc_support(self.get_boundary_conditions())
+
+        # Issue #1560 / RFC #1574 Phase 0: even when every segment type is individually supported, the
+        # SL characteristic fold and ADI diffusion collapse a MIXED per-axis BC to segments[0]'s single
+        # geometric operation (reflect vs wrap) applied to ALL axes (get_bc_type_string returns only the
+        # first segment) — so e.g. no-flux walls on one axis + periodic on another is silently reduced
+        # to one op, and reordering the segments flips the physics. Per-axis handling is a follow-up;
+        # for now fail loud when the segments do not agree on a single geometric operation.
+        _sl_bc = self.get_boundary_conditions()
+        _sl_segments = getattr(_sl_bc, "segments", None)
+        if _sl_segments:
+            _sl_ops = set()
+            for _seg in _sl_segments:
+                _seg_type = str(getattr(_seg.bc_type, "value", _seg.bc_type))
+                _sl_ops.add(bc_type_to_geometric_operation(_seg_type))
+            _sl_default = getattr(_sl_bc, "default_bc", None)
+            if _sl_default is not None:
+                _d = str(getattr(_sl_default, "value", _sl_default))
+                _sl_ops.add(bc_type_to_geometric_operation(_d))
+            if len(_sl_ops) > 1:
+                raise NotImplementedError(
+                    f"HJBSemiLagrangianSolver does not support a mixed per-axis boundary condition whose "
+                    f"segments map to different geometric operations ({sorted(_sl_ops)}). The characteristic "
+                    f"fold and ADI diffusion apply the FIRST segment's single operation to every axis "
+                    f"(order-sensitive silent collapse). Use a single BC type across axes, or HJB-FDM/GFDM "
+                    f"which resolve BC per wall (Issue #1560 / RFC #1574 Phase 0)."
+                )
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -840,7 +901,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # Issue #1071 / fail-fast: a missing Hamiltonian must fail loud HERE, before the
         # timestep loop — otherwise the batch path silently zeros H (pure transport of the
-        # terminal data) and the per-point loops' broad except swallows the per-point raise.
+        # terminal data). (The per-point loops used to swallow the resulting per-point raise
+        # as well; since #1635 they propagate it, but the batch path still needs this gate.)
         # MFGProblem construction requires a Hamiltonian, so this only fires on a duck-typed
         # or externally-nulled problem; it must not silently solve the wrong physics.
         if self.problem.hamiltonian_class is None:
@@ -954,6 +1016,54 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         return U_solution
 
+    def _advect_pointwise(
+        self,
+        U_next: np.ndarray,
+        M_next: np.ndarray,
+        grad_u: np.ndarray,
+        t_val: float,
+        dt: float,
+    ) -> np.ndarray:
+        """One backward semi-Lagrangian advection sweep, node by node.
+
+        Issue #1413: lambda-scaled foot (x - dt*dH/dp = x - dt*p/lambda) followed by the
+        Lax-Oleinik value update, matching the vectorized batch path.
+
+        Single owner for the two byte-identical copies of this loop (Issue #1635): the
+        rk4/other fallback of the fixed-dt path, and the CFL-substepping path.
+
+        A per-node failure propagates. The previous handlers caught Exception and assigned
+        ``U_star[i] = U_next[i]`` -- the value at t^{n+1}, i.e. no update at all for that
+        node. That substitution is finite by construction, so the NaN/Inf guard in
+        solve_hjb_system could not see it and the solver returned a plausible, silently
+        wrong value function with no machine-readable trace. The nD siblings catch no
+        exceptions at all; they do still substitute a stale value on NaN/Inf, counting the
+        affected nodes and escalating to a raise past a 10% threshold -- though the with-dt
+        sibling logs nothing below it, leaving that path as invisible as this one was.
+        Tracked in #1641.
+        """
+        Nx = len(U_next)
+        # Issue #1547: dH/dp from the Hamiltonian, batched once per sweep rather than a hardcoded
+        # p/lambda per node (see _characteristic_foot_velocity).
+        vel_all = self._characteristic_foot_velocity(
+            self.x_grid.reshape(-1, 1), M_next, grad_u.reshape(-1, 1), t_val
+        ).reshape(-1)
+        U_star = np.zeros(Nx)
+        for i in range(Nx):
+            x_i = self.x_grid[i]
+            try:
+                vel_i = vel_all[i]
+                x_departure = self._trace_characteristic_backward(x_i, vel_i, dt)
+                u_departure = self._interpolate_value(U_next, x_departure)
+                U_star[i] = self._sl_value_update(
+                    u_departure, np.array([x_i]), M_next[i], np.array([grad_u[i]]), t_val, dt
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Semi-Lagrangian update failed at grid point {i} (x={x_i:.6g}, t={t_val:.6g}, dt={dt:.6g}): {e}"
+                ) from e
+        return U_star
+
     def _solve_timestep_semi_lagrangian(
         self,
         U_next: np.ndarray,
@@ -991,7 +1101,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if self.dimension == 1:
             # 1D solve with operator splitting: characteristics + Crank-Nicolson diffusion
-            Nx = len(U_next)
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
@@ -1000,8 +1109,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Issue #930: Vectorized advection — batch characteristic tracing + interpolation
             # For explicit_euler/rk2, characteristic is x_departure = x - p*dt (vectorizable)
             if self.characteristic_solver in ("explicit_euler", "rk2"):
-                # Step 1a: Batch departure points
-                x_departures = self.x_grid - (grad_u / self._control_cost_lambda()) * self.dt
+                # Step 1a: Batch departure points.
+                # Issue #1071 fail-fast on a missing Hamiltonian, hoisted above the foot (Issue
+                # #1547) because the foot itself now needs H: never silently drop the H term.
+                H_class = self.problem.hamiltonian_class
+                if H_class is None:
+                    raise ValueError(
+                        "HJBSemiLagrangianSolver: problem.hamiltonian_class is None in the batch "
+                        "Hamiltonian path. Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
+                    )
+                x_batch = self.x_grid.reshape(-1, 1)  # (Nx, 1)
+                p_batch = grad_u.reshape(-1, 1)  # (Nx, 1)
+                # Issue #1547: dH/dp from the Hamiltonian, not a hardcoded p/lambda.
+                vel = self._characteristic_foot_velocity(x_batch, M_next, p_batch, time_idx * self.dt).reshape(-1)
+                x_departures = self.x_grid - vel * self.dt
 
                 # Apply boundary conditions (vectorized)
                 bc = self.get_boundary_conditions()
@@ -1028,37 +1149,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     interp_fn = interp1d(self.x_grid, U_next, kind="linear", fill_value="extrapolate")
                     u_departures = interp_fn(x_departures)
 
-                # Step 1c: fail-fast on a missing Hamiltonian (Issue #1071) — never silently
-                # drop the H term (that reduces the update to pure transport of the terminal data).
-                H_class = self.problem.hamiltonian_class
-                if H_class is None:
-                    raise ValueError(
-                        "HJBSemiLagrangianSolver: problem.hamiltonian_class is None in the batch "
-                        "Hamiltonian path. Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
-                    )
-                x_batch = self.x_grid.reshape(-1, 1)  # (Nx, 1)
-                p_batch = grad_u.reshape(-1, 1)  # (Nx, 1)
-
                 # Step 1d: Lax-Oleinik value update (Issue #1413)
                 U_star = self._sl_value_update(u_departures, x_batch, M_next, p_batch, time_idx * self.dt, self.dt)
 
             else:
                 # Fallback: per-point loop for rk4 or other methods. Issue #1413: λ-scaled foot
                 # (x - dt·∂H/∂p = x - dt·p/λ) + Lax-Oleinik value update, matching the batch path.
-                lam = self._control_cost_lambda()
-                t_val = time_idx * self.dt
-                U_star = np.zeros(Nx)
-                for i in range(Nx):
-                    try:
-                        vel_i = grad_u[i] / lam
-                        x_departure = self._trace_characteristic_backward(self.x_grid[i], vel_i, self.dt)
-                        u_departure = self._interpolate_value(U_next, x_departure)
-                        U_star[i] = self._sl_value_update(
-                            u_departure, np.array([self.x_grid[i]]), M_next[i], np.array([grad_u[i]]), t_val, self.dt
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error at grid point {i}: {e}")
-                        U_star[i] = U_next[i]
+                U_star = self._advect_pointwise(U_next, M_next, grad_u, time_idx * self.dt, self.dt)
 
             # Step 2: Diffusion (using configured method)
             U_current = self._apply_diffusion(U_star, self.dt)
@@ -1109,9 +1206,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             error_count = 0
             total_points = int(np.prod(grid_shape))
 
-            # Issue #1413: hoist λ and the time value for the Lax-Oleinik update in the loop.
-            lam = self._control_cost_lambda()
+            # Issue #1413: hoist the time value for the Lax-Oleinik update in the loop.
             t_val = time_idx * self.dt
+            # Issue #1547: dH/dp from the Hamiltonian, batched once per step (see
+            # _characteristic_foot_velocity) rather than a hardcoded p/lambda per node.
+            vel_grid = self._nd_foot_velocity_field(grid_shape, grad_components, M_next_shaped, t_val)
             # Iterate over all grid points for advection
             for multi_idx in np.ndindex(grid_shape):
                 # Get spatial coordinates for this grid point
@@ -1121,11 +1220,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # Extract momentum p = ∇u (vector for nD)
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
-                # Issue #1413: trace along the characteristic velocity ∂H/∂p (= p/λ for the
-                # quadratic control cost), then apply the Lax-Oleinik value update (the foot
-                # carries advection; cost = dt·H_control - dt·(V+f)). Replaces the inconsistent
-                # `u_departure - dt·H` with a non-λ-scaled foot (Issue #575/#1413).
-                vel = p_optimal / lam
+                # Issue #1413: trace along the characteristic velocity ∂H/∂p, then apply the
+                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control -
+                # dt·(V+f)). Replaces the inconsistent `u_departure - dt·H` with a non-λ-scaled
+                # foot (Issue #575/#1413). Issue #1547: ∂H/∂p is the Hamiltonian's, not p/λ.
+                vel = vel_grid[multi_idx]
                 x_departure = self._trace_characteristic_backward(x_current, vel, self.dt)
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, self.dt)
@@ -1200,31 +1299,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if self.dimension == 1:
             # 1D solve with operator splitting
-            Nx = len(U_next)
-            U_star = np.zeros(Nx)
 
             # Compute gradient for optimal control
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_u = self._compute_gradient(U_next, check_cfl=False, t_idx=time_idx, m_density=M_next)
 
             # Step 1: Advection along characteristics (Issue #1413: λ-scaled foot + Lax-Oleinik)
-            lam = self._control_cost_lambda()
-            t_val = time_idx * self.dt
-            for i in range(Nx):
-                x_current = self.x_grid[i]
-                m_current = M_next[i]
-
-                try:
-                    vel_i = grad_u[i] / lam
-                    x_departure = self._trace_characteristic_backward(x_current, vel_i, dt)
-                    u_departure = self._interpolate_value(U_next, x_departure)
-                    U_star[i] = self._sl_value_update(
-                        u_departure, np.array([x_current]), m_current, np.array([grad_u[i]]), t_val, dt
-                    )
-
-                except Exception as e:
-                    logger.warning(f"Error at grid point {i}: {e}")
-                    U_star[i] = U_next[i]
+            U_star = self._advect_pointwise(U_next, M_next, grad_u, time_idx * self.dt, dt)
 
             # Step 2: Diffusion with custom dt
             U_current = self._apply_diffusion(U_star, dt)
@@ -1261,15 +1342,16 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             error_count = 0
             total_points = int(np.prod(grid_shape))
 
-            lam = self._control_cost_lambda()
             t_val = time_idx * self.dt
+            # Issue #1547: dH/dp from the Hamiltonian, batched once (see _nd_foot_velocity_field).
+            vel_grid = self._nd_foot_velocity_field(grid_shape, grad_components, M_next_shaped, t_val)
             for multi_idx in np.ndindex(grid_shape):
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
                 m_current = M_next_shaped[multi_idx]
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
-                # Issue #1413: λ-scaled foot (∂H/∂p) + Lax-Oleinik value update.
-                vel = p_optimal / lam
+                # Issue #1413: characteristic foot (∂H/∂p) + Lax-Oleinik value update.
+                vel = vel_grid[multi_idx]
                 x_departure = self._trace_characteristic_backward(x_current, vel, dt)
                 u_departure = self._interpolate_value(U_next_shaped, x_departure)
                 u_star_val = self._sl_value_update(u_departure, x_current, m_current, p_optimal, t_val, dt)
@@ -1301,6 +1383,35 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     # === Carlini-Silva stochastic-characteristic SL (Issue #1026) ===
 
+    def _brownian_foot_offset(self, sqrt_dt: float) -> np.ndarray:
+        """Per-axis Brownian foot offset ``c_ax`` for the 2d-departure SL diffusion quadrature.
+
+        Both the ``'stochastic'`` and ``'canonical_cs'`` SL steps place ``2d`` feet
+        ``x ± c_ax·e_ax`` (one ± pair per axis) and average them with uniform weight ``1/(2d)``.
+        Taylor: ``(1/2d)·Σ_ax[u(x + c_ax e_ax) + u(x − c_ax e_ax)] = u + (1/2d)·Σ_ax c_ax²·∂²u/∂x_ax² + O(c⁴)``.
+        Recovering the canonical anisotropic viscosity ``(1/2)·Σ_ax σ_ax²·∂²u/∂x_ax²·dt`` — the
+        ``-(σ²/2)·Δu`` term of the HJB residual (``base_hjb.py``) — requires
+        ``c_ax = √d·σ_ax·√dt`` (weak-Euler direction tree: ``E[ξ ξᵀ] = I·dt`` over the ``2d``
+        one-axis feet). The ``√d`` is an exact identity at ``d = 1`` and restores the ``1/d``
+        diffusion deficit that under-diffused every ``d ≥ 2`` SL solve (Issue #1543: 2× in 2D,
+        3× in 3D). ``diffusion_method='adi'`` is a separate path and is unaffected.
+
+        Single owner for the departure offset — the ``'stochastic'`` and ``'canonical_cs'`` paths
+        must not re-derive ``σ·√dt`` independently (the divergence that was Issue #1543).
+        """
+        d = self.dimension
+        sigma = self.problem.sigma
+        if isinstance(sigma, np.ndarray):
+            sigma_diag = np.asarray(sigma, dtype=float).ravel()
+            if sigma_diag.size != d:
+                raise ValueError(
+                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
+                    "Full-tensor sigma not supported by semi-Lagrangian SL."
+                )
+        else:
+            sigma_diag = np.full(d, float(sigma))
+        return np.sqrt(d) * sigma_diag * sqrt_dt
+
     def _solve_timestep_stochastic_sl(
         self,
         U_next: np.ndarray,
@@ -1320,7 +1431,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     + dt * H_control(p_i) - dt * (V + f)
                   = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
 
-        with y_k^pm = x_i - (dH/dp)_i * dt +/- sigma * sqrt(dt) * e_k. (The prior
+        with y_k^pm = x_i - (dH/dp)_i * dt +/- sqrt(d) * sigma * sqrt(dt) * e_k (the
+        sqrt(d) restores the full (sigma^2/2) Lap(u) under the 1/(2d) average, Issue #1543). (The prior
         `alpha* = -nabla u` foot with `- dt*H` was lambda=1-only on the foot and
         double-counted the kinetic term ~3x; see Issue #575/#1413.)
 
@@ -1370,9 +1482,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Issue #1050: unifies the former ``_stochastic_sl_step_1d`` and
         ``_stochastic_sl_step_nd`` into one method handling d ∈ {1, 2, 3, ...}.
         One Brownian-quadrature step: ``2*d`` departures per node (a
-        ``±σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``),
-        interpolate ``u^{n+1}`` at each foot, average over the ``2*d``
-        directions, subtract ``dt·H``.
+        ``±√d·σ_ax·√dt`` pair per axis from the drift foot ``x − p·dt``; the
+        ``√d`` makes the ``1/(2d)`` average recover the full ``(σ²/2)Δu``,
+        Issue #1543), interpolate ``u^{n+1}`` at each foot, average over the
+        ``2*d`` directions, subtract ``dt·H``.
 
         The shared structure (drift + Brownian departures, boundary fold,
         averaging, batch Hamiltonian) is written once, so the 1D fixes
@@ -1434,17 +1547,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 flat_input = False
             grid_coords = tuple(self.grid.coordinates)
 
-        # --- Diagonal volatility σ_ax (SDE volatility, mfg_problem.py:39) ---
-        sigma = self.problem.sigma
-        if isinstance(sigma, np.ndarray):
-            sigma_diag = np.asarray(sigma, dtype=float).ravel()
-            if sigma_diag.size != d:
-                raise ValueError(
-                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
-                    f"Full-tensor sigma not yet supported by stochastic SL."
-                )
-        else:
-            sigma_diag = np.full(d, float(sigma))
+        # --- Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source) ---
+        foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         # Optimal control α* = -p where p = ∇u^{n+1}; drift foot x_drift = x − p·dt.
         grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped)
@@ -1465,17 +1569,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # --- Build the 2*d departures per node (one ± pair per axis) ---
         n_total = int(np.prod(grid_shape))
         mesh = np.meshgrid(*grid_coords, indexing="ij")
-        # x_drift_flat[i, ax] = x_current[ax] − dt · p[ax] for node i
-        x_drift_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
-        # Issue #1413: drift along the characteristic velocity ∂H/∂p = p/λ (not raw p).
-        lam = self._control_cost_lambda()
-        for ax in range(d):
-            x_drift_flat[:, ax] -= (grad_components[ax].ravel() / lam) * dt
+        # x_drift_flat[i, ax] = x_current[ax] − dt · ∂H/∂p[ax] for node i
+        x_positions_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        p_flat = np.stack([grad_components[ax].ravel() for ax in range(d)], axis=1)
+        # Issue #1413: drift along the characteristic velocity ∂H/∂p (not raw p).
+        # Issue #1547: ∂H/∂p comes from the Hamiltonian, not a hardcoded p/λ.
+        vel_flat = self._characteristic_foot_velocity(x_positions_flat, M_shaped.ravel(), p_flat, time_idx * dt)
+        x_drift_flat = x_positions_flat - vel_flat * dt
 
         all_departures = np.empty((2 * d * n_total, d), dtype=float)
         for ax in range(d):
             offset = np.zeros(d)
-            offset[ax] = sigma_diag[ax] * sqrt_dt
+            offset[ax] = foot_offset[ax]
             block_start = 2 * ax * n_total
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
@@ -1514,8 +1619,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         u_avg = all_u.reshape(2 * d, n_total).mean(axis=0).reshape(grid_shape)
 
         # --- Lax-Oleinik value update (Issue #1413; single source, Issue #1071) ---
-        x_batch = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
-        p_batch = np.stack([grad_components[ax].ravel() for ax in range(d)], axis=1)
+        # Reuses the node positions / momenta already stacked for the drift foot above.
+        x_batch = x_positions_flat
+        p_batch = p_flat
         H_class = self.problem.hamiltonian_class
         if H_class is None:
             raise ValueError(
@@ -1643,17 +1749,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 return x_min + (points - x_min) % span
             return np.clip(points, x_min, x_max)
 
-        # Diagonal volatility sigma_ax (SDE volatility), as in the stochastic SL path.
-        sigma = self.problem.sigma
-        if isinstance(sigma, np.ndarray):
-            sigma_diag = np.asarray(sigma, dtype=float).ravel()
-            if sigma_diag.size != d:
-                raise ValueError(
-                    f"Diagonal sigma must have {d} entries, got {sigma_diag.size}. "
-                    f"Full-tensor sigma not supported by canonical CS SL."
-                )
-        else:
-            sigma_diag = np.full(d, float(sigma))
+        # Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source; shared with stochastic SL).
+        foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         H_class = self.problem.hamiltonian_class
         # Issue #1420: control-cost lambda from the single source. The DPP running cost is
@@ -1667,7 +1764,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         if d == 1:
             Nx = len(U_next)
-            diff_off = float(sigma_diag[0]) * sqrt_dt
+            diff_off = float(foot_offset[0])
             bound = float(alpha_bound[0])
 
             # h_i = H(x_i, m_i, p=0, t_n): potential + coupling, single-source via H_class.
@@ -1744,8 +1841,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         grid_coords = tuple(self.grid.coordinates)
         interp_fn = RegularGridInterpolator(grid_coords, U_shaped, method="linear", bounds_error=False, fill_value=None)
 
-        # The 2*d departure offsets: +/- sigma_ax * sqrt(dt) along each axis -> (2d, d).
-        axis_offsets = np.diag(sigma_diag * sqrt_dt)  # (d, d), row k = offset along axis k
+        # The 2*d departure offsets: +/- c_ax along each axis -> (2d, d); c_ax = √d·σ_ax·√dt (Issue #1543).
+        axis_offsets = np.diag(foot_offset)  # (d, d), row k = offset along axis k
         depart_offsets = np.concatenate([axis_offsets, -axis_offsets], axis=0)  # (2d, d)
 
         # h batch over all nodes: h(x_i, m_i) = H(x_i, m_i, p=0, t_n).
@@ -1832,27 +1929,37 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_star = np.zeros(Nx)
 
             # Detect special structure for fast paths
-            from mfgarchon.core.hamiltonian import (
-                BoundedControlCost,
-                L1ControlCost,
-                QuadraticControlCost,
-                SeparableLagrangian,
-            )
+            from mfgarchon.core.hamiltonian import L1ControlCost, SeparableLagrangian
 
+            # The admissible set A is READ from its single owner,
+            # ControlCostBase.effective_domain() (Issue #1642, B3) -- it is never
+            # re-derived here. This previously carried its own ladder holding a
+            # bang-bang interval literal for L1 and reading the max-control
+            # attribute off Bounded directly, i.e. a second owner of A that could
+            # drift from the first and that a regularized cost silently defeated.
+            #
+            # What remains local is only QUADRATURE -- how densely to sample A --
+            # which is a genuine structural distinction, not a duplicated
+            # quantity: a piecewise-linear L_ctrl is optimized at a vertex of A
+            # or at its kink, a quadratic one needs interior samples. Narrowing
+            # that last isinstance to a control-cost capability is Issue #1651.
             fast_candidates = None
             if isinstance(L_class, SeparableLagrangian):
                 cc = L_class.control_cost
-                if isinstance(cc, L1ControlCost):
-                    # Bang-bang: compare alpha in {-1, 0, 1}
-                    fast_candidates = np.array([-1.0, 0.0, 1.0])
-                elif isinstance(cc, BoundedControlCost):
-                    # Sample endpoints + zero + a few interior points
-                    a_max = cc.max_control
-                    fast_candidates = np.linspace(-a_max, a_max, 11)
-                elif isinstance(cc, QuadraticControlCost):
-                    # Quadratic has closed-form: alpha* = -grad_u / lambda
-                    # DPP reduces to H-based SL. Use grad_u path for efficiency.
-                    fast_candidates = None  # fall through to scalar optimization
+                domain = cc.effective_domain()
+                if domain is None:
+                    # A = R^d: no box to sample. QuadraticControlCost lands here
+                    # and has the closed form alpha* = -grad_u/lambda anyway, so
+                    # fall through to the scalar optimization path.
+                    fast_candidates = None
+                elif isinstance(cc, L1ControlCost):
+                    # Bang-bang: L_ctrl is piecewise linear, so the optimum sits
+                    # at an endpoint of A or at the kink alpha = 0.
+                    fast_candidates = np.array([domain[0], 0.0, domain[1]])
+                else:
+                    # Quadratic-on-A costs (BoundedControlCost, and its
+                    # Moreau-Yosida envelope): sample endpoints + interior.
+                    fast_candidates = np.linspace(domain[0], domain[1], 11)
 
             for i in range(Nx):
                 x_i = self.x_grid[i]
@@ -1979,6 +2086,79 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # If H is non-smooth, prefer DPP (avoids grad_u at kinks)
         is_smooth = getattr(H_class, "is_smooth", lambda: True)
         return bool(callable(is_smooth) and not is_smooth())
+
+    def _characteristic_foot_velocity(self, x: np.ndarray, m: np.ndarray, p: np.ndarray, t: float) -> np.ndarray:
+        """Characteristic velocity ``dH/dp`` over a batch of nodes (Issue #1547 / RFC #1574 Phase 1).
+
+        The departure foot of the semi-Lagrangian step is ``x - dt * dH/dp``. Every foot site in
+        this solver used to hardcode ``dH/dp = p/lambda`` -- the QUADRATIC-control-cost form -- while
+        the Lax-Oleinik value term routed through ``eval_H_batch`` and evaluated the true ``H``. For
+        any Hamiltonian whose real ``dH/dp`` differs (multiplicative congestion
+        ``dH/dp = p/(lambda*c(m))``, additive congestion, a non-quadratic control cost) that hybrid
+        is not a discretization of the requested PDE: it solves without complaint and converges to
+        the WRONG LIMIT. On a frozen-density pure-HJB refinement against ``HJBFDMSolver`` the stock
+        error plateaued at ``max|SL-FDM| ~ 0.206`` from Nx=51 to Nx=201 instead of decreasing.
+
+        ``dH/dp`` now comes from the same single source the FDM and GFDM solvers already use
+        (``eval_dH_dp_batch`` -> ``HamiltonianBase.evaluate_dp`` -> ``H_class.dp``), so the
+        characteristic velocity has one owner across the whole HJB family rather than a private
+        quadratic copy here. That also makes the fix self-extending: a hand-rolled
+        ``HamiltonianBase`` subclass that overrides ``dp()`` is honored automatically, with no
+        marker attribute to spell correctly.
+
+        Byte-identity at the quadratic case: for ``SeparableHamiltonian(QuadraticControlCost)``,
+        ``dp`` is ``control_cost.dp(p) == p / lambda_`` and ``_control_cost_lambda()`` returns
+        ``float(control_cost.lambda_)`` -- the same Python float -- so this returns the same array,
+        elementwise, as the expression it replaces.
+
+        Args:
+            x: Node positions, shape ``(N, d)``.
+            m: Density at those nodes, shape ``(N,)``.
+            p: Momentum ``grad(u)`` at those nodes, shape ``(N, d)``.
+            t: Time at which to evaluate.
+
+        Returns:
+            ``dH/dp``, shape ``(N, d)``.
+        """
+        H_class = self.problem.hamiltonian_class
+        if H_class is None:
+            # Legacy no-Hamiltonian LQ path: p/lambda IS the definition of the scheme there, and
+            # problem.lambda_ is the only available source (Issue #1071). The value term fail-louds
+            # separately if this path is reached without any usable H.
+            return np.asarray(p, dtype=float) / self._control_cost_lambda()
+
+        vel = np.asarray(eval_dH_dp_batch(H_class, x, m, p, t), dtype=float)
+        p_arr = np.asarray(p, dtype=float)
+        if vel.size != p_arr.size:
+            raise ValueError(
+                f"{type(H_class).__name__}.dp() returned shape {vel.shape} for momentum of shape "
+                f"{p_arr.shape}; the semi-Lagrangian characteristic foot needs one dH/dp component "
+                f"per momentum component. Fix the Hamiltonian's dp() to return the documented "
+                f"(N, d) batch shape (Issue #1547 / RFC #1574)."
+            )
+        return vel.reshape(p_arr.shape)
+
+    def _nd_foot_velocity_field(
+        self,
+        grid_shape: tuple[int, ...],
+        grad_components: Sequence[np.ndarray],
+        m_shaped: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """``dH/dp`` on every node of an nD grid, shaped ``grid_shape + (d,)`` (Issue #1547).
+
+        Batches the per-node ``dH/dp`` the nD advection loops need into ONE Hamiltonian call. The
+        coordinate array is built from ``self.grid.coordinates`` truncated to ``grid_shape`` per
+        axis, which reproduces exactly the ``self.grid.coordinates[ax][multi_idx[ax]]`` lookup the
+        loops perform -- including the reduced ``n-1`` shape the periodic nD path uses.
+        """
+        d = self.dimension
+        coord_axes = [np.asarray(self.grid.coordinates[ax], dtype=float)[: grid_shape[ax]] for ax in range(d)]
+        mesh = np.meshgrid(*coord_axes, indexing="ij")
+        x_flat = np.stack([mesh[ax].ravel() for ax in range(d)], axis=1)
+        p_flat = np.stack([np.asarray(grad_components[ax]).ravel() for ax in range(d)], axis=1)
+        vel_flat = self._characteristic_foot_velocity(x_flat, np.asarray(m_shaped).ravel(), p_flat, t)
+        return vel_flat.reshape((*tuple(grid_shape), d))
 
     def _trace_characteristic_backward(
         self, x_current: np.ndarray | float, p_optimal: np.ndarray | float, dt: float
@@ -2274,7 +2454,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Evaluate Hamiltonian H(x, p, m) at given point (supports 1D and nD).
 
         Uses DerivativeTensors for consistency with all solvers.
-        See docs/NAMING_CONVENTIONS.md "Derivative Tensor Standard" section.
+        See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) "Derivative Tensor Standard" section.
 
         Args:
             x: Spatial position

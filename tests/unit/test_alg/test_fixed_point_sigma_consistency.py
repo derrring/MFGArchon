@@ -110,6 +110,34 @@ def test_silent_when_callable():
     assert len(sigma_warns) == 0
 
 
+def test_raises_on_two_problem_sigma_mismatch():
+    """Issue #1603: HJB and FP solvers built from problems with DIFFERENT sigma
+    must raise -- the two-problem desync the #1081 volatility_field guard misses.
+
+    Reverting the #1603 guard makes this FAIL (construction stays silent and
+    returns an iterator), which pins the fix (mutation-checked).
+    """
+    prob_hjb = _make_problem(sigma=0.2)
+    prob_fp = _make_problem(sigma=0.8)
+    hjb = HJBFDMSolver(prob_hjb)
+    fp = FPFDMSolver(prob_fp)
+
+    with pytest.raises(ValueError, match="sigma"):
+        FixedPointIterator(prob_hjb, hjb, fp)
+
+
+def test_silent_when_both_problems_match():
+    """No raise when the two solvers' problems share sigma -- guard keys on the
+    VALUE, not object identity (two separate problem instances, same sigma)."""
+    prob_a = _make_problem(sigma=0.3)
+    prob_b = _make_problem(sigma=0.3)
+    hjb = HJBFDMSolver(prob_a)
+    fp = FPFDMSolver(prob_b)
+
+    # Same sigma on both problems -> construction succeeds (no #1603 error).
+    FixedPointIterator(prob_a, hjb, fp)
+
+
 def test_warns_when_newton_tolerance_looser_than_picard():
     """Issue #1081: a Newton tolerance looser than the Picard tolerance is a convergence
     floor — each inner HJB solve injects a ~newton_tolerance residual, so Picard cannot

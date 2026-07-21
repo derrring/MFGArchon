@@ -21,6 +21,66 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
+    """Fail loud if ``problem.hamiltonian_class`` is a ``SeparableHamiltonian`` whose control cost is
+    NOT quadratic-MINIMIZE -- the one case where the scalar FP drift ``-c*grad(U)`` misrepresents the
+    optimal control (Issue #1542 / RFC #1574 Phase 0).
+
+    The scalar ``c = 1/control_cost`` closure (and the byte-identical ``-p/control_cost`` the
+    Hamiltonian owner returns for it) is the true optimal control ``alpha*`` only for a
+    quadratic-MINIMIZE ``SeparableHamiltonian``. A MAXIMIZE-quadratic cost has ``alpha* = +p/lambda``
+    (opposite sign) and a regularized (e.g. Moreau--Yosida) cost is soft-thresholded, so advecting
+    with ``-c*grad(U)`` would silently transport mass with the wrong physics.
+
+    This is the guard the FVM / FEM / meshless-Galerkin FP families inherited implicitly through
+    :func:`fp_drift_coefficient`. Extracting it keeps that fail-loud after those families route the
+    drift through ``H.optimal_control`` directly (Issue #1528 PR-1) instead of reading the scalar --
+    a routing change that is byte-neutral for the quadratic-MINIMIZE case but would otherwise let a
+    MAXIMIZE / non-quadratic ``SeparableHamiltonian`` run silently (a capability change deferred to
+    Phase 1, not this byte-safe refactor).
+
+    No-op (returns ``None``) for a quadratic-MINIMIZE ``SeparableHamiltonian`` (its scalar
+    ``-c*grad(U)`` and the byte-identical ``H.optimal_control`` owner are both the true optimal
+    control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
+    guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
+    no-op depends on the caller: :func:`fp_drift_coefficient`'s own callers fall through to the legacy
+    scalar ``coupling_coefficient``; the velocity-channel FP solvers (FVM / FEM / meshless-Galerkin)
+    do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
+    non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
+    site (Issue #1528).
+
+    Parameters
+    ----------
+    problem : Any
+        The MFG problem; its ``hamiltonian_class`` attribute is inspected (absent -> no-op).
+    context : str
+        Caller tag prepended to the error message (e.g. the solver name) so the raised
+        ``NotImplementedError`` names the site that could not honor the non-quadratic cost.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``hamiltonian_class`` is a ``SeparableHamiltonian`` with a MAXIMIZE-quadratic or
+        non-quadratic control cost.
+    """
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    h_class = getattr(problem, "hamiltonian_class", None)
+    if not isinstance(h_class, SeparableHamiltonian):
+        return
+    control_cost = h_class.control_cost
+    if isinstance(control_cost, QuadraticControlCost) and control_cost.sign == 1:  # OptimizationSense.MINIMIZE
+        return
+    detail = "MAXIMIZE quadratic" if isinstance(control_cost, QuadraticControlCost) else type(control_cost).__name__
+    raise NotImplementedError(
+        f"{context}: the scalar FP drift `-c*grad(U)` is defined only for a "
+        f"quadratic-MINIMIZE SeparableHamiltonian, but got a {detail} control cost. Its optimal "
+        f"control is alpha* = H.optimal_control(...), not -c*grad(U) (wrong sign for MAXIMIZE, "
+        f"wrong form for a regularized cost). Route the FP drift through the velocity channel "
+        f"(precomputed alpha*) instead (Issue #1542 / RFC #1574 Phase 1)."
+    )
+
+
 def fp_drift_coefficient(problem: Any) -> float:
     """Single-source the MFG drift coefficient ``c`` (drift ``= -c·∇U``) from the Hamiltonian's
     control law, not the independent ``coupling_coefficient`` field (Issue #1420 / gotcha G-017).
@@ -33,12 +93,20 @@ def fp_drift_coefficient(problem: Any) -> float:
     (``MFGProblem`` default 0.5), making the coupled solve converge to the wrong fixed point
     (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too wide).
 
-    Falls back to the legacy ``coupling_coefficient`` attribute when there is no quadratic MINIMIZE
-    separable Hamiltonian to source from: a non-``SeparableHamiltonian`` Hamiltonian (e.g.
-    ``QuadraticMFGHamiltonian``, which carries its own ``coupling_coefficient``) or a non-Hamiltonian
-    direct solve. Non-smooth / congestion / MAXIMIZE control costs never reach the ``-c·∇U`` path
-    (``resolve_fp_drift_kwargs`` routes them to the velocity ``drift_field`` channel), and
-    ``CongestionHamiltonian`` is not a ``SeparableHamiltonian`` so it is excluded here by type.
+    Falls back to the legacy ``coupling_coefficient`` attribute when there is no ``SeparableHamiltonian``
+    at all: a non-``SeparableHamiltonian`` Hamiltonian (e.g. ``QuadraticMFGHamiltonian``, which carries
+    its own ``coupling_coefficient``) or a non-Hamiltonian direct solve.
+
+    Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
+    Phase 0): a ``SeparableHamiltonian`` whose control cost is MAXIMIZE-quadratic or non-quadratic
+    (e.g. Moreau--Yosida-regularized) can reach this function because ``resolve_fp_drift_kwargs`` gates
+    the routing on ``is_smooth()`` alone (sense-blind), so it steers such a Hamiltonian to the
+    ``potential_field=U`` channel where the FP solver forms ``-c·∇U``. But the scalar ``-c·∇U`` form is
+    the optimal control *only* for the quadratic-MINIMIZE case; the true drift is
+    ``α* = H.optimal_control(...)`` (``+p/λ`` for MAXIMIZE, soft-thresholded for a regularized cost).
+    Returning ``coupling_coefficient`` here would advect with the wrong sign / wrong form silently, so
+    this raises ``NotImplementedError`` instead — the caller must route the drift through the velocity
+    channel (Phase 1). This enforces the invariant the docstring previously only asserted.
 
     Fail-loud (Issue #1420 V1): if there is neither a quadratic-MINIMIZE ``SeparableHamiltonian`` to
     source ``1/control_cost`` from nor a ``coupling_coefficient`` on the problem, this raises rather
@@ -54,6 +122,12 @@ def fp_drift_coefficient(problem: Any) -> float:
         and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
     ):
         return 1.0 / h_class.control_cost.lambda_
+    # A SeparableHamiltonian that fell past the quadratic-MINIMIZE branch is MAXIMIZE-quadratic or a
+    # non-quadratic (e.g. regularized) control cost. The scalar drift `-c·∇U` does not represent its
+    # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
+    # and advect with the wrong physics (Issue #1542 / RFC #1574 Phase 0). The guard is a no-op for a
+    # non-separable / absent Hamiltonian, which falls through to the `coupling_coefficient` lookup.
+    assert_quadratic_minimize_drift(problem, context="fp_drift_coefficient")
     cc = getattr(problem, "coupling_coefficient", None)
     if cc is None:
         raise ValueError(
@@ -73,7 +147,7 @@ def diffusion_from_volatility(
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` (Issue #811).
 
     Single source of truth for the volatility -> diffusion conversion documented in
-    ``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion". Volatility is a tensor in general
+    ``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion". Volatility is a tensor in general
     (the noise matrix :math:`\Sigma`, shape ``(d, k)``); the scalar :math:`\sigma` is the
     isotropic special case. The diffusion coefficient is
 
@@ -117,6 +191,47 @@ def diffusion_from_volatility(
             )
         return 0.5 * np.matmul(arr, np.swapaxes(arr, -1, -2))
     raise ValueError(f"kind must be 'field' or 'tensor' (or None for scalar sigma), got {kind!r}.")
+
+
+def validate_symmetric_psd(
+    S: np.ndarray,
+    *,
+    name: str = "sigma tensor",
+    tolerance: float = 1e-10,
+) -> None:
+    r"""Consumer-side admissibility gate for a ``(d, d)`` tensor VOLATILITY input (RFC #1596).
+
+    A ``(d, d)`` volatility is the **symmetric** standard-deviation matrix ``S`` -- the symmetric
+    square root of the covariance ``C`` (``C = S S^T = S^2``), so the diffusion is
+    ``D = 1/2 S S^T = 1/2 C``. An asymmetric or non-PSD ``(d, d)`` input is caller confusion
+    (passing a Cholesky factor, a raw covariance, or a malformed matrix), so this fails loud.
+
+    Grid consumers that assemble a per-axis + cross-derivative diffusion on a tensor grid
+    (``adi_diffusion_step``, ``DiffusionOperator`` tensor path) call this immediately before
+    :func:`diffusion_from_volatility` ``(kind="tensor")``. The converter itself stays
+    symmetry-agnostic: ``D = 1/2 S S^T`` is the covariance of *any* noise matrix, and the
+    particle solver legitimately drives particles with an asymmetric ``(d, k)`` noise matrix
+    (RFC #1596: symmetry is a consumer admissibility constraint, not a kernel identity).
+
+    Raises ``ValueError`` if ``S`` is not square ``(d, d)``, not symmetric within ``tolerance``,
+    or has an eigenvalue below ``-tolerance``.
+    """
+    S = np.asarray(S, dtype=float)
+    if S.ndim != 2 or S.shape[0] != S.shape[1]:
+        raise ValueError(f"{name} must be a square (d, d) matrix, got shape {S.shape}.")
+    max_asymmetry = float(np.max(np.abs(S - S.T))) if S.size else 0.0
+    if max_asymmetry > tolerance:
+        raise ValueError(
+            f"{name} must be symmetric: it is the standard-deviation matrix (symmetric square "
+            f"root of the covariance), not a covariance or a Cholesky factor (RFC #1596). "
+            f"Max asymmetry |S - S^T| = {max_asymmetry:.3e} > tolerance {tolerance:.2e}."
+        )
+    min_eigenvalue = float(np.min(np.linalg.eigvalsh(S))) if S.size else 0.0
+    if min_eigenvalue < -tolerance:
+        raise ValueError(
+            f"{name} must be positive semi-definite (a std-dev matrix has non-negative "
+            f"eigenvalues). Found min eigenvalue {min_eigenvalue:.6e} < 0 (RFC #1596)."
+        )
 
 
 def diffusion_from_volatility_torch(sigma: Any) -> Any:
@@ -171,7 +286,7 @@ def resolve_volatility(
     Resolution order (canonical first):
 
     1. ``problem_params["sigma"]`` -- the canonical SDE volatility key
-       (``NAMING_CONVENTIONS.md`` "Volatility vs Diffusion"). Returned verbatim; the caller
+       (``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion"). Returned verbatim; the caller
        computes ``D = sigma**2 / 2``. No warning.
     2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
        given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``
@@ -829,38 +944,13 @@ class CoefficientField:
         """
         Check that a single d×d tensor is symmetric and positive semi-definite.
 
-        Parameters
-        ----------
-        tensor : ndarray
-            Tensor of shape (d, d)
-        tolerance : float
-            Numerical tolerance for symmetry and eigenvalue checks
+        Single-sourced through :func:`validate_symmetric_psd` (RFC #1596), the same
+        symmetric-std-dev-matrix gate the grid diffusion consumers (``adi_diffusion_step``,
+        ``DiffusionOperator`` tensor path) use, so the admissibility check has one owner.
 
-        Raises
-        ------
-        ValueError
-            If tensor is not symmetric or has negative eigenvalues
+        Raises ``ValueError`` if the tensor is not symmetric or has a negative eigenvalue.
         """
-        # Check symmetry
-        symmetric_diff = np.abs(tensor - tensor.T)
-        max_asymmetry = np.max(symmetric_diff)
-
-        if max_asymmetry > tolerance:
-            raise ValueError(
-                f"{self.name} must be symmetric. "
-                f"Max asymmetry |Σ - Σᵀ| = {max_asymmetry:.2e} > tolerance {tolerance:.2e}"
-            )
-
-        # Check positive semi-definite via eigenvalues
-        eigenvalues = np.linalg.eigvalsh(tensor)  # Hermitian/symmetric eigenvalues
-        min_eigenvalue = np.min(eigenvalues)
-
-        if min_eigenvalue < -tolerance:
-            raise ValueError(
-                f"{self.name} must be positive semi-definite. "
-                f"Found negative eigenvalue: λ_min = {min_eigenvalue:.6e} < 0. "
-                f"All eigenvalues: {eigenvalues}"
-            )
+        validate_symmetric_psd(tensor, name=self.name, tolerance=tolerance)
 
 
 def check_adi_compatibility(

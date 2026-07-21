@@ -152,44 +152,48 @@ def _get_bc_info_1d(
     Returns:
         Tuple (BCType, value, alpha, beta)
     """
-    from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
+    from mfgarchon.geometry.boundary.types import BoundaryFace
 
     target_face = BoundaryFace(0, "min" if side == "left" else "max")
     default_alpha, default_beta = 1.0, 0.0
 
-    # Priority 1: Try segment-based access (supports Robin with alpha/beta)
-    # Issue #946: Match via seg.face instead of string comparison
-    try:
-        for seg in bc.segments:
-            seg_face = seg.face
-            if seg_face is not None and seg_face == target_face:
-                value = seg.value
-                if callable(value):
-                    value = value(time)
-                value = value if value is not None else 0.0
-                alpha = getattr(seg, "alpha", default_alpha)
-                beta = getattr(seg, "beta", default_beta)
-                return seg.bc_type, value, alpha, beta
-        # No matching segment - use default
-        default_value = getattr(bc, "default_value", 0.0)
-        return bc.default_type, default_value, default_alpha, default_beta
-    except AttributeError:
-        pass  # No segments attribute, try unified interface
+    # Priority 1: segment-based access (supports Robin with alpha/beta).
+    # Issue #946: match via seg.face instead of string comparison.
+    for seg in bc.segments:
+        seg_face = seg.face
+        if seg_face is not None and seg_face == target_face:
+            value = seg.value
+            if callable(value):
+                value = value(time)
+            value = value if value is not None else 0.0
+            alpha = getattr(seg, "alpha", default_alpha)
+            beta = getattr(seg, "beta", default_beta)
+            return seg.bc_type, value, alpha, beta
 
-    # Priority 2: Try unified interface (get_boundary_type method)
-    # These methods still take string keys (public API)
+    # Priority 2: no segment carries this face -- fall back to the uniform default.
+    #
+    # Issue #1685: this branch read `bc.default_type` and `bc.get_boundary_type()`, neither of
+    # which exists (the real names are `default_bc` and `get_bc_type_at_boundary`). Both raised
+    # AttributeError into a bare `except: pass`, so every BC whose segments carry no face --
+    # i.e. everything built by the `uniform_bc()` family, including `dirichlet_bc(value=7.0)`
+    # and `periodic_bc()` -- silently resolved to Neumann-0 and the solve ran on boundary data
+    # the caller never asked for. The exception handlers are gone with the misspellings: a
+    # BoundaryConditions object that cannot answer these is a bug, not a fallback case.
+    # Both the type and the value go through the accessor, not through `bc.default_bc`.
+    # Reading the type from the raw attribute pairs it with a value that may come from a
+    # different segment -- e.g. default_bc=NEUMANN beside a faceless DIRICHLET segment with
+    # value=9.0 resolves to (NEUMANN, 9.0), applying du/dn = 9.0 where the caller declared
+    # u = 9.0. It also returns None when `default_bc` is unset (its declared type is
+    # `BCType | None`) and bypasses `_resolve_default_bc`, the Issue #1100 diagnostic.
     boundary_key = target_face.to_string()
-    try:
-        bc_type = bc.get_boundary_type(boundary_key)
-        bc_value = bc.get_boundary_value(boundary_key, time=time)
-        if bc_value is None:
-            bc_value = 0.0
-        return bc_type, bc_value, default_alpha, default_beta
-    except AttributeError:
-        pass
-
-    # Default to Neumann zero
-    return BCType.NEUMANN, 0.0, default_alpha, default_beta
+    bc_type = bc.get_bc_type_at_boundary(boundary_key)
+    default_value = bc.get_bc_value_at_boundary(boundary_key, time=time)
+    return (
+        bc_type,
+        0.0 if default_value is None else default_value,
+        default_alpha,
+        default_beta,
+    )
 
 
 class BaseHJBSolver(BaseNumericalSolver):
@@ -1261,7 +1265,12 @@ def solve_hjb_timestep_newton(
                 U_n_current_newton_iterate[0] = backend.array([left_value])[0]
             else:
                 U_n_current_newton_iterate[0] = left_value
-        elif left_type == BCType.NEUMANN:
+        elif left_type in (BCType.NEUMANN, BCType.NO_FLUX):
+            # Issue #1685: on the HJB side NO_FLUX *is* du/dn = 0, i.e. Neumann with a
+            # zero value -- see docs/user/guides/boundary_conditions.md. It is a distinct
+            # condition only on the FP side, where it means zero total flux J.n = 0.
+            # Previously it fell through to the else and raised, so a faced NO_FLUX
+            # segment -- a BCSegment carrying an explicit boundary -- crashed Auto Mode.
             # Neumann: Set boundary value to satisfy gradient constraint
             # Forward difference: (u[1] - u[0]) / dx = g  =>  u[0] = u[1] - g*dx
             if backend is not None:
@@ -1301,7 +1310,12 @@ def solve_hjb_timestep_newton(
                 U_n_current_newton_iterate[-1] = backend.array([right_value])[0]
             else:
                 U_n_current_newton_iterate[-1] = right_value
-        elif right_type == BCType.NEUMANN:
+        elif right_type in (BCType.NEUMANN, BCType.NO_FLUX):
+            # Issue #1685: on the HJB side NO_FLUX *is* du/dn = 0, i.e. Neumann with a
+            # zero value -- see docs/user/guides/boundary_conditions.md. It is a distinct
+            # condition only on the FP side, where it means zero total flux J.n = 0.
+            # Previously it fell through to the else and raised, so a faced NO_FLUX
+            # segment -- a BCSegment carrying an explicit boundary -- crashed Auto Mode.
             # Neumann: Set boundary value to satisfy gradient constraint
             # Backward difference: (u[-1] - u[-2]) / dx = g  =>  u[-1] = u[-2] + g*dx
             if backend is not None:

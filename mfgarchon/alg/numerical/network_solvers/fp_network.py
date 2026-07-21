@@ -23,6 +23,7 @@ Key algorithms:
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -66,11 +67,19 @@ class FPNetworkSolver(BaseFPSolver):
         Mass conservation enforced through discrete operators.
     """
 
+    # Node-BC capability gate (Issue #1468; #1456 network family). The network BC model is
+    # `NetworkMFGComponents.boundary_nodes` (a node-level Dirichlet pin applied via
+    # `NetworkMFGProblem.apply_boundary_conditions`), NOT the continuum `BCType`/segments framework —
+    # so the inherited `_validate_bc_support` (which keys on `BoundaryConditions.segments`) is a
+    # structural no-op for network problems. This solver ignores `boundary_nodes` entirely and
+    # unconditionally renormalizes total mass each step, so it cannot honor a node BC: `False`.
+    _honors_node_bc: bool = False
+
     def __init__(
         self,
         problem: NetworkMFGProblem,
         scheme: str = "explicit",
-        diffusion_coefficient: float = 0.1,
+        diffusion_coefficient: float | None = None,
         cfl_factor: float = 0.5,
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
@@ -81,8 +90,11 @@ class FPNetworkSolver(BaseFPSolver):
 
         Args:
             problem: Network MFG problem instance
-            scheme: Time discretization ("explicit", "implicit", "upwind")
-            diffusion_coefficient: Network diffusion coefficient σ²/2
+            scheme: Time discretization ("explicit" or "implicit"). "upwind"/"flow" were removed
+                (Issue #1541): "upwind" was an identity map and "flow" was never implemented.
+            diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), falls
+                back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility_field`
+                to solve_fp_system) for correct physics.
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
@@ -91,8 +103,42 @@ class FPNetworkSolver(BaseFPSolver):
         super().__init__(problem)
 
         self.network_problem = problem
+
+        # Issue #1478 (Stage 2b): the FP now HONORS the geometry-owned node-BC via the single-source
+        # GraphApplicator. ABSORBING nodes are exits (their mass leaves, m -> 0), applied to the
+        # density field each step; DIRICHLET / NEUMANN are no-ops on density. The mass renorm is gated
+        # OFF whenever the BC changes total mass (ABSORBING / SOURCE) — else it would manufacture
+        # false conservation and hide the absorption (the #1456 silent-wrong-answer class).
+        self._node_applicator = problem._node_applicator
+        self._mass_changing_bc = False
+        node_bc = problem.geometry.get_boundary_conditions()
+        if node_bc is not None:
+            from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
+
+            mass_changing = {GraphBCType.ABSORBING, GraphBCType.SOURCE}
+            self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
+
         self.scheme = scheme
-        self.diffusion_coefficient = diffusion_coefficient
+        # Issue #1541 / RFC #1574: scheme="upwind" was an identity map (the paired edge flows cancel
+        # to exactly zero net drift and the step has no diffusion term, so the density never evolves),
+        # and "flow" was never implemented. A correctly-implemented conservative upwind would be
+        # byte-identical to "explicit" (which already sources transition rates via H.optimal_control in
+        # inflow-outflow form + a diffusion term), i.e. a single-source duplicate. Fail loud at
+        # construction rather than silently returning a physics-free density (matches the #1426
+        # dead-knob precedent already in this file).
+        if scheme not in ("explicit", "implicit"):
+            raise NotImplementedError(
+                f"FPNetworkSolver(scheme={scheme!r}) is not supported (Issue #1541). Only 'explicit' "
+                f"and 'implicit' are implemented; 'upwind' was a proven identity map (no transport) "
+                f"and would duplicate 'explicit' if fixed, and 'flow' was never implemented. "
+                f"Use scheme='explicit'."
+            )
+        # Issue #1532: no silent physical default. The network diffusion D=sigma^2/2 is decoupled
+        # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
+        # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
+        # falls back to 0.1, but the solve WARNS when that fallback is silently relied on.
+        self._diffusion_was_defaulted = diffusion_coefficient is None
+        self.diffusion_coefficient = 0.1 if diffusion_coefficient is None else diffusion_coefficient
         self.cfl_factor = cfl_factor
         self.max_iterations = max_iterations
         self.tolerance = tolerance
@@ -227,7 +273,17 @@ class FPNetworkSolver(BaseFPSolver):
 
         # Handle volatility_field parameter
         if volatility_field is None:
-            # Use self.diffusion_coefficient (backward compatible)
+            # Issue #1532: warn when the physical diffusion is neither given here nor at construction
+            # — the solve then runs at the D=0.1 fallback, decoupled from the problem's physics.
+            if self._diffusion_was_defaulted:
+                warnings.warn(
+                    "FPNetworkSolver: network diffusion defaulted to D=0.1, decoupled from the "
+                    "problem's physics (NetworkMFGProblem carries no sigma). Pass "
+                    "diffusion_coefficient=... at construction or volatility_field=sigma to "
+                    "solve_fp_system for correct physics (Issue #1532).",
+                    UserWarning,
+                    stacklevel=2,
+                )
             effective_diffusion = self.diffusion_coefficient
         elif isinstance(volatility_field, (int, float)):
             # Issue #1429 (S0-15): volatility_field is the SDE volatility sigma (the base_fp
@@ -285,20 +341,23 @@ class FPNetworkSolver(BaseFPSolver):
                 # Issue #913: precompute transition rates via H.optimal_control
                 self._current_rates = self._precompute_transition_rates(M[n, :], u_current, t)
 
-                # Solve single time step
+                # Solve single time step (scheme validated to {explicit, implicit} at __init__, #1541)
                 if self.scheme == "explicit":
                     M[n + 1, :] = self._explicit_step(M[n, :], u_current, t)
-                elif self.scheme == "implicit":
+                else:  # implicit
                     M[n + 1, :] = self._implicit_step(M[n, :], u_current, t)
-                elif self.scheme == "upwind":
-                    M[n + 1, :] = self._upwind_step(M[n, :], u_current, t)
-                else:
-                    raise ValueError(f"Unknown scheme: {self.scheme}")
 
-                # Enforce non-negativity and mass conservation
+                # Enforce non-negativity
                 M[n + 1, :] = np.maximum(M[n + 1, :], 0)
 
-                if self.enforce_mass_conservation:
+                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
+                # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
+                # With an absorbing / source node the total mass legitimately changes, so renormalizing
+                # would manufacture false conservation and hide the absorption.
+                if self._node_applicator is not None:
+                    M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
+
+                if self.enforce_mass_conservation and not self._mass_changing_bc:
                     total_mass = np.sum(M[n + 1, :])
                     if total_mass > 1e-12:
                         M[n + 1, :] /= total_mass
@@ -366,30 +425,6 @@ class FPNetworkSolver(BaseFPSolver):
 
         return m_next
 
-    def _upwind_step(self, m_current: np.ndarray, u_current: np.ndarray, t: float) -> np.ndarray:
-        """Upwind scheme for network FP equation (conservation-preserving)."""
-        m_next = m_current.copy()
-
-        # Compute flows between neighboring nodes
-        for i in range(self.num_nodes):
-            neighbors = self.divergence_ops[i]
-
-            net_flow = 0.0
-
-            for j in neighbors:
-                # Compute flow from j to i
-                flow_ji = self._compute_edge_flow(j, i, m_current, u_current, t)
-                # Compute flow from i to j
-                flow_ij = self._compute_edge_flow(i, j, m_current, u_current, t)
-
-                # Net flow into node i
-                net_flow += flow_ji - flow_ij
-
-            # Update with net flow
-            m_next[i] = m_current[i] + self.dt * net_flow
-
-        return m_next
-
     def _precompute_transition_rates(self, m: np.ndarray, u: np.ndarray, t: float) -> dict:
         """Precompute transition rates alpha[i][j] for all nodes.
 
@@ -400,18 +435,18 @@ class FPNetworkSolver(BaseFPSolver):
         rates = {}
         for i in range(self.num_nodes):
             neighbors = self.divergence_ops.get(i, [])
-            if H_class is not None:
-                alpha = H_class.optimal_control(np.array([i]), m, u, t)
-                rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
-            else:
-                # Legacy: quadratic rates from value gradient
-                rates[i] = {}
-                for j in neighbors:
-                    du = u[j] - u[i]
-                    edge_weight = self.network_problem.network_data.get_edge_weight(i, j)
-                    rate = edge_weight * max(du, 0.0)
-                    if rate > 0:
-                        rates[i][j] = rate
+            if H_class is None:
+                # Issue #1474: fail loud. A NetworkMFGProblem always wires a single-source
+                # NetworkHamiltonian (`hamiltonian_class`), so this is unreachable; the old legacy
+                # branch computed the wrong-signed uphill rate `w*max(u_j-u_i,0)` (MAXIMIZE), diverging
+                # from the value Hamiltonian. Never fall back to it silently (fail-fast).
+                raise RuntimeError(
+                    "FPNetworkSolver: problem.hamiltonian_class is None. The network transition rates "
+                    "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
+                    "Ensure the NetworkMFGProblem wired its Hamiltonian."
+                )
+            alpha = H_class.optimal_control(np.array([i]), m, u, t)
+            rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 
     def _compute_drift_term(self, node: int, m: np.ndarray, u: np.ndarray, t: float) -> float:
@@ -428,75 +463,32 @@ class FPNetworkSolver(BaseFPSolver):
             )
             return inflow - outflow
 
-        # Legacy fallback
-        neighbors = self.divergence_ops.get(node, [])
-        drift = 0.0
-        for neighbor in neighbors:
-            du = u[neighbor] - u[node]
-            edge_weight = self.network_problem.network_data.get_edge_weight(node, neighbor)
-            drift += edge_weight * m[node] * du
-        return drift
-
-    def _compute_edge_flow(self, node_from: int, node_to: int, m: np.ndarray, u: np.ndarray, t: float) -> float:
-        """Compute flow along edge from node_from to node_to."""
-        if node_from == node_to:
-            return 0.0
-
-        # Check if edge exists
-        edge_weight = self.network_problem.network_data.get_edge_weight(node_from, node_to)
-        if edge_weight == 0:
-            return 0.0
-
-        # Upwind density selection
-        du = u[node_to] - u[node_from]
-
-        if du > 0:  # Flow from node_from to node_to
-            density = m[node_from]
-        else:  # Flow from node_to to node_from
-            density = m[node_to]
-            du = -du
-
-        # Flow magnitude
-        flow = edge_weight * density * du
-
-        return flow
+        # Issue #1546 / #1474: no silent legacy fallback. solve_fp_system always precomputes
+        # self._current_rates (via H.optimal_control) before each step, so reaching here means the
+        # caller stepped without precomputing (the removed forward_step path). The old fallback used
+        # the wrong-signed, non-conservative uphill drift `w*m[node]*(u_j-u_i)` that #1474 replaced;
+        # fail loud instead of resurrecting it.
+        raise RuntimeError(
+            "FPNetworkSolver._compute_drift_term: transition rates were not precomputed "
+            "(self._current_rates is None). Call solve_fp_system (which precomputes rates via "
+            "H.optimal_control each step) rather than stepping directly (Issue #1546 / #1474)."
+        )
 
     def forward_step(self, m_prev: np.ndarray, u_current: np.ndarray, dt: float) -> np.ndarray:
+        """Single forward time step — NOT IMPLEMENTED (Issue #1546).
+
+        This "interface compatibility" stub never called _precompute_transition_rates, so it (a) hit
+        the wrong-signed legacy drift on a fresh solver and (b) reused stale last-timestep rates after
+        a solve, and it also skipped the geometry-owned node-BC (_node_applicator.apply_fp) and the
+        #1478 mass-changing-BC renorm gate, manufacturing false conservation under an ABSORBING node.
+        It has no callers. Rather than ship a silently-wrong single-step API, fail loud; use
+        solve_fp_system, which precomputes rates and honors the node BC each step.
         """
-        Single forward time step (interface compatibility).
-
-        Args:
-            m_prev: Density at previous time step
-            u_current: Current value function
-            dt: Time step size
-
-        Returns:
-            Updated density distribution
-        """
-        # Temporarily adjust dt for this step
-        original_dt = self.dt
-        self.dt = dt
-
-        t = 0.0  # Dummy time (should be passed properly in full implementation)
-
-        if self.scheme == "explicit":
-            result = self._explicit_step(m_prev, u_current, t)
-        elif self.scheme == "implicit":
-            result = self._implicit_step(m_prev, u_current, t)
-        else:
-            result = self._upwind_step(m_prev, u_current, t)
-
-        # Restore original dt
-        self.dt = original_dt
-
-        # Enforce constraints
-        result = np.maximum(result, 0)
-        if self.enforce_mass_conservation:
-            total_mass = np.sum(result)
-            if total_mass > 1e-12:
-                result /= total_mass
-
-        return result
+        raise NotImplementedError(
+            "FPNetworkSolver.forward_step is not implemented consistently with solve_fp_system "
+            "(it skips rate precomputation and the node-BC / mass-renorm gate, Issue #1546). "
+            "Use solve_fp_system(M_initial=..., ...) for network FP time stepping."
+        )
 
 
 # Alias for backward compatibility

@@ -436,13 +436,20 @@ class MeanFieldSAC:
 
             done = False
             while not done:
-                # Get population state
-                # Backend compatibility - gym environment API (Issue #543 acceptable)
-                # hasattr checks for optional get_population_state() method on MFG environments
-                if hasattr(self.env, "get_population_state"):
-                    pop_state = self.env.get_population_state().density_histogram.flatten()
-                else:
-                    pop_state = np.zeros(self.population_dim)
+                # Get population state. Issue #1508: get_population_state is a REQUIRED capability of a
+                # mean-field env, NOT optional backend detection. The former hasattr -> np.zeros fallback
+                # silently trained on an identically-zero mean field (the coupling channel that DEFINES a
+                # mean-field game), returning a policy the user trusts while MFG was never active. Fail
+                # loud (getattr + callable, per the repo's no-hasattr-duck-typing rule).
+                _pop_getter = getattr(self.env, "get_population_state", None)
+                if not callable(_pop_getter):
+                    raise AttributeError(
+                        f"{type(self.env).__name__} has no get_population_state(): a mean-field RL env "
+                        f"must expose the population density (the MFG coupling channel). A zero fallback "
+                        f"would train on an identically-zero mean field and silently return a non-MFG "
+                        f"policy (Issue #1508)."
+                    )
+                pop_state = _pop_getter()  # #1570: get_population_state() returns a flat NDArray for every env
 
                 # Select action (stochastic during training)
                 action = self.select_action(state, pop_state, training=True)
@@ -451,12 +458,11 @@ class MeanFieldSAC:
                 next_observations, reward, terminated, truncated, _ = self.env.step(action)
                 next_state = next_observations[0] if isinstance(next_observations, list | tuple) else next_observations
 
-                # Get next population state
-                # Backend compatibility - gym environment API (Issue #543 acceptable)
-                if hasattr(self.env, "get_population_state"):
-                    next_pop_state = self.env.get_population_state().density_histogram.flatten()
-                else:
-                    next_pop_state = np.zeros(self.population_dim)
+                # Get next population state (required capability; see above, Issue #1508).
+                _pop_getter = getattr(self.env, "get_population_state", None)
+                if not callable(_pop_getter):
+                    raise AttributeError(f"{type(self.env).__name__} has no get_population_state() (Issue #1508).")
+                next_pop_state = _pop_getter()  # #1570: get_population_state() returns a flat NDArray for every env
 
                 # Store transition
                 if isinstance(reward, int | float | np.floating):

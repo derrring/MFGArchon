@@ -583,10 +583,35 @@ class MeanFieldActorCritic:
         return obs[: self.state_dim] if len(obs) > self.state_dim else obs
 
     def _extract_population(self, obs: dict | np.ndarray) -> np.ndarray:
-        """Extract population state from observation."""
+        """Extract the population (mean-field) state from an observation.
+
+        Issue #1568 (extends #1508): a zero-filled population is the silent non-MFG failure that
+        #1508 made DDPG/TD3/SAC raise on -- training on an identically-zero mean field returns a
+        policy the user trusts as MFG-coupled when the coupling channel was never present. This
+        algorithm reads the population from the OBSERVATION (it does not query
+        ``env.get_population_state()``), so it must fail loud when the observation carries no
+        population channel instead of zero-filling.
+        """
         if isinstance(obs, dict):
-            return obs.get("local_density", obs.get("population", np.zeros(self.population_dim)))
-        return obs[self.state_dim :] if len(obs) > self.state_dim else np.zeros(self.population_dim)
+            pop = obs.get("local_density", obs.get("population"))
+            if pop is not None:
+                return pop
+        elif len(obs) > self.state_dim:
+            return obs[self.state_dim :]
+
+        has_env_getter = callable(getattr(self.env, "get_population_state", None))
+        hint = (
+            "The env exposes get_population_state(), but MeanFieldActorCritic reads the population "
+            "from the observation, not from that method -- embed the population channel in the "
+            "observation (dict key 'local_density'/'population', or as a tail slice past state_dim)."
+            if has_env_getter
+            else "The env exposes no get_population_state() and the observation carries no population."
+        )
+        raise AttributeError(
+            "MeanFieldActorCritic observation carries no population (mean-field) channel. A zero "
+            "fallback would train on an identically-zero mean field and silently return a non-MFG "
+            f"policy (Issue #1508/#1568). {hint}"
+        )
 
     def save(self, path: str) -> None:
         """Save model checkpoint."""

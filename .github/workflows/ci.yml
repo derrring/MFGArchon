@@ -57,7 +57,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -108,7 +108,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -134,47 +134,14 @@ jobs:
         mypy mfgarchon/config --follow-imports=silent
         echo "✅ config type-checks clean"
 
-    - name: Documentation completeness check
-      run: |
-        echo "📚 Checking documentation completeness..."
-        python -c "
-        import ast
-        from pathlib import Path
-
-        def check_docstrings(file_path):
-            with open(file_path, 'r') as f:
-                tree = ast.parse(f.read())
-
-            missing = []
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    if not node.name.startswith('_'):  # Public only
-                        if not ast.get_docstring(node):
-                            missing.append(f'{file_path}:{node.lineno}:{node.name}')
-            return missing
-
-        all_missing = []
-        for py_file in Path('mfgarchon').rglob('*.py'):
-            if '__pycache__' not in str(py_file):
-                missing = check_docstrings(py_file)
-                all_missing.extend(missing)
-
-        if all_missing:
-            print('⚠️  Missing docstrings (tracked but not blocking):')
-            for missing in all_missing[:5]:
-                print(f'   {missing}')
-            if len(all_missing) > 5:
-                print(f'   ... and {len(all_missing) - 5} more')
-        else:
-            print('✅ All public functions and classes have docstrings')
-        "
-
-  # === PHASE 2: Test Suite ===
   test-suite:
-    name: Test Suite
+    # NOT the test suite. On PRs this runs a smoke subset only; the authoritative
+    # full run is scripts/local_ci.sh (see CLAUDE.md, "CI shape"). Naming it
+    # "Test Suite" made a green check read as "your tests passed", which is false.
+    name: Smoke subset (NOT the full suite)
     runs-on: ubuntu-latest
     needs: import-validation
-    timeout-minutes: 45  # Comprehensive serial test suite (~4770 tests; see PR step budget below)
+    timeout-minutes: 45  # release path runs the full suite; the PR path is a smoke subset
 
     strategy:
       fail-fast: true  # Stop on first failure
@@ -184,7 +151,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -201,27 +168,24 @@ jobs:
         echo "Testing package imports..."
         python -c "import mfgarchon; print('✅ Package imports successfully')"
 
-    - name: Run tests with coverage (skip slow tests on PRs)
+    # PR path: a SMOKE subset, not the full suite. The full run is the local gate
+    # (scripts/local_ci.sh, ~2.5 min) plus nightly.yml. Measured 2026-07-19: the
+    # full suite is ~141 s locally and exceeded the 25-min step budget here --
+    # coverage accounts for 1.5x, the runner itself for the rest. Online execution
+    # of the full suite was buying latency, not signal.
+    - name: Smoke tests (fast subset; the full suite is the local gate + nightly)
       if: github.event_name != 'release'
-      timeout-minutes: 25  # parallel (-n auto) suite under coverage; ~2.3x faster than the old 38-min serial budget
+      timeout-minutes: 12
       env:
-        # Pin BLAS/OpenMP to 1 thread per worker: xdist already saturates cores,
-        # so per-process BLAS parallelism would oversubscribe and slow the run.
         OMP_NUM_THREADS: 1
         OPENBLAS_NUM_THREADS: 1
         MKL_NUM_THREADS: 1
       run: |
-        # Note: test_backends/ and test_visualization/ excluded due to platform-specific failures
-        # (MPS device tests on non-Mac, legacy plotting issues)
-        # -n auto: pytest-xdist parallelism. Confirmed equivalent to serial
-        # (same pass/skip/xfail counts, no isolation failures) before enabling.
-        pytest tests/ -v \
+        pytest tests/unit/test_core tests/unit/test_config -v \
           -n auto \
-          --ignore=tests/unit/test_backends/ \
-          --ignore=tests/unit/test_visualization/ \
           -m "not slow and not optional_torch and not benchmark and not experimental and not environment" \
-          --cov=mfgarchon --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --maxfail=50 \
-          --durations=20
+          --junitxml=junit.xml -o junit_family=legacy --maxfail=10 \
+          --durations=10
 
     - name: Run all tests with coverage (including slow tests on releases)
       if: github.event_name == 'release'
@@ -230,7 +194,8 @@ jobs:
         pytest tests/ -v --cov=mfgarchon --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --maxfail=50 --durations=20
 
     - name: Upload coverage reports to Codecov
-      if: ${{ !cancelled() }}
+      # coverage.xml is produced only by the release step; on PRs this found 0 files and passed
+      if: ${{ !cancelled() && github.event_name == 'release' }}
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -259,7 +224,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -329,9 +294,9 @@ jobs:
         echo "🔍 Validating parameter migration system..."
         python -c "
         from mfgarchon.utils.parameter_migration import global_parameter_migrator
-        print(f'✅ Parameter migration system loaded with {len(global_parameter_migrator.mappings)} mappings')
+        assert len(global_parameter_migrator.mappings) > 0, 'parameter migration registry is empty'; print(f'✅ Parameter migration system loaded with {len(global_parameter_migrator.mappings)} mappings')
         print('📋 Migration system operational for runtime parameter conversion')
-        " || true
+        "
 
   # === PHASE 3: Security Scanning (Conditional) ===
   security-scan:
@@ -346,7 +311,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -393,7 +358,7 @@ jobs:
   integration-tests:
     name: Integration Testing
     runs-on: ubuntu-latest
-    needs: [import-validation, test-suite, performance-check]
+    needs: [import-validation]
     timeout-minutes: 30  # Timeout for integration tests (includes slow tests)
     if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
 
@@ -406,7 +371,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
@@ -454,7 +419,7 @@ jobs:
   build-validation:
     name: Build & Distribution
     runs-on: ubuntu-latest
-    needs: [import-validation, test-suite, performance-check]
+    needs: [import-validation]
     timeout-minutes: 15  # Timeout for build validation
     if: ${{ github.event_name == 'release' }}
 
@@ -463,7 +428,7 @@ jobs:
       uses: actions/checkout@v7
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
@@ -518,37 +483,3 @@ jobs:
         retention-days: 30
 
   # === PHASE 6: Summary Report ===
-  ci-summary:
-    name: CI/CD Summary
-    runs-on: ubuntu-latest
-    needs: [import-validation, test-suite, performance-check]
-    if: always()
-
-    steps:
-    - name: Generate CI summary
-      run: |
-        echo "# 🚀 MFGArchon CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Build Information" >> $GITHUB_STEP_SUMMARY
-        echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Python Version**: ${{ env.PYTHON_VERSION }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Quality Gates" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Code Quality**: Ruff formatting and linting" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Type Safety**: Mypy type checking" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Performance**: Memory and execution validation" >> $GITHUB_STEP_SUMMARY
-
-        if [[ "${{ github.event_name }}" == "release" || "${{ github.event.inputs.run_security_scan }}" == "true" ]]; then
-          echo "- ✅ **Security**: Comprehensive scanning completed" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- ⏭️ **Security**: Skipped (not a release)" >> $GITHUB_STEP_SUMMARY
-        fi
-
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Modern Tooling Benefits" >> $GITHUB_STEP_SUMMARY
-        echo "- 🚀 **10-100x faster** than legacy multi-tool workflows" >> $GITHUB_STEP_SUMMARY
-        echo "- 🔧 **Unified configuration** in pyproject.toml" >> $GITHUB_STEP_SUMMARY
-        echo "- 🎯 **Smart triggering** optimized for cost efficiency" >> $GITHUB_STEP_SUMMARY
-        echo "- 📊 **Comprehensive reporting** with actionable insights" >> $GITHUB_STEP_SUMMARY

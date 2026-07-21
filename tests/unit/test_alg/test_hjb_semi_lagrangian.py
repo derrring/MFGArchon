@@ -166,9 +166,6 @@ class TestHJBSemiLagrangianSolveHJBSystem:
 class TestHJBSemiLagrangianNumericalProperties:
     """Test numerical properties of the semi-Lagrangian method."""
 
-    @pytest.mark.skip(
-        reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations (Issue #600)"
-    )
     def test_solution_finiteness(self):
         """Test that solution remains finite throughout."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -187,7 +184,6 @@ class TestHJBSemiLagrangianNumericalProperties:
         # All values should be finite
         assert np.all(np.isfinite(U_solution))
 
-    @pytest.mark.skip(reason="Semi-Lagrangian method can have numerical overflow issues with certain configurations")
     def test_solution_smoothness(self):
         """Test that solution has reasonable smoothness."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -203,9 +199,24 @@ class TestHJBSemiLagrangianNumericalProperties:
 
         U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
-        # Check spatial smoothness - finite differences shouldn't be too large
-        U_diff = np.diff(U_solution, axis=1)
-        assert np.max(np.abs(U_diff)) < 100.0
+        # The solution should be no rougher than the terminal data it propagates back from.
+        # A hardcoded bound does not express this: the previous 100.0 sat 9626x above the
+        # measured value, so the solve had to degrade by four orders of magnitude to fail it.
+        # Scaling to the terminal condition tracks the grid: the ratio stays in 1.03-1.09 over
+        # Nx 31-101 with Nt = Nx-1, so 2x leaves ~1.85x headroom. It catches a linear-to-
+        # nearest interpolation regression (hjb_semi_lagrangian.py:1149) at every one of those
+        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's Nt = Nx-1 convention,
+        # which every sibling test at T = 1.0 uses (27 of 27; the 16 that do not are all at
+        # T < 1.0 and pin Nt at 20). Pinning Nt at 50 while varying Nx breaks the
+        # correspondence and the catch becomes intermittent -- a property of that sweep,
+        # not of the bound.
+        terminal_roughness = np.max(np.abs(np.diff(U_final)))
+        solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
+        assert solution_roughness < 2 * terminal_roughness, (
+            f"solution roughness {solution_roughness:.3e} exceeds 2x the terminal data's "
+            f"{terminal_roughness:.3e}; healthy ratio is 1.03-1.09 over Nx 31-101, and a "
+            f"linear-to-nearest interpolation regression reaches 2.62-3.17 over that range"
+        )
 
 
 class TestHJBSemiLagrangianIntegration:
@@ -493,9 +504,32 @@ class TestInterpolationMethods:
         rel_error = np.linalg.norm(U_cubic - U_linear) / np.linalg.norm(U_linear)
         assert rel_error < 0.25  # Within 25% (updated after gradient fix)
 
-    @pytest.mark.xfail(reason="Cubic interpolation produces NaN values - see issue #583")
     def test_cubic_improves_smoothness(self):
-        """Test that cubic interpolation produces smoother solutions."""
+        """Cubic interpolation is not markedly rougher than linear, measured on second differences.
+
+        Formerly ``@pytest.mark.xfail(reason="Cubic interpolation produces NaN values - see
+        issue #583")``. #583 is CLOSED and the test passes, so the marker was stale; it had been
+        XPASSing unnoticed because pytest.ini set no ``xfail_strict`` (Issue #1663).
+
+        **Why it passes is not established.** An earlier version of this docstring asserted that
+        #583's fix -- routing ``interpolation_method='cubic'`` through PCHIP rather than a natural
+        cubic spline (``hjb_sl_interpolation.py:79-86``) -- was the reason. That is refuted by
+        counterfactual: aliasing ``PchipInterpolator`` to ``scipy.interpolate.CubicSpline`` and
+        re-running leaves this class **passing** (5 passed). PCHIP dispatch is real and
+        deliberate, but it is not what makes this test green. #583's own remaining-work note
+        attributes the NaNs to ``p**2`` overflow rather than to Runge oscillations. Do not
+        substitute a mechanism here without testing it.
+
+        The name is restored: a previous rename to ``..._produces_a_finite_solution`` described
+        the body as asserting "finiteness and a shape, never smoothness, and never comparing
+        against a non-cubic run". All three clauses were false -- the body builds a
+        ``interpolation_method='linear'`` solver, computes ``mean|second difference|`` for both,
+        and asserts ``smoothness_cubic < smoothness_linear * 2.0``. The original name was the
+        more accurate of the two.
+
+        What is fair to say about the assertion: the ``* 2.0`` slack makes it a
+        not-much-worse check rather than an improves check.
+        """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=20, components=_default_components())
 
@@ -563,9 +597,24 @@ class TestRBFInterpolationFallback:
             solver = HJBSemiLagrangianSolver(problem, use_rbf_fallback=True, rbf_kernel=kernel)
             assert solver.rbf_kernel == kernel
 
-    @pytest.mark.xfail(reason="Numerical instability with RBF thin_plate_spline on steep gradients - see Issue #583")
-    def test_rbf_fallback_produces_valid_solution(self):
-        """Test that solver with RBF fallback produces valid solution."""
+    def test_enabling_rbf_fallback_does_not_break_the_solve(self):
+        """Enabling ``use_rbf_fallback`` leaves an ordinary 1D solve finite -- and the flag is INERT here.
+
+        Formerly ``@pytest.mark.xfail(reason="Numerical instability with RBF thin_plate_spline on
+        steep gradients - see Issue #583")``, XPASSing silently for want of ``xfail_strict``
+        (Issue #1663). That reason described a path this test never enters.
+
+        Counter instrumentation over this exact configuration records
+        ``interpolate_value_rbf_fallback`` invoked **0** times against ``interpolate_value_1d``
+        **5177** times. Code-traced: ``hjb_semi_lagrangian.py`` returns ``interpolate_value_1d``
+        unconditionally on the 1D branch, and the only RBF call site is in the nD ``else``. So in
+        1D the flag is structurally inert -- this test would pass identically with
+        ``use_rbf_fallback=False``, or with the RBF function deleted.
+
+        Kept, narrowly, as a regression pin that constructing with the flag does not break the
+        solve. It is largely redundant with ``test_rbf_consistency_with_no_fallback``, which at
+        least compares two runs. That RBF has no test reaching it at all is Issue #1664.
+        """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
         solver = HJBSemiLagrangianSolver(

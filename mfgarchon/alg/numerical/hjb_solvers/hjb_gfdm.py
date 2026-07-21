@@ -272,7 +272,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         k_neighbors: int | None = None,
         neighborhood_mode: str = "hybrid",
         # New GFDM infrastructure parameters
-        derivative_method: str = "taylor",  # "taylor" or "rbf"
+        derivative_method: str = "taylor",  # "taylor"; "rbf" unsupported since #1526 (raises, #1553)
         rbf_kernel: str = "phs3",  # For RBF-FD: "phs3", "phs5", "gaussian"
         rbf_poly_degree: int = 2,  # Polynomial augmentation degree for RBF-FD
         use_new_infrastructure: bool = True,  # Use new Strategy Pattern (recommended)
@@ -387,8 +387,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 - "hybrid": Use delta, but ensure at least k neighbors (default, most robust)
             derivative_method: Method for computing spatial derivatives:
                 - "taylor": Standard GFDM with Taylor polynomial basis (default)
-                - "rbf": RBF-FD with polyharmonic splines (better conditioning)
-            rbf_kernel: Kernel for RBF-FD method (only used when derivative_method="rbf"):
+                - "rbf": UNSUPPORTED since #1526 (raises NotImplementedError, Issue #1553) --
+                  the RBF branch has no working differentiation-weight builder. Use "taylor".
+            rbf_kernel: Kernel for RBF-FD method (reserved for the future "rbf" build-out, #1553):
                 - "phs3": r³ polyharmonic spline (most common)
                 - "phs5": r⁵ polyharmonic spline (higher accuracy)
                 - "gaussian": Gaussian RBF (requires shape parameter tuning)
@@ -779,6 +780,21 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Store new infrastructure parameters
         self._use_new_infrastructure = use_new_infrastructure
+        # Issue #1553: fail loud at construction rather than deep in Newton-Jacobian assembly.
+        # (An unrecognized derivative_method is already rejected at construction by the operator
+        # dispatch's else-branch below, so only 'rbf' needs an explicit guard here.)
+        # Since #1526 the non-LCR weight path routes through NeighborhoodBuilder's Taylor-SVD builder,
+        # which consumes SVD factors LocalRBFOperator.get_taylor_data does not provide (a dummy shim
+        # returning None), so every real 'rbf' solve raises an undiagnostic
+        # ``'NoneType' object has no attribute 'T'``. Repairing it also owes threading obstacle_sdf
+        # (the pre-#1124 wall-coupling seam). Until a genuine RBF weight-builder + convergence test
+        # lands, 'rbf' is unsupported: a half-working parallel path is worse than none.
+        if derivative_method == "rbf":
+            raise NotImplementedError(
+                "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the "
+                "RBF branch has no working differentiation-weight builder and would reopen the #1124 "
+                "obstacle seam. Use derivative_method='taylor' (the default)."
+            )
         self._derivative_method = derivative_method
         self._rbf_kernel = rbf_kernel
         self._rbf_poly_degree = rbf_poly_degree
@@ -1084,13 +1100,19 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if stats.get("n_enlarged", 0) > 0
                 else ""
             )
+            # Issue #1565: the SOCP loop iterates INTERIOR indices only, and the M-matrix-QP
+            # precompute buffer is BOUNDARY-only, so an SOCP-infeasible interior node matches
+            # neither has_stencil branch at solve time and falls through to the bare (non-monotone)
+            # Wendland-Taylor LSQ weights — NOT a Phase-2 M-matrix QP (which never covers interior
+            # nodes). Report the real fallback so the monotone fraction is not over-stated.
             logger.info(
                 f"Precomputed joint SOCP stencils: feasible {stats['n_feasible']}/"
                 f"{stats['n_interior']} interior "
                 f"({stats['n_fast_path']} via Wendland-LSQ fast-path, "
                 f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}{relax_fb_msg}) in "
-                f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} fall "
-                f"back to M-matrix QP (Phase 2)"
+                f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} interior node(s) "
+                f"fall through to bare Wendland-Taylor LSQ (NON-MONOTONE; no Phase-2 QP covers "
+                f"interior nodes)"
             )
 
         # Initialize precomputed M-matrix QP stencils at boundary nodes.
@@ -1660,7 +1682,20 @@ class HJBGFDMSolver(BaseHJBSolver):
                     # Legacy fallback
                     weights = self._compute_derivative_weights_from_taylor(i)
             else:
-                weights = self._gfdm_operator.get_derivative_weights(i)
+                # Issue #1427: route non-LCR points through the adaptive-aware builder so
+                # D_lap/D_grad and self.neighborhoods share ONE source. On the default
+                # adaptive_neighborhoods=False path the builder reuses the operator's SVD
+                # verbatim, so this is byte-identical (verified: non-LCR grad/lap diff == 0.0).
+                # When adaptive enlargement fires, the builder reflects the ENLARGED
+                # neighborhood (self.neighborhoods[i]); the operator's pre-adaptive weights
+                # would silently diverge from it. Fall back to the operator only when the
+                # builder has no SVD Taylor data (QR-fallback stencils) — byte-identical there.
+                if self._neighborhood_builder is not None:
+                    weights = self._neighborhood_builder.compute_derivative_weights_from_taylor(i)
+                    if weights is None:
+                        weights = self._gfdm_operator.get_derivative_weights(i)
+                else:
+                    weights = self._gfdm_operator.get_derivative_weights(i)
 
             if weights is None:
                 continue

@@ -29,6 +29,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -78,6 +79,22 @@ class FPGFDMSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.GFDM
 
+    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type handles no-flux / Neumann /
+    # periodic and returns None (silently) for everything else; declare exactly those so
+    # Dirichlet / Robin / Reflecting / Extrapolation fail loud instead.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+
+    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
+    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
+    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
+    #: silently discarded. Flip this to True in the same commit that implements it.
+    honors_inhomogeneous_neumann: bool = False
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """BC types this solver supports (BoundaryCapable protocol)."""
+        return self._SUPPORTED_BC_TYPES
+
     def __init__(
         self,
         problem: MFGProblem,
@@ -91,6 +108,9 @@ class FPGFDMSolver(BaseFPSolver):
         boundary_conditions: BoundaryConditions | None = None,
         upwind_scheme: str = "none",
         upwind_strength: float = 0.5,
+        obstacle_sdf: object | None = None,
+        visibility_samples: int = 10,
+        visibility_margin: float = 0.0,
     ):
         """
         Initialize GFDM-based FP solver.
@@ -140,15 +160,26 @@ class FPGFDMSolver(BaseFPSolver):
             boundary_conditions=boundary_conditions,
             boundary_type_str=boundary_type,
         )
+        # Issue #1456: fail loud if the resolved BC requests a type GFDM cannot honor —
+        # _resolve_boundary_type returns None (silently) for Dirichlet/Robin/Reflecting/Extrapolation.
+        _bc_for_gate = boundary_conditions if boundary_conditions is not None else self.get_boundary_conditions()
+        self._validate_bc_support(_bc_for_gate)
 
         # Create GFDM operator using TaylorOperator (Strategy Pattern, Issue #844)
         # TaylorOperator handles neighborhoods and derivative weights
         # BC is handled externally (no ghost particles — cleaner separation)
+        # Issue #1556: thread the obstacle SDF into the operator so the FP density derivatives
+        # (D_lap / D_grad) respect obstacle connectivity, exactly like the HJB-GFDM side (#1124).
+        # Without it, in a coupled obstacle-cloud solve the FP stencils couple through walls while
+        # the HJB stencils are visibility-filtered — asymmetric physics.
         self.gfdm_operator = TaylorOperator(
             points=self.collocation_points,
             delta=self.delta,
             taylor_order=taylor_order,
             weight_function=weight_function,
+            obstacle_sdf=obstacle_sdf,
+            visibility_samples=visibility_samples,
+            visibility_margin=visibility_margin,
         )
         # Store boundary info for solver-level BC enforcement
         self._boundary_indices = boundary_indices

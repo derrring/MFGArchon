@@ -1,924 +1,251 @@
-# Claude Code Preferences for MFGArchon
+# MFGArchon — Claude Code project instructions
 
-This file contains preferences and conventions for Claude Code when working with the MFGArchon repository.
+@~/code/dotfiles/agent_axiom/domains/cs/_core.md
+@~/code/dotfiles/agent_axiom/domains/cs/python.md
+@~/code/dotfiles/agent_axiom/domains/math/_core.md
+@~/code/dotfiles/agent_axiom/domains/math/mfg.md
 
-## ⚠️ **Communication Principles**
-
-**Objectivity and Honesty**:
-- ❌ **NO flattery, NO superlatives, NO praise**
-- ✅ **Factual, technical, honest assessment** of code and results
-- ✅ **Point out issues, limitations, and areas needing improvement**
-- ✅ **Acknowledge uncertainty**: "This may have issues", "Needs validation"
-
-**Example**: Say "Implementation complete. Validation needed" not "Excellent work! This implementation is amazing!"
-
-**Rationale**: Research and production code require objective critique, not encouragement.
+> **Composition.** The global `~/.claude/CLAUDE.md` already loads the axiom **kernel + tools + audit mode**; the four imports above add the **CS + MFG domains**. **Universal behavior lives in the axiom, not here** — do not restate it in this file. Already owned by the axiom (`core/00_kernel.md`, `modes/audit.md`, `domains/cs/python.md`):
+> - cold, honest, no-flattery stance;
+> - fail-fast / no-silent-fallback / no-over-defensive-guards;
+> - no `hasattr()` duck typing → `getattr(o,"x",None)` + `callable`/Protocol/ABC;
+> - testing discipline ("coverage = paths whose failure you'd catch", edge/stress/failure cases);
+> - single-source-of-truth (one owner + pinning test for any quantity computed on ≥2 paths);
+> - scope discipline (no premature abstraction/convenience), doc status tags (`[SUPERSEDED]` etc.).
+>
+> This file holds **only what is true for THIS repo**. A new universal pattern starts here as a project override and graduates into the axiom after it recurs across N≥3 repos (`agent_axiom/README.md` § Editing protocol).
 
 ---
 
-## 🎯 **Repository Mission & Scope** ⚠️ **CRITICAL**
+## 🎯 Repository Mission & Scope ⚠️ CRITICAL
 
-### **MFGArchon: Public Infrastructure Package**
+### MFGArchon: Public Infrastructure Package
 Production-ready infrastructure for Mean Field Games research and applications.
 
-**Scope**:
-- ✅ Core infrastructure (solvers, backends, config, geometry, workflow, visualization)
-- ✅ Classical algorithms (FDM, FEM, GFDM, DGM, PINN, Actor-Critic, PPO)
-- ✅ Standard examples (LQ, crowd motion, traffic flow, tutorials)
+**Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical algorithms (FDM, FEM, GFDM, DGM, PINN, Actor-Critic, PPO); ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
 
-### **MFG-Research: Private Research Repository**
-Novel research, experimental algorithms, unpublished methods.
+### MFG-Research: Private Research Repository
+Novel/experimental algorithms, unpublished methods. **Key principle**: MFG-Research **imports** MFGArchon but **never modifies** it.
 
-**Scope**:
-- 🔬 Research algorithms (novel schemes, experimental architectures)
-- 🔬 Research applications (case studies, parameter studies, publications)
-
-**Key Principle**: MFG-Research **imports** MFGArchon but **never modifies** it.
-
-### **Decision Criteria**
+### Decision criteria
 
 | Criterion | MFGArchon (Public) | MFG-Research (Private) |
 |:----------|:-----------------|:-----------------------|
-| **Maturity** | Production-ready, tested | Experimental |
-| **Publication** | Published methods | Unpublished |
-| **Stability** | Stable API, versioned | Breaking changes OK |
-| **Documentation** | Comprehensive | Minimal |
-| **Testing** | Full coverage | Exploratory |
+| Maturity | Production-ready, tested | Experimental |
+| Publication | Published methods | Unpublished |
+| Stability | Stable API, versioned | Breaking changes OK |
+| Documentation | Comprehensive | Minimal |
+| Testing | Full coverage | Exploratory |
 
-### **Migration Path: Research → Infrastructure**
-When research matures: Add tests, write docs, ensure API consistency, open PR in MFGArchon.
+**Migration (research → infra)**: when research matures — add tests, write docs, ensure API consistency, open a PR in MFGArchon.
 
-### **Bug Fixes from Research** ⚠️ **CRITICAL**
-When bugs are discovered and validated in mfg-research:
-
-**Requirements before modifying MFGArchon**:
-1. GitHub issue created with quantified validation evidence
-2. Standalone validation experiment in mfg-research demonstrating the fix
-3. Discussion and approval of approach
-4. Reference to validation experiment in code comments
-
-**Code Comment Format**:
+### Bug fixes from research ⚠️ CRITICAL
+Before modifying MFGArchon for a bug found in mfg-research:
+1. GitHub issue with quantified validation evidence.
+2. Standalone validation experiment in mfg-research demonstrating the fix.
+3. Discussion + approval of approach.
+4. Reference the validation experiment in code comments:
 ```python
 # Issue #542 fix. Validated in:
 # mfg-research/experiments/crowd_evacuation_2d/runners/exp14b_fdm_bc_fix_validation.py
-# Achieves 23x error reduction (47.98% -> 2.06%) for 1D corridor evacuation problem.
+# Achieves 23x error reduction (47.98% -> 2.06%) for 1D corridor evacuation.
 ```
-
-**Principles**:
-- ❌ Don't add legacy fallbacks - use mature utilities directly
-- ❌ Don't make broad changes without discussion
-- ✅ Keep changes minimal and focused
-- ✅ Run tests before and after changes
-- ✅ Verify by re-running research experiments
+Keep changes minimal + focused; no legacy fallbacks (use mature utilities directly); run tests before and after; verify by re-running the research experiment.
 
 ---
 
-## 🎨 **API Design Principles** ⚠️ **CRITICAL**
+## 🏗️ Repository Structure
 
-### **No Premature Convenience**
-Do NOT add convenience wrappers, factory shortcuts, or "easy modes" until the core API is stable and mature.
+**Top-level**: `mfgarchon/` (package), `tests/` (unit + integration only), `benchmarks/` (perf scripts), `examples/` (`basic/ advanced/ notebooks/ tutorials/`), `docs/`, `archive/` (historical — do not modify).
 
-**Why**: Premature convenience creates technical debt, confuses users, and obscures the actual API.
+**Package** (`mfgarchon/`): `alg/ backends/ config/ core/ factory/ geometry/ hooks/ solvers/ types/ utils/ visualization/ workflow/ compat/ meta/`.
 
-**Anti-patterns to avoid**:
-- ❌ Multiple ways to do the same thing (`solve_mfg()` vs `create_solver().solve()`)
-- ❌ Magic parameters (`method="fast"` vs explicit `tolerance=1e-4`)
-- ❌ Wrapper functions that hide the real API
-- ❌ Factory explosion (8 solver factories when 1 suffices)
+---
 
-**Correct approach**:
-- ✅ One clear path: `problem.solve()`
-- ✅ Explicit parameters: `tolerance=1e-6, max_iterations=100`
-- ✅ Domain model IS the API: `MFGProblem` knows how to solve itself
-- ✅ Advanced options via composition, not factory proliferation
+## 🎨 MFGArchon-specific conventions
 
-### **Primary API Pattern**
+### Primary API pattern
+The domain model **is** the API (kernel scope discipline: no premature convenience/factory explosion — wrappers wait until post-1.0):
 ```python
-# The primary API is simple and direct
 problem = MFGProblem(...)
 result = problem.solve()
-
-# Customization via explicit parameters
-result = problem.solve(max_iterations=200, tolerance=1e-8)
-
-# Advanced: Factory API only when truly needed
-solver = create_standard_solver(problem, custom_config=config)
+result = problem.solve(max_iterations=200, tolerance=1e-8)   # explicit params, not magic "mode=" strings
+solver = create_standard_solver(problem, custom_config=config)   # factory only when truly needed
 ```
 
-### **When to Add Convenience**
-Only after v1.0.0 when:
-- Core API is stable and well-tested
-- Clear user demand exists
-- The convenience doesn't obscure the primary API
-
----
-
-## 🏗️ **Repository Structure**
-
-### **Top-Level Directories**
-- **`mfgarchon/`** - Core package code
-- **`tests/`** - Unit and integration tests only
-- **`benchmarks/`** - Performance benchmark scripts (peer to `tests/`)
-- **`examples/`** - Demos organized by complexity: `basic/`, `advanced/`, `notebooks/`, `tutorials/`
-- **`docs/`** - Documentation by category
-- **`archive/`** - Historical code (do not modify)
-
-### **Package Structure** (`mfgarchon/`)
-`alg/`, `backends/`, `config/`, `core/`, `factory/`, `geometry/`, `hooks/`, `solvers/`, `types/`, `utils/`, `visualization/`, `workflow/`, `compat/`, `meta/`
-
----
-
-## 📝 **Coding Standards**
-
-### **Type Checking Philosophy** ⚠️ **IMPORTANT**
-Pragmatic approach optimized for research:
-- ✅ **Strict typing**: Public APIs, factory functions, core algorithms, config systems
-- ⚠️ **Relaxed typing**: Utilities, examples, optional dependencies
-
-### **Modern Python Typing** ⚠️ **CRITICAL**
-
-**Division of Responsibility**:
-
-| Tool | Primary User | Purpose | When to Use |
-|:-----|:-------------|:--------|:------------|
-| **`@overload`** | Library Author | Precise type signatures | Multiple return types |
-| **`isinstance()`** | Both | Runtime type checking | Safe branching, type guards |
-| **`cast()`** | Library User | Override imprecise hints | Library hints too generic |
-
-**Library Authors**: Use `@overload` for factory functions with multiple return types.
-
-**Library Users**: Use `isinstance()` for type branching, `cast()` sparingly for external library issues.
-
-### **Import Style**
+### Import style
 ```python
 from mfgarchon import MFGProblem, BoundaryConditions
 from mfgarchon.factory import create_fast_solver
 from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 ```
 
-### **Documentation Style**
-- Use comprehensive docstrings with LaTeX math: `$u(t,x)$`, `$m(t,x)$`
-- Reference code locations: `file_path:line_number`
-- Follow `mfg-research/docs/archon-notes/development/guides/CONSISTENCY_GUIDE.md`
+### Mathematical typesetting & emoji
+Graduated to axiom (2026-05-01): markdown LaTeX-only (no Unicode 𝒯/ℝ) → `core/00_kernel.md`; Python docstring UTF-8 math + ASCII logs + no code emojis → `domains/cs/python.md`. No local override; notation is `u(t,x)`, `m(t,x)`.
 
-### **Mathematical Typesetting & Emoji**
+### Physics conventions (single-source; #811/#1412/#1512)
+- `problem.sigma` = SDE volatility **σ**; `problem.diffusion` = PDE coefficient **D = σ²/2**. Never conflate.
+- Resolve σ→D through the one converter `diffusion_from_volatility(σ)`; never inline `0.5*sigma**2` in a solver.
+- FP drift scale comes from `fp_drift_coefficient(problem)` (= 1/control_cost), not a private per-solver copy.
 
-**Graduated to `agent_axiom`** (2026-05-01):
-- Markdown LaTeX-only (no Unicode 𝒯/ℝ substitution): `core/00_kernel.md`
-- Python docstring UTF-8 math + log ASCII + no emojis in code: `domains/cs/python.md` § Math symbols and emoji
-- This project follows those rules without local override.
+### File-path anchoring ⚠️ CRITICAL
+Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).
 
-### **Fail Fast & Surface Problems** ⚠️ **CRITICAL**
-Prioritize surfacing problems early during development:
-- ✅ **Let problems emerge**: Allow exceptions to propagate rather than catching and silencing them.
-- ❌ **NO silent fallbacks**: Do not provide default values or fallbacks for failed operations without explicit permission.
-- ❌ **NO over-defensive programming**: Avoid excessive null checks or safety guards that mask logic errors.
-- ❌ **NO `hasattr()` for duck typing**: Use explicit interfaces (Protocol/ABC) or `getattr()` for optional attributes.
-- ❌ **NO ambiguous returns**: Do not return `None`, `0`, or `1` to indicate failure without a reasonable following action or error propagation.
-
-#### **hasattr() Usage Rules** ⚠️ **CRITICAL**
-
-**Prohibited**: Duck typing with hasattr()
-**Goal**: Move from "guessing" object capabilities to explicit contracts (ABC/Protocol).
-
-**🔴 Bad: Loose Duck Typing**
+### Boundary-condition coupling — adjoint-consistent BC (Issue #574, #625) ⚠️
+Reflecting-boundary HJB couples to the FP density gradient for equilibrium consistency, via the **BCValueProvider** pattern: `AdjointConsistentProvider` stored in `BCSegment.value`, resolved at iteration time.
 ```python
-# Ambiguous: Is 'solver' a valid object or just something with a 'solve' method?
-if hasattr(solver, "solve"):
-    solver.solve()
-```
-
-**🟢 Good: Structural Typing (Protocol/ABC)**
-```python
-# Explicit: We expect a specific interface
-if isinstance(solver, BaseSolver):
-    solver.solve()
-```
-
-**🟢 Good: Optional Configuration (getattr pattern)**
-```python
-# Clean: Optional config with default fallback
-# Replaces: if hasattr(config, 'tol'): tol = config.tol else: tol = 1e-6
-tolerance = getattr(config, "tolerance", 1e-6)
-```
-
-**🟢 Good: Optional Attributes with Explicit Initialization**
-```python
-# In __init__:
-self._cached_matrix: np.ndarray | None = None
-
-# In usage:
-if self._cached_matrix is None:  # ✅ Fast, type-safe, JIT-friendly
-    self._cached_matrix = expensive_computation()
-```
-
-**🟡 Acceptable: External Library Feature Detection**
-```python
-# Backend compatibility - PyTorch MPS support (Issue #543 acceptable)
-# hasattr required: torch.backends.mps added in PyTorch 1.12+
-if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
-```
-
-**❌ Bad: Runtime Attribute Addition**
-```python
-# Breaks object shape stability (confuses JIT compilers, static analyzers)
-if not hasattr(self, "_grid"):
-    self._grid = make_grid()
-```
-
-**Key Benefits of Explicit Initialization**:
-1. **Object Shape Stability**: All attributes exist from construction (helps Numba/JAX)
-2. **Type Safety**: Static analyzers can track `Optional[T]` types
-3. **Performance**: Single `is None` check vs `hasattr()` + `getattr()`
-4. **Clear Intent**: `None` means "not yet computed", not "maybe doesn't exist"
-
-**For Optional Methods**: Use `callable()` check or Protocol:
-```python
-# For optional callable attributes
-cleaner = getattr(solver, "cleanup", None)
-if callable(cleaner):  # ✅ Ensures it's actually a method
-    cleaner()
-
-# Better: Use Protocol for type safety
-from typing import Protocol
-
-class HasCleanup(Protocol):
-    def cleanup(self) -> None: ...
-
-if isinstance(solver, HasCleanup):  # ✅ Type-safe
-    solver.cleanup()
-```
-
-### **Boundary Condition Coupling Patterns** ⚠️ **IMPORTANT**
-
-When implementing coupled PDE systems (like HJB-FP in MFG), boundary conditions may need to couple between equations.
-
-**Pattern: Adjoint-Consistent Boundary Conditions (Issue #574, #625)**
-
-For reflecting boundaries in MFG systems, the HJB boundary condition couples to the FP density gradient to maintain equilibrium consistency. This is implemented using the **BCValueProvider pattern** with `AdjointConsistentProvider` stored in `BCSegment.value`.
-
-**Architecture Principles**:
-1. **Use existing framework**: Leverage Robin BC infrastructure (`BCType.ROBIN` with α=0, β=1)
-2. **Provider pattern**: Store intent in BC object, resolve at iteration time
-3. **Clean separation**: Solver stays generic; iterator handles coupling via `using_resolved_bc()`
-4. **Dimension-agnostic**: Architecture supports 1D, 2D, nD (1D implemented)
-
-**Example** (Provider pattern, v0.18.0+):
-```python
-from mfgarchon.geometry.boundary import (
-    AdjointConsistentProvider, BCSegment, BCType, BoundaryConditions, neumann_bc
-)
-
-# Standard Neumann BC (default)
-problem = MFGProblem(..., boundary_conditions=neumann_bc(dimension=1))
-
-# Adjoint-consistent BC via provider pattern (Issue #625)
+from mfgarchon.geometry.boundary import AdjointConsistentProvider, BCSegment, BCType, BoundaryConditions
 bc = BoundaryConditions(segments=[
-    BCSegment(name="left_ac", bc_type=BCType.ROBIN,
-              alpha=0.0, beta=1.0,
-              value=AdjointConsistentProvider(side="left", diffusion=sigma),
-              boundary="x_min"),
-    BCSegment(name="right_ac", bc_type=BCType.ROBIN,
-              alpha=0.0, beta=1.0,
-              value=AdjointConsistentProvider(side="right", diffusion=sigma),
-              boundary="x_max"),
+    BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+              value=AdjointConsistentProvider(side="left", sigma=sigma), boundary="x_min"),  # sigma=σ (#1512); diffusion= is the deprecated alias
+    BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
+              value=AdjointConsistentProvider(side="right", sigma=sigma), boundary="x_max"),
 ], dimension=1)
-problem = MFGProblem(..., boundary_conditions=bc)
 ```
+Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard step; the provider computes `g = -σ²/2 · ∂ln(m)/∂n`; the solver receives a resolved BC (no coupling knowledge). **Use for**: boundary-stall reflecting configs (>1000× improvement in some cases). **Not for**: interior stall or periodic BC. Implementation: `geometry/boundary/providers.py`, `geometry/boundary/bc_coupling.py`, `alg/numerical/coupling/fixed_point_iterator.py`. Ref: `mfg-research/docs/archon-notes/development/TOWEL_ON_BEACH_1D_PROTOCOL.md`.
 
-**How it works internally**:
-1. `AdjointConsistentProvider` stored as intent in `BCSegment.value`
-2. `FixedPointIterator` calls `problem.using_resolved_bc(state)` each iteration
-3. Provider computes concrete Robin BC value from current density: `g = -σ²/2 · ∂ln(m)/∂n`
-4. Solver receives resolved BC (no MFG coupling knowledge needed)
+---
 
-**When to use adjoint-consistent BC**:
-- ✅ Reflecting boundaries with stall point at domain boundary
-- ✅ Near equilibrium or high-accuracy requirements
-- ✅ Boundary stall configurations (dramatic improvement: >1000x in some cases)
-- ❌ Not needed for interior stall points or periodic BC
+## 🧪 Testing — repo strategy (*what* counts as tested is axiom)
 
-**Implementation**:
-- Provider: `mfgarchon/geometry/boundary/providers.py`
-  - `BCValueProvider` protocol, `AdjointConsistentProvider` implementation
-- BC coupling utilities: `mfgarchon/geometry/boundary/bc_coupling.py`
-  - `create_adjoint_consistent_bc_1d()`: Creates Robin BC from density
-- Iterator integration: `mfgarchon/alg/numerical/coupling/fixed_point_iterator.py`
-  - Resolves providers via `problem.using_resolved_bc(state)`
+The axiom testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
-**Reference**: See `mfg-research/docs/archon-notes/development/TOWEL_ON_BEACH_1D_PROTOCOL.md` § Boundary Condition Consistency Issue
+- **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`solve_mfg()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. Run in CI on every commit.
+- **Inline smoke tests (`if __name__ == "__main__"`)** — rapidly-changing algorithm implementations; visual verification; low-maintenance; delete naturally on refactor. `python mfgarchon/alg/numerical/hjb_solvers/my_solver.py`.
+- **Examples (`examples/`)** — complete user workflows, not quick algorithm testing.
 
-### **File Path Anchoring** ⚠️ **CRITICAL**
-Always anchor output paths to **project root**, never to CWD:
-- ✅ `Path(__file__).resolve().parent.parent / "results"` — fixed to project structure
-- ✅ `${hydra:runtime.cwd}/results` — fixed to launch location (Hydra/OmegaConf)
-- ❌ `Path("results")` or `os.getcwd()` — changes with `cd`, causes recursive nesting
+| Code type | Changes often? | Public API? | Test type |
+|:----------|:--------------|:------------|:----------|
+| `solve_mfg()`, config system | No | Yes | Unit |
+| New HJB/FP solver, experimental RL | Yes | Maybe/No | Smoke |
+| Visualization | Sometimes | Yes | Smoke |
+| Utility function | No | Internal | Unit or smoke |
 
-### **Documentation: Three-Tier Policy** ⚠️ **CRITICAL**
+---
 
-MFGArchon documentation is split across three systems:
+## 🔧 Development workflow
 
-| Content | Location | Audience |
-|---------|----------|----------|
-| **User docs** (tutorials, guides, API) | `mfgarchon/docs/user/` | Public (future book) |
-| **Theory & design** (math foundations, architecture, roadmaps) | **Joplin MFG notebook** | Private |
-| **Development guides** (coding style, CI/CD, tooling) | `mfg-research/docs/archon-notes/development/` | Private |
-| **Research notes** (experiments, analysis) | `mfg-research/docs/`, `experiments/*/docs/` | Private |
-| **Completed/historical work** | `mfg-research/docs/archon-notes/archive/` | Private |
+### Deprecation policy ⚠️ CRITICAL
+Deprecated code MUST immediately redirect to the new standard: (1) old API calls new internally (zero behavior difference); (2) **mandatory equivalence test** (old == new); (3) update ALL call sites (direct, factory, defaults, examples, tests); (4) timeline 3 minor versions OR 6 months before removal. Ref: `DEPRECATION_LIFECYCLE_POLICY.md`. Lesson (Issue #616, `conservative=`): deprecated-with-wrong-default + factory-not-updated + no-equivalence-test → 1 month of 99.4%-mass-error bugs.
 
-**Joplin MFG notebook** is the primary knowledge base. Folders are organized by mathematical topic (HJB, FP, Hamiltonian, Coupling, etc.), with a **Dev** folder for architecture notes and the active development plan, and an **Archive** folder for completed/superseded documents. Joplin API token is stored in Claude memory.
+### Version-bump checklist ⚠️ MANDATORY
+In a single commit:
+1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
+2. `CHANGELOG.md` — collate the `changelog.d/` fragments into a new `## [X.Y.Z] - YYYY-MM-DD` section: `python scripts/collate_changelog.py --version X.Y.Z --date $(date +%F)`, paste it under the new heading, then `git rm changelog.d/*.md` (keep the README). Keep-a-Changelog categories. *One-time (#1521):* the pre-#1521 `## [Unreleased]` block is promoted by hand at the first release after #1521; from then on fragments own the changelog.
 
-**Rules**:
-- ✅ User-facing docs (tutorials, guides) → `mfgarchon/docs/user/`
-- ✅ Theory, design notes, roadmaps → **Joplin MFG notebook**
-- ✅ Development guides (coding conventions, CI/CD) → `mfg-research/docs/archon-notes/development/`
-- ❌ Do NOT create `docs/theory/`, `docs/development/`, or `docs/architecture/` in mfgarchon
-- ❌ Do NOT put internal planning or theory docs in the public repo
-- ❌ Do NOT create markdown design docs in repos — use Joplin for cross-referenced knowledge
+Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow/__init__.py` (independent subpackage version), backend version reporting (external libs), historical version notes in docstrings. Sanity check: `grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/` — only `pyproject.toml:11` should change.
 
-**Cross-repo workflow** (design → implementation):
-1. Design and analyze in **Joplin** (Dev folder for architecture, topic folders for theory)
-2. Create GitHub issue in mfgarchon with summary
-3. Implement in mfgarchon with issue reference
-4. Update user docs in mfgarchon if user-facing behavior changed
-5. Link Joplin note and GitHub issue bidirectionally
+### Branches & PRs
+- **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
+- **Never commit directly to `main`** (branch protection enforces this). Create the PR when you push; delete merged branches.
+- **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless. The two pains that made granularity costly — CHANGELOG conflicts and red-main — are removed by *mechanism*: the fragment changelog, and the full-suite gate that now runs **locally** (`./scripts/local_ci.sh`, wired as a pre-push hook) rather than on GitHub. So this stays a convenience call, not a rule to remember.
+- **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
+- **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
+- **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises; re-review after applying fixes. Local-green ≠ correct: this has caught real bugs a passing suite hid (e.g. a level-set boundary regression invisible to symmetric test configs, #1602/#1605). Cf. axiom `feedback_pre_pr_adversarial_review`.
 
-### **Development Plan Management** ⚠️ **CRITICAL**
+### GitHub issue/PR management ⚠️ MANDATORY
 
-Development plans live in Joplin Dev folder with lifecycle management:
+**Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each; no bare labels (all prefixed). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Non-taxonomic (GitHub conventions): `good first issue`, `help wanted`, `automated`.
 
-**Naming**: `{焦点} Plan — {日期范围}` (e.g., "Generalized PDE & Institutional MFG Plan — 2026 Q2-Q3")
+```bash
+gh issue edit N --add-label "priority: medium,area: algorithms,size: small,type: enhancement"
+git checkout -b feature/descriptive-name
+gh pr create --title "…" --body "Fixes #N" --label "priority: medium,area: algorithms,size: small,type: enhancement,status: in-review"
+```
+Feature process: issue (labelled) → branch → core code in `mfgarchon/<sub>` → examples → tests → docs → benchmarks → label PR to match.
 
-**Rules**:
-- ✅ **Scope**: 2-4 months of work. Longer → split into multiple plans
-- ✅ **Uniqueness**: Only 1 active Plan in Dev folder at any time
-- ✅ **Completion**: All Phase issues closed → Plan marked `[COMPLETED]` and moved to Archive
-- ✅ **Succession**: Old Plan moved to Archive with `[SUPERSEDED by ...]` when replaced
-- ✅ **Plan vs Issue**: Plan explains "why this order"; Issues define "what to do"
-- ✅ **`[Principle]` prefix**: For permanent design philosophy docs (no lifecycle, never archived)
+### Ruff pinning
+Pin the ruff version (reproducible formatting, no surprise CI failures). Monthly automated update via GitHub Action, or `python scripts/update_ruff_version.py`.
 
-**Document types in Dev folder**:
+### `.gitignore` — targeted patterns (preserve valuable code) ⚠️
+Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examples/**/*.py`, `!tests/**/*.py`, `!docs/**/*.md`.
 
-| Prefix/Pattern | Lifecycle | Example |
-|---|---|---|
-| `[Principle] ...` | Permanent | Architecture Reflection: From Features to Ψ |
-| `{焦点} Plan — {dates}` | 2-4 months | Generalized PDE & Institutional MFG Plan — 2026 Q2-Q3 |
-| Other | Same as code | Hamiltonian Vectorization 技术債, 性能热点全景 |
+### Pre-commit / pre-merge checks
+```bash
+pytest tests/unit/test_affected_module.py            # iterate on the affected module
+./scripts/local_ci.sh                                # THE GATE: ruff + ratchet + full suite (~2.5 min)
+./scripts/local_ci.sh --fast                         # lint/format/ratchet only, while iterating
+ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affected_module.py
+mypy mfgarchon/affected_module.py
+```
+⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
-### **Logging and Progress Bars**
+**CI shape — the full suite runs LOCALLY, not on GitHub (2026-07-19):**
+
+| Tier | What | Where | Cost |
+|:-----|:-----|:------|:-----|
+| Gate (authoritative) | full suite, CI marker set, `-n auto`, no coverage | **local**, `./scripts/local_ci.sh` | ~2.5 min |
+| PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_config`) | GitHub `ci.yml` | ~3 min |
+| Backstop | full suite **incl. `@slow`** | GitHub `nightly.yml`, 03:00 | 45 min budget |
+| Release | full suite incl. `@slow`, with coverage | GitHub `ci.yml` on `release` | 35 min budget |
+
+Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** on a GitHub runner. Measured — coverage accounts for 1.5x, the runner itself for the rest (~7x slower than an M-series Mac). Online execution of the full suite was buying latency, not signal.
+
+**The consequence you must not forget:** a GitHub-green PR has NOT had its tests run. `./scripts/local_ci.sh` before every push is the gate; state its result in the PR. A regression outside `test_core`/`test_config` will otherwise reach `main` and only surface in nightly.
+
+---
+
+## 📚 Documentation
+
+### Three-tier policy ⚠️ CRITICAL
+
+| Content | Location |
+|---------|----------|
+| User docs (tutorials, guides, API) | `mfgarchon/docs/user/` (public, future book) |
+| Theory & design, architecture, roadmaps | **Joplin MFG notebook** (private) |
+| Development guides (coding style, CI/CD, tooling) | `mfg-research/docs/archon-notes/development/` |
+| Research notes (experiments, analysis) | `mfg-research/docs/`, `experiments/*/docs/` |
+| Completed/historical | `mfg-research/docs/archon-notes/archive/` |
+
+**Joplin ↔ archon-notes split**: see the Joplin Dev `[Principle]` note "Joplin MFG vs archon-notes — doc division of labor" (Joplin = evergreen knowledge-graph; archon-notes = git-versioned chronicle + dev handbook). Rules: never create `docs/theory|development|architecture/` in mfgarchon; never put internal planning/theory in the public repo; never create markdown design docs in repos — use Joplin. Cross-repo: design in Joplin → GitHub issue → implement with issue ref → update user docs if user-facing → bidirectional-link Joplin + issue.
+
+### Development Plan Management ⚠️ CRITICAL
+Plans live in Joplin **Dev** folder. Naming `{焦点} Plan — {日期范围}`. Scope 2–4 months (longer → split). **Only 1 active Plan** at a time. On completion → `[COMPLETED]` + move to Archive; on replacement → `[SUPERSEDED by …]` + Archive. Plan explains *why this order*; issues define *what to do*. `[Principle]` prefix = permanent design-philosophy doc (never archived).
+
+### Progressive logging ⚠️
+Log incrementally, summarize at milestones only. During work: technical notes + TodoWrite, no frequent summaries. Bugs → GitHub issues (`gh issue create`), not `docs/bugs/*.md`. Create a summary only at phase completion / milestone / investigation conclusion — and **ask first**.
+
+---
+
+## 🎨 Visualization & Output
+
+- **Plotting**: matplotlib with immediate `plt.show()` (primary); Plotly/Bokeh on demand. Publication-ready; notation `u(t,x)`, `m(t,x)`.
+- **Notebook-based reporting** ⚠️ is the primary research-output form (algorithm comparisons, convergence, validation). Track `.ipynb` with cleared outputs + exported HTML.
+- **Output dirs**: `examples/outputs/` (gitignored), `examples/outputs/reference/` (tracked), `benchmarks/results/` (gitignored), `benchmarks/reports/*.html` (tracked). Python scripts → `examples/outputs/[category]/`, never root.
+- **Incremental data saving** ⚠️: long computations (GFDM, Picard sweeps) save after each iteration to HDF5 (append + metadata) — a crash must not lose progress.
+- **Heavy tasks** ⚠️: never cap timeouts on long solvers; run in background (`run_in_background` / `&`); monitor via logs; trust incremental saves.
+
+---
+
+## 📊 Package management
+Core: numpy, scipy, matplotlib. Interactive: plotly, jupyter, nbformat (with fallbacks). Progress: rich. Optional: psutil. Support dev (`pip install -e .`) and user installs.
+
+---
+
+## 🪵 Logging & progress bars
 ```python
 from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 from mfgarchon.utils.progress import create_progress_bar, solver_progress
-
-configure_research_logging("session_name", level="INFO")
-logger = get_logger(__name__)
-
-# Type-safe progress bar pattern (Issue #587 Protocol)
+configure_research_logging("session_name", level="INFO"); logger = get_logger(__name__)
 progress = create_progress_bar(range(max_iterations), verbose=True, desc="Picard")
 for i in progress:
-    progress.update_metrics(error=error, norm=norm)  # Always works, no hasattr needed
-    if converged:
-        progress.log("Converged!")  # Always works
-        break
-
-# Alternative: High-level solver progress utility
-with solver_progress(max_iterations, "Solving MFG") as progress:
-    for iteration in range(max_iterations):
-        error = step()
-        progress.update(1, error=error)
+    progress.update_metrics(error=error)        # type-safe Protocol (Issue #587) — no hasattr
+    if converged: progress.log("Converged!"); break
 ```
-
-**Progress Bar Backend**: Rich only (v0.16.15+). External tqdm eliminated.
-
-**Key Principles**:
-- ✅ Use `create_progress_bar()` for type-safe polymorphism (Issue #587)
-- ✅ Call `update_metrics()` and `log()` directly - no hasattr checks needed
-- ✅ Protocol pattern ensures both verbose=True and verbose=False work identically
-- ❌ DO NOT use hasattr checks on progress bars
-- 📚 Legacy `tqdm` alias kept for backward compatibility, use `create_progress_bar()` in new code
+Rich-only backend (v0.16.15+; external tqdm removed — legacy alias kept). Use `create_progress_bar()`; no hasattr checks on progress bars.
 
 ---
 
-## 🎨 **Visualization & Output**
+## 📜 Solo Maintainer's Protocol
+1. Propose in issue → 2. implement in a feature-branch PR → 3. **independent adversarial review** (fresh reviewer, not just self-review — mandatory, see *Branches & PRs*) → 4. **verify issue completion** → 5. merge only after review is MERGE-OK **and** all checks pass. Enforced by branch protection on `main`.
 
-### **Plotting Preferences**
-- **Primary**: Matplotlib with immediate rendering (`plt.show()`)
-- **On-demand**: Plotly/Bokeh for interactive features
-- **Style**: Publication-ready, consistent notation u(t,x) and m(t,x)
-
-### **Notebook-Based Reporting** ⚠️ **CRITICAL**
-Primary method for research outputs, benchmarks, analyses. Use notebooks for:
-- Algorithm comparisons, convergence analysis, validation
-- Tutorials, research experiments, demonstrations
-
-**Benefits**: Reproducibility, shareability, self-documenting.
-
-### **Output Directory Structure**
-```
-examples/outputs/         # Gitignored (regenerable)
-examples/outputs/reference/  # Tracked (for comparison)
-benchmarks/results/       # Gitignored (raw data)
-benchmarks/reports/*.html # Tracked (exported reports)
-```
-
-### **File Organization Rules**
-1. **Python scripts**: Save to `examples/outputs/[category]/`, never root
-2. **Notebooks**: Track .ipynb with cleared outputs + exported HTML
-3. **Documentation**: Markdown preferred
-4. **Tutorials**: `.ipynb` is canonical (math rendering + inline plots). Companion `.py` scripts kept for CI/linting.
-5. **Benchmarks**: Use notebooks in `benchmarks/notebooks/`, export HTML to `benchmarks/reports/`
-
-### **Incremental Data Saving** ⚠️ **CRITICAL**
-For long-running computations (GFDM solvers, Picard iterations, parameter sweeps):
-- ✅ **Save after each iteration**: Don't wait until experiment completes
-- ✅ **Use HDF5 with incremental writes**: Append results after each step
-- ✅ **Include metadata**: Config, timestamp, partial progress in file attrs
-- **Rationale**: Long experiments may crash. Incremental saves preserve progress.
-
-### **Heavy Computational Tasks** ⚠️ **CRITICAL**
-- ❌ **Never limit timeout** for long-running solvers (GFDM with high collocation, multi-parameter sweeps)
-- ✅ **Run in background**: Use `&` or `run_in_background` for tasks > 5 minutes
-- ✅ **Monitor via logs**: Check progress with `tail -f` rather than waiting inline
-- ✅ **Trust incremental saves**: If process crashes, partial results are preserved
-- **Rationale**: MFG computations can take hours. Arbitrary timeouts lose all progress.
+**Issue-completion verification** ⚠️ (before closing an issue / opening a PR): read the *original* issue (not commit messages); check every acceptance criterion; answer every discussion point; confirm all subtasks; document deviations (update the issue before closing). Anti-pattern: closing on commit messages without re-reading the requirements.
 
 ---
 
-## 🧪 **Testing Philosophy**
-
-MFGArchon uses a **hybrid testing approach** optimized for research code that evolves rapidly.
-
-### **1. Unit Tests (`tests/`) - For Stable APIs**
-
-**When to write unit tests**:
-- ✅ Public APIs (`solve_mfg()`, `create_*_solver()`, factory functions)
-- ✅ Core infrastructure (config, problem, result, backend)
-- ✅ Numerical correctness validation (convergence criteria, boundary conditions)
-- ✅ Data structures and utilities used across multiple modules
-
-**Characteristics**:
-- Comprehensive test coverage with fixtures and mocks
-- Run in CI/CD on every commit
-- Should be maintained as API stabilizes
-- Located in `tests/unit/` and `tests/integration/`
-
-**Current state**: Comprehensive unit test suite covering stable framework APIs ✅
-
-### **2. Smoke Tests (`if __name__ == "__main__"`) - For Development**
-
-**When to add inline smoke tests**:
-- ✅ Algorithm implementations (HJB solvers, FP solvers, coupling methods)
-- ✅ Rapidly changing experimental code
-- ✅ Modules that benefit from visual verification
-- ✅ Utilities and helper functions
-
-**Example pattern**:
-```python
-# mfgarchon/alg/numerical/hjb_solvers/my_solver.py
-
-class MySolver:
-    """Implementation of my solver."""
-    def solve(self):
-        # Solver logic...
-        return result
-
-if __name__ == "__main__":
-    """Quick smoke test for development."""
-    from mfgarchon import MFGProblem
-    import matplotlib.pyplot as plt
-
-    print("Testing MySolver...")
-
-    # Basic convergence test
-    problem = MFGProblem()
-    solver = MySolver(problem)
-    result = solver.solve()
-
-    assert result.converged, "Convergence test failed"
-    print(f"✓ Converged in {result.iterations} iterations")
-
-    # Quick visualization (optional)
-    plt.semilogy(result.error_history_U)
-    plt.title("Convergence History")
-    plt.show()
-
-    print("All smoke tests passed! ✓")
-```
-
-**Usage**:
-```bash
-# Quick test during development
-python mfgarchon/alg/numerical/hjb_solvers/my_solver.py
-```
-
-**Benefits**:
-- Fast iteration - no need to update separate test files
-- Visual debugging - see algorithm output immediately
-- Self-documenting - shows usage example
-- Low maintenance - simple asserts, no mock overhead
-- Colocated - tests travel with code
-
-### **3. Examples (`examples/`) - For User Documentation**
-
-**Purpose**:
-- Demonstrate complete workflows
-- Show best practices
-- Validate across versions
-- Tutorial content
-
-**Not for**: Quick algorithm testing (use smoke tests instead)
-
-### **Decision Matrix**
-
-| Code Type | Changes Frequently? | Public API? | Test Type |
-|:----------|:-------------------|:------------|:----------|
-| `solve_mfg()` | No | Yes | Unit tests ✅ |
-| Config system | No | Yes | Unit tests ✅ |
-| New HJB solver | Yes | Maybe | Smoke tests ✅ |
-| Experimental RL | Yes | No | Smoke tests ✅ |
-| Visualization | Sometimes | Yes | Smoke tests ✅ |
-| Utility function | No | Internal | Unit tests OR smoke tests |
-
-### Rationale
-
-Research code evolves quickly. Inline smoke tests:
-- ✅ Reduce maintenance burden on rapidly changing algorithms
-- ✅ Enable visual verification during development
-- ✅ Provide immediate feedback without test suite overhead
-- ✅ Delete naturally when code is refactored/removed
-
-Unit tests remain essential for:
-- ✅ Public APIs that users depend on
-- ✅ Numerical correctness that must not regress
-- ✅ Core infrastructure that rarely changes
+## 🤖 AI interaction design
+Pointer: `mfg-research/docs/archon-notes/development/AI_INTERACTION_DESIGN.md` (graduate-level rigor, complexity analysis, journal-quality exposition).
 
 ---
 
-## 🔧 **Development Workflow**
-
-### **Deprecation Policy** ⚠️ **CRITICAL**
-
-**Core Principle**: Deprecated code must immediately redirect to new standard.
-
-When deprecating any API element (parameter, function, class, module):
-1. **Immediate redirection**: Old API MUST call new API internally (zero behavior difference)
-2. **Equivalence test**: MUST verify old and new give identical results
-3. **Complete migration**: Update ALL call sites (direct, factory, defaults, examples, tests)
-4. **Timeline**: 3 minor versions OR 6 months before removal
-
-**Reference**: `mfg-research/docs/archon-notes/development/DEPRECATION_LIFECYCLE_POLICY.md`
-
-**Lesson from Issue #616** (`conservative=` parameter):
-- Deprecated with warning but wrong default → 1 month of catastrophic bugs (99.4% mass error)
-- Factory not updated → production code got broken behavior
-- No equivalence test → bug not caught until user validation
-
-**Enforcement**:
-- ✅ Equivalence test is mandatory
-- ✅ Pre-commit hook blocks deprecated usage in production code
-- ✅ CI verifies all call sites updated
-
-### **Version Bump Checklist** ⚠️ **MANDATORY**
-
-When bumping the package version, update the following in a single commit:
-
-1. **`pyproject.toml`** — `version = "X.Y.Z"` on line 11. Inline comment on the
-   same line summarizing the bump (e.g., `# vX.Y.Z: <one-line scope>`).
-2. **`CHANGELOG.md`** — promote the `## [Unreleased]` section to
-   `## [X.Y.Z] - YYYY-MM-DD`, then re-add an empty `## [Unreleased]` above it.
-   Use Keep a Changelog categories: `### Added`, `### Changed`,
-   `### Deprecated`, `### Removed (BREAKING)`, `### Fixed`. Reference the PR
-   number; reference the github issue if the change is bug-fix-driven.
-
-**No need to edit**:
-- `mfgarchon/__init__.py` — reads via `importlib.metadata.version("mfgarchon")`,
-  auto-syncs from pyproject at install time.
-- `mfgarchon/workflow/__init__.py:__version__ = "1.0.0"` — independent
-  subpackage version, decoupled from main package by design.
-- Backend version reporting (`numpy_backend.py`, `torch_backend.py`,
-  `numpy_compat.py`) — these report installed *external library* versions
-  (numpy, torch, jax), not mfgarchon's own version.
-- Historical notes in module docstrings that reference past versions
-  (e.g., "prior versions before v0.19.4 maintained...") — keep the historical
-  reference; do not bump.
-
-**Sanity check before commit**:
-```bash
-grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/ --include="*.toml" --include="*.py"
-```
-The only line that should change is `pyproject.toml:11`.
-
-### **Branch Naming** ⚠️ **MANDATORY**
-Always use `<type>/<short-description>` format:
-
-**Types**: `feature/`, `fix/`, `chore/`, `docs/`, `refactor/`, `test/`
-
-**Examples**: `feature/semi-lagrangian-solver`, `fix/convergence-criteria-bug`
-
-### **Hierarchical Branch Structure** ⚠️ **CRITICAL**
-
-**Principle**: Organize work through hierarchical structures reflecting logical dependencies.
-
-**Core Rules**:
-1. ❌ Never commit directly to `main`
-2. ✅ Create feature branches for all work
-3. ✅ Use parent branches for related work
-4. **Merge order**: Child → Parent → Main (always respect this order)
-
-**When to use hierarchy**:
-- Multi-step refactoring (each step = child)
-- Feature development (sub-features = children)
-- Systematic cleanup (categories = children)
-- Related changes (logical grouping)
-
-**Branch lifecycle**:
-- Create child when starting sub-feature
-- Merge to parent when logical unit complete
-- Keep child alive if more related work remains
-- Delete child only when entire sub-feature done
-
-**Example**:
-```bash
-# Create parent and child
-git checkout -b chore/code-quality-cleanup
-git checkout -b chore/fix-unused-variables
-# Work, commit, push
-git checkout chore/code-quality-cleanup
-git merge chore/fix-unused-variables --no-ff
-# Keep child alive for more work OR delete if complete
-```
-
-### Branch Management ⚠️ **ADAPTIVE**
-
-**Branch Count Guidelines**:
-- **< 5**: Healthy
-- **5-10**: Warning - cleanup immediately
-- **> 10**: Critical - stop creating until cleanup
-
-**Decision Framework**: "Should I create new branch or reuse existing?"
-- **Reuse** if: Related to existing PR, part of feature in progress, fixing bugs in same area
-- **Create new** if: Independent work, >1 week effort, experimental, parallel development needed
-
-**Daily Habits**:
-- Rebase long-lived branches onto main daily
-- Create PR immediately when pushing
-- Delete merged branches immediately
-- Merge early, merge often
-
-**Weekly Audit**:
-```bash
-# Check branch health
-git branch -r | wc -l  # Count active branches
-gh pr list --state open  # Review open PRs
-# Clean up merged branches
-gh pr list --state merged --limit 20 --json headRefName --jq '.[].headRefName' | \
-  xargs -I {} git push origin --delete {}
-```
-
-### **GitHub Issue and PR Management** ⚠️ **MANDATORY**
-
-**Required Labels (all 4)**:
-1. `priority:` high/medium/low
-2. `area:` algorithms/config/core/documentation/geometry/performance/testing/visualization
-3. `size:` small/medium/large
-4. `type:` bug/enhancement/chore/refactor/infrastructure/research/type-checking/question
-
-**Workflow**:
-```bash
-# Check issue labels
-gh issue view [issue_number]
-# Apply labels before work
-gh issue edit [issue_number] --add-label "priority: medium,area: algorithms,size: small,type: enhancement"
-# Create properly named branch
-git checkout -b feature/descriptive-name
-# Create PR with inherited labels
-gh pr create --title "Title" --body "Fixes #[issue_number]" \
-  --label "priority: medium,area: algorithms,size: small,type: enhancement,status: in-review"
-```
-
-### **Feature Development Process**
-1. Create/verify issue with proper labels
-2. Create branch: `git checkout -b <type>/descriptive-name`
-3. Add core code to `mfgarchon/` subdirectory
-4. Create examples in `examples/basic/` or `examples/advanced/`
-5. Add tests to `tests/unit/` or `tests/integration/`
-6. Update docs in `docs/` category
-7. Add benchmarks if applicable
-8. Label PR matching issue
-
-### **Code Quality Expectations**
-- Follow `mfg-research/docs/archon-notes/development/guides/CONSISTENCY_GUIDE.md`
-- Use type hints and comprehensive docstrings
-- Include error handling and validation
-- Support interactive and non-interactive usage
-
-### **Ruff Version Management** ⚠️ **IMPORTANT**
-**Strategy**: Pin with periodic automated updates
-
-**Why pin**: Consistent formatting, reproducible, no surprise CI failures, controlled review
-
-**Update**: Monthly automated check via GitHub Action, manual via `python scripts/update_ruff_version.py`
-
-### **Defensive Programming** ⚠️ **CRITICAL**
-Test before extend:
-- ✅ Verify existing functionality works before adding features
-- ✅ Run tests after changes
-- ✅ Check examples execute successfully
-- ❌ Don't build on untested foundations
-
-**Pre-commit checklist**:
-```bash
-pytest tests/unit/test_affected_module.py
-mypy mfgarchon/affected_module.py
-ruff check mfgarchon/affected_module.py
-python examples/basic/relevant_example.py
-git add ... && git commit -m "..."
-```
-
-### **Smart .gitignore** ⚠️ **CRITICAL**
-Use targeted patterns preserving valuable code:
-```bash
-# ✅ GOOD: Root-level only
-/*.png
-/*_analysis.py
-
-# ❌ BAD: Too broad
-*.png
-*_analysis.py
-
-# Always preserve
-!examples/**/*.py
-!tests/**/*.py
-!docs/**/*.md
-```
-
----
-
-## 📊 **Package Management**
-
-**Dependencies**:
-- **Core**: numpy, scipy, matplotlib
-- **Interactive**: plotly, jupyter, nbformat (with fallbacks)
-- **Progress**: rich
-- **Optional**: psutil
-
-**Installation**: Support both development (`pip install -e .`) and user installation.
-
----
-
-## 🎯 **Working Preferences**
-
-### **GitHub Label System** ⚠️ **IMPORTANT**
-
-**Hierarchical Taxonomy** (formalized 2026-02-05):
-
-| Prefix | Purpose | Labels |
-|:-------|:--------|:-------|
-| **`area:`** | Functional domain | `algorithms`, `config`, `core`, `documentation`, `geometry`, `performance`, `testing`, `visualization` |
-| **`type:`** | Work nature | `bug`, `enhancement`, `chore`, `refactor`, `infrastructure`, `research`, `type-checking`, `question` |
-| **`priority:`** | Urgency | `high`, `medium`, `low` |
-| **`size:`** | Effort estimate | `small` (hours-1d), `medium` (1-3d), `large` (1+wk) |
-| **`status:`** | Workflow state | `blocked`, `in-review`, `needs-testing` |
-| **`resolution:`** | Completion type | `merged`, `superseded`, `wontfix`, `duplicate`, `invalid` |
-
-**Required on every issue** (4 dimensions): `area:`, `type:`, `priority:`, `size:`
-
-**Non-taxonomic labels** (kept for GitHub conventions): `good first issue`, `help wanted`, `automated`
-
-**Color Coding**:
-- Red/Orange: `priority:` labels
-- Blue: `area:` labels (technical domains)
-- Purple: `type:` labels
-- Green: `resolution:` labels, `status: in-review`
-- Yellow: `status: needs-testing`, `priority: medium`
-- Gray: `type: chore`, `automated`
-
-**Rules**:
-- No bare labels — all issue-classification labels must use a prefix
-- One label per `priority:` and `size:` dimension (no duplicates)
-- Multiple `area:` labels allowed for cross-cutting issues
-- **Scaling**: Subdivide areas before creating new label types (e.g., `area: algorithms-hjb`)
-
-### **Task Management**
-- Use TodoWrite tool for multi-step tasks
-- Track progress and mark completion immediately
-- Apply consistent GitHub labels
-
-### **Progressive Logging** ⚠️ **CRITICAL**
-
-**Principle**: Log incrementally, summarize at milestones only.
-
-**During Work**:
-- ✅ Log steps in simple files, use TodoWrite, write technical notes
-- ❌ Don't create frequent summaries
-
-**Bug Reporting**:
-- ✅ Bugs belong to GitHub issues (use `gh issue create`)
-- ❌ Don't create markdown files in docs/bugs/ directory
-
-**Summary Creation**:
-- ✅ Only create summaries after important phases
-- ✅ Always ask user first if summary is needed
-- ❌ Don't create markdown summaries after each operation
-
-**Create Summaries at**:
-- Phase completion, critical milestones, before/after breaks, investigation conclusions
-
-### **Directory Management** ⚠️ **CRITICAL**
-
-**Before creating new directories**:
-1. Analyze existing content first
-2. Create detailed migration plan
-3. Identify and merge duplicates
-4. Update cross-references
-5. Move systematically
-
-**Guidelines**:
-- Minimum 5+ files per directory
-- Clear, distinct functional purpose
-- User-centric organization
-- Max 3 levels depth
-- Test before finalizing
-
-### **Repository Management**
-- **Preserve**: Examples, tests, research-grade code
-- **Target cleanup**: Use root-level patterns (`/*.py`) not global (`*.py`)
-- **Archive vs Delete**: Remove clutter, archive valuable history only
-- **Clean root**: Keep root clean, preserve organized subdirectories
-
----
-
-## 🤖 **AI Interaction Design**
-
-For advanced MFG research, follow `mfg-research/docs/archon-notes/development/AI_INTERACTION_DESIGN.md`:
-
-**Research Context**:
-- Graduate/research level mathematical rigor
-- High-performance implementation with complexity analysis
-- Journal-quality exposition
-- Integration of mathematical traditions
-
-**Prompt Templates**: Theoretical investigation, computational implementation, cross-field analysis
-
-**Quality Standards**: Mathematical rigor, computational excellence, academic communication
-
----
-
-## 📜 **Solo Maintainer's Protocol**
-
-Self-governance for disciplined changes:
-
-1. **Propose in Issue**: Document reasoning in GitHub issue
-2. **Implement in PR**: Work in feature branch, submit PR
-3. **AI-Assisted Review**: Self-review with AI against standards
-4. **Verify Issue Completion**: Before closing an issue or creating PR, verify EVERY point mentioned in the issue has been solved/discussed/treated
-5. **Merge on Pass**: Merge only after all checks pass
-
-Enforce with GitHub branch protection rules on `main`.
-
-### **Issue Completion Verification** ⚠️ **CRITICAL**
-
-Before marking an issue as complete or creating a PR:
-
-1. **Read the original issue** - Don't rely on memory or commit messages
-2. **Check every acceptance criterion** - All checkboxes must be addressed
-3. **Verify all discussion points** - Each question answered or documented
-4. **Confirm scope completeness** - All subtasks, not just main objective
-5. **Document any deviations** - If scope changed, update issue before closing
-
-**Anti-pattern**: Closing issues based on commit messages without re-reading the original issue requirements.
-
----
-
-## 🔍 **Quality Assurance**
-
-### **Before Completing Tasks**
-- Verify imports work
-- Check file placement
-- Update documentation
-- Test examples execute
-- Maintain consistency
-
-### **Consistency Checks**
-- Mathematical notation: u(t,x), m(t,x)
-- Import patterns: Use factory methods
-- Documentation: Professional, research-grade
-- Organization: Follow established structure
-
-### **Documentation Status Tracking** ⚠️ **MANDATORY**
-
-**Status Categories**: `[COMPLETED]`, `[RESOLVED]`, `[ANALYSIS]`, `[EVALUATION]`, `[SUPERSEDED]`
-
-**Cleanup Principles**:
-- Mark completed work
-- Use descriptive status indicators
-- Remove obsolete content
-- Consolidate overlaps
-- Ensure docs reflect current state
-
----
-
-**Last Updated**: 2026-04-03
-**Repository Version**: v0.17.16 (Pre-1.0.0)
-**Claude Code**: Always reference this file for MFGArchon conventions
+**Last restructured**: 2026-07-04 (composed from `agent_axiom` domains + pruned axiom-duplication). Pre-1.0.0.

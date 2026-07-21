@@ -32,7 +32,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import solve_banded
 
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
 
 def solve_crank_nicolson_diffusion_1d(
@@ -227,25 +227,19 @@ def adi_diffusion_step(
         # Diagonal anisotropic: different sigma per direction
         sigma_vec = np.asarray(sigma)
     elif hasattr(sigma, "ndim") and sigma.ndim == 2:  # Issue #543 acceptable
-        # Full tensor diffusion. Convention: sigma_tensor = covariance matrix (sigma*sigma^T).
-        # Diagonal ADI uses D_d = sigma_tensor[d,d]/2 (via diffusion_from_volatility on
-        # sqrt of diagonal). Explicit cross-derivative uses coefficient sigma_tensor[i,j]
-        # for each i<j pair (the factor-of-2 from symmetry and 1/2 in D_ij cancel exactly;
-        # see apply_cross_diffusion_explicit docstring and Issue #1261 fix).
-        # Convention assert (Issue #1079): sigma_tensor must be symmetric so that both
-        # paths are consistent. An asymmetric tensor means the caller is passing something
-        # other than a covariance matrix, which makes the convention undefined.
-        sigma_tensor = np.asarray(sigma)
-        if not np.allclose(sigma_tensor, sigma_tensor.T, rtol=1e-5, atol=1e-8):
-            max_asym = float(np.max(np.abs(sigma_tensor - sigma_tensor.T)))
-            raise ValueError(
-                f"adi_diffusion_step: sigma_tensor must be symmetric (covariance "
-                f"convention: sigma_tensor = sigma*sigma^T). Max asymmetry = {max_asym:.3e}. "
-                f"Diagonal ADI uses D_d = sigma_tensor[d,d]/2; explicit cross-derivative "
-                f"uses coefficient sigma_tensor[i,j] for i<j pair. Both require a "
-                f"symmetric covariance matrix as input (Issue #1079)."
-            )
-        sigma_vec = np.sqrt(np.diag(sigma_tensor))  # Diagonal part for ADI
+        # Full tensor diffusion. Convention (RFC #1596): the (d,d) sigma is the SYMMETRIC
+        # standard-deviation matrix S (the symmetric square root of the covariance), NOT the
+        # covariance itself and NOT a Cholesky factor. The diffusion is D = 1/2 S S^T = 1/2 C.
+        # Gate symmetry + PSD here as a consumer admissibility check (validate_symmetric_psd),
+        # then form the covariance C = S S^T = 2D by routing the square through the single-source
+        # converter diffusion_from_volatility (Issue #811) rather than re-deriving it locally --
+        # the local re-derivation was why #1079 (covariance, no-square) and #1548 (square,
+        # no-symmetry) diverged. Downstream is unchanged: the diagonal ADI reads
+        # alpha_d = 1/2 C_dd = D_dd, and apply_cross_diffusion_explicit reads C_ij = 2 D_ij.
+        S = np.asarray(sigma, dtype=float)
+        validate_symmetric_psd(S, name="adi_diffusion_step sigma tensor")
+        sigma_tensor = 2.0 * diffusion_from_volatility(S, kind="tensor")  # C = S S^T = 2D
+        sigma_vec = np.sqrt(np.diag(sigma_tensor))  # per-axis std-dev sqrt(C_dd); alpha_d = 1/2 C_dd = D_dd
     else:
         # Issue #1286, 2026-06-11 survey: fail-fast — never silently default sigma.
         # A wrong sigma type causes adi_diffusion_step to solve a different PDE.
@@ -303,9 +297,10 @@ def apply_cross_diffusion_explicit(
     """
     Apply cross-derivative diffusion terms explicitly.
 
-    For full tensor diffusion with off-diagonal entries sigma_ij of the covariance
-    matrix (sigma_tensor), the diagonal ADI step handles D_d = sigma_tensor[d,d]/2
-    for each direction d. The full operator expanded by symmetry is:
+    ``sigma_tensor`` here is the covariance C = S S^T = 2D, formed by the caller from the
+    validated symmetric standard-deviation matrix S via the single-source converter
+    (RFC #1596); D = 1/2 C. For off-diagonal entries C_ij, the diagonal ADI step handles
+    D_d = C[d,d]/2 for each direction d. The full operator expanded by symmetry is:
 
         sum_{i,j} D_ij d^2u/dx_i dx_j
         = sum_i (sigma_tensor[i,i]/2) d^2u/dx_i^2
@@ -323,7 +318,7 @@ def apply_cross_diffusion_explicit(
 
     Args:
         U: Solution array, shape (N1, N2, ..., Nd)
-        sigma_tensor: Covariance (sigma*sigma^T) tensor, shape (d, d). D_ij = sigma_tensor[i,j]/2.
+        sigma_tensor: Covariance C = S S^T = 2D, shape (d, d), from the validated std-dev matrix S. D_ij = C[i,j]/2.
         dt: Time step size
         spacing: Grid spacing in each dimension
 

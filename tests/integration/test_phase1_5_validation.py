@@ -141,6 +141,21 @@ class TestRegimeSwitchingIntegration:
         # Verify pi @ Q = 0
         np.testing.assert_allclose(pi @ Q, 0.0, atol=1e-10)
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Issue #1681: the iterator drives divergence_upwind -- a positivity-preserving "
+            "scheme, and the FPFDMSolver default -- to a density of -1.0e-03, which the "
+            "non-negativity clip used to absorb by fabricating 0.015% of the total mass "
+            "(Issue #1671). Refining dt does not rescue it: at NT=20, where dt*sigma^2/dx^2 = "
+            "0.45 satisfies the library's own stated CFL bound, the density still reaches "
+            "-9.7e-04, and the guard still raises at NT=320 -- a 32x refinement. The run maximum "
+            "does decay first-order in dt, so 'not a timestep artifact' would be too strong; it "
+            "is a first-order one: measured, the run maximum is 4.95e-05 at NT=640, so clearing "
+            "1e-8 extrapolates to NT ~ 3e6. The fixture "
+            "is deliberately left at its original NT=10, since retuning would only hide it."
+        ),
+    )
     def test_regime_switching_iterator_runs(self):
         """Verify RegimeSwitchingIterator executes without error."""
         from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
@@ -190,7 +205,7 @@ class TestNetworkSolverIntegration:
 
         network = GridNetwork(width=n_nodes, height=1)
         network.create_network()
-        return NetworkMFGProblem(network_geometry=network, T=0.5, Nt=5)
+        return NetworkMFGProblem(geometry=network, T=0.5, Nt=5)
 
     def test_network_hjb_solver_runs(self):
         """Network HJB solver initialization and basic solve."""

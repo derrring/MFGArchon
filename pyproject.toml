@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mfgarchon"
-version = "0.20.4"  # v0.20.4: HJB 1D BC-aware boundary gradient residual+Jacobian (#1384) + HJB source v_t on all couplers (#1382) + post-audit hygiene (#1383)
+version = "0.21.1"  # v0.21.1: RFC-#1574 phase-0 fail-loud guards (BC/SL/network capability honesty) + network MAXIMIZE + single-source consolidations (FP-drift #1528 ph1, sigma-tensor, project-to-boundary, paired-sigma) + examples/tutorials remediation + RL mean-field fixes + opt-in analytic Jacobian
 authors = [
     { name = "Jiongyi Wang", email = "jiongyiwang@gmail.com" },
     # et al.
@@ -18,6 +18,11 @@ readme = "README.md"
 requires-python = ">=3.12"  # Updated to match conda environments
 classifiers = [
     "Programming Language :: Python :: 3",
+    # Verified by .github/workflows/python-compat.yml (weekly matrix). 3.15 is pre-release
+    # (early-warning only) so it is intentionally not claimed here.
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
@@ -121,6 +126,7 @@ all = [
     # Profiling
     "memory-profiler",
     "line-profiler",
+    "cvxpy>=1.4",
 ]
 
 # Development tools (not user-facing)
@@ -129,14 +135,26 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-benchmark",
     "pytest-xdist>=3.5",
+    "pytest-timeout>=2.1",
     "ruff>=0.6.0",
-    "mypy>=1.5",
+    # Upper bound: mypy 2.2.0 false-positives on valid `list[str]` slices (e.g.
+    # config/omegaconf_manager.py `keys[:i+1]`), a typeshed `slice` overload regression that
+    # 2.1.0 does not have. Lift to `<2.3` once mypy 2.2.1 fixes it. See RFC-adjacent CI note.
+    "mypy>=1.5,<2.2",
     "pre-commit>=2.0",
     "types-setuptools",
     "types-psutil",
 ]
 
 # Documentation (not user-facing)
+# Convex-optimisation solvers. `joint_socp.py` raises ImportError without cvxpy
+# (joint_socp.py:573). nightly.yml referenced a `numerical` extra for 3.5 months
+# while it did not exist, so the SOCP gate failed on ImportError every night and
+# burned one of ten --maxfail slots (Issue #1658).
+numerical = [
+    "cvxpy>=1.4",
+]
+
 docs = [
     "sphinx>=7.0",
     "sphinx-rtd-theme",
@@ -260,21 +278,6 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 
 # Mathematical variables and naming conventions handled by Ruff configuration
-
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--verbose",
-    "--cov=mfgarchon",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "-x",  # Stop on first failure for faster debugging
-    "--tb=short",  # Shorter tracebacks
-]
 
 [tool.coverage.run]
 source = ["mfgarchon"]

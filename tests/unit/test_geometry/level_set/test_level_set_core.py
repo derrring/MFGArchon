@@ -188,6 +188,74 @@ class TestLevelSetEvolver:
 
         assert area1 > area0, "Circle should expand with positive velocity"
 
+    def test_upwind_inward_collapse_matches_analytic_extinction(self):
+        """Issue #1602: default 'upwind' must track inward (V<0) normal motion.
+
+        phi0 = |x| - 1 on [-2, 2] collapses toward the kink at x=0; with inward
+        speed |V|=1 the half-width shrinks linearly and the domain extinguishes at
+        the analytic t* = 1.0. The pre-fix upwind selected the one-sided stencil
+        from sign(grad phi), not the velocity sign, which over-collapses early and
+        then stalls at the kink core, persisting to ~2.8*t*. The velocity-sign
+        Godunov (this fix) tracks the analytic collapse.
+
+        Discriminating (mutation-checked): reverting to the sign(grad phi) stencil
+        makes both assertions fail (area ~16 at t=0.5; ~4 cells never extinguish).
+        """
+        grid = TensorProductGrid(bounds=[(-2.0, 2.0)], Nx=[400], boundary_conditions=no_flux_bc(dimension=1))
+        x = grid.coordinates[0]
+        phi0 = np.abs(x) - 1.0
+        area0 = int(np.sum(phi0 < 0))
+
+        evolver = LevelSetEvolver(grid, scheme="upwind")
+        V, dt = -1.0, 0.004
+
+        def evolve_to(T):
+            phi = phi0.copy()
+            for _ in range(round(T / dt)):
+                phi = evolver.evolve_step(phi, velocity=V, dt=dt)
+            return phi
+
+        # Linear collapse: half-width 1.0 -> 0.5 at t=0.5, so area ~ area0/2.
+        area_half = int(np.sum(evolve_to(0.5) < 0))
+        assert abs(area_half - area0 / 2) < 0.15 * area0, (
+            f"inward collapse off analytic rate: area(t=0.5)={area_half}, expected ~{area0 / 2:.0f}"
+        )
+
+        # Fully extinguished past the analytic extinction time t*=1.0.
+        area_late = int(np.sum(evolve_to(1.5) < 0))
+        assert area_late == 0, f"domain persists past extinction: area(t=1.5)={area_late}, expected 0"
+
+    def test_upwind_planar_front_no_boundary_phantom(self):
+        """Issue #1602 (review): a non-symmetric interface must not grow a phantom
+        interface at the domain boundary.
+
+        phi0 = x on [-2, 2] has phi[0]=-2 != phi[-1]=+2 and a single interface at
+        x=0; under outward V=+0.5 it moves to x=0.5 while the right boundary stays
+        positive. The velocity-sign Godunov uses periodic-roll one-sided
+        differences, so without a no-flux (Neumann-ghost) edge correction the wrap
+        injects a spurious O(1/h) gradient that flips phi[-1] negative and creates
+        a second, phantom interface.
+
+        Discriminating: raw np.roll stencils (no edge correction) give phi[-1]<0
+        and two sign changes; the Neumann-ghost fix keeps phi[-1]~+1.5 and exactly
+        one interface. Symmetric configs (centered circle, |x|-1) never exercise
+        this because phi[0]==phi[-1].
+        """
+        grid = TensorProductGrid(bounds=[(-2.0, 2.0)], Nx_points=[401], boundary_conditions=no_flux_bc(dimension=1))
+        x = grid.coordinates[0]
+        phi = x.copy()  # single interface at x=0, non-symmetric across the edges
+
+        evolver = LevelSetEvolver(grid, scheme="upwind")
+        V, dt = 0.5, 0.004
+        for _ in range(250):  # t = 1.0
+            phi = evolver.evolve_step(phi, velocity=V, dt=dt)
+
+        # Right boundary must remain positive (no phantom interface from edge wrap).
+        assert phi[-1] > 0.5, f"boundary flipped -> phantom interface: phi[-1]={phi[-1]:.3f}"
+        # Exactly one strict sign change (the real interface near x=0.5), not two.
+        crossings = int(np.sum(phi[:-1] * phi[1:] < 0))
+        assert crossings == 1, f"expected 1 interface, found {crossings}"
+
 
 class TestTimeDependentDomain:
     """Test TimeDependentDomain for managing φ(t) history."""

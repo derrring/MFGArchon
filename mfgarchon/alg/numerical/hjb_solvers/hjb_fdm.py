@@ -160,6 +160,7 @@ class HJBFDMSolver(BaseHJBSolver):
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
         on_newton_failure: NewtonFailurePolicy = "raise",
+        analytic_jacobian: bool = False,
         # Deprecated parameter (decorator handles warnings)
         damping_factor: float | None = None,
         backend: str | None = None,
@@ -187,6 +188,17 @@ class HJBFDMSolver(BaseHJBSolver):
                 Only meaningful when solver_type="newton" and dimension > 1.
                 - 'raise': Raise ConvergenceError (default, fail-fast).
                 - 'warn_and_fallback': Emit warning and retry with Value Iteration.
+            analytic_jacobian: Opt-in inner-Newton HJB Jacobian assembly (#1607).
+                Default False keeps the per-point finite-difference Jacobian
+                (byte-identical to prior releases; the robust default). True routes
+                single-population solves through the batch analytic (chain-rule)
+                Jacobian -- the same path multi-population solves already use --
+                avoiding the O(Nx^2) per-column gradient recomputes (measured ~17x
+                faster per solve). When it converges it reaches the same fixed point
+                as the FD Jacobian (to tolerance); however the frozen-upwind analytic
+                Jacobian has a SMALLER convergence basin, so on some problems it
+                returns converged=False where the default converges -- fall back to
+                the default there. NumPy backend only (raises otherwise).
             backend: 'numpy', 'torch', or None
         """
         import warnings
@@ -194,9 +206,23 @@ class HJBFDMSolver(BaseHJBSolver):
         super().__init__(problem)
 
         # Initialize backend
-        from mfgarchon.backends import create_backend
+        from mfgarchon.backends import NumPyBackend, create_backend
 
         self.backend = create_backend(backend or "numpy")
+
+        # #1607: opt-in analytic inner-Newton Jacobian. The batch analytic path in
+        # compute_hjb_jacobian is gated on backend is None; routing single-pop solves
+        # through it (effective_backend=None in solve_hjb_system) swaps the O(Nx^2)
+        # FD-assembled Jacobian for the O(Nx) chain-rule one. NumPy-only: the None
+        # path assumes numpy arrays (no to_numpy), so fail loud rather than silently
+        # mis-run torch/jax. isinstance (not a class-name string) so a legitimate
+        # NumPyBackend subclass is accepted while any genuine non-NumPy backend raises.
+        self._analytic_jacobian = bool(analytic_jacobian)
+        if self._analytic_jacobian and not isinstance(self.backend, NumPyBackend):
+            raise ValueError(
+                "analytic_jacobian=True is a NumPy-only inner-Newton Jacobian assembly "
+                f"(got backend={type(self.backend).__name__}); use the default backend='numpy'."
+            )
 
         # Validate and store advection scheme
         valid_schemes = {"gradient_centered", "gradient_upwind"}
@@ -450,7 +476,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # only a scalar own-population density and cannot express cross-population coupling. The
             # batch path is numerically equivalent to the per-point path (Issue #789), so this
             # changes nothing for single-population solves (cross_density None => self.backend).
-            effective_backend = None if cross_density is not None else self.backend
+            # #1607: the analytic_jacobian opt-in also routes single-pop solves through backend=None
+            # to use the O(Nx) analytic Jacobian instead of the O(Nx^2) FD fallback.
+            effective_backend = None if (cross_density is not None or self._analytic_jacobian) else self.backend
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
@@ -908,11 +936,20 @@ class HJBFDMSolver(BaseHJBSolver):
 
             bc = self.get_boundary_conditions()
             spacings = list(self.problem.geometry.get_grid_spacing())
+            # Issue #1506: axis_weights are the diffusion diagonal D_d = sigma_d^2/2, NOT raw sigma_d --
+            # weighted_laplacian applies axis_weights LINEARLY (w_d * d2u/dx_d^2). Route sigma_diag through
+            # the SAME single-source converter the scalar path uses (diffusion_from_volatility -> sigma^2/2
+            # elementwise); passing raw sigma_diag with a 0.5 factor silently solved 0.5*sigma instead of
+            # 0.5*sigma^2, so a per-axis/tensor volatility array discretized the wrong HJB PDE.
             aniso_lap = weighted_laplacian_with_bc(
-                U.reshape(self.shape), spacings, axis_weights=sigma_diag, bc=bc, time=time
+                U.reshape(self.shape),
+                spacings,
+                axis_weights=diffusion_from_volatility(sigma_diag, kind="field"),
+                bc=bc,
+                time=time,
             ).ravel()
 
-            H_values_flat = H_convective - 0.5 * aniso_lap
+            H_values_flat = H_convective - aniso_lap
 
         else:
             # Scalar diffusion mode — batch HamiltonianBase (Issue #784)
@@ -1191,6 +1228,30 @@ class HJBFDMSolver(BaseHJBSolver):
             - Issue #706 (adjoint discretization)
             - compute_hjb_jacobian() in base_hjb.py (1D Newton solver version)
         """
+        # Issue #1564 / RFC #1574 Phase 0: the linearized operator hardcodes no-flux at every
+        # boundary (both 1D and nD skip boundary rows as no-flux). HJBFDMSolver declares DIRICHLET/
+        # PERIODIC supported for the NORMAL FDM solve (which honors them via its own assembly), but
+        # THIS operator -- consumed only by the strict-adjoint BlockIterator (jacobian_transpose,
+        # #707) as A_FP = A_HJB^T -- does not. A declared Dirichlet outflow would be silently treated
+        # as mass-conserving no-flux. Fail loud on any BC this operator does not honor rather than
+        # advect with the wrong wall physics (mirrors the HJBGFDMSolver Howard gate).
+        bc = self.get_boundary_conditions()
+        if bc is not None:
+            honored = {BCType.NEUMANN, BCType.NO_FLUX}
+            requested = {seg.bc_type for seg in getattr(bc, "segments", [])}
+            default_bc = getattr(bc, "default_bc", None)
+            if default_bc is not None:
+                requested.add(default_bc)
+            unsupported = requested - honored
+            if unsupported:
+                names = ", ".join(sorted(str(getattr(t, "value", t)) for t in unsupported))
+                raise NotImplementedError(
+                    f"build_linearized_operator (strict-adjoint FP operator, Issue #707) hardcodes "
+                    f"no-flux at every boundary and does not honor {{{names}}}. The declared BC would "
+                    f"be silently treated as no-flux, leaking no mass where a Dirichlet outflow should. "
+                    f"Use the standard coupling path (FixedPointIterator) for non-Neumann boundaries, "
+                    f"or a Neumann/no-flux BC on the strict-adjoint path (Issue #1564 / RFC #1574)."
+                )
         if self.dimension == 1:
             return self._build_linearized_operator_1d(U, M, time)
         else:

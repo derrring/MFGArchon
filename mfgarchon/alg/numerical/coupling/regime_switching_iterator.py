@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
+from mfgarchon.alg.numerical.coupling.base_mfg import (
+    BaseCouplingIterator,
+    assert_bc_providers_resolvable,
+    assert_paired_solver_sigma,
+)
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
@@ -126,6 +130,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # Use first problem as representative for base class
         super().__init__(problems[0])
         self._problems = problems
+        # Guard EVERY regime's problem, not just problems[0] (self.problem): each regime solves its
+        # own HJB and none of them resolves BC providers (Issue #1563).
+        for _k, _p in enumerate(problems):
+            assert_bc_providers_resolvable(_p, f"RegimeSwitchingIterator[regime {_k}]")
         self._regime = regime_config
         self._hjb = hjb_solvers
         self._fp = fp_solvers
@@ -135,6 +143,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # _init_solver_signatures. One set per regime k because regimes may use different FP
         # solver types.
         self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        # Issue #1489 (S1): per-regime FP drift-input convention, parallel to _fp_sig_params_k, so
+        # resolve_fp_drift_kwargs routes each regime by convention rather than param presence.
+        self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
         self._max_iter = max_iterations
         self._tol = tolerance
         self._damping = damping
@@ -151,6 +162,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         if len(fp_solvers) != K:
             msg = f"Need {K} FP solvers for {K} regimes, got {len(fp_solvers)}"
             raise ValueError(msg)
+        # RFC #1574 C14 / Issue #1603: each regime HJB-FP pair is an adjoint pair; guard every pair
+        # AFTER the count validation above, so a wrong-length list raises the clean count error first.
+        for _k in range(K):
+            assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"RegimeSwitchingIterator[regime {_k}]")
 
         regime_config.validate()
         self._last_result: RegimeSwitchingResult | None = None
@@ -283,7 +298,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 fp_sig_params_k = self._fp_sig_params_k[k]
                 if fp_sig_params_k is not None:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        self._problems[k], fp_sig_params_k, None, Us_new[k], Ms[k]
+                        self._problems[k],
+                        fp_sig_params_k,
+                        None,
+                        Us_new[k],
+                        Ms[k],
+                        drift_convention=self._fp_drift_convention_k[k],
                     )
                     fp_kwargs.update(drift_kwargs)
                     if use_positional_U:

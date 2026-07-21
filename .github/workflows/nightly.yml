@@ -1,7 +1,16 @@
 name: Nightly Full Test Suite
 
-# Runs all tests including @slow markers that are skipped in PR CI.
-# Catches regressions in heavy validation tests within 24h.
+# The ONLY automatic full-suite run in the project. Since #1656 moved the
+# authoritative gate local (scripts/local_ci.sh), this is the backstop for a
+# developer who pushed without it, and the only tier that runs @slow at all.
+#
+# It had never completed a run: 0 successes in 108 (98 cancelled, 10 failure)
+# between 2026-04-03 and 2026-07-19. Causes, all fixed here (#1658):
+#   - the suite ran SERIALLY -- no -n auto, unlike ci.yml and local_ci.sh
+#   - --maxfail=10 aborted at ~2.5% of the suite, before tests/unit/ was reached
+#   - it installed a ".[dev,numerical]" extra that pyproject.toml never declared,
+#     so cvxpy was absent and the SOCP test burned a maxfail slot on ImportError
+#   - nothing reported a failure anywhere, so 3.5 months of red went unnoticed
 
 on:
   schedule:
@@ -14,16 +23,43 @@ on:
 env:
   PYTHON_VERSION: "3.12"
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   full-test-suite:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Sharded by top-level directory. Measured 2026-07-20 on an M-series Mac with
+    # -n auto: the @slow subset alone is 32m33s, and tests/integration holds 85 of
+    # its 138 tests. Unsharded, removing --maxfail merely trades "aborts early" for
+    # "hits the wall and cancels" -- both give zero completed runs, which is the
+    # state this workflow was in for 3.5 months.
+    #
+    # Shards run in parallel, so wall-clock is the slowest shard, not the sum.
+    # fail-fast is off: this tier reports every failure, so one red shard must not
+    # cancel the others.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: unit
+            path: tests/unit
+          - name: integration
+            path: tests/integration
+          - name: validation
+            path: tests/validation
+          - name: regression
+            path: tests/regression
+
+    name: nightly (${{ matrix.shard.name }})
+    timeout-minutes: 300
 
     steps:
     - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
@@ -32,15 +68,56 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev,numerical]"
 
-    - name: Run full test suite (including slow tests)
+    - name: Assert the shard matrix covers every tests/ subdirectory
+      # tests/regression was silently dropped from an earlier three-shard matrix -- it holds the
+      # atol=1e-9 byte-identity golden master. Nothing stopped that, so this does: a new tests/
+      # subdirectory fails the run instead of quietly going uncovered.
       run: |
-        pytest tests/ -v \
+        python - <<'PYEOF'
+        import pathlib, sys, yaml
+        wf = yaml.safe_load(open('.github/workflows/nightly.yml'))
+        covered = {m['path'].rstrip('/') for m in wf['jobs']['full-test-suite']['strategy']['matrix']['shard']}
+        present = {
+            f'tests/{p.name}' for p in pathlib.Path('tests').iterdir()
+            if p.is_dir() and not p.name.startswith(('_', '.'))
+        }
+        missing = sorted(present - covered)
+        if missing:
+            print(f'Shard matrix does not cover: {missing}')
+            print(f'  covered: {sorted(covered)}')
+            sys.exit(1)
+        print(f'All {len(present)} tests/ subdirectories covered by the shard matrix.')
+        PYEOF
+
+    - name: Run ${{ matrix.shard.name }} shard (including slow tests)
+      id: suite
+      env:
+        # xdist saturates the cores; per-process BLAS parallelism would oversubscribe.
+        OMP_NUM_THREADS: 1
+        OPENBLAS_NUM_THREADS: 1
+        MKL_NUM_THREADS: 1
+      run: |
+        # No --maxfail: this tier exists to report EVERY failure, not to stop at
+        # the first ten. The old --maxfail=10 aborted at ~2.5% of the suite, so
+        # every @slow test in the repo went unexecuted -- not merely a subset.
+        #
+        # The two --ignore lines are a DELIBERATE DEFERRAL, not an oversight. Those
+        # directories run in no AUTOMATIC workflow -- not here, not in the PR smoke
+        # subset, not in python-compat.yml. They DO run on the release-only
+        # `pytest tests/` at ci.yml:190-194, which carries no --ignore; that is
+        # post-publication reporting, not a gate. Locally they pass in 1.8 s
+        # (242 + 34 tests), so the exclusion is not about runtime; the maintainer's
+        # call (2026-07-20) is that these areas are not mature enough to gate on yet.
+        # Tracked in #1659. When enabled, a platform-specific failure should be a
+        # skip marker ON THE TEST, where it is visible, rather than a workflow flag
+        # that silently removes 276 tests from every tier.
+        pytest ${{ matrix.shard.path }} -v \
+          -n auto \
           --ignore=tests/unit/test_backends/ \
           --ignore=tests/unit/test_visualization/ \
           -m "not optional_torch and not benchmark and not experimental and not environment" \
-          --cov=mfgarchon --cov-report=term \
           --junitxml=junit.xml -o junit_family=legacy \
-          --maxfail=10 \
+          --timeout=900 \
           --durations=20
 
     - name: Upload test results
@@ -49,4 +126,71 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./junit.xml
+        flags: nightly-${{ matrix.shard.name }}
         fail_ci_if_error: false
+
+  # Notification runs ONCE, after all shards, rather than per-shard. Per-shard it races:
+  # three concurrent failures each read an empty issue list and each create one, leaving two
+  # orphans open forever -- "de-duplicated on title" would only have held from night two.
+  #
+  # Deliberately NOT gated on `github.event_name == 'schedule'`. Gating it there means the
+  # path cannot be exercised by a manual workflow_dispatch, so a bug in it would surface only
+  # on a real scheduled failure -- silently, which is the defect this whole workflow fixes.
+  notify-on-failure:
+    needs: full-test-suite
+    # NOT `failure()`: a shard that blows the timeout is reported `cancelled`, not `failed`,
+    # and `failure()` is false for a cancelled dependency -- which was 98 of 108 historical runs.
+    if: ${{ always() && needs.full-test-suite.result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/github-script@v9
+      with:
+        script: |
+          const date = new Date().toISOString().split('T')[0];
+          const title = 'Nightly full test suite is failing';
+          const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          const existing = await github.paginate(github.rest.issues.listForRepo, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            labels: 'automated',
+            per_page: 100,
+          });
+          const open = existing.find(i => i.title === title);
+
+          const body = [
+            `The nightly full suite failed on ${date}.`,
+            '',
+            `Run (see which shards are red): ${url}`,
+            '',
+            'This tier is the only automatic full-suite run and the only tier that executes',
+            '`@slow` tests at all -- #1656 moved the authoritative gate local. A failure here',
+            'means either a real regression the local gate missed, or someone pushed without',
+            'running `./scripts/local_ci.sh`.',
+            '',
+            'Reproduce locally:',
+            '```bash',
+            './scripts/local_ci.sh',
+            '```',
+            '',
+            'De-duplicated on title: subsequent failures comment here rather than opening new',
+            'issues. Close it once the suite is green.',
+          ].join('\n');
+
+          if (open) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: open.number,
+              body: `Still failing on ${date}. Run: ${url}`,
+            });
+          } else {
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['automated', 'area: testing', 'priority: high', 'type: bug'],
+            });
+          }

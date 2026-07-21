@@ -68,7 +68,7 @@ logger = get_logger(__name__)
 # =============================================================================
 # These functions provide the classic Linear-Quadratic MFG setup that was
 # previously built-in. Users must now explicitly import and use them.
-# See examples/basic/lq_mfg_classic.py for usage.
+# See examples/tutorials/01_hello_mfg.py for usage.
 
 
 def lq_mfg_terminal_cost(Lx: float = 1.0):
@@ -158,19 +158,6 @@ def create_mfg_problem(
 
 @overload
 def create_mfg_problem(
-    problem_type: Literal["variational"],
-    components: MFGComponents,
-    *,
-    geometry: Domain,
-    time_horizon: float = 1.0,
-    num_timesteps: int = 100,
-    use_unified: Literal[False],
-    **kwargs: Any,
-) -> Any: ...  # VariationalMFGProblem
-
-
-@overload
-def create_mfg_problem(
     problem_type: Literal["stochastic"],
     components: MFGComponents,
     *,
@@ -238,7 +225,7 @@ def create_mfg_problem(
     >>>
     >>> # Network MFG (new unified API)
     >>> components = MFGComponents(
-    ...     network_geometry=graph,
+    ...     geometry=graph,
     ...     node_interaction_func=node_cost,
     ...     edge_cost_func=edge_cost
     ... )
@@ -252,11 +239,14 @@ def create_mfg_problem(
         components.problem_type = problem_type
 
     if use_unified:
-        # New unified API - create MFGProblem directly
+        # New unified API - create MFGProblem directly.
+        # MFGProblem's constructor takes T / Nt; passing time_horizon /
+        # num_timesteps would fall into **kwargs and be silently dropped
+        # (T, Nt then default to 1.0 / 51). Map the factory's names.
         return MFGProblem(
             geometry=geometry,
-            time_horizon=time_horizon,
-            num_timesteps=num_timesteps,
+            T=time_horizon,
+            Nt=num_timesteps,
             components=components,
             **kwargs,
         )
@@ -274,28 +264,36 @@ def create_mfg_problem(
 
             return NetworkMFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
         elif problem_type == "variational":
-            from mfgarchon.solvers.variational import VariationalMFGProblem
-
-            return VariationalMFGProblem(
-                geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
-                components=components,
-                **kwargs,
+            # Issue #1642 (D1): this branch used to import a variational module under a
+            # package that has never existed, so it raised ModuleNotFoundError. The real
+            # VariationalMFGProblem lives in mfgarchon.alg.optimization.variational_problem
+            # but takes an incompatible contract, so this factory cannot forward its
+            # arguments -- geometry would land in **kwargs and the domain would silently
+            # fall back to [0, 1] with Nx=51. Refuse loudly instead.
+            raise NotImplementedError(
+                "create_mfg_problem('variational', ..., use_unified=False) has no "
+                "specialized class to return. Construct "
+                "mfgarchon.alg.optimization.variational_problem.VariationalMFGProblem "
+                "directly: it takes (xmin, xmax, Nx, T, Nt) plus a "
+                "VariationalMFGComponents, not a Domain geometry plus MFGComponents, so "
+                "this factory cannot forward geometry or components without discarding "
+                "them. Use use_unified=True for a variational-tagged MFGProblem. The "
+                "variational solver stack itself is experimental and blocked "
+                "(Issue #1342). Refs #1642."
             )
         elif problem_type == "stochastic":
             from mfgarchon.core.stochastic.stochastic_problem import StochasticMFGProblem
 
             return StochasticMFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -304,8 +302,8 @@ def create_mfg_problem(
             # Use MFGProblem with spatial_bounds and spatial_discretization instead
             return MFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -313,8 +311,8 @@ def create_mfg_problem(
             # Standard MFG
             return MFGProblem(
                 geometry=geometry,
-                time_horizon=time_horizon,
-                num_timesteps=num_timesteps,
+                T=time_horizon,
+                Nt=num_timesteps,
                 components=components,
                 **kwargs,
             )
@@ -429,7 +427,7 @@ def create_network_problem(
 
     >>> from mfgarchon.extensions.topology import NetworkMFGProblem
     >>> problem = NetworkMFGProblem(
-    ...     network_geometry=graph,
+    ...     geometry=graph,
     ...     node_interaction=lambda node, m: m[node]**2,
     ...     edge_cost=lambda edge: 1.0,
     ...     initial_density=initial_m,
@@ -459,7 +457,7 @@ def create_network_problem(
         "Use the extension module directly:\n"
         "  from mfgarchon.extensions.topology import NetworkMFGProblem\n\n"
         "  problem = NetworkMFGProblem(\n"
-        "      network_geometry=graph,\n"
+        "      geometry=graph,\n"
         "      node_interaction=lambda node, m: m[node]**2,\n"
         "      edge_cost=lambda edge: 1.0,\n"
         "      initial_density=initial_m,\n"

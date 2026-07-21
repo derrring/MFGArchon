@@ -41,7 +41,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator
+from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
 from .fixed_point_utils import (
     apply_damping,
     check_convergence_criteria,
@@ -147,9 +147,11 @@ class BlockIterator(BaseCouplingIterator):
             relaxation_M = damping_factor_M
 
         super().__init__(problem)
+        assert_bc_providers_resolvable(self.problem, type(self).__name__)
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator")
 
         # Parse method
         if isinstance(method, str):
@@ -298,7 +300,12 @@ class BlockIterator(BaseCouplingIterator):
             # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
             # incorrect for solvers where drift_field is alpha* (e.g. FPGFDMSolver).
             drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                self.problem, self._fp_sig_params, self.drift_field, U, _M_curr
+                self.problem,
+                self._fp_sig_params,
+                self.drift_field,
+                U,
+                _M_curr,
+                drift_convention=self._fp_drift_convention,
             )
             kwargs.update(drift_kwargs)
             if use_positional_U:

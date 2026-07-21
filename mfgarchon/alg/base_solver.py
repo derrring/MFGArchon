@@ -113,6 +113,7 @@ class SchemeFamily(Enum):
     FEM = "fem"  # Finite Element Methods (Issue #773)
     GFDM = "gfdm"  # Meshfree GFDM (strong-form, Type B)
     MESHLESS_GALERKIN = "meshless_galerkin"  # Meshfree Galerkin / MLS (weak-form, Type A; Issue #1131)
+    FEEC = "feec"  # Finite Element Exterior Calculus (mixed H(div)/L2, structure-preserving; scaffold)
     PINN = "pinn"  # Physics-Informed Neural Network (future)
     GENERIC = "generic"  # Unknown/custom solvers
 
@@ -234,6 +235,12 @@ class BaseMFGSolver(ABC):
         # No BC found
         return None
 
+    #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
+    #: its type? Every FP family currently reads the type and drops the value, so they override
+    #: this to False. Declaring the type without honouring the value is the RFC #1574 class:
+    #: a declared surface broader than the honoured code, silent in the gap.
+    honors_inhomogeneous_neumann: bool = True
+
     def _validate_bc_support(self, bc: Any) -> None:
         """Fail loud if ``bc`` requests a ``BCType`` this solver does not declare in
         ``supported_bc_types`` (the ``BoundaryCapable`` protocol; Issue #1456).
@@ -254,6 +261,74 @@ class BaseMFGSolver(ABC):
         default = getattr(bc, "default_bc", None)
         if default is not None:
             requested.add(default)
+        if not self.honors_inhomogeneous_neumann:
+            import numpy as np
+
+            from mfgarchon.geometry.boundary import BCType
+            from mfgarchon.geometry.boundary.providers import is_provider
+
+            # Issue #1686: declaring BCType.NEUMANN is not the same as honouring the value
+            # attached to it. Every FP solver declares NEUMANN and then reads only the type --
+            # `neumann_bc(value=g)` with g != 0 is applied by the HJB side and silently dropped
+            # by the FP side, so the coupled solve integrates a pair that is not adjoint and
+            # still reports converged=True. Until the inhomogeneous flux wall exists, refuse the
+            # problem rather than solve a different one.
+            # A time-dependent value is a callable, so it cannot be compared to zero here.
+            # Refuse it rather than let it through: `isinstance(value, (int, float))` alone
+            # would accept `neumann_bc(value=lambda t: 5.0)` and discard it silently, which is
+            # the behaviour this gate exists to stop.
+            def _describe(value: Any) -> object | None:
+                """Return a description if this value is not verifiably zero, else None.
+
+                Anything that cannot be compared to zero here is refused rather than assumed
+                homogeneous. `float()` is reached only for things it accepts: an array or a
+                BCValueProvider would otherwise raise TypeError out of a capability gate, and
+                an all-zero array is a legitimate g = 0 that must not crash.
+                """
+                if value is None:
+                    return None
+                if is_provider(value):
+                    return "<provider>"
+                if callable(value):
+                    return "<callable>"
+                if isinstance(value, np.ndarray):
+                    return None if not value.any() else "<array>"
+                try:
+                    return None if float(value) == 0.0 else float(value)
+                except (TypeError, ValueError):
+                    return f"<unrecognised {type(value).__name__}>"
+
+            ignored: list[object] = []
+            for seg in segments:
+                if seg.bc_type is not BCType.NEUMANN:
+                    continue
+                described = _describe(getattr(seg, "value", None))
+                if described is not None:
+                    ignored.append(described)
+
+            # Issue #1686: the uniform default is a value too. Checking only `segments` left the
+            # original silent discard reachable through `default_bc=NEUMANN, default_value=g`.
+            if getattr(bc, "default_bc", None) is BCType.NEUMANN:
+                described = _describe(getattr(bc, "default_value", None))
+                if described is not None:
+                    ignored.append(described)
+            if ignored:
+                ignored = sorted(set(ignored), key=repr)
+                timed = "<callable>" in ignored
+                detail = (
+                    "a time-dependent value cannot be checked for being identically zero here, "
+                    "so it is refused rather than assumed homogeneous; pass 0.0 if it is"
+                    if timed
+                    else f"the value(s) {ignored} would be silently discarded"
+                )
+                raise NotImplementedError(
+                    f"{type(self).__name__} declares BCType.NEUMANN but honours only the "
+                    f"homogeneous case: {detail} (Issue #1686). On the FP side a Neumann value "
+                    "is a prescribed flux J.n = g, and no FP solver implements an inhomogeneous "
+                    "flux wall yet. Use g = 0 (equivalently no_flux_bc()), or a Dirichlet "
+                    "segment if you meant a prescribed density."
+                )
+
         unsupported = requested - set(supported)
         if unsupported:
             raise NotImplementedError(

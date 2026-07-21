@@ -47,7 +47,9 @@ def _diffusion_to_volatility(
 
     Scalar:   D = sigma^2/2  =>  sigma = sqrt(2D)
     Diagonal: D_i = sigma_i^2/2  =>  sigma_i = sqrt(2 D_i)
-    Tensor:   D = (1/2) Sigma Sigma^T  =>  Sigma = cholesky(2D)
+    Tensor:   D = (1/2) S S^T  =>  S = symmetric matrix square root of 2D (RFC #1596;
+              the SYMMETRIC square root, not a Cholesky factor, so the volatility->D->volatility
+              round-trip lands on a symmetric std-dev matrix that passes validate_symmetric_psd).
 
     Args:
         D: PDE diffusion coefficient (non-negative scalar, 1D diagonal, or 2D SPD tensor).
@@ -77,8 +79,20 @@ def _diffusion_to_volatility(
             raise ValueError("Diffusion coefficient array must be non-negative")
         return np.sqrt(2.0 * D_arr)
     if D_arr.ndim == 2:
-        # Full tensor: D = (1/2) Sigma Sigma^T => Sigma = cholesky(2D)
-        return np.linalg.cholesky(2.0 * D_arr)
+        # Full tensor: D = (1/2) S S^T => S = symmetric square root of 2D. Emit the SYMMETRIC
+        # square root (not a Cholesky factor): the volatility convention is that a (d,d) sigma is
+        # the symmetric std-dev matrix (RFC #1596), so the round-trip volatility->D->volatility
+        # must land back on a symmetric S that passes validate_symmetric_psd. Cholesky returns a
+        # lower-triangular (asymmetric) factor and would be rejected by the grid consumers.
+        two_D = 2.0 * D_arr
+        eigvals, eigvecs = np.linalg.eigh(0.5 * (two_D + two_D.T))  # symmetrize guards fp asymmetry
+        if float(np.min(eigvals)) < -1e-10:
+            raise ValueError(
+                f"Diffusion tensor must be positive semi-definite to take a real square root; "
+                f"got min eigenvalue {float(np.min(eigvals)):.6e} (RFC #1596)."
+            )
+        sqrt_eigvals = np.sqrt(np.clip(eigvals, 0.0, None))
+        return (eigvecs * sqrt_eigvals) @ eigvecs.T
 
     raise ValueError(f"Unsupported diffusion shape: {D_arr.shape}")
 
@@ -1780,6 +1794,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise ValidationError(result)
 
         # Issue #686: Validate custom functions (Hamiltonian, derivatives)
+        # Issue #1642 (C1): the derivative-consistency check runs here (it is on by
+        # default) and gates only on an exhibited witness, so a wrong dH_dm/dH_dp is
+        # refused at construction instead of silently steering every Picard step.
         if has_components and self.geometry is not None:
             from mfgarchon.utils.validation import validate_custom_functions
 
@@ -1790,7 +1807,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     dH_dm=h_class.dm,
                     dH_dp=h_class.dp,
                     geometry=self.geometry,
-                    check_consistency=False,
                 )
                 if not func_result.is_valid:
                     raise ValidationError(func_result)
@@ -1855,7 +1871,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 "u_terminal (terminal condition) must be provided in MFGComponents. "
                 "Example: MFGComponents(u_terminal=lambda x: ..., m_initial=lambda x: ...). "
-                "See examples/basic/lq_mfg_classic.py for the classic LQ-MFG setup."
+                "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
         # === m_initial: MUST be in MFGComponents (Issue #670: no silent default) ===
@@ -1865,7 +1881,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise ValueError(
                 "m_initial (initial density) must be provided in MFGComponents. "
                 "Example: MFGComponents(u_terminal=lambda x: ..., m_initial=lambda x: ...). "
-                "See examples/basic/lq_mfg_classic.py for the classic LQ-MFG setup."
+                "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
         # === Potential: V(x,t) - defaults to zero (Issue #671: explicit default) ===

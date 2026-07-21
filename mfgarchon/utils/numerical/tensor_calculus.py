@@ -450,8 +450,8 @@ def diffusion(
     This is the unified diffusion operator that handles both isotropic and
     anisotropic cases. The coefficient type determines the computation:
 
-        - scalar σ      → isotropic:  σ²Δu = ∇·(σ²I∇u)
-        - (d,d) matrix  → anisotropic: ∇·(Σ∇u) with constant tensor
+        - scalar D      → isotropic:  D·Δu = ∇·(D·I∇u)  (RFC #1596: coeff is D, not σ)
+        - (d,d) matrix  → anisotropic: ∇·(D∇u) with constant tensor
         - (*shape,d,d)  → spatially varying anisotropic diffusion
 
     Parameters
@@ -460,9 +460,9 @@ def diffusion(
         Scalar field, shape (N0, N1, ..., Nd-1).
     coeff : float | NDArray
         Diffusion coefficient:
-        - scalar σ: Treated as σ² for isotropic diffusion (Σ = σ²I)
-        - (d, d) array: Constant diffusion tensor Σ
-        - (*u.shape, d, d) array: Spatially varying tensor Σ(x)
+        - scalar D: isotropic diffusion D·Δu (coeff is the diffusion D, not σ; RFC #1596)
+        - (d, d) array: Constant diffusion tensor D
+        - (*u.shape, d, d) array: Spatially varying tensor D(x)
     spacings : list[float]
         Grid spacing per dimension [h0, h1, ..., hd-1].
     bc : BoundaryConditions, optional
@@ -481,8 +481,8 @@ def diffusion(
 
     Notes
     -----
-    For isotropic diffusion with scalar σ, the fast path uses the Laplacian:
-        σ²Δu = σ²(∂²u/∂x² + ∂²u/∂y² + ...)
+    For isotropic diffusion with scalar D, the fast path uses the Laplacian:
+        D·Δu = D·(∂²u/∂x² + ∂²u/∂y² + ...)
 
     For anisotropic diffusion with tensor Σ, the full operator is computed:
         ∇·(Σ∇u) = Σᵢ ∂/∂xᵢ (Σⱼ Σᵢⱼ ∂u/∂xⱼ)
@@ -506,22 +506,25 @@ def diffusion(
     """
     d = u.ndim
 
-    # Dispatch based on coefficient type
+    # Dispatch based on coefficient type. RFC #1596 (Path A): coeff is the PDE diffusion tensor D,
+    # applied directly with NO internal squaring on any branch; conversion sigma->D lives in the one
+    # owner diffusion_from_volatility. (Before RFC #1596 the scalar branch squared while the
+    # vector/tensor branches used the input directly -- the #1549 shape-flip.)
     if np.isscalar(coeff):
-        # Isotropic: σ²Δu (fast path)
+        # Isotropic: D·Δu (fast path)
         lap = laplacian(u, spacings, bc=bc, backend=backend, time=time)
-        return float(coeff) ** 2 * lap
+        return float(coeff) * lap
 
     coeff = np.asarray(coeff)
 
     if coeff.ndim == 0:
-        # 0-d array (scalar wrapped in array)
+        # 0-d array (scalar D wrapped in array)
         lap = laplacian(u, spacings, bc=bc, backend=backend, time=time)
-        return float(coeff) ** 2 * lap
+        return float(coeff) * lap
 
     if coeff.ndim == 1 and len(coeff) == d:
-        # Diagonal tensor: [σ_0², σ_1², ...] → Σ = diag(σ²)
-        # Convert to full tensor for uniform handling
+        # Diagonal diffusion tensor: [D_0, D_1, ...] → diag(D) (values are D_i, used directly).
+        # Convert to full tensor for uniform handling.
         Sigma = np.diag(coeff)
         return _diffusion_tensor(u, Sigma, spacings, bc, domain_bounds, time)
 

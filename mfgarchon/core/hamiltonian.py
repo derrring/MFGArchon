@@ -253,6 +253,43 @@ class ControlCostBase(ABC):
         """
         ...
 
+    # === Admissible control set (Issue #1642, capability B3) ===
+
+    def effective_domain(self) -> tuple[float, float] | None:
+        """Admissible control set A = dom(L), i.e. where L(alpha) is finite.
+
+        SINGLE OWNER of "which controls are admissible" (Issue #1642, B3).
+        Every consumer that needs to bound a control -- optimization boxes,
+        conjugate/Legendre sups, semi-Lagrangian control sweeps -- must read
+        it from here rather than re-deriving it. ``SeparableLagrangian.control_bounds()``
+        and ``HJBSemiLagrangianSolver._solve_timestep_dpp`` both delegate to this
+        method; do not add a second isinstance ladder.
+
+        Scope of that claim, stated exactly: consumers own how densely they
+        SAMPLE A (a quadrature choice -- the DPP sweep still selects three points
+        for a piecewise-linear L_ctrl against eleven for a quadratic one). What
+        they may not do is decide what A IS. Narrowing that last sampling
+        isinstance to a control-cost capability is Issue #1651.
+
+        Returns
+        -------
+        tuple[float, float] | None
+            ``(a_min, a_max)`` when A is a box, ``None`` when A = R^d.
+
+        Notes
+        -----
+        ``lagrangian(alpha)`` does NOT enforce this domain: it evaluates the
+        smooth branch everywhere and returns a FINITE value for infeasible
+        alpha. ``BoundedControlCost(max_control=2).lagrangian(5.0)`` returns
+        12.5 where the true L is +inf. Consumers that maximize
+        ``p*alpha - L(alpha)`` must therefore restrict the search to this
+        domain, or they silently overshoot -- for ``L1ControlCost(lambda_=0.5)``
+        at p=5 the unrestricted sup returns 225.0 against a true H of 4.5.
+        Making ``lagrangian()`` itself fail loud outside A is deferred to
+        Issue #1644 (capability B4), which owns the guarded conjugate helper.
+        """
+        return None
+
     # === DEPRECATED: hamiltonian() -> use evaluate() ===
 
     def hamiltonian(self, p: np.ndarray) -> np.ndarray:
@@ -439,6 +476,15 @@ class L1ControlCost(ControlCostBase):
         """L(alpha) = lambda * |alpha|."""
         return self._lambda * np.sum(np.abs(alpha), axis=-1)
 
+    def effective_domain(self) -> tuple[float, float]:
+        """A = [-1, 1]. The bang-bang bound, matching optimal_control()'s +/-1.
+
+        This is the class's modelling choice (see the class docstring): the
+        unbounded L1 cost has an indicator Hamiltonian and is numerically
+        unusable, so A is normalized to the unit interval.
+        """
+        return (-1.0, 1.0)
+
     def proximal(self, tau: float, z: np.ndarray) -> np.ndarray:
         """prox_{tau * L}(z): soft-threshold then clip to [-1, 1]."""
         soft = np.sign(z) * np.maximum(np.abs(z) - tau * self._lambda, 0.0)
@@ -520,8 +566,16 @@ class BoundedControlCost(ControlCostBase):
         return result
 
     def lagrangian(self, alpha: np.ndarray) -> np.ndarray:
-        """L(alpha) = lambda/2 * |alpha|^2 (assumes feasible)."""
+        """L(alpha) = lambda/2 * |alpha|^2. Finite everywhere; see effective_domain().
+
+        The true L is +inf outside ``effective_domain()``. This method does NOT
+        enforce that -- callers must restrict to the domain (Issue #1642, B3).
+        """
         return 0.5 * self._lambda * np.sum(alpha**2, axis=-1)
+
+    def effective_domain(self) -> tuple[float, float]:
+        """A = [-max_control, max_control]."""
+        return (-self.max_control, self.max_control)
 
     def proximal(self, tau: float, z: np.ndarray) -> np.ndarray:
         """prox_{tau * L}(z) = clip(z / (1 + tau*lambda), -alpha_max, alpha_max)."""
@@ -614,10 +668,21 @@ class _MoreauYosidaControlCost(ControlCostBase):
         return -self.sign * self.dp(p)
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
-        """H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps)."""
+        """H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps).
+
+        The Moreau envelope is a functional of the whole momentum vector, so
+        both terms are aggregated over the component axis. Base costs disagree
+        on that convention (QuadraticControlCost already sums over axis=-1;
+        L1ControlCost and BoundedControlCost return one value per component),
+        so the base term is summed here rather than trusted to be a total.
+        Adding a summed penalty to a per-component base term counted the
+        penalty d times -- see tests/unit/test_core/test_hamiltonian_classes.py
+        ``TestMoreauYosidaPenaltyAggregation``.
+        """
         p_arr = np.atleast_1d(p)
         q = self._prox_h(p_arr)
-        return self.base.evaluate(q) + np.sum((p_arr - q) ** 2, axis=-1) / (2 * self.epsilon)
+        base_total = np.sum(self.base.evaluate(q), axis=-1)
+        return base_total + np.sum((p_arr - q) ** 2, axis=-1) / (2 * self.epsilon)
 
     def dp(self, p: np.ndarray) -> np.ndarray:
         """dH_eps/dp = (p - prox(p)) / epsilon. Always Lipschitz."""
@@ -627,6 +692,14 @@ class _MoreauYosidaControlCost(ControlCostBase):
     def lagrangian(self, alpha: np.ndarray) -> np.ndarray:
         """L_eps(alpha) = L(alpha) + epsilon/2 * |alpha|^2."""
         return self.base.lagrangian(alpha) + self.epsilon / 2 * np.sum(alpha**2, axis=-1)
+
+    def effective_domain(self) -> tuple[float, float] | None:
+        """Same domain as the wrapped cost.
+
+        L_eps = L + (eps/2)|.|^2 adds a finite-everywhere term, so
+        dom(L_eps) = dom(L). Moreau-Yosida smooths H, it does not enlarge A.
+        """
+        return self.base.effective_domain()
 
     def proximal(self, tau: float, z: np.ndarray) -> np.ndarray:
         """prox_{tau * L_eps}(z). L_eps = L + eps/2 |.|^2."""
@@ -680,6 +753,62 @@ class MFGOperatorBase(ABC):
     - Users can specify either H or L (whichever is more natural)
     - The other is automatically derived via Legendre transform
     - Both have equal mathematical status
+
+    Sign convention for the potential V and the coupling f (Issue #1642, B1)
+    ------------------------------------------------------------------------
+    Write the control part as L_ctrl(alpha) and H_ctrl(p), which are Legendre
+    conjugates of each other, and let W(x, m, t) collect every alpha-independent
+    term of L. Then the convention is fixed by the shipped HJB residual, not by
+    preference:
+
+        L(x, alpha, m, t) = L_ctrl(alpha) - V(x, t) - f(m)
+
+    Derivation. The dynamic programming principle gives
+
+        (u^n - u^{n+1}) / dt = min_alpha { L(x, alpha, m, t) + p . alpha }
+
+    so with L = L_ctrl + W the PDE reads  -d_t u + H_ctrl(p) - W = 0.  The
+    residual assembled in ``alg/numerical/hjb_solvers/base_hjb.py`` is
+    ``Phi_U += (u^n - u^{n+1})/dt`` then ``Phi_U += H`` with H = H_ctrl + V + f,
+    i.e.  -d_t u + H_ctrl + V + f = 0.  Matching the two gives W = -(V + f).
+
+    Equivalently, and this is the form the round-trip test asserts: since V and
+    f do not depend on alpha,
+
+        sup_alpha { p . alpha - L(x, alpha, m, t) } = H_ctrl(p) - W = H(x, m, p, t)
+
+    holds if and only if W = -(V + f). Adding V and f to BOTH H and L breaks
+    conjugacy by exactly 2(V + f), constant in p.
+
+    ``canonical_cs`` (``hjb_semi_lagrangian.py``), the ``Dual*`` pair, and
+    ``SeparableLagrangian.__call__`` all follow this convention. The last of
+    those did not until Issue #1645 (B2): it returned L_ctrl + V + f and was not
+    self-conjugate against its own ``evaluate_hamiltonian``, by exactly 2(V+f).
+
+    Where this convention is actually pinned, named precisely, because a
+    conjugate round trip only discriminates when the two sides source V and f
+    INDEPENDENTLY -- a Lagrangian obtained from H via ``legendre_transform()``
+    yields H** == H for every convex H whatever the signs are, which asserts
+    convexity and not a convention:
+
+    - ``TestSeparableRoundTrip.test_conjugate_of_lagrangian_recovers_hamiltonian``
+      -- its 9 V + f != 0 rows (3 control costs x 3 non-zero (V, f) cells). These
+      carried strict xfail until Issue #1645 (B2) closed the fork; they are now
+      the primary discriminating pin. Its 3 V0_f0 rows are non-discriminating,
+      the disputed term being identically zero there.
+    - ``TestCongestionRoundTrip`` -- 12 tests, 3 control costs x 4 (V, f) cells,
+      conjugating an analytic Lagrangian written out in the test module against
+      ``CongestionHamiltonian``.
+    - ``tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py`` -- the numerical
+      end of the same pin: on the semi-Lagrangian DPP path the pre-B2 error
+      against HJB-FDM was V + O(h), mesh-independent and linear in the potential
+      amplitude.
+
+    Note on the alpha sign. This class documents H = sup_alpha { p . alpha - L },
+    while ``optimal_control`` returns the drift alpha* = -dH/dp (MINIMIZE). The
+    two coincide for every control cost shipped here because each L_ctrl is even
+    in alpha; the (V, f) conclusion above is independent of that choice, since V
+    and f are alpha-independent either way.
 
     Parameters
     ----------
@@ -1417,6 +1546,12 @@ class HamiltonianBase(MFGOperatorBase):
 # Lagrangian: Running cost L(x, α, m, t) with Legendre transform - Issue #651
 # =============================================================================
 
+#: Search box used by the numerical fallbacks when ``control_bounds()`` returns
+#: None (A = R^d). It is a solver convenience, NOT a modelling statement: a
+#: maximizer/minimizer landing on its edge means the box truncated the answer,
+#: so the numerics raise rather than return a silently truncated value.
+_FALLBACK_CONTROL_BOUNDS: tuple[float, float] = (-10.0, 10.0)
+
 
 class LagrangianBase(MFGOperatorBase):
     """
@@ -1458,28 +1593,84 @@ class LagrangianBase(MFGOperatorBase):
         """Evaluate L(x, alpha, m, t)."""
         ...
 
-    # === Optimal control (same signature as HamiltonianBase) ===
+    # === Numerical search box: one owner for the control_bounds() fallback ===
 
-    def optimal_control(
+    def _resolve_search_bounds(self) -> tuple[tuple[float, float], bool]:
+        """Return ((a_min, a_max), used_fallback) for the numerical routines.
+
+        Single owner of the ``control_bounds() or _FALLBACK_CONTROL_BOUNDS``
+        decision, shared by conjugate_argmax() and proximal() so the two cannot
+        drift apart on either the box or the truncation check.
+        """
+        declared = self.control_bounds()
+        if declared is None:
+            return _FALLBACK_CONTROL_BOUNDS, True
+        return declared, False
+
+    def _reject_fallback_truncation(
+        self,
+        alpha: NDArray,
+        used_fallback: bool,
+        routine: str,
+    ) -> None:
+        """Raise if a fallback-box search terminated on the box edge.
+
+        When control_bounds() declares a real control set, hitting the edge is a
+        genuine active constraint and is left alone. When the box is the
+        _FALLBACK_CONTROL_BOUNDS stand-in, the edge carries no modelling meaning:
+        the returned value is truncated, not optimal, so it must not be returned
+        silently (Issue #1642 review).
+        """
+        if not used_fallback:
+            return
+        lo, hi = _FALLBACK_CONTROL_BOUNDS
+        # scipy's bounded minimizers stop ~xatol (1e-5) shy of a binding bound;
+        # 1e-5 * range gives ~20x margin over that without flagging the interior.
+        tol = 1e-5 * (hi - lo)
+        alpha_arr = np.atleast_1d(alpha)
+        if np.any((alpha_arr <= lo + tol) | (alpha_arr >= hi - tol)):
+            raise ValueError(
+                f"{type(self).__name__}.{routine}: the numerical search hit the edge of "
+                f"the fallback box {_FALLBACK_CONTROL_BOUNDS} at alpha={alpha_arr.tolist()}. "
+                "control_bounds() returned None (A = R^d), so this box is a solver "
+                "stand-in, not the control set -- the result is truncated, not optimal. "
+                "Either override control_bounds() with the real admissible set, or "
+                "override conjugate_argmax()/proximal() with the closed form."
+            )
+
+    # === Conjugate maximizer: the single owner of the numerical Legendre step ===
+
+    def conjugate_argmax(
         self,
         x: NDArray,
         m: float | NDArray,
         p: NDArray,
         t: float = 0.0,
     ) -> NDArray:
-        """Compute alpha* = argmax_alpha { p . alpha - L(x, alpha, m, t) }.
+        """argmax_alpha { p . alpha - L(x, alpha, m, t) } -- the maximizer of L*(p).
 
-        Same alpha* as HamiltonianBase.optimal_control(). Computed directly
-        from L without constructing DualHamiltonian.
+        **This is THE extension point for analytic subclasses.** Both
+        optimal_control() and evaluate_hamiltonian() derive from it, so
+        overriding it here supplies the closed form to both at once and keeps
+        them on one sign convention. Overriding optimal_control() alone leaves
+        evaluate_hamiltonian() on the numerical fallback.
 
-        Default: 1D scalar optimization via scipy. Override for analytic.
+        By the envelope theorem this equals dH/dp, which is NOT alpha*: the optimal
+        control is alpha* = -sign * dH/dp (Issue #1642, capability B5). Keeping the
+        maximization in one place is what stops optimal_control() and
+        evaluate_hamiltonian() from re-forking into private sign conventions --
+        before #1642 they held opposite ones, and only the two errors cancelling
+        made evaluate_hamiltonian() return the right number.
+
+        Default: 1D scalar optimization via scipy, L-BFGS-B in nD. Raises if the
+        search terminates on the edge of the control_bounds() fallback box.
         """
         from scipy.optimize import minimize_scalar
 
         p_arr = np.atleast_1d(p)
         d = p_arr.shape[-1] if p_arr.ndim >= 2 else (1 if p_arr.ndim == 0 else len(p_arr))
 
-        bounds = self.control_bounds() or (-10.0, 10.0)
+        bounds, used_fallback = self._resolve_search_bounds()
 
         if d == 1:
             p_val = float(p_arr.flat[0])
@@ -1489,7 +1680,9 @@ class LagrangianBase(MFGOperatorBase):
                 return -(p_val * a - float(self(x, alpha, m, t)))
 
             res = minimize_scalar(neg_objective, bounds=bounds, method="bounded")
-            return np.array([res.x])
+            argmax = np.array([res.x])
+            self._reject_fallback_truncation(argmax, used_fallback, "conjugate_argmax")
+            return argmax
 
         # nD: scipy.optimize.minimize
         from scipy.optimize import minimize as scipy_minimize
@@ -1499,7 +1692,37 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        self._reject_fallback_truncation(res.x, used_fallback, "conjugate_argmax")
         return res.x
+
+    # === Optimal control (same signature AND same convention as HamiltonianBase) ===
+
+    def optimal_control(
+        self,
+        x: NDArray,
+        m: float | NDArray,
+        p: NDArray,
+        t: float = 0.0,
+    ) -> NDArray:
+        """Compute the optimal control alpha*, the drift the agent applies.
+
+        Same convention as HamiltonianBase.optimal_control() (Issue #1642):
+        - MINIMIZE: alpha* = -dH/dp
+        - MAXIMIZE: alpha* = +dH/dp
+
+        with dH/dp = argmax_alpha { p . alpha - L(x, alpha, m, t) }. Computed
+        directly from L without constructing DualHamiltonian.
+
+        Before #1642 this returned the bare argmax -- i.e. +p/lambda under
+        MINIMIZE where HamiltonianBase and SeparableLagrangian both return
+        -p/lambda -- so a subclass that did not override it got a drift of the
+        wrong sign.
+
+        Derives from conjugate_argmax(); **override that instead** for an
+        analytic subclass. evaluate_hamiltonian() reads conjugate_argmax()
+        directly, so an override placed here alone would not reach it.
+        """
+        return -self._sign * self.conjugate_argmax(x, m, p, t)
 
     # === On-the-fly H evaluation ===
 
@@ -1510,13 +1733,22 @@ class LagrangianBase(MFGOperatorBase):
         p: NDArray,
         t: float = 0.0,
     ) -> float | NDArray:
-        """H(x, m, p, t) = p . alpha*(p) - L(x, alpha*(p), m, t).
+        """H(x, m, p, t) = sup_alpha { p . alpha - L(x, alpha, m, t) } = L*(p).
 
-        Computes Hamiltonian value on-the-fly without DualHamiltonian.
+        The convex conjugate, evaluated at its own maximizer. Matches
+        DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
+        the value does not depend on OptimizationSense (Issue #1185).
+
+        Evaluated at ``conjugate_argmax``, NOT at ``optimal_control`` -- those
+        differ by the sense sign, so substituting one for the other flips the
+        Hamiltonian's sign under MINIMIZE (Issue #1642). Analytic subclasses
+        therefore override ``conjugate_argmax``, which both consumers read.
+
+        Computes the Hamiltonian value on-the-fly without DualHamiltonian.
         """
-        alpha_star = self.optimal_control(x, m, p, t)
-        p_dot_alpha = float(np.sum(np.atleast_1d(p) * alpha_star))
-        return p_dot_alpha - float(self(x, alpha_star, m, t))
+        dH_dp = self.conjugate_argmax(x, m, p, t)
+        p_dot_alpha = float(np.sum(np.atleast_1d(p) * dH_dp))
+        return p_dot_alpha - float(self(x, dH_dp, m, t))
 
     # === ADMM / variational interface ===
 
@@ -1535,12 +1767,15 @@ class LagrangianBase(MFGOperatorBase):
 
         For separable L, only the control cost term matters (V, f don't
         depend on alpha), so x and m are unused.
+
+        Raises if the search terminates on the edge of the control_bounds()
+        fallback box -- the same truncation hazard as conjugate_argmax().
         """
         from scipy.optimize import minimize_scalar
 
         z_arr = np.atleast_1d(z)
         d = len(z_arr) if z_arr.ndim == 1 else 1
-        bounds = self.control_bounds() or (-10.0, 10.0)
+        bounds, used_fallback = self._resolve_search_bounds()
 
         # Dummy x, m if not provided
         if x is None:
@@ -1556,7 +1791,9 @@ class LagrangianBase(MFGOperatorBase):
                 return float(self(x, alpha, m, t)) + (a - z_val) ** 2 / (2 * tau)
 
             res = minimize_scalar(objective, bounds=bounds, method="bounded")
-            return np.array([res.x])
+            prox = np.array([res.x])
+            self._reject_fallback_truncation(prox, used_fallback, "proximal")
+            return prox
 
         from scipy.optimize import minimize as scipy_minimize
 
@@ -1565,6 +1802,7 @@ class LagrangianBase(MFGOperatorBase):
 
         x0 = np.clip(z_arr, bounds[0], bounds[1])
         res = scipy_minimize(objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
+        self._reject_fallback_truncation(res.x, used_fallback, "proximal")
         return res.x
 
     # === Semi-Lagrangian interface ===
@@ -1600,7 +1838,11 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(x, alpha, m, t) = L_control(alpha) + V(x, t) + f(m).
+    """Separable Lagrangian: L(x, alpha, m, t) = L_control(alpha) - V(x, t) - f(m).
+
+    The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
+    class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).
+    See the convention block on ``MFGOperatorBase`` for the derivation.
 
     Mirrors SeparableHamiltonian. Uses ControlCostBase for the control term,
     providing closed-form optimal_control, evaluate_hamiltonian, and proximal.
@@ -1630,11 +1872,20 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
 
     def __call__(self, x, alpha, m, t=0.0):
-        """L = L_control(alpha) + V(x, t) + f(m)."""
+        """L = L_control(alpha) - V(x, t) - f(m).
+
+        The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
+        H = sup_alpha { p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
+        because every shipped L_ctrl is even in alpha -- Issue #1652), so if L = L_ctrl + W then
+        H = H_ctrl - W; the repo's HJB is
+        -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
+        carrying +f), which forces W = -(V + f). Carrying +V+f on both sides made this class
+        non-self-conjugate against its own evaluate_hamiltonian by exactly 2(V+f).
+        """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = float(self._potential(x, t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
-        return L_ctrl + V + f_m
+        return L_ctrl - V - f_m
 
     def optimal_control(self, x, m, p, t=0.0):
         """Delegates to control_cost.optimal_control(p). Analytic."""
@@ -1655,13 +1906,13 @@ class SeparableLagrangian(LagrangianBase):
         return self.control_cost.proximal(tau, np.atleast_1d(z))
 
     def control_bounds(self):
-        """Infer from control_cost if available."""
-        cc = self.control_cost
-        if isinstance(cc, BoundedControlCost):
-            return (-cc.max_control, cc.max_control)
-        if isinstance(cc, L1ControlCost):
-            return (-1.0, 1.0)  # bang-bang bounded to [-1, 1]
-        return None
+        """Admissible control set, owned by the control cost (Issue #1642, B3).
+
+        Delegates to ``ControlCostBase.effective_domain()``. This replaced an
+        isinstance ladder that re-derived the same answer -- a second owner of
+        the admissible set. Do not re-introduce one here.
+        """
+        return self.control_cost.effective_domain()
 
     def as_hamiltonian(self) -> SeparableHamiltonian:
         """Return the corresponding SeparableHamiltonian (shared control_cost)."""

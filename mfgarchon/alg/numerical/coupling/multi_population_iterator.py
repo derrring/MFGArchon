@@ -20,8 +20,10 @@ import numpy as np
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
+from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma
+
 if TYPE_CHECKING:
-    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.multi_population import MultiPopulationProblem
 
@@ -71,11 +73,19 @@ class MultiPopulationIterator:
         self.fp_solvers = fp_solvers
         self.relaxation = relaxation
         K = multi_problem.K
+        _get_pop = getattr(multi_problem, "get_population", None)
+        if callable(_get_pop):
+            for _k in range(K):
+                assert_bc_providers_resolvable(_get_pop(_k), f"MultiPopulationIterator[population {_k}]")
 
         if len(hjb_solvers) != K:
             raise ValueError(f"Need {K} HJB solvers, got {len(hjb_solvers)}")
         if len(fp_solvers) != K:
             raise ValueError(f"Need {K} FP solvers, got {len(fp_solvers)}")
+        # RFC #1574 C14 / Issue #1603: each population HJB-FP pair is an adjoint pair; guard every
+        # pair, not just population 0, against silent sigma desync.
+        for _k in range(K):
+            assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"MultiPopulationIterator[population {_k}]")
 
         # Issue #1043: cache each FP solver's solve_fp_system signature so the drift/potential
         # convention can be resolved via the shared resolve_fp_drift_kwargs (same as single-pop).
@@ -87,6 +97,12 @@ class MultiPopulationIterator:
                 self._fp_sig_params.append(set(inspect.signature(fp.solve_fp_system).parameters))
             except (AttributeError, ValueError, TypeError):
                 self._fp_sig_params.append(None)
+
+        # Issue #1489 (S1): per-population FP drift-input convention, parallel to _fp_sig_params, so
+        # resolve_fp_drift_kwargs routes each population by convention rather than param presence.
+        self._fp_drift_convention: list[DriftConvention | None] = [
+            getattr(fp, "_drift_convention", None) for fp in fp_solvers
+        ]
 
     @property
     def damping_factor(self) -> float:
@@ -195,7 +211,14 @@ class MultiPopulationIterator:
                     M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                        prob_k, self._fp_sig_params[k], None, U[k], M[k], h_class=H_k, cross_density=m_all
+                        prob_k,
+                        self._fp_sig_params[k],
+                        None,
+                        U[k],
+                        M[k],
+                        h_class=H_k,
+                        cross_density=m_all,
+                        drift_convention=self._fp_drift_convention[k],
                     )
                     if use_positional_U:
                         M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False)

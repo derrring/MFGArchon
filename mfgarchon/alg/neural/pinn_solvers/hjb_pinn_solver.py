@@ -239,8 +239,8 @@ class HJBPINNSolver(PINNBase):
 
     def compute_pde_residual(self, t: torch.Tensor, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        Compute HJB equation residual:
-        du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
+        Compute backward-HJB equation residual:
+        -du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
 
         Args:
             t: Time coordinates [N, 1]
@@ -250,9 +250,13 @@ class HJBPINNSolver(PINNBase):
             Dictionary with HJB residual
 
         Note:
-            Issue #1281 fix (2026-06-11 survey): added -(sigma^2/2)*u_xx viscous
-            term; convention mirrors FP diffusion sign (fp_residual subtracts
-            (sigma^2/2)*m_xx). HJB residual now sigma-dependent for sigma>0.
+            Issue #1281 fix (2026-06-11 survey): added -(sigma^2/2)*u_xx viscous term.
+            Issue #1571 fix: the time-derivative sign is -du/dt, not +du/dt. The HJB is
+            BACKWARD (terminal condition u(T,x)=g at t=T, t fed un-reversed), so the
+            canonical residual is -du/dt + H - (sigma^2/2)*u_xx = 0 (base_hjb residual
+            convention). The earlier +du/dt mirrored the FORWARD FP sign (+m_t) onto the
+            backward HJB and fit the wrong PDE (e.g. H=const c, D=0 gave u(0)=g+cT instead
+            of the correct g-cT). Only the diffusion sign mirrors FP, not the time-derivative.
         """
         # Compute derivatives (u_t, u_x, u_xx)
         u_t, u_x, u_xx = self.compute_derivatives(t, x)
@@ -269,8 +273,8 @@ class HJBPINNSolver(PINNBase):
         # PINN solvers (fp_pinn_solver.py, mfg_pinn_solver.py).
         viscous_term = diffusion_from_volatility_torch(self.sigma) * u_xx
 
-        # HJB residual: du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0
-        hjb_residual = u_t + H - viscous_term
+        # Backward-HJB residual: -du/dt + H(grad_u, x, m) - (sigma^2/2)*u_xx = 0 (Issue #1571)
+        hjb_residual = -u_t + H - viscous_term
 
         return {"hjb": hjb_residual}
 

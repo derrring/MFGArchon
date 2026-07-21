@@ -243,22 +243,70 @@ class ContinuousMFGEnvBase(ABC):
         histogram = np.ones(self.population_bins, dtype=np.float32) / self.population_bins
         return histogram
 
+    def _noise_mask(self) -> NDArray[np.floating[Any]]:
+        """Per-dimension 0/1 multiplier selecting which state dims receive Brownian noise.
+
+        Default: every dim is dynamic (all ones). Override to zero the DECLARED-CONSTANT dims --
+        those whose ``_drift`` is identically zero (e.g. fixed goal coordinates) or a deterministic
+        countdown (drift = -1) -- so they do not random-walk (Issue #1600). Shape (state_dim,); it
+        broadcasts over the (num_agents, state_dim) population increment in ``_advance_population``.
+        """
+        return np.ones(self.state_dim, dtype=np.float64)
+
+    def _postprocess_next_states(self, next_states: NDArray[np.floating[Any]]) -> NDArray[np.floating[Any]]:
+        """Per-agent post-processing of the advanced population, shape (num_agents, state_dim).
+
+        Default: identity. Override for hard state constraints that must hold for EVERY agent (e.g.
+        the resource-allocation simplex projection). Overriding this hook -- rather than the whole
+        ``step()`` -- keeps ``_advance_population`` the single source for the Euler-Maruyama update
+        (Issue #1600), so the population-frozen and constant-dim-noise fixes cannot silently
+        re-diverge into a per-env ``step()`` copy.
+        """
+        return next_states
+
+    def _advance_population(
+        self, action: NDArray[np.floating[Any]], population: NDArray[np.floating[Any]]
+    ) -> NDArray[np.floating[Any]]:
+        r"""Advance ALL agents one Euler-Maruyama step against the pre-step ``population``.
+
+        The empirical density ``get_population_state()`` bins is real only if every agent it bins
+        actually moves. The prior ``step()`` advanced only ``agent_states[0]``, freezing agents
+        ``1..N-1`` at their reset positions, so the coupling density stayed ~= m_0 forever
+        (Issue #1600). Each agent takes the SAME ego action -- the single-agent Gym interface
+        controls one policy, so the population co-moves as a caricature crowd; a self-consistent
+        fictitious-play equilibrium (per-agent best response pi(x_i, m)) is #1570/#887 territory,
+        not this fix -- but each agent's drift still differs through its own state. Constant dims
+        are held fixed by ``_noise_mask()``; per-agent hard constraints by ``_postprocess_next_states``.
+        """
+        states = self.agent_states
+        assert states is not None
+        drift = np.stack([self._drift(states[i], action, population) for i in range(states.shape[0])])
+        noise = self.rng.normal(0.0, self.noise_std * np.sqrt(self.dt), size=states.shape) * self._noise_mask()
+        next_states = states + drift * self.dt + noise
+        state_low, state_high = self._get_state_bounds()
+        next_states = np.clip(next_states, state_low, state_high)
+        # Keep agent_states float32 (the observation_space dtype); the old in-place agent_states[0]
+        # assignment downcast, but we now replace the whole array (float64 from rng/mask).
+        return self._postprocess_next_states(next_states).astype(np.float32, copy=False)
+
     def step(
         self, action: NDArray[np.floating[Any]]
     ) -> tuple[NDArray[np.floating[Any]], float, bool, bool, dict[str, Any]]:
         r"""
         Execute one timestep of the MFG dynamics.
 
-        This represents a single agent's interaction. In a full MFG setting,
-        all agents would act, but here we track one representative agent.
+        The controlled ego agent is ``agent_states[0]`` (its next state is the returned observation
+        and drives the reward/termination). The whole population advances each step
+        (``_advance_population``) so the empirical mean field ``get_population_state()`` bins is real
+        rather than frozen at the reset sample (Issue #1600).
 
         Args:
             action: Action $u \in \mathbb{R}^{action\_dim}$
 
         Returns:
             Tuple (observation, reward, terminated, truncated, info):
-            - observation: Next state $x'$
-            - reward: Reward $r(x, u, m)$
+            - observation: Next state $x'$ of the ego agent
+            - reward: Reward $r(x, u, m)$ for the ego agent
             - terminated: Whether episode ended naturally
             - truncated: Whether episode hit time limit
             - info: Additional diagnostic information
@@ -269,26 +317,16 @@ class ContinuousMFGEnvBase(ABC):
         # Clip action to bounds
         action = np.clip(action, self.action_bounds[0], self.action_bounds[1])
 
-        # Get representative agent state (first agent)
+        # Ego (controlled) agent state and the pre-step population the dynamics/reward couple to
         state = self.agent_states[0]
-
-        # Get current population distribution
         population = self.get_population_state()
 
-        # Apply dynamics: x' = x + f(x, u, m) * dt + sigma * sqrt(dt) * noise
-        drift = self._drift(state, action, population)
-        noise = self.rng.normal(0, self.noise_std * np.sqrt(self.dt), size=state.shape)
-        next_state = state + drift * self.dt + noise
+        # Advance the WHOLE population one Euler-Maruyama step (Issue #1600) and read the ego next state
+        self.agent_states = self._advance_population(action, population)
+        next_state = self.agent_states[0]
 
-        # Clip to state bounds
-        state_low, state_high = self._get_state_bounds()
-        next_state = np.clip(next_state, state_low, state_high)
-
-        # Compute reward
+        # Reward for the ego agent against the pre-step mean field
         reward = self._compute_reward(state, action, next_state, population)
-
-        # Update agent state
-        self.agent_states[0] = next_state
 
         # Check termination
         terminated = self._is_terminated(next_state)
@@ -298,7 +336,7 @@ class ContinuousMFGEnvBase(ABC):
 
         info = {
             "step": self.current_step,
-            "population_mass": np.sum(population),
+            "population_mass": float(np.sum(population)),
         }
 
         return next_state.astype(np.float32), float(reward), terminated, truncated, info

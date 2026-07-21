@@ -42,7 +42,7 @@ from mfgarchon.utils.iteration.schedules import (
 )
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator
+from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
 from .fixed_point_utils import (
     check_convergence_criteria,
     initialize_cold_start,
@@ -126,9 +126,11 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         drift_field: np.ndarray | Any | None = None,
     ):
         super().__init__(problem)
+        assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
         self.backend = backend
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "FictitiousPlayIterator")
         self.config = config
 
         # Fictitious play parameters
@@ -397,7 +399,12 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             fp_kwargs = self._build_fp_kwargs(volatility_field=self.volatility_field)
             if self._fp_sig_params is not None:
                 drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
-                    self.problem, self._fp_sig_params, self.drift_field, U_new, M_old
+                    self.problem,
+                    self._fp_sig_params,
+                    self.drift_field,
+                    U_new,
+                    M_old,
+                    drift_convention=self._fp_drift_convention,
                 )
                 fp_kwargs.update(drift_kwargs)
                 if use_positional_U:

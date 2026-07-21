@@ -140,11 +140,12 @@ class TestMFGGridConfig:
         assert abs(config.dt - expected_dt) < 1e-10
 
     def test_property_cfl_number(self):
-        """Test CFL number calculation."""
+        """Test CFL number calculation uses the PDE coefficient D = sigma^2/2 (Issue #1550)."""
         config = MFGGridConfig(Nx=100, Nt=100, xmin=0.0, xmax=1.0, T=1.0, sigma=0.1)
         dx = 1.0 / 100
         dt = 1.0 / 100
-        expected_cfl = (0.1**2) * dt / (dx**2)
+        # Diffusive CFL = D*dt/dx^2 with D = sigma^2/2, NOT bare sigma^2 (= 2D).
+        expected_cfl = 0.5 * (0.1**2) * dt / (dx**2)
         assert abs(config.cfl_number - expected_cfl) < 1e-10
 
     def test_property_grid_shape(self):

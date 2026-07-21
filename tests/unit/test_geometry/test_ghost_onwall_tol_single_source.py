@@ -6,15 +6,18 @@ Two migration sites in geometry/boundary/ghost.py:
 
 Tests assert:
   (A) ghost module imports from tolerances (structural: import present)
-  (B) compute_normal_from_bounds default matches ONWALL_TOL exactly
+  (B) compute_normal_from_bounds default matches ONWALL_TOL exactly (VALUE only)
   (C) create_ghost_stencil classification is unchanged on a known 2-D cloud
       (behavior-invariant: byte-identical result before/after)
+  source-grep (:154/:170) the actual re-fork guard -- the module source of each site
+      must not contain the bare literal '1e-10'.
 
-Test (B) FAILS on the pre-refactor code because the default argument is the
-literal 1e-10, not the imported constant (which has the same float value but
-the test checks via module introspection that no hardcoded literal bypasses the
-import).  After the refactor the default IS ONWALL_TOL so the import is present
-and the float value matches.
+What catches a revert (Issue #1569): the import-vs-literal re-fork is caught by the
+source-grep tests (``test_no_hardcoded_1e10_in_*``, :154/:170), NOT by (B). A signature
+default is the *evaluated* value, so ``tol=1e-10`` and ``tol=ONWALL_TOL`` are both ``1e-10``
+to introspection -- (B) is a value equality that a bare-literal revert PASSES. (B) exists
+only to pin that ONWALL_TOL keeps that float value (a change to the constant would surface),
+and (A) that the import exists; the grep is the discriminating single-source guard.
 """
 
 from __future__ import annotations
@@ -52,11 +55,13 @@ def test_ghost_imports_onwall_tol():
 
 
 def test_compute_normal_from_bounds_default_tol_is_onwall_tol():
-    """The default tol= argument of compute_normal_from_bounds must be ONWALL_TOL.
+    """The default tol= argument of compute_normal_from_bounds must equal ONWALL_TOL by VALUE.
 
-    This test FAILS on the pre-refactor code if the default is still the bare
-    literal 1e-10 and ONWALL_TOL has not been wired in.  After the refactor the
-    default is set to ONWALL_TOL (same float value, single-sourced).
+    Scope (Issue #1569): a signature default is the evaluated value, so this equality does NOT
+    distinguish ``tol=1e-10`` from ``tol=ONWALL_TOL`` (both introspect as 1e-10) -- a bare-literal
+    revert PASSES here. The import-vs-literal re-fork is caught by ``test_no_hardcoded_1e10_in_
+    compute_normal_from_bounds`` (source grep). This test pins only that ONWALL_TOL keeps that
+    float value, so a change to the constant surfaces as a mismatch.
     """
     from mfgarchon.geometry.boundary.ghost import compute_normal_from_bounds
 
@@ -65,7 +70,7 @@ def test_compute_normal_from_bounds_default_tol_is_onwall_tol():
 
     assert default_tol == ONWALL_TOL, (
         f"compute_normal_from_bounds default tol={default_tol!r} != ONWALL_TOL={ONWALL_TOL!r}. "
-        "The 1e-10 literal has not been replaced by the imported constant."
+        "The default's float value has drifted from the single source (ONWALL_TOL)."
     )
 
 

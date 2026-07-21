@@ -253,20 +253,54 @@ class TestFEMFacetBoundaryTags:
         assert np.allclose(fp._skfem_mesh.p[0, dofs], 0.0)
         assert len(dofs) < len(fp._skfem_mesh.boundary_nodes())  # a wall, not all boundary
 
-    def test_untagged_mesh_falls_back_without_crashing(self):
-        """If mesh.boundaries is None (no tagging), _find_segment_dofs must fall back to all
-        boundary nodes, not raise."""
+    def test_named_boundary_untagged_fails_loud_but_none_falls_back(self):
+        """Issue #1489 (F3): a NAMED boundary absent from mesh.boundaries must RAISE (silently applying
+        a one-wall Dirichlet to the whole boundary is the bug); only boundary=None falls back to the
+        whole boundary — and that fallback resolves ALL boundary DOFs, incl. P2 edge DOFs (F2)."""
         from mfgarchon.alg.numerical.fem.assembly import create_basis
         from mfgarchon.alg.numerical.fem.bc_adapter import _find_segment_dofs
         from mfgarchon.geometry.boundary.conditions import BCSegment, BCType
 
         mesh = skfem.MeshTri.init_sqsymmetric().refined(1)  # raw skfem mesh: boundaries is None
         assert mesh.boundaries is None
-        basis = create_basis(mesh, order=1)
-        seg = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
-        dofs = _find_segment_dofs(mesh, basis, seg)  # must not raise
-        assert len(dofs) == len(mesh.boundary_nodes())  # fell back to all boundary nodes
+        basis = create_basis(mesh, order=2)  # P2, so the fallback must include edge DOFs (F2)
+
+        named = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
+        with pytest.raises(ValueError, match=r"no such tagged boundary|entire boundary"):
+            _find_segment_dofs(mesh, basis, named)
+
+        whole = BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary=None, value=0.0)
+        dofs = _find_segment_dofs(mesh, basis, whole)  # boundary=None -> whole boundary, no raise
+        # F2: get_dofs on the boundary facets includes P2 edge-midpoint DOFs (> vertex-only count)
+        assert len(dofs) == len(set(basis.get_dofs(mesh.boundary_facets()).flatten().tolist()))
+        assert len(dofs) > len(mesh.boundary_nodes())  # strictly more than vertices-only (the F2 bug)
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_fem_solvers_fail_loud_on_non_mesh_geometry():
+    """Issue #1489: a FEM solver on a non-mesh geometry (TensorProductGrid, no mesh_data attribute)
+    must raise a CLEAR ValueError naming the geometry, not a cryptic AttributeError. The prior guard
+    accessed `.mesh_data` directly, so it AttributeError'd before the message that named TensorProductGrid."""
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    comp = MFGComponents(
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+        ),
+    )
+    problem = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+    for solver_cls in (HJBFEMSolver, FPFEMSolver):
+        with pytest.raises(ValueError, match=r"mesh_data|Mesh2D"):
+            solver_cls(problem)

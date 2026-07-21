@@ -100,6 +100,12 @@ from .fp_fdm_operators import is_boundary_point
 
 logger = get_logger(__name__)
 
+# Issue #1671: the largest fraction of total mass the non-negativity clip may fabricate before
+# the solve is treated as failed rather than repaired. Round-off negatives from a
+# positivity-preserving scheme sit around 1e-15 of the mass; a scheme that has gone unstable
+# reaches O(1). Anything between is a discretisation problem the caller needs to see.
+_MAX_CLIP_MASS_FABRICATION = 1e-8
+
 # =============================================================================
 # Scheme dispatch tables (Issue #859: replace if/elif chains)
 # =============================================================================
@@ -117,6 +123,31 @@ _INTERIOR_HANDLERS: dict[str, Any] = {
     "divergence_centered": add_interior_entries_divergence_centered,
     "divergence_upwind": add_interior_entries_divergence_upwind,
 }
+
+# Legacy scheme names -> canonical names (single source for both the outer driver's
+# velocity-support check and the per-timestep assembly).
+_SCHEME_ALIASES = {
+    "centered": "gradient_centered",
+    "upwind": "gradient_upwind",
+    "flux": "divergence_upwind",
+}
+
+_VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
+
+# Schemes whose assembly handlers actually read `interface_velocity`. The other three
+# accept the parameter and ignore it, re-deriving the drift from U instead -- so they
+# still need the scalar coefficient. That silent discard of the caller's velocity is a
+# real defect (verified in 1D and 2D: velocity (2.5, -1.7) vs (0, 0) gives bit-identical
+# densities for all three), tracked separately in #1632; this set exists so the driver
+# knows which schemes leave the coefficient unread.
+_INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
+
+# Marker for "the scalar drift coefficient does not apply on this path": the consuming
+# scheme carries alpha* per face and never reads the coefficient. NaN rather than 0.0 so
+# that a scheme added to _INTERFACE_VELOCITY_SCHEMES without a real interface_velocity
+# branch fails loudly through the per-timestep NaN guard (Issue #881) instead of silently
+# advecting at rate zero.
+_COEFFICIENT_NOT_APPLICABLE = float("nan")
 
 
 # =============================================================================
@@ -671,7 +702,20 @@ def solve_fp_nd_full_system(
     dt = problem.dt
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
     # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
-    coupling_coefficient = fp_drift_coefficient(problem)
+    #
+    # Issue #1528 phase 2: resolve it lazily, at the point of use. fp_drift_coefficient
+    # raises for any Hamiltonian whose optimal control is not -∇U/control_cost (MAXIMIZE,
+    # non-quadratic, regularized). Resolving it eagerly here made that raise fire before
+    # the drift channel was even consulted, so a MAXIMIZE problem could not run through
+    # the nD FDM solver *even when supplying velocity_field* -- the channel that exists
+    # precisely to carry a precomputed alpha* for those Hamiltonians.
+    _resolved_coefficient: list[float] = []
+
+    def resolve_coupling_coefficient() -> float:
+        """Drift coefficient c in alpha* = -c*grad(U), resolved once, only if consumed."""
+        if not _resolved_coefficient:
+            _resolved_coefficient.append(fp_drift_coefficient(problem))
+        return _resolved_coefficient[0]
 
     # Get grid spacing and geometry
     spacing = problem.geometry.get_grid_spacing()
@@ -683,6 +727,9 @@ def solve_fp_nd_full_system(
     # Issue #919 Phase 2: velocity_field → pass to implicit solver directly
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
+    _velocity_is_consumed = velocity_field is not None and (
+        _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
+    )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
         # Create a zero-U dispatcher (U is unused when interface_velocity is set)
@@ -857,7 +904,9 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 tensor_base,
-                coupling_coefficient,
+                # The tensor path has no interface_velocity parameter and derives its
+                # advection from U, so it genuinely consumes the coefficient.
+                resolve_coupling_coefficient(),
                 spacing,
                 grid,
                 ndim,
@@ -899,7 +948,10 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                coupling_coefficient,
+                # Issue #1631: skip resolving a coefficient the handler will not read.
+                # Only a scheme in _INTERFACE_VELOCITY_SCHEMES actually consumes the
+                # velocity; the others fall back to -c*grad(U) and still need it (#1632).
+                _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,
                 ndim,
@@ -921,15 +973,47 @@ def solve_fp_nd_full_system(
                 "Check CFL condition: dt * sigma^2 / dx^2 should be < 0.5 for explicit schemes."
             )
 
-        # Issue #880: Enforce non-negativity with diagnostic warning
+        # Issue #880 / #1671: clip round-off negatives, but refuse to manufacture mass.
+        #
+        # #880 added this guard for what it described as "small negative values (e.g. -1e-15)"
+        # leaking out of a positivity-preserving scheme. Clipping those is mass-neutral. The clip
+        # was written unbounded, so it also absorbed scheme failures: divergence_centered at high
+        # cell Peclet reaches densities near -1e+05, and raising each of those to zero ADDS that
+        # mass. Measured on Nx=21/Nt=10/T=1.0/FDM_CENTERED, that compounded to a total mass of
+        # 6378.77 while min(M) read +0.037 -- non-negative, finite, and entirely wrong.
+        #
+        # The test is the invariant itself, not a proxy for it: how much mass would the clip
+        # fabricate, relative to the mass present. Round-off gives ~1e-15; a failed scheme O(1).
         min_val = np.min(M_next)
         if min_val < 0:
+            negative_mass = -float(np.sum(M_next[M_next < 0]))
+            positive_mass = float(np.sum(M_next[M_next > 0]))
+            fabricated = negative_mass / positive_mass if positive_mass > 0 else np.inf
+
+            if fabricated > _MAX_CLIP_MASS_FABRICATION:
+                remedy = (
+                    "'divergence_centered' is not positivity-preserving: it oscillates at "
+                    "cell-Peclet > 2. Switch to 'divergence_upwind', add diffusion (sigma > 0), "
+                    "or refine the grid."
+                    if advection_scheme == "divergence_centered"
+                    else "'divergence_upwind' preserves positivity only under a CFL-type "
+                    "restriction on dt. Reduce dt (increase Nt), refine the grid, or add "
+                    "diffusion (sigma > 0)."
+                )
+                raise ValueError(
+                    f"FP solver: density went to {min_val:.3e} at timestep {k + 1}/{Nt - 1}. "
+                    f"Clipping it to zero would fabricate {fabricated:.3%} of the total mass, "
+                    "so the solve is stopped rather than silently repaired (Issue #1671). "
+                    f"advection_scheme={advection_scheme!r}: {remedy}"
+                )
+
             if min_val < -1e-10:
                 logger.warning(
-                    "FP solver: negative density clipped at timestep %d (min=%.2e). "
-                    "This may indicate discretization issues.",
+                    "FP solver: negative density clipped at timestep %d (min=%.2e, "
+                    "fabricating %.2e of total mass). This may indicate discretization issues.",
                     k + 1,
                     min_val,
+                    fabricated,
                 )
             M_solution[k + 1] = np.maximum(M_solution[k + 1], 0)
 
@@ -1037,7 +1121,8 @@ def solve_timestep_tensor_explicit(
 
     # Compute tensor diffusion term: div(D * grad(m)).
     # Sigma is the SDE volatility; the diffusion operator needs the PDE diffusion tensor
-    # D = (1/2) Sigma Sigma^T (NAMING_CONVENTIONS "Volatility vs Diffusion", #811). The raw
+    # D = (1/2) Sigma Sigma^T (archon-notes/development/guides/NAMING_CONVENTIONS.md, mfg-research,
+    # private: "Volatility vs Diffusion"; Issue #811). The raw
     # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
@@ -1137,18 +1222,11 @@ def solve_timestep_full_nd(
     np.ndarray
         Next density field. Shape: (N1, N2, ..., Nd)
     """
-    # Map legacy scheme names to new names
-    scheme_aliases = {
-        "centered": "gradient_centered",
-        "upwind": "gradient_upwind",
-        "flux": "divergence_upwind",
-    }
-    advection_scheme = scheme_aliases.get(advection_scheme, advection_scheme)
+    advection_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
 
     # Validate scheme name
-    valid_schemes = {"gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"}
-    if advection_scheme not in valid_schemes:
-        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(valid_schemes)}")
+    if advection_scheme not in _VALID_SCHEMES:
+        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
     # Total number of unknowns
     N_total = int(np.prod(shape))
 
@@ -1208,8 +1286,22 @@ def solve_timestep_full_nd(
                     f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
                     "Expected BoundaryConditions from mfgarchon.geometry.boundary."
                 ) from None
-            # Legacy BC: treat as no-flux for backward compatibility
-            # (legacy periodic BC relies on no-flux boundary assembly + interior wrapping)
+            # Only legacy neumann/no_flux are correctly honored here (they ARE no-flux). Fail loud
+            # (Issue #1559) for every other legacy type -- dirichlet, robin, AND periodic -- instead
+            # of silently coercing to no-flux. _is_dirichlet_at_point cannot see a legacy BC (no
+            # is_uniform, so it returns False), so a legacy dirichlet is silently assembled as no-flux;
+            # and despite the old "relies on no-flux + interior wrapping" claim, a legacy periodic gets
+            # NO wrap here -- it is byte-identical to legacy no_flux and differs from canonical
+            # periodic_bc by O(1) once mass reaches the wall (verified with an off-center bump).
+            # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
+            if legacy_type not in ("neumann", "no_flux"):
+                raise NotImplementedError(
+                    f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not honored by the "
+                    f"FP-FDM time-stepping assembly (only neumann/no_flux are); it would be silently "
+                    f"assembled as no-flux (a legacy 'periodic' does NOT wrap). Use "
+                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / robin_bc / no_flux_bc) "
+                    f"with the modern BoundaryConditions instead (Issue #1559)."
+                ) from None
             is_no_flux = True
             is_uniform = False
 

@@ -60,7 +60,7 @@ class TestCreateLionsSource:
         def energy(m):
             return 0.5 * np.sum(m**2) * 0.02
 
-        source = create_lions_source(energy, fd)
+        source = create_lions_source(energy, fd, weights=0.02)
         assert callable(source)
 
     def test_source_signature(self):
@@ -70,7 +70,7 @@ class TestCreateLionsSource:
         def energy(m):
             return 0.5 * np.sum(m**2) * 0.02
 
-        source = create_lions_source(energy, fd)
+        source = create_lions_source(energy, fd, weights=0.02)
         x = np.linspace(0, 1, 50)
         m = np.ones(50) / 50
         v = np.zeros(50)
@@ -80,26 +80,50 @@ class TestCreateLionsSource:
         assert result.shape == (50,)
 
     def test_quadratic_functional_derivative(self):
-        """For F[m] = (1/2) int m^2 dx, delta F/delta m = m * dx."""
+        """For F[m] = (1/2) int m^2 dx, delta F/delta m = m(x).
+
+        The source slot holds the *pointwise* flat derivative. The FD engine
+        returns dF/dm_k = w_k * m_k (it perturbs an unweighted Dirac); the
+        bridge divides the quadrature weight back out.
+        """
         Nx = 50
         dx = 1.0 / Nx
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4, method="central")
 
         def energy(m):
+            # F[m] = (1/2) int m^2 dx = (1/2) sum_k w_k m_k^2
             return 0.5 * np.sum(m**2) * dx
 
-        source = create_lions_source(energy, fd)
+        source = create_lions_source(energy, fd, weights=dx)
         x = np.linspace(0, 1, Nx)
         m = np.ones(Nx) * 2.0  # uniform density = 2
 
         result = source(x, m, np.zeros(Nx), 0.0)
 
-        # Analytical: delta F/delta m[m](x_i) = m(x_i) * dx = 2 * dx
-        expected = m * dx
+        # Analytical: delta F/delta m[m](x_i) = m(x_i) = 2
+        expected = m
         np.testing.assert_allclose(result, expected, rtol=1e-2)
 
+    def test_quadratic_functional_derivative_is_mesh_independent(self):
+        """delta F/delta m = m(x) converges under refinement, it does not scale as h.
+
+        A source carrying a spurious w_k factor would shrink by 2x per halving
+        of dx here -- the failure mode is silent weakening of the coupling.
+        """
+        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-6, method="central")
+        for Nx in (25, 50, 100, 200):
+            dx = 1.0 / Nx
+
+            def energy(m, _dx=dx):
+                return 0.5 * np.sum(m**2) * _dx
+
+            source = create_lions_source(energy, fd, weights=dx)
+            m = np.full(Nx, 2.0)
+            result = source(np.linspace(0, 1, Nx), m, np.zeros(Nx), 0.0)
+            np.testing.assert_allclose(result, 2.0, rtol=1e-4)
+
     def test_linear_functional_derivative(self):
-        """For F[m] = int V(x) m(x) dx, delta F/delta m = V(x) * dx."""
+        """For F[m] = int V(x) m(x) dx, delta F/delta m = V(x)."""
         Nx = 50
         dx = 1.0 / Nx
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4, method="central")
@@ -108,16 +132,40 @@ class TestCreateLionsSource:
         V = np.sin(np.pi * x)
 
         def energy(m):
+            # F[m] = int V m dx = sum_k w_k V_k m_k
             return np.sum(V * m) * dx
 
-        source = create_lions_source(energy, fd)
+        source = create_lions_source(energy, fd, weights=dx)
         m = np.ones(Nx)
 
         result = source(x, m, np.zeros(Nx), 0.0)
 
-        # Analytical: delta F/delta m = V(x_i) * dx
-        expected = V * dx
+        # Analytical: delta F/delta m = V(x_i)
+        expected = V
         np.testing.assert_allclose(result, expected, rtol=1e-2, atol=1e-10)
+
+    def test_non_uniform_weights_are_not_a_scalar_dx(self):
+        """Per-point weights must be divided out entrywise, not by a mean.
+
+        Discriminating fixture: w.max()/w.min() > 5, so a scalar-mean "repair"
+        of the quadrature factor fails while the entrywise one passes.
+        """
+        Nx = 40
+        rng = np.random.default_rng(1642)
+        w = 0.01 + 0.09 * rng.random(Nx)  # spread ~ 10x
+        assert w.max() / w.min() > 5.0
+        V = np.cos(3.0 * np.linspace(0, 1, Nx)) + 2.0
+
+        def energy(m):
+            return float(np.sum(w * V * np.asarray(m).ravel()))
+
+        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-7, method="central")
+        source = create_lions_source(energy, fd, weights=w)
+        result = source(np.linspace(0, 1, Nx), np.ones(Nx), np.zeros(Nx), 0.0)
+
+        np.testing.assert_allclose(result, V, rtol=1e-6)
+        # The scalar-mean pseudo-repair would have produced this instead.
+        assert not np.allclose(result, (w * V) / w.mean(), rtol=1e-3)
 
 
 class TestCreateNonlocalSource:
@@ -162,7 +210,12 @@ class TestCreateNonlocalSource:
         np.testing.assert_allclose(result, result[::-1], atol=1e-6)
 
     def test_matches_lions_source(self):
-        """Nonlocal source should match create_lions_source for same kernel."""
+        """Nonlocal source should match create_lions_source for same kernel.
+
+        Both sides are the pointwise delta F/delta m of the *physical*
+        F[m] = (1/2) int int W m m dx dy = (1/2) sum_ij w_i w_j W_ij m_i m_j,
+        which carries BOTH quadrature factors.
+        """
         Nx = 30
         dx = 1.0 / Nx
         x = np.linspace(0, 1, Nx)
@@ -176,9 +229,9 @@ class TestCreateNonlocalSource:
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4, method="central")
 
         def energy(m):
-            return 0.5 * np.sum(m * (W @ m)) * dx
+            return 0.5 * np.sum(m * (W @ m)) * dx**2
 
-        source_fd = create_lions_source(energy, fd)
+        source_fd = create_lions_source(energy, fd, weights=dx)
 
         m = np.sin(np.pi * x) + 1.5
 

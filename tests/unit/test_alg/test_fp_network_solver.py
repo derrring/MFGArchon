@@ -6,6 +6,8 @@ Tests the Fokker-Planck solver for Mean Field Games on network/graph structures,
 including density evolution, mass conservation, and various time discretization schemes.
 """
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -27,7 +29,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -48,7 +50,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -64,7 +66,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -74,21 +76,20 @@ class TestFPNetworkSolverInitialization:
         assert solver.scheme == "implicit"
         assert solver.fp_method_name == "NetworkFP_implicit"
 
-    def test_upwind_scheme_initialization(self):
-        """Test initialization with upwind scheme."""
+    def test_upwind_scheme_fails_loud(self):
+        """Issue #1541: scheme='upwind' was a physics-free identity map; it now fails loud at
+        construction rather than silently returning an unevolved density."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
 
-        solver = FPNetworkSolver(problem, scheme="upwind")
-
-        assert solver.scheme == "upwind"
-        assert solver.fp_method_name == "NetworkFP_upwind"
+        with pytest.raises(NotImplementedError, match="1541"):
+            FPNetworkSolver(problem, scheme="upwind")
 
     def test_custom_diffusion_coefficient(self):
         """Test initialization with custom diffusion coefficient."""
@@ -96,7 +97,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -111,7 +112,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -128,7 +129,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -149,7 +150,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -166,7 +167,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -183,7 +184,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=2.0,
             Nt=20,
         )
@@ -201,7 +202,7 @@ class TestFPNetworkSolverInitialization:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=1.0,
             Nt=10,
         )
@@ -221,7 +222,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -248,7 +249,7 @@ class TestFPNetworkSolverSolveFPSystem:
         pre-fix `D = volatility_field` fork would have failed)."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
-        problem = NetworkMFGProblem(network_geometry=network, T=0.5, Nt=10)
+        problem = NetworkMFGProblem(geometry=network, T=0.5, Nt=10)
         num_nodes = problem.num_nodes
         # NON-uniform initial density: a uniform m is a diffusion fixed point (Laplacian of a
         # constant is 0), so D would be unobservable. A ramp makes the diffusion (hence D) matter.
@@ -276,7 +277,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -303,7 +304,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.1,  # Short time for stability
             Nt=20,
         )
@@ -326,35 +327,12 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
 
         solver = FPNetworkSolver(problem, scheme="implicit")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_upwind_scheme(self):
-        """Test solving with upwind scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            network_geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = FPNetworkSolver(problem, scheme="upwind")
 
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
@@ -372,7 +350,7 @@ class TestFPNetworkSolverSolveFPSystem:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -391,27 +369,19 @@ class TestFPNetworkSolverSolveFPSystem:
         assert np.all(np.isfinite(M_solution))
 
     def test_invalid_scheme_raises_error(self):
-        """Test that invalid scheme raises error."""
+        """Issue #1541: an unsupported scheme is rejected at construction (fail loud), not silently
+        run or discovered at solve time."""
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
 
-        solver = FPNetworkSolver(problem, scheme="explicit")
-        solver.scheme = "invalid_scheme"  # Manually set invalid scheme
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        with pytest.raises(ValueError, match="Unknown scheme"):
-            solver.solve_fp_system(m_initial, U_solution)
+        with pytest.raises(NotImplementedError, match="1541"):
+            FPNetworkSolver(problem, scheme="invalid_scheme")
 
 
 class TestFPNetworkSolverNumericalProperties:
@@ -423,7 +393,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -448,7 +418,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -478,7 +448,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=15,
         )
@@ -507,7 +477,7 @@ class TestFPNetworkSolverNumericalProperties:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -535,7 +505,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -559,7 +529,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -583,7 +553,7 @@ class TestFPNetworkSolverDifferentNetworks:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -612,7 +582,7 @@ class TestFPNetworkSolverIntegration:
         network.create_network()
 
         problem = NetworkMFGProblem(
-            network_geometry=network,
+            geometry=network,
             T=0.5,
             Nt=10,
         )
@@ -632,12 +602,12 @@ class TestFPNetworkSolverIntegration:
         configs = [
             {"scheme": "explicit", "cfl_factor": 0.4},
             {"scheme": "implicit"},
-            {"scheme": "upwind", "diffusion_coefficient": 0.15},
+            {"scheme": "explicit", "diffusion_coefficient": 0.15},  # was "upwind" (removed, Issue #1541)
         ]
 
         for config in configs:
             problem = NetworkMFGProblem(
-                network_geometry=network,
+                geometry=network,
                 T=0.2,
                 Nt=10,
             )
@@ -653,6 +623,77 @@ class TestFPNetworkSolverIntegration:
             M_solution = solver.solve_fp_system(m_initial, U_solution)
 
             assert np.all(np.isfinite(M_solution))
+
+
+class TestFPNetworkSolverAbsorbingNodeBC:
+    """Issue #1478 (Stage 2b): FPNetworkSolver honors an ABSORBING (exit) node — its mass leaves
+    (``m -> 0``) and the mass renorm is gated off so the absorption is not hidden.
+    """
+
+    def _network(self, absorbing_node=None):
+        from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig, GraphBCType, NodeBC
+
+        bc = None
+        if absorbing_node is not None:
+            bc = GraphBCConfig(node_bcs=[NodeBC(nodes=[absorbing_node], bc_type=GraphBCType.ABSORBING, value=0.0)])
+        network = GridNetwork(width=3, height=3, boundary_conditions=bc)
+        network.create_network()
+        return network
+
+    def test_absorbing_fp_mass_decreases(self):
+        problem = NetworkMFGProblem(geometry=self._network(absorbing_node=0), T=0.5, Nt=20)
+        solver = FPNetworkSolver(problem, scheme="explicit")  # honors it — no raise
+        n = problem.num_nodes
+        m0 = np.ones(n) / n
+        u = np.zeros((21, n))  # zero value -> pure diffusion toward the absorbing node
+        m = solver.solve_fp_system(M_initial=m0, potential_field=u)
+        assert m[-1].sum() < m[0].sum() - 1e-3, "absorption: total mass must strictly decrease"
+        assert np.allclose(m[1:, 0], 0.0), "the absorbing node's density is zeroed each step"
+
+    def test_no_node_bc_constructs_and_conserves(self):
+        """No node BC -> construction unchanged and mass is conserved (renorm active)."""
+        problem = NetworkMFGProblem(geometry=self._network(), T=0.5, Nt=10)
+        solver = FPNetworkSolver(problem)  # no raise
+        assert solver.num_nodes == 9
+        assert solver._mass_changing_bc is False
+
+
+class TestFPNetworkDiffusionDefaultWarning1532:
+    """Issue #1532: relying on the D=0.1 diffusion fallback (no explicit ``diffusion_coefficient`` and
+    no ``volatility_field``) must WARN — otherwise the physical diffusion silently decouples from the
+    problem (NetworkMFGProblem carries no sigma to source from). Byte-value 0.1 is retained for
+    backward compatibility; only the silence is fixed."""
+
+    @staticmethod
+    def _setup():
+        net = GridNetwork(width=3, height=3)
+        net.create_network()
+        problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=10)
+        n = problem.num_nodes
+        return problem, np.ones(n) / n, np.zeros((problem.Nt, n))
+
+    def test_defaulted_diffusion_warns_on_solve(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem)  # diffusion defaulted -> fallback 0.1
+        assert solver.diffusion_coefficient == 0.1  # value unchanged (backward compatible)
+        with pytest.warns(UserWarning, match="1532"):
+            solver.solve_fp_system(m0, U)
+
+    def test_explicit_diffusion_does_not_warn(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem, diffusion_coefficient=0.05)
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            solver.solve_fp_system(m0, U)
+        assert not any("1532" in str(w.message) for w in rec)
+
+    def test_volatility_field_suppresses_warning(self):
+        problem, m0, U = self._setup()
+        solver = FPNetworkSolver(problem)  # defaulted, but sigma given at solve time
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            solver.solve_fp_system(m0, U, volatility_field=0.3)
+        assert not any("1532" in str(w.message) for w in rec)
 
 
 if __name__ == "__main__":

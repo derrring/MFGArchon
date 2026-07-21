@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -129,6 +128,12 @@ class FPParticleSolver(BaseFPSolver):
     _SUPPORTED_BC_TYPES: frozenset = frozenset(
         {BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.PERIODIC, BCType.DIRICHLET}
     )
+
+    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
+    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
+    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
+    #: silently discarded. Flip this to True in the same commit that implements it.
+    honors_inhomogeneous_neumann: bool = False
 
     @property
     def supported_bc_types(self) -> frozenset:
@@ -941,14 +946,24 @@ class FPParticleSolver(BaseFPSolver):
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
         """
-        Issue #1083: infer per-axis bounds for KDE reflection from solver BC.
+        Issue #1083: decide whether KDE reflection applies, from the solver BC.
 
-        Returns the subset of `bounds` for axes whose BC is reflective
-        (NO_FLUX / REFLECTING / NEUMANN). Returns None if no axis is reflective
-        — caller falls back to standard KDE without ghost reflection.
+        Returns ALL of `bounds` if there is no explicit BC (no `boundary_conditions` or no
+        segments -- the legacy reflect-everywhere default) OR if ANY segment is reflective
+        (NO_FLUX / REFLECTING / NEUMANN); returns None only when segments exist and NONE is
+        reflective (caller falls back to standard KDE without ghost reflection). This is an
+        all-or-nothing gate keyed on "is any wall reflective", NOT a per-axis subset.
 
-        For axes with non-reflective BC (DIRICHLET absorbing exit, periodic),
-        reflection ghosts are mathematically wrong, so they are excluded.
+        LIMITATION (Issue #1557): when a domain mixes reflective and non-reflective faces
+        (e.g. reflecting walls + a Dirichlet absorbing exit, or a periodic axis), this still
+        returns every axis, so `reflection_kde` creates ghosts on the non-reflective faces
+        too -- where they are mathematically wrong: ghost mass is mirrored back within ~1
+        bandwidth and flattens the density dip an absorbing exit should produce. True per-face
+        masking needs the segment -> axis/side mapping threaded into the density estimator;
+        because that changes the density near absorbing exits (the evacuation regime), it is
+        gated together with the mass-channel fix #1552 (mfg-research exp09 validation), not
+        made here. The earlier "Returns the subset ... excluded" wording described that intended
+        end state, not this code -- corrected to match the actual behavior (kernel doc honesty).
         """
         bc = self.boundary_conditions
         if bc is None or not getattr(bc, "segments", None):
@@ -1197,15 +1212,24 @@ class FPParticleSolver(BaseFPSolver):
             return density_reshaped
 
         except Exception as e:
-            warnings.warn(f"KDE failed in nD: {e}. Returning histogram estimate.")
-            # Fallback to histogram
-            density, _ = np.histogramdd(
-                particles,
-                bins=[len(c) for c in coordinates],
-                range=bounds,
-                density=True,
-            )
-            return density
+            # Issue #1513: fail loud, matching the 1D twin (_estimate_density_from_particles raises
+            # RuntimeError for the same failure). The former histogram fallback silently swapped the
+            # density estimator mid-solve in nD ONLY -- a dimension-dependent raise-vs-swallow
+            # divergence -- so a coupled solve ran on a lower-quality estimate without the user knowing.
+            # Same failure -> same policy. For an explicit histogram estimate, request it via kde_method
+            # rather than relying on a silent fallback.
+            raise RuntimeError(
+                f"KDE density estimation failed in FPParticleSolver (nD): {e}\n"
+                f"Number of particles: {len(particles)}\n"
+                f"Bandwidth: {self.kde_bandwidth}\n"
+                "Possible causes:\n"
+                "  1. Too few particles for reliable KDE (need at least 10-20)\n"
+                "  2. Bandwidth selection failed (try fixed bandwidth like 0.1)\n"
+                "  3. Particles outside domain bounds\n"
+                "Suggestions:\n"
+                "  - Increase number of particles (Np > 100 recommended)\n"
+                "  - Use fixed bandwidth: kde_bandwidth=0.1"
+            ) from e
 
     def _estimate_density_from_particles(self, particles_at_time_t: np.ndarray) -> np.ndarray:
         # Use geometry-aware parameter extraction
@@ -1502,6 +1526,39 @@ class FPParticleSolver(BaseFPSolver):
             # problem.sigma to restore now that the monkeypatch is gone.
             self._effective_sigma_override = None
 
+    def _advective_drift(
+        self,
+        positions: np.ndarray,
+        grad_at_particles: np.ndarray,
+        t: float,
+        coupling_coefficient: float,
+    ) -> np.ndarray:
+        """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
+
+        The control law alpha* = H.optimal_control(x, m, p, t) on the problem's
+        ``hamiltonian_class`` is the single source of the FP advective drift, replacing the
+        three hand-coded ``-fp_drift_coefficient(problem) * grad(U)`` copies (CPU 1D / CPU nD /
+        GPU). ``fp_drift_coefficient``'s #1542 guard (applied at param-build time, ~line 389)
+        guarantees any ``SeparableHamiltonian`` that reaches a solver is quadratic-MINIMIZE, for
+        which ``optimal_control == -p / lambda == -coupling_coefficient * p`` -- byte-identical
+        for dyadic lambda (incl. the paper's control_cost=1.0), <= 1 ULP for non-dyadic. The
+        identical locally-computed ``grad_at_particles`` is fed to the owner, so byte-identity is
+        independent of the coefficient.
+
+        ``SeparableHamiltonian.optimal_control`` uses only ``p`` (x, m, t are ignored), so no
+        density-at-particles interpolation is done here; ``m`` is passed as ``None``.
+
+        A problem with no Hamiltonian owner (H is None), or a non-separable one, still carries an
+        explicit scalar ``coupling_coefficient``; that legacy path keeps the hand scalar
+        ``-c * grad`` unchanged (and does not silently reinterpret a non-separable H's control law).
+        """
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+
+        H = getattr(self.problem, "hamiltonian_class", None)
+        if isinstance(H, SeparableHamiltonian):
+            return H.optimal_control(positions, None, grad_at_particles, t)
+        return -coupling_coefficient * grad_at_particles
+
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """CPU pipeline - existing NumPy implementation."""
         # Use geometry-aware parameter extraction
@@ -1632,7 +1689,10 @@ class FPParticleSolver(BaseFPSolver):
             else:
                 dUdx_at_particles = np.zeros(n_particles_t)
 
-            alpha_optimal_at_particles = -coupling_coefficient * dUdx_at_particles
+            # Issue #1528: single-owner FP advective drift via H.optimal_control (see _advective_drift).
+            alpha_optimal_at_particles = self._advective_drift(
+                particles_t, dUdx_at_particles, n_time_idx * Dt, coupling_coefficient
+            )
 
             # Generate Brownian motion for current particle count
             dW = np.random.normal(0.0, np.sqrt(Dt), n_particles_t) if Dt > 1e-14 else np.zeros(n_particles_t)
@@ -1810,8 +1870,8 @@ class FPParticleSolver(BaseFPSolver):
                 for d in range(dimension):
                     grad_at_particles[:, d] = self._interpolate_grid_to_particles_nd(gradients[d], bounds, particles_t)
 
-                # Compute drift: alpha = -coupling_coefficient * grad(U)
-                drift = -coupling_coefficient * grad_at_particles
+                # Compute drift alpha* via the single owner H.optimal_control (Issue #1528).
+                drift = self._advective_drift(particles_t, grad_at_particles, t_idx * Dt, coupling_coefficient)
 
             # Generate Brownian increments
             dW = self._generate_brownian_increment_nd(n_particles_t, dimension, Dt, sigma_sde)
@@ -1967,8 +2027,14 @@ class FPParticleSolver(BaseFPSolver):
             else:
                 dUdx_particles_gpu = self.backend.zeros((self.num_particles,))
 
-            # Compute drift (GPU)
-            drift_gpu = -coupling_coefficient * dUdx_particles_gpu
+            # Compute drift via the single owner H.optimal_control (Issue #1528). optimal_control runs
+            # on host NumPy (np.atleast_1d), so alpha* is computed on host once and uploaded. The
+            # host multiply/divide is IEEE-identical to the former on-device -coupling_coefficient*grad,
+            # and to_numpy/from_numpy are lossless, so this is byte-identical to the pre-#1528 GPU path.
+            dUdx_host = self.backend.to_numpy(dUdx_particles_gpu)
+            x_host = self.backend.to_numpy(X_particles_gpu[t, :])
+            drift_host = self._advective_drift(x_host, dUdx_host, t * Dt, coupling_coefficient)
+            drift_gpu = self.backend.from_numpy(np.asarray(drift_host, dtype=dUdx_host.dtype))
 
             # Random noise (GPU native RNG)
             if Dt > 1e-14:

@@ -49,10 +49,16 @@ class HJBFEMSolver(WeakFormHJBSolver):
     _scheme_family = SchemeFamily.FEM
 
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
-        mesh_data = problem.geometry.mesh_data
+        # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
+        # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
+        # TensorProductGrid was unreachable for its own case. getattr catches both the missing-attribute
+        # and the None (ungenerated Mesh2D) cases.
+        mesh_data = getattr(problem.geometry, "mesh_data", None)
         if mesh_data is None:
             raise ValueError(
-                "HJBFEMSolver requires unstructured mesh geometry. Use Mesh2D or Mesh3D, not TensorProductGrid."
+                "HJBFEMSolver requires an unstructured mesh geometry with mesh_data (Mesh2D / Mesh3D); "
+                f"got {type(problem.geometry).__name__}. A structured grid has no mesh — build a "
+                "Mesh2D / Mesh3D, or use an FDM / FVM / GFDM solver for a TensorProductGrid."
             )
         self._skfem_mesh = meshdata_to_skfem(mesh_data)
         from .assembly import create_basis
@@ -150,10 +156,10 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
         return get_dirichlet_dofs_and_values(self._basis, self._bc)
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(self, matrix, rhs, homogeneous=False):
         from .bc_adapter import apply_bc_to_fem_system
 
-        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, homogeneous=homogeneous)
 
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass

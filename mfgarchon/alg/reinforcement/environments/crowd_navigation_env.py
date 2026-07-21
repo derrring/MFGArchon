@@ -236,6 +236,14 @@ class CrowdNavigationEnv(ContinuousMFGEnvBase):
 
         return np.array([dx_dt, dy_dt, dvx_dt, dvy_dt, dgoal_dt[0], dgoal_dt[1]], dtype=np.float32)
 
+    def _noise_mask(self) -> NDArray[np.floating[Any]]:
+        """Goal coordinates (dims 4-5) are fixed per episode (``_drift`` returns 0 for them), so they
+        must NOT receive Brownian noise (Issue #1600): random-walking goals silently corrupt the
+        goal-reached termination and the distance-to-goal reward."""
+        mask = np.ones(self.state_dim, dtype=np.float64)
+        mask[4:6] = 0.0
+        return mask
+
     def _individual_reward(
         self,
         state: NDArray[np.floating[Any]],
@@ -306,22 +314,19 @@ class CrowdNavigationEnv(ContinuousMFGEnvBase):
         Returns:
             Mean field coupling term (negative crowd density penalty)
         """
-        # For simplicity, estimate local density from agent's position
-        # In full implementation, would integrate over population histogram
-
-        # Extract position
-        x, y = state[0], state[1]
-
-        # Simplified: compute distance to center of domain as proxy for density
-        # (assumes crowd tends to concentrate near center)
-        center_x, center_y = self.domain_size / 2, self.domain_size / 2
-        dist_to_center = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
-
-        # Gaussian kernel (higher near center = more crowded)
-        density_proxy = np.exp(-(dist_to_center**2) / (2 * self.crowd_kernel_std**2))
+        # Issue #1600: read the actual population histogram instead of a fixed distance-to-center
+        # proxy that ignored `population`. get_population_state() bins the crowd by x-coordinate over
+        # [0, domain_size]; the advertised Gaussian-kernel local density is
+        # rho(x) = sum_b K(x, y_b) m_b with K(x, y) = exp(-(x - y)^2 / 2 sigma^2). Higher local
+        # density -> larger penalty (encourages spacing). Discriminating: a crowd peaked at the
+        # agent's x now yields a large penalty, a crowd far away a small one.
+        x = float(state[0])
+        edges = np.linspace(0.0, self.domain_size, self.population_bins + 1)
+        bin_centers = 0.5 * (edges[:-1] + edges[1:])
+        local_density = float(np.sum(np.exp(-((x - bin_centers) ** 2) / (2 * self.crowd_kernel_std**2)) * population))
 
         # Crowd avoidance penalty
-        crowd_cost = self.cost_crowd * density_proxy
+        crowd_cost = self.cost_crowd * local_density
 
         return float(-crowd_cost)
 

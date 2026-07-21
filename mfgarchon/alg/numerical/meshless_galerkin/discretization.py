@@ -61,8 +61,15 @@ class MeshlessGalerkinDiscretization:
         self._exps = monomial_exponents(self._dim, degree)
 
         # (phi, grad) at quadrature points: (Q, N), (Q, N, dim)
+        # Issue #1485: this is the Gauss-quadrature ASSEMBLY path -> guard the MLS moment-matrix
+        # conditioning (SCNI's own discretization does not, by design -- see mls_basis.py).
         self._phi, self._grad = shape_functions_and_grads(
-            np.asarray(quad_points, dtype=np.float64), self._nodes, self._rho, self._exps, backend
+            np.asarray(quad_points, dtype=np.float64),
+            self._nodes,
+            self._rho,
+            self._exps,
+            backend,
+            check_conditioning=True,
         )
 
     @property

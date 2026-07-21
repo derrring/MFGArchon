@@ -20,9 +20,10 @@ Contents:
     - convolution: ConvolutionCouplingOperator (LinearOperator) with FFT path
       (regular grid) and direct-quadrature path (irregular cloud).
     - energy_functionals: EnergyFunctional protocol + QuadraticInteractionEnergy,
-      PotentialEnergy, CombinedEnergy with analytic Lions derivatives.
+      PotentialEnergy, CombinedEnergy with analytic flat derivatives
+      ``delta F / delta m``.
 
-The analytic Lions derivatives plug into
+The analytic flat derivatives plug into
 ``alg.numerical.coupling.lions_correction.create_lions_source`` (Phase 2), which
 recognizes an ``EnergyFunctional`` and skips the finite-difference path.
 
@@ -36,6 +37,11 @@ from .energy_functionals import (
     EnergyFunctional,
     PotentialEnergy,
     QuadraticInteractionEnergy,
+    as_single_population,
+    energy_functional_members,
+    flat_derivative_from_energy_gradient,
+    missing_energy_functional_members,
+    validate_weights,
 )
 from .kernels import (
     DipoleKernel,
@@ -61,4 +67,10 @@ __all__ = [
     "QuadraticInteractionEnergy",
     "PotentialEnergy",
     "CombinedEnergy",
+    # Contract helpers (Issue #1642 A1/A2)
+    "flat_derivative_from_energy_gradient",
+    "as_single_population",
+    "validate_weights",
+    "energy_functional_members",
+    "missing_energy_functional_members",
 ]

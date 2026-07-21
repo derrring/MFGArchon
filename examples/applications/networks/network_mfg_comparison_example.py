@@ -138,12 +138,10 @@ class NetworkMFGBenchmark:
             initial_node_density_func=initial_density_func,
             node_potential_func=node_potential_func,
             node_interaction_func=node_interaction_func,
-            diffusion_coefficient=0.1,
-            drift_coefficient=1.0,
         )
 
         problem = NetworkMFGProblem(
-            network_geometry=network_geometry,
+            geometry=network_geometry,
             T=self.T,
             Nt=self.Nt,
             components=components,
