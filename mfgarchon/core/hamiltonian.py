@@ -678,12 +678,10 @@ class _MoreauYosidaControlCost(ControlCostBase):
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps).
 
-        The Moreau envelope is a functional of the whole momentum vector, so
-        both terms are aggregated over the component axis. Base costs disagree
-        on that convention (QuadraticControlCost already sums over axis=-1;
-        L1ControlCost and BoundedControlCost return one value per component),
-        Every base cost now returns a total (Issue #1653 aligned L1 and Bounded with
-        Quadratic and with their own ``lagrangian``), so the base term is used as it comes.
+        The Moreau envelope is a functional of the whole momentum vector, so both terms are
+        aggregated over the component axis. Every base cost now returns a total (Issue #1653
+        aligned L1ControlCost and BoundedControlCost with QuadraticControlCost and with their own
+        ``lagrangian``), so the base term is used as it comes.
         Summing it here as well would count it twice -- and would collapse a batch axis for a
         base that already reduces. See tests/unit/test_core/test_hamiltonian_classes.py
         ``TestMoreauYosidaPenaltyAggregation``.

@@ -6,8 +6,13 @@ inside `evaluate` alone -- the convention was settled, one method disagreed with
 
 Consequence, measured before the fix:
 
-    L1 / Bounded, d=1  ->  SeparableHamiltonian returns an (N, N) matrix   [silent]
-    L1 / Bounded, d=2  ->  ValueError: operands could not be broadcast     [loud]
+    L1 / Bounded, d=1        ->  SeparableHamiltonian returns (N, N)          [silent]
+    L1 / Bounded, N == d     ->  SeparableHamiltonian returns (N, N)          [silent]
+    L1 / Bounded, N != d,d>1 ->  ValueError: operands could not be broadcast  [loud]
+
+    ``evaluate`` itself never raised at any arity; the raise came from the caller when the
+    componentwise array would not broadcast. So the silent surface is every shape with
+    ``d == 1`` or ``N == d``, not ``d = 1`` alone.
 
 The d=1 case is the dangerous one: a square array is a plausible shape for a Hamiltonian
 evaluated on a grid, so nothing downstream had reason to object.
