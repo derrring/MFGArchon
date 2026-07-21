@@ -12,5 +12,7 @@ fold unchecked. The check now sits at all seven sites that read the BC type, and
 `except Exception -> RuntimeError` handler in `_advect_pointwise` lets the refusal through with its
 declared type instead of retyping it.
 
+The refusal is pinned behaviourally across the 45-cell dispatch matrix (dimension x characteristic solver x diffusion method), with a source-level invariant test as a backstop.
+
 Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
 configuration rather than solving a different one.

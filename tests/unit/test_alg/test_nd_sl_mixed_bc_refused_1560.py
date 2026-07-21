@@ -93,14 +93,18 @@ def test_a_uniform_bc_still_solves(bc_factory):
 
 
 def test_every_bc_type_read_goes_through_the_checked_accessor():
-    """Pin all seven call sites at once, not just the two the behavioural tests reach.
+    """Pin all seven call sites at once, as a backstop to the behavioural matrix below.
 
     An independent review of #1696 showed that reverting any *single* site to the raw
-    `get_bc_type_string` left the whole suite green: only two of the seven sites are exercised by
-    the behavioural tests above, and those two are mutually redundant. Behavioural coverage of the
-    remaining five needs fixtures that do not exist yet (the DPP path, `characteristic_solver`
-    variants); this asserts the invariant directly on the source instead, so a single reverted site
-    fails loudly.
+    `get_bc_type_string` left the whole suite green: only two of the seven sites were exercised,
+    and those two are mutually redundant. This asserts the invariant on the source, so a single
+    reverted site fails loudly regardless of which dispatch path reaches it.
+
+    It is a backstop, not the primary evidence -- `test_refusal_holds_across_the_dispatch_matrix`
+    covers the behaviour. Three known evasions, all requiring a deliberate edit rather than a
+    revert: an early `return get_bc_type_string(bc)` inside the helper's own line range; a net
+    *addition* written in attribute form (`bc_utils.get_bc_type_string(...)`), which `ast.Name`
+    does not match; and adding a legitimate eighth site, which fails on the count.
     """
     import ast
     import inspect
@@ -135,7 +139,11 @@ def test_every_bc_type_read_goes_through_the_checked_accessor():
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == helper
     )
-    assert checked == 7, f"expected 7 checked reads, found {checked} -- update this count with the site list"
+    assert checked == 7, (
+        f"expected 7 checked reads, found {checked}. Sites as of #1696: "
+        "_solve_timestep_semi_lagrangian, _canonical_cs_step (x2), _apply_boundary_to_point, "
+        "_trace_characteristic_backward (x2), _get_diffusion_bc_type. Update both if you add one."
+    )
 
 
 def test_refusal_is_not_retyped_by_the_pointwise_handler():
@@ -158,3 +166,43 @@ def test_refusal_is_not_retyped_by_the_pointwise_handler():
 
     with pytest.raises(NotImplementedError, match="different geometric operations"):
         solver.solve_hjb_system(np.ones((6, 11)), np.zeros(11), np.zeros((6, 11)))
+
+
+def _mixed_bc_nd(dim):
+    """no-flux beside periodic -- distinct geometric operations, on any dimension."""
+    other = "y_min" if dim > 1 else "x_max"
+    return BoundaryConditions(
+        dimension=dim,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="wrap", bc_type=BCType.PERIODIC, boundary=other),
+        ],
+    )
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("characteristic_solver", ["explicit_euler", "rk2", "rk4"])
+@pytest.mark.parametrize("diffusion_method", ["adi", "none", "explicit", "stochastic", "canonical_cs"])
+def test_refusal_holds_across_the_dispatch_matrix(dim, characteristic_solver, diffusion_method):
+    """The refusal must hold on every dispatch path, with its declared type.
+
+    The seven routed sites sit behind different combinations of dimension, characteristic solver
+    and diffusion method; the two behavioural tests above reach only two of them. Review of #1696
+    established that this matrix discriminates: at the parent commit exactly three cells regressed
+    (dim=1, rk4, diffusion in {adi, none, explicit}) -- the `_advect_pointwise` path whose
+    `except Exception` retyped the refusal to RuntimeError.
+
+    The PR body had claimed behavioural coverage here needed fixtures that did not exist yet. It
+    did not; this is that coverage.
+    """
+    grid, problem = _grid_and_problem(no_flux_bc(dimension=dim), dim=dim)
+    solver = HJBSemiLagrangianSolver(
+        problem, characteristic_solver=characteristic_solver, diffusion_method=diffusion_method
+    )
+
+    grid._boundary_conditions = _mixed_bc_nd(dim)
+
+    shape = (11,) * dim
+    with pytest.raises(NotImplementedError, match="different geometric operations"):
+        solver.solve_hjb_system(np.ones((6, *shape)), np.zeros(shape), np.zeros((6, *shape)))
