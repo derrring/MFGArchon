@@ -1093,6 +1093,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 U_star[i] = self._sl_value_update(
                     u_departure, np.array([x_i]), M_next[i], np.array([grad_u[i]]), t_val, dt
                 )
+            except NotImplementedError:
+                # An unsupported configuration is not a per-point numerical failure; let the
+                # declared type reach the caller instead of being retyped as RuntimeError.
+                raise
             except Exception as e:
                 raise RuntimeError(
                     f"Semi-Lagrangian update failed at grid point {i} (x={x_i:.6g}, t={t_val:.6g}, dt={dt:.6g}): {e}"

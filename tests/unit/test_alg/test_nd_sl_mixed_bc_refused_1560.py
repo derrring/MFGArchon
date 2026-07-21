@@ -40,8 +40,8 @@ def _components():
     )
 
 
-def _grid_and_problem(bc):
-    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=bc)
+def _grid_and_problem(bc, dim=2):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[11] * dim, boundary_conditions=bc)
     return grid, MFGProblem(geometry=grid, Nt=5, T=1.0, components=_components())
 
 
@@ -90,3 +90,71 @@ def test_a_uniform_bc_still_solves(bc_factory):
     result = solver.solve_hjb_system(np.ones((6, 11, 11)), np.zeros((11, 11)), np.zeros((6, 11, 11)))
 
     assert np.all(np.isfinite(result))
+
+
+def test_every_bc_type_read_goes_through_the_checked_accessor():
+    """Pin all seven call sites at once, not just the two the behavioural tests reach.
+
+    An independent review of #1696 showed that reverting any *single* site to the raw
+    `get_bc_type_string` left the whole suite green: only two of the seven sites are exercised by
+    the behavioural tests above, and those two are mutually redundant. Behavioural coverage of the
+    remaining five needs fixtures that do not exist yet (the DPP path, `characteristic_solver`
+    variants); this asserts the invariant directly on the source instead, so a single reverted site
+    fails loudly.
+    """
+    import ast
+    import inspect
+
+    from mfgarchon.alg.numerical.hjb_solvers import hjb_semi_lagrangian
+
+    tree = ast.parse(inspect.getsource(hjb_semi_lagrangian))
+    helper = "_checked_bc_type_string"
+
+    raw_calls = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "get_bc_type_string"
+        # the helper is the one legitimate caller
+        and not any(
+            isinstance(fn, ast.FunctionDef)
+            and fn.name == helper
+            and fn.lineno <= node.lineno <= (fn.end_lineno or fn.lineno)
+            for fn in ast.walk(tree)
+        )
+    ]
+
+    assert not raw_calls, (
+        f"get_bc_type_string called directly at line(s) {raw_calls}; route through {helper} "
+        "so a mixed per-axis BC is refused rather than silently applied to every axis (#1560)"
+    )
+
+    checked = sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == helper
+    )
+    assert checked == 7, f"expected 7 checked reads, found {checked} -- update this count with the site list"
+
+
+def test_refusal_is_not_retyped_by_the_pointwise_handler():
+    """`_advect_pointwise` wraps each node in `except Exception -> RuntimeError`.
+
+    Without a passthrough the refusal reaches the caller as RuntimeError, so the declared contract
+    holds on some paths and not others. Found by review of #1696.
+    """
+    grid, problem = _grid_and_problem(no_flux_bc(dimension=1), dim=1)
+    solver = HJBSemiLagrangianSolver(problem, characteristic_solver="rk4")
+
+    grid._boundary_conditions = BoundaryConditions(
+        dimension=1,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="wrap", bc_type=BCType.PERIODIC, boundary="x_max"),
+        ],
+    )
+
+    with pytest.raises(NotImplementedError, match="different geometric operations"):
+        solver.solve_hjb_system(np.ones((6, 11)), np.zeros(11), np.zeros((6, 11)))

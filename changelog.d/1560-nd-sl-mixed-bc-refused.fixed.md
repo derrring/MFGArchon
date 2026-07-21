@@ -8,7 +8,9 @@ axis reflected both, and reordering the segments changed the physics with no dia
 
 A construction-time guard already existed but was bypassable: the solver re-reads
 `get_boundary_conditions()` on every solve, so a BC set or replaced after construction reached the
-fold unchecked. The check now sits at the four sites that read the BC type.
+fold unchecked. The check now sits at all seven sites that read the BC type, and the per-node
+`except Exception -> RuntimeError` handler in `_advect_pointwise` lets the refusal through with its
+declared type instead of retyping it.
 
 Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
 configuration rather than solving a different one.
