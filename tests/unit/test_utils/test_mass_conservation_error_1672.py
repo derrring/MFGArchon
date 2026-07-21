@@ -59,45 +59,82 @@ def test_an_unmeasured_field_is_none_not_zero():
 
 @pytest.mark.parametrize("scheme", [NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED])
 def test_the_coupled_solve_reports_the_quantity_it_documents(scheme):
-    """The reported value must equal `max|integral(m) - 1|` computed independently."""
+    """The reported value must equal the drift computed independently.
+
+    ``abs=0`` is load-bearing. ``pytest.approx``'s default absolute floor is 1e-12, and these
+    fixtures conserve mass to ~7e-15, so with the default every value in [0, 1e-12] passes --
+    including the literal ``0.0`` that is bug #1672 itself. Review of this PR caught that: all four
+    tests stayed green with the measurement replaced by a constant zero.
+    """
     problem = _problem(sigma=1.0)
     result = problem.solve(scheme=scheme, max_iterations=5, verbose=False)
 
-    cell_volume = problem.geometry.volume_element()
     spatial_axes = tuple(range(1, result.M.ndim))
-    expected = float(np.max(np.abs(np.sum(result.M, axis=spatial_axes) * cell_volume - 1.0)))
+    mass = np.sum(result.M, axis=spatial_axes)
+    expected = float(np.max(np.abs(mass / mass[0] - 1.0)))
 
     assert result.mass_conservation_error is not None, "the coupling path did not measure it"
-    assert result.mass_conservation_error == pytest.approx(expected, rel=1e-12), (
-        f"reported {result.mass_conservation_error!r} against an independently computed {expected!r}"
-    )
+    assert result.mass_conservation_error == pytest.approx(expected, rel=1e-12, abs=0)
 
 
-def test_the_measurement_uses_the_geometry_volume_element():
-    """Pin the source of the cell measure, not just the number.
+def test_a_solve_that_loses_mass_reports_an_order_one_error():
+    """The positive control. Without it every assertion sits within the noise floor.
 
-    A second hand-rolled `dx` would agree on a unit-interval grid and diverge elsewhere, which is
-    the repo's dominant defect class. Using a non-unit domain makes the two disagree.
+    A Dirichlet-0 boundary absorbs mass, so the true value is O(1) rather than O(1e-15) and the
+    assertion has room to fail. This is the fixture that discriminates; the machine-precision ones
+    above only pin agreement with an independent computation.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.geometry.boundary import dirichlet_bc
 
     problem = MFGProblem(
-        geometry=TensorProductGrid(bounds=[(0.0, 4.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=dirichlet_bc(dimension=1, value=0.0)
+        ),
         Nt=10,
         T=1.0,
         sigma=1.0,
         components=MFGComponents(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 2.0) ** 2).squeeze(),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         ),
     )
     result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=3, verbose=False)
 
-    assert problem.geometry.volume_element() == pytest.approx(0.2), "fixture assumption"
-    naive = float(np.max(np.abs(np.sum(result.M, axis=1) * (1.0 / 20) - 1.0)))
-    correct = float(np.max(np.abs(np.sum(result.M, axis=1) * 0.2 - 1.0)))
+    assert result.mass_conservation_error is not None
+    assert result.mass_conservation_error > 0.1, (
+        f"an absorbing boundary must show up as lost mass; got "
+        f"{result.mass_conservation_error!r}, which is within the noise floor of a conserving solve"
+    )
 
-    assert naive != pytest.approx(correct, rel=1e-6), "fixture cannot discriminate the two"
-    assert result.mass_conservation_error == pytest.approx(correct, rel=1e-12)
+
+def test_the_metric_is_drift_not_deviation_from_one():
+    """Why the target is the initial mass rather than 1.0.
+
+    Two owners disagree on the cell measure: ``MFGProblem._initialize_functions`` normalises with
+    ``prod(L_i / Nx_points_i)`` while ``volume_element()`` returns ``prod(L_i / (Nx_points_i - 1))``
+    -- points against intervals. Measured against 1.0 that fork reports ``(N/(N-1))**d - 1``: 21%
+    on an 11-point 2D grid whose mass is flat to 4e-16, shrinking like d/N so it reads as a
+    first-order-convergent error. A ratio is invariant to the measure. The fork itself is
+    pre-existing and out of scope here.
+    """
+    n, d = 11, 2
+    flat = np.ones((5,) + (n,) * d)
+    flat /= flat[0].sum() * (1.0 / n) ** d  # normalised the way the problem normalises m0
+    mass = np.sum(flat, axis=tuple(range(1, flat.ndim))) * (1.0 / (n - 1)) ** d  # measured the other way
+
+    against_one = float(np.max(np.abs(mass - 1.0)))
+    drift = float(np.max(np.abs(mass / mass[0] - 1.0)))
+
+    assert against_one == pytest.approx((n / (n - 1)) ** d - 1, rel=1e-12)
+    assert against_one > 0.2, "the fork is large, not a rounding artefact"
+    assert drift == 0.0, "a perfectly flat mass must report exactly zero drift"
+
+
+def test_a_real_drift_is_still_reported():
+    """The ratio must not launder an actual failure into zero."""
+    mass = np.array([1.0, 1.0, 1.0, 6378.0, 6378.0])
+
+    assert float(np.max(np.abs(mass / mass[0] - 1.0))) == pytest.approx(6377.0, rel=1e-12, abs=0)

@@ -38,7 +38,8 @@ class SolverResult:
         metadata: Additional solver-specific information
         ergodic_constant: Ergodic constant lambda for stationary MFG (Issue #875)
         policy: Optimal control policy alpha*(t, x) as callable (Issue #875)
-        mass_conservation_error: max|integral(m) - 1| over time steps (Issue #875), or None
+        mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
+            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
             when no solver on this path measured it (Issue #1672). ``None`` and ``0.0`` are
             different statements: the second says the solve conserved mass exactly, and for
             three years every solve reported it because the field defaulted to ``0.0`` and
@@ -90,7 +91,8 @@ class SolverResult:
             metadata: Additional solver-specific information
             ergodic_constant: Ergodic constant lambda for stationary MFG
             policy: Optimal control policy alpha*(t, x) as callable
-            mass_conservation_error: max|sum(m) - 1| over time steps
+            mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
+            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
         """
         # Initialize dataclass fields
         self.U = U
