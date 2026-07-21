@@ -740,7 +740,7 @@ class TestControlCostEvaluate:
 
     def test_l1_evaluate_above_threshold(self):
         """Reduced over the component axis, like QuadraticControlCost and like L1's own
-        ``lagrangian`` (Issue #1672/D9).
+        ``lagrangian`` (Issue #1653).
 
         A bare ``(d,)`` array is one point with ``d`` components -- the reading
         ``QuadraticControlCost`` has always used, since ``np.sum(p**2, axis=-1)`` collapses it.
@@ -948,7 +948,7 @@ class TestMoreauYosidaPenaltyAggregation:
         q_batch = smooth._prox_h(p_batch)
 
         values = smooth.evaluate(p_batch)
-        # Issue #1672/D9: every base cost now returns a total, so the base term is used as it
+        # Issue #1653: every base cost now returns a total, so the base term is used as it
         # comes. Summing it again here would collapse the batch axis.
         expected = base.evaluate(q_batch) + np.sum((p_batch - q_batch) ** 2, axis=-1) / (2 * self.EPSILON)
         assert values.shape == (2,)

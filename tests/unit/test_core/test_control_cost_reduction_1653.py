@@ -1,4 +1,4 @@
-"""Every control cost must reduce `evaluate` over the component axis (Issue #1672 / D9).
+"""Every control cost must reduce `evaluate` over the component axis (Issue #1653).
 
 `QuadraticControlCost.evaluate` summed over `axis=-1`; `L1ControlCost` and `BoundedControlCost`
 returned one value per component. Every class's own `lagrangian` already summed, so the fork was
@@ -47,7 +47,7 @@ def test_hamiltonian_is_one_value_per_point(label, cost, d):
 
     assert np.shape(result) == (n_points,), (
         f"{label} at d={d} returned shape {np.shape(result)}; an (N, N) result here is the "
-        "pre-#1672 per-component reduction leaking into the Hamiltonian"
+        "pre-#1653 per-component reduction leaking into the Hamiltonian"
     )
 
 

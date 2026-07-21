@@ -320,7 +320,7 @@ class TestEffectiveDomain:
         """
         cost = L1ControlCost(lambda_=0.5)
         L = SeparableLagrangian(control_cost=cost)
-        # Issue #1672/D9: evaluate reduces over the component axis, so a (1,) momentum
+        # Issue #1653: evaluate reduces over the component axis, so a (1,) momentum
         # yields one scalar rather than a length-1 array.
         true_h = float(cost.evaluate(np.array([5.0])))
 

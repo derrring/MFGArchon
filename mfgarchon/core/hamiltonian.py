@@ -449,7 +449,7 @@ class L1ControlCost(ControlCostBase):
     >>> cost = L1ControlCost(lambda_=0.5)
     >>> cost.optimal_control(np.array([0.3, 0.7, -0.8]))
     array([ 0., -1.,  1.])
-    >>> cost.evaluate(np.array([0.3, 0.7, -0.8]))  # 0.5 -- one total (Issue #1672/D9)
+    >>> cost.evaluate(np.array([0.3, 0.7, -0.8]))  # 0.5 -- one total (Issue #1653)
     0.5
     """
 
@@ -463,7 +463,7 @@ class L1ControlCost(ControlCostBase):
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H(p) = sum_i max(|p_i| - lambda, 0). Always finite.
 
-        Issue #1672/D9: reduced over the component axis, matching this class's own
+        Issue #1653: reduced over the component axis, matching this class's own
         ``lagrangian`` (which already sums over ``axis=-1``) and ``QuadraticControlCost``.
         Returning one value per component made ``SeparableHamiltonian`` produce an ``(N, N)``
         matrix at ``d=1`` -- silently, since a square array is a plausible shape -- and raise a
@@ -561,7 +561,7 @@ class BoundedControlCost(ControlCostBase):
         # Saturated region: H = alpha_max * |p| - lambda * alpha_max^2 / 2
         saturated = np.abs(p_arr) > threshold
         h[saturated] = self.max_control * np.abs(p_arr[saturated]) - 0.5 * self._lambda * self.max_control**2
-        # Issue #1672/D9: reduce over the component axis, as this class's own `lagrangian` does.
+        # Issue #1653: reduce over the component axis, as this class's own `lagrangian` does.
         return np.sum(h, axis=-1)
 
     def dp(self, p: np.ndarray) -> np.ndarray:
@@ -682,7 +682,7 @@ class _MoreauYosidaControlCost(ControlCostBase):
         both terms are aggregated over the component axis. Base costs disagree
         on that convention (QuadraticControlCost already sums over axis=-1;
         L1ControlCost and BoundedControlCost return one value per component),
-        Every base cost now returns a total (Issue #1672/D9 aligned L1 and Bounded with
+        Every base cost now returns a total (Issue #1653 aligned L1 and Bounded with
         Quadratic and with their own ``lagrangian``), so the base term is used as it comes.
         Summing it here as well would count it twice -- and would collapse a batch axis for a
         base that already reduces. See tests/unit/test_core/test_hamiltonian_classes.py
