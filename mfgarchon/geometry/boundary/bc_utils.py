@@ -118,23 +118,43 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     **with no permutation available** -- a guard that unions only over ``segments`` lets that form
     straight through (Issue #1697).
 
-    Returns an empty set for ``None`` and for legacy BC objects, which carry no per-axis
-    information that could disagree.
-    """
-    from .conditions import BoundaryConditions
+    Returns an empty set for ``None`` and for legacy BC objects, which carry neither field and so
+    have no per-axis information that could disagree.
 
-    if not isinstance(boundary_conditions, BoundaryConditions):
+    Reach is by duck typing rather than ``isinstance`` on purpose. An ``isinstance`` gate would be
+    a fail-silent branch in front of a fail-loud body: any future adapter, protocol implementation
+    or wrapper that is not literally a ``BoundaryConditions`` would return an empty set, which
+    reads as "nothing disagrees" and turns every caller's guard into a no-op -- the shape this
+    function exists to prevent.
+
+    Raises:
+        AttributeError: if exactly one of ``segments`` / ``default_bc`` is present. That is the
+            signature of a rename, and it must not degrade into an empty set (Issue #1691).
+    """
+    if boundary_conditions is None:
         return set()
+
+    missing = object()
+    segments = getattr(boundary_conditions, "segments", missing)
+    default = getattr(boundary_conditions, "default_bc", missing)
+
+    if segments is missing and default is missing:
+        return set()  # not a segmented BC at all
+
+    if segments is missing or default is missing:
+        present, absent = ("segments", "default_bc") if default is missing else ("default_bc", "segments")
+        raise AttributeError(
+            f"{type(boundary_conditions).__name__} has {present!r} but no {absent!r}. A segmented "
+            f"boundary condition must expose both, since a mixed BC is detected by unioning them; "
+            f"reading only one would silently under-report disagreement (Issue #1697)."
+        )
 
     def _op(bc_type: Any) -> str:
         return bc_type_to_geometric_operation(str(getattr(bc_type, "value", bc_type)))
 
-    # Direct attribute access, not getattr with a default: if these are ever renamed this must
-    # fail loudly. A silent fallback would yield an empty set, which reads as "nothing disagrees"
-    # and turns every caller's guard into a no-op (the Issue #1691 shape).
-    ops = {_op(seg.bc_type) for seg in boundary_conditions.segments or ()}
-    if boundary_conditions.default_bc is not None:
-        ops.add(_op(boundary_conditions.default_bc))
+    ops = {_op(seg.bc_type) for seg in segments or ()}
+    if default is not None:
+        ops.add(_op(default))
     return ops
 
 

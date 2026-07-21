@@ -204,17 +204,19 @@ def test_fp_sl_solver_refuses_a_mixed_bc_at_solve_time():
     and solves. Verified by mutation: routing ``_get_bc_operation_type`` back to
     ``get_bc_type_string`` fails this test and only this one.
 
-    The BC is swapped in after construction on purpose: the solver re-reads its boundary conditions
-    during the solve, so a construction-time check alone would be bypassed here exactly as it was
-    on the HJB side (#1560).
+    The BC is swapped in on the geometry after construction on purpose: FPSLSolver caches only an
+    explicitly-passed BC and otherwise resolves the geometry live at each point of use, so a
+    construction-time check alone would be bypassed here exactly as on the HJB side (#1560).
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 
     grid, problem = _fp_problem(no_flux_bc(dimension=2))
     solver = FPSLSolver(problem)
 
+    # ONLY the geometry's BC is replaced. Writing solver.boundary_conditions as well would pass
+    # even if the solver never re-read anything -- review of #1702 found exactly that: the test
+    # asserted a re-read mechanism the FP solver did not have, and passed by poking the cache.
     grid._boundary_conditions = _two_segments()
-    solver.boundary_conditions = _two_segments()
 
     m0 = np.ones((9, 9)) / 81.0
     u = np.zeros((5, 9, 9))
@@ -231,3 +233,46 @@ def test_fp_sl_solver_still_solves_a_uniform_bc():
 
     assert np.all(np.isfinite(result))
     assert np.all(result >= 0.0)
+
+
+def test_a_duck_typed_bc_is_checked_not_waved_through():
+    """Reach is by duck typing, and that choice is pinned in both directions.
+
+    An `isinstance` gate would be a fail-silent branch in front of a fail-loud body: an adapter or
+    wrapper that is not literally a BoundaryConditions would return an empty set, read as "nothing
+    disagrees". Review of #1702 measured that a gate was present and that removing it changed no
+    test -- unpinned in either direction, so the next refactor could flip it invisibly.
+    """
+    from types import SimpleNamespace
+
+    duck = SimpleNamespace(
+        segments=[_seg("w", BCType.NO_FLUX, "x_min"), _seg("p", BCType.PERIODIC, "y_min")],
+        default_bc=BCType.NO_FLUX,
+    )
+    assert geometric_operations(duck) == {"reflect", "periodic"}
+
+    with pytest.raises(NotImplementedError, match="different geometric operations"):
+        checked_bc_type_string(duck, **CONSUMER)
+
+
+def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
+    """A legacy BC has no per-axis information; it must not raise, and must not be refused."""
+    from types import SimpleNamespace
+
+    assert geometric_operations(SimpleNamespace(type="periodic")) == set()
+    assert geometric_operations(None) == set()
+
+
+def test_half_a_renamed_pair_raises_rather_than_under_reporting():
+    """One field present and the other missing is the signature of a rename.
+
+    Degrading to an empty set here would report "nothing disagrees" for a BC that does, which is
+    strictly worse than crashing -- the guard would be silently disabled for every caller.
+    """
+    from types import SimpleNamespace
+
+    with pytest.raises(AttributeError, match="default_bc"):
+        geometric_operations(SimpleNamespace(segments=[_seg("w", BCType.NO_FLUX, "x_min")]))
+
+    with pytest.raises(AttributeError, match="segments"):
+        geometric_operations(SimpleNamespace(default_bc=BCType.PERIODIC))
