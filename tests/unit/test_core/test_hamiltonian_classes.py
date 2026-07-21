@@ -739,11 +739,23 @@ class TestControlCostEvaluate:
         np.testing.assert_allclose(result, [0.0, 0.0])
 
     def test_l1_evaluate_above_threshold(self):
+        """Reduced over the component axis, like QuadraticControlCost and like L1's own
+        ``lagrangian`` (Issue #1653).
+
+        A bare ``(d,)`` array is one point with ``d`` components -- the reading
+        ``QuadraticControlCost`` has always used, since ``np.sum(p**2, axis=-1)`` collapses it.
+        Batch input is ``(N, d)`` and reduces to ``(N,)``. This previously returned one value per
+        component, which made ``SeparableHamiltonian`` emit an ``(N, N)`` matrix at ``d=1``.
+        """
         cost = L1ControlCost(lambda_=0.5)
-        p = np.array([0.7, -0.8, 1.5])
-        result = cost.evaluate(p)
-        expected = np.maximum(np.abs(p) - 0.5, 0.0)
-        np.testing.assert_allclose(result, expected)
+
+        one_point = np.array([0.7, -0.8, 1.5])
+        assert cost.evaluate(one_point) == pytest.approx(np.sum(np.maximum(np.abs(one_point) - 0.5, 0.0)))
+
+        batch = np.array([[0.7, -0.8], [1.5, 0.1]])
+        result = cost.evaluate(batch)
+        assert result.shape == (2,)
+        np.testing.assert_allclose(result, np.sum(np.maximum(np.abs(batch) - 0.5, 0.0), axis=-1))
 
     def test_l1_evaluate_always_finite(self):
         cost = L1ControlCost(lambda_=1.0)
@@ -936,9 +948,9 @@ class TestMoreauYosidaPenaltyAggregation:
         q_batch = smooth._prox_h(p_batch)
 
         values = smooth.evaluate(p_batch)
-        expected = np.sum(base.evaluate(q_batch), axis=-1) + np.sum((p_batch - q_batch) ** 2, axis=-1) / (
-            2 * self.EPSILON
-        )
+        # Issue #1653: every base cost now returns a total, so the base term is used as it
+        # comes. Summing it again here would collapse the batch axis.
+        expected = base.evaluate(q_batch) + np.sum((p_batch - q_batch) ** 2, axis=-1) / (2 * self.EPSILON)
         assert values.shape == (2,)
         np.testing.assert_allclose(values, expected, rtol=0.0, atol=1e-15)
 

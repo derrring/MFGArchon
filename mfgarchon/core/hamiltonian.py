@@ -394,8 +394,8 @@ class QuadraticControlCost(ControlCostBase):
     Examples
     --------
     >>> cost = QuadraticControlCost(lambda_=2.0)
-    >>> cost.evaluate(np.array([1.0, 2.0]))  # [0.25, 1.0]
-    >>> cost.dp(np.array([1.0, 2.0]))        # [0.5, 1.0]
+    >>> cost.evaluate(np.array([1.0, 2.0]))  # 1.25 -- one total, reduced over components
+    >>> cost.dp(np.array([1.0, 2.0]))        # [0.5, 1.0] -- per component, a gradient
     """
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
@@ -449,8 +449,8 @@ class L1ControlCost(ControlCostBase):
     >>> cost = L1ControlCost(lambda_=0.5)
     >>> cost.optimal_control(np.array([0.3, 0.7, -0.8]))
     array([ 0., -1.,  1.])
-    >>> cost.evaluate(np.array([0.3, 0.7, -0.8]))
-    array([0. , 0.2, 0.3])
+    >>> cost.evaluate(np.array([0.3, 0.7, -0.8]))  # 0.5 -- one total (Issue #1653)
+    0.5
     """
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
@@ -461,8 +461,15 @@ class L1ControlCost(ControlCostBase):
         return alpha
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
-        """H(p) = max(|p| - lambda, 0). Always finite."""
-        return np.maximum(np.abs(np.atleast_1d(p)) - self._lambda, 0.0)
+        """H(p) = sum_i max(|p_i| - lambda, 0). Always finite.
+
+        Issue #1653: reduced over the component axis, matching this class's own
+        ``lagrangian`` (which already sums over ``axis=-1``) and ``QuadraticControlCost``.
+        Returning one value per component made ``SeparableHamiltonian`` produce an ``(N, N)``
+        matrix at ``d=1`` -- silently, since a square array is a plausible shape -- and raise a
+        broadcast ``ValueError`` at ``d != 1``.
+        """
+        return np.sum(np.maximum(np.abs(np.atleast_1d(p)) - self._lambda, 0.0), axis=-1)
 
     def dp(self, p: np.ndarray) -> np.ndarray:
         """Clarke subdifferential: sign(p) where |p| > lambda, 0 otherwise."""
@@ -554,7 +561,8 @@ class BoundedControlCost(ControlCostBase):
         # Saturated region: H = alpha_max * |p| - lambda * alpha_max^2 / 2
         saturated = np.abs(p_arr) > threshold
         h[saturated] = self.max_control * np.abs(p_arr[saturated]) - 0.5 * self._lambda * self.max_control**2
-        return h
+        # Issue #1653: reduce over the component axis, as this class's own `lagrangian` does.
+        return np.sum(h, axis=-1)
 
     def dp(self, p: np.ndarray) -> np.ndarray:
         """dH/dp = p/lambda in unsaturated region, +/-alpha_max at saturation."""
@@ -670,18 +678,17 @@ class _MoreauYosidaControlCost(ControlCostBase):
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps).
 
-        The Moreau envelope is a functional of the whole momentum vector, so
-        both terms are aggregated over the component axis. Base costs disagree
-        on that convention (QuadraticControlCost already sums over axis=-1;
-        L1ControlCost and BoundedControlCost return one value per component),
-        so the base term is summed here rather than trusted to be a total.
-        Adding a summed penalty to a per-component base term counted the
-        penalty d times -- see tests/unit/test_core/test_hamiltonian_classes.py
+        The Moreau envelope is a functional of the whole momentum vector, so both terms are
+        aggregated over the component axis. Every base cost now returns a total (Issue #1653
+        aligned L1ControlCost and BoundedControlCost with QuadraticControlCost and with their own
+        ``lagrangian``), so the base term is used as it comes.
+        Summing it here as well would count it twice -- and would collapse a batch axis for a
+        base that already reduces. See tests/unit/test_core/test_hamiltonian_classes.py
         ``TestMoreauYosidaPenaltyAggregation``.
         """
         p_arr = np.atleast_1d(p)
         q = self._prox_h(p_arr)
-        base_total = np.sum(self.base.evaluate(q), axis=-1)
+        base_total = self.base.evaluate(q)
         return base_total + np.sum((p_arr - q) ** 2, axis=-1) / (2 * self.epsilon)
 
     def dp(self, p: np.ndarray) -> np.ndarray:

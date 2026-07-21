@@ -320,7 +320,9 @@ class TestEffectiveDomain:
         """
         cost = L1ControlCost(lambda_=0.5)
         L = SeparableLagrangian(control_cost=cost)
-        true_h = float(cost.evaluate(np.array([5.0]))[0])
+        # Issue #1653: evaluate reduces over the component axis, so a (1,) momentum
+        # yields one scalar rather than a length-1 array.
+        true_h = float(cost.evaluate(np.array([5.0])))
 
         on_domain = _conjugate(L, 5.0, bounds=cost.effective_domain())
         off_domain = _conjugate(L, 5.0, bounds=(-50.0, 50.0))
