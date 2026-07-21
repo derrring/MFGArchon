@@ -106,6 +106,88 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
         return "clamp"
 
 
+def geometric_operations(boundary_conditions: Any) -> set[str]:
+    """Every distinct geometric operation ``boundary_conditions`` asks for.
+
+    Unlike :func:`get_bc_type_string`, which returns the FIRST segment's type, this reports the
+    whole set. A set of size > 1 means the BC cannot be honoured by a fold that applies one
+    operation to every axis.
+
+    ``default_bc`` is included deliberately. ``get_bc_type_string`` never reads it, so a
+    partially-covering segment list plus a differing default produces the same silent collapse
+    **with no permutation available** -- a guard that unions only over ``segments`` lets that form
+    straight through (Issue #1697).
+
+    Returns an empty set for ``None`` and for legacy BC objects, which carry neither field and so
+    have no per-axis information that could disagree.
+
+    Reach is by duck typing rather than ``isinstance`` on purpose. An ``isinstance`` gate would be
+    a fail-silent branch in front of a fail-loud body: any future adapter, protocol implementation
+    or wrapper that is not literally a ``BoundaryConditions`` would return an empty set, which
+    reads as "nothing disagrees" and turns every caller's guard into a no-op -- the shape this
+    function exists to prevent.
+
+    Raises:
+        AttributeError: if exactly one of ``segments`` / ``default_bc`` is present. That is the
+            signature of a rename, and it must not degrade into an empty set (Issue #1691).
+    """
+    if boundary_conditions is None:
+        return set()
+
+    missing = object()
+    segments = getattr(boundary_conditions, "segments", missing)
+    default = getattr(boundary_conditions, "default_bc", missing)
+
+    if segments is missing and default is missing:
+        return set()  # not a segmented BC at all
+
+    if segments is missing or default is missing:
+        present, absent = ("segments", "default_bc") if default is missing else ("default_bc", "segments")
+        raise AttributeError(
+            f"{type(boundary_conditions).__name__} has {present!r} but no {absent!r}. A segmented "
+            f"boundary condition must expose both, since a mixed BC is detected by unioning them; "
+            f"reading only one would silently under-report disagreement (Issue #1697)."
+        )
+
+    def _op(bc_type: Any) -> str:
+        return bc_type_to_geometric_operation(str(getattr(bc_type, "value", bc_type)))
+
+    ops = {_op(seg.bc_type) for seg in segments or ()}
+    if default is not None:
+        ops.add(_op(default))
+    return ops
+
+
+def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternative: str) -> str | None:
+    """Collapse ``boundary_conditions`` to one BC type, or refuse if that would change the physics.
+
+    The single owner of the per-axis collapse for solvers whose fold applies one geometric
+    operation to every axis (Issues #1560, #1697). Callers get either a BC type they may safely
+    apply to all axes, or ``NotImplementedError``.
+
+    Call this at the point of use, not only at construction: solvers re-read
+    ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
+    a BC that is unset when the solver is built, or replaced afterwards.
+
+    Args:
+        boundary_conditions: the BC to collapse.
+        consumer: the refusing component, named in the error (e.g. ``"HJBSemiLagrangianSolver"``).
+        alternative: what the caller should use instead, appended to the error message.
+
+    Per-axis handling is the actual fix and remains open on #1560 (HJB) and #1697 (FP). Until then
+    the library refuses the configuration rather than solving a different one.
+    """
+    ops = geometric_operations(boundary_conditions)
+    if len(ops) > 1:
+        raise NotImplementedError(
+            f"{consumer} does not support a mixed per-axis boundary condition whose segments map "
+            f"to different geometric operations ({sorted(ops)}). The fold applies a single "
+            "operation to every axis, so the result depends on segment order rather than on "
+            f"which wall carries which condition. {alternative}"
+        )
+    return get_bc_type_string(boundary_conditions)
+
+
 # =============================================================================
 # Smoke Test
 # =============================================================================

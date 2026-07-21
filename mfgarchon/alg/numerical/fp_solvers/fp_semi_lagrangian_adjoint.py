@@ -39,7 +39,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
-    get_bc_type_string,
+    checked_bc_type_string,
 )
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
@@ -211,26 +211,16 @@ class FPSLSolver(BaseFPSolver):
                 f"FPSLSolver initialized for {self.dimension}D: shape={self.grid_shape}, spacing={self.spacing}"
             )
 
-        # Boundary conditions
-        if boundary_conditions is not None:
-            self.boundary_conditions = boundary_conditions
-        else:
-            self.boundary_conditions = self._get_boundary_conditions_from_problem()
+        # Boundary conditions. An explicit argument is cached under the name
+        # ``get_boundary_conditions()`` resolves first, so it wins for the solver's lifetime;
+        # otherwise nothing is cached and the geometry is re-read at every point of use. Caching
+        # the geometry's BC here would freeze a construction-time snapshot, and the mixed-BC guard
+        # in ``_get_bc_operation_type`` would then never see a BC replaced afterwards -- the
+        # bypass this solver's own guard exists to close (Issue #1697).
+        self._boundary_conditions = boundary_conditions
         # Issue #1456: fail loud now if the resolved BC requests a type this solver cannot honor
         # (Dirichlet/Robin would otherwise be silently collapsed to the zero-flux Neumann stencil).
-        self._validate_bc_support(self.boundary_conditions)
-
-    def _get_boundary_conditions_from_problem(self) -> BoundaryConditions | None:
-        """Get boundary conditions from problem or geometry."""
-        try:
-            return self.problem.geometry.boundary_conditions
-        except AttributeError:
-            pass
-        try:
-            return self.problem.geometry.get_boundary_conditions()
-        except AttributeError:
-            pass
-        return None
+        self._validate_bc_support(self.get_boundary_conditions())
 
     def _get_bc_operation_type(self) -> str:
         """
@@ -241,7 +231,11 @@ class FPSLSolver(BaseFPSolver):
         Returns:
             Geometric operation: 'reflect', 'clamp', or 'periodic'
         """
-        bc_type = get_bc_type_string(self.boundary_conditions)
+        bc_type = checked_bc_type_string(
+            self.get_boundary_conditions(),
+            consumer="FPSLSolver",
+            alternative=("Use one BC type across axes, or FP-FDM/FVM which resolve BC per wall (Issue #1697)."),
+        )
         return bc_type_to_geometric_operation(bc_type)
 
     def _get_diffusion_bc_type(self) -> str:
