@@ -866,6 +866,22 @@ class FixedPointIterator(BaseCouplingIterator):
                 "; ".join(str(i) for i in output_validation.issues),
             )
 
+        # Issue #1672: the field defaulted to 0.0 and nothing on this path wrote it, so every
+        # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case
+        # whose mass reached 6378 (Issue #1671). Measured here, where M and the geometry are
+        # both in hand, using the geometry's own volume element rather than a second
+        # hand-rolled dx so the quantity has one owner.
+        mass_conservation_error: float | None
+        try:
+            cell_volume = self.problem.geometry.volume_element()
+            spatial_axes = tuple(range(1, self.M.ndim))
+            mass_per_step = np.sum(self.M, axis=spatial_axes) * cell_volume
+            mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))
+        except (AttributeError, NotImplementedError):
+            # A geometry without a volume element cannot express the integral; None says
+            # "not measured" rather than fabricating a zero.
+            mass_conservation_error = None
+
         # Construct result
         result = SolverResult(
             U=self.U,
@@ -876,6 +892,7 @@ class FixedPointIterator(BaseCouplingIterator):
             solver_name=self.name,
             converged=converged,
             metadata=metadata,
+            mass_conservation_error=mass_conservation_error,
         )
 
         # Return tuple for backward compatibility if requested
