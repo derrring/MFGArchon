@@ -39,7 +39,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
-    get_bc_type_string,
+    checked_bc_type_string,
 )
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
@@ -241,7 +241,11 @@ class FPSLSolver(BaseFPSolver):
         Returns:
             Geometric operation: 'reflect', 'clamp', or 'periodic'
         """
-        bc_type = get_bc_type_string(self.boundary_conditions)
+        bc_type = checked_bc_type_string(
+            self.boundary_conditions,
+            consumer="FPSLSolver",
+            alternative=("Use one BC type across axes, or FP-FDM/FVM which resolve BC per wall (Issue #1697)."),
+        )
         return bc_type_to_geometric_operation(bc_type)
 
     def _get_diffusion_bc_type(self) -> str:

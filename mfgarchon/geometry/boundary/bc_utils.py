@@ -106,6 +106,68 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
         return "clamp"
 
 
+def geometric_operations(boundary_conditions: Any) -> set[str]:
+    """Every distinct geometric operation ``boundary_conditions`` asks for.
+
+    Unlike :func:`get_bc_type_string`, which returns the FIRST segment's type, this reports the
+    whole set. A set of size > 1 means the BC cannot be honoured by a fold that applies one
+    operation to every axis.
+
+    ``default_bc`` is included deliberately. ``get_bc_type_string`` never reads it, so a
+    partially-covering segment list plus a differing default produces the same silent collapse
+    **with no permutation available** -- a guard that unions only over ``segments`` lets that form
+    straight through (Issue #1697).
+
+    Returns an empty set for ``None`` and for legacy BC objects, which carry no per-axis
+    information that could disagree.
+    """
+    from .conditions import BoundaryConditions
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return set()
+
+    def _op(bc_type: Any) -> str:
+        return bc_type_to_geometric_operation(str(getattr(bc_type, "value", bc_type)))
+
+    # Direct attribute access, not getattr with a default: if these are ever renamed this must
+    # fail loudly. A silent fallback would yield an empty set, which reads as "nothing disagrees"
+    # and turns every caller's guard into a no-op (the Issue #1691 shape).
+    ops = {_op(seg.bc_type) for seg in boundary_conditions.segments or ()}
+    if boundary_conditions.default_bc is not None:
+        ops.add(_op(boundary_conditions.default_bc))
+    return ops
+
+
+def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternative: str) -> str | None:
+    """Collapse ``boundary_conditions`` to one BC type, or refuse if that would change the physics.
+
+    The single owner of the per-axis collapse for solvers whose fold applies one geometric
+    operation to every axis (Issues #1560, #1697). Callers get either a BC type they may safely
+    apply to all axes, or ``NotImplementedError``.
+
+    Call this at the point of use, not only at construction: solvers re-read
+    ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
+    a BC that is unset when the solver is built, or replaced afterwards.
+
+    Args:
+        boundary_conditions: the BC to collapse.
+        consumer: the refusing component, named in the error (e.g. ``"HJBSemiLagrangianSolver"``).
+        alternative: what the caller should use instead, appended to the error message.
+
+    Per-axis handling is the actual fix and remains open on #1560 (HJB) and #1697 (FP). Until then
+    the library refuses the configuration rather than solving a different one.
+    """
+    ops = geometric_operations(boundary_conditions)
+    if len(ops) > 1:
+        raise NotImplementedError(
+            f"{consumer} does not support a mixed per-axis boundary condition whose segments map "
+            f"to different geometric operations ({sorted(ops)}). The fold applies a single "
+            "operation to every axis, so the result depends on segment order rather than on "
+            f"which wall carries which condition. {alternative}"
+        )
+    return get_bc_type_string(boundary_conditions)
+
+
 # =============================================================================
 # Smoke Test
 # =============================================================================

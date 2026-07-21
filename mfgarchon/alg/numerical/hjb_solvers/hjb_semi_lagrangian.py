@@ -31,7 +31,7 @@ from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
-    get_bc_type_string,
+    checked_bc_type_string,
 )
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
@@ -77,36 +77,18 @@ except ImportError:
 def _checked_bc_type_string(bc) -> str:
     """Collapse ``bc`` to the single BC type the SL fold applies to every axis, or refuse.
 
-    Issue #1560: ``get_bc_type_string`` returns the FIRST segment's type by contract, and the
-    characteristic fold and ADI diffusion then apply that single operation ('reflect' | 'wrap' |
-    ...) to all axes. For a mixed per-axis BC -- no-flux walls on one axis, periodic on another --
-    that silently drops one transform, and reordering the segments changes the physics.
-
-    This is the one owner of that collapse. It raises when the segments disagree, so the refusal
-    happens where the value is used rather than only at construction: the solver re-reads
-    ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
-    a BC that is unset when the solver is built, or replaced afterwards.
-
-    Per-axis handling is the actual fix and remains open on #1560; until then the library refuses
-    the configuration rather than solving a different one.
+    Thin wrapper over :func:`checked_bc_type_string`, which is the one owner of this collapse for
+    every solver whose fold is per-axis blind (Issues #1560, #1697). It lives here only to bind the
+    consumer name and the suggested alternative; the logic, including the ``default_bc`` union that
+    a segments-only guard would miss, belongs to ``bc_utils``.
     """
-    ops = set()
-    for seg in getattr(bc, "segments", None) or ():
-        ops.add(bc_type_to_geometric_operation(str(getattr(seg.bc_type, "value", seg.bc_type))))
-    default = getattr(bc, "default_bc", None)
-    if default is not None:
-        ops.add(bc_type_to_geometric_operation(str(getattr(default, "value", default))))
-
-    if len(ops) > 1:
-        raise NotImplementedError(
-            "HJBSemiLagrangianSolver does not support a mixed per-axis boundary condition whose "
-            f"segments map to different geometric operations ({sorted(ops)}). The characteristic "
-            "fold and ADI diffusion apply a single operation to every axis (order-sensitive "
-            "silent collapse). Use one BC type across axes, or HJB-FDM/GFDM which resolve BC per "
-            "wall (Issue #1560 / RFC #1574 Phase 0)."
-        )
-
-    return get_bc_type_string(bc)
+    return checked_bc_type_string(
+        bc,
+        consumer="HJBSemiLagrangianSolver",
+        alternative=(
+            "Use one BC type across axes, or HJB-FDM/GFDM which resolve BC per wall (Issue #1560 / RFC #1574 Phase 0)."
+        ),
+    )
 
 
 class HJBSemiLagrangianSolver(BaseHJBSolver):
