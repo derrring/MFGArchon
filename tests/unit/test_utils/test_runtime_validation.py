@@ -15,11 +15,46 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary.conditions import no_flux_bc
 from mfgarchon.utils.validation.runtime import (
     check_bounds,
     check_finite,
     validate_solver_output,
 )
+
+_NX = 11
+
+
+def _divergence_probe_problem():
+    """The one problem all the FixedPointIterator divergence tests below run on.
+
+    Extracted after an independent review flagged five byte-identical copies of this
+    construction in this file (Issue #1717 review, MINOR-7). Nothing here is tuned per
+    test -- each test varies only what the mocked HJB/FP solvers return.
+    """
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0)],
+            Nx_points=[_NX],
+            boundary_conditions=no_flux_bc(dimension=1),
+        ),
+        components=MFGComponents(
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: -(m**2),
+                coupling_dm=lambda m: -2 * m,
+            ),
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: x**2,
+        ),
+        Nt=10,
+    )
+
 
 # ===========================================================================
 # check_finite
@@ -135,7 +170,9 @@ def test_fixed_point_nan_early_termination():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary.conditions import no_flux_bc
 
-    # Real problem setup (Nx=11 for speed)
+    # Pre-existing construction, left inline: folding it into
+    # _divergence_probe_problem() is a change to a test this PR does not otherwise
+    # touch, so it belongs to whoever next edits #688's coverage, not here.
     Nx = 11
     geom = TensorProductGrid(
         bounds=[(0.0, 1.0)],
@@ -192,3 +229,159 @@ def test_fixed_point_nan_early_termination():
     output_val = result.metadata.get("output_validation")
     assert output_val is not None
     assert output_val["is_valid"] is False
+
+
+@pytest.mark.unit
+def test_fp_is_not_solved_after_hjb_returns_nonfinite():
+    """A diverged HJB must stop the iteration before FP runs (Issue #1717).
+
+    The sibling test above mocks FP to return a clean density regardless of input, so it
+    cannot see whether FP was handed a non-finite U. Here FP records what it received.
+    Without the guard, the FP source and drift are composed from a NaN U and the real FP
+    solver raises a CFL diagnostic -- an FP error for an HJB failure -- and that exception
+    escapes before the #1078 HJB-vs-FP attribution can run.
+    """
+    from unittest.mock import Mock
+
+    problem = _divergence_probe_problem()
+    Nx = _NX
+    shape = (problem.Nt + 1, *problem.spatial_shape)
+
+    hjb_calls = [0]
+
+    def hjb_side_effect(*args, **kwargs):
+        hjb_calls[0] += 1
+        # Second HJB solve diverges.
+        return np.full(shape, np.nan) if hjb_calls[0] >= 2 else np.zeros(shape)
+
+    hjb_solver = Mock()
+    hjb_solver.solve_hjb_system.side_effect = hjb_side_effect
+
+    u_seen_by_fp = []
+
+    def fp_side_effect(*args, **kwargs):
+        # The value function reaches FP through one of several channels depending on the
+        # solver's signature -- positionally with a Mock, but as potential_field= or
+        # drift_field= with a real solver (resolve_fp_drift_kwargs). Scan every array
+        # argument rather than one named channel, so hardening this double into
+        # Mock(spec=FPFDMSolver) cannot silently disarm the assertion.
+        candidates = [a for a in args if isinstance(a, np.ndarray)]
+        candidates += [v for v in kwargs.values() if isinstance(v, np.ndarray)]
+        u_seen_by_fp.append(any(not np.all(np.isfinite(c)) for c in candidates))
+        return np.ones(shape) / Nx
+
+    fp_solver = Mock()
+    fp_solver.solve_fp_system.side_effect = fp_side_effect
+
+    FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
+        max_iterations=10, tolerance=1e-6
+    )
+
+    assert hjb_calls[0] == 2, "the second HJB solve is the one that diverges"
+    assert not any(u_seen_by_fp), "FP was handed a non-finite array"
+    assert len(u_seen_by_fp) == 1, (
+        f"FP ran {len(u_seen_by_fp)} times; it must not run in the iteration whose HJB diverged"
+    )
+    # Not asserted here: convergence_reason == "diverged_nan". The pre-existing post-damping
+    # check sets the same string, so it passes with or without the guard and pins nothing
+    # (Issue #1701). The mass sentinel below does discriminate.
+
+
+@pytest.mark.unit
+def test_mass_conservation_is_unmeasured_when_fp_never_ran():
+    """A solve that dies in HJB must not report perfect mass conservation (Issue #1717).
+
+    When the first HJB solve diverges, FP never runs and `self.M` still holds the cold start,
+    whose mass is constant across time by construction -- so measuring it yields exactly 0.0,
+    the best possible value, for the worst possible solve. Issue #1672 added the None sentinel
+    so that "not measured" cannot masquerade as a zero; this pins that it is used here.
+    """
+    from unittest.mock import Mock
+
+    problem = _divergence_probe_problem()
+    Nx = _NX
+    shape = (problem.Nt + 1, *problem.spatial_shape)
+
+    hjb_solver = Mock()
+    hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
+    fp_solver = Mock()
+    fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
+
+    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
+        max_iterations=10, tolerance=1e-6
+    )
+
+    assert fp_solver.solve_fp_system.call_count == 0, "FP must not run when the first HJB diverges"
+    assert result.mass_conservation_error is None, (
+        f"mass conservation reported {result.mass_conservation_error!r} for a solve where FP "
+        "never produced a density; it must be None (not measured)"
+    )
+
+
+@pytest.mark.unit
+def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence():
+    """The mirror of the test above, and the harder direction (Issue #1717).
+
+    Suppressing the measurement whenever the solve diverges would be the same defect as
+    fabricating a zero, pointed the other way: if FP completed a step before the HJB blew
+    up, `self.M` is a density this solve produced and its mass error is a real number. Here
+    FP loses half the mass, so `None` would be hiding a ~50% error behind "not measured".
+    """
+    from unittest.mock import Mock
+
+    problem = _divergence_probe_problem()
+    Nx = _NX
+    shape = (problem.Nt + 1, *problem.spatial_shape)
+
+    hjb_calls = [0]
+
+    def hjb_side_effect(*args, **kwargs):
+        hjb_calls[0] += 1
+        # Diverge on the SECOND solve, so one full FP step has already completed.
+        return np.full(shape, np.nan) if hjb_calls[0] >= 2 else np.zeros(shape)
+
+    hjb_solver = Mock()
+    hjb_solver.solve_hjb_system.side_effect = hjb_side_effect
+    # A density that sheds mass down the time axis: a real, measurable conservation defect.
+    losing_mass = np.ones(shape) / Nx * np.linspace(1.0, 0.1, shape[0])[:, None]
+    fp_solver = Mock()
+    fp_solver.solve_fp_system.side_effect = lambda *a, **k: losing_mass
+
+    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
+        max_iterations=10, tolerance=1e-6
+    )
+
+    assert fp_solver.solve_fp_system.call_count == 1, "one FP step must have completed"
+    assert result.mass_conservation_error is not None, (
+        "FP produced a density in this solve, so its mass error is measurable; reporting None "
+        "hides a real defect behind 'not measured'"
+    )
+    assert result.mass_conservation_error > 0.1, (
+        f"expected the injected mass loss to be reported, got {result.mass_conservation_error!r}"
+    )
+
+
+@pytest.mark.unit
+def test_terminal_condition_survives_an_hjb_divergence():
+    """The terminal row is boundary data, not solver output (Issue #1717).
+
+    The normal path and the two pre-existing divergence breaks all pass through
+    preserve_terminal_condition; the new guard must not be the one that returns U[-1] as NaN.
+    """
+    from unittest.mock import Mock
+
+    problem = _divergence_probe_problem()
+    Nx = _NX
+    shape = (problem.Nt + 1, *problem.spatial_shape)
+
+    hjb_solver = Mock()
+    hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
+    fp_solver = Mock()
+    fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
+
+    result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
+        max_iterations=10, tolerance=1e-6
+    )
+
+    x = problem.geometry.get_spatial_grid().ravel()
+    np.testing.assert_allclose(np.asarray(result.U)[-1], x**2, rtol=0, atol=1e-12)
