@@ -72,7 +72,6 @@ def _decay_relerr(adi_factor: float, analytic_factor: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.tier1
 @pytest.mark.parametrize("dim", [1, 2, 3])
 def test_adi_diffusion_magnitude(dim):
     """ADI nD diffusion must decay a cosine eigenmode at exp(-D*dim*k^2*T) (D=sigma^2/2).
@@ -132,7 +131,6 @@ def _fp_pure_diffusion_decay(path: str, sigma: float, n: int = 81, nt: int = 40,
     return ampT[i] / amp0[i], np.exp(-D * _K**2 * T)
 
 
-@pytest.mark.tier2
 @pytest.mark.integration
 @pytest.mark.parametrize("path", ["explicit", "implicit"])
 def test_fp_fdm_diffusion_magnitude(path):
@@ -150,7 +148,6 @@ def test_fp_fdm_diffusion_magnitude(path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.tier2
 @pytest.mark.integration
 def test_weak_form_fem_fp_diffusion_magnitude():
     """The weak-form (FEM Galerkin) FP solver must decay a cosine eigenmode at exp(-D*k^2*T)
@@ -255,7 +252,6 @@ def _gfdm_diffusion_field_relerr(
 
 @pytest.mark.slow
 @pytest.mark.integration
-@pytest.mark.tier3
 def test_hjb_gfdm_diffusion_magnitude():
     """The production HJB-GFDM per-point Newton path (joint_socp + precompute) must apply
     D = sigma^2/2. Verified discriminating: correct D -> field relerr ~0.012, a halved D ->

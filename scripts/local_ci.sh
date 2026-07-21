@@ -66,6 +66,10 @@ step "Fail-fast ratchet"
 "$PY" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
 
+step "Marker census"
+"$PY" scripts/check_markers.py --path .
+check $? "every declared marker is reachable and promises no unimplemented schedule"
+
 if [[ $FAST -eq 0 ]]; then
   step "Test suite (CI marker set, xdist parallel, no coverage)"
   "$PY" -m pytest tests/ -n auto \
