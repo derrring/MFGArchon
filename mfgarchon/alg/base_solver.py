@@ -314,7 +314,7 @@ class BaseMFGSolver(ABC):
                     ignored.append(described)
             if ignored:
                 ignored = sorted(set(ignored), key=repr)
-                timed = any(isinstance(v, str) for v in ignored)
+                timed = "<callable>" in ignored
                 detail = (
                     "a time-dependent value cannot be checked for being identically zero here, "
                     "so it is refused rather than assumed homogeneous; pass 0.0 if it is"

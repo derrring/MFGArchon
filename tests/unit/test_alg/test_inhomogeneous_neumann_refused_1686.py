@@ -205,3 +205,34 @@ def test_the_uniform_default_is_checked_too():
     )
     with pytest.raises(NotImplementedError, match="honours only the homogeneous case"):
         FPFDMSolver(_problem(bc))
+
+
+def test_the_message_names_what_it_found():
+    """Each refusal must describe the value it actually saw.
+
+    `_describe` returns a string for four categories, only one of which is time-dependent. A
+    predicate of `any(isinstance(v, str) ...)` therefore reported "time-dependent" for arrays and
+    providers, and dropped the scalar entirely from a mixed segment set -- so the message named
+    something the caller had not written.
+    """
+    array_only = BoundaryConditions(
+        default_bc=BCType.NO_FLUX,
+        dimension=1,
+        segments=[BCSegment(name="w", bc_type=BCType.NEUMANN, value=np.ones(21), boundary="x_min")],
+    )
+    with pytest.raises(NotImplementedError, match=r"value\(s\) \['<array>'\]"):
+        FPFDMSolver(_problem(array_only))
+
+    mixed = BoundaryConditions(
+        default_bc=BCType.NO_FLUX,
+        dimension=1,
+        segments=[
+            BCSegment(name="a", bc_type=BCType.NEUMANN, value=5.0, boundary="x_min"),
+            BCSegment(name="b", bc_type=BCType.NEUMANN, value=np.ones(21), boundary="x_max"),
+        ],
+    )
+    with pytest.raises(NotImplementedError, match=r"5\.0"):
+        FPFDMSolver(_problem(mixed))
+
+    with pytest.raises(NotImplementedError, match="time-dependent value cannot be checked"):
+        FPFDMSolver(_problem(neumann_bc(value=lambda t: 5.0, dimension=1)))
