@@ -104,7 +104,7 @@ jobs:
         # The two --ignore lines are a DELIBERATE DEFERRAL, not an oversight. Those
         # directories run in no AUTOMATIC workflow -- not here, not in the PR smoke
         # subset, not in python-compat.yml. They DO run on the release-only
-        # `pytest tests/` at ci.yml:190-194, which carries no --ignore; that is
+        # `pytest tests/` in ci.yml's "Run all tests with coverage" step, which carries no --ignore; that is
         # post-publication reporting, not a gate. Locally they pass in 1.8 s
         # (242 + 34 tests), so the exclusion is not about runtime; the maintainer's
         # call (2026-07-20) is that these areas are not mature enough to gate on yet.
@@ -115,7 +115,7 @@ jobs:
           -n auto \
           --ignore=tests/unit/test_backends/ \
           --ignore=tests/unit/test_visualization/ \
-          -m "not optional_torch and not benchmark and not experimental and not environment" \
+          -m "not optional_torch and not benchmark and not experimental and not environment and not manual" \
           --junitxml=junit.xml -o junit_family=legacy \
           --timeout=900 \
           --durations=20

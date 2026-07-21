@@ -187,11 +187,16 @@ jobs:
           --junitxml=junit.xml -o junit_family=legacy --maxfail=10 \
           --durations=10
 
-    - name: Run all tests with coverage (including slow tests on releases)
+    - name: Run all tests with coverage (including slow tests, excluding manual, on releases)
       if: github.event_name == 'release'
       timeout-minutes: 35
       run: |
-        pytest tests/ -v --cov=mfgarchon --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --maxfail=50 --durations=20
+        # -m "not manual": this is the only job with no marker filter, so it was the last
+        # automatic tier still selecting the manual set. nightly.yml's shard step already applies
+        # this qualification to its --ignore list ("they DO run on the release-only pytest
+        # tests/"); the same standard applies to -m. The manual set is ~2h against this 35-minute
+        # budget, and the last five release runs all timed out here.
+        pytest tests/ -v -m "not manual" --cov=mfgarchon --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --maxfail=50 --durations=20
 
     - name: Upload coverage reports to Codecov
       # coverage.xml is produced only by the release step; on PRs this found 0 files and passed
