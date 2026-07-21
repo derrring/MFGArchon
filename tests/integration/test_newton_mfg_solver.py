@@ -16,7 +16,7 @@ selects them. Run them deliberately:
     pytest -m manual
 
 Measured 2026-07-21: `test_newton_solver_executes` takes 822 s at dcb8be82 and 842 s at c1a29a12,
-passing serially at both, against the global 900 s cap at pytest.ini:9 -- 8% of headroom, which
+passing serially at both, against the global 900 s cap (`timeout` in pytest.ini) -- 8% of headroom, which
 nightly's `-n auto` contention consumes. Nothing will report when these break; that is the trade.
 
 `TestMFGResidualComputation` is deliberately NOT manual: those two tests cost 0.11 s combined and

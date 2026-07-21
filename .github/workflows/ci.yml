@@ -192,7 +192,7 @@ jobs:
       timeout-minutes: 35
       run: |
         # -m "not manual": this is the only job with no marker filter, so it was the last
-        # automatic tier still selecting the manual set. nightly.yml:106 already applies exactly
+        # automatic tier still selecting the manual set. nightly.yml's shard step already applies
         # this qualification to its --ignore list ("they DO run on the release-only pytest
         # tests/"); the same standard applies to -m. The manual set is ~2h against this 35-minute
         # budget, and the last five release runs all timed out here.
