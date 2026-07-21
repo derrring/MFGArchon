@@ -115,7 +115,7 @@ jobs:
           -n auto \
           --ignore=tests/unit/test_backends/ \
           --ignore=tests/unit/test_visualization/ \
-          -m "not optional_torch and not benchmark and not experimental and not environment" \
+          -m "not optional_torch and not benchmark and not experimental and not environment and not manual" \
           --junitxml=junit.xml -o junit_family=legacy \
           --timeout=900 \
           --durations=20

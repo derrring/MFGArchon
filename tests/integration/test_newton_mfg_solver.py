@@ -46,8 +46,21 @@ def _default_components():
     )
 
 
-# Mark all tests in this module as slow by default (Newton uses expensive Jacobian)
-pytestmark = pytest.mark.slow
+# NOT RUN BY ANY AUTOMATIC TIER (Issue #1660, decision 2026-07-21).
+#
+# `slow` keeps this module out of the local gate; `manual` keeps it out of nightly too. Run it
+# deliberately with `pytest tests/integration/test_newton_mfg_solver.py` or `pytest -m manual`.
+#
+# Why: measured 2026-07-21, `test_newton_solver_executes` takes 822 s at dcb8be82 and 842 s at
+# c1a29a12 -- it PASSES serially at both, so this is not a regression. The module's timeout is
+# 900 s, leaving 8% of headroom, and under nightly's `-n auto` the workers contend and the group
+# crosses it. Eight tests at that duration also occupied roughly two hours of the integration
+# shard, so failures behind them were never reached.
+#
+# The honest cost: nothing will now tell us when these break. That is the trade being made, not
+# an oversight -- the alternative was a tier that reports a scheduling artefact as a correctness
+# failure every night and buries everything after it.
+pytestmark = [pytest.mark.slow, pytest.mark.manual]
 
 
 @pytest.mark.slow
