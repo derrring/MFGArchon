@@ -741,6 +741,21 @@ class PINNBase(BaseNeuralSolver, ABC):
             "networks": {name: net.state_dict() for name, net in self.networks.items()},
         }
 
+    @property
+    def converged(self) -> bool:
+        """Whether training reached ``convergence_tolerance``.
+
+        The one owner of this question. It is the same comparison the training loop breaks on, so
+        the reported flag and the loop's own decision cannot disagree: the loop exits early iff some
+        epoch had ``total_loss < convergence_tolerance``, and ``best_loss`` is the minimum over
+        epochs, so ``best_loss < tolerance`` holds exactly when that happened. Exiting on
+        ``early_stopping_patience`` or on ``max_epochs`` leaves ``best_loss`` at or above tolerance,
+        and untrained solvers keep ``best_loss = inf``.
+
+        Subclasses must not recompute this (Issue #1684).
+        """
+        return self.best_loss < self.config.convergence_tolerance
+
     def train(
         self, data_points: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None, verbose: bool = True
     ) -> dict[str, list[float]]:

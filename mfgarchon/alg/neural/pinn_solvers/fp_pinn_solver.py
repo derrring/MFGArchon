@@ -653,7 +653,7 @@ class FPPINNSolver(PINNBase):
             "t_grid": solution["t_grid"],
             # Training information
             "training_history": self.training_history,
-            "converged": len(self.training_history.get("total_loss", [])) > 0,
+            "converged": self.converged,
             "final_loss": self.training_history.get("total_loss", [float("inf")])[-1]
             if self.training_history.get("total_loss")
             else float("inf"),
