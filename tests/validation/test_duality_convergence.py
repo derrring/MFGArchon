@@ -93,29 +93,22 @@ class TestDualityConvergence:
             final_error = errors[-1]
             assert final_error <= initial_max * 2.0, "Should show overall error reduction trend"
 
-    @pytest.mark.slow
-    def test_centered_fdm_higher_order(self):
-        """Test that FDM_CENTERED achieves second-order convergence."""
-        # Centered differences are O(h^2) in space
-        problem = MFGProblem(
-            geometry=TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[40 + 1], boundary_conditions=no_flux_bc(dimension=1)
-            ),
-            Nt=20,
-            T=1.0,
-            sigma=0.1,
-            components=_default_components(),
-        )
-
-        result = problem.solve(
-            scheme=NumericalScheme.FDM_CENTERED,
-            max_iterations=50,
-            tolerance=1e-8,
-            verbose=False,
-        )
-
-        # Centered scheme should converge (though may be less stable than upwind)
-        assert result.converged or result.iterations >= 30, "Centered FDM should converge or make progress"
+    # test_centered_fdm_higher_order was removed 2026-07-25 rather than repaired.
+    #
+    # It ran ONE grid (Nx=41), so it could not measure an order under any assertion, despite
+    # the name. Its assertion was `result.converged or result.iterations >= 30` against
+    # max_iterations=50 -- a non-converging solve runs to 50, so the disjunction held either
+    # way and the test could not fail on its own terms. And its configuration was byte-identical
+    # to TestNumericalStability::test_centered_fdm_may_oscillate below, which asserts that this
+    # exact problem MUST raise: at sigma=0.1 on this grid the cell Peclet number puts
+    # divergence_centered in its oscillatory regime (Issue #1671). Two tests, one configuration,
+    # opposite contracts; the one with the evidence is the one that stayed.
+    #
+    # Not replaced with a real EOC test here: a probe over the existing coupled MMS at low
+    # Peclet gave error ratios 1.84 / 1.72 across a two-grid sequence, which is not a stable
+    # second-order signal, so writing one would have meant choosing a threshold to fit the
+    # numbers. Genuine centered-scheme order verification belongs with the MMS convergence
+    # suite, not as a single-grid smoke test named after a rate.
 
     @pytest.mark.slow
     def test_mesh_refinement_improves_accuracy(self):
@@ -211,49 +204,36 @@ class TestDualityConvergence:
 
 
 class TestConvergenceRate:
-    """Test theoretical convergence rates for dual schemes."""
+    """Empty since 2026-07-25 -- see the note below for why nothing replaced its one test.
 
-    @pytest.mark.slow
-    def test_upwind_first_order_convergence(self):
-        """
-        Test that FDM upwind exhibits O(h) spatial convergence.
+    Kept rather than deleted so the note stays attached to the class it explains.
+    """
 
-        Theory: Upwind differences are first-order accurate in space.
-        """
-        # Run on multiple mesh sizes
-        mesh_sizes = [20, 40]
-        errors = []
-
-        for Nx in mesh_sizes:
-            problem = MFGProblem(
-                geometry=TensorProductGrid(
-                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
-                ),
-                Nt=Nx,
-                T=1.0,
-                sigma=0.1,
-                components=_default_components(),
-            )
-
-            result = problem.solve(
-                scheme=NumericalScheme.FDM_UPWIND,
-                max_iterations=30,
-                tolerance=1e-8,
-                verbose=False,
-            )
-
-            errors.append(result.max_error)
-
-        # Both runs should produce finite errors
-        assert all(np.isfinite(e) for e in errors), "Errors should be finite"
-
-        # For first-order method: error ~ h = 1/N
-        # So error(N=40) / error(N=20) ≈ 0.5
-        # We allow generous tolerance due to problem complexity
-        if all(e < 10.0 for e in errors):  # Only check if both converged reasonably
-            ratio = errors[1] / errors[0]
-            # Ratio should be between 0.3 and 1.0 (refinement helps or maintains)
-            assert 0.1 < ratio <= 1.5, f"Refinement should improve accuracy (ratio={ratio:.3f})"
+    # test_upwind_first_order_convergence was removed 2026-07-25. It measured the wrong
+    # quantity, and upwind's spatial order is verified properly elsewhere.
+    #
+    # It refined the grid and compared `result.max_error`, which is
+    # `max(final_error_U, final_error_M)` (solver_result.py:169-171) -- the final PICARD
+    # RESIDUAL, i.e. how much the last iteration moved, not a discretization error against
+    # a known solution. That quantity has no reason to scale like h. It scales with how hard
+    # the coupled iteration is at that resolution, and refining raises the cell Peclet number,
+    # so the residual after a fixed 30-iteration budget grows: measured ratio 3.636, which is
+    # what made this test fail. No amount of threshold tuning turns a residual into an order.
+    #
+    # Two further defects made it unable to fail for the right reason either: the assertion sat
+    # behind `if all(e < 10.0 for e in errors)`, so a badly-behaved run skipped the check
+    # silently, and the accepted band `0.1 < ratio <= 1.5` admits a 50% error INCREASE under
+    # refinement while being named after first-order convergence.
+    #
+    # NOT replaced, and upwind's spatial order is now UNCOVERED. The first version of this
+    # deletion cited TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence as the real
+    # coverage. Review refuted that: it solves with `potential_field=U_zero`
+    # (test_mms_validation.py:260), i.e. zero drift, so the advection stencil never runs.
+    # Substituting divergence_centered or gradient_upwind for divergence_upwind leaves its
+    # errors bit-identical -- it measures the diffusion/BC treatment, not the scheme its ratios
+    # are attributed to. The coverage delta of this deletion is still zero (the removed test
+    # could not measure an order either), but nothing in this repo now fails if upwind stops
+    # being first-order. Tracked in #1728.
 
 
 @pytest.mark.slow
