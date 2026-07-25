@@ -41,19 +41,9 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 from mfgarchon.types import NumericalScheme
 
-
 # ---------------------------------------------------------------------------
 # Problem builders (LQ MFG: H = |p|^2/2 + m, quadratic terminal well)
 # ---------------------------------------------------------------------------
-def _lq_hamiltonian():
-    """Separable LQ Hamiltonian H = |p|^2/2 + m (smooth control cost, linear coupling)."""
-    return SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: m,
-        coupling_dm=lambda m: 1.0,
-    )
-
-
 # 1D LQ regime. Weak coupling + moderate diffusion keep the coupled velocity small so the
 # Picard loop converges in <20 iterations; the cost is dominated by the per-iteration 1D HJB
 # Newton solve, so N/Nt are kept modest to bound the wall-clock.
@@ -62,6 +52,26 @@ _T_1D = 0.3
 _NT_1D = 12
 _SIGMA_1D = 0.4
 _COUPLING_1D = 0.3
+
+
+def _lq_hamiltonian():
+    """Separable LQ Hamiltonian H = |p|^2/(2*lambda) + m, lambda = 1/_COUPLING_1D.
+
+    lambda is tied to _COUPLING_1D so the FP drift coefficient c = 1/lambda equals the 0.3
+    this module says it uses. Issue #1442 made the FP solvers read the drift from the
+    Hamiltonian rather than from `coupling_coefficient`, so with control_cost=1.0 the fixture
+    silently ran at c = 1.0 -- more than triple its stated drift. It still converged, but in
+    52 Picard iterations against a 40-iteration budget and an `iterations <= 30` assertion,
+    so both 1D tests failed. Measured 2026-07-25: c=1.0 -> 52 iterations, c=0.3 -> 18,
+    c=0.2 -> 17. c=0.3 restores the "<20 iterations" the regime comment below claims.
+    """
+    return SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0 / _COUPLING_1D),
+        coupling=lambda m: m,
+        coupling_dm=lambda m: 1.0,
+    )
+
+
 _X0_1D, _S0_1D = 0.4, 0.13  # Gaussian IC center / width
 _XT_1D, _KT_1D = 0.6, 0.2  # terminal cost 0.2*(x - 0.6)^2
 
