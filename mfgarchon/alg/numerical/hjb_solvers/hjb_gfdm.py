@@ -2150,11 +2150,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_residual (now field-σ capable, D_i = σ_eff_i²/2 elementwise); a plain solve
         # uses the scalar σ. One assembly path either way.
-        sigma = (
-            self._llf_sigma_eff
-            if (self.llf_augmentation and self._llf_sigma_eff is not None)
-            else self._get_sigma_value(None)
-        )
+        sigma = self._batch_sigma()
         return assemble_hjb_residual(
             H_class=H_class,
             x=self.collocation_points,
@@ -2198,11 +2194,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_jacobian_diag (now field-σ capable: it row-scales the Laplacian via
         # diags(D_i) @ D_lap); a plain solve uses the scalar σ. One assembly path either way.
-        sigma = (
-            self._llf_sigma_eff
-            if (self.llf_augmentation and self._llf_sigma_eff is not None)
-            else self._get_sigma_value(None)
-        )
+        sigma = self._batch_sigma()
         return assemble_hjb_jacobian_diag(
             H_class=H_class,
             x=self.collocation_points,
@@ -2846,6 +2838,45 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             # Numeric sigma: use directly (with fallback to default)
             return float(getattr(self.problem, "sigma", 1.0))
+
+    def _batch_sigma(self) -> float | np.ndarray:
+        """The one owner of the batch path's sigma (Issue #1725).
+
+        Returns a per-node field when one is available and a scalar otherwise.
+        ``assemble_hjb_residual`` and ``assemble_hjb_jacobian_diag`` accept either
+        (``h_eval.py``: ``sigma: float | NDArray``, elementwise ``D_i = sigma_i**2/2``, and
+        bit-identical to the prior call for a scalar), so a field does not need collapsing to
+        reach them.
+
+        Before this existed, the residual (~:2154) and the Jacobian (~:2202) each carried a
+        byte-identical copy of this selection and both ended in ``_get_sigma_value(None)``,
+        whose documented contract averages an array and evaluates a callable once at the domain
+        centre. So a caller passing ``volatility_field=linspace(0.1, 0.5, N)`` got a solve
+        byte-identical to passing the scalar ``0.3`` -- a plausible answer to a different
+        problem. The capability was never missing; the coefficient was discarded one layer above
+        the assembly that could consume it.
+
+        Precedence, highest first:
+
+        1. LLF ``sigma_eff`` when augmentation is on -- unchanged, it is already per-node.
+        2. A ``volatility_field`` override that resolves per node: an array of length
+           ``n_points``, or a callable evaluated at each collocation point.
+        3. Everything else via ``_get_sigma_value(None)`` -- scalars, and arrays whose length
+           does not match the collocation set (those cannot be a per-node field here, and
+           silently reshaping one would be a worse failure than averaging it).
+        """
+        if self.llf_augmentation and self._llf_sigma_eff is not None:
+            return self._llf_sigma_eff
+
+        override = self._volatility_field_override
+        if isinstance(override, np.ndarray) and override.ndim >= 1 and override.shape[0] == self.n_points:
+            return override
+        if callable(override):
+            return np.array(
+                [self._resolve_diffusion_source(override, i) for i in range(self.n_points)],
+                dtype=float,
+            )
+        return self._get_sigma_value(None)
 
     def _resolve_diffusion_source(self, source: float | np.ndarray | Callable, point_idx: int | None) -> float:
         """Resolve a scalar / callable / per-point-array diffusion source to a scalar sigma.
