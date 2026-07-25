@@ -421,6 +421,12 @@ scientific = ["numpy", "scipy", "matplotlib", "plotly", "jax", "jaxlib"]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+# ruff 0.16.0 began formatting fenced code blocks inside markdown. Documentation examples are
+# laid out for reading, not for the 120-column source budget: it collapsed a six-vertex array
+# and a four-kwarg constructor in geometry/README.md onto single lines, and pushed a raise in
+# utils/README.md past 100 characters. Source files are still formatted; only the prose is
+# exempt. If markdown formatting is wanted later, it needs its own line-length, not this one.
+exclude = ["*.md"]
 
 # Pydantic plugin configuration
 [tool.pydantic-mypy]

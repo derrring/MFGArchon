@@ -520,7 +520,7 @@ class CoefficientField:
 
     def __init__(
         self,
-        field: None | float | np.ndarray | Callable,
+        field: float | np.ndarray | Callable | None,
         default_value: float | np.ndarray,
         field_name: str = "coefficient",
         dimension: int = 1,
@@ -1109,7 +1109,7 @@ class _DriftDispatcher:
 
     def __init__(
         self,
-        drift_field: None | np.ndarray | Callable,
+        drift_field: np.ndarray | Callable | None,
         Nt: int,
         spatial_shape: tuple,
         dimension: int = 1,
