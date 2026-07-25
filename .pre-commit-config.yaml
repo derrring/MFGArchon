@@ -71,7 +71,10 @@ default_language_version:
   python: python3.12
 
 default_stages: [pre-commit]
-# pre-push must be installed explicitly; `pre-commit install` alone does NOT wire it:
-#   pre-commit install --hook-type pre-commit --hook-type pre-push
+# `pre-commit install` with no flags wires both hook types, because of the line below.
+# (The comment here previously said the opposite -- it was added in the same commit as the
+# setting that contradicts it, 44ed0a49, and was cited as authority in #1720 and in CLAUDE.md
+# before anyone ran `pre-commit install` to check. Verified 2026-07-25 by installing into a
+# scratch repo with and without this line.)
 default_install_hook_types: [pre-commit, pre-push]
 minimum_pre_commit_version: "3.2.0"
