@@ -22,6 +22,19 @@ check() {
   else printf '\033[31mFAIL\033[0m %s\n' "$2"; fail=1; fi
 }
 
+# This script calls itself the authoritative gate, so it must not run whatever ruff happens to
+# be on PATH. pyproject/environment.yml specify `ruff>=0.6.0` -- a floor, not a pin -- so a
+# contributor who installs today gets a different formatter from the one CI and pre-commit use,
+# and goes red on files they never touched. Warn rather than fail: an unexpected version is a
+# real signal, but blocking the whole gate on it would be worse than running it.
+RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$(dirname "$0")/../.pre-commit-config.yaml" 2>/dev/null \
+  | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
+RUFF_HAVE=$(ruff --version 2>/dev/null | awk '{print $2}')
+if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
+  printf '\033[33mWARN\033[0m ruff %s on PATH, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
+    "$RUFF_HAVE" "$RUFF_PIN"
+fi
+
 step "Ruff format"
 ruff format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
 

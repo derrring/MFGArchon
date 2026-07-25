@@ -86,7 +86,7 @@ type ParameterDict = dict[str, float | int | str | bool]
 type SolverOptions = dict[str, float | int | str | bool | None]
 """Dictionary of optional solver settings."""
 
-type ConfigValue = float | int | str | bool | None | list[float | int | str] | dict[str, Any] | Callable | Any
+type ConfigValue = float | int | str | bool | list[float | int | str] | dict[str, Any] | Callable | Any | None
 """Flexible configuration value type."""
 
 # === Callback Types ===

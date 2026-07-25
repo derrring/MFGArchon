@@ -13,6 +13,7 @@ on:
       - 'tests/**/*.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
+      - '.pre-commit-config.yaml'   # decides which ruff this workflow installs
 
   # Full checks on main branch pushes
   push:
@@ -22,6 +23,7 @@ on:
       - 'tests/**/*.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
+      - '.pre-commit-config.yaml'   # decides which ruff this workflow installs
 
   # Comprehensive checks on releases
   release:
@@ -66,7 +68,19 @@ jobs:
       timeout-minutes: 2
       run: |
         python -m pip install --upgrade pip
-        pip install ruff
+        # Read the pin from .pre-commit-config.yaml rather than restating it here. A bare
+        # `pip install ruff` took whatever was newest, so this job silently drifted off the
+        # version everyone else runs: ruff 0.16.0 shipped markdown formatting and this check
+        # went red on four README files nobody had touched, on every open PR at once.
+        # `|| RUFF_VERSION=""` matters: the runner shell is `bash -e {0}`, so a failing
+        # substitution would abort here and the guard below would never print anything.
+        RUFF_VERSION=$(grep -A1 'repos:.*ruff-pre-commit\|astral-sh/ruff-pre-commit' .pre-commit-config.yaml | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_VERSION="")
+        if [ -z "$RUFF_VERSION" ]; then
+          echo "::error::could not read the ruff pin from .pre-commit-config.yaml"
+          exit 1
+        fi
+        echo "Using ruff==$RUFF_VERSION (pinned in .pre-commit-config.yaml)"
+        pip install "ruff==$RUFF_VERSION"
 
     - name: Python syntax check (instant fail)
       timeout-minutes: 1
