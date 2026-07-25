@@ -8,26 +8,32 @@ Tests the Newton's method solver for coupled HJB-FP systems:
 - Comparison with Picard (FixedPointIterator)
 - Output format and structure
 
-MOST OF THIS MODULE RUNS IN NO AUTOMATIC TIER (Issue #1660). The three Newton solver classes
-carry `manual` in addition to `slow`, so neither the local gate, nightly, nor the release job
-selects them. Run them deliberately:
+The four full-size Newton solver classes (10 tests) run manually on cost grounds. 822 s was
+measured 2026-07-21 for `test_newton_solver_executes` (dcb8be82) -- but that is one of the two
+CHEAPEST of the ten. #1660 records 7 of the 10 as failing, and those 7 are exactly the 7 most
+expensive; at least one exceeds pytest.ini's 900 s cap serially, so "slow but passing" is the
+wrong summary of this module. Run them deliberately:
 
     pytest tests/integration/test_newton_mfg_solver.py
     pytest -m manual
 
-Measured 2026-07-21: `test_newton_solver_executes` takes 822 s at dcb8be82 and 842 s at c1a29a12,
-passing serially at both, against the global 900 s cap (`timeout` in pytest.ini) -- 8% of headroom, which
-nightly's `-n auto` contention consumes. Nothing will report when these break; that is the trade.
+Automatic Newton coverage does NOT depend on this file. `test_newton_picard_agreement.py` is
+unmarked and runs in every automatic tier: 5 Picard warmup iterations plus up to 3 Newton
+iterations WITH line search, asserting agreement with the Picard fixed point to 5%. It is
+strictly stronger than anything here and predates it.
 
-`TestMFGResidualComputation` is deliberately NOT manual: those two tests cost 0.11 s combined and
-pin the residual pack/unpack round-trip identity, so quarantining them would fail the marker's own
-criterion.
+What this file adds automatically is one narrow thing, and the docstring of
+`test_one_newton_step_reduces_the_mfg_residual` states which: a step-LENGTH defect. Measured over
+12 mutations, the agreement test catches sign flips, a transposed FD Jacobian, a wrong FD epsilon
+and a discarded step; a halved Newton step is the one it passes and this one fails. Plus two fast
+tests covering residual construction and packing.
 """
 
 import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator, NewtonMFGSolver
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
@@ -56,21 +62,11 @@ def _default_components():
     )
 
 
-# NOT RUN BY ANY AUTOMATIC TIER (Issue #1660, decision 2026-07-21).
-#
-# `slow` keeps this module out of the local gate; `manual` keeps it out of nightly too. Run it
-# deliberately with `pytest tests/integration/test_newton_mfg_solver.py` or `pytest -m manual`.
-#
-# Why: measured 2026-07-21, `test_newton_solver_executes` takes 822 s at dcb8be82 and 842 s at
-# c1a29a12 -- it PASSES serially at both, so this is not a regression. The module's timeout is
-# 900 s, leaving 8% of headroom, and under nightly's `-n auto` the workers contend and the group
-# crosses it. Eight tests at that duration also occupied roughly two hours of the integration
-# shard, so failures behind them were never reached.
-#
-# The honest cost: nothing will now tell us when these break. That is the trade being made, not
-# an oversight -- the alternative was a tier that reports a scheduling artefact as a correctness
-# failure every night and buries everything after it.
-_newton = pytest.mark.manual  # see the module docstring; paired with slow per class
+# Paired with @pytest.mark.slow on every class that uses it. `manual` ALONE is not enough:
+# scripts/local_ci.sh filters `not slow and not benchmark and not experimental and not
+# optional_torch and not environment` -- no `not manual` -- so a manual-only test still
+# runs in the authoritative 2.5-minute gate. `manual` is what excludes it from nightly.
+_newton = pytest.mark.manual
 
 
 @pytest.mark.slow
@@ -350,6 +346,63 @@ class TestNewtonMFGSolverParameters:
 
         assert np.all(np.isfinite(U))
         assert np.all(np.isfinite(M))
+
+
+@pytest.mark.fast
+def test_one_newton_step_reduces_the_mfg_residual():
+    """Catch a Newton step of the wrong LENGTH -- the one defect class the agreement test misses.
+
+    Not "keep Newton covered": `test_newton_picard_agreement.py` already does that, unmarked, in
+    every automatic tier, with line search on. Measured over 12 mutations of the solver, that test
+    and this one both catch a discarded step, a sign flip, a transposed FD Jacobian, and a wrong FD
+    epsilon. A halved step (`0.5 * alpha * dx`) is the one it passes and this one fails, because
+    agreement-to-5%-of-Picard tolerates a shortened step that still converges while a
+    residual-reduction bound does not.
+
+    The 0.25 threshold is not slack: the measured ratio is 0.16, and a step-scale sweep passes only
+    for s in roughly [0.75, 1.13] -- it tolerates +-15-25% of step-length error and no more.
+
+    Note `line_search=False` here: the backtracking path is therefore NOT under test, and deleting
+    it leaves all four automatic Newton tests green.
+    """
+    problem = MFGProblem(
+        model=Model(hamiltonian=_default_hamiltonian(), sigma=0.2),
+        domain=TensorProductGrid(
+            bounds=[(0.0, 1.0)],
+            boundary_conditions=no_flux_bc(dimension=1),
+            Nx_points=[5],
+        ),
+        conditions=Conditions(
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+            u_terminal=lambda x: 0.0,
+            T=0.1,
+        ),
+        Nt=2,
+    )
+    solver = NewtonMFGSolver(
+        problem,
+        HJBFDMSolver(problem),
+        FPFDMSolver(problem),
+        picard_warmup=0,
+        newton_max_iterations=1,
+        line_search=False,
+    )
+
+    initial_state = solver.mfg_residual.get_initial_guess()
+    initial_u, initial_m = solver.mfg_residual.unpack_state(initial_state)
+    initial_residual = solver.mfg_residual.compute_residual_norm(initial_u, initial_m)
+
+    U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
+    final_residual = solver.mfg_residual.compute_residual_norm(U, M)
+    relative_mass = M.sum(axis=1) / M[0].sum()
+
+    # Not asserted: info["picard_iterations"] -- newton_mfg_solver.py:341 sets it to the
+    # constructor argument, never to a count of executed iterations, so asserting 0 after
+    # passing picard_warmup=0 pins nothing.
+    assert info["newton_iterations"] == 1
+    assert info["jacobian_evaluations"] == 1
+    assert final_residual < 0.25 * initial_residual
+    np.testing.assert_allclose(relative_mass, 1.0, rtol=0.0, atol=1e-8)
 
 
 @pytest.mark.fast  # Fast tests - no Newton iterations
