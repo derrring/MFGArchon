@@ -47,14 +47,24 @@ _MAX_PICARD = 80
 def _default_hamiltonian():
     """H = |p|^2/8 + m (quadratic control with lambda=4, linear coupling).
 
-    lambda=4 because the FP drift coefficient is c = 1/lambda, and 0.25 is the largest
-    drift at which this fixture's Picard iteration actually contracts. Measured on the
-    N=10, T=0.2, Nt=10, sigma=0.1 configuration, tolerance 1e-5:
+    lambda=4 because the FP drift coefficient is c = 1/lambda, and 0.25 buys convergence in
+    a budget a test can afford. It is NOT the contraction boundary -- the first version of this
+    docstring said it was, from a four-point sweep with nothing adjacent to the boundary, and
+    review measured it directly. On the N=10, T=0.2, Nt=10, sigma=0.1 configuration at damping
+    0.3, tolerance 1e-5, budget 400:
 
-        lambda=1  (c=1.00)  diverges at iteration 7
-        lambda=2  (c=0.50)  diverges at iteration 27
-        lambda=4  (c=0.25)  converges in 56
-        lambda=10 (c=0.10)  converges in 25
+        lambda=1    (c=1.000)  diverges at iteration 7
+        lambda=2    (c=0.500)  diverges at iteration 27
+        lambda=2.5  (c=0.400)  raises
+        lambda=2.6  (c=0.385)  converges in 395   <- boundary is in (0.385, 0.400]
+        lambda=3    (c=0.333)  converges in 117
+        lambda=4    (c=0.250)  converges in 56
+        lambda=10   (c=0.100)  converges in 25
+
+    So anything below c ~ 0.385 converges; 0.25 is chosen for iteration cost, not because
+    larger drifts fail. A maintainer finding this fixture broken again should not read 0.25 as
+    a ceiling and tune below it -- the real signal is a solve that stops converging anywhere
+    under c ~ 0.385.
 
     History: Issue #1442 made the FP solvers read the drift from the Hamiltonian instead
     of a private 0.5 default, so these fixtures went from c=0.5 to c=1.0 and six tests
