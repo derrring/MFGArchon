@@ -430,6 +430,39 @@ def test_integrated_howard_inner_solver_lq_1d():
     )
 
 
+def test_integrated_howard_consumes_nonconstant_volatility_field():
+    """The integrated Howard path must not replace a per-node field with its mean."""
+
+    def solve(volatility_field):
+        pts, bdry, geom = _make_1d_cloud(LX=2.0, n_int=9)
+        problem = _MockProblem(geom, sigma=0.3, T=0.5, Nt=5, dimension=1)
+        problem.hamiltonian_class = _LQHam()
+        gfdm = _make_gfdm_solver(
+            pts,
+            bdry,
+            geom,
+            problem,
+            k_neighbors=5,
+            inner_solver="howard",
+        )
+        U_T = 0.5 * (pts[:, 0] - 1.0) ** 2
+        return gfdm.solve_hjb_system(
+            M_density=None,
+            U_terminal=U_T,
+            volatility_field=volatility_field,
+        )
+
+    field = np.linspace(0.1, 0.7, 11)
+    U_field = solve(field)
+    U_mean = solve(float(field.mean()))
+    U_default = solve(None)
+    U_scalar = solve(0.3)
+
+    assert not np.array_equal(U_field, U_mean)
+    assert np.max(np.abs(U_field - U_mean)) > 1e-6
+    np.testing.assert_array_equal(U_default, U_scalar)
+
+
 def test_inner_solver_rejects_unknown_value():
     """An unknown inner_solver value fails fast at construction."""
     pts, bdry, geom = _make_1d_cloud()
@@ -1018,38 +1051,24 @@ def test_howard_honors_resolved_robin_in_solution():
 # ---------------------------------------------------------------------------
 
 
-def test_array_volatility_field_warns_and_uses_mean():
-    """(A) Issue #1254: array volatility_field must warn (UserWarning) and collapse to
-    mean, not silently take element 0.
-
-    Pinning: element 0 of the sigma array is set to 0.1 while the rest are 0.5
-    (mean ~0.471).  The fixed path must:
-    - emit a UserWarning matching "collapsed to its mean"
-    - produce a result byte-identical to scalar sigma=mean (not scalar sigma=flat[0])
-    """
+def test_array_volatility_field_row_scales_howard_diffusion():
+    """Howard must retain a nonconstant per-node field instead of using one scalar."""
     pts, bdry, geom = _make_1d_cloud(LX=2.0, n_int=7)
     problem = _MockProblem(geom, sigma=0.3, T=0.5, Nt=5, dimension=1)
     gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5)
 
     n = len(pts)
     U_T = 0.5 * (pts[:, 0] - 1.0) ** 2
+    sigma_arr = np.linspace(0.1, 0.7, n)
+    U_array = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda x, p, m, t: -p,
+        discretisation="central",
+        volatility_field=sigma_arr,
+        max_iter=5,
+    ).solve_hjb_system(M_density=None, U_terminal=U_T)
 
-    # sigma array: element 0 deviates so flat[0] != mean.
-    sigma_arr = np.full(n, 0.5)
-    sigma_arr[0] = 0.1  # mean ≈ (0.1 + 0.5*(n-1)) / n
-
-    # The fixed path must warn.
-    with pytest.warns(UserWarning, match="collapsed to its mean"):
-        U_array = HJBHowardSolver(
-            problem,
-            stencil_provider=gfdm,
-            alpha_star=lambda x, p, m, t: -p,
-            discretisation="central",
-            volatility_field=sigma_arr,
-            max_iter=5,
-        ).solve_hjb_system(M_density=None, U_terminal=U_T)
-
-    # Run with mean sigma (new correct behavior): no warning expected.
     sigma_mean = float(np.mean(sigma_arr))
     U_mean = HJBHowardSolver(
         problem,
@@ -1060,27 +1079,8 @@ def test_array_volatility_field_warns_and_uses_mean():
         max_iter=5,
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
 
-    # Run with flat[0] sigma (the old buggy behavior).
-    sigma_flat0 = float(sigma_arr.flat[0])  # = 0.1
-    U_flat0 = HJBHowardSolver(
-        problem,
-        stencil_provider=gfdm,
-        alpha_star=lambda x, p, m, t: -p,
-        discretisation="central",
-        volatility_field=sigma_flat0,
-        max_iter=5,
-    ).solve_hjb_system(M_density=None, U_terminal=U_T)
-
-    # Confirm the two scalar runs produce distinguishably different results.
-    assert not np.allclose(U_mean, U_flat0, atol=1e-8), (
-        f"Test fixture broken: mean-sigma ({sigma_mean:.4f}) and flat[0]-sigma "
-        f"({sigma_flat0:.4f}) solutions are indistinguishable — cannot pin (A)."
-    )
-    # The array-volatility path must match the mean run, not the flat[0] run.
-    assert np.allclose(U_array, U_mean, atol=1e-10), (
-        "Array volatility_field: result should match mean-sigma scalar run but matches "
-        "flat[0]-sigma run instead — bug (A) Issue #1254 not fixed."
-    )
+    assert not np.array_equal(U_array, U_mean)
+    assert np.max(np.abs(U_array - U_mean)) > 1e-6
 
 
 def test_stencil_less_interior_with_provider_bc_rows_raises():
