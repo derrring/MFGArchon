@@ -940,7 +940,7 @@ def verify_assembled_m_matrix(
 def critical_drift_for_dmp(
     d_lap: Any,
     d_grad: list,
-    diffusion_coeff: float,
+    diffusion_coeff: float | np.ndarray,
     interior_indices: np.ndarray | None = None,
     atol: float = 1e-12,
 ) -> float:
@@ -951,7 +951,8 @@ def critical_drift_for_dmp(
     $\sum_d \alpha_d (D_{\mathrm{grad}})_{d,ij} - D\,L_{ij}$. The worst-case unit-$|\alpha|$
     direction makes the drift part $|\alpha|\,\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$
     (Cauchy-Schwarz), so the M-matrix sign holds iff
-    $|\alpha| \le D\,L_{ij}/\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$.
+    $|\alpha| \le D_i\,L_{ij}/\lVert (D_{\mathrm{grad}})_{:,ij}\rVert$, where
+    ``diffusion_coeff`` is either one scalar $D$ or a row-wise field $(D_i)$.
 
     When $L_{ij} \le 0$ (relaxed-SOCP slack row; Issue #1253) and $\lVert D_{:,j}\rVert > 0$,
     the right-hand side is $\le 0$: the off-diagonal entry is already non-negative at zero
@@ -967,9 +968,15 @@ def critical_drift_for_dmp(
     grads = [g.tocsr() for g in d_grad]
     n = L.shape[0]
     rows = np.arange(n) if interior_indices is None else np.asarray(interior_indices)
+    diffusion = np.asarray(diffusion_coeff, dtype=float)
+    if diffusion.ndim > 0 and diffusion.shape != (n,):
+        raise ValueError(
+            f"diffusion_coeff must be a scalar or a row-wise field with shape ({n},), got {diffusion.shape}."
+        )
 
     alpha_crit = np.inf
     for i in rows:
+        diffusion_i = float(diffusion) if diffusion.ndim == 0 else float(diffusion[i])
         l_row = L.getrow(i).toarray().ravel()
         g_rows = [g.getrow(i).toarray().ravel() for g in grads]
         # Issue #1253 2026-06-10 audit: iterate over ALL off-diagonal edges with
@@ -982,5 +989,5 @@ def critical_drift_for_dmp(
         for j in np.nonzero(g_norms > atol)[0]:
             if j == i:
                 continue
-            alpha_crit = min(alpha_crit, diffusion_coeff * float(l_row[j]) / float(g_norms[j]))
+            alpha_crit = min(alpha_crit, diffusion_i * float(l_row[j]) / float(g_norms[j]))
     return alpha_crit

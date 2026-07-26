@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import warnings
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -483,13 +484,24 @@ class HJBGFDMSolver(BaseHJBSolver):
         # discretized. Fail loud at construction rather than returning a silently wrong
         # solution (fail-fast per CLAUDE.md).
         _vf = getattr(self.problem, "volatility_field", None)
-        if isinstance(_vf, np.ndarray) and _vf.ndim == 2:
+        _spatial_shape = tuple(getattr(self.problem, "spatial_shape", ()) or ())
+        _problem_dimension = getattr(self.problem, "dimension", None)
+        _tensor_shape = (_problem_dimension, _problem_dimension) if isinstance(_problem_dimension, int) else None
+        if isinstance(_vf, np.ndarray) and _tensor_shape is not None and _vf.shape == _tensor_shape:
+            if _vf.shape == _spatial_shape:
+                raise NotImplementedError(
+                    "HJBGFDMSolver cannot infer whether problem.volatility_field with shape "
+                    f"{_vf.shape} is a scalar-valued grid field or a full-tensor (d,d) sigma; "
+                    "the two representations are ambiguous. Keep a scalar sigma on the problem "
+                    "and pass the grid field explicitly as "
+                    "solve_hjb_system(volatility_field=field) instead."
+                )
             raise NotImplementedError(
                 "HJBGFDMSolver does not support full-tensor (d,d) sigma. "
                 "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
                 "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
                 "terms are silently dropped (Issue #1079). Pass scalar sigma or a "
-                "1-D per-axis diagonal array instead."
+                "scalar-valued spatial field matching problem.spatial_shape instead."
             )
 
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---
@@ -663,14 +675,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._dmp_alpha_crit: float | None = None
         self._dmp_warned = False
 
-        # Issue #1316: per-solve volatility_field override. None by default (explicit
-        # init for object-shape stability — see CLAUDE.md). When solve_hjb_system is
-        # called with volatility_field != None, this holds the spatial diffusion the
-        # coupling layer / FP solver is using; _get_sigma_value reads it INSTEAD of
-        # problem.sigma so HJB and FP stay convention-consistent. None -> byte-identical
-        # legacy path (problem.sigma). Set BEFORE the LLF block: _compute_llf_sigma_eff()
-        # below calls _get_sigma_value(None), which now reads this attribute.
+        # Issue #1316: retain the raw per-solve override for public-state compatibility.
+        # Issue #1725: normalize it once per solve into collocation space; every live
+        # diffusion consumer reads `_solve_sigma`, so coefficient resolution cannot fork.
         self._volatility_field_override: float | np.ndarray | Callable | None = None
+        self._solve_sigma: float | np.ndarray | None = None
 
         # LLF augmented diffusion (Issue #1059, paper P2 branch of thm:discrete_comparison).
         # nu_i = max(0, C * l_H(i) * h_i - sigma^2/2)
@@ -2150,7 +2159,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_residual (now field-σ capable, D_i = σ_eff_i²/2 elementwise); a plain solve
         # uses the scalar σ. One assembly path either way.
-        sigma = self._batch_sigma()
+        sigma = self._sigma_for_assembly()
         return assemble_hjb_residual(
             H_class=H_class,
             x=self.collocation_points,
@@ -2194,7 +2203,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_jacobian_diag (now field-σ capable: it row-scales the Laplacian via
         # diags(D_i) @ D_lap); a plain solve uses the scalar σ. One assembly path either way.
-        sigma = self._batch_sigma()
+        sigma = self._sigma_for_assembly()
         return assemble_hjb_jacobian_diag(
             H_class=H_class,
             x=self.collocation_points,
@@ -2303,7 +2312,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         if self._dmp_alpha_crit is None:
             from mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer import critical_drift_for_dmp
 
-            diffusion_coeff = diffusion_from_volatility(self._get_sigma_value(None))
+            sigma = self._sigma_for_assembly()
+            diffusion_coeff = (
+                diffusion_from_volatility(sigma, kind="field")
+                if isinstance(sigma, np.ndarray)
+                else diffusion_from_volatility(sigma)
+            )
             self._dmp_alpha_crit = critical_drift_for_dmp(
                 self._D_lap, self._D_grad, diffusion_coeff, interior_indices=self.interior_indices
             )
@@ -2759,23 +2773,26 @@ class HJBGFDMSolver(BaseHJBSolver):
             sigma_eff_i = sqrt(sigma^2 + 2 * nu_i)
 
         where:
-          - sigma = problem volatility (scalar; callable not supported here, evaluated at None)
+          - sigma = solve-level scalar or collocation-space volatility
           - C = self._llf_cone_constant (paper P2 cone constant, default 0.5)
           - l_H(i) = self._llf_l_H[i] (user-supplied |dH/dp| Lipschitz bound)
           - h_i = self.delta (conservative upper bound for local mesh size)
 
         When nu_i = 0 at node i (Pe already small enough), sigma_eff_i = sigma exactly
         (no augmentation at that node).  Called once at __init__ and stored in
-        self._llf_sigma_eff; not recomputed per Picard iteration (Issue #1059 stability
-        note: holding nu_i fixed avoids the runaway Picard feedback in the prototype).
+        self._llf_sigma_eff; recomputed only when a new solve-level volatility is
+        normalized, not per Picard/Newton iteration (Issue #1059 stability note:
+        holding nu_i fixed avoids the runaway feedback in the prototype).
 
         Returns:
             shape (n_points,) float64 array of per-node effective volatility values.
         """
-        # Use scalar sigma from problem (callable sigma: evaluated with None, returns 1.0
-        # representative value — callable-sigma + LLF is an uncommon combination).
-        sigma = self._get_sigma_value(None)
-        D_base = 0.5 * sigma**2  # sigma^2/2, the base diffusion coefficient
+        sigma = self._solve_sigma if self._solve_sigma is not None else self._get_sigma_value(None)
+        D_base = (
+            diffusion_from_volatility(sigma, kind="field")
+            if isinstance(sigma, np.ndarray)
+            else diffusion_from_volatility(sigma)
+        )
 
         # nu_i = max(0, C * l_H(i) * h_i - D_base)
         # h_i approximated by self.delta (conservative upper bound; actual stencil
@@ -2791,9 +2808,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         When llf_augmentation=True and point_idx is not None, returns the per-node
         effective sigma sqrt(sigma^2 + 2*nu_i) from LLF augmentation (Issue #1059).
-        When point_idx is None (batch path), returns the base scalar sigma regardless
-        of llf_augmentation (the batch path handles LLF separately via the
-        self._llf_sigma_eff array in the residual/Jacobian assembly).
+        When point_idx is None, preserves the legacy representative-scalar lookup used
+        by pre-solve diagnostics and compatibility tests. Live assembly reads
+        :meth:`_sigma_for_assembly` instead.
 
         Args:
             point_idx: Collocation point index (for callable sigma evaluation or LLF lookup)
@@ -2809,11 +2826,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         5. problem.sigma is numeric → use directly (fallback: 1.0)
         """
         # LLF per-node override: return sigma_eff_i when augmentation is active (Issue #1059).
-        # Only applies when point_idx is not None (per-point path); the batch path (None)
-        # reads self._llf_sigma_eff directly.
+        # Only applies when point_idx is not None; solve-level assembly reads the full
+        # self._llf_sigma_eff field directly.
         if self.llf_augmentation and point_idx is not None and self._llf_sigma_eff is not None:
             if point_idx < len(self._llf_sigma_eff):
                 return float(self._llf_sigma_eff[point_idx])
+
+        # Live solves resolve the coefficient once. Per-point residual and Jacobian
+        # assembly index that canonical collocation-space value instead of re-evaluating
+        # a callable or independently interpreting an array.
+        if point_idx is not None and self._solve_sigma is not None:
+            if isinstance(self._solve_sigma, np.ndarray):
+                return float(self._solve_sigma[point_idx])
+            return self._solve_sigma
 
         # Issue #1316: the per-solve volatility_field override (the spatial diffusion
         # the coupling layer / FP solver is using) is the authoritative diffusion source,
@@ -2839,44 +2864,100 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Numeric sigma: use directly (with fallback to default)
             return float(getattr(self.problem, "sigma", 1.0))
 
-    def _batch_sigma(self) -> float | np.ndarray:
-        """The one owner of the batch path's sigma (Issue #1725).
-
-        Returns a per-node field when one is available and a scalar otherwise.
-        ``assemble_hjb_residual`` and ``assemble_hjb_jacobian_diag`` accept either
-        (``h_eval.py``: ``sigma: float | NDArray``, elementwise ``D_i = sigma_i**2/2``, and
-        bit-identical to the prior call for a scalar), so a field does not need collapsing to
-        reach them.
-
-        Before this existed, the residual (~:2154) and the Jacobian (~:2202) each carried a
-        byte-identical copy of this selection and both ended in ``_get_sigma_value(None)``,
-        whose documented contract averages an array and evaluates a callable once at the domain
-        centre. So a caller passing ``volatility_field=linspace(0.1, 0.5, N)`` got a solve
-        byte-identical to passing the scalar ``0.3`` -- a plausible answer to a different
-        problem. The capability was never missing; the coefficient was discarded one layer above
-        the assembly that could consume it.
-
-        Precedence, highest first:
-
-        1. LLF ``sigma_eff`` when augmentation is on -- unchanged, it is already per-node.
-        2. A ``volatility_field`` override that resolves per node: an array of length
-           ``n_points``, or a callable evaluated at each collocation point.
-        3. Everything else via ``_get_sigma_value(None)`` -- scalars, and arrays whose length
-           does not match the collocation set (those cannot be a per-node field here, and
-           silently reshaping one would be a worse failure than averaging it).
-        """
+    def _sigma_for_assembly(self) -> float | np.ndarray:
+        """Return the single solve-level volatility consumed by every assembly path."""
         if self.llf_augmentation and self._llf_sigma_eff is not None:
             return self._llf_sigma_eff
+        if self._solve_sigma is not None:
+            return self._solve_sigma
+        return self._get_sigma_value(None)
 
-        override = self._volatility_field_override
-        if isinstance(override, np.ndarray) and override.ndim >= 1 and override.shape[0] == self.n_points:
-            return override
-        if callable(override):
+    def _resolve_sigma_for_solve(
+        self,
+        volatility_field: float | np.ndarray | Callable | None,
+        *,
+        is_meshfree_input: bool,
+    ) -> float | np.ndarray:
+        """Normalize one volatility source to a scalar or collocation-space ``(N,)`` field."""
+        problem_field = getattr(self.problem, "volatility_field", None)
+        source_is_problem_field = volatility_field is None or volatility_field is problem_field
+
+        if volatility_field is not None:
+            source = volatility_field
+        else:
+            legacy_nu = getattr(self.problem, "nu", None)
+            if legacy_nu is not None:
+                source = legacy_nu
+                source_is_problem_field = False
+            elif problem_field is not None:
+                source = problem_field
+            else:
+                source = getattr(self.problem, "sigma", 1.0)
+                source_is_problem_field = False
+
+        if callable(source):
+            try:
+                parameters = list(inspect.signature(source).parameters.values())
+            except (TypeError, ValueError) as exc:
+                raise NotImplementedError(
+                    "HJBGFDMSolver supports only a space-only volatility callable sigma(x) "
+                    "whose one-argument signature can be inspected. Time- or density-dependent "
+                    "sigma(t, x, m) is unsupported."
+                ) from exc
+            if len(parameters) != 1 or parameters[0].kind not in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                raise NotImplementedError(
+                    "HJBGFDMSolver supports only a space-only volatility callable sigma(x); "
+                    f"got signature {inspect.signature(source)}. Time- or density-dependent "
+                    "sigma(t, x, m) cannot be frozen into one solve-level spatial field."
+                )
             return np.array(
-                [self._resolve_diffusion_source(override, i) for i in range(self.n_points)],
+                [self._resolve_diffusion_source(source, i) for i in range(self.n_points)],
                 dtype=float,
             )
-        return self._get_sigma_value(None)
+
+        sigma = np.asarray(source, dtype=float)
+        if sigma.ndim == 0:
+            return float(sigma)
+
+        # An explicit per-solve array follows the representation of M_density. A
+        # problem-owned array follows the problem geometry even when a caller supplies
+        # collocation-space density directly: grid problems own grid fields, whereas
+        # implicit problems own node-indexed fields.
+        problem_field_is_grid_indexed = source_is_problem_field and getattr(self.problem, "domain_type", None) == "grid"
+        grid_indexed = not is_meshfree_input or problem_field_is_grid_indexed
+        if grid_indexed:
+            grid_shape = tuple(self._mapper.grid_shape)
+            grid_size = int(np.prod(grid_shape))
+            if sigma.shape == grid_shape:
+                sigma_grid = sigma.reshape(-1)
+            elif sigma.shape == (grid_size,):
+                sigma_grid = sigma
+            else:
+                raise ValueError(
+                    "volatility_field shape mismatch: a grid-indexed scalar-volatility field "
+                    f"must have native shape {grid_shape} or flattened one-dimensional shape "
+                    f"({grid_size},), got {sigma.shape}; collocation space has "
+                    f"{self.n_points} points."
+                )
+            resolved = np.asarray(self._mapper.map_grid_to_collocation(sigma_grid), dtype=float)
+        else:
+            if sigma.shape != (self.n_points,):
+                raise ValueError(
+                    "volatility_field shape mismatch: a meshfree scalar-volatility field "
+                    f"must have one-dimensional collocation shape ({self.n_points},), "
+                    f"got {sigma.shape}."
+                )
+            resolved = sigma
+
+        if resolved.shape != (self.n_points,):
+            raise AssertionError(
+                "volatility_field normalization violated the collocation-space invariant: "
+                f"expected ({self.n_points},), got {resolved.shape}."
+            )
+        return resolved
 
     def _resolve_diffusion_source(self, source: float | np.ndarray | Callable, point_idx: int | None) -> float:
         """Resolve a scalar / callable / per-point-array diffusion source to a scalar sigma.
@@ -2900,7 +2981,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         show_progress: bool | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility_field: float | np.ndarray | Callable | None = None,
         running_cost: np.ndarray | Callable[[int], np.ndarray] | None = None,
     ) -> np.ndarray:
         """
@@ -2916,27 +2997,24 @@ class HJBGFDMSolver(BaseHJBSolver):
                 Time-dependent array: shape (n_time_points, n_points) -- L(t_n, x) per step.
                 Callable: f(time_index) -> (n_points,) array, evaluated per step.
                 Added to Hamiltonian: H_total = H(x,p,m) + L(t,x).
-            volatility_field: Optional diffusion coefficient override
+            volatility_field: Optional SDE-volatility override. Accepts a scalar,
+                an inspectable one-argument space-only callable ``sigma(x)`` evaluated
+                at each collocation point, or a
+                scalar-valued spatial array. Grid-indexed arrays may use the native
+                problem spatial shape or its flattened form and are mapped to
+                collocation points; meshfree arrays must have shape ``(n_points,)``.
+                If the native grid shape is also ``(d, d)``, pass the array through
+                this argument to distinguish a scalar grid field from tensor sigma.
+                Time-/density-varying callables, time-varying arrays, and tensor
+                volatility are unsupported.
 
         Returns:
             (Nt, *spatial_shape) solution array
         """
-        # Issue #1316: install the per-solve volatility_field as the authoritative
-        # diffusion source for _get_sigma_value (consumed below via the residual /
-        # Jacobian / LLF paths). Set every call (not cleared at end) so there is no
-        # stale state and the default volatility_field=None restores the byte-identical
-        # legacy problem.sigma path.
+        # Retain the raw public argument and clear the previous solve's normalized value
+        # before validating this solve.
         self._volatility_field_override = volatility_field
-
-        # Issue #1429 (S0-13): recompute the LLF effective volatility from the per-solve override.
-        # _llf_sigma_eff is otherwise frozen at __init__ from problem.sigma, so an LLF-augmented
-        # solve with a #1316 override would stabilize off the base sigma, not the override.
-        # Unconditional so a later volatility_field=None solve resets it to the base (no stale
-        # override). Safe w.r.t. the #1059 frozen-nu note: the override is constant across Picard
-        # iterations and _llf_l_H is static, so this recompute is idempotent — not the
-        # solution-driven feedback #1059 guards against.
-        if self.llf_augmentation:
-            self._llf_sigma_eff = self._compute_llf_sigma_eff()
+        self._solve_sigma = None
 
         # Pick up any per-Picard resolved BC the coupling layer installed on the
         # geometry since construction (Issue #1118; matches FDM's per-solve re-read).
@@ -2980,6 +3058,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Grid format: M_density.shape = (Nt, Nx, Ny, ...)
         # Collocation format: M_density.shape = (Nt, n_points)
         is_meshfree_input = M_density.ndim == 2 and M_density.shape[1] == self.n_points
+
+        # Issue #1725: resolve once, after the input representation is known and before
+        # any interpolation, Newton probe, sparse assembly, LLF, DMP, or Howard path.
+        self._solve_sigma = self._resolve_sigma_for_solve(
+            volatility_field,
+            is_meshfree_input=is_meshfree_input,
+        )
+        self._dmp_alpha_crit = None
+        if self.llf_augmentation:
+            self._llf_sigma_eff = self._compute_llf_sigma_eff()
 
         # For GFDM, we work directly with collocation points
         U_solution_collocation = np.zeros((n_time_points, self.n_points))
@@ -3225,6 +3313,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             running_cost=howard_running_cost,
             control_lagrangian=control_lagrangian,
             discretisation="central" if self.dimension == 1 else "upwind_projection",
+            volatility_field=self._sigma_for_assembly(),
             use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
         )
         return howard.solve_hjb_system(M_collocation, U_terminal_colloc)

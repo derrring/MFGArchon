@@ -24,7 +24,8 @@ For each backward time step (Nt-1 → 0):
     For k = 0, 1, ..., MAX_ITER:
         1. Build advection operator A_adv(α^k) — sign-aware upwind D_grad
         2. Solve linear system:
-               (I/dt - A_adv - (σ²/2) D_lap) · U^{k+1} = U_n+1/dt + L(x, α^k, m)
+               (I/dt - A_adv - diag(σ_i²/2) D_lap) · U^{k+1}
+                   = U_n+1/dt + L(x, α^k, m)
            where L is the Legendre dual of H at (x, α, m).
         3. Update policy: α^{k+1} = arg min_α (α · ∇U^{k+1} + L(x, α, m))
         4. If ‖α^{k+1} - α^k‖_∞ / ‖α^k‖_∞ < tol: break
@@ -46,7 +47,6 @@ References
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
@@ -56,6 +56,7 @@ from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
@@ -272,8 +273,10 @@ class HJBHowardSolver:
     tol : float
         Relative `∞`-norm tolerance on policy change `(α^{k+1} − α^k)/α^k`.
     volatility_field : float | np.ndarray | None
-        Override σ (constant scalar or per-point array). When None, read
-        from `problem` via `stencil_provider._get_sigma_value(None)`.
+        Override $\\sigma$ (constant scalar or a collocation-space array of
+        shape `(n,)`). A field row-scales the Laplacian by
+        $D_i = \\sigma_i^2/2$. When None, read from `problem` via
+        `stencil_provider._get_sigma_value(None)`.
 
     Raises
     ------
@@ -411,7 +414,7 @@ class HJBHowardSolver:
         u_next: np.ndarray,
         m_n: np.ndarray,
         t_idx: int,
-        sigma: float,
+        sigma: float | np.ndarray,
         dt: float,
         static: dict,
         alpha_init: np.ndarray | None,
@@ -441,10 +444,14 @@ class HJBHowardSolver:
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
         bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
+        if isinstance(sigma, np.ndarray):
+            diffusion_operator = diags(diffusion_from_volatility(sigma, kind="field")) @ D_lap
+        else:
+            diffusion_operator = 0.5 * sigma * sigma * D_lap
 
         for _ in range(self.max_iter):
             A_adv = self._build_A_adv(alpha, static)
-            A = eye(n, format="csr") / dt - A_adv - 0.5 * sigma * sigma * D_lap
+            A = eye(n, format="csr") / dt - A_adv - diffusion_operator
 
             # RHS: u_next/dt + L(alpha) + running_cost. L(alpha) is the control-cost
             # Lagrangian from the single source (control_cost.lagrangian, Issue #1071):
@@ -561,23 +568,14 @@ class HJBHowardSolver:
         elif np.isscalar(self._volatility_field_override):
             sigma = float(self._volatility_field_override)
         else:
-            # Issue #1254, 2026-06-10 audit: per-point/array sigma field — previously element 0
-            # was silently taken (flat[0]), giving a spatially-wrong scalar if the array has
-            # distinct per-point values.  Collapse to mean with a UserWarning, matching
-            # scalar_diffusion_from_volatility (utils/pde_coefficients.py) parity.
-            # Howard assembles one global scalar sigma; spatially-varying fields cannot be
-            # honored here.  Use an FDM/GFDM path with coefficient_field for true varying-D.
-            arr = np.asarray(self._volatility_field_override)
-            sigma = float(np.mean(arr))
-            warnings.warn(
-                "HJBHowardSolver assembles a single scalar sigma; the per-point "
-                f"volatility_field is collapsed to its mean (sigma = {sigma:.6g}, "
-                f"mean of {arr.size} values). Previously element 0 was silently used "
-                "(Issue #1254). For true varying-coefficient diffusion use an FDM/GFDM "
-                "path with coefficient_field.",
-                UserWarning,
-                stacklevel=2,
-            )
+            sigma = np.asarray(self._volatility_field_override, dtype=float)
+            if sigma.ndim == 0:
+                sigma = float(sigma)
+            elif sigma.shape != (n,):
+                raise ValueError(
+                    "HJBHowardSolver volatility_field must be a scalar or a row-wise "
+                    f"field with shape ({n},), got {sigma.shape}."
+                )
 
         U = np.zeros((Nt + 1, n))
         U[Nt] = U_terminal.copy()
