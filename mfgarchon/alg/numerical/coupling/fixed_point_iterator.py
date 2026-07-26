@@ -576,6 +576,12 @@ class FixedPointIterator(BaseCouplingIterator):
         # Main fixed-point iteration loop
         converged = False
         convergence_reason = "Maximum iterations reached"
+        # True once self.M holds a density this solve's FP produced. The mass-conservation
+        # measurement below is meaningful only then: before that, self.M is the cold start
+        # (constant mass by construction, so it measures as exactly 0.0) or a warm start
+        # (some other solve's output). Set where self.M is assigned, not at the exits, so
+        # that a break after a completed FP step still reports its real number (Issue #1717).
+        fp_output_available = False
         # Hierarchical progress for Picard iterations (Issue #614)
         from mfgarchon.utils.progress import HierarchicalProgress
 
@@ -620,6 +626,30 @@ class FixedPointIterator(BaseCouplingIterator):
                         source_term=hjb_source,
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
+
+                # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it.
+                # The FP source and drift below are composed from U_new, so a non-finite U_new
+                # makes the FP solver fail first and report a CFL condition -- an FP diagnostic
+                # for an HJB failure. Worse, that exception escapes the loop, so the #1078
+                # HJB-vs-FP attribution further down never runs on this path.
+                if not np.all(np.isfinite(U_new)):
+                    # Publish the diverged U so the end-of-solve output validation still reports
+                    # it. Keeping the last finite iterate instead would leave the result looking
+                    # valid to any caller that reads output_validation rather than
+                    # convergence_reason -- trading a misattributed diagnostic for a silent one.
+                    # preserve_terminal_condition is applied for the same reason the normal path
+                    # applies it: U[-1] is boundary data the solve never had licence to overwrite.
+                    # Copy first: it writes U[-1] in place, and U_new is the HJB solver's own
+                    # return value rather than the freshly damped array the normal path hands it.
+                    self.U = preserve_terminal_condition(U_new.copy(), U_terminal)
+                    convergence_reason = "diverged_nan"
+                    logger.warning(
+                        "NaN/Inf detected in iteration %d (source: HJB (Newton divergence)). "
+                        "Terminating early; FP was not solved.",
+                        iiter + 1,
+                    )
+                    self.iterations_run = iiter + 1
+                    break
 
                 # 2. Solve FP forward with new U (transient subtask)
                 # Issue #614: Use hierarchical subtask for inner solver visibility
@@ -683,6 +713,11 @@ class FixedPointIterator(BaseCouplingIterator):
                     # Standard damping for both - Issue #719: separate factors + schedules
                     self.U = effective_theta_U * U_new + (1 - effective_theta_U) * U_old
                     self.M = effective_theta_M * M_new + (1 - effective_theta_M) * M_old
+
+                # self.M now carries a density this solve's FP produced, so the end-of-solve
+                # mass measurement has something real to measure -- including if a later
+                # iteration breaks before its own FP step (Issue #1717).
+                fp_output_available = True
 
                 # Preserve boundary conditions
                 self.M = preserve_initial_condition(self.M, M_initial)
@@ -882,26 +917,41 @@ class FixedPointIterator(BaseCouplingIterator):
         # invariant to the choice of measure and is what the field's name claims to quantify.
         # The normalisation fork itself is pre-existing and tracked separately.
         mass_conservation_error: float | None
-        try:
-            # Called as a gate, not as a factor: a geometry with no volume element cannot express
-            # a total mass, so no conservation error is meaningful for it. A uniform cell measure
-            # cancels out of the ratio below, so it is deliberately not multiplied in -- writing it
-            # in would suggest the answer depends on it.
-            self.problem.geometry.volume_element()
-
-            spatial_axes = tuple(range(1, self.M.ndim))
-            mass_per_step = np.sum(self.M, axis=spatial_axes)
-            initial_mass = float(mass_per_step[0])
-            if not np.isfinite(initial_mass) or initial_mass <= 0.0:
-                raise ValueError(
-                    f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
-                    "mass conservation is undefined and the solve that produced it is already wrong"
-                )
-            mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
-        except (AttributeError, NotImplementedError):
-            # A geometry without a volume element cannot express the integral; None says
-            # "not measured" rather than fabricating a zero.
+        if not fp_output_available:
+            # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
+            # density. Two ways to get here, and the number would be wrong differently in each:
+            # from a cold start, initialize_cold_start writes M_initial into every row, so mass
+            # is constant by construction and measures as exactly 0.0 -- the best possible value
+            # for a solve that never ran; from a warm start, self.M is some other solve's output,
+            # so any number describes that solve rather than this one. Neither is a measurement
+            # of this solve, and the None sentinel exists so that cannot masquerade as one.
+            #
+            # The condition is "no FP output yet", not "the solve diverged". A divergence after a
+            # completed FP step DOES have a real density to measure, and reporting None there
+            # would be this defect's mirror image -- suppressing a genuine number instead of
+            # fabricating a zero.
             mass_conservation_error = None
+        else:
+            try:
+                # Called as a gate, not as a factor: a geometry with no volume element cannot express
+                # a total mass, so no conservation error is meaningful for it. A uniform cell measure
+                # cancels out of the ratio below, so it is deliberately not multiplied in -- writing it
+                # in would suggest the answer depends on it.
+                self.problem.geometry.volume_element()
+
+                spatial_axes = tuple(range(1, self.M.ndim))
+                mass_per_step = np.sum(self.M, axis=spatial_axes)
+                initial_mass = float(mass_per_step[0])
+                if not np.isfinite(initial_mass) or initial_mass <= 0.0:
+                    raise ValueError(
+                        f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
+                        "mass conservation is undefined and the solve that produced it is already wrong"
+                    )
+                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
+            except (AttributeError, NotImplementedError):
+                # A geometry without a volume element cannot express the integral; None says
+                # "not measured" rather than fabricating a zero.
+                mass_conservation_error = None
 
         # Construct result
         result = SolverResult(

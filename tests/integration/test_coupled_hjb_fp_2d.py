@@ -37,10 +37,46 @@ from mfgarchon.geometry import TensorProductGrid, no_flux_bc
 # ---------------------------------------------------------------------------
 
 
+# Picard budget: the smallest round number above the 56 Picard steps this fixture needs to
+# converge at lambda=4 (measured 2026-07-25). Deliberately not 8: the old budget was
+# smaller than the solve, so every test here stopped mid-iteration and asserted on a
+# non-converged state.
+_MAX_PICARD = 80
+
+
 def _default_hamiltonian():
-    """H = |p|^2/2 + m (quadratic control + linear coupling)."""
+    """H = |p|^2/8 + m (quadratic control with lambda=4, linear coupling).
+
+    lambda=4 because the FP drift coefficient is c = 1/lambda, and 0.25 buys convergence in
+    a budget a test can afford. It is NOT the contraction boundary -- the first version of this
+    docstring said it was, from a four-point sweep with nothing adjacent to the boundary, and
+    review measured it directly. On the N=10, T=0.2, Nt=10, sigma=0.1 configuration at damping
+    0.3, tolerance 1e-5, budget 400:
+
+        lambda=1    (c=1.000)  diverges at iteration 7
+        lambda=2    (c=0.500)  diverges at iteration 27
+        lambda=2.5  (c=0.400)  raises
+        lambda=2.6  (c=0.385)  converges in 395   <- boundary is in (0.385, 0.400]
+        lambda=3    (c=0.333)  converges in 117
+        lambda=4    (c=0.250)  converges in 56
+        lambda=10   (c=0.100)  converges in 25
+
+    So anything below c ~ 0.385 converges; 0.25 is chosen for iteration cost, not because
+    larger drifts fail. A maintainer finding this fixture broken again should not read 0.25 as
+    a ceiling and tune below it -- the real signal is a solve that stops converging anywhere
+    under c ~ 0.385.
+
+    History: Issue #1442 made the FP solvers read the drift from the Hamiltonian instead
+    of a private 0.5 default, so these fixtures went from c=0.5 to c=1.0 and six tests
+    began failing with a NaN value function. Restoring c=0.5 (lambda=2) makes them pass
+    again, but only because they stopped at 8 iterations -- the solve still diverges at
+    27. That is a smaller test window, not a fixed solve, so it is not what this module
+    does. Refining does not rescue c=0.5 either: at N=20 it diverges at iteration 7, i.e.
+    sooner, which is the signature of a Picard map that does not contract rather than of
+    a timestep restriction.
+    """
     return SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
+        control_cost=QuadraticControlCost(control_cost=4.0),
         coupling=lambda m: m,
         coupling_dm=lambda m: 1.0,
     )
@@ -135,7 +171,12 @@ class TestCoupledHJBFP2DBasic:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10)
         solver = _create_2d_mfg_solver(problem)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-4)
+
+        assert result.converged, (
+            "the coupled solve did not converge, so every assertion below is about an "
+            f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+        )
 
         U, M = result[:2]
         grid_shape = problem.geometry.get_grid_shape()
@@ -167,7 +208,12 @@ class TestCoupledHJBFP2DBasic:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10)
         solver = _create_2d_mfg_solver(problem)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-4)
+
+        assert result.converged, (
+            "the coupled solve did not converge, so every assertion below is about an "
+            f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+        )
 
         U = result[0]
 
@@ -187,7 +233,12 @@ class TestCoupledHJBFP2DBasic:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10)
         solver = _create_2d_mfg_solver(problem)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-4)
+
+        assert result.converged, (
+            "the coupled solve did not converge, so every assertion below is about an "
+            f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+        )
 
         M = result[1]
 
@@ -209,7 +260,12 @@ class TestCoupledHJBFP2DMassConservation:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10, sigma=0.1, bc=bc)
         solver = _create_2d_mfg_solver(problem)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-4)
+
+        assert result.converged, (
+            "the coupled solve did not converge, so every assertion below is about an "
+            f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+        )
 
         M = result[1]
 
@@ -236,7 +292,16 @@ class TestCoupledHJBFP2DConvergence:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10)
         solver = _create_2d_mfg_solver(problem, damping=0.2)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-6)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-6)
+
+        # Not `assert result.converged` here, unlike its siblings: this test deliberately
+        # sets a tolerance the solve will not reach so that it runs the full budget and the
+        # error trajectory can be inspected. What it must still rule out is divergence --
+        # otherwise a NaN run reaches the assertion below with a meaningless history.
+        assert result.metadata.get("convergence_reason") != "diverged_nan", (
+            "the solve diverged, so the error history below describes a blow-up"
+        )
+        assert np.all(np.isfinite(result[0])), "U contains non-finite values"
 
         err_U = result.error_history_U
         # Minimum error should be < 50% of initial error
@@ -255,7 +320,12 @@ class TestCoupledHJBFP2DConvergence:
             problem = _create_2d_problem(N=N, T=0.3, Nt=20, sigma=0.5)
             solver = _create_2d_mfg_solver(problem)
 
-            result = solver.solve(max_iterations=8, tolerance=1e-4)
+            result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-4)
+
+            assert result.converged, (
+                "the coupled solve did not converge, so every assertion below is about an "
+                f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+            )
 
             U, M = result[:2]
             assert np.all(np.isfinite(U)), f"U not finite for N={N}"
@@ -272,7 +342,12 @@ class TestCoupledHJBFP2DSymmetry:
         problem = _create_2d_problem(N=N, T=0.2, Nt=10)
         solver = _create_2d_mfg_solver(problem)
 
-        result = solver.solve(max_iterations=8, tolerance=1e-5)
+        result = solver.solve(max_iterations=_MAX_PICARD, tolerance=1e-5)
+
+        assert result.converged, (
+            "the coupled solve did not converge, so every assertion below is about an "
+            f"unconverged state: {result.metadata.get('convergence_reason')!r}"
+        )
 
         U = result[0]
 
