@@ -46,6 +46,13 @@
       },
       "status": "UNSUPPORTED"
     },
+    "regime_switching/non_negativity": {
+      "artifact": {
+        "exception": "ValueError",
+        "message": "FP solver: density went to -1.031e-03 at timestep 7/10. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than silently repaired (Issue #1671). advection_sch"
+      },
+      "status": "UNSUPPORTED"
+    },
     "sl_linear/mass_conservation": {
       "artifact": {
         "all_finite": true,

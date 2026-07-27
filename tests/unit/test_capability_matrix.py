@@ -100,6 +100,28 @@ def test_every_mass_oracle_cell_is_a_declared_cell(cm):
     assert set(cm.CELLS) >= cm.MASS_ORACLE_CELLS
 
 
+def test_currently_failing_density_cells_are_still_registered_for_the_self_test(cm):
+    """A cell that is not PASS today has an oracle the self-test cannot yet exercise.
+
+    ``regime_switching/non_negativity`` raises before producing a density (#1681), so
+    nothing has proved its oracle reads what it claims to. Listing it in
+    MASS_ORACLE_CELLS is what makes the self-test pick it up the moment it recovers --
+    without that, the recovery would land with an unproven oracle, which is exactly
+    the state #1715 measured in the agreement tests.
+    """
+    density_cells = {
+        "fdm_upwind/mass_conservation",
+        "sl_linear/mass_conservation",
+        "fdm_centered/mass_conservation",
+        "fvm_muscl/mass_conservation",
+        "fvm_vs_fdm/agreement",
+        "regime_switching/non_negativity",
+    }
+    assert density_cells <= cm.MASS_ORACLE_CELLS, (
+        f"unregistered density cells: {sorted(density_cells - cm.MASS_ORACLE_CELLS)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The self-test mutation -- the control has to be able to fail
 # ---------------------------------------------------------------------------

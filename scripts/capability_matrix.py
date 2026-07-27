@@ -25,12 +25,14 @@ A cell status is one of:
   UNSUPPORTED  the path refused to run (exception type + message head recorded)
   ERROR        the harness itself broke -- always fails --check-baseline
 
-Cells deliberately NOT in this first set, so the omission is on the record rather than
+Every cell but one drives the public API. ``regime_switching/non_negativity`` reaches
+through the deep module path because ``RegimeSwitchingIterator`` is exported from no
+package ``__init__`` -- recorded in that cell rather than treated as a reason to leave
+a measured defect (#1681) unwatched.
+
+Cells deliberately NOT in this set, so the omission is on the record rather than
 implied absent:
 
-- regime-switching non-negativity (#1681). ``RegimeSwitchingIterator`` is not exported
-  from any package ``__init__``; reaching it needs the deep module path plus a
-  per-regime problem list. It belongs here, it is not here yet.
 - 2-D meshless-Galerkin + Nitsche refinement (#1679). Needs a refinement sweep, so it
   is minutes, not seconds; it belongs in a nightly-tier matrix.
 """
@@ -266,23 +268,114 @@ def _fvm_mass_cell():
     return run
 
 
+def _regime_switching_cell():
+    """Two-regime Markov-switching MFG: every regime density stays non-negative.
+
+    Mirrors the #1681 reproducer
+    (tests/integration/test_phase1_5_validation.py::test_regime_switching_iterator_runs)
+    at its original NT=10. That fixture is deliberately not retuned: the run maximum
+    decays only first-order in dt, so clearing the guard threshold extrapolates to
+    NT ~ 3e6 and refining would hide the defect rather than fix it.
+
+    Reached through the deep module path. ``RegimeSwitchingIterator`` is exported from
+    no package ``__init__``, so unlike every other cell here this one is not on the
+    public surface -- which is itself part of what the cell records.
+    """
+
+    def run():
+        from mfgarchon import MFGProblem
+        from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
+            RegimeSwitchingIterator,
+        )
+        from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+        from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_components import MFGComponents
+        from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry.boundary import no_flux_bc
+
+        def lq(coupling_coeff):
+            return MFGProblem(
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)],
+                    Nx_points=[31],
+                    boundary_conditions=no_flux_bc(dimension=1),
+                ),
+                Nt=10,
+                T=1.0,
+                sigma=0.1,
+                components=MFGComponents(
+                    m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(
+                        control_cost=QuadraticControlCost(control_cost=1.0),
+                        coupling=lambda m: coupling_coeff * m,
+                        coupling_dm=lambda m: coupling_coeff,
+                    ),
+                ),
+            )
+
+        problems = [lq(c) for c in (1.0, 0.5)]
+        iterator = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=[FPFDMSolver(p) for p in problems],
+            max_iterations=3,
+            tolerance=1e-4,
+            damping=0.5,
+        )
+        result = iterator.solve()
+
+        dx = problems[0].geometry.get_grid_spacing()[0]
+        per_regime = []
+        for k, dens in enumerate(result.densities):
+            M = _apply_mutation(np.asarray(dens, dtype=float))
+            mass = M.sum(axis=1) * dx
+            per_regime.append(
+                {
+                    "regime": k,
+                    "min_density": float(M.min()),
+                    "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
+                    "all_finite": bool(np.isfinite(M).all()),
+                }
+            )
+        art = {
+            "regimes": per_regime,
+            "min_density": min(r["min_density"] for r in per_regime),
+            "max_rel_drift": max(r["max_rel_drift"] for r in per_regime),
+            "all_finite": all(r["all_finite"] for r in per_regime),
+            "tolerance": 1e-6,
+        }
+        ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+        return ("PASS" if ok else "FAIL"), art
+
+    return run
+
+
 CELLS = {
     "fdm_upwind/mass_conservation": _mass_conservation_cell("FDM_UPWIND"),
     "sl_linear/mass_conservation": _mass_conservation_cell("SL_LINEAR"),
     "fdm_centered/mass_conservation": _mass_conservation_cell("FDM_CENTERED"),
     "fvm_muscl/mass_conservation": _fvm_mass_cell(),
     "fvm_vs_fdm/agreement": _fvm_fdm_agreement_cell(),
+    "regime_switching/non_negativity": _regime_switching_cell(),
     "gfdm_rbf/construction": _gfdm_rbf_cell(),
 }
 
-# Cells whose oracle is the density this module measures. --self-test scales that
+# Cells whose oracle is the density this module measures. --self-test perturbs that
 # density and requires every one of them to leave PASS; one that does not is inert.
+# Cells that are not PASS today are still listed: the self-test skips them now and
+# picks them up automatically if they recover, so a recovery cannot arrive with an
+# unproven oracle.
 MASS_ORACLE_CELLS = {
     "fdm_upwind/mass_conservation",
     "sl_linear/mass_conservation",
     "fdm_centered/mass_conservation",
     "fvm_muscl/mass_conservation",
     "fvm_vs_fdm/agreement",
+    "regime_switching/non_negativity",
 }
 
 
