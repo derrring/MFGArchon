@@ -266,11 +266,77 @@ def restore(backups: dict[str, str]) -> None:
     backups.clear()
 
 
+def _head_sha() -> str:
+    """Stamped by the same call that produces the counts, not looked up later."""
+    out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True)
+    return out.stdout.strip() or "unknown"
+
+
+def _write_baseline(path: Path, results: dict) -> None:
+    payload = {
+        "_comment": (
+            "Kill counts per mutated convention. --check-baseline fails when a count DROPS "
+            "(discrimination lost) and when one RISES (record the gain in the same change). "
+            "Counts, not test names: this population cannot be selected by name -- the "
+            "agreement-shaped patterns give 51, 114 or 156 depending on the regex."
+        ),
+        "_measured_at": _head_sha(),
+        "mutations": {
+            name: {
+                "owner": res["owner"],
+                "status": res["status"],
+                "kill_count": res["kill_count"],
+            }
+            for name, res in sorted(results.items())
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def compare_to_baseline(results: dict, baseline: dict) -> list[str]:
+    """Every way discrimination can degrade. Empty list means it did not.
+
+    Two ratchets, both unforgeable by renaming -- which matters, because the
+    population this measures cannot be selected by name at all:
+
+    - **Per-mutation kill counts must not drop.** A convention that 129 tests noticed
+      and 120 notice now has lost coverage, whatever the test names are. Deleting a
+      discriminating test trips this, which is correct: it is a real loss.
+    - **The UNCOVERED set must not grow.** A convention going from watched to
+      unwatched is the defect this tool exists to find.
+
+    Improvements trip it too, and must be recorded in the same change -- otherwise the
+    next baseline encodes the gain as if it had always held, and the ratchet loses the
+    ability to say when anything got better. Same rule as the capability matrix.
+    """
+    problems = []
+    base_muts = baseline["mutations"]
+    for name, was in sorted(base_muts.items()):
+        now = results.get(name)
+        if now is None:
+            problems.append(f"  {name}: mutation DISAPPEARED (baseline killed {was['kill_count']})")
+            continue
+        if now["status"] == "INEFFECTIVE":
+            problems.append(f"  {name}: became INEFFECTIVE -- the mutation no longer applies; fix it")
+            continue
+        if now["kill_count"] < was["kill_count"]:
+            problems.append(f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [DISCRIMINATION LOST]")
+        elif now["kill_count"] > was["kill_count"]:
+            problems.append(
+                f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [IMPROVED -- record it in the baseline]"
+            )
+    for name in sorted(set(results) - set(base_muts)):
+        problems.append(f"  {name}: NEW mutation, not in baseline")
+    return problems
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", action="append", help="Run only these mutations (repeatable)")
     parser.add_argument("--paths", default="tests", help="Test paths to run (default: tests)")
     parser.add_argument("--json", metavar="FILE", help="Write the full kill matrix to FILE")
+    parser.add_argument("--write-baseline", metavar="FILE", help="Write the ratchet baseline to FILE")
+    parser.add_argument("--check-baseline", metavar="FILE", help="Fail if discrimination degraded vs FILE")
     args = parser.parse_args()
 
     _assert_clean_tree()
@@ -362,6 +428,23 @@ def main() -> None:
 
     _assert_clean_tree()
     print("\nWorking tree restored and verified clean.")
+
+    if args.write_baseline:
+        _write_baseline(Path(args.write_baseline), results)
+        print(f"Baseline written to {args.write_baseline}")
+        sys.exit(0)
+
+    if args.check_baseline:
+        baseline = json.loads(Path(args.check_baseline).read_text())
+        problems = compare_to_baseline(results, baseline)
+        if problems:
+            print("\nDiscrimination baseline mismatch:")
+            print("\n".join(problems))
+            print("\nIf intended, regenerate with --write-baseline in the same commit.")
+            sys.exit(1)
+        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations).")
+        sys.exit(0)
+
     sys.exit(0 if effective else 1)
 
 

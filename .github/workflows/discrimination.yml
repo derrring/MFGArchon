@@ -1,0 +1,108 @@
+name: Weekly Test-Discrimination Sweep
+
+# Measures which tests notice a change to a convention the library single-sources,
+# by mutating each one and running the suite. Weekly, not nightly: it is seven full
+# suite runs (~26 min measured locally), and the quantity it tracks moves on the
+# timescale of a campaign, not a commit.
+#
+# It answers what #1715 asked and #1701 generalises. Measured 2026-07-27 over 5,665
+# collected tests: 184 (3.2%) notice any of the six conventions, 176 of them notice
+# exactly one, and one convention -- the absent-BC default -- is noticed by nothing.
+#
+# The ratchet is per-mutation kill COUNTS, not test names. That is deliberate: this
+# population cannot be selected by name at all. `*_agree` / `*_matches` / `*_equals`
+# gives 51, 114 or 156 depending on the pattern, and 60% of the tests whose names
+# claim cross-path agreement notice none of the six.
+
+on:
+  schedule:
+    # 04:00 UTC on Mondays, after nightly has finished.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  discrimination:
+    name: mutation sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # ~26 min locally; a GH runner is ~7x slower on this suite
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,numerical]"
+
+    - name: Sweep and compare against the baseline
+      env:
+        OMP_NUM_THREADS: 1
+        OPENBLAS_NUM_THREADS: 1
+      run: |
+        python scripts/test_discrimination.py \
+          --check-baseline scripts/discrimination_baseline.json \
+          --json killmatrix.json
+
+    - name: Upload the kill matrix
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: kill-matrix
+        path: killmatrix.json
+        retention-days: 90
+
+  # Same reasoning as nightly.yml's notifier: a job nobody watches is a job that
+  # reports nothing. Not gated on `schedule`, so workflow_dispatch exercises the
+  # path too -- otherwise a bug in it surfaces only on a real weekly failure.
+  notify-on-failure:
+    needs: discrimination
+    if: ${{ always() && needs.discrimination.result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/github-script@v9
+      with:
+        script: |
+          const date = new Date().toISOString().split('T')[0];
+          const title = 'Weekly test-discrimination sweep is failing';
+          const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const { data: issues } = await github.rest.issues.listForRepo({
+            owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'automated',
+          });
+          const open = issues.find(i => i.title === title);
+          const body = [
+            `The weekly mutation sweep failed on ${date}. Run: ${url}`,
+            '',
+            'Either discrimination dropped (a convention fewer tests now notice), a mutation',
+            'stopped applying because the source moved, or it improved and the baseline has',
+            'not recorded it yet. The run output names which.',
+            '',
+            'Reproduce locally (~26 min):',
+            '```bash',
+            'python scripts/test_discrimination.py --check-baseline scripts/discrimination_baseline.json',
+            '```',
+            '',
+            'De-duplicated on title: subsequent failures comment here rather than opening new issues.',
+          ].join('\n');
+          if (open) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: open.number, body: `Still failing on ${date}. Run: ${url}`,
+            });
+          } else {
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo, title, body,
+              labels: ['automated', 'area: testing', 'priority: medium', 'type: bug'],
+            });
+          }
