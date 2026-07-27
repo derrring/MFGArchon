@@ -9,8 +9,14 @@ correction, not the defect, and a check that cannot tell those apart would force
 correction to be written in riddles. The distinction is mechanical: fenced blocks are
 what a reader copies.
 
-The population is derived from the package, not hardcoded, so a factory removed
-tomorrow is covered without editing this file.
+Two populations, because neither alone is complete: names still present as raising
+stubs are discovered from the package, and names that are *gone* cannot be discovered
+from a package that no longer contains them, so those are listed. Review of #1740
+caught the docstring claiming the whole set was derived when only removed-ness was.
+
+Known scanner limits, stated rather than implied absent: it reads fenced blocks, so a
+4-space-indented code block, a nested fence, or an HTML `<pre>` block slips past. Those
+forms appear nowhere in this repo's docs today; the fenced form is what is written here.
 """
 
 import re
@@ -24,7 +30,11 @@ REPO = Path(__file__).resolve().parents[2]
 
 # Historical records, not instructions. A changelog entry describing a v0.16 API is
 # correct as written; rewriting it would falsify the record.
-EXEMPT = {"CHANGELOG.md", "archive", ".github"}
+# Directories, matched on the first path component only -- `EXEMPT` used to conflate
+# directory names with file names, so any file called CHANGELOG.md anywhere was exempt
+# while `docs/archive/` was scanned.
+EXEMPT_DIRS = {"archive", ".github"}
+EXEMPT_FILES = {Path("CHANGELOG.md")}
 
 FENCE = re.compile(r"^\s*(```|~~~)")
 
@@ -35,20 +45,16 @@ def _removed_factory_names() -> set[str]:
     Two failure shapes, both counted: the name is gone entirely (ImportError for the
     reader), or it survives as a stub that raises on call.
     """
-    known = {
-        "create_standard_solver",
-        "create_fast_solver",
-        "create_research_solver",
-        "create_basic_solver",
-        "create_accurate_solver",
-        "create_monitored_solver",
-    }
-    removed = set()
-    for name in known:
-        fn = getattr(factory, name, None)
-        if fn is None:
-            removed.add(name)  # gone: importing it fails
-            continue
+    # Discoverable: still exported, raising on call.
+    live = {n for n in dir(factory) if re.fullmatch(r"create_\w+_solver", n)}
+    # Not discoverable: deleted outright, so `dir()` cannot report them. A name here
+    # that comes back is caught by test_the_removed_set_is_not_empty going stale, not
+    # silently -- the docs check would simply stop flagging it, which is correct.
+    vanished = {"create_standard_solver", "create_monitored_solver"}
+    removed = set(vanished) & {"create_standard_solver", "create_monitored_solver"}
+    removed = {n for n in vanished if getattr(factory, n, None) is None}
+    for name in live:
+        fn = getattr(factory, name)
         try:
             fn()
         except NotImplementedError:
@@ -62,7 +68,7 @@ def _docs() -> list[Path]:
     out = []
     for path in REPO.rglob("*.md"):
         rel = path.relative_to(REPO)
-        if rel.parts[0] in EXEMPT or rel.name in EXEMPT:
+        if set(rel.parts) & EXEMPT_DIRS or rel in EXEMPT_FILES:
             continue
         out.append(path)
     return sorted(out)
@@ -122,7 +128,7 @@ def test_no_notebook_teaches_a_removed_factory():
     offences = [
         f"{path.relative_to(REPO)}: {name}"
         for path in sorted(REPO.rglob("*.ipynb"))
-        if path.relative_to(REPO).parts[0] not in EXEMPT
+        if not set(path.relative_to(REPO).parts) & EXEMPT_DIRS
         for name in names
         if name in path.read_text(errors="replace")
     ]

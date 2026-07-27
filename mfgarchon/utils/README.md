@@ -512,7 +512,7 @@ def run_experiment(config_file):
         
         # Solve with progress monitoring and timing
         with SolverTimer("Experiment") as timer:
-            result = solver.solve(verbose=True)
+            result = problem.solve(config=config, verbose=True)
         
         # Validate and return structured result
         validated_result = validation.validate_mfg_solution(

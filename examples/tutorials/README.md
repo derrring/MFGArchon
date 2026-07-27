@@ -84,4 +84,4 @@ python examples/tutorials/06_boundary_condition_coupling.py
 - [Basic Examples](../basic/) - Single-concept demonstrations
 - [Advanced Examples](../advanced/) - Research-grade problems
 - [Boundary Conditions Guide](../../docs/user/guides/boundary_conditions.md)
-- [Solver Selection Guide](../../docs/user/SOLVER_SELECTION_GUIDE.md)
+- [HJB Solver Selection Guide](../../docs/user/HJB_SOLVER_SELECTION_GUIDE.md)

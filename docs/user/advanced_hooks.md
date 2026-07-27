@@ -670,6 +670,6 @@ The hooks system provides unlimited extensibility while maintaining clean interf
 ## What's Next?
 
 - **Need examples?** → Check [Advanced Examples](../../examples/advanced/)
-- **Building custom solvers?** → See [Solver Selection Guide](SOLVER_SELECTION_GUIDE.md)
+- **Building custom solvers?** → See [HJB Solver Selection Guide](HJB_SOLVER_SELECTION_GUIDE.md)
 - **Performance optimization?** → Read [Multidimensional MFG Guide](multidimensional_mfg_guide.md)
 - **Understanding hooks?** → See [Hooks Guide](guides/hooks.md)

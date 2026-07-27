@@ -120,7 +120,7 @@ plt.show()
 - **[Basic Examples](../../examples/basic/)** - Single-concept demonstrations
 - **[Boundary Conditions Guide](guides/boundary_conditions.md)** - BC types and usage
 - **[Advanced Examples](../../examples/advanced/)** - Research-grade problems
-- **[Solver Selection](SOLVER_SELECTION_GUIDE.md)** - Choosing the right method
+- **[HJB Solver Selection](HJB_SOLVER_SELECTION_GUIDE.md)** - Choosing the right method
 
 ---
 

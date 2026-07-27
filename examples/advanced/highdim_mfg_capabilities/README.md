@@ -64,8 +64,7 @@ problem = MFGProblem(
     sigma=0.1,
 )
 
-# Solve with factory
-result = problem.solve(damping=0.6, max_iterations=30)
+result = problem.solve(max_iterations=30)
 ```
 
 ### **High-Performance nD Problems**

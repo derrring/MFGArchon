@@ -60,9 +60,9 @@ Step-by-step learning from basics to advanced:
 | [Advanced BC](advanced_boundary_conditions.md) | Variational inequalities, moving boundaries |
 | [Backend Usage](guides/backend_usage.md) | NumPy, JAX, PyTorch backends |
 | [Maze Generation](guides/maze_generation.md) | Graph-based MFG domains |
-| [Solver Selection](SOLVER_SELECTION_GUIDE.md) | Choosing the right numerical method |
+| [HJB Solver Selection](HJB_SOLVER_SELECTION_GUIDE.md) | Choosing the right numerical method |
 | [HJB Solver Selection](HJB_SOLVER_SELECTION_GUIDE.md) | FDM vs GFDM vs SL vs WENO |
-| [Migration](migration.md) | Upgrading from older API versions |
+| [Migration to v0.19 config](migration_v0.19.md) | Config-schema field mapping |
 | [Deprecation Guide](DEPRECATION_MODERNIZATION_GUIDE.md) | Legacy parameter migration paths |
 
 ### Examples
