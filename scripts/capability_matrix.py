@@ -83,6 +83,8 @@ def _apply_mutation(M: np.ndarray) -> np.ndarray:
     return M * ramp.reshape((-1,) + (1,) * (M.ndim - 1))
 
 
+_STATUSES = frozenset({"PASS", "FAIL", "UNSUPPORTED", "ERROR"})
+
 MASS_RTOL = 1e-9  # matches tests/integration/test_three_mode_api.py
 AGREEMENT_RTOL = 0.07  # matches tests/integration/test_fvm_hjb_coupling.py:175
 
@@ -217,11 +219,23 @@ def _measure(what: str, thunk):
     Returning the artifact alone left the comparison against it -- ``art["worst"] <
     AGREEMENT_RTOL`` -- one line outside the wrapper, so a ``KeyError`` from a
     partial artifact still read as a library refusal.
+
+    The return shape is CHECKED, not merely documented. A cell that goes back to
+    returning a bare artifact puts its verdict outside the wrapper again, and that
+    reverts silently -- the tests all pass thunks, so they hold under either shape.
+    Making the old shape raise is the only version of this that cannot rot.
     """
     try:
-        return thunk()
+        out = thunk()
     except Exception as exc:
         raise HarnessError(f"measuring {what}: {type(exc).__name__}: {exc}") from exc
+    if not (isinstance(out, tuple) and len(out) == 2 and out[0] in _STATUSES):
+        raise HarnessError(
+            f"measuring {what}: oracle must return (status, artifact) with status in "
+            f"{sorted(_STATUSES)}, got {type(out).__name__} {repr(out)[:80]}. "
+            f"Returning the artifact alone puts the verdict outside this wrapper."
+        )
+    return out
 
 
 # --------------------------------------------------------------------------------
@@ -513,6 +527,7 @@ def evaluate(only: list[str] | None = None) -> dict:
                 "AttributeError",
                 "TypeError",
                 "AssertionError",
+                "KeyError",
             }:
                 status = "ERROR"
                 artifact["traceback_tail"] = traceback.format_exc().strip().splitlines()[-1]

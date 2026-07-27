@@ -271,6 +271,79 @@ def test_a_refusal_from_the_solve_phase_survives_the_phase_split(cm, monkeypatch
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# The two structural fixes must not be able to revert silently
+# ---------------------------------------------------------------------------
+
+
+def test_construct_takes_a_thunk_and_nothing_else(cm):
+    """Pins the signature, because the old one did not do what it looked like.
+
+    ``_construct(what, fn, *args, **kwargs)`` evaluates the argument expressions
+    in the CALLER's frame, so every constructor inside them ran before the wrapper
+    was entered and their failures bypassed it. Every existing phase test passes a
+    thunk, so all of them hold under either signature -- reverting it was measured
+    to kill nothing. This is the assertion that notices.
+    """
+    with pytest.raises(TypeError):
+        cm._construct("x", lambda: None, "an extra positional argument")
+
+
+def test_measure_takes_a_thunk_and_nothing_else(cm):
+    with pytest.raises(TypeError):
+        cm._measure("x", lambda: ("PASS", {}), "an extra positional argument")
+
+
+def test_measure_rejects_an_oracle_that_returns_only_the_artifact(cm):
+    """The shape check is what keeps the verdict inside the wrapper.
+
+    A cell whose oracle returns a bare artifact has its verdict computed one line
+    outside ``_measure`` again, where a KeyError reads as a library refusal. Tests
+    cannot catch that by construction -- they pass their own thunks -- so the
+    wrapper refuses the old shape instead.
+    """
+    with pytest.raises(cm.HarnessError, match="must return \\(status, artifact\\)"):
+        cm._measure("mass drift", lambda: {"mass_t0": 1.0})
+
+
+def test_measure_rejects_an_unknown_status(cm):
+    with pytest.raises(cm.HarnessError, match="must return"):
+        cm._measure("x", lambda: ("PROBABLY_FINE", {}))
+
+
+def test_measure_accepts_the_correct_shape(cm):
+    """The guard must not reject what the production cells actually return."""
+    assert cm._measure("x", lambda: ("PASS", {"n": 1})) == ("PASS", {"n": 1})
+
+
+def test_a_keyerror_anywhere_in_a_cell_is_error_not_unsupported(cm, monkeypatch):
+    """Second net, for the shape check being bypassed some other way.
+
+    A partial artifact is never a library refusal, whichever phase surfaced it.
+    """
+
+    def raises_keyerror():
+        raise KeyError("mass_t0")
+
+    monkeypatch.setattr(cm, "CELLS", {"k/e": raises_keyerror})
+    assert cm.evaluate()["k/e"]["status"] == "ERROR"
+
+
+def test_the_harness_diagnostic_goes_to_stderr(cm, monkeypatch, tmp_path, capsys):
+    """stdout carries the --json blob; a human block appended to it breaks parsing."""
+
+    def boom():
+        raise TypeError("signature drift")
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": boom})
+    monkeypatch.setattr(sys, "argv", ["capability_matrix.py", "--json"])
+    with pytest.raises(SystemExit):
+        cm.main()
+    captured = capsys.readouterr()
+    json.loads(captured.out)  # raises if the diagnostic leaked into stdout
+    assert "Harness is broken" in captured.err
+
+
 def test_errored_lists_broken_cells(cm):
     results = {
         "a": {"status": "PASS", "artifact": {}},
