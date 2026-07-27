@@ -1,0 +1,69 @@
+{
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline.",
+  "cells": {
+    "fdm_centered/mass_conservation": {
+      "artifact": {
+        "exception": "ValueError",
+        "message": "FP solver: density went to -2.769e-01 at timestep 2/10. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than silently repaired (Issue #1671). advection_sch"
+      },
+      "status": "UNSUPPORTED"
+    },
+    "fdm_upwind/mass_conservation": {
+      "artifact": {
+        "all_finite": true,
+        "mass_max": 1.0000000000000004,
+        "mass_t0": 1.0000000000000002,
+        "max_drift": 2.220446049250313e-16,
+        "min_density": 0.007498923701786717,
+        "tolerance": 1.0000000000000003e-09
+      },
+      "status": "PASS"
+    },
+    "fvm_muscl/mass_conservation": {
+      "artifact": {
+        "all_finite": true,
+        "mass_t0": 0.9999999999999998,
+        "max_rel_drift": 2.2204460492503136e-16,
+        "min_density": 7.271016423279045e-05,
+        "tolerance": 1e-06
+      },
+      "status": "PASS"
+    },
+    "fvm_vs_fdm/agreement": {
+      "artifact": {
+        "all_finite": true,
+        "rel_l2_M": 0.04890589064334588,
+        "rel_l2_M_terminal": 0.04285364468545015,
+        "rel_l2_U": 0.0272298496449295,
+        "tolerance": 0.07,
+        "worst": 0.04890589064334588
+      },
+      "status": "PASS"
+    },
+    "gfdm_rbf/construction": {
+      "artifact": {
+        "exception": "NotImplementedError",
+        "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
+      },
+      "status": "UNSUPPORTED"
+    },
+    "regime_switching/non_negativity": {
+      "artifact": {
+        "exception": "ValueError",
+        "message": "FP solver: density went to -1.031e-03 at timestep 7/10. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than silently repaired (Issue #1671). advection_sch"
+      },
+      "status": "UNSUPPORTED"
+    },
+    "sl_linear/mass_conservation": {
+      "artifact": {
+        "all_finite": true,
+        "mass_max": 1.0000000000000007,
+        "mass_t0": 1.0000000000000002,
+        "max_drift": 4.440892098500626e-16,
+        "min_density": 0.00466345594426523,
+        "tolerance": 1.0000000000000003e-09
+      },
+      "status": "PASS"
+    }
+  }
+}

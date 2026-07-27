@@ -129,6 +129,35 @@ jobs:
         flags: nightly-${{ matrix.shard.name }}
         fail_ci_if_error: false
 
+  # The capability matrix is a real solve, so it is not in the PR tier and not in a
+  # shard (the shard matrix would run it 4x). Its own model, check_fail_fast.py, runs
+  # both locally and in ci.yml; without this job the matrix ran ONLY in
+  # scripts/local_ci.sh, so a capability regression pushed without the local gate
+  # surfaced in no tier at all -- the "call sites outside CI" gap of #1714.
+  #
+  # --self-test is here for the same reason: it is the control that proves the mass
+  # oracles are load-bearing, and until now nothing invoked it, so nothing would ever
+  # report that the control had gone inert.
+  capability-matrix:
+    name: nightly (capability matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # measured ~41 s (matrix) + ~77 s (self-test) locally
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[dev]
+    - name: Capability vs baseline
+      run: python scripts/capability_matrix.py --check-baseline scripts/capability_baseline.json
+    - name: Self-test (the mass oracles must go red under injected drift)
+      run: python scripts/capability_matrix.py --self-test
+
   # Notification runs ONCE, after all shards, rather than per-shard. Per-shard it races:
   # three concurrent failures each read an empty issue list and each create one, leaving two
   # orphans open forever -- "de-duplicated on title" would only have held from night two.
@@ -137,10 +166,12 @@ jobs:
   # path cannot be exercised by a manual workflow_dispatch, so a bug in it would surface only
   # on a real scheduled failure -- silently, which is the defect this whole workflow fixes.
   notify-on-failure:
-    needs: full-test-suite
+    needs: [full-test-suite, capability-matrix]
     # NOT `failure()`: a shard that blows the timeout is reported `cancelled`, not `failed`,
     # and `failure()` is false for a cancelled dependency -- which was 98 of 108 historical runs.
-    if: ${{ always() && needs.full-test-suite.result != 'success' }}
+    if: >-
+      ${{ always() && (needs.full-test-suite.result != 'success'
+          || needs.capability-matrix.result != 'success') }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/github-script@v9

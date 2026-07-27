@@ -80,6 +80,15 @@ step "Fail-fast ratchet"
 check $? "no new silent fallbacks vs baseline"
 
 if [[ $FAST -eq 0 ]]; then
+  # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
+  # here that measures the product rather than the source. Counts of tests, issues or
+  # fail-fast violations all move for reasons unrelated to whether anything solves;
+  # this is the quantity that does not. Bidirectional -- a recovered cell fails until
+  # the baseline records it, so a fix cannot land without saying so.
+  step "Capability matrix (public solve surface vs external oracles)"
+  "$PY" scripts/capability_matrix.py --check-baseline scripts/capability_baseline.json
+  check $? "no capability change vs baseline"
+
   step "Test suite (CI marker set, xdist parallel, no coverage)"
   "$PY" -m pytest tests/ -n auto \
     -m "not slow and not benchmark and not experimental and not optional_torch and not environment" \

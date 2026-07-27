@@ -163,7 +163,7 @@ Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examp
 ### Pre-commit / pre-merge checks
 ```bash
 pytest tests/unit/test_affected_module.py            # iterate on the affected module
-./scripts/local_ci.sh                                # THE GATE: ruff + ratchet + full suite (~2.5 min)
+./scripts/local_ci.sh                                # THE GATE: ruff + ratchets + capability matrix + full suite (~4 min)
 ./scripts/local_ci.sh --fast                         # lint/format/ratchet only, while iterating
 ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affected_module.py
 mypy mfgarchon/affected_module.py
@@ -174,9 +174,9 @@ mypy mfgarchon/affected_module.py
 
 | Tier | What | Where | Cost |
 |:-----|:-----|:------|:-----|
-| Gate (authoritative) | full suite, CI marker set, `-n auto`, no coverage | **local**, `./scripts/local_ci.sh` | ~2.5 min |
+| Gate (authoritative) | fail-fast ratchet, capability matrix, full suite (CI marker set, `-n auto`, no coverage) | **local**, `./scripts/local_ci.sh` | ~4 min |
 | PR checks | syntax, ruff format+lint, fail-fast ratchet, imports, **smoke subset** (`test_core` + `test_config`) | GitHub `ci.yml` | ~3 min |
-| Backstop | full suite **incl. `@slow`**, excluding `@manual` | GitHub `nightly.yml`, 03:00 | `timeout-minutes: 300` |
+| Backstop | full suite **incl. `@slow`**, excluding `@manual`; plus the capability matrix + its self-test | GitHub `nightly.yml`, 03:00 | `timeout-minutes: 300` |
 | Release | full suite incl. `@slow`, excluding `@manual`, with coverage | GitHub `ci.yml` on `release` | 35 min budget |
 
 Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** on a GitHub runner. Measured — coverage accounts for 1.5x, the runner itself for the rest (~7x slower than an M-series Mac). Online execution of the full suite was buying latency, not signal.
