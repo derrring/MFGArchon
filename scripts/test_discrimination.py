@@ -60,6 +60,19 @@ REPO = Path(__file__).resolve().parent.parent
 # The CI marker set, matching scripts/local_ci.sh so a kill here means a kill there.
 MARKERS = "not slow and not benchmark and not experimental and not optional_torch and not environment"
 
+# The instrument must not be inside its own population.
+#
+# `tests/unit/test_discrimination_ratchet.py` asserts that each mutation's literal
+# source anchor matches exactly once. Under a mutation it does not -- that is the whole
+# point of the anchor test -- so it fails under EVERY mutation and adds exactly +1 to
+# every kill count. Measured: 129/34/19/5/5/0 became 130/35/20/6/6/1.
+#
+# The +1 on the last one is the damage. `bc_default_reads_as_reflect` is UNCOVERED at 0,
+# and a self-referential +1 reads as "one test now covers it" -- the instrument erasing
+# the finding it exists to produce, while every other count moves just enough to look
+# like a real improvement rather than an artifact.
+SELF_TESTS = "tests/unit/test_discrimination_ratchet.py"
+
 
 @dataclass
 class Mutation:
@@ -153,6 +166,7 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
             "no:cacheprovider",
             "-m",
             MARKERS,
+            f"--ignore={SELF_TESTS}",
             "--timeout=900",
         ],
         cwd=REPO,
@@ -347,7 +361,7 @@ def main() -> None:
         sys.exit(f"No mutation matched {args.only}. Known: {[m.name for m in MUTATIONS]}")
 
     paths = args.paths.split()
-    print(f"Baseline: pytest {' '.join(paths)} ...", flush=True)
+    print(f"Baseline: pytest {' '.join(paths)} (excluding {SELF_TESTS}) ...", flush=True)
     base = _pytest(paths)
     if base.failed:
         sys.exit(

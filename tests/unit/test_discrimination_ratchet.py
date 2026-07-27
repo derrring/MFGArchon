@@ -143,6 +143,19 @@ def test_the_mutation_list_matches_the_parametrisation(td):
     assert len(td.MUTATIONS) == 6
 
 
+def test_the_sweep_excludes_this_file(td):
+    """This file must not be inside the population it measures.
+
+    `test_every_mutation_anchor_still_matches_exactly_once` fails under every mutation
+    by design, so leaving it in adds +1 to every kill count. Measured before the
+    exclusion: 129/34/19/5/5/0 became 130/35/20/6/6/1 -- and that last +1 turned the
+    one UNCOVERED convention into an apparently-covered one, which is the instrument
+    deleting its own finding.
+    """
+    assert td.SELF_TESTS == "tests/unit/test_discrimination_ratchet.py"
+    assert str(Path(__file__).resolve()).endswith(td.SELF_TESTS)
+
+
 def test_every_mutation_changes_something(td):
     for mut in td.MUTATIONS:
         assert mut.old != mut.new, f"{mut.name}: old and new are identical"
