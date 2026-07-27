@@ -74,6 +74,12 @@ MARKERS = "not slow and not benchmark and not experimental and not optional_torc
 # like a real improvement rather than an artifact.
 SELF_TESTS = "tests/unit/test_discrimination_ratchet.py"
 
+# The population #1715 asks about, as a regex over pytest node ids. Owned here and
+# emitted into the kill matrix, because a claim of the form "193 of 308 are inert" is
+# unrecoverable without it -- and hand-adding it to the JSON does not survive the next
+# --json, which is how it was lost once already.
+AGREEMENT_SHAPED = r"::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)"
+
 
 @dataclass
 class Mutation:
@@ -481,6 +487,14 @@ def main() -> None:
         print(f"  {name:<30} {res['kill_count']:>4} killed")
 
     payload = {
+        "_measured_at": {
+            "commit": _head_sha(),
+            "paths": paths,
+            "markers": MARKERS,
+            "collected": base.collected,
+            "excluded": SELF_TESTS,
+        },
+        "_selection_regex_for_agreement_shaped": AGREEMENT_SHAPED,
         "uncovered": uncovered,
         "markers": MARKERS,
         "paths": paths,

@@ -230,7 +230,12 @@ def test_the_kill_matrix_is_committed_beside_the_baseline(td):
     stop shipping.
     """
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
-    assert matrix["_selection_regex_for_agreement_shaped"]
+    # Owned by the module, not hand-added to the JSON: a hand-added key does not
+    # survive the next --json, and this test caught exactly that regression once.
+    assert matrix["_selection_regex_for_agreement_shaped"] == td.AGREEMENT_SHAPED
+    assert matrix["_measured_at"] == json.loads(_BASELINE.read_text())["_measured_at"], (
+        "matrix and baseline record different runs"
+    )
     baseline = json.loads(_BASELINE.read_text())["mutations"]
     for name, res in baseline.items():
         assert matrix["mutations"][name]["kill_count"] == res["kill_count"], (
