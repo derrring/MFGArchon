@@ -1,15 +1,15 @@
 {
- "_comment": "The per-test kill matrix from the sweep that produced discrimination_baseline.json. Committed so the population claims in #1715 can be re-derived by anyone: which tests notice which convention. The gate is the COUNTS in the baseline; this is the evidence under them. Regenerate with --json.",
  "_measured_at": {
-  "collected": 5665,
-  "commit": "25b09c44",
+  "collected": 5683,
+  "commit": "bec28ce5",
   "excluded": "tests/unit/test_discrimination_ratchet.py",
+  "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
   "paths": [
    "tests"
   ]
  },
  "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
- "baseline_seconds": 211.7,
+ "baseline_seconds": 181.4,
  "killed_by": {
   "tests/integration/test_coupling_mesh_geometry.py::TestFixedPointIteratorMeshGeometry::test_fem_couples_through_fixed_point_iterator": [
    "optimal_control_sign"
@@ -544,6 +544,30 @@
   "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order": [
    "diffusion_scalar_2x"
   ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp": [
+   "bc_default_reads_as_reflect"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]": [
+   "bc_noflux_reads_as_clamp"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect": [
+   "bc_default_reads_as_reflect"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]": [
+   "bc_noflux_reads_as_clamp"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]": [
+   "bc_noflux_reads_as_clamp"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]": [
+   "bc_noflux_reads_as_clamp"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned": [
+   "bc_noflux_reads_as_clamp"
+  ],
+  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive": [
+   "bc_noflux_reads_as_clamp"
+  ],
   "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through": [
    "bc_noflux_reads_as_clamp"
   ],
@@ -575,24 +599,33 @@
  "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
  "mutations": {
   "bc_default_reads_as_reflect": {
-   "kill_count": 0,
-   "killed": [],
+   "kill_count": 2,
+   "killed": [
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
+   ],
    "owner": "absent BC defaults to clamp/absorbing (#1698)",
-   "seconds": 204.2,
-   "status": "UNCOVERED",
+   "seconds": 167.0,
+   "status": "ok",
    "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
   },
   "bc_noflux_reads_as_clamp": {
-   "kill_count": 5,
+   "kill_count": 11,
    "killed": [
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi",
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_constant_terminal_preserved",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned",
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive",
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through",
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_renamed_attribute_fails_loudly_rather_than_disabling_the_guard",
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available"
    ],
    "owner": "no_flux/neumann/robin -> reflect (#1698)",
-   "seconds": 204.4,
+   "seconds": 159.6,
    "status": "ok",
    "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
   },
@@ -606,7 +639,7 @@
     "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
    ],
    "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-   "seconds": 198.0,
+   "seconds": 175.6,
    "status": "ok",
    "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
   },
@@ -744,7 +777,7 @@
     "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind"
    ],
    "owner": "D = sigma^2/2 for scalar sigma (#811)",
-   "seconds": 321.8,
+   "seconds": 326.4,
    "status": "ok",
    "verify": "diffusion_from_volatility(2.0) == 4.0"
   },
@@ -772,7 +805,7 @@
     "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
    ],
    "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-   "seconds": 208.8,
+   "seconds": 171.1,
    "status": "ok",
    "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
   },
@@ -815,7 +848,7 @@
     "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]"
    ],
    "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
-   "seconds": 201.1,
+   "seconds": 159.3,
    "status": "ok",
    "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
   }
@@ -823,7 +856,5 @@
  "paths": [
   "tests"
  ],
- "uncovered": [
-  "bc_default_reads_as_reflect"
- ]
+ "uncovered": []
 }

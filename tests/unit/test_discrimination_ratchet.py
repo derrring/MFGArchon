@@ -15,6 +15,7 @@ can silently stop working:
 """
 
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -177,6 +178,50 @@ def test_the_mutation_list_matches_the_parametrisation(td):
     assert len(td.MUTATIONS) == 6
 
 
+def test_the_end_of_run_guard_checks_the_mutated_files_only(td, monkeypatch):
+    """It must not fire on the script's own --json output.
+
+    Implemented as a whole-tree check it did exactly that: `--json` wrote the kill
+    matrix into the repo, the end-of-run assertion saw a modified tracked file, and
+    `--write-baseline` in the same invocation was refused -- with a message blaming
+    the operator for a file the script had just created. The startup check stays
+    whole-tree; only this one is scoped.
+    """
+    seen = {}
+
+    class _Proc:
+        stdout = ""
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return _Proc()
+
+    monkeypatch.setattr(td.subprocess, "run", fake_run)
+    td._assert_mutations_restored(td.MUTATIONS)
+    assert seen["cmd"][:4] == ["git", "status", "--porcelain", "--"], seen["cmd"]
+    scoped = set(seen["cmd"][4:])
+    assert scoped == {m.path for m in td.MUTATIONS}
+    assert not any(p.endswith(".json") for p in scoped), "the guard must not watch its own outputs"
+
+
+def test_main_uses_the_scoped_guard_at_the_end(td):
+    """M1 again, third time: the function was pinned, the CALL SITE was not.
+
+    Swapping the end-of-run call back to `_assert_clean_tree()` killed zero tests,
+    because the test above exercises `_assert_mutations_restored` directly. Source
+    inspection is the honest pin here -- driving `main()` means a 26-minute sweep --
+    and it is the same technique the mutation-anchor tests already use.
+    """
+    body = inspect.getsource(td.main)
+    assert "_assert_mutations_restored(selected)" in body, (
+        "main() no longer uses the scoped end-of-run guard; a whole-tree check there "
+        "fires on the script's own --json output and blocks --write-baseline"
+    )
+    # The whole-tree check belongs at startup and nowhere else: the run must begin from
+    # a state it can prove it restored.
+    assert body.count("_assert_clean_tree()") == 1
+
+
 def test_the_kill_matrix_is_committed_beside_the_baseline(td):
     """The counts are the gate; the matrix is the evidence under them.
 
@@ -185,7 +230,12 @@ def test_the_kill_matrix_is_committed_beside_the_baseline(td):
     stop shipping.
     """
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
-    assert matrix["_selection_regex_for_agreement_shaped"]
+    # Owned by the module, not hand-added to the JSON: a hand-added key does not
+    # survive the next --json, and this test caught exactly that regression once.
+    assert matrix["_selection_regex_for_agreement_shaped"] == td.AGREEMENT_SHAPED
+    assert matrix["_measured_at"] == json.loads(_BASELINE.read_text())["_measured_at"], (
+        "matrix and baseline record different runs"
+    )
     baseline = json.loads(_BASELINE.read_text())["mutations"]
     for name, res in baseline.items():
         assert matrix["mutations"][name]["kill_count"] == res["kill_count"], (

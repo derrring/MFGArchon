@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 5665,
-    "commit": "25b09c44",
+    "collected": 5683,
+    "commit": "bec28ce5",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
     "paths": [
@@ -11,12 +11,12 @@
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
-      "kill_count": 0,
+      "kill_count": 2,
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "status": "UNCOVERED"
+      "status": "ok"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 5,
+      "kill_count": 11,
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "status": "ok"
     },
