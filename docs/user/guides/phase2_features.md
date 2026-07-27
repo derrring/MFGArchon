@@ -19,7 +19,6 @@ The `solve_mfg()` function provides a one-line interface for solving MFG problem
 **Before (Factory API - ~30 lines)**:
 ```python
 from mfgarchon import MFGProblem
-from mfgarchon.factory import create_standard_solver
 from mfgarchon.config import create_fast_config
 
 problem = MFGProblem()
@@ -27,11 +26,7 @@ config = create_fast_config()
 config.max_iterations = 100
 config.tolerance_U = 1e-5
 
-solver = create_standard_solver(
-    problem=problem,
-    custom_config=config
-)
-result = solver.solve(verbose=True)
+result = problem.solve(config=config, verbose=True)
 ```
 
 **After (solve_mfg() - 1 line)**:
@@ -438,10 +433,10 @@ density_2d = particles_to_grid_kde_2d(
 Particle interpolation is used internally by hybrid solvers:
 
 ```python
-from mfgarchon.factory import create_standard_solver
+from mfgarchon.types import NumericalScheme
 
-# Standard solver uses HJB-FDM + FP-Particle (hybrid)
-solver = create_standard_solver(problem, "fixed_point")
+# The default pairing is HJB-FDM + FP-Particle (hybrid)
+result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
 
 # Internally:
 # 1. HJB solve on grid → value function U

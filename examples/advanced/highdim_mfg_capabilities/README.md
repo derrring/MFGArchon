@@ -37,7 +37,6 @@ highdim_mfg_capabilities/
 ### **2D Grid-Based MFG (Modern API)**
 ```python
 from mfgarchon import MFGProblem
-from mfgarchon.factory import create_basic_solver
 
 # 2D problem on tensor product grid
 problem = MFGProblem(
@@ -49,14 +48,12 @@ problem = MFGProblem(
 )
 
 # Solve MFG problem
-solver = create_basic_solver(problem)
-result = solver.solve()
+result = problem.solve()
 ```
 
 ### **3D Grid-Based MFG (Modern API)**
 ```python
 from mfgarchon import MFGProblem
-from mfgarchon.factory import create_basic_solver
 
 # 3D box domain with regular grid
 problem = MFGProblem(
@@ -68,8 +65,7 @@ problem = MFGProblem(
 )
 
 # Solve with factory
-solver = create_basic_solver(problem, damping=0.6, max_iterations=30)
-result = solver.solve()
+result = problem.solve(damping=0.6, max_iterations=30)
 ```
 
 ### **High-Performance nD Problems**

@@ -23,7 +23,7 @@ Our codebase follows a strict organizational pattern:
 ```python
 # Preferred imports for MFGArchon
 from mfgarchon import MFGProblem, BoundaryConditions
-from mfgarchon.factory import create_fast_solver
+from mfgarchon.types import NumericalScheme
 from mfgarchon.config import create_fast_config
 from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 ```
