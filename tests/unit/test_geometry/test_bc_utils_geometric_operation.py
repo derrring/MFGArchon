@@ -67,7 +67,13 @@ class TestGeometricOperationMapping:
         assert bc_type_to_geometric_operation("Periodic") == "periodic"
 
     def test_only_three_operations_are_ever_returned(self):
-        """Semi-Lagrangian foot placement dispatches on exactly these three."""
+        """The function's return alphabet. NOT a claim about what consumers dispatch on.
+
+        Review of #1738 grepped the consumers and found HJB-SL testing `bc_op == "wrap"`
+        at three sites against a value this function never returns, so periodic BCs are
+        never wrapped there. Filed separately. This test pins the alphabet only; the
+        consumer side is a different quantity and is not verified here.
+        """
         produced = {
             bc_type_to_geometric_operation(t)
             for t in ("no_flux", "neumann", "robin", "periodic", "dirichlet", "absorbing", None, "junk")
