@@ -1,5 +1,5 @@
 {
-  "_comment": "Executed capability of the public solve surface. --check-baseline fails in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. Regenerate with --write-baseline.",
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline.",
   "cells": {
     "fdm_centered/mass_conservation": {
       "artifact": {
@@ -31,6 +31,7 @@
     },
     "fvm_vs_fdm/agreement": {
       "artifact": {
+        "all_finite": true,
         "rel_l2_M": 0.04890589064334588,
         "rel_l2_M_terminal": 0.04285364468545015,
         "rel_l2_U": 0.0272298496449295,

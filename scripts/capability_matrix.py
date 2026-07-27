@@ -10,9 +10,11 @@ Three properties make a cell hard to satisfy the cheap way:
 
 - The oracle is a number (mass drift, relative L2 against a second discretisation),
   not an exception. ``pytest.raises`` cannot turn a cell green.
-- The comparison is against a closed form or a second independent discretisation,
-  never against another call into the same owner -- so consolidating two paths does
-  not make a cell tautological the way an agreement test becomes tautological.
+- Where a cell claims independence, the second reading comes from a genuinely
+  different discretisation, so consolidating two paths does not make it tautological
+  the way an agreement test does. Independence is claimed **per axis, in the cell's
+  own docstring**, not globally -- ``fvm_vs_fdm`` is independent on M and not on U,
+  because both arms share ``HJBFDMSolver``. Read the cell before relying on it.
 - ``--check-baseline`` fails in BOTH directions. A cell that recovers fails the check
   until the baseline records the recovery, so improvements cannot land silently and a
   baseline cannot be lowered without doing the work. Same structure as
@@ -23,7 +25,17 @@ A cell status is one of:
   PASS         solve returned and the oracle held
   FAIL         solve returned and the oracle was violated (measured value recorded)
   UNSUPPORTED  the path refused to run (exception type + message head recorded)
-  ERROR        the harness itself broke -- always fails --check-baseline
+  ERROR        the harness itself broke
+
+ERROR is not a status like the others: it is never written to a baseline and never
+compared against one. Any ERROR exits 2 before the baseline is read. Treating it as
+comparable was a real hole -- an ERROR baselined as ERROR matched, so a harness broken
+during a regeneration would have stayed green forever, the matrix silently no longer
+measuring anything and reporting success for it.
+
+What ``--check-baseline`` compares is STATUS, not the recorded artifacts. The artifact
+blocks in the baseline are a record for a human diffing a PR; a cell can degrade well
+within its own tolerance and the gate stays green.
 
 Every cell but one drives the public API. ``regime_switching/non_negativity`` reaches
 through the deep module path because ``RegimeSwitchingIterator`` is exported from no
@@ -156,6 +168,38 @@ def _rel_l2(a: np.ndarray, b: np.ndarray, dx: float) -> float:
     return float(np.sqrt(dx * np.sum((a - b) ** 2)) / np.sqrt(dx * np.sum(b**2)))
 
 
+class HarnessError(Exception):
+    """The measurement apparatus failed. Never the code under test.
+
+    A cell has three phases and only the middle one may report UNSUPPORTED:
+
+      construct  build the fixture      -- any failure here is mine
+      solve      call the library       -- a refusal here is the measurement
+      measure    compute the oracle     -- any failure here is mine
+
+    Classifying by exception type instead was the wrong shape, and shipped two
+    holes: a `ValueError` from a mistyped fixture argument, and an `IndexError`
+    from `M.shape[1]` on a malformed result, both read as "the library does not
+    support this". Phase, not type, is what separates the two.
+    """
+
+
+def _construct(what: str, fn, *args, **kwargs):
+    """Build a fixture. Any exception is a harness fault, not a library refusal."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        raise HarnessError(f"constructing {what}: {type(exc).__name__}: {exc}") from exc
+
+
+def _measure(what: str, fn, *args, **kwargs):
+    """Compute an oracle from a returned result. Any exception is a harness fault."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        raise HarnessError(f"measuring {what}: {type(exc).__name__}: {exc}") from exc
+
+
 # --------------------------------------------------------------------------------
 # Cells
 # --------------------------------------------------------------------------------
@@ -167,9 +211,9 @@ def _mass_conservation_cell(scheme_name: str):
     def run():
         from mfgarchon.types import NumericalScheme
 
-        problem = _smoke_problem()
+        problem = _construct("smoke problem", _smoke_problem)
         result = problem.solve(scheme=getattr(NumericalScheme, scheme_name), max_iterations=5, verbose=False)
-        art = _mass_drift(result, problem)
+        art = _measure("mass drift", _mass_drift, result, problem)
         tol = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
         art["tolerance"] = tol
         if not art["all_finite"]:
@@ -193,19 +237,19 @@ def _gfdm_rbf_cell():
     def run():
         from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
-        problem = _smoke_problem()
+        problem = _construct("smoke problem", _smoke_problem)
         pts = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
 
-        # Control: the same call with the supported method must construct. If this
-        # raises, the cell reports ERROR (harness broken), never UNSUPPORTED.
-        try:
-            HJBGFDMSolver(problem=problem, collocation_points=pts, derivative_method="taylor")
-        except Exception as exc:
-            raise AssertionError(
-                f"harness control failed: derivative_method='taylor' did not construct "
-                f"({type(exc).__name__}: {' '.join(str(exc).split())[:120]}); "
-                f"the rbf verdict below would be meaningless"
-            ) from exc
+        # Control: the same call with the supported method must construct, or the rbf
+        # verdict below is meaningless. _construct makes its failure ERROR, not
+        # UNSUPPORTED.
+        _construct(
+            "gfdm taylor control",
+            HJBGFDMSolver,
+            problem=problem,
+            collocation_points=pts,
+            derivative_method="taylor",
+        )
 
         HJBGFDMSolver(problem=problem, collocation_points=pts, derivative_method="rbf")
         return "PASS", {"constructed": True}
@@ -214,34 +258,59 @@ def _gfdm_rbf_cell():
 
 
 def _fvm_fdm_agreement_cell():
-    """Two independent discretisations of one PDE must agree to a few percent.
+    """FVM_MUSCL and FDM_UPWIND on one 1-D LQ problem must agree to a few percent.
 
-    The oracle is a second discretisation, not a second call into a shared owner, so
-    single-sourcing the drift or the Hamiltonian does not make this tautological.
+    **What is and is not independent here.** ``create_paired_solvers`` gives
+    ``FVM_MUSCL`` the pair (``HJBFDMSolver``, ``FPFVMSolver``) and ``FDM_UPWIND`` the
+    pair (``HJBFDMSolver``, ``FPFDMSolver``) -- FVM has no HJB partner of its own yet.
+    So the **M** axis is a genuine second discretisation and does not go tautological
+    when the FP drift or the Hamiltonian is single-sourced; the **U** axis is the same
+    HJB class on both arms and is a consistency check, not an independent comparison.
+    The headline number is driven by the M axis (measured 4.891% M vs 2.723% U).
+
+    An earlier version of this docstring claimed independence for the whole cell. That
+    was wrong, and would have mattered: it is the claim someone would rely on when
+    deciding this cell still bites after a consolidation.
     """
 
     def run():
         from mfgarchon.types import NumericalScheme
 
-        p_fvm = _lq_problem_1d()
+        p_fvm = _construct("FVM problem", _lq_problem_1d)
         dx = p_fvm.geometry.get_grid_spacing()[0]
         r_fvm = p_fvm.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
 
-        p_fdm = _lq_problem_1d()
+        p_fdm = _construct("FDM problem", _lq_problem_1d)
         r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4)
 
-        M_fvm, M_fdm = _density(r_fvm), np.asarray(r_fdm.M, dtype=float)
-        U_fvm, U_fdm = np.asarray(r_fvm.U, dtype=float), np.asarray(r_fdm.U, dtype=float)
+        def oracle():
+            M_fvm, M_fdm = _density(r_fvm), np.asarray(r_fdm.M, dtype=float)
+            U_fvm, U_fdm = np.asarray(r_fvm.U, dtype=float), np.asarray(r_fdm.U, dtype=float)
+            # Checked before the norms. `max()` drops a NaN in any non-leading
+            # position -- max(0.0, nan, 0.0) is 0.0 -- so an all-NaN value function
+            # would otherwise pass, and would also make --write-baseline emit a bare
+            # NaN token, which is not valid JSON.
+            art = {
+                "all_finite": bool(
+                    np.isfinite(M_fvm).all()
+                    and np.isfinite(M_fdm).all()
+                    and np.isfinite(U_fvm).all()
+                    and np.isfinite(U_fdm).all()
+                ),
+                "tolerance": AGREEMENT_RTOL,
+            }
+            if not art["all_finite"]:
+                art["worst"] = None
+                return art
+            art["rel_l2_M"] = _rel_l2(M_fvm, M_fdm, dx)
+            art["rel_l2_U"] = _rel_l2(U_fvm, U_fdm, dx)
+            art["rel_l2_M_terminal"] = _rel_l2(M_fvm[-1], M_fdm[-1], dx)
+            art["worst"] = max(art["rel_l2_M"], art["rel_l2_U"], art["rel_l2_M_terminal"])
+            return art
 
-        art = {
-            "rel_l2_M": _rel_l2(M_fvm, M_fdm, dx),
-            "rel_l2_U": _rel_l2(U_fvm, U_fdm, dx),
-            "rel_l2_M_terminal": _rel_l2(M_fvm[-1], M_fdm[-1], dx),
-            "tolerance": AGREEMENT_RTOL,
-        }
-        worst = max(art["rel_l2_M"], art["rel_l2_U"], art["rel_l2_M_terminal"])
-        art["worst"] = worst
-        return ("PASS" if worst < AGREEMENT_RTOL else "FAIL"), art
+        art = _measure("FVM/FDM agreement", oracle)
+        ok = art["all_finite"] and art["worst"] < AGREEMENT_RTOL
+        return ("PASS" if ok else "FAIL"), art
 
     return run
 
@@ -250,18 +319,22 @@ def _fvm_mass_cell():
     def run():
         from mfgarchon.types import NumericalScheme
 
-        problem = _lq_problem_1d()
+        problem = _construct("FVM problem", _lq_problem_1d)
         result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
-        M = _density(result)
-        dx = problem.geometry.get_grid_spacing()[0]
-        mass = M.sum(axis=1) * dx
-        art = {
-            "mass_t0": float(mass[0]),
-            "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
-            "min_density": float(M.min()),
-            "all_finite": bool(np.isfinite(M).all()),
-            "tolerance": 1e-6,
-        }
+
+        def oracle():
+            M = _density(result)
+            dx = problem.geometry.get_grid_spacing()[0]
+            mass = M.sum(axis=1) * dx
+            return {
+                "mass_t0": float(mass[0]),
+                "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
+                "min_density": float(M.min()),
+                "all_finite": bool(np.isfinite(M).all()),
+                "tolerance": 1e-6,
+            }
+
+        art = _measure("FVM mass drift", oracle)
         ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
         return ("PASS" if ok else "FAIL"), art
 
@@ -316,8 +389,10 @@ def _regime_switching_cell():
                 ),
             )
 
-        problems = [lq(c) for c in (1.0, 0.5)]
-        iterator = RegimeSwitchingIterator(
+        problems = _construct("regime problems", lambda: [lq(c) for c in (1.0, 0.5)])
+        iterator = _construct(
+            "regime iterator",
+            RegimeSwitchingIterator,
             problems=problems,
             regime_config=RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
             hjb_solvers=[HJBFDMSolver(p) for p in problems],
@@ -328,26 +403,29 @@ def _regime_switching_cell():
         )
         result = iterator.solve()
 
-        dx = problems[0].geometry.get_grid_spacing()[0]
-        per_regime = []
-        for k, dens in enumerate(result.densities):
-            M = _apply_mutation(np.asarray(dens, dtype=float))
-            mass = M.sum(axis=1) * dx
-            per_regime.append(
-                {
-                    "regime": k,
-                    "min_density": float(M.min()),
-                    "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
-                    "all_finite": bool(np.isfinite(M).all()),
-                }
-            )
-        art = {
-            "regimes": per_regime,
-            "min_density": min(r["min_density"] for r in per_regime),
-            "max_rel_drift": max(r["max_rel_drift"] for r in per_regime),
-            "all_finite": all(r["all_finite"] for r in per_regime),
-            "tolerance": 1e-6,
-        }
+        def oracle():
+            dx = problems[0].geometry.get_grid_spacing()[0]
+            per_regime = []
+            for k, dens in enumerate(result.densities):
+                M = _apply_mutation(np.asarray(dens, dtype=float))
+                mass = M.sum(axis=1) * dx
+                per_regime.append(
+                    {
+                        "regime": k,
+                        "min_density": float(M.min()),
+                        "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
+                        "all_finite": bool(np.isfinite(M).all()),
+                    }
+                )
+            return {
+                "regimes": per_regime,
+                "min_density": min(r["min_density"] for r in per_regime),
+                "max_rel_drift": max(r["max_rel_drift"] for r in per_regime),
+                "all_finite": all(r["all_finite"] for r in per_regime),
+                "tolerance": 1e-6,
+            }
+
+        art = _measure("regime mass/non-negativity", oracle)
         ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
         return ("PASS" if ok else "FAIL"), art
 
@@ -387,15 +465,24 @@ def evaluate(only: list[str] | None = None) -> dict:
         t0 = time.perf_counter()
         try:
             status, artifact = run()
-        # Broad by design: classifying the refusal IS the measurement here. The
-        # narrowing happens below, on the exception type.
+        # A HarnessError names its own phase: construct or measure, never the solve.
+        except HarnessError as exc:
+            status = "ERROR"
+            artifact = {
+                "exception": "HarnessError",
+                "message": " ".join(str(exc).split())[:200],
+                "traceback_tail": traceback.format_exc().strip().splitlines()[-1],
+            }
+        # Broad by design: classifying the refusal IS the measurement here. Anything
+        # reaching this point came out of the solve phase.
         except Exception as exc:
             status = "UNSUPPORTED"
-            head = " ".join(str(exc).split())[:200]
-            artifact = {"exception": type(exc).__name__, "message": head}
-            # A cell reports UNSUPPORTED only for a refusal by the code under test.
-            # A broken harness -- bad import, wrong signature, failed control -- must
-            # never be readable as "the library does not support this".
+            artifact = {
+                "exception": type(exc).__name__,
+                "message": " ".join(str(exc).split())[:200],
+            }
+            # Second net, for exception classes that cannot come from a library
+            # refusal no matter which phase raised them.
             if type(exc).__name__ in {
                 "ImportError",
                 "ModuleNotFoundError",
@@ -415,6 +502,11 @@ def evaluate(only: list[str] | None = None) -> dict:
 
 def _statuses(results: dict) -> dict:
     return {k: v["status"] for k, v in results.items()}
+
+
+def errored(results: dict) -> list[str]:
+    """Cells whose apparatus failed. Never comparable, never baselined."""
+    return sorted(k for k, v in results.items() if v["status"] == "ERROR")
 
 
 def compare_to_baseline(current: dict[str, str], baseline: dict[str, dict]) -> list[str]:
@@ -444,23 +536,34 @@ def compare_to_baseline(current: dict[str, str], baseline: dict[str, dict]) -> l
     return problems
 
 
+def _summarise(art: dict) -> str:
+    """One line per artifact. Must never raise: a reporting crash would lose the run.
+
+    A cell whose oracle short-circuits (the NaN guard returns before the norms are
+    computed) hands back a partial artifact, and a KeyError here would take down a
+    report whose whole job is to show that something went wrong.
+    """
+    if "exception" in art:
+        return f"{art['exception']}: {str(art.get('message', ''))[:70]}"
+    if art.get("all_finite") is False:
+        return "NON-FINITE values in the compared arrays"
+    if art.get("worst") is not None:
+        tol = art.get("tolerance")
+        tol_s = f" (tol {tol:.0%})" if isinstance(tol, float) else ""
+        return f"worst rel L2 {art['worst']:.3%}{tol_s}"
+    if art.get("max_drift") is not None:
+        return f"mass drift {art['max_drift']:.3e}, min M {art.get('min_density', float('nan')):.3e}"
+    if art.get("max_rel_drift") is not None:
+        return f"rel mass drift {art['max_rel_drift']:.3e}, min M {art.get('min_density', float('nan')):.3e}"
+    return json.dumps(art, default=str)
+
+
 def print_report(results: dict) -> None:
     width = max(len(k) for k in results)
     print(f"\n{'cell':<{width}}  {'status':<12} {'s':>6}  artifact")
     print("-" * (width + 60))
     for name, r in sorted(results.items()):
-        art = r["artifact"]
-        if "exception" in art:
-            summary = f"{art['exception']}: {art['message'][:70]}"
-        elif "worst" in art:
-            summary = f"worst rel L2 {art['worst']:.3%} (tol {art['tolerance']:.0%})"
-        elif "max_drift" in art:
-            summary = f"mass drift {art['max_drift']:.3e}, min M {art['min_density']:.3e}"
-        elif "max_rel_drift" in art:
-            summary = f"rel mass drift {art['max_rel_drift']:.3e}, min M {art['min_density']:.3e}"
-        else:
-            summary = json.dumps(art)
-        print(f"{name:<{width}}  {r['status']:<12} {r['seconds']:>6.2f}  {summary}")
+        print(f"{name:<{width}}  {r['status']:<12} {r['seconds']:>6.2f}  {_summarise(r['artifact'])}")
     tally = {}
     for r in results.values():
         tally[r["status"]] = tally.get(r["status"], 0) + 1
@@ -477,6 +580,10 @@ def self_test() -> int:
     global _DENSITY_MUTATION
 
     baseline = evaluate(only=sorted(MASS_ORACLE_CELLS))
+    broken = errored(baseline)
+    if broken:
+        print(f"SELF-TEST ABORTED: harness broken in {', '.join(broken)}.")
+        return 2
     passing = [k for k, v in baseline.items() if v["status"] == "PASS"]
     if not passing:
         print("SELF-TEST INCONCLUSIVE: no mass-oracle cell is PASS, nothing to mutate.")
@@ -525,18 +632,44 @@ def main() -> None:
     else:
         print_report(results)
 
+    # ERROR means the apparatus failed, so no verdict below is trustworthy. It is
+    # checked before the baseline is even read, and it is never comparable: an ERROR
+    # baselined as ERROR would otherwise match, and a harness broken during a
+    # regeneration would be green forever -- the matrix silently stops measuring and
+    # reports success for doing so.
+    broken = errored(results)
+    if broken:
+        print("\nHarness is broken; no capability verdict is trustworthy:")
+        for name in broken:
+            art = results[name]["artifact"]
+            print(f"  {name}: {art.get('exception')}: {art.get('message', '')[:150]}")
+        print("\nFix the harness. ERROR is never baselined and never compared.")
+        sys.exit(2)
+
     if args.write_baseline:
         payload = {
             "_comment": (
-                "Executed capability of the public solve surface. --check-baseline fails in "
-                "BOTH directions: a recovered cell must be recorded here in the same change "
-                "that recovers it. Regenerate with --write-baseline."
+                "Executed capability of the solve surface. --check-baseline compares STATUS "
+                "only, in BOTH directions: a recovered cell must be recorded here in the same "
+                "change that recovers it. The artifact blocks are a record for diffing by a "
+                "human reviewer, NOT a gate -- a cell can degrade within its own tolerance "
+                "(fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. "
+                "Regenerate with --write-baseline."
             ),
             "cells": {k: {"status": v["status"], "artifact": v["artifact"]} for k, v in results.items()},
         }
+        # allow_nan=False: Python would otherwise emit a bare `NaN` token, which is
+        # not JSON and which every non-Python reader rejects. A non-finite artifact
+        # also means a cell's oracle produced one, which is a defect in the cell --
+        # refuse rather than record it.
+        try:
+            body = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)
+        except ValueError as exc:
+            print(f"\nRefusing to write a baseline with a non-finite artifact: {exc}")
+            print("A cell's oracle returned NaN or Infinity. Fix the cell.")
+            sys.exit(1)
         with open(args.write_baseline, "w") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
+            fh.write(body + "\n")
         print(f"\nBaseline written to {args.write_baseline}")
         sys.exit(0)
 
@@ -552,7 +685,7 @@ def main() -> None:
         print(f"\nCapability matches baseline ({len(baseline)} cells).")
         sys.exit(0)
 
-    sys.exit(1 if any(r["status"] == "ERROR" for r in results.values()) else 0)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
