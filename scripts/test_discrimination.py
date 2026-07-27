@@ -200,6 +200,27 @@ def _env() -> dict:
     return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
 
 
+def _assert_mutations_restored(selected: list[Mutation]) -> None:
+    """The end-of-run guarantee: every file this run mutated is back as it was.
+
+    NOT a whole-tree check. That is right at startup -- the run must begin from a state
+    it can prove it restored -- but wrong at the end, where the script has by then
+    written its own `--json` output into the repo. Implemented as a tree check, it
+    refused to write the baseline in the same invocation that produced the matrix, and
+    the refusal message blamed the operator for a file the script itself had created.
+    """
+    paths = sorted({m.path for m in selected})
+    out = subprocess.run(
+        ["git", "status", "--porcelain", "--", *paths], cwd=REPO, capture_output=True, text=True
+    ).stdout
+    dirty = [ln for ln in out.splitlines() if not ln.startswith("??")]
+    if dirty:
+        sys.exit(
+            "MUTATION NOT RESTORED -- the tree still carries a perturbation. Recover with "
+            "`git checkout --` on the paths below before doing anything else.\n" + "\n".join(dirty)
+        )
+
+
 def _assert_clean_tree() -> None:
     """No MODIFIED tracked files.
 
@@ -471,8 +492,8 @@ def main() -> None:
         Path(args.json).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         print(f"\nKill matrix written to {args.json}")
 
-    _assert_clean_tree()
-    print("\nWorking tree restored and verified clean.")
+    _assert_mutations_restored(selected)
+    print("\nEvery mutated file verified restored.")
 
     if args.write_baseline:
         _write_baseline(Path(args.write_baseline), results, paths=paths, collected=base.collected)
