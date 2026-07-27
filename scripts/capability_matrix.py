@@ -181,21 +181,45 @@ class HarnessError(Exception):
     holes: a `ValueError` from a mistyped fixture argument, and an `IndexError`
     from `M.shape[1]` on a malformed result, both read as "the library does not
     support this". Phase, not type, is what separates the two.
+
+    **What goes inside the wrapper: the fixture, never the object under test.**
+    Constructing the thing being measured is part of the measurement, because its
+    ``__init__`` runs the library's own validation -- ``RegimeSwitchingIterator``
+    calls ``assert_paired_solver_sigma`` (#1603 / RFC #1574 C14), and refusing
+    there is a capability statement, not a broken harness. Wrapping it would turn
+    that refusal into an ERROR, and ERROR is never baselined, so the refusal could
+    never be recorded at all. The fixtures -- geometry, components, Hamiltonian,
+    the problem list -- are the harness's own choices and do go inside.
     """
 
 
-def _construct(what: str, fn, *args, **kwargs):
-    """Build a fixture. Any exception is a harness fault, not a library refusal."""
+def _construct(what: str, thunk):
+    """Build a fixture. Any exception is a harness fault, not a library refusal.
+
+    Takes a zero-argument callable, deliberately. An earlier signature was
+    ``_construct(what, fn, *args, **kwargs)``, which does not do what it looks
+    like: Python evaluates argument expressions in the CALLER's frame, so
+    ``_construct("iterator", Cls, solvers=[Solver(p) for p in problems])`` runs
+    every one of those constructors before ``_construct`` is entered, and their
+    failures bypass the wrapper entirely. A thunk is the only form where the
+    wrapper actually covers what it appears to cover.
+    """
     try:
-        return fn(*args, **kwargs)
+        return thunk()
     except Exception as exc:
         raise HarnessError(f"constructing {what}: {type(exc).__name__}: {exc}") from exc
 
 
-def _measure(what: str, fn, *args, **kwargs):
-    """Compute an oracle from a returned result. Any exception is a harness fault."""
+def _measure(what: str, thunk):
+    """Compute the verdict from a returned result. Any exception is a harness fault.
+
+    The thunk returns the whole ``(status, artifact)`` pair, not just the artifact.
+    Returning the artifact alone left the comparison against it -- ``art["worst"] <
+    AGREEMENT_RTOL`` -- one line outside the wrapper, so a ``KeyError`` from a
+    partial artifact still read as a library refusal.
+    """
     try:
-        return fn(*args, **kwargs)
+        return thunk()
     except Exception as exc:
         raise HarnessError(f"measuring {what}: {type(exc).__name__}: {exc}") from exc
 
@@ -213,14 +237,14 @@ def _mass_conservation_cell(scheme_name: str):
 
         problem = _construct("smoke problem", _smoke_problem)
         result = problem.solve(scheme=getattr(NumericalScheme, scheme_name), max_iterations=5, verbose=False)
-        art = _measure("mass drift", _mass_drift, result, problem)
-        tol = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
-        art["tolerance"] = tol
-        if not art["all_finite"]:
-            return "FAIL", art
-        if art["max_drift"] > tol:
-            return "FAIL", art
-        return "PASS", art
+
+        def verdict():
+            art = _mass_drift(result, problem)
+            art["tolerance"] = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
+            ok = art["all_finite"] and art["max_drift"] <= art["tolerance"]
+            return ("PASS" if ok else "FAIL"), art
+
+        return _measure("mass drift", verdict)
 
     return run
 
@@ -241,14 +265,12 @@ def _gfdm_rbf_cell():
         pts = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
 
         # Control: the same call with the supported method must construct, or the rbf
-        # verdict below is meaningless. _construct makes its failure ERROR, not
-        # UNSUPPORTED.
+        # verdict below is meaningless. The CONTROL is a fixture, so it goes inside
+        # _construct; the rbf construction one line below is the object under test and
+        # deliberately does not.
         _construct(
             "gfdm taylor control",
-            HJBGFDMSolver,
-            problem=problem,
-            collocation_points=pts,
-            derivative_method="taylor",
+            lambda: HJBGFDMSolver(problem=problem, collocation_points=pts, derivative_method="taylor"),
         )
 
         HJBGFDMSolver(problem=problem, collocation_points=pts, derivative_method="rbf")
@@ -283,7 +305,7 @@ def _fvm_fdm_agreement_cell():
         p_fdm = _construct("FDM problem", _lq_problem_1d)
         r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4)
 
-        def oracle():
+        def verdict():
             M_fvm, M_fdm = _density(r_fvm), np.asarray(r_fdm.M, dtype=float)
             U_fvm, U_fdm = np.asarray(r_fvm.U, dtype=float), np.asarray(r_fdm.U, dtype=float)
             # Checked before the norms. `max()` drops a NaN in any non-leading
@@ -301,16 +323,14 @@ def _fvm_fdm_agreement_cell():
             }
             if not art["all_finite"]:
                 art["worst"] = None
-                return art
+                return "FAIL", art
             art["rel_l2_M"] = _rel_l2(M_fvm, M_fdm, dx)
             art["rel_l2_U"] = _rel_l2(U_fvm, U_fdm, dx)
             art["rel_l2_M_terminal"] = _rel_l2(M_fvm[-1], M_fdm[-1], dx)
             art["worst"] = max(art["rel_l2_M"], art["rel_l2_U"], art["rel_l2_M_terminal"])
-            return art
+            return ("PASS" if art["worst"] < AGREEMENT_RTOL else "FAIL"), art
 
-        art = _measure("FVM/FDM agreement", oracle)
-        ok = art["all_finite"] and art["worst"] < AGREEMENT_RTOL
-        return ("PASS" if ok else "FAIL"), art
+        return _measure("FVM/FDM agreement", verdict)
 
     return run
 
@@ -322,21 +342,21 @@ def _fvm_mass_cell():
         problem = _construct("FVM problem", _lq_problem_1d)
         result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
 
-        def oracle():
+        def verdict():
             M = _density(result)
             dx = problem.geometry.get_grid_spacing()[0]
             mass = M.sum(axis=1) * dx
-            return {
+            art = {
                 "mass_t0": float(mass[0]),
                 "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
                 "min_density": float(M.min()),
                 "all_finite": bool(np.isfinite(M).all()),
                 "tolerance": 1e-6,
             }
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            return ("PASS" if ok else "FAIL"), art
 
-        art = _measure("FVM mass drift", oracle)
-        ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
-        return ("PASS" if ok else "FAIL"), art
+        return _measure("FVM mass drift", verdict)
 
     return run
 
@@ -390,9 +410,13 @@ def _regime_switching_cell():
             )
 
         problems = _construct("regime problems", lambda: [lq(c) for c in (1.0, 0.5)])
-        iterator = _construct(
-            "regime iterator",
-            RegimeSwitchingIterator,
+
+        # NOT wrapped, deliberately. Solver and iterator construction is the object
+        # under test: RegimeSwitchingIterator.__init__ runs assert_paired_solver_sigma
+        # (#1603 / RFC #1574 C14) and three other library validations, so a refusal
+        # here is a capability statement. Wrapping it would make that ERROR, and ERROR
+        # is never baselined -- the refusal could then never be recorded at all.
+        iterator = RegimeSwitchingIterator(
             problems=problems,
             regime_config=RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
             hjb_solvers=[HJBFDMSolver(p) for p in problems],
@@ -403,7 +427,7 @@ def _regime_switching_cell():
         )
         result = iterator.solve()
 
-        def oracle():
+        def verdict():
             dx = problems[0].geometry.get_grid_spacing()[0]
             per_regime = []
             for k, dens in enumerate(result.densities):
@@ -417,17 +441,17 @@ def _regime_switching_cell():
                         "all_finite": bool(np.isfinite(M).all()),
                     }
                 )
-            return {
+            art = {
                 "regimes": per_regime,
                 "min_density": min(r["min_density"] for r in per_regime),
                 "max_rel_drift": max(r["max_rel_drift"] for r in per_regime),
                 "all_finite": all(r["all_finite"] for r in per_regime),
                 "tolerance": 1e-6,
             }
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            return ("PASS" if ok else "FAIL"), art
 
-        art = _measure("regime mass/non-negativity", oracle)
-        ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
-        return ("PASS" if ok else "FAIL"), art
+        return _measure("regime mass/non-negativity", verdict)
 
     return run
 
@@ -537,16 +561,25 @@ def compare_to_baseline(current: dict[str, str], baseline: dict[str, dict]) -> l
 
 
 def _summarise(art: dict) -> str:
-    """One line per artifact. Must never raise: a reporting crash would lose the run.
+    """One line per artifact. Never raises: a reporting crash would lose the run.
 
     A cell whose oracle short-circuits (the NaN guard returns before the norms are
     computed) hands back a partial artifact, and a KeyError here would take down a
-    report whose whole job is to show that something went wrong.
+    report whose whole job is to show that something went wrong. The branches below
+    cover every shape a production cell emits; the catch-all covers the rest, since
+    "never raises" has to hold for shapes nobody anticipated -- that is the point.
     """
+    try:
+        return _summarise_known(art)
+    except Exception:
+        return f"UNSUMMARISABLE artifact: {repr(art)[:110]}"
+
+
+def _summarise_known(art: dict) -> str:
     if "exception" in art:
         return f"{art['exception']}: {str(art.get('message', ''))[:70]}"
     if art.get("all_finite") is False:
-        return "NON-FINITE values in the compared arrays"
+        return "NON-FINITE values in the measured arrays"
     if art.get("worst") is not None:
         tol = art.get("tolerance")
         tol_s = f" (tol {tol:.0%})" if isinstance(tol, float) else ""
@@ -595,6 +628,15 @@ def self_test() -> int:
     finally:
         _DENSITY_MUTATION = None
 
+    # ERROR under mutation is NOT evidence the oracle bites. Scoring on "not PASS"
+    # counted a harness that broke under mutation as a working control -- the same
+    # shape as treating ERROR as a comparable status, surviving in the one place the
+    # earlier fix did not reach, and it matters more here because this IS the control.
+    mutated_broken = errored(mutated)
+    if mutated_broken:
+        print(f"SELF-TEST ABORTED: harness broke under mutation in {', '.join(mutated_broken)}.")
+        return 2
+
     inert = [k for k in passing if mutated[k]["status"] == "PASS"]
     for k in passing:
         verdict = "INERT" if k in inert else "discriminates"
@@ -639,11 +681,13 @@ def main() -> None:
     # reports success for doing so.
     broken = errored(results)
     if broken:
-        print("\nHarness is broken; no capability verdict is trustworthy:")
+        # stderr, not stdout: --json writes the blob to stdout above, and appending
+        # a human block after it makes the output unparseable.
+        print("\nHarness is broken; no capability verdict is trustworthy:", file=sys.stderr)
         for name in broken:
             art = results[name]["artifact"]
-            print(f"  {name}: {art.get('exception')}: {art.get('message', '')[:150]}")
-        print("\nFix the harness. ERROR is never baselined and never compared.")
+            print(f"  {name}: {art.get('exception')}: {art.get('message', '')[:150]}", file=sys.stderr)
+        print("\nFix the harness. ERROR is never baselined and never compared.", file=sys.stderr)
         sys.exit(2)
 
     if args.write_baseline:

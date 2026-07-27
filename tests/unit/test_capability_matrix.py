@@ -247,7 +247,7 @@ def test_an_exception_while_computing_the_oracle_is_error_not_unsupported(cm, mo
         class Result:
             M = None
 
-        cm._measure("mass drift", cm._mass_drift, Result(), None)
+        cm._measure("mass drift", lambda: cm._mass_drift(Result(), None))
 
     monkeypatch.setattr(cm, "CELLS", {"bad/measure": bad_measure})
     result = cm.evaluate()["bad/measure"]
@@ -381,17 +381,53 @@ def test_self_test_passes_when_the_oracle_reads_the_mutation(cm, monkeypatch):
     assert cm.self_test() == 0
 
 
-def test_self_test_restores_the_mutation_even_if_a_cell_raises(cm, monkeypatch):
-    """A leaked mutation would make every later run FAIL for no reason."""
+def test_self_test_restores_the_mutation(cm, monkeypatch):
+    """A leaked mutation would make every later run FAIL for no reason.
+
+    Named for what it checks. The earlier name said "even if a cell raises", which
+    it did not earn: ``evaluate`` swallows every per-cell exception, so the
+    ``finally`` is never reached via an exception and deleting the ``try/finally``
+    killed no test. The reset itself is real and is what is pinned here.
+    """
+    monkeypatch.setattr(cm, "CELLS", {"cell": lambda: ("PASS", {})})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"cell"})
+    cm.self_test()
+    assert cm._DENSITY_MUTATION is None
+
+
+def test_self_test_aborts_when_the_harness_breaks_under_mutation(cm, monkeypatch):
+    """ERROR under mutation is not evidence the oracle bites.
+
+    Scoring on "not PASS" counted a harness that broke under mutation as a working
+    control -- the same shape as treating ERROR as a comparable status, surviving in
+    the one place the earlier fix did not reach. It matters more here because this
+    IS the control: it is what certifies the other cells still discriminate.
+    """
     calls = {"n": 0}
 
-    def flaky():
+    def healthy_then_broken():
         calls["n"] += 1
         if calls["n"] == 1:
             return "PASS", {}
-        raise RuntimeError("solver blew up under mutation")
+        raise TypeError("apparatus broke under mutation")
 
-    monkeypatch.setattr(cm, "CELLS", {"flaky/cell": flaky})
-    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"flaky/cell"})
-    cm.self_test()
-    assert cm._DENSITY_MUTATION is None
+    monkeypatch.setattr(cm, "CELLS", {"cell": healthy_then_broken})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"cell"})
+    assert cm.self_test() == 2, "a broken apparatus must not certify the control"
+
+
+def test_summarise_never_raises_on_any_shape(cm):
+    """`never raises` has to hold for shapes nobody anticipated -- that is the point."""
+    shapes = [
+        {},
+        {"min_density": None},
+        {"max_drift": "not a float", "min_density": 0.0},
+        {"worst": "text"},
+        {"exception": 123},
+        {"all_finite": 0},
+        {"nested": {"a": [1, 2]}},
+        {"obj": object()},
+        {"worst": 0.01, "tolerance": "seven percent"},
+    ]
+    for art in shapes:
+        assert isinstance(cm._summarise(art), str), f"raised or returned non-str for {art!r}"
