@@ -1,6 +1,14 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
-  "_measured_at": "8d56dc8d, tests/ under the CI marker set, 5665 collected",
+  "_measured_at": {
+    "collected": 5665,
+    "commit": "25b09c44",
+    "excluded": "tests/unit/test_discrimination_ratchet.py",
+    "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
+    "paths": [
+      "tests"
+    ]
+  },
   "mutations": {
     "bc_default_reads_as_reflect": {
       "kill_count": 0,

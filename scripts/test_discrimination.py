@@ -19,9 +19,12 @@ TWO TRAPS, both live in this repo, both handled here:
 - **#1677 -- an editable install pins imports to the main checkout.** Mutating a copy
   or a worktree and running pytest there can leave the *original* module imported, so
   every mutation reports zero kills and reads as "nothing discriminates". This script
-  mutates the main checkout in place, restores from a pristine copy under try/finally,
-  and refuses to start on a dirty tree. It also asserts at run time that the imported
-  `mfgarchon` is the tree it mutated.
+  mutates the main checkout in place, restores each file from the text it read before
+  writing (held in memory, under try/finally), and refuses to start with modified
+  tracked files. It also asserts at run time that the imported `mfgarchon` is the tree
+  it mutated. SIGINT is safe -- the original text is captured before the write and
+  restored by the outer finally. SIGKILL is not: recover with `git checkout --`, which
+  the dirty-tree guard forces before a re-run.
 - **A mutation that kills nothing is ambiguous.** Either every test is blind to that
   convention, or the mutation never executed. Each mutation therefore carries `verify`:
   an expression run against the mutated tree that is true only if the perturbation is
@@ -48,10 +51,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -144,6 +145,7 @@ _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?:\s|$)", re.MULTILINE)
 class Run:
     failed: set[str] = field(default_factory=set)
     returncode: int = 0
+    collected: int = 0
     seconds: float = 0.0
 
 
@@ -178,8 +180,18 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
     return Run(
         failed=set(_FAILED.findall(proc.stdout)),
         returncode=proc.returncode,
+        collected=_collected(proc.stdout),
         seconds=round(time.perf_counter() - t0, 1),
     )
+
+
+_COLLECTED = re.compile(r"(\d+) (?:passed|failed|error)")
+
+
+def _collected(stdout: str) -> int:
+    """Tests that actually ran. Zero means the run did not happen, not that it passed."""
+    counts = re.findall(r"(\d+) (?:passed|failed|xfailed|xpassed|skipped)", stdout)
+    return sum(int(c) for c in counts)
 
 
 def _env() -> dict:
@@ -191,8 +203,8 @@ def _env() -> dict:
 def _assert_clean_tree() -> None:
     """No MODIFIED tracked files.
 
-    Untracked files are ignored on purpose: the restore rewrites tracked files from a
-    pristine copy, so an untracked file cannot be clobbered by it and its presence says
+    Untracked files are ignored on purpose: the restore only rewrites the tracked files
+    it mutated, so an untracked file cannot be clobbered by it and its presence says
     nothing about whether the restore worked. Blocking on `??` would only train the
     operator to reach for --force.
     """
@@ -201,8 +213,8 @@ def _assert_clean_tree() -> None:
     if modified:
         sys.exit(
             "Refusing to run: tracked files are modified. This script edits the checkout in "
-            "place (see the #1677 note in the module docstring) and restores from a pristine "
-            "copy, so it must start from a state it can prove it restored.\n" + "\n".join(modified)
+            "place (see the #1677 note in the module docstring) and restores what it wrote, "
+            "so it must start from a state it can prove it restored.\n" + "\n".join(modified)
         )
 
 
@@ -286,7 +298,7 @@ def _head_sha() -> str:
     return out.stdout.strip() or "unknown"
 
 
-def _write_baseline(path: Path, results: dict) -> None:
+def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: int) -> None:
     payload = {
         "_comment": (
             "Kill counts per mutated convention. --check-baseline fails when a count DROPS "
@@ -294,7 +306,13 @@ def _write_baseline(path: Path, results: dict) -> None:
             "Counts, not test names: this population cannot be selected by name -- the "
             "agreement-shaped patterns give 51, 114 or 156 depending on the regex."
         ),
-        "_measured_at": _head_sha(),
+        "_measured_at": {
+            "commit": _head_sha(),
+            "paths": paths,
+            "markers": MARKERS,
+            "collected": collected,
+            "excluded": SELF_TESTS,
+        },
         "mutations": {
             name: {
                 "owner": res["owner"],
@@ -368,14 +386,22 @@ def main() -> None:
             f"Refusing to run: {len(base.failed)} tests already fail before any mutation, so a "
             f"kill could not be attributed.\n  " + "\n  ".join(sorted(base.failed)[:10])
         )
-    print(f"  clean, {base.seconds}s\n", flush=True)
+    # pytest exits 5 on "no tests collected" and 2/3/4 on usage or internal errors, and in
+    # every one of those the FAILED set is empty. Without this, a --paths typo produces a
+    # clean baseline and then six UNCOVERED "findings" -- the exact ambiguity the
+    # three-way verdict removes, entering through the door `verify` does not watch:
+    # `verify` proves the MUTATION took effect, nothing proved that PYTEST RAN.
+    if base.returncode != 0 or base.collected == 0:
+        sys.exit(
+            f"Refusing to run: the baseline pytest exited {base.returncode} having run "
+            f"{base.collected} tests. Nothing below would be a measurement."
+        )
+    print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
 
     results: dict[str, dict] = {}
     backups: dict[str, str] = {}
-    pristine = Path(tempfile.mkdtemp(prefix="discrim-"))
     try:
         for mut in selected:
-            shutil.copy2(REPO / mut.path, pristine / Path(mut.path).name)
             print(f"[{mut.name}] {mut.owner}", flush=True)
             apply_mutation(mut, backups)
             try:
@@ -384,8 +410,14 @@ def main() -> None:
             finally:
                 restore(backups)
 
+            shrank = live and run.collected < base.collected * 0.99
             if not live:
                 status, note = "INEFFECTIVE", "  <-- mutation not observable; its zeros mean nothing"
+            elif run.returncode not in (0, 1) or shrank:
+                # A mutation that breaks collection silently shrinks the population, so
+                # every survivor "survived" a run it was never in.
+                status = "INEFFECTIVE"
+                note = f"  <-- pytest exited {run.returncode} having run {run.collected} (baseline {base.collected})"
             elif run.failed:
                 status, note = "ok", ""
             else:
@@ -401,7 +433,6 @@ def main() -> None:
             print(f"  killed {len(run.failed):4d}  [{status}]  {run.seconds}s{note}\n", flush=True)
     finally:
         restore(backups)
-        shutil.rmtree(pristine, ignore_errors=True)
 
     effective = {k: v for k, v in results.items() if v["status"] == "ok"}
     uncovered = sorted(k for k, v in results.items() if v["status"] == "UNCOVERED")
@@ -444,7 +475,7 @@ def main() -> None:
     print("\nWorking tree restored and verified clean.")
 
     if args.write_baseline:
-        _write_baseline(Path(args.write_baseline), results)
+        _write_baseline(Path(args.write_baseline), results, paths=paths, collected=base.collected)
         print(f"Baseline written to {args.write_baseline}")
         sys.exit(0)
 

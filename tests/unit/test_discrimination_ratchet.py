@@ -113,9 +113,43 @@ def test_shipped_baseline_covers_every_declared_mutation(td):
     )
 
 
-def test_shipped_baseline_records_where_it_was_measured(td):
-    """A count with no provenance cannot be re-derived, and rots without saying so."""
-    assert json.loads(_BASELINE.read_text()).get("_measured_at")
+def test_shipped_baseline_records_the_scope_it_was_measured_at(td):
+    """A count whose scope is unrecorded is not comparable to anything.
+
+    A baseline written under `--paths tests/unit` would otherwise be indistinguishable
+    from one written over the whole tree, and a later run would read the difference as
+    discrimination lost.
+    """
+    at = json.loads(_BASELINE.read_text()).get("_measured_at")
+    assert isinstance(at, dict), "provenance must be structured, not a bare sha"
+    for key in ("commit", "paths", "markers", "collected", "excluded"):
+        assert at.get(key), f"_measured_at is missing {key!r}"
+    assert at["markers"] == td.MARKERS, "baseline marker set has drifted from the script's"
+    assert at["excluded"] == td.SELF_TESTS
+
+
+def test_the_sweep_passes_its_self_exclusion_to_pytest(td, monkeypatch):
+    """M1: the constant alone was pinned, the WIRING was not.
+
+    Deleting the `--ignore` argument left all 19 pins green while the +1 contamination
+    returned -- including the +1 that turns the one UNCOVERED convention into an
+    apparently-covered one. This asserts the argument actually reaches pytest.
+    """
+    seen = {}
+
+    class _Proc:
+        stdout = "1 passed"
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return _Proc()
+
+    monkeypatch.setattr(td.subprocess, "run", fake_run)
+    td._pytest(["tests"])
+    assert f"--ignore={td.SELF_TESTS}" in seen["cmd"], (
+        f"the sweep did not exclude its own tests; argv was {seen['cmd']}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +175,22 @@ def test_every_mutation_anchor_still_matches_exactly_once(td, index):
 def test_the_mutation_list_matches_the_parametrisation(td):
     """The parametrize range above is a literal; this is what notices when it drifts."""
     assert len(td.MUTATIONS) == 6
+
+
+def test_the_kill_matrix_is_committed_beside_the_baseline(td):
+    """The counts are the gate; the matrix is the evidence under them.
+
+    Without it the population claims in #1715 -- "193 of 308 inert", "39 of 65" -- are
+    unrecoverable by anyone, which is the shape of claim this whole campaign exists to
+    stop shipping.
+    """
+    matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
+    assert matrix["_selection_regex_for_agreement_shaped"]
+    baseline = json.loads(_BASELINE.read_text())["mutations"]
+    for name, res in baseline.items():
+        assert matrix["mutations"][name]["kill_count"] == res["kill_count"], (
+            f"{name}: matrix and baseline disagree -- they came from different runs"
+        )
 
 
 def test_the_sweep_excludes_this_file(td):

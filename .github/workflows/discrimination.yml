@@ -31,7 +31,11 @@ jobs:
   discrimination:
     name: mutation sweep
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # ~26 min locally; a GH runner is ~7x slower on this suite
+    # ~29 min locally (measured: 212 s baseline + 348 s for the largest mutation + five
+    # smaller runs). A GH runner is ~7x slower on this suite, so ~200 min -- 180 would
+    # have timed out, and the artifact upload is `if: !cancelled()`, so the failure issue
+    # would have arrived with no kill matrix to diagnose from. Matches nightly.yml.
+    timeout-minutes: 300
     steps:
     - uses: actions/checkout@v7
 
@@ -46,6 +50,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev,numerical]"
 
+    # NOTE: --paths defaults to `tests`, which includes tests/unit/test_backends and
+    # tests/unit/test_visualization. nightly.yml deliberately --ignores both (see its
+    # comment: they "run in no AUTOMATIC workflow"), so this is the first automatic tier
+    # to execute them, on Linux, where they have never run. They pass locally and the
+    # marker set here is byte-identical to local_ci.sh, but if they are red on a runner
+    # the baseline gate aborts the whole job with a clear message rather than producing
+    # a wrong number. Exercise once via workflow_dispatch before trusting the schedule.
     - name: Sweep and compare against the baseline
       env:
         OMP_NUM_THREADS: 1
@@ -77,8 +88,11 @@ jobs:
           const date = new Date().toISOString().split('T')[0];
           const title = 'Weekly test-discrimination sweep is failing';
           const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-          const { data: issues } = await github.rest.issues.listForRepo({
-            owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'automated',
+          // Paginated, like nightly.yml. The unpaginated default is 30, so past that
+          // this would stop finding its own issue and open a fresh duplicate weekly.
+          const issues = await github.paginate(github.rest.issues.listForRepo, {
+            owner: context.repo.owner, repo: context.repo.repo, state: 'open',
+            labels: 'automated', per_page: 100,
           });
           const open = issues.find(i => i.title === title);
           const body = [
