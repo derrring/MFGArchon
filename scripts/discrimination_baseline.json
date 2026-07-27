@@ -1,0 +1,44 @@
+{
+  "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
+  "_measured_at": {
+    "collected": 5665,
+    "commit": "25b09c44",
+    "excluded": "tests/unit/test_discrimination_ratchet.py",
+    "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
+    "paths": [
+      "tests"
+    ]
+  },
+  "mutations": {
+    "bc_default_reads_as_reflect": {
+      "kill_count": 0,
+      "owner": "absent BC defaults to clamp/absorbing (#1698)",
+      "status": "UNCOVERED"
+    },
+    "bc_noflux_reads_as_clamp": {
+      "kill_count": 5,
+      "owner": "no_flux/neumann/robin -> reflect (#1698)",
+      "status": "ok"
+    },
+    "diffusion_field_2x": {
+      "kill_count": 5,
+      "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
+      "status": "ok"
+    },
+    "diffusion_scalar_2x": {
+      "kill_count": 129,
+      "owner": "D = sigma^2/2 for scalar sigma (#811)",
+      "status": "ok"
+    },
+    "drift_coefficient_2x": {
+      "kill_count": 19,
+      "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
+      "status": "ok"
+    },
+    "optimal_control_sign": {
+      "kill_count": 34,
+      "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
+      "status": "ok"
+    }
+  }
+}
