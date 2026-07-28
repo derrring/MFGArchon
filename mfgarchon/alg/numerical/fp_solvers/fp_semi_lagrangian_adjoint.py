@@ -44,6 +44,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 from .base_fp import BaseFPSolver, DriftConvention
@@ -155,10 +156,6 @@ class FPSLSolver(BaseFPSolver):
             if interpolation_method not in valid_methods_nd:
                 raise ValueError(f"For nD problems, only 'linear' splatting is supported. Got: {interpolation_method}.")
         self.interpolation_method = interpolation_method
-
-        # Positivity-clip diagnostic state (Issue #1147 class). Reset per solve_fp_system call;
-        # tracks whether the once-per-solve mass-injection warning has already fired.
-        self._clip_warned = False
 
         # Precompute grid parameters (dimension-agnostic)
         self.dt = problem.dt
@@ -311,9 +308,6 @@ class FPSLSolver(BaseFPSolver):
             M_shape = (Nt_points, self.Nx)
         else:
             M_shape = (Nt_points, *self.grid_shape)
-
-        # Reset the once-per-solve positivity-clip warning (Issue #1147 class).
-        self._clip_warned = False
 
         M = np.zeros(M_shape)
         M[0] = M_initial.copy().reshape(self.grid_shape if self.dimension > 1 else -1)
@@ -574,26 +568,27 @@ class FPSLSolver(BaseFPSolver):
 
         Cubic/quintic splatting and the CN/ADI diffusion step are not monotone, so the
         density can undershoot below zero; deleting those undershoots injects positive
-        mass and violates conservation. Surface it once per ``solve_fp_system`` call
-        rather than failing silently (kernel fail-fast). Mirrors the
-        ``WeakFormFPSolver`` positivity-clip diagnostic (Issue #1147).
+        mass and violates conservation.
+
+        Issue #1683: this warned once per ``solve_fp_system`` and returned the clipped
+        density either way, so a diverging solve came back looking healthy -- finite,
+        non-negative, and with the conservation error hidden inside the repair. It now
+        stops. Measured across five configurations, four clip **nothing** and the fifth
+        clips 11.9% and drifts 10.2% in mass, so there is no régime between round-off and
+        failure on this path and one threshold separates them.
 
         The injected/total ratio is grid-quadrature-invariant on a uniform grid, so raw
-        sums (no ``dx`` weighting) give the correct fraction.
+        sums give the correct fraction -- which is what ``mass_of=None`` asserts.
         """
-        if not self._clip_warned:
-            injected = -float(np.minimum(m, 0.0).sum())
-            total = float(np.maximum(m, 0.0).sum())
-            if injected > 1e-6 * max(total, 1e-300):
-                logger.warning(
-                    "FP-SL positivity clip injected mass %.2e (%.1f%% of total): cubic/quintic "
-                    "splatting or CN/ADI diffusion is not monotone; consider linear interpolation "
-                    "or a finer grid.",
-                    injected,
-                    100.0 * injected / max(total, 1e-300),
-                )
-                self._clip_warned = True
-        return np.maximum(m, 0.0)
+        return clip_nonnegative_or_raise(
+            m,
+            context="FP-SL positivity clip",
+            remedy=(
+                "Cubic/quintic splatting and CN/ADI diffusion are not monotone. Use "
+                "linear interpolation, reduce dt, or coarsen the grid -- on this scheme "
+                "refining can make the departure point span more cells and worsen it."
+            ),
+        )
 
     def _get_solver_type_id(self) -> str | None:
         """Get solver type identifier for compatibility checking."""

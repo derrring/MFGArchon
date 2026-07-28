@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 import numpy as np
 
 from mfgarchon import MFGProblem
@@ -58,20 +60,45 @@ def _run(fp, m0, U, logger_name=_CLIP_LOGGER):
     return [r.getMessage() for r in records]
 
 
-def test_clip_warns_when_cubic_splatting_injects_mass():
-    """Cubic splatting under a steep confining drift oscillates; the clip then injects
-    mass and the solver warns (once)."""
+def test_a_clip_that_injects_mass_stops_the_solve():
+    """Cubic splatting undershoots; the solve now stops rather than repairing (#1683).
+
+    It used to warn once per solve and return the clipped density, so a run whose mass
+    the clip had moved came back finite, non-negative, and indistinguishable from a
+    healthy one. Measured across five configurations of this scheme, four clip nothing
+    at all and the fifth clips 11.9% while drifting 10.2% in mass -- there is no régime
+    between round-off and failure here, which is why one threshold separates them.
+    """
     n, nt = 41, 20
     prob = _problem(n=n, nt=nt)
     fp = FPSLSolver(prob, interpolation_method="cubic")
     x = np.linspace(0.0, 1.0, n)
     m0 = np.exp(-60 * (x - 0.4) ** 2)
     m0 /= m0.sum() * (x[1] - x[0])
-    # Steep confining potential -> velocity alpha = -grad(U) is large -> cubic splat rings.
     U = np.tile(25.0 * (x - 0.5) ** 2, (nt + 1, 1))
+    with pytest.raises(ValueError, match="would fabricate"):
+        fp.solve_fp_system(m0, U)
 
-    msgs = _run(fp, m0, U)
-    assert any("positivity clip injected mass" in m for m in msgs), f"expected a clip warning, got {msgs}"
+
+def test_the_stop_names_the_interpolation_and_a_remedy():
+    """Naming the defect without a next step gets the diagnostic read as noise.
+
+    The remedy also states the counter-intuitive part: on this scheme *refining* can make
+    it worse, because the departure point then spans more cells.
+    """
+    n, nt = 41, 20
+    prob = _problem(n=n, nt=nt)
+    fp = FPSLSolver(prob, interpolation_method="cubic")
+    x = np.linspace(0.0, 1.0, n)
+    m0 = np.exp(-60 * (x - 0.4) ** 2)
+    m0 /= m0.sum() * (x[1] - x[0])
+    U = np.tile(25.0 * (x - 0.5) ** 2, (nt + 1, 1))
+    with pytest.raises(ValueError) as exc:
+        fp.solve_fp_system(m0, U)
+    message = str(exc.value)
+    assert "FP-SL positivity clip" in message
+    assert "linear interpolation" in message
+    assert "coarsen" in message
 
 
 def test_no_clip_warning_for_linear_pure_diffusion():
@@ -88,22 +115,3 @@ def test_no_clip_warning_for_linear_pure_diffusion():
 
     msgs = _run(fp, m0, U)
     assert not any("positivity clip injected mass" in m for m in msgs), f"unexpected clip warning: {msgs}"
-
-
-def test_clip_warning_fires_at_most_once_per_solve():
-    """The diagnostic is once-per-solve: the flag resets each solve_fp_system call but
-    does not spam across the (Nt) time steps within a single solve."""
-    n, nt = 41, 20
-    prob = _problem(n=n, nt=nt)
-    fp = FPSLSolver(prob, interpolation_method="cubic")
-    x = np.linspace(0.0, 1.0, n)
-    m0 = np.exp(-60 * (x - 0.4) ** 2)
-    m0 /= m0.sum() * (x[1] - x[0])
-    U = np.tile(25.0 * (x - 0.5) ** 2, (nt + 1, 1))
-
-    msgs = _run(fp, m0, U)
-    n_clip = sum("positivity clip injected mass" in m for m in msgs)
-    assert n_clip <= 1, f"warning should fire at most once per solve, fired {n_clip} times"
-    # And the flag resets: a second solve can warn again.
-    msgs2 = _run(fp, m0, U)
-    assert sum("positivity clip injected mass" in m for m in msgs2) <= 1

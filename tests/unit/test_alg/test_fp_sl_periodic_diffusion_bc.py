@@ -124,10 +124,16 @@ def test_neumann_domain_preserves_zero_flux_stencil():
 
     # Spike at the left boundary — with no-flux/zero-flux the spike is reflected,
     # so m_new[1] > m_new[-1] (boundary acts as a mirror, not a seam).
+    #
+    # A narrow Gaussian rather than a delta (Issue #1683). A single-cell delta of height
+    # 1/dx drives the CN diffusion to -7.5 in one step: the stencil question this test
+    # asks is answerable without an unphysical density, and the old input only passed
+    # because the positivity clip repaired it. Measured, w = 2dx clips **nothing** and
+    # the assertion below is unchanged.
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    m = np.zeros(n)
-    m[0] = 1.0 / dx
+    m = np.exp(-(((x - 0.0) / (2 * dx)) ** 2))
+    m = m / (m.sum() * dx)
     alpha = np.zeros(n)
     m_new = fp._adjoint_sl_step_1d(m, alpha, prob.dt, prob.sigma)
 
