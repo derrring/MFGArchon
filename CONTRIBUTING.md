@@ -15,7 +15,6 @@ Our codebase follows a strict organizational pattern:
   - `tutorials/` - Step-by-step learning materials
 - **`benchmarks/`** - Performance comparisons and method analysis
 - **`docs/`** - Documentation organized by category
-- **`archive/`** - Historical code (do not modify)
 
 ## Code Style and Standards
 

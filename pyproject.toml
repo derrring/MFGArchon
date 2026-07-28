@@ -212,7 +212,6 @@ plugins = [
     "pydantic.mypy",
 ]
 exclude = [
-    "archive/",
     "build/",
     "dist/",
     ".venv/",
@@ -283,7 +282,6 @@ check_untyped_defs = true
 source = ["mfgarchon"]
 omit = [
     "*/tests/*",
-    "*/archive/*",
     "*/__pycache__/*",
     "*/build/*",
     "*/dist/*",

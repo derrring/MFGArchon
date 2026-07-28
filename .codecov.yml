@@ -24,7 +24,6 @@ coverage:
     - "examples/"
     - "docs/"
     - "scripts/"
-    - "archive/"
     - "**/__pycache__"
     - "setup.py"
     - "**/__main__.py"
