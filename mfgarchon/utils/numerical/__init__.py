@@ -69,6 +69,11 @@ from mfgarchon.utils.numerical.kernels import (
     WendlandKernel,
     create_kernel,
 )
+from mfgarchon.utils.numerical.mass_fabrication_gate import (
+    MAX_CLIP_MASS_FABRICATION,
+    clip_nonnegative_or_raise,
+    mass_fabricated_by_clip,
+)
 from mfgarchon.utils.numerical.monotonicity_stats import (
     MonotonicityStats,
     get_m_matrix_diagnostic_string,
@@ -129,7 +134,10 @@ __all__ = [
     # Nonlinear solvers
     "FixedPointSolver",
     "NewtonSolver",
+    "MAX_CLIP_MASS_FABRICATION",
     "PolicyIterationSolver",
+    "clip_nonnegative_or_raise",
+    "mass_fabricated_by_clip",
     "SolverInfo",
     # Particle interpolation (from particle submodule)
     "estimate_kde_bandwidth",

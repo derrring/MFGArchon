@@ -4,7 +4,7 @@
     "fdm_centered/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
-        "message": "FP solver: density went to -2.769e-01 at timestep 2/10. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than silently repaired (Issue #1671). advection_sch"
+        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.769e-01. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than repor"
       },
       "status": "UNSUPPORTED"
     },
@@ -71,7 +71,7 @@
     "regime_switching/non_negativity": {
       "artifact": {
         "exception": "ValueError",
-        "message": "FP solver: density went to -1.031e-03 at timestep 7/10. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than silently repaired (Issue #1671). advection_sch"
+        "message": "FP solver: at timestep 7/10, advection_scheme='divergence_upwind': density went to -1.031e-03. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than reporti"
       },
       "status": "UNSUPPORTED"
     },

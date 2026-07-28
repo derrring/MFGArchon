@@ -66,6 +66,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
 from mfgarchon.geometry.boundary.types import BoundaryFace
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
     _DriftDispatcher,
@@ -100,11 +101,6 @@ from .fp_fdm_operators import is_boundary_point
 
 logger = get_logger(__name__)
 
-# Issue #1671: the largest fraction of total mass the non-negativity clip may fabricate before
-# the solve is treated as failed rather than repaired. Round-off negatives from a
-# positivity-preserving scheme sit around 1e-15 of the mass; a scheme that has gone unstable
-# reaches O(1). Anything between is a discretisation problem the caller needs to see.
-_MAX_CLIP_MASS_FABRICATION = 1e-8
 
 # =============================================================================
 # Scheme dispatch tables (Issue #859: replace if/elif chains)
@@ -986,26 +982,24 @@ def solve_fp_nd_full_system(
         # fabricate, relative to the mass present. Round-off gives ~1e-15; a failed scheme O(1).
         min_val = np.min(M_next)
         if min_val < 0:
-            negative_mass = -float(np.sum(M_next[M_next < 0]))
-            positive_mass = float(np.sum(M_next[M_next > 0]))
-            fabricated = negative_mass / positive_mass if positive_mass > 0 else np.inf
-
-            if fabricated > _MAX_CLIP_MASS_FABRICATION:
-                remedy = (
-                    "'divergence_centered' is not positivity-preserving: it oscillates at "
-                    "cell-Peclet > 2. Switch to 'divergence_upwind', add diffusion (sigma > 0), "
-                    "or refine the grid."
-                    if advection_scheme == "divergence_centered"
-                    else "'divergence_upwind' preserves positivity only under a CFL-type "
-                    "restriction on dt. Reduce dt (increase Nt), refine the grid, or add "
-                    "diffusion (sigma > 0)."
-                )
-                raise ValueError(
-                    f"FP solver: density went to {min_val:.3e} at timestep {k + 1}/{Nt - 1}. "
-                    f"Clipping it to zero would fabricate {fabricated:.3%} of the total mass, "
-                    "so the solve is stopped rather than silently repaired (Issue #1671). "
-                    f"advection_scheme={advection_scheme!r}: {remedy}"
-                )
+            fabricated = mass_fabricated_by_clip(M_next)
+            remedy = (
+                "'divergence_centered' is not positivity-preserving: it oscillates at "
+                "cell-Peclet > 2. Switch to 'divergence_upwind', add diffusion (sigma > 0), "
+                "or refine the grid."
+                if advection_scheme == "divergence_centered"
+                else "'divergence_upwind' preserves positivity only under a CFL-type "
+                "restriction on dt. Reduce dt (increase Nt), refine the grid, or add "
+                "diffusion (sigma > 0)."
+            )
+            # Issue #1683: the gate this path pioneered is now shared. The clip below stays
+            # inline because this loop needs `min_val` for its own sub-threshold warning;
+            # what must not fork is the *invariant* and the threshold, which are the owner's.
+            clip_nonnegative_or_raise(
+                M_next,
+                context=f"FP solver: at timestep {k + 1}/{Nt - 1}, advection_scheme={advection_scheme!r}",
+                remedy=remedy,
+            )
 
             if min_val < -1e-10:
                 logger.warning(

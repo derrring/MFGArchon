@@ -11,6 +11,7 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.aux_func import npart, ppart
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
@@ -750,22 +751,21 @@ class FPFDMSolver(BaseFPSolver):
         # mass; the operator-level adjoint A_FP=A_HJB^T is unchanged) and warn when the clip is
         # non-trivial -- matching fp_semi_lagrangian / fp_fdm_time_stepping (Issues #880/#886), so a
         # diverging solve is surfaced instead of silently reported as a valid conserved density.
-        mass_before = float(M_current.sum())
-        neg_mass = float(-np.minimum(M_next, 0.0).sum())  # magnitude of the clipped negatives (>= 0)
-        M_next = np.maximum(M_next, 0.0)
-        mass_after_clip = float(M_next.sum())
-        if mass_after_clip > 1e-15:
-            M_next *= mass_before / mass_after_clip
-        if neg_mass > 1e-9 * max(mass_before, 1e-300):
-            logger.warning(
-                "Strict-adjoint FP step clipped %.3e negative mass (%.1f%% of the total) then "
-                "renormalized: the adjoint advection operator is not an M-matrix at this Péclet number "
-                "(Issue #1507). Persistent large clips indicate a diverging coupled solve.",
-                neg_mass,
-                100.0 * neg_mass / max(mass_before, 1e-300),
-            )
-
-        return M_next
+        # Issue #1683: this used to clip and then renormalize to the pre-step total, which
+        # made a diverging solve indistinguishable from a healthy one -- the result was
+        # finite, non-negative and exactly mass-conserving, so every cheap check a caller
+        # might run was satisfied by the repair rather than by the physics. Measured on
+        # the #1507 configuration, an 8.39% clip came back reporting exact conservation.
+        # The shared gate stops the solve instead, and does not renormalize.
+        return clip_nonnegative_or_raise(
+            M_next,
+            context="Strict-adjoint FP step",
+            remedy=(
+                "The transposed HJB advection operator is not an M-matrix, so at high "
+                "Péclet it undershoots negative. Reduce dt (increase Nt), refine the "
+                "grid, or add diffusion (sigma > 0)."
+            ),
+        )
 
     @deprecated(since="v0.17.1", replacement="solve_fp_system")
     def _solve_fp_1d(
