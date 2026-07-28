@@ -120,6 +120,38 @@ def _smoke_problem():
     )
 
 
+def _smoke_problem_2d():
+    """The 1-D smoke fixture lifted to 2-D, unchanged in everything but dimension.
+
+    Deliberately the same Gaussian, the same no-flux boundaries, the same coupling: a
+    cell that differs from its 1-D sibling only in dimension is what makes "works in
+    1-D, not in 2-D" readable off the matrix. 11x11 and 6 steps keep it near a second.
+    """
+    from mfgarchon import MFGProblem
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    return MFGProblem(
+        geometry=TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+        ),
+        Nt=6,
+        T=0.2,
+        sigma=0.4,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+
+
 def _lq_problem_1d():
     """The tests/integration/test_fvm_hjb_coupling.py 1-D LQ fixture."""
     from mfgarchon import MFGProblem
@@ -259,6 +291,42 @@ def _mass_conservation_cell(scheme_name: str):
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("mass drift", verdict)
+
+    return run
+
+
+def _mass_conservation_2d_cell(scheme_name: str):
+    """Same oracle as the 1-D cell, in 2-D (#1745).
+
+    Every cell in this file was 1-D until now, so a scheme could conserve mass to
+    2.2e-16 in one dimension and not run at all in two with the matrix reporting
+    nothing. Measured when these were added: SL_LINEAR passes at 3.67e-16 while
+    FDM_UPWIND, FDM_CENTERED and FVM_MUSCL all raise the same ConvergenceError from
+    the same Newton solve -- they share `HJBFDMSolver`, and SL_LINEAR does not. One
+    defect, three dead schemes.
+    """
+
+    def run():
+        from mfgarchon.types import NumericalScheme
+
+        problem = _construct("2-D smoke problem", _smoke_problem_2d)
+        result = problem.solve(scheme=getattr(NumericalScheme, scheme_name), max_iterations=3, verbose=False)
+
+        def verdict():
+            M = _apply_mutation(np.asarray(result.M, dtype=float))
+            dv = (1.0 / 10) ** 2  # 11 points per axis on the unit square
+            mass = M.reshape(M.shape[0], -1).sum(axis=1) * dv
+            art = {
+                "mass_t0": float(mass[0]),
+                "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
+                "min_density": float(M.min()),
+                "all_finite": bool(np.isfinite(M).all()),
+                "tolerance": 1e-9,
+            }
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9
+            return ("PASS" if ok else "FAIL"), art
+
+        return _measure("2-D mass drift", verdict)
 
     return run
 
@@ -476,6 +544,10 @@ CELLS = {
     "fdm_centered/mass_conservation": _mass_conservation_cell("FDM_CENTERED"),
     "fvm_muscl/mass_conservation": _fvm_mass_cell(),
     "fvm_vs_fdm/agreement": _fvm_fdm_agreement_cell(),
+    "sl_linear_2d/mass_conservation": _mass_conservation_2d_cell("SL_LINEAR"),
+    "fdm_upwind_2d/mass_conservation": _mass_conservation_2d_cell("FDM_UPWIND"),
+    "fdm_centered_2d/mass_conservation": _mass_conservation_2d_cell("FDM_CENTERED"),
+    "fvm_muscl_2d/mass_conservation": _mass_conservation_2d_cell("FVM_MUSCL"),
     "regime_switching/non_negativity": _regime_switching_cell(),
     "gfdm_rbf/construction": _gfdm_rbf_cell(),
 }
@@ -492,6 +564,10 @@ MASS_ORACLE_CELLS = {
     "fvm_muscl/mass_conservation",
     "fvm_vs_fdm/agreement",
     "regime_switching/non_negativity",
+    "sl_linear_2d/mass_conservation",
+    "fdm_upwind_2d/mass_conservation",
+    "fdm_centered_2d/mass_conservation",
+    "fvm_muscl_2d/mass_conservation",
 }
 
 

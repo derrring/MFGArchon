@@ -8,6 +8,13 @@
       },
       "status": "UNSUPPORTED"
     },
+    "fdm_centered_2d/mass_conservation": {
+      "artifact": {
+        "exception": "ConvergenceError",
+        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+      },
+      "status": "UNSUPPORTED"
+    },
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
@@ -19,6 +26,13 @@
       },
       "status": "PASS"
     },
+    "fdm_upwind_2d/mass_conservation": {
+      "artifact": {
+        "exception": "ConvergenceError",
+        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+      },
+      "status": "UNSUPPORTED"
+    },
     "fvm_muscl/mass_conservation": {
       "artifact": {
         "all_finite": true,
@@ -28,6 +42,13 @@
         "tolerance": 1e-06
       },
       "status": "PASS"
+    },
+    "fvm_muscl_2d/mass_conservation": {
+      "artifact": {
+        "exception": "ConvergenceError",
+        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+      },
+      "status": "UNSUPPORTED"
     },
     "fvm_vs_fdm/agreement": {
       "artifact": {
@@ -62,6 +83,16 @@
         "max_drift": 4.440892098500626e-16,
         "min_density": 0.00466345594426523,
         "tolerance": 1.0000000000000003e-09
+      },
+      "status": "PASS"
+    },
+    "sl_linear_2d/mass_conservation": {
+      "artifact": {
+        "all_finite": true,
+        "mass_t0": 1.2100000000000002,
+        "max_rel_drift": 3.670158759091426e-16,
+        "min_density": 3.5346848535299638e-06,
+        "tolerance": 1e-09
       },
       "status": "PASS"
     }
