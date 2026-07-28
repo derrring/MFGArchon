@@ -56,7 +56,7 @@ Keep changes minimal + focused; no legacy fallbacks (use mature utilities direct
 
 ## 🏗️ Repository Structure
 
-**Top-level**: `mfgarchon/` (package), `tests/` (unit + integration only), `benchmarks/` (perf scripts), `examples/` (`basic/ advanced/ notebooks/ tutorials/`), `docs/`, `archive/` (historical — do not modify).
+**Top-level**: `mfgarchon/` (package), `tests/` (unit + integration only), `benchmarks/` (perf scripts), `examples/` (`basic/ advanced/ notebooks/ tutorials/`), `docs/`. There is no `archive/`: it was 16,634 lines excluded from pytest, ruff and the fail-fast ratchet, so it cost nothing to keep and nothing to delete — git history is the archive (#1710).
 
 **Package** (`mfgarchon/`): `alg/ backends/ config/ core/ factory/ geometry/ hooks/ solvers/ types/ utils/ visualization/ workflow/ compat/ meta/`.
 

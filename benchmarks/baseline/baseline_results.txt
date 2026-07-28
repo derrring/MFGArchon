@@ -1,6 +1,0 @@
-WENO5 Baseline Performance
-Date: 2025-10-09
-Median: 2.08 μs
-Min: 2.03 μs
-Max: 2.19 μs
-Std: 0.04 μs
