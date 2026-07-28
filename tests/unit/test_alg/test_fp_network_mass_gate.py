@@ -80,9 +80,17 @@ def test_the_remedy_is_scheme_aware_and_names_only_what_was_measured_to_work():
     not exist and the warning structurally cannot have been emitted. It also suggested
     "use scheme='implicit'" to a user already on it.
 
-    On the explicit path, review measured the suggestions: lowering the diffusion coefficient
-    does not clear the raise, and switching to implicit makes it worse (it raises at step 2
-    rather than step 4). Only increasing Nt works. The remedy now says that and nothing else.
+    On the explicit path, review measured the suggestions: switching to implicit makes it worse
+    (it raises earlier on the same configuration). "Lowering the diffusion coefficient does not
+    work" was my own over-correction -- re-review measured that it does, at D <= 1e-4, so the
+    message now says so and gives the real reason not to reach for it: D is physics, not a
+    discretisation knob.
+
+    The implicit text was wrong in the same way the original was. `_implicit_step` is IMEX --
+    only the diffusion is implicit, the drift term is explicit -- so it does carry a timestep
+    restriction, and increasing Nt does fix it (Nt=3 stops at 10.991%, Nt=20 completes). My
+    version asserted "a negative density here is the spatial operator, not the timestep" while
+    opening with "Increase Nt", contradicting both the code and itself.
     """
     with pytest.raises(ValueError) as exc:
         _solve(u_scale=50.0)
@@ -91,6 +99,9 @@ def test_the_remedy_is_scheme_aware_and_names_only_what_was_measured_to_work():
     assert "scheme='explicit'" in explicit
     assert "Increase Nt" in explicit
     assert "dt_stable" not in explicit, "no dt_stable advice on a path where it was measured not to help"
+    assert "physics rather than a discretisation knob" in explicit, (
+        "lowering D does clear the gate; the message must give the real reason not to, not deny it"
+    )
 
     network = GridNetwork(width=5, height=5)
     network.create_network()
@@ -104,7 +115,9 @@ def test_the_remedy_is_scheme_aware_and_names_only_what_was_measured_to_work():
         solver.solve_fp_system(m0, np.tile(5.0 * (np.arange(n, dtype=float) - n / 2.0) ** 2 / n, (4, 1)))
     implicit = str(exc.value)
     assert "scheme='implicit'" in implicit
-    assert "no dt_stable to check" in implicit
+    assert "IMEX" in implicit, "the drift term is explicit; the message must not deny the timestep"
+    assert "Increase Nt" in implicit
+    assert "not the timestep" not in implicit, "measured: Nt=3 stops, Nt=20 completes"
     assert "use scheme='implicit'" not in implicit, "do not advise a scheme the caller is already on"
 
 
@@ -239,11 +252,85 @@ def test_the_threshold_admits_this_scheme_s_own_discretisation_noise():
 
     This test guards the lower end, which is the side a tightened threshold would break and
     the side no other test here covers. `test_a_steep_value_field_stops` guards the upper end.
+
+    **No lower bound is asserted, deliberately.** An earlier version required
+    `1e-6 < drift < 1e-3` and would have failed on *improvement*: the drift is a step function
+    of how many steps happened to clip, not a smooth curve, so neighbouring configurations give
+    1.1e-16 (u=8), 6.1e-08 (u=9), 5.8e-05 (u=10, pinned here) and 9.0e-04 (u=15). Two steps of
+    Nt in the accurate direction drops it three orders. A test that goes red when the scheme
+    gets better, saying "re-measure the threshold", is a false alarm dressed as diligence.
+
+    What must hold is that this configuration **completes**: it is the one review found the
+    shipped gate refusing while the PR body cited it as evidence.
     """
     result = _solve(u_scale=10.0)
     drift = abs(float(result[-1].sum()) - 1.0)
-    assert 1e-6 < drift < 1e-3, (
-        f"drift {drift:.3e}: this configuration is chosen because it sits in the band between "
-        f"round-off and failure. If it moved out, re-measure the threshold rather than "
-        f"widening this assertion"
+    assert drift < 1e-3, (
+        f"drift {drift:.3e} is above the honest band this threshold was measured against; "
+        f"the scheme changed and the threshold needs re-measuring, not this assertion widening"
     )
+
+
+def test_the_drift_report_does_not_repeat_across_a_coupled_solve(caplog):
+    """A coupled solve calls this once per Picard iteration, and neither channel dedups.
+
+    `warnings.warn` keys its dedup on the message text, which carries the drift value and so
+    differs every iteration; `logging` does not dedup at all. Both were measured emitting one
+    record per call -- 15 iterations, 15 records, for behaviour that is correct on an absorbing
+    node. My first fix diagnosed that correctly and then switched channels, which did not
+    change the count and was strictly worse on identical repeats.
+
+    A drift that grows is worth another line; one that repeats is not.
+    """
+    import logging
+
+    network = GridNetwork(width=5, height=5)
+    network.create_network()
+    problem = NetworkMFGProblem(geometry=network, T=T, Nt=NT)
+    solver = FPNetworkSolver(problem, diffusion_coefficient=0.1)
+
+    n = network.num_nodes
+    m0 = np.zeros(n)
+    m0[n // 2] = 1.0
+    u = np.tile((np.arange(n, dtype=float) - n / 2.0) ** 2 / n, (NT + 1, 1))
+
+    original = solver._explicit_step
+    solver._explicit_step = lambda m, u_cur, t: 0.99 * original(m, u_cur, t)
+
+    logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        for _ in range(15):
+            solver.solve_fp_system(m0, u)
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(records) == 1, (
+        f"{len(records)} records from 15 identical solves; the drift does not grow, so after "
+        f"the first there is nothing new to say"
+    )
+
+
+def test_a_growing_drift_is_still_reported(caplog):
+    """The suppression must not swallow an escalation, which is the case worth seeing.
+
+    Without this, the guard above could be satisfied by never reporting again -- the failure
+    mode that made the deleted `_clip_warned` latch in the SL solver a defect rather than a fix.
+    """
+    import logging
+
+    network = GridNetwork(width=5, height=5)
+    network.create_network()
+    problem = NetworkMFGProblem(geometry=network, T=T, Nt=NT)
+    solver = FPNetworkSolver(problem, diffusion_coefficient=0.1)
+
+    n = network.num_nodes
+    m0 = np.zeros(n)
+    m0[n // 2] = 1.0
+    u = np.tile((np.arange(n, dtype=float) - n / 2.0) ** 2 / n, (NT + 1, 1))
+    original = solver._explicit_step
+
+    logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        for factor in (0.999, 0.99, 0.9):
+            solver._explicit_step = (lambda f: lambda m, u_cur, t: f * original(m, u_cur, t))(factor)
+            solver.solve_fp_system(m0, u)
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(records) == 3, f"{len(records)} records: each worsening drift must be reported"

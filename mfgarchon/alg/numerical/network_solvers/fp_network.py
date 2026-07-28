@@ -40,25 +40,30 @@ _logger = get_logger(__name__)
 
 # Issue #1683: this path does NOT use the shared default of 1e-8. The shared gate's docstring
 # argued one threshold suffices because "round-off gives ~1e-15, a failed scheme gives O(1),
-# there is no interesting regime between them". Measured on 144 configurations of this scheme
-# (3x3/5x5/8x8 grids, Nt in {3,20,100}, D in {0.01,0.1,1,10}, four value-field scales), that is
-# false here: the fabricated fraction forms a continuous ladder from 1e-9 to O(1), tracking the
-# true final drift monotonically the whole way.
+# there is no interesting regime between them". That is false here: the fabricated fraction
+# runs continuously from 1e-9 to O(1), and 1e-8 rejected solves whose honest answer was a
+# drift of 5.8e-5 -- including one this change originally cited as evidence that the scheme
+# conserves.
 #
-# There is still a usable gap, and this is its geometric middle:
+# Chosen against 3704 configurations (grid, random and scale-free topologies; both schemes;
+# D from 0.005 to 10; Nt from 3 to 100), classifying a solve as honest when its true ungated
+# final drift is below 1e-3 and broken at 1e-2 or above:
 #
-#     solves whose true final drift is < 1e-3  (honest)  -- fabricated at most 6.664e-06
-#     solves whose true final drift is >= 1e-2 (broken)  -- fabricated at least 9.179e-04
+#     false negatives (broken solves admitted)   0 of 2941
+#     false positives (honest solves refused)   31 of  533   -- all with drift in [1e-4, 1e-3)
 #
-# 2.1 orders of separation. At 1e-8 the shared default rejected nine measured configurations
-# whose honest answer was a drift between 2e-7 and 5.8e-5 -- including one this change
-# originally cited as evidence that the scheme conserves. At 1e-4 every one of those runs, and
-# everything from 1.6e-3 drift upward still stops.
+# The safety direction is what this gate is for, and it is intact: nothing broken passes.
+#
+# What is NOT true, and was claimed in an earlier version of this comment: that there is a
+# 2.1-order gap. That was measured on grids only. On scale-free topologies the honest and
+# broken populations abut -- highest honest 9.6026e-04 against lowest broken 9.7067e-04, a
+# ratio of 1.011 -- so no scalar separates them there, and the per-population optima differ by
+# 5.5x. This constant is a defensible line, not a separating one, and #1758 tracks the fact
+# that a scalar is the wrong shape for this quantity at all.
 #
 # What is single-sourced is the INVARIANT, which is still the shared owner's. A tolerance is
 # not an invariant: it belongs to the scheme whose discretisation error it must sit above, the
-# same way a solver tolerance does. Re-measure this number if the transition-rate computation
-# changes.
+# same way a solver tolerance does. Re-measure if the transition-rate computation changes.
 _MAX_NETWORK_CLIP_FABRICATION = 1e-4
 
 if TYPE_CHECKING:
@@ -163,6 +168,8 @@ class FPNetworkSolver(BaseFPSolver):
         # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
         # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
         # falls back to 0.1, but the solve WARNS when that fallback is silently relied on.
+        # Issue #1683: highest drift already reported by this instance; see the report site.
+        self._reported_mass_drift = 0.0
         self._diffusion_was_defaulted = diffusion_coefficient is None
         self.diffusion_coefficient = 0.1 if diffusion_coefficient is None else diffusion_coefficient
         self.cfl_factor = cfl_factor
@@ -405,15 +412,18 @@ class FPNetworkSolver(BaseFPSolver):
                     M[n + 1, :],
                     context=f"Network FP solve: at step {n + 1}/{n_intervals}, scheme={self.scheme!r}",
                     remedy=(
-                        "Increase Nt -- measured as the only one of the obvious knobs that "
-                        "works here; lowering the diffusion coefficient does not, and neither "
-                        "does switching to implicit (it raises earlier on the same "
-                        "configuration)."
+                        "Increase Nt. Switching to implicit does not help -- it raises "
+                        "earlier on the same configuration, because its drift term is explicit "
+                        "too. Lowering the diffusion coefficient does clear the gate "
+                        "eventually (measured: at u=50 the fabricated fraction falls with D and "
+                        "the solve completes at D <= 1e-4), but D is physics rather than a "
+                        "discretisation knob -- changing it answers a different question."
                         if self.scheme == "explicit"
-                        else "Increase Nt. The implicit step is a direct sparse solve with no "
-                        "CFL limit and no dt_stable to check, so a negative density here is the "
-                        "spatial operator, not the timestep -- refine the network or reduce the "
-                        "value-function gradient driving the transition rates."
+                        else "Increase Nt. Despite the name, `_implicit_step` is IMEX: only "
+                        "the diffusion is solved implicitly, and the drift term is explicit "
+                        "(see `_implicit_step`, 'Drift terms (explicit for simplicity)'), so it "
+                        "carries a forward-Euler restriction. Measured on a 5x5 grid at D=0.1: "
+                        "Nt=3 stops at 10.991%, Nt=20 and Nt=100 both complete."
                     ),
                     threshold=_MAX_NETWORK_CLIP_FABRICATION,
                 )
@@ -444,13 +454,20 @@ class FPNetworkSolver(BaseFPSolver):
             if mass_initial > 0:
                 mass_final = float(np.sum(M[-1, :]))
                 drift = abs(mass_final - mass_initial) / mass_initial
-                if drift > 1e-6:
+                # Report the first drift and any escalation, not every call. A coupled solve
+                # invokes this once per Picard iteration, and neither channel dedups for us:
+                # `warnings` keys on the message text, which carries the drift value and so
+                # differs every iteration, and `logging` does not dedup at all. Measured before
+                # this guard: 15 iterations -> 15 records; 20 identical solves -> 20 records.
+                # A drift that grows is worth another line; one that repeats is not.
+                if drift > 1e-6 and drift > self._reported_mass_drift * 1.05:
+                    self._reported_mass_drift = drift
                     _logger.warning(
                         "Network FP solve: total mass changed by %.3f%% over the solve "
                         "(%.6g -> %.6g). With an absorbing or source node this is the boundary "
                         "flux and is expected. Without one it is the scheme losing mass, and the "
                         "density returned carries that drift rather than being rescaled to hide "
-                        "it (Issue #1683).",
+                        "it (Issue #1683). Repeats are suppressed unless the drift grows.",
                         drift * 100.0,
                         mass_initial,
                         mass_final,

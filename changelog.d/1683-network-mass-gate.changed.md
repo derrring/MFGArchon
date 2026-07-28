@@ -8,6 +8,8 @@ and scale-free topologies, both schemes, and four diffusion scales -- so the fla
 on a healthy solve and forced a false answer on a broken one. Drift is now logged at WARNING
 instead. The clip that preceded the division routes through `clip_nonnegative_or_raise` and
 stops the solve when it would fabricate mass: a timestep past the CFL limit clips 60.1% of the
-present mass on every step. This path passes its own threshold rather than the shared default,
-measured -- its discretisation noise reaches 6.7e-06 fabricated on solves whose honest answer
-is a drift below 1e-3, while genuine failures start at 9.2e-04.
+present mass on every step. This path passes its own threshold rather than the shared
+default: the shared 1e-8 was measured refusing solves whose honest answer is a 5.8e-5 drift.
+The replacement was chosen against 3704 configurations spanning grid, random and scale-free
+topologies -- no broken solve is admitted, and the solves it still refuses all have a true
+drift between 1e-4 and 1e-3.
