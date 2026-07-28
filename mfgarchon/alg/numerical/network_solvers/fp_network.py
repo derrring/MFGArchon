@@ -32,6 +32,7 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -347,8 +348,26 @@ class FPNetworkSolver(BaseFPSolver):
                 else:  # implicit
                     M[n + 1, :] = self._implicit_step(M[n, :], u_current, t)
 
-                # Enforce non-negativity
-                M[n + 1, :] = np.maximum(M[n + 1, :], 0)
+                # Issue #1683: this clipped to zero and then divided by the total, so the
+                # returned density was non-negative AND exactly unit-mass whatever the step
+                # produced -- the two properties a caller would check to decide the solve was
+                # healthy, both supplied by the repair rather than by the physics. Measured on
+                # a 5x5 grid network: a steep value field clips 1.66% of the present mass on
+                # 19 of 20 steps, and dt past the CFL limit clips 60.1% on every step. Both
+                # returned unit mass.
+                #
+                # The node masses are the mass functional here (`np.sum` at line ~363 below is
+                # the solver's own notion of total mass), so the ratio needs no weights.
+                M[n + 1, :] = clip_nonnegative_or_raise(
+                    M[n + 1, :],
+                    context=f"Network FP solve: at step {n + 1}/{n_intervals}, scheme={self.scheme!r}",
+                    remedy=(
+                        "The explicit scheme is stable only under a CFL-type limit on dt; the "
+                        "solve warns when dt exceeds dt_stable, and that warning is the first "
+                        "thing to check. Reduce dt (increase Nt), lower the diffusion "
+                        "coefficient, or use scheme='implicit'."
+                    ),
+                )
 
                 # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
                 # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
