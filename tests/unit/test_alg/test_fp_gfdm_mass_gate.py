@@ -33,11 +33,12 @@ NT = 10
 T = 0.5
 
 
-def _solver(sigma):
+def _build(sigma, Nt=NT):
+    """Same construction as `_solver`, with Nt exposed for the refinement-sensitive tests."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1))
     problem = MFGProblem(
         geometry=grid,
-        Nt=NT,
+        Nt=Nt,
         T=T,
         sigma=sigma,
         components=MFGComponents(
@@ -51,6 +52,10 @@ def _solver(sigma):
         ),
     )
     return FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, N).reshape(-1, 1))
+
+
+def _solver(sigma):
+    return _build(sigma)
 
 
 def _inputs(drift_scale):
@@ -78,23 +83,39 @@ def test_an_advection_driven_configuration_stops():
         _solver(0.1).solve_fp_system(m0, drift)
 
 
-def test_the_remedy_names_both_mechanisms():
-    """They point opposite ways, so naming only one sends half the readers backwards."""
+def test_the_remedy_names_the_lever_that_works_and_disowns_the_one_that_does_not():
+    """Review measured both of the first version's suggestions and neither helped.
+
+    "Reduce dt" is worse than useless here -- refining dt at fixed h makes the mass drift
+    grow monotonically (2.79 -> 8.73 over Nt = 10..1280). "Add diffusion" never reaches the
+    threshold on the advection-driven configuration and turns back up. The lever that does
+    move it, `upwind_scheme`, went unmentioned. A remedy that names only non-levers sends
+    the reader to spend an afternoon refining a grid.
+    """
     m0, drift = _inputs(1.0)
     with pytest.raises(ValueError) as exc:
         _solver(0.5).solve_fp_system(m0, drift)
     message = str(exc.value)
     assert "GFDM FP solve: at t_idx=" in message
-    assert "dt*D/dx^2" in message
-    assert "drift is" in message
-    assert "measure which one binds" in message
+    assert "upwind_scheme" in message
+    assert "1752" in message
+    assert "Do NOT reduce dt" in message, "refining dt silences this gate; the message must say so"
+    assert "2.5e+09" in message, "name the number the refinement leads to, not just the direction"
 
 
-def test_a_converging_configuration_still_runs():
-    """The gate must not stop a solve that does not clip.
+def test_a_configuration_with_no_negatives_at_all_still_runs():
+    """The gate must not stop a solve that never goes negative.
 
-    sigma=0.3 with a moderate drift clips nothing across all ten steps -- the régime this
-    path is usable in, and the one a threshold set too tight would destroy.
+    Named for what it does. The first version called this "a converging configuration" and
+    "the régime this path is usable in", which review measurement contradicted: the very
+    next test asserts this same run fabricates 179% of its mass, and refining either dt or h
+    makes it worse. It converges to nothing; its density merely stays positive
+    (min +8.5e-05).
+
+    That also bounds what this test can guard. With no negatives anywhere it exercises only
+    `mass_fabricated_by_clip`'s `if not negatives.any(): return 0.0` early return, so it
+    would stay green under any threshold down to zero. It is a smoke check, not the
+    threshold guard -- `test_the_threshold_is_not_satisfiable_by_a_marginal_clip` is that.
     """
     m0, drift = _inputs(5.0)
     result = _solver(0.3).solve_fp_system(m0, drift)
@@ -141,3 +162,67 @@ def test_the_drift_is_reported_at_warning_level(caplog):
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "the drift was not reported at WARNING or above"
     assert "1752" in warnings[0].getMessage(), "the message must name the issue tracking the defect"
+
+
+def test_a_clip_far_below_one_percent_still_stops_the_solve():
+    """Pins the THRESHOLD, which the large-clip configurations above do not.
+
+    My first attempt here copied the FDM sibling's guard -- assert the reported percentage
+    is above 1% -- and claimed it pinned the threshold. Measured, it does not: at
+    `MAX_CLIP_MASS_FABRICATION = 0.02`, six orders looser than shipped, that assertion and
+    every other one in this file stays green, because a 61% clip is above 1% either way.
+
+    This configuration is the discriminating one. It fabricates so little that the message
+    rounds it to 0.000%, and it must still stop -- because the campaign's premise is that
+    there is no interesting régime between round-off (~1e-15) and a failed scheme, so
+    anything measurably above round-off is the scheme. Loosening the threshold to any
+    percent-scale value turns this red.
+    """
+    n_t = 640
+    x = np.linspace(0, 1, N)
+    m0 = np.exp(-30 * (x - 0.5) ** 2)
+    m0 /= m0.sum()
+    drift = np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
+
+    with pytest.raises(ValueError) as exc:
+        _build(sigma=0.1, Nt=n_t).solve_fp_system(m0, drift)
+    percent = float(str(exc.value).split("would fabricate")[1].split("%")[0])
+    assert percent < 0.01, (
+        f"message reported {percent}% -- this test is only a threshold pin while the clip "
+        f"here is far below the percent scale; pick a finer Nt if the scheme changed"
+    )
+
+
+def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
+    """Records the campaign invariant's structural limit. Recorded, not fixed.
+
+    `fabricated = |sum(negatives)| / sum(positives)` is scale-invariant AND evaluated per
+    step, so refining dt shrinks what any one step can fabricate whether or not the answer
+    improves. On this configuration the observable falls monotonically to exactly zero --
+    nothing goes negative at all -- while the final mass climbs seven orders:
+
+        Nt=10    max fabricated 9.591e-02   final mass 8.40e+02   raises
+        Nt=640   max fabricated 3.396e-05   final mass 1.70e+09   raises
+        Nt=2560  max fabricated 0.000e+00   final mass 2.55e+09   PASSES
+
+    No threshold closes this: any fixed value can be driven below by refining dt. The failure
+    is adversarial in shape, because the natural response to the gate firing is to refine the
+    timestep, and here that silences the gate and makes the answer worse -- which is why the
+    remedy string tells the reader not to.
+
+    Asserted so nobody later reads a passing gate as "the solve is healthy", and so the drift
+    WARNING is not mistaken for redundant with the gate: only the pair covers this.
+    """
+    n_t = 2560
+    x = np.linspace(0, 1, N)
+    m0 = np.exp(-30 * (x - 0.5) ** 2)
+    m0 /= m0.sum()
+    drift = np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
+
+    result = _build(sigma=0.1, Nt=n_t).solve_fp_system(m0, drift)
+
+    assert result.min() >= 0.0, "if this goes negative the gate would have caught it and the point is moot"
+    assert float(result[-1].sum()) > 1e6, (
+        f"final mass {float(result[-1].sum()):.3e}: this configuration is meant to diverge while "
+        f"staying positive, which is the blind spot being recorded"
+    )

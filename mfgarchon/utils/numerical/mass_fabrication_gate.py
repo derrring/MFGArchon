@@ -21,14 +21,51 @@ wrong.
 Round-off gives ~1e-15. A scheme that has genuinely failed gives O(1). There is no
 interesting régime between them, which is why a single threshold works.
 
+## What this cannot see, and why no threshold fixes it
+
+The ratio is **scale-invariant** and evaluated **per step**. Both matter, and the second is
+the serious one: refining the timestep shrinks what any one step can fabricate, so the
+observable vanishes under dt-refinement whether or not the answer improves. Measured on the
+GFDM path (sigma=0.1, drift=25, Issue #1752):
+
+    Nt        dt        max fabricated      final mass     this gate
+    10     5.00e-02        9.591e-02          8.40e+02       raises
+    20     2.50e-02        5.961e-03          5.18e+04       raises
+   160     3.13e-03        3.646e-04          4.17e+08       raises
+   640     7.81e-04        3.396e-05          1.70e+09       raises
+  2560     1.95e-04        0.000e+00          2.55e+09       PASSES
+ 10240     4.88e-05        0.000e+00          2.83e+09       PASSES
+
+The observable falls five orders and then to exactly zero -- nothing goes negative at all --
+while the end-to-end error climbs seven. At Nt=2560 the solve is maximally wrong and
+maximally clean by this function's own criterion.
+
+**A tighter threshold does not close this.** Any fixed value can be driven below by refining
+dt. What this gate rules out is a step that repairs a sign violation large enough to matter;
+it does not certify that a solve converged, and a caller must not read a passing gate as
+"healthy". Where magnitude matters, a drift check on the whole solve belongs beside this one
+-- `fp_gfdm.py` carries one for exactly this reason.
+
+Worth stating plainly because the failure is adversarial in shape: the natural response to
+this gate firing is to refine the timestep, and on a scheme whose spatial operator is the
+real problem that silences the gate and makes the answer worse.
+
 ## Why weights are optional, and when they are not
 
 For a **uniform** quadrature the cell measure cancels in the ratio, so the same numbers
 come out whether or not you multiply by dV -- and passing them is wasted work. For a
-non-uniform one (GFDM quadrature, a weak-form mass matrix, graph node masses) it does
-**not** cancel, and omitting the weights silently measures a different quantity than the
-solver's own mass functional. Hence `weights=None` means "uniform, and I have checked
-that it is", not "I did not think about it".
+non-uniform one (a weak-form mass matrix is the real case) it does **not** cancel, and
+omitting the weights silently measures a different quantity than the solver's own mass
+functional. Hence `weights=None` means "uniform, and I have checked that it is", not "I
+did not think about it".
+
+The check is mechanical: find what the caller compares to decide mass changed. Both
+migrated callers turned out to be unweighted -- GFDM compares `np.sum(M)` and carries no
+cell measure anywhere (the only weights in `gfdm_components/` are least-squares stencil and
+interpolation weights), and the network solver's mass functional is the node sum. An earlier
+version of this paragraph offered "GFDM quadrature" as the paradigm non-uniform case, which
+was wrong: it was reasoning from the family name rather than from the code, and the first
+caller it warned about was one where the warning did not apply.
 
 ## Not for input validation
 

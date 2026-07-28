@@ -564,6 +564,7 @@ class FPGFDMSolver(BaseFPSolver):
 
         _logger = get_logger(__name__)
         max_mass_drift = 0.0
+        max_mass_drift_t_idx = 0
 
         # Time stepping loop (forward Euler)
         for t_idx in range(n_time_points - 1):
@@ -601,35 +602,57 @@ class FPGFDMSolver(BaseFPSolver):
             # exactly 1.0000 -- including one measured to clip **61%** of the present mass
             # at a single step. Reporting perfect conservation over that is the defect.
             #
-            # Two mechanisms drive it here and the remedy names both, because they call for
-            # opposite changes. Measured on a 21-point grid: sigma=0.5 clips 61% with
-            # dt*D/dx^2 = 2.5, five times the explicit-diffusion limit; sigma=0.1 with a
-            # steep drift clips 9.6% at dt*D/dx^2 = 0.1, where the driver is advection
-            # rather than diffusion.
+            # Issue #1752: the mechanism is the unstabilised central flux divergence below
+            # with `upwind_scheme="none"` (the default), NOT the explicit time stepping. The
+            # first version of this comment blamed forward Euler; refining dt at fixed h
+            # makes the drift monotonically WORSE, converging upward to a semi-discrete
+            # limit (2.79 -> 4.47 -> 6.08 -> 7.99 -> 8.62 -> 8.73 for Nt = 10..1280 at
+            # sigma=0.3), which rules time discretisation out. Refining h with the drift on
+            # also diverges (4.31 -> 8.62 -> 12.18 -> 17.88 for N = 11..81), while pure
+            # diffusion converges cleanly at ~O(h). So this is not merely non-conservative;
+            # it is divergent under refinement, and `dt` is not a lever on it.
+            #
+            # The mass functional here is `np.sum` (line ~560 and just below), an unweighted
+            # sum, and the GFDM path carries no cell measure at all -- the only weights in
+            # `gfdm_components/` are least-squares stencil and interpolation weights. So the
+            # gate's ratio measures the same quantity this solver compares, and `weights=`
+            # is correctly omitted rather than merely unset.
             M_solution[t_idx + 1, :] = clip_nonnegative_or_raise(
                 M_solution[t_idx + 1, :],
                 context=f"GFDM FP solve: at t_idx={t_idx + 1}",
                 remedy=(
-                    "Forward Euler is explicit in both terms. Check dt*D/dx^2 < 0.5 for "
-                    "the diffusion limit, and reduce dt or add diffusion if the drift is "
-                    "steep -- the two point opposite ways, so measure which one binds."
+                    f"upwind_scheme is {self.upwind_scheme!r}. 'none' leaves the flux "
+                    "divergence unstabilised, which is what drives this (Issue #1752); "
+                    "'linear' or 'exponential' measurably reduce it -- on the reference "
+                    "configuration, final mass 8.62 -> 2.34 -> 2.25. Do NOT reduce dt to "
+                    "silence this: refining the timestep drives the per-step clip below "
+                    "the threshold while the final mass climbs from 8.4e+02 to 2.5e+09, so "
+                    "it removes the message and not the defect. If dt*D/dx^2 < 0.5 is also "
+                    "violated, fix that on its own merits; it is not what binds here."
                 ),
             )
             mass_current = np.sum(M_solution[t_idx + 1, :])
             if mass_initial > 0:
-                max_mass_drift = max(max_mass_drift, abs(mass_current - mass_initial) / mass_initial)
+                drift = abs(mass_current - mass_initial) / mass_initial
+                if drift > max_mass_drift:
+                    max_mass_drift, max_mass_drift_t_idx = drift, t_idx + 1
 
-        # Issue #1752: with the renormalisation gone this line is the only remaining signal
-        # for a drift that was measured at 179% on a configuration that clips nothing, so
-        # it cannot stay at DEBUG. The scheme is not conservative by construction -- forward
-        # Euler with a non-conservative GFDM operator -- and scaling the answer afterwards
-        # was hiding that rather than fixing it.
+        # Issue #1752: with the renormalisation gone this is the only remaining signal for a
+        # drift measured at 179% on a configuration that clips nothing, so it cannot stay at
+        # DEBUG. It is also the ONLY thing that catches a divergence the clip gate structurally
+        # cannot: the gate measures fabricated mass as a RATIO of the mass present, which is
+        # scale-invariant, so a solve that blows up while staying positive has no negatives and
+        # passes. Measured: sigma=0.1/drift=25 at Nt=2560 returns a finite, non-negative density
+        # of mass 2.55e+09 and the gate does not fire. This warning does.
         if max_mass_drift > 1e-6:
             _logger.warning(
-                "GFDM FP mass drift %.2e over the solve. Forward Euler with this operator does "
-                "not conserve mass (Issue #1752); the returned density carries the drift rather "
-                "than being rescaled to hide it.",
+                "GFDM FP mass drift %.2e (worst at t_idx=%d). The flux divergence is unstabilised "
+                "at upwind_scheme=%r and diverges under refinement (Issue #1752) -- refining dt "
+                "makes this worse, not better. The returned density carries the drift rather than "
+                "being rescaled to hide it.",
                 max_mass_drift,
+                max_mass_drift_t_idx,
+                self.upwind_scheme,
             )
 
         return M_solution
