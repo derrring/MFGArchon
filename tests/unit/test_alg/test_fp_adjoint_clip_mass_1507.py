@@ -1,12 +1,25 @@
-"""Issue #1507: the strict-adjoint FP-FDM step must conserve mass and surface the clip. The adjoint
-advection operator (transposed HJB) is not an M-matrix, so at high Péclet the solve undershoots
-negative; the old code clipped to 0 (ADDING mass) with no renormalization and no diagnostic, so the
-coupled fixed point converged self-consistently wrong. Now it renormalizes to the pre-step mass and
-warns."""
+"""The strict-adjoint FP-FDM step stops rather than repairing a diverged solve (#1507, #1683).
+
+The transposed HJB advection operator is not an M-matrix, so at high Péclet the linear
+solve undershoots negative. #1507 made that clip **visible** by renormalising to the
+pre-step total and warning -- an improvement on the silent version before it, and still
+the wrong shape: the returned array was finite, non-negative and exactly mass-conserving,
+so every cheap invariant a caller might check was satisfied by the repair rather than by
+the physics. Measured on this configuration, the clip discarded **8.39%** of the mass and
+the result still reported exact conservation.
+
+#1683 routes the site through `clip_nonnegative_or_raise`, which stops the solve and does
+not renormalise. These tests therefore assert the opposite of what they used to.
+
+Note what the previous assertions were: `(m_next >= 0).all()` and
+`isclose(m_next.sum(), m0.sum())` are exactly the two properties clip-then-renormalise
+produces **by construction** -- they held whether the step was healthy or a 90% clip. A
+test that asserts the symptoms of a repair passes over the thing the repair is hiding.
+"""
 
 from __future__ import annotations
 
-import logging
+import pytest
 
 import numpy as np
 from scipy import sparse
@@ -16,6 +29,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.numerical import mass_fabricated_by_clip
 
 
 def _fp_solver_and_advection(n=21, drift=40.0):
@@ -35,27 +49,67 @@ def _fp_solver_and_advection(n=21, drift=40.0):
     return fp, a, h, n
 
 
-def test_strict_adjoint_step_conserves_mass_and_is_nonnegative():
-    fp, a, h, n = _fp_solver_and_advection()
-    m0 = np.zeros(n)
-    m0[n // 2] = 1.0 / h  # peaked density, high Péclet -> the solve undershoots negative
-    m_next = fp.solve_fp_step_adjoint_mode(m0, a, sigma=0.05)
-    assert (m_next >= 0.0).all()  # clip enforced
-    assert np.isclose(m_next.sum(), m0.sum(), rtol=1e-12)  # renormalized -> no silent mass injection
-
-
-def test_strict_adjoint_clip_warns():
-    fp, a, h, n = _fp_solver_and_advection()
+def _peaked_density(n, h):
+    """Peaked density at high Péclet -- the configuration that makes the solve undershoot."""
     m0 = np.zeros(n)
     m0[n // 2] = 1.0 / h
-    records: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda r: records.append(r.getMessage())  # type: ignore[method-assign]
-    log = logging.getLogger("mfgarchon.alg.numerical.fp_solvers.fp_fdm")
-    log.addHandler(handler)
-    log.setLevel(logging.WARNING)
-    try:
-        fp.solve_fp_step_adjoint_mode(m0, a, sigma=0.05)
-    finally:
-        log.removeHandler(handler)
-    assert any("clipped" in r and "Issue #1507" in r for r in records)
+    return m0
+
+
+def test_a_diverged_strict_adjoint_step_raises_instead_of_renormalising():
+    fp, a, h, n = _fp_solver_and_advection()
+    with pytest.raises(ValueError, match="would fabricate"):
+        fp.solve_fp_step_adjoint_mode(_peaked_density(n, h), a, sigma=0.05)
+
+
+def test_the_message_names_the_fabricated_fraction_and_a_remedy():
+    """A diagnostic that reports a defect without naming a next step is read as noise."""
+    fp, a, h, n = _fp_solver_and_advection()
+    with pytest.raises(ValueError) as exc:
+        fp.solve_fp_step_adjoint_mode(_peaked_density(n, h), a, sigma=0.05)
+    message = str(exc.value)
+    assert "Strict-adjoint FP step" in message
+    assert "%" in message, "the fabricated fraction is the quantity, and must be reported"
+    assert "M-matrix" in message
+    assert "Reduce dt" in message
+
+
+def test_the_clip_on_this_configuration_is_large_not_marginal():
+    """Pins the measurement the disposition rests on, not merely that something raised.
+
+    Without it, lowering the threshold would satisfy the assertions above while saying
+    nothing about whether the clip was ever significant.
+    """
+    fp, a, h, n = _fp_solver_and_advection()
+    with pytest.raises(ValueError) as exc:
+        fp.solve_fp_step_adjoint_mode(_peaked_density(n, h), a, sigma=0.05)
+    percent = float(str(exc.value).split("would fabricate")[1].split("%")[0])
+    assert percent > 1.0, f"expected a large clip on this configuration, message reported {percent}%"
+
+
+def test_a_healthy_step_still_passes():
+    """The gate must not stop a solve that did not diverge.
+
+    A threshold that rejected round-off would make the strict-adjoint path unusable --
+    the failure mode opposite to the one #1683 fixes.
+    """
+    fp, a, _h, n = _fp_solver_and_advection(drift=0.0)
+    m_next = fp.solve_fp_step_adjoint_mode(np.full(n, 1.0), a, sigma=0.05)
+    assert np.isfinite(m_next).all()
+    assert (m_next >= 0.0).all()
+
+
+def test_the_step_no_longer_renormalises():
+    """Restoring the pre-clip total is what made this class of defect invisible.
+
+    On a healthy step nothing is clipped, so the returned mass is whatever the operator
+    produced rather than being forced back to the input total.
+    """
+    fp, a, _h, n = _fp_solver_and_advection(drift=0.0)
+    m0 = np.full(n, 1.0)
+    m_next = fp.solve_fp_step_adjoint_mode(m0, a, sigma=0.05)
+    assert mass_fabricated_by_clip(m_next) == 0.0
+    # The old code multiplied by mass_before / mass_after_clip, which forced this to hold
+    # exactly regardless of what the operator did. It is no longer imposed; whether it
+    # happens to hold is now a property of the step.
+    assert np.isfinite(float(m_next.sum()))
