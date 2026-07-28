@@ -79,19 +79,22 @@ class YourCustomSolver:
         Solve the MFG system and return a SolverResult object.
         
         Returns:
-            SolverResult containing U_solution, M_solution, and metadata
+            SolverResult containing U, M, the per-iteration error histories, and metadata
         """
         # Your solving algorithm here
-        
-        # Return standardized result
+
+        # Return standardized result. U, M, iterations, error_history_U and
+        # error_history_M are required; the rest have defaults.
         return SolverResult(
-            U_solution=U_array,
-            M_solution=M_array,
-            converged=True,
+            U=U_array,
+            M=M_array,
             iterations=num_iterations,
-            final_error=final_error,
+            error_history_U=error_history_U,
+            error_history_M=error_history_M,
+            solver_name="your_solver_type",
+            converged=True,
             execution_time=time_taken,
-            solver_info={'solver_type': 'your_solver_type'}
+            metadata={"learning_rate": self.learning_rate},
         )
 ```
 
@@ -105,7 +108,7 @@ import time
 from typing import List, Optional, Dict, Any
 
 from mfgarchon.core.plugin_system import SolverPlugin, PluginMetadata
-from mfgarchon.core.solver_result import SolverResult
+from mfgarchon.utils.solver_result import SolverResult
 from mfgarchon.config import MFGSolverConfig
 
 class GradientDescentSolver:
@@ -127,35 +130,39 @@ class GradientDescentSolver:
     
     def solve(self) -> SolverResult:
         start_time = time.time()
-        convergence_history = []
-        
+        error_history_U: list[float] = []
+        error_history_M: list[float] = []
+
         for iteration in range(self.max_iterations):
             # Store previous solution
             U_prev = self.U_solution.copy()
             M_prev = self.M_solution.copy()
-            
+
             # Update value function and density
             self._gradient_step()
-            
-            # Check convergence
-            error = self._compute_error(U_prev, M_prev)
-            convergence_history.append(error)
-            
+
+            # Track each field separately: the coupled system can converge in one and not
+            # the other, and a single combined number cannot show that.
+            error_U = float(np.max(np.abs(self.U_solution - U_prev)))
+            error_M = float(np.max(np.abs(self.M_solution - M_prev)))
+            error_history_U.append(error_U)
+            error_history_M.append(error_M)
+            error = max(error_U, error_M)
+
             if error < self.tolerance:
                 break
+
         
         return SolverResult(
-            U_solution=self.U_solution,
-            M_solution=self.M_solution,
-            converged=error < self.tolerance,
+            U=self.U_solution,
+            M=self.M_solution,
             iterations=iteration + 1,
-            final_error=error,
+            error_history_U=np.array(error_history_U),
+            error_history_M=np.array(error_history_M),
+            solver_name="gradient_descent",
+            converged=error < self.tolerance,
             execution_time=time.time() - start_time,
-            convergence_history=convergence_history,
-            solver_info={
-                'solver_type': 'gradient_descent',
-                'learning_rate': self.learning_rate
-            }
+            metadata={"learning_rate": self.learning_rate},
         )
     
     def _gradient_step(self):
@@ -384,7 +391,8 @@ class TestCustomSolverPlugin:
 
 ```python
 from mfgarchon.core.plugin_system import discover_and_load_plugins
-from mfgarchon import MFGProblem, create_solver_with_plugins
+from mfgarchon import MFGProblem
+from mfgarchon.core.plugin_system import create_solver_with_plugins
 
 # Discover and load all available plugins
 plugin_results = discover_and_load_plugins()
@@ -661,9 +669,11 @@ plugin = YourPlugin()
 solver = plugin.create_solver(problem, "your_solver")
 result = solver.solve()
 
-# Validate result format
-from mfgarchon.core.solver_result import validate_solver_result
-validate_solver_result(result, problem)
+# Check the result. There is no validator function to call: `SolverResult` is a dataclass
+# whose required fields are enforced at construction, so a plugin that builds one has
+# already been checked. What is worth asserting is the physics your solver claims.
+assert result.U.shape == result.M.shape
+assert result.converged, f"did not converge in {result.iterations} iterations"
 ```
 
 ## Contributing Plugins to Community

@@ -24,7 +24,7 @@ This is the most macroscopic view. The configuration system acts like a funnel:
 ```mermaid
 graph TD
     subgraph User_Space [User Space: Flexibility First]
-        A[User Input<br>CLI / YAML] -->|Load| B(OmegaConf Object<br><b>*Schema</b>)
+        A[User Input<br>CLI / YAML] -->|Load| B(OmegaConf DictConfig<br><i>transport only</i>)
         style A fill:#e1f5fe,stroke:#01579b
         style B fill:#e1f5fe,stroke:#01579b
         B -->|Interpolation| B_Res[Resolved Config<br>User Intent]
@@ -53,7 +53,7 @@ This sequence diagram shows the complete journey of a configuration file in **Mo
 ```mermaid
 sequenceDiagram
     participant U as User (YAML)
-    participant O as OmegaConf (*Schema)
+    participant O as OmegaConf (transport)
     participant M as Manager (Bridge)
     participant P as Pydantic (*Config)
     participant D as Disk (Snapshot)
@@ -127,7 +127,7 @@ graph LR
 | System | File | Suffix | Role | When to Use |
 |:-------|:-----|:-------|:-----|:------------|
 | **Pydantic** | `core.py` | `*Config` | Runtime validation | Direct Python usage, API calls |
-| **OmegaConf** | `structured_schemas.py` | `*Schema` | YAML management | Experiments, parameter sweeps |
+| **OmegaConf** | `omegaconf_manager.py` | — | YAML transport only | Experiments, parameter sweeps |
 
 ### Why Two Systems?
 
@@ -187,10 +187,10 @@ experiment:
 
 **Python code:**
 ```python
-from mfgarchon.config.omegaconf_manager import load_structured_mfg_config
+from mfgarchon.config import MFGSolverConfig, load_effective_config
 
-# Load from YAML
-config = load_structured_mfg_config("experiment.yaml")
+# Load from YAML and validate against the Pydantic model in one step
+config = load_effective_config("experiment.yaml", MFGSolverConfig)
 
 # Access values with type safety
 print(config.problem.T)        # 2.0
@@ -202,21 +202,19 @@ print(config.solver.tolerance) # 1e-8
 Best for: Production runs where both flexibility and validation matter.
 
 ```python
-from mfgarchon.config import MFGSolverConfig
-from mfgarchon.config.omegaconf_manager import (
-    create_omega_manager,
-    load_structured_mfg_config,
-)
+from mfgarchon.config import MFGSolverConfig, create_omega_manager, load_effective_config
 
-# 1. Load flexible config from YAML
+# 1. Load flexible YAML and validate against the Pydantic model.
+#    `load_effective_config` does both, which is the single validation crossing (#1010).
+config = load_effective_config("experiment.yaml", MFGSolverConfig)
+
+# 2. For composition, overrides or parameter sweeps, go through the manager --
+#    OmegaConf handles YAML transport, the Pydantic model owns the schema.
 manager = create_omega_manager()
-omega_config = load_structured_mfg_config("experiment.yaml")
+sweep = manager.create_parameter_sweep(config, {"solver.tolerance": [1e-6, 1e-8]})
 
-# 2. Bridge to strict Pydantic config (validates everything)
-pydantic_config = manager.bridge_to_pydantic(omega_config, MFGSolverConfig)
-
-# 3. Solve with validated config
-result = problem.solve(config=pydantic_config)
+# 3. Solve with the validated config
+result = problem.solve(config=config)
 
 # 4. Save effective config for reproducibility
 manager.save_effective_config(pydantic_config, output_dir="results/run_001")
@@ -270,23 +268,21 @@ from mfgarchon.config import (
 )
 ```
 
-### OmegaConf Schemas (`mfgarchon.config.structured_schemas`)
+### YAML loading (`mfgarchon.config`)
+
+There are no OmegaConf schema classes. `mfgarchon.config.structured_schemas` and its
+`*Schema` dataclasses were removed in **v0.19.4** (`5f7d0800`, closing the B3+B4 items of
+#1010): the config system has one schema authority, the Pydantic models above, and one
+validation crossing. OmegaConf now handles YAML transport only.
 
 ```python
-from mfgarchon.config.structured_schemas import (
-    MFGSchema,              # Complete MFG configuration
-    ProblemSchema,          # Problem definition
-    SolverSchema,           # Solver settings
-    HJBSchema,              # HJB solver settings
-    FPSchema,               # FP solver settings
-    NewtonSchema,           # Newton settings
-    ExperimentSchema,       # Experiment metadata
-    DomainSchema,           # Spatial domain
-    BoundaryConditionsSchema,
-    InitialConditionSchema,
-    LoggingSchema,
-    VisualizationSchema,
-    BeachProblemSchema,     # Specialized for beach problem
+from mfgarchon.config import (
+    load_effective_config,   # YAML -> validated Pydantic model (the usual entry point)
+    load_solver_config,      # YAML -> SolverConfig
+    load_experiment_config,  # composed experiment config, with **overrides
+    save_effective_config,   # write the config a run actually used
+    create_omega_manager,    # composition, overrides, parameter sweeps
+    bridge_to_pydantic,      # explicit crossing, when you already hold a DictConfig
 )
 ```
 
@@ -297,8 +293,8 @@ from mfgarchon.config.structured_schemas import (
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │  YAML File   │────►│   OmegaConf  │────►│   Pydantic   │────►│    Solver    │
-│              │     │   *Schema    │     │   *Config    │     │              │
-│  (Flexible)  │     │  (Typed)     │     │  (Validated) │     │  (Executes)  │
+│              │     │  (transport) │     │   *Config    │     │              │
+│  (Flexible)  │     │  (untyped)   │     │  (Validated) │     │  (Executes)  │
 └──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
                            │                     │
                            │                     │
@@ -332,9 +328,10 @@ Both systems support IDE autocompletion:
 config: MFGSolverConfig = MFGSolverConfig(...)
 config.tolerance  # IDE knows this is float
 
-# OmegaConf - typed via schemas
-schema: MFGSchema = load_structured_mfg_config("config.yaml")
-schema.solver.tolerance  # IDE knows this is float
+# Loading YAML returns the same typed model: OmegaConf carries the text, the
+# Pydantic class owns the schema, and validation happens once at the crossing.
+loaded: MFGSolverConfig = load_effective_config("config.yaml", MFGSolverConfig)
+loaded.solver.tolerance  # IDE knows this is float
 ```
 
 ### 3. Validate Early
@@ -373,10 +370,10 @@ problem:
 **Solution**: Use the structured loading functions:
 ```python
 # Bad
-config = OmegaConf.load("config.yaml")  # Returns DictConfig
+config = OmegaConf.load("config.yaml")  # Returns DictConfig -- unvalidated
 
 # Good
-config = load_structured_mfg_config("config.yaml")  # Returns typed MFGSchema
+config = load_effective_config("config.yaml", MFGSolverConfig)  # Returns a validated model
 ```
 
 ### Validation Error on Bridge
@@ -401,7 +398,5 @@ print(OmegaConf.to_yaml(config))  # See all values including defaults
 
 ## See Also
 
-- `docs/development/PYDANTIC_OMEGACONF_COOPERATION.md` - Architecture details
 - `mfgarchon/config/core.py` - Pydantic class definitions
-- `mfgarchon/config/structured_schemas.py` - OmegaConf schema definitions
 - `mfgarchon/config/omegaconf_manager.py` - Manager utilities
