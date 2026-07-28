@@ -21,14 +21,67 @@ wrong.
 Round-off gives ~1e-15. A scheme that has genuinely failed gives O(1). There is no
 interesting régime between them, which is why a single threshold works.
 
+## What this cannot see, and why no threshold fixes it
+
+The ratio is **scale-invariant** and evaluated **per step**. Both matter, and the second is
+the serious one: refining the timestep shrinks what any one step can fabricate, so the
+observable can vanish under dt-refinement whether or not the answer improves. Measured on the
+GFDM path -- and, so far, only there (sigma=0.1, drift=25, Issue #1752):
+
+    Nt        dt        max fabricated      final mass     this gate
+    10     5.00e-02        9.591e-02          8.40e+02       raises
+    20     2.50e-02        5.961e-03          5.18e+04       raises
+   160     3.13e-03        3.646e-04          4.17e+08       raises
+   640     7.81e-04        3.396e-05          1.70e+09       raises
+  2560     1.95e-04        0.000e+00          2.55e+09       PASSES
+ 10240     4.88e-05        0.000e+00          2.83e+09       PASSES
+
+The observable falls five orders and then to exactly zero -- nothing goes negative at all --
+while the end-to-end error climbs seven. At Nt=2560 the solve is maximally wrong and
+maximally clean by this function's own criterion.
+
+**Scope of that measurement.** It is one site. The obvious generalisation -- "any fixed
+threshold is defeatable by refining dt at any caller" -- was asserted during review and then
+withdrawn, because the attempt to reproduce it at the FDM time-stepping site produced a null
+with no working positive control. So: demonstrated at the GFDM site, open elsewhere. Do not
+cite it as a general property of this function until a second site shows it.
+
+What is general, and does not depend on that table: this gate rules out a step that repairs a
+sign violation large enough to matter. It does not certify that a solve converged. A caller
+must not read a passing gate as "healthy".
+
+Where magnitude matters, something must **stop**, and this function is not it. `fp_gfdm.py`
+reports its whole-solve drift, but reports is the accurate verb -- it is a `logger.warning`,
+and the solve returns. That is the only thing separating a GFDM configuration whose honest
+answer is a 0.27% drift from one that returns a final mass of 1.06e+23, and by this campaign's
+own standard ("a diagnostic nobody reads is the same failure as no diagnostic") a log is not a
+gate. Recorded rather than fixed: what should stop a divergent-but-positive solve is a
+different invariant than this one, not a stricter threshold.
+
+Worth stating plainly because the failure is adversarial in shape wherever it does occur: the
+natural response to this gate firing is to refine the timestep, and on a scheme whose spatial
+operator is the real problem that silences the gate and makes the answer worse.
+
 ## Why weights are optional, and when they are not
 
 For a **uniform** quadrature the cell measure cancels in the ratio, so the same numbers
 come out whether or not you multiply by dV -- and passing them is wasted work. For a
-non-uniform one (GFDM quadrature, a weak-form mass matrix, graph node masses) it does
-**not** cancel, and omitting the weights silently measures a different quantity than the
-solver's own mass functional. Hence `weights=None` means "uniform, and I have checked
-that it is", not "I did not think about it".
+non-uniform one (a weak-form mass matrix is the real case) it does **not** cancel, and
+omitting the weights silently measures a different quantity than the solver's own mass
+functional. Hence `weights=None` means "uniform, and I have checked that it is", not "I
+did not think about it".
+
+The check is mechanical: read what the caller itself compares to decide mass changed, and
+match the gate to that. Worked example -- GFDM compares `np.sum(M)` against `np.sum(m_init)`
+and carries no cell measure anywhere (the only weights under `gfdm_components/` are
+least-squares stencil and interpolation weights), so `weights=None` is not merely the default
+there, it is the only correct value.
+
+An earlier version of this paragraph offered "GFDM quadrature" as the paradigm non-uniform
+case. That was wrong, and wrong in a specific way worth naming: it reasoned from the family
+name rather than from the code, so the first caller it warned about was one where the warning
+did not apply. The replacement then over-corrected by counting callers it had not read. Check
+each site; do not generalise from the scheme family, and do not generalise from this file.
 
 ## Not for input validation
 
