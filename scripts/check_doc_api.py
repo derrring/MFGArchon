@@ -3,7 +3,7 @@
 
 Docs are the one artefact nothing checks. `local_ci.sh` runs `pytest tests/`, and no test
 imports a doc example, so a rename silently leaves every tutorial that used the old name
-teaching a `NameError`. The first sweep found 259 such claims across 110 files.
+teaching a `NameError`. The first sweep found 251 such claims in 30 of the 109 files it scans.
 
 ## Four checks
 
@@ -35,11 +35,34 @@ positive is visible in the report rather than silent.
 - `CHANGELOG.md` and `archive/` are exempt: an entry describing a v0.16 API is correct as
   written, and rewriting it would falsify the record.
 
-## Known blind spot
+## Known blind spots — measured, not guessed
 
-A document that both **sketches** `class Foo` and calls the real `Foo` has the name shadowed,
-so its calls are skipped. `NetworkHJBSolver(cfl_factor=...)` (#1757) is a live instance. The
-counts are a lower bound, and `--self-test` asserts the checks that do work still fire.
+The counts are a lower bound. A review census of 20 constructed defects found 14 missed. The
+structural ones, which will not go away on their own:
+
+- **Attribute-chain calls.** `mfgarchon.geometry.Domain2D(...)` is skipped; only bare
+  `ast.Name` callables are checked. Bare `Domain2D(...)` is caught.
+- **A doc that sketches `class Foo` and also calls the real `Foo`.** The name is shadowed
+  file-wide, so its calls and kwargs are skipped. `NetworkHJBSolver(cfl_factor=...)` (#1757)
+  is a live instance.
+- **Positional arity.** Nothing checks argument counts, only keyword names.
+- **`import mfgarchon.does_not_exist`.** Only `from X import Y` is resolved.
+- **Classes with no own `__init__`** (336 of them: `PINNConfig`, `DGMConfig`, ...). Their
+  parameters are inherited or dataclass-generated, so no signature is recorded and the kwarg
+  check is skipped.
+- **Names defined in two modules** (36 of them). Ambiguous, so deliberately exempted.
+- **Third-party names leak into `known`.** 288 of ~2100 names come only from `import`
+  statements, so `KDTree()` or `BaseModel()` in a doc reads as provided. This weakens
+  `unknown_calls` only; `bad_imports` uses the tighter per-module set.
+- **One syntax error discards the whole block.**
+
+Non-structural, latent rather than live: fence tags other than `python`/`py`/empty are not
+read, and `~~~` fences are not read. A census of every scanned doc finds neither form in use
+today.
+
+`--self-test` guards against a check going *silent*, which is not the same as guarding its
+coverage: a narrowing that still fires once on the control document passes. Closing that needs
+a control with several distinct shapes per category, and is tracked separately.
 """
 
 from __future__ import annotations
@@ -49,6 +72,7 @@ import ast
 import builtins
 import json
 import re
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -100,8 +124,6 @@ class PackageIndex:
             for node in ast.walk(tree):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     names.update(a.asname or a.name.split(".")[0] for a in node.names if a.name != "*")
-                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    continue
             names.update(self._all_entries(tree))
         self.known: set[str] = {n for v in self.provides.values() for n in v}
 
@@ -145,8 +167,9 @@ class PackageIndex:
             target = node
         if target is None:
             return
-        # First definition wins: a name defined in two modules is ambiguous, and guessing
-        # which one a document meant would produce findings that depend on walk order.
+        # A name defined in two modules is ambiguous: guessing which one a document meant
+        # would produce findings that depend on walk order, so BOTH are discarded and the
+        # kwarg check is skipped for that name. 36 names are exempted this way.
         if node.name in self.params:
             self.params[node.name] = None
             return
@@ -214,7 +237,10 @@ def scan_document(path: Path, index: PackageIndex) -> dict[str, list[str]]:
                     for a in n.names:
                         if a.name == "*":
                             continue
-                        if not index.module_known(module) or not index.module_provides(module, a.name):
+                        submodule = f"{module}.{a.name}"
+                        if not index.module_known(module) or not (
+                            index.module_provides(module, a.name) or index.module_known(submodule)
+                        ):
                             found["bad_imports"].append(f"{path}:{lineno + n.lineno}: from {module} import {a.name}")
                 else:
                     foreign.update(a.asname or a.name.split(".")[0] for a in n.names)
@@ -222,7 +248,13 @@ def scan_document(path: Path, index: PackageIndex) -> dict[str, list[str]]:
                 foreign.update(a.asname or a.name.split(".")[0] for a in n.names if not a.name.startswith("mfgarchon"))
 
     for lineno, tree in parsed:
-        for n in ast.walk(tree):
+        # Top level only. `ast.walk` picked up methods nested in doc-defined classes and
+        # compared them against module-level functions of the same bare name -- a namespace
+        # collision, not a drifted sketch. `UniversalLogger.log_convergence_analysis` was
+        # flagged against `utils/mfg_logging/logger.py`'s free function of that name, which is
+        # an unrelated object. The index records top-level definitions, so the comparison has
+        # to be against top-level ones.
+        for n in tree.body:
             if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in index.known:
                 real = index.params.get(n.name)
                 if real is not None:
@@ -232,6 +264,9 @@ def scan_document(path: Path, index: PackageIndex) -> dict[str, list[str]]:
                         found["drifted_sketches"].append(
                             f"{path}:{lineno + n.lineno}: {n.name} sketched with {sorted(extra)}"
                         )
+
+    for lineno, tree in parsed:
+        for n in ast.walk(tree):
             if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
                 continue
             name = n.func.id
@@ -259,10 +294,28 @@ def _sketched_params(node: ast.ClassDef | ast.FunctionDef) -> set[str]:
     return {a.arg for a in [*target.args.args, *target.args.kwonlyargs]} - {"self", "cls"}
 
 
+def tracked_markdown(repo: Path) -> list[Path]:
+    """`git ls-files`, not `rglob`.
+
+    The baseline is committed, so the measurement has to be over what is committed. Reading
+    the filesystem makes the count depend on whatever is lying around: a worktree under
+    `.claude/worktrees/` (which `.gitignore` does not cover, and which the review tooling
+    creates) took `bad_imports` from 102 to 188, and a single untracked scratch note took it
+    to 103. Either turns `local_ci.sh` red on an otherwise clean checkout.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-z", "--", "*.md"],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return [repo / rel for rel in out.stdout.split("\0") if rel]
+
+
 def scan(repo: Path) -> dict[str, list[str]]:
     index = PackageIndex(repo / "mfgarchon")
     results: dict[str, list[str]] = {c: [] for c in CATEGORIES}
-    for path in sorted(repo.rglob("*.md")):
+    for path in sorted(tracked_markdown(repo)):
         rel = path.relative_to(repo)
         if set(rel.parts) & EXEMPT_DIRS or rel in EXEMPT_FILES:
             continue
