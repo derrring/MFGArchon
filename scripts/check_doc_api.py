@@ -3,7 +3,7 @@
 
 Docs are the one artefact nothing checks. `local_ci.sh` runs `pytest tests/`, and no test
 imports a doc example, so a rename silently leaves every tutorial that used the old name
-teaching a `NameError`. The first sweep found 251 such claims in 30 of the 109 files it scans.
+teaching a `NameError`. Run it with no arguments to see the current count and where the claims are.
 
 ## Four checks
 
@@ -35,34 +35,35 @@ positive is visible in the report rather than silent.
 - `CHANGELOG.md` and `archive/` are exempt: an entry describing a v0.16 API is correct as
   written, and rewriting it would falsify the record.
 
-## Known blind spots — measured, not guessed
+## Known blind spots
 
-The counts are a lower bound. A review census of 20 constructed defects found 14 missed. The
-structural ones, which will not go away on their own:
+The counts are a lower bound. `--stats` reports how many names each exemption currently
+covers, computed from the tree rather than stated here -- a number written into this docstring
+would be true when typed and silently false after the next rename.
+
+Structural, and permanent unless the checks are extended:
 
 - **Attribute-chain calls.** `mfgarchon.geometry.Domain2D(...)` is skipped; only bare
   `ast.Name` callables are checked. Bare `Domain2D(...)` is caught.
 - **A doc that sketches `class Foo` and also calls the real `Foo`.** The name is shadowed
   file-wide, so its calls and kwargs are skipped. `NetworkHJBSolver(cfl_factor=...)` (#1757)
   is a live instance.
-- **Positional arity.** Nothing checks argument counts, only keyword names.
+- **Positional arity.** Only keyword names are checked, never argument counts.
 - **`import mfgarchon.does_not_exist`.** Only `from X import Y` is resolved.
-- **Classes with no own `__init__`** (336 of them: `PINNConfig`, `DGMConfig`, ...). Their
-  parameters are inherited or dataclass-generated, so no signature is recorded and the kwarg
-  check is skipped.
-- **Names defined in two modules** (36 of them). Ambiguous, so deliberately exempted.
-- **Third-party names leak into `known`.** 288 of ~2100 names come only from `import`
-  statements, so `KDTree()` or `BaseModel()` in a doc reads as provided. This weakens
-  `unknown_calls` only; `bad_imports` uses the tighter per-module set.
+- **Classes with no own `__init__`.** Parameters are inherited or dataclass-generated, so no
+  signature is recorded and the kwarg check is skipped.
+- **Names defined in two modules.** Ambiguous, so deliberately exempted rather than guessed.
+- **Third-party names leak into the known set** via `import` statements, so `KDTree()` in a
+  doc reads as provided. This weakens `unknown_calls` only; `bad_imports` uses the tighter
+  per-module set.
 - **One syntax error discards the whole block.**
 
-Non-structural, latent rather than live: fence tags other than `python`/`py`/empty are not
-read, and `~~~` fences are not read. A census of every scanned doc finds neither form in use
-today.
+Latent rather than live: fence tags other than `python`/`py`/empty are not read, and `~~~`
+fences are not read. Neither form appears in this repo today.
 
 `--self-test` guards against a check going *silent*, which is not the same as guarding its
 coverage: a narrowing that still fires once on the control document passes. Closing that needs
-a control with several distinct shapes per category, and is tracked separately.
+a control with several distinct shapes per category (#1761).
 """
 
 from __future__ import annotations
@@ -119,8 +120,8 @@ class PackageIndex:
             # dependencies are re-exported from inside `try:` blocks and `if TYPE_CHECKING:`
             # guards -- `backends/__init__.py` hides 7 of its 11 imports that way and
             # `reinforcement/environments/__init__.py` hides 22 of 54. Reading only the top
-            # level made 29% of this check's findings false positives, measured on a random
-            # sample of 14; reading the whole tree brought that to 0 of 20 on the same method.
+            # level made this check's findings substantially false-positive; reading the whole
+            # tree removed that. `--stats` shows how much each __init__ file hides today.
             for node in ast.walk(tree):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     names.update(a.asname or a.name.split(".")[0] for a in node.names if a.name != "*")
@@ -169,7 +170,7 @@ class PackageIndex:
             return
         # A name defined in two modules is ambiguous: guessing which one a document meant
         # would produce findings that depend on walk order, so BOTH are discarded and the
-        # kwarg check is skipped for that name. 36 names are exempted this way.
+        # kwarg check is skipped for that name. `--stats` counts how many that currently is.
         if node.name in self.params:
             self.params[node.name] = None
             return
@@ -370,12 +371,59 @@ def self_test(repo: Path) -> int:
     return 0
 
 
+def report_stats(repo: Path) -> None:
+    """Count the exemptions in force, from the tree.
+
+    These numbers change with every rename, which is exactly why they are computed here
+    instead of written into the docstring: a measurement in prose is true when typed and
+    silently false afterwards, and nobody comes back to update it.
+    """
+    index = PackageIndex(repo / "mfgarchon")
+    # Two shapes, and the second is easy to miss: a name can be recorded as `None` (ambiguous,
+    # or **kwargs), or never recorded at all (a class with no own `__init__` returns before
+    # recording). The first version of this counter measured only the first shape and reported
+    # a fraction of the real exemption -- an undercount in the tool that counts exemptions.
+    explicitly_none = sum(1 for v in index.params.values() if v is None)
+    never_recorded = len(index.known - set(index.params))
+    checkable = sum(1 for v in index.params.values() if v is not None)
+    own_defs: set[str] = set()
+    imported_only: set[str] = set()
+    for path in sorted((repo / "mfgarchon").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(errors="replace"))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                own_defs.add(node.name)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imported_only.update(a.asname or a.name.split(".")[0] for a in node.names if a.name != "*")
+    third_party = imported_only - own_defs
+    placeheld = sorted(n for n in index.known if PLACEHOLDER.match(n))
+
+    print(f"names the package provides                  {len(index.known)}")
+    print(f"modules indexed                             {len(index.provides)}")
+    print(f"markdown files tracked by git               {len(tracked_markdown(repo))}")
+    print()
+    print(f"names whose kwargs CAN be checked            {checkable}")
+    print()
+    print("exemptions currently in force (each weakens a check):")
+    print(f"  signature recorded as unusable -- **kwargs or defined in 2 modules  {explicitly_none}")
+    print(f"  no signature recorded at all -- e.g. a class with no own __init__   {never_recorded}")
+    print(f"  known only via a third-party import (weakens unknown_calls)        {len(third_party)}")
+    print(f"  real package names matched by PLACEHOLDER and skipped              {len(placeheld)}")
+    if placeheld:
+        print(f"      {', '.join(placeheld[:8])}{' ...' if len(placeheld) > 8 else ''}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--path", default=".", help="Repository root")
     parser.add_argument("--limit", type=int, default=15, help="Lines printed per category")
     parser.add_argument("--all", action="store_true", help="Print every finding")
     parser.add_argument("--self-test", action="store_true", help="Verify each check still fires")
+    parser.add_argument("--stats", action="store_true", help="Count the exemptions currently in force")
     parser.add_argument("--write-baseline", metavar="FILE", help="Write current counts and exit")
     parser.add_argument(
         "--check-baseline",
@@ -390,6 +438,10 @@ def main() -> None:
 
     if args.self_test:
         sys.exit(self_test(repo))
+
+    if args.stats:
+        report_stats(repo)
+        sys.exit(0)
 
     results = scan(repo)
     counts = {c: len(results[c]) for c in CATEGORIES}
