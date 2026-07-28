@@ -30,6 +30,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -563,6 +564,7 @@ class FPGFDMSolver(BaseFPSolver):
 
         _logger = get_logger(__name__)
         max_mass_drift = 0.0
+        max_mass_drift_t_idx = 0
 
         # Time stepping loop (forward Euler)
         for t_idx in range(n_time_points - 1):
@@ -595,23 +597,72 @@ class FPGFDMSolver(BaseFPSolver):
             dm_dt = -advection + diffusion
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
 
-            # Physical constraints
-            M_solution[t_idx + 1, :] = np.maximum(M_solution[t_idx + 1, :], 0.0)
-
-            # Issue #886: log raw mass drift before normalization
+            # Issue #1683: this clipped, then renormalised to the initial mass, and warned
+            # only above 1% drift. Every configuration therefore returned a final mass of
+            # exactly 1.0000 -- including one measured to clip **61%** of the present mass
+            # at a single step. Reporting perfect conservation over that is the defect.
+            #
+            # Issue #1752: the mechanism is the unstabilised central flux divergence below
+            # with `upwind_scheme="none"` (the default), NOT the explicit time stepping. The
+            # first version of this comment blamed forward Euler; refining dt at fixed h
+            # makes the drift monotonically WORSE, converging upward to a semi-discrete
+            # limit (2.79, 4.47, 6.08, 7.26, 7.99, 8.62, 8.73 at Nt = 10, 20, 40, 80,
+            # 160, 640, 1280 with sigma=0.3), which rules time discretisation out. Refining h with the drift on
+            # also diverges (4.31 -> 8.62 -> 12.18 -> 17.88 for N = 11..81), while pure
+            # diffusion converges cleanly at ~O(h). So this is not merely non-conservative;
+            # it is divergent under refinement, and `dt` is not a lever on it.
+            #
+            # The mass functional here is `np.sum` (line ~560 and just below), an unweighted
+            # sum, and the GFDM path carries no cell measure at all -- the only weights in
+            # `gfdm_components/` are least-squares stencil and interpolation weights. So the
+            # gate's ratio measures the same quantity this solver compares, and `weights=`
+            # is correctly omitted rather than merely unset.
+            M_solution[t_idx + 1, :] = clip_nonnegative_or_raise(
+                M_solution[t_idx + 1, :],
+                context=f"GFDM FP solve: at t_idx={t_idx + 1}",
+                remedy=(
+                    (
+                        "upwind_scheme is 'none', which leaves the flux divergence "
+                        "unstabilised -- that is what drives this (Issue #1752). 'linear' or "
+                        "'exponential' measurably reduce it: on a 21-point grid at sigma=0.3, "
+                        "final mass 2.795 -> 1.437 -> 1.418 at Nt=10, and 8.62 -> 2.34 -> 2.25 "
+                        "at Nt=640."
+                        if self.upwind_scheme == "none"
+                        else f"upwind_scheme is already {self.upwind_scheme!r}, so stabilisation "
+                        "is on and is not enough here -- it reduces the drift without removing "
+                        "it (Issue #1752: this operator diverges under refinement). Coarsen the "
+                        "value-function gradient driving the flux, or use a different FP scheme."
+                    )
+                    + " Do NOT reduce dt to silence this: refining the timestep drives the "
+                    "per-step clip below the threshold while the final mass climbs from "
+                    "8.4e+02 to 2.5e+09, so it removes the message and not the defect. If "
+                    "dt*D/dx^2 < 0.5 is also violated, fix that on its own merits; it is not "
+                    "what binds here."
+                ),
+            )
             mass_current = np.sum(M_solution[t_idx + 1, :])
             if mass_initial > 0:
-                mass_drift = abs(mass_current - mass_initial) / mass_initial
-                max_mass_drift = max(max_mass_drift, mass_drift)
-                if mass_drift > 0.01:
-                    _logger.warning("GFDM mass drift %.2e at t_idx=%d (before renorm)", mass_drift, t_idx + 1)
+                drift = abs(mass_current - mass_initial) / mass_initial
+                if drift > max_mass_drift:
+                    max_mass_drift, max_mass_drift_t_idx = drift, t_idx + 1
 
-            # Renormalize to conserve mass
-            if mass_current > 0:
-                M_solution[t_idx + 1, :] *= mass_initial / mass_current
-
+        # Issue #1752: with the renormalisation gone this is the only remaining signal for a
+        # drift measured at 179% on a configuration that clips nothing, so it cannot stay at
+        # DEBUG. It is also the ONLY thing that catches a divergence the clip gate structurally
+        # cannot: the gate measures fabricated mass as a RATIO of the mass present, which is
+        # scale-invariant, so a solve that blows up while staying positive has no negatives and
+        # passes. Measured: sigma=0.1/drift=25 at Nt=2560 returns a finite, non-negative density
+        # of mass 2.55e+09 and the gate does not fire. This warning does.
         if max_mass_drift > 1e-6:
-            _logger.debug("GFDM max mass drift: %.2e (renormalized each step)", max_mass_drift)
+            _logger.warning(
+                "GFDM FP mass drift %.2e (worst at t_idx=%d). The flux divergence is unstabilised "
+                "at upwind_scheme=%r and diverges under refinement (Issue #1752) -- refining dt "
+                "makes this worse, not better. The returned density carries the drift rather than "
+                "being rescaled to hide it.",
+                max_mass_drift,
+                max_mass_drift_t_idx,
+                self.upwind_scheme,
+            )
 
         return M_solution
 
