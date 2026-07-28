@@ -25,8 +25,8 @@ interesting régime between them, which is why a single threshold works.
 
 The ratio is **scale-invariant** and evaluated **per step**. Both matter, and the second is
 the serious one: refining the timestep shrinks what any one step can fabricate, so the
-observable vanishes under dt-refinement whether or not the answer improves. Measured on the
-GFDM path (sigma=0.1, drift=25, Issue #1752):
+observable can vanish under dt-refinement whether or not the answer improves. Measured on the
+GFDM path -- and, so far, only there (sigma=0.1, drift=25, Issue #1752):
 
     Nt        dt        max fabricated      final mass     this gate
     10     5.00e-02        9.591e-02          8.40e+02       raises
@@ -40,15 +40,20 @@ The observable falls five orders and then to exactly zero -- nothing goes negati
 while the end-to-end error climbs seven. At Nt=2560 the solve is maximally wrong and
 maximally clean by this function's own criterion.
 
-**A tighter threshold does not close this.** Any fixed value can be driven below by refining
-dt. What this gate rules out is a step that repairs a sign violation large enough to matter;
-it does not certify that a solve converged, and a caller must not read a passing gate as
-"healthy". Where magnitude matters, a drift check on the whole solve belongs beside this one
--- `fp_gfdm.py` carries one for exactly this reason.
+**Scope of that measurement.** It is one site. The obvious generalisation -- "any fixed
+threshold is defeatable by refining dt at any caller" -- was asserted during review and then
+withdrawn, because the attempt to reproduce it at the FDM time-stepping site produced a null
+with no working positive control. So: demonstrated at the GFDM site, open elsewhere. Do not
+cite it as a general property of this function until a second site shows it.
 
-Worth stating plainly because the failure is adversarial in shape: the natural response to
-this gate firing is to refine the timestep, and on a scheme whose spatial operator is the
-real problem that silences the gate and makes the answer worse.
+What is general, and does not depend on that table: this gate rules out a step that repairs a
+sign violation large enough to matter. It does not certify that a solve converged. A caller
+must not read a passing gate as "healthy", and where magnitude matters a drift check on the
+whole solve belongs beside this one -- `fp_gfdm.py` carries one for exactly this reason.
+
+Worth stating plainly because the failure is adversarial in shape wherever it does occur: the
+natural response to this gate firing is to refine the timestep, and on a scheme whose spatial
+operator is the real problem that silences the gate and makes the answer worse.
 
 ## Why weights are optional, and when they are not
 

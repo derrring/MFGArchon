@@ -205,10 +205,13 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
         Nt=640   max fabricated 3.396e-05   final mass 1.70e+09   raises
         Nt=2560  max fabricated 0.000e+00   final mass 2.55e+09   PASSES
 
-    No threshold closes this: any fixed value can be driven below by refining dt. The failure
-    is adversarial in shape, because the natural response to the gate firing is to refine the
-    timestep, and here that silences the gate and makes the answer worse -- which is why the
-    remedy string tells the reader not to.
+    No threshold closes it **here**: any fixed value can be driven below on this
+    configuration. Whether that generalises to the gate's other callers is open -- the
+    attempt to reproduce it at the FDM time-stepping site during review produced a null with
+    no working positive control, so the claim is scoped to this site rather than to the
+    invariant. The failure is adversarial in shape wherever it occurs, because the natural
+    response to the gate firing is to refine the timestep, and here that silences the gate and
+    makes the answer worse -- which is why the remedy string tells the reader not to.
 
     Asserted so nobody later reads a passing gate as "the solve is healthy", and so the drift
     WARNING is not mistaken for redundant with the gate: only the pair covers this.
