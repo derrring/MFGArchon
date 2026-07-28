@@ -30,6 +30,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -595,23 +596,41 @@ class FPGFDMSolver(BaseFPSolver):
             dm_dt = -advection + diffusion
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
 
-            # Physical constraints
-            M_solution[t_idx + 1, :] = np.maximum(M_solution[t_idx + 1, :], 0.0)
-
-            # Issue #886: log raw mass drift before normalization
+            # Issue #1683: this clipped, then renormalised to the initial mass, and warned
+            # only above 1% drift. Every configuration therefore returned a final mass of
+            # exactly 1.0000 -- including one measured to clip **61%** of the present mass
+            # at a single step. Reporting perfect conservation over that is the defect.
+            #
+            # Two mechanisms drive it here and the remedy names both, because they call for
+            # opposite changes. Measured on a 21-point grid: sigma=0.5 clips 61% with
+            # dt*D/dx^2 = 2.5, five times the explicit-diffusion limit; sigma=0.1 with a
+            # steep drift clips 9.6% at dt*D/dx^2 = 0.1, where the driver is advection
+            # rather than diffusion.
+            M_solution[t_idx + 1, :] = clip_nonnegative_or_raise(
+                M_solution[t_idx + 1, :],
+                context=f"GFDM FP solve: at t_idx={t_idx + 1}",
+                remedy=(
+                    "Forward Euler is explicit in both terms. Check dt*D/dx^2 < 0.5 for "
+                    "the diffusion limit, and reduce dt or add diffusion if the drift is "
+                    "steep -- the two point opposite ways, so measure which one binds."
+                ),
+            )
             mass_current = np.sum(M_solution[t_idx + 1, :])
             if mass_initial > 0:
-                mass_drift = abs(mass_current - mass_initial) / mass_initial
-                max_mass_drift = max(max_mass_drift, mass_drift)
-                if mass_drift > 0.01:
-                    _logger.warning("GFDM mass drift %.2e at t_idx=%d (before renorm)", mass_drift, t_idx + 1)
+                max_mass_drift = max(max_mass_drift, abs(mass_current - mass_initial) / mass_initial)
 
-            # Renormalize to conserve mass
-            if mass_current > 0:
-                M_solution[t_idx + 1, :] *= mass_initial / mass_current
-
+        # Issue #1752: with the renormalisation gone this line is the only remaining signal
+        # for a drift that was measured at 179% on a configuration that clips nothing, so
+        # it cannot stay at DEBUG. The scheme is not conservative by construction -- forward
+        # Euler with a non-conservative GFDM operator -- and scaling the answer afterwards
+        # was hiding that rather than fixing it.
         if max_mass_drift > 1e-6:
-            _logger.debug("GFDM max mass drift: %.2e (renormalized each step)", max_mass_drift)
+            _logger.warning(
+                "GFDM FP mass drift %.2e over the solve. Forward Euler with this operator does "
+                "not conserve mass (Issue #1752); the returned density carries the drift rather "
+                "than being rescaled to hide it.",
+                max_mass_drift,
+            )
 
         return M_solution
 
