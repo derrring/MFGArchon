@@ -16,6 +16,15 @@ This file existed nowhere before: `HybridMazeGenerator` had no test at all, whic
 three of four branches stayed broken across a rename. Each test below calls `generate()`
 for real rather than asserting the import resolves -- a reachable branch that produces a
 degenerate maze is still broken, and `pytest.importorskip`-style checks would not notice.
+
+**What these do not verify.** That the `perfect` branch's wall-array rendering is
+faithful to the `Grid` it was built from. Two oracles were tried and measured, and both
+failed to discriminate: deleting the line that carves cell passages leaves the maze
+fully connected (ratio 1.000 either way, 1151 vs 2093 passage cells) and still mixed
+0/1. A faithful check means comparing the array against the Grid's link structure, which
+`_generate_region` does not expose. Not shipped rather than shipped as a threshold that
+catches nothing -- the real defect class here is the one that occurred, a rename breaking
+a call site, and the tests below do catch that.
 """
 
 import pytest
