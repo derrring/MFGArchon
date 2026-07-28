@@ -97,6 +97,18 @@ def test_shipped_baseline_covers_every_declared_cell(cm):
     )
 
 
+def test_every_scheme_with_a_1d_cell_has_a_2d_cell(cm):
+    """The gap #1745 exposed: every cell was 1-D, so a scheme could conserve mass to
+    2.2e-16 in one dimension and not run at all in two with the matrix silent.
+
+    Pinned as a rule rather than a list: a new scheme cell arriving in 1-D only
+    reopens exactly that hole.
+    """
+    one_d = {c.split("/")[0] for c in cm.CELLS if "/mass_conservation" in c and not c.endswith("_2d/mass_conservation")}
+    two_d = {c.split("/")[0].removesuffix("_2d") for c in cm.CELLS if c.endswith("_2d/mass_conservation")}
+    assert one_d <= two_d, f"schemes with a 1-D mass cell and no 2-D sibling: {sorted(one_d - two_d)}"
+
+
 def test_every_mass_oracle_cell_is_a_declared_cell(cm):
     assert set(cm.CELLS) >= cm.MASS_ORACLE_CELLS
 
@@ -117,6 +129,10 @@ def test_currently_failing_density_cells_are_still_registered_for_the_self_test(
         "fvm_muscl/mass_conservation",
         "fvm_vs_fdm/agreement",
         "regime_switching/non_negativity",
+        "sl_linear_2d/mass_conservation",
+        "fdm_upwind_2d/mass_conservation",
+        "fdm_centered_2d/mass_conservation",
+        "fvm_muscl_2d/mass_conservation",
     }
     assert density_cells <= cm.MASS_ORACLE_CELLS, (
         f"unregistered density cells: {sorted(density_cells - cm.MASS_ORACLE_CELLS)}"
