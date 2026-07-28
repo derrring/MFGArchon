@@ -344,7 +344,7 @@ class HybridMazeGenerator:
         generator: Any
 
         if spec.algorithm == "recursive_division":
-            from mfgarchon.geometry.graph.recursive_division import (
+            from mfgarchon.geometry.graph.maze_recursive_division import (
                 RecursiveDivisionConfig,
                 RecursiveDivisionGenerator,
             )
@@ -354,7 +354,7 @@ class HybridMazeGenerator:
             return generator.generate(seed=int(self.rng.integers(0, 2**31)))
 
         elif spec.algorithm == "cellular_automata":
-            from mfgarchon.geometry.graph.cellular_automata import (
+            from mfgarchon.geometry.graph.maze_cellular_automata import (
                 CellularAutomataConfig,
                 CellularAutomataGenerator,
             )
@@ -364,7 +364,7 @@ class HybridMazeGenerator:
             return generator.generate(seed=int(self.rng.integers(0, 2**31)))
 
         elif spec.algorithm == "voronoi":
-            from mfgarchon.geometry.graph.voronoi_maze import (
+            from mfgarchon.geometry.graph.maze_voronoi import (
                 VoronoiMazeConfig,
                 VoronoiMazeGenerator,
             )
@@ -384,7 +384,10 @@ class HybridMazeGenerator:
             grid_cols = region_cols // 2
 
             generator = MazeGeometry(grid_rows, grid_cols)
-            grid = generator.generate(seed=int(self.rng.integers(0, 2**31)))
+            # generate() returns self to satisfy GeometryProtocol; the cell lattice is
+            # the Grid it wraps. Reading get_cell off the return value was an
+            # AttributeError -- the fourth broken branch of four (#1712).
+            grid = generator.generate(seed=int(self.rng.integers(0, 2**31))).grid
 
             # Convert to wall-based array
             maze = np.ones((region_rows, region_cols), dtype=np.int_)
