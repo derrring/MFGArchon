@@ -48,8 +48,15 @@ cite it as a general property of this function until a second site shows it.
 
 What is general, and does not depend on that table: this gate rules out a step that repairs a
 sign violation large enough to matter. It does not certify that a solve converged. A caller
-must not read a passing gate as "healthy", and where magnitude matters a drift check on the
-whole solve belongs beside this one -- `fp_gfdm.py` carries one for exactly this reason.
+must not read a passing gate as "healthy".
+
+Where magnitude matters, something must **stop**, and this function is not it. `fp_gfdm.py`
+reports its whole-solve drift, but reports is the accurate verb -- it is a `logger.warning`,
+and the solve returns. That is the only thing separating a GFDM configuration whose honest
+answer is a 0.27% drift from one that returns a final mass of 1.06e+23, and by this campaign's
+own standard ("a diagnostic nobody reads is the same failure as no diagnostic") a log is not a
+gate. Recorded rather than fixed: what should stop a divergent-but-positive solve is a
+different invariant than this one, not a stricter threshold.
 
 Worth stating plainly because the failure is adversarial in shape wherever it does occur: the
 natural response to this gate firing is to refine the timestep, and on a scheme whose spatial
@@ -64,13 +71,17 @@ omitting the weights silently measures a different quantity than the solver's ow
 functional. Hence `weights=None` means "uniform, and I have checked that it is", not "I
 did not think about it".
 
-The check is mechanical: find what the caller compares to decide mass changed. Both
-migrated callers turned out to be unweighted -- GFDM compares `np.sum(M)` and carries no
-cell measure anywhere (the only weights in `gfdm_components/` are least-squares stencil and
-interpolation weights), and the network solver's mass functional is the node sum. An earlier
-version of this paragraph offered "GFDM quadrature" as the paradigm non-uniform case, which
-was wrong: it was reasoning from the family name rather than from the code, and the first
-caller it warned about was one where the warning did not apply.
+The check is mechanical: read what the caller itself compares to decide mass changed, and
+match the gate to that. Worked example -- GFDM compares `np.sum(M)` against `np.sum(m_init)`
+and carries no cell measure anywhere (the only weights under `gfdm_components/` are
+least-squares stencil and interpolation weights), so `weights=None` is not merely the default
+there, it is the only correct value.
+
+An earlier version of this paragraph offered "GFDM quadrature" as the paradigm non-uniform
+case. That was wrong, and wrong in a specific way worth naming: it reasoned from the family
+name rather than from the code, so the first caller it warned about was one where the warning
+did not apply. The replacement then over-corrected by counting callers it had not read. Check
+each site; do not generalise from the scheme family, and do not generalise from this file.
 
 ## Not for input validation
 

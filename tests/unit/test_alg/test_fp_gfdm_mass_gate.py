@@ -164,6 +164,48 @@ def test_the_drift_is_reported_at_warning_level(caplog):
     assert "1752" in warnings[0].getMessage(), "the message must name the issue tracking the defect"
 
 
+def test_the_remedy_does_not_tell_a_stabilised_solve_to_stabilise():
+    """The first fix for this interpolated `upwind_scheme` and then ignored it.
+
+    On a solve already using `'linear'` it printed "upwind_scheme is 'linear'. 'none' leaves
+    the flux divergence unstabilised ... 'linear' or 'exponential' measurably reduce it" --
+    naming a mechanism the caller is not in and prescribing what they already did. Caught in
+    re-review, and unpinned by my own fix until this test: mutating the branch to always take
+    the 'none' text left all eight other tests green.
+    """
+    n_x, n_t = 21, 10
+    x = np.linspace(0, 1, n_x)
+    m0 = np.exp(-30 * (x - 0.5) ** 2)
+    m0 /= m0.sum()
+    drift = np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=n_t,
+        T=T,
+        sigma=0.1,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    solver = FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, n_x).reshape(-1, 1), upwind_scheme="linear")
+    with pytest.raises(ValueError) as exc:
+        solver.solve_fp_system(m0, drift)
+    message = str(exc.value)
+    assert "already 'linear'" in message, "the message must acknowledge the scheme the caller is on"
+    assert "is not enough here" in message
+    assert "'linear' or 'exponential' measurably reduce it" not in message, (
+        "do not prescribe the stabilisation the caller already enabled"
+    )
+
+
 def test_a_clip_far_below_one_percent_still_stops_the_solve():
     """Pins the THRESHOLD, which the large-clip configurations above do not.
 
@@ -205,6 +247,13 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
         Nt=640   max fabricated 3.396e-05   final mass 1.70e+09   raises
         Nt=2560  max fabricated 0.000e+00   final mass 2.55e+09   PASSES
 
+    The configuration pinned below is a stronger instance found in re-review: N=41, Nt=640,
+    sigma=0.5, drift=50 fabricates **nothing** and returns a final mass of 1.06e+23. It is
+    pinned instead of the Nt=2560 case because it is 13 orders further past the assertion and
+    does not depend on sitting past a refinement boundary -- the Nt=2560 case was measured to
+    flip to raising somewhere between Nt=900 and Nt=1100, which is a 2.6x margin rather than a
+    structural one.
+
     No threshold closes it **here**: any fixed value can be driven below on this
     configuration. Whether that generalises to the gate's other callers is open -- the
     attempt to reproduce it at the FDM time-stepping site during review produced a null with
@@ -216,16 +265,35 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
     Asserted so nobody later reads a passing gate as "the solve is healthy", and so the drift
     WARNING is not mistaken for redundant with the gate: only the pair covers this.
     """
-    n_t = 2560
-    x = np.linspace(0, 1, N)
+    n_t = 640
+    n_x = 41
+    x = np.linspace(0, 1, n_x)
     m0 = np.exp(-30 * (x - 0.5) ** 2)
     m0 /= m0.sum()
-    drift = np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
+    drift = np.tile(50.0 * (x - 0.5) ** 2, (n_t + 1, 1))
 
-    result = _build(sigma=0.1, Nt=n_t).solve_fp_system(m0, drift)
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=n_t,
+        T=T,
+        sigma=0.5,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    result = FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, n_x).reshape(-1, 1)).solve_fp_system(m0, drift)
 
-    assert result.min() >= 0.0, "if this goes negative the gate would have caught it and the point is moot"
-    assert float(result[-1].sum()) > 1e6, (
-        f"final mass {float(result[-1].sum()):.3e}: this configuration is meant to diverge while "
-        f"staying positive, which is the blind spot being recorded"
+    # No assertion on result.min(): `clip_nonnegative_or_raise` returns `np.maximum(density, 0)`
+    # into every row, so non-negativity is imposed by the gate and cannot fail. Asserting it
+    # would look like a check and be a tautology.
+    assert float(result[-1].sum()) > 1e18, (
+        f"final mass {float(result[-1].sum()):.3e}: this configuration is meant to diverge past "
+        f"1e+20 while fabricating nothing, which is the blind spot being recorded"
     )

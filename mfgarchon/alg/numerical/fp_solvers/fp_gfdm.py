@@ -606,8 +606,8 @@ class FPGFDMSolver(BaseFPSolver):
             # with `upwind_scheme="none"` (the default), NOT the explicit time stepping. The
             # first version of this comment blamed forward Euler; refining dt at fixed h
             # makes the drift monotonically WORSE, converging upward to a semi-discrete
-            # limit (2.79 -> 4.47 -> 6.08 -> 7.99 -> 8.62 -> 8.73 for Nt = 10..1280 at
-            # sigma=0.3), which rules time discretisation out. Refining h with the drift on
+            # limit (2.79, 4.47, 6.08, 7.26, 7.99, 8.62, 8.73 at Nt = 10, 20, 40, 80,
+            # 160, 640, 1280 with sigma=0.3), which rules time discretisation out. Refining h with the drift on
             # also diverges (4.31 -> 8.62 -> 12.18 -> 17.88 for N = 11..81), while pure
             # diffusion converges cleanly at ~O(h). So this is not merely non-conservative;
             # it is divergent under refinement, and `dt` is not a lever on it.
@@ -621,14 +621,23 @@ class FPGFDMSolver(BaseFPSolver):
                 M_solution[t_idx + 1, :],
                 context=f"GFDM FP solve: at t_idx={t_idx + 1}",
                 remedy=(
-                    f"upwind_scheme is {self.upwind_scheme!r}. 'none' leaves the flux "
-                    "divergence unstabilised, which is what drives this (Issue #1752); "
-                    "'linear' or 'exponential' measurably reduce it -- on the reference "
-                    "configuration, final mass 8.62 -> 2.34 -> 2.25. Do NOT reduce dt to "
-                    "silence this: refining the timestep drives the per-step clip below "
-                    "the threshold while the final mass climbs from 8.4e+02 to 2.5e+09, so "
-                    "it removes the message and not the defect. If dt*D/dx^2 < 0.5 is also "
-                    "violated, fix that on its own merits; it is not what binds here."
+                    (
+                        "upwind_scheme is 'none', which leaves the flux divergence "
+                        "unstabilised -- that is what drives this (Issue #1752). 'linear' or "
+                        "'exponential' measurably reduce it: on a 21-point grid at sigma=0.3, "
+                        "final mass 2.795 -> 1.437 -> 1.418 at Nt=10, and 8.62 -> 2.34 -> 2.25 "
+                        "at Nt=640."
+                        if self.upwind_scheme == "none"
+                        else f"upwind_scheme is already {self.upwind_scheme!r}, so stabilisation "
+                        "is on and is not enough here -- it reduces the drift without removing "
+                        "it (Issue #1752: this operator diverges under refinement). Coarsen the "
+                        "value-function gradient driving the flux, or use a different FP scheme."
+                    )
+                    + " Do NOT reduce dt to silence this: refining the timestep drives the "
+                    "per-step clip below the threshold while the final mass climbs from "
+                    "8.4e+02 to 2.5e+09, so it removes the message and not the defect. If "
+                    "dt*D/dx^2 < 0.5 is also violated, fix that on its own merits; it is not "
+                    "what binds here."
                 ),
             )
             mass_current = np.sum(M_solution[t_idx + 1, :])
