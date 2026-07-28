@@ -8,26 +8,19 @@ Modules:
 - maze_generator: Perfect maze generation algorithms for RL experiments
 - maze_config: Comprehensive configuration for maze parameters
 - position_placement: Strategies for start/goal position placement
-- recursive_division: Variable-width mazes with rooms and open spaces
-- cellular_automata: Organic, cave-like mazes using cellular automata
+- maze generators are re-exported from mfgarchon.geometry.graph, which owns them;
+  byte-identical copies lived here until #1712
 - mfg_maze_env: Gymnasium-compatible MFG maze environments with population dynamics
 """
 
-from mfgarchon.alg.reinforcement.environments.cellular_automata import (
-    CellularAutomataConfig,
-    CellularAutomataGenerator,
-    create_preset_ca_config,
-)
 from mfgarchon.alg.reinforcement.environments.position_placement import (
     compute_position_metrics,
     place_positions,
 )
-from mfgarchon.alg.reinforcement.environments.recursive_division import (
-    RecursiveDivisionConfig,
-    RecursiveDivisionGenerator,
-    SplitOrientation,
-    add_loops,
-    create_room_based_config,
+from mfgarchon.geometry.graph.maze_cellular_automata import (
+    CellularAutomataConfig,
+    CellularAutomataGenerator,
+    create_preset_ca_config,
 )
 from mfgarchon.geometry.graph.maze_config import (
     MazeConfig,
@@ -54,6 +47,13 @@ from mfgarchon.geometry.graph.maze_hybrid import (
     create_campus_hybrid,
     create_museum_hybrid,
     create_office_hybrid,
+)
+from mfgarchon.geometry.graph.maze_recursive_division import (
+    RecursiveDivisionConfig,
+    RecursiveDivisionGenerator,
+    SplitOrientation,
+    add_loops,
+    create_room_based_config,
 )
 from mfgarchon.geometry.graph.maze_voronoi import (
     VoronoiMazeConfig,

@@ -12,7 +12,7 @@ MFGArchon provides a complete suite of maze generation algorithms optimized for 
 
 ### 1. Perfect Mazes: Recursive Backtracking & Wilson's Algorithm
 
-**Module**: `mfgarchon/alg/reinforcement/environments/maze_generator.py`
+**Module**: `mfgarchon.geometry.graph.maze_generator` (`MazeGeometry`)
 
 #### Mathematical Foundation
 Perfect mazes are minimal spanning trees on grid graphs with two critical properties:
@@ -68,7 +68,7 @@ maze = generator.generate(seed=42)
 
 ### 2. Recursive Division: Room-Based Environments
 
-**Module**: `mfgarchon/alg/reinforcement/environments/recursive_division.py`
+**Module**: `mfgarchon.geometry.graph.maze_recursive_division` (`RecursiveDivisionGenerator`)
 
 #### Algorithm
 Starts with empty space and recursively adds walls with doors, creating structured building-like layouts.
@@ -111,7 +111,7 @@ maze = generator.generate(seed=42)
 
 ### 3. Cellular Automata: Organic Environments
 
-**Module**: `mfgarchon/alg/reinforcement/environments/cellular_automata.py`
+**Module**: `mfgarchon.geometry.graph.maze_cellular_automata` (`CellularAutomataGenerator`)
 
 #### Algorithm
 Random initialization followed by iterative smoothing rules, producing cave-like structures.
@@ -154,7 +154,7 @@ maze = generator.generate(seed=42)
 
 ### 4. Braided Mazes: Loop Addition
 
-**Module**: `mfgarchon/alg/reinforcement/environments/recursive_division.py:269`
+**Module**: `mfgarchon.geometry.graph.maze_recursive_division` (`add_loops`)
 
 #### Algorithm
 Post-processing function that converts perfect mazes into braided mazes by removing walls to create loops.
