@@ -6,7 +6,7 @@ architecture: enums, protocols, and abstract base classes that define
 the interfaces for BC application across discretization methods.
 
 Extracted from applicator_base.py (mechanical refactor, no logic changes).
-Handler protocols merged from handler_protocol.py.
+Handler protocols, merged here from a former handler_protocol module (#1711).
 """
 
 from __future__ import annotations
@@ -714,7 +714,7 @@ class BaseGraphApplicator(BaseBCApplicator):
 
 
 # =============================================================================
-# Boundary Handler Protocols (merged from handler_protocol.py)
+# Boundary Handler Protocols (merged here; the separate module is gone, #1711)
 # =============================================================================
 
 
@@ -924,7 +924,7 @@ __all__ = [
     "BaseUnstructuredApplicator",
     "BaseMeshfreeApplicator",
     "BaseGraphApplicator",
-    # Handler protocols (merged from handler_protocol.py)
+    # Handler protocols (merged here; the separate module is gone, #1711)
     "BoundaryHandler",
     "AdvancedBoundaryHandler",
     "validate_boundary_handler",

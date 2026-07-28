@@ -153,7 +153,7 @@ class PartialDerivOperator(LinearOperator):
         # WENO5 scheme: use dedicated implementation (Issue #606)
         if self.scheme == "weno5":
             if not _WENO5_AVAILABLE:
-                raise ImportError("WENO5 scheme requires mfgarchon.geometry.operators.schemes.weno5")
+                raise ImportError("WENO5 scheme requires mfgarchon.operators.reconstruction.weno")
 
             # Currently only 1D supported
             if len(self.field_shape) != 1:
