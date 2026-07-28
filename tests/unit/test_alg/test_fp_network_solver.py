@@ -627,7 +627,7 @@ class TestFPNetworkSolverIntegration:
 
 class TestFPNetworkSolverAbsorbingNodeBC:
     """Issue #1478 (Stage 2b): FPNetworkSolver honors an ABSORBING (exit) node — its mass leaves
-    (``m -> 0``) and the mass renorm is gated off so the absorption is not hidden.
+    (``m -> 0``) and the absorption is reported rather than renormalised away (the renorm and its gate were removed in #1683).
     """
 
     def _network(self, absorbing_node=None):

@@ -72,15 +72,40 @@ def test_a_timestep_past_the_cfl_limit_stops():
         _solve(Nt=3, diffusion=1.0, u_scale=5.0)
 
 
-def test_the_message_names_the_step_the_scheme_and_a_remedy():
-    """A diagnostic that reports a defect without naming a next step is read as noise."""
+def test_the_remedy_is_scheme_aware_and_names_only_what_was_measured_to_work():
+    """The first version shipped one constant remedy for both schemes, and it was wrong twice.
+
+    On the implicit path it told the reader to check a `dt > dt_stable` warning -- but
+    `dt_stable` is only computed under `if self.scheme == "explicit"`, so the attribute does
+    not exist and the warning structurally cannot have been emitted. It also suggested
+    "use scheme='implicit'" to a user already on it.
+
+    On the explicit path, review measured the suggestions: lowering the diffusion coefficient
+    does not clear the raise, and switching to implicit makes it worse (it raises at step 2
+    rather than step 4). Only increasing Nt works. The remedy now says that and nothing else.
+    """
     with pytest.raises(ValueError) as exc:
         _solve(u_scale=50.0)
-    message = str(exc.value)
-    assert "Network FP solve: at step" in message
-    assert "scheme='explicit'" in message
-    assert "dt_stable" in message, "the CFL warning is the first thing to check; name it"
-    assert "scheme='implicit'" in message
+    explicit = str(exc.value)
+    assert "Network FP solve: at step" in explicit
+    assert "scheme='explicit'" in explicit
+    assert "Increase Nt" in explicit
+    assert "dt_stable" not in explicit, "no dt_stable advice on a path where it was measured not to help"
+
+    network = GridNetwork(width=5, height=5)
+    network.create_network()
+    problem = NetworkMFGProblem(geometry=network, T=T, Nt=3)
+    solver = FPNetworkSolver(problem, diffusion_coefficient=1.0, scheme="implicit")
+    assert not hasattr(solver, "dt_stable"), "if this gains a dt_stable the remedy below is stale"
+    n = network.num_nodes
+    m0 = np.zeros(n)
+    m0[n // 2] = 1.0
+    with pytest.raises(ValueError) as exc:
+        solver.solve_fp_system(m0, np.tile(5.0 * (np.arange(n, dtype=float) - n / 2.0) ** 2 / n, (4, 1)))
+    implicit = str(exc.value)
+    assert "scheme='implicit'" in implicit
+    assert "no dt_stable to check" in implicit
+    assert "use scheme='implicit'" not in implicit, "do not advise a scheme the caller is already on"
 
 
 def test_a_healthy_solve_still_runs():
@@ -149,12 +174,22 @@ def test_the_removed_flag_raises_on_both_values():
             FPNetworkSolver(problem, enforce_mass_conservation=value)
 
 
-def test_a_drift_that_does_happen_is_reported():
+def test_a_drift_that_does_happen_is_reported(caplog):
     """The other half of removing the division: if it does not conserve, say so.
 
-    Driven by an absorbing-shaped perturbation rather than a broken scheme -- mass genuinely
-    leaves, and the solve reports the number instead of scaling it back to the input total.
+    Reported through the logger, not `warnings.warn`, for two measured reasons found in
+    review. `solve_fp_system` carries two `@deprecated_parameter` decorators, so
+    `stacklevel=2` resolved to `utils/deprecation.py` instead of the caller. And the drift
+    value sits in the message text, so `warnings`' dedup keyed on a string that changed every
+    Picard iteration -- a 15-iteration coupled solve with an absorbing node emitted 15
+    warnings for behaviour that is correct. The GFDM sibling reports its drift the same way.
+
+    Driven by a perturbation rather than a broken scheme: unpatched, this configuration drifts
+    exactly 0.0 and logs nothing, so the assertion below is about the report and not about the
+    configuration happening to be noisy.
     """
+    import logging
+
     network = GridNetwork(width=5, height=5)
     network.create_network()
     problem = NetworkMFGProblem(geometry=network, T=T, Nt=NT)
@@ -171,6 +206,44 @@ def test_a_drift_that_does_happen_is_reported():
     def leaky(m, u_cur, t):
         return 0.99 * original(m, u_cur, t)
 
-    solver._explicit_step = leaky
-    with pytest.warns(RuntimeWarning, match="total mass changed by"):
+    logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
         solver.solve_fp_system(m0, u)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        "unpatched, this configuration conserves exactly -- if it already logs, the test below "
+        "proves nothing about the perturbation"
+    )
+
+    solver._explicit_step = leaky
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        solver.solve_fp_system(m0, u)
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert records, "the drift was not reported"
+    assert "total mass changed by" in records[0].getMessage()
+
+
+def test_the_threshold_admits_this_scheme_s_own_discretisation_noise():
+    """The shared default of 1e-8 rejected solves whose honest answer is a 0.006% drift.
+
+    Review caught this PR citing exactly such a configuration as evidence that the scheme
+    conserves -- while the shipped code refused to run it. The shared gate's premise ("round-off
+    gives ~1e-15, a failed scheme gives O(1), there is no interesting regime between them") is
+    false for this scheme: across 144 configurations the fabricated fraction forms a continuous
+    ladder from 1e-9 to O(1).
+
+    The measured gap this threshold sits in:
+
+        true final drift < 1e-3  (honest)  -- fabricated at most 6.664e-06
+        true final drift >= 1e-2 (broken)  -- fabricated at least 9.179e-04
+
+    This test guards the lower end, which is the side a tightened threshold would break and
+    the side no other test here covers. `test_a_steep_value_field_stops` guards the upper end.
+    """
+    result = _solve(u_scale=10.0)
+    drift = abs(float(result[-1].sum()) - 1.0)
+    assert 1e-6 < drift < 1e-3, (
+        f"drift {drift:.3e}: this configuration is chosen because it sits in the band between "
+        f"round-off and failure. If it moved out, re-measure the threshold rather than "
+        f"widening this assertion"
+    )

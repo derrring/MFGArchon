@@ -32,8 +32,34 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+_logger = get_logger(__name__)
+
+# Issue #1683: this path does NOT use the shared default of 1e-8. The shared gate's docstring
+# argued one threshold suffices because "round-off gives ~1e-15, a failed scheme gives O(1),
+# there is no interesting regime between them". Measured on 144 configurations of this scheme
+# (3x3/5x5/8x8 grids, Nt in {3,20,100}, D in {0.01,0.1,1,10}, four value-field scales), that is
+# false here: the fabricated fraction forms a continuous ladder from 1e-9 to O(1), tracking the
+# true final drift monotonically the whole way.
+#
+# There is still a usable gap, and this is its geometric middle:
+#
+#     solves whose true final drift is < 1e-3  (honest)  -- fabricated at most 6.664e-06
+#     solves whose true final drift is >= 1e-2 (broken)  -- fabricated at least 9.179e-04
+#
+# 2.1 orders of separation. At 1e-8 the shared default rejected nine measured configurations
+# whose honest answer was a drift between 2e-7 and 5.8e-5 -- including one this change
+# originally cited as evidence that the scheme conserves. At 1e-4 every one of those runs, and
+# everything from 1.6e-3 drift upward still stops.
+#
+# What is single-sourced is the INVARIANT, which is still the shared owner's. A tolerance is
+# not an invariant: it belongs to the scheme whose discretisation error it must sit above, the
+# same way a solver tolerance does. Re-measure this number if the transition-rate computation
+# changes.
+_MAX_NETWORK_CLIP_FABRICATION = 1e-4
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -379,11 +405,17 @@ class FPNetworkSolver(BaseFPSolver):
                     M[n + 1, :],
                     context=f"Network FP solve: at step {n + 1}/{n_intervals}, scheme={self.scheme!r}",
                     remedy=(
-                        "The explicit scheme is stable only under a CFL-type limit on dt; the "
-                        "solve warns when dt exceeds dt_stable, and that warning is the first "
-                        "thing to check. Reduce dt (increase Nt), lower the diffusion "
-                        "coefficient, or use scheme='implicit'."
+                        "Increase Nt -- measured as the only one of the obvious knobs that "
+                        "works here; lowering the diffusion coefficient does not, and neither "
+                        "does switching to implicit (it raises earlier on the same "
+                        "configuration)."
+                        if self.scheme == "explicit"
+                        else "Increase Nt. The implicit step is a direct sparse solve with no "
+                        "CFL limit and no dt_stable to check, so a negative density here is the "
+                        "spatial operator, not the timestep -- refine the network or reduce the "
+                        "value-function gradient driving the transition rates."
                     ),
+                    threshold=_MAX_NETWORK_CLIP_FABRICATION,
                 )
 
                 # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING ->
@@ -396,22 +428,32 @@ class FPNetworkSolver(BaseFPSolver):
             # logged; a drift that shows up here is the scheme failing, which is the thing the
             # old `enforce_mass_conservation` division made unobservable.
             #
+            # A logger rather than `warnings.warn`, for two measured reasons. (1) This method
+            # carries two `@deprecated_parameter` decorators, so `stacklevel=2` resolved to
+            # `utils/deprecation.py` rather than to the caller -- the user could not tell which
+            # solve drifted. (2) The drift value is in the message text, so `warnings`' dedup
+            # keys on a string that changes every Picard iteration: a 15-iteration coupled solve
+            # with an absorbing node emitted 15 warnings for behaviour that is correct. The GFDM
+            # sibling reports its drift the same way.
+            #
             # Not gated on the node BC: with an ABSORBING or SOURCE node the mass legitimately
             # changes, and reporting that is correct -- it is the absorption, measured. The
             # message says what the number is rather than calling it an error, because only the
             # caller knows which of the two they configured.
             mass_initial = float(np.sum(M[0, :]))
             if mass_initial > 0:
-                drift = abs(float(np.sum(M[-1, :])) - mass_initial) / mass_initial
+                mass_final = float(np.sum(M[-1, :]))
+                drift = abs(mass_final - mass_initial) / mass_initial
                 if drift > 1e-6:
-                    warnings.warn(
-                        f"Network FP solve: total mass changed by {drift:.3%} over the solve "
-                        f"({mass_initial:.6g} -> {float(np.sum(M[-1, :])):.6g}). With an "
-                        f"absorbing or source node this is the boundary flux and is expected. "
-                        f"Without one it is the scheme losing mass, and the density returned "
-                        f"carries that drift rather than being rescaled to hide it (Issue #1683).",
-                        RuntimeWarning,
-                        stacklevel=2,
+                    _logger.warning(
+                        "Network FP solve: total mass changed by %.3f%% over the solve "
+                        "(%.6g -> %.6g). With an absorbing or source node this is the boundary "
+                        "flux and is expected. Without one it is the scheme losing mass, and the "
+                        "density returned carries that drift rather than being rescaled to hide "
+                        "it (Issue #1683).",
+                        drift * 100.0,
+                        mass_initial,
+                        mass_final,
                     )
 
             return M

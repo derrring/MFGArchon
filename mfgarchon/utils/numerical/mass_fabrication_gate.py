@@ -18,8 +18,20 @@ the three quantities the repair itself fixes. Issue #1671 is the case in point: 
 grew 1.0 -> 6378.77 while `min(M)` read +0.037 -- non-negative, finite, and entirely
 wrong.
 
-Round-off gives ~1e-15. A scheme that has genuinely failed gives O(1). There is no
-interesting régime between them, which is why a single threshold works.
+Round-off gives ~1e-15. A scheme that has genuinely failed gives O(1). The default
+threshold sits between them.
+
+**That is not universal, and one caller has already falsified it.** Measured on 144
+configurations of the network graph scheme, the fabricated fraction forms a continuous ladder
+from 1e-9 to O(1), tracking the true final drift monotonically the whole way -- so the default
+rejected nine solves whose honest answer was a drift between 2e-7 and 5.8e-5. That scheme
+passes its own `threshold=`, justified by a measured 2.1-order gap between its discretisation
+noise and its failures (`fp_network.py`, `_MAX_NETWORK_CLIP_FABRICATION`).
+
+So: the default is a default, not a law. Before adopting it at a new site, measure where that
+site's honest solves sit. What is single-sourced here is the **invariant** -- how fabricated
+mass is defined and compared. A tolerance is not an invariant; it belongs to the scheme whose
+discretisation error it has to clear, the same way a solver tolerance does.
 
 ## Why weights are optional, and when they are not
 

@@ -220,7 +220,7 @@ fp_solver = create_network_fp_solver(problem, "upwind")
 ```
 
 **Key Features:**
-- Mass conservation enforcement
+- Mass drift reported rather than imposed (Issue #1683)
 - Flow-based density evolution
 - Network diffusion operators
 - Stability-preserving schemes
