@@ -187,14 +187,26 @@ experiment:
 
 **Python code:**
 ```python
-from mfgarchon.config import MFGSolverConfig, load_effective_config
+from pathlib import Path
 
-# Load from YAML and validate against the Pydantic model in one step
-config = load_effective_config("experiment.yaml", MFGSolverConfig)
+from mfgarchon.config import MFGSolverConfig, bridge_to_pydantic, create_omega_manager
 
-# Access values with type safety
-print(config.problem.T)        # 2.0
-print(config.solver.tolerance) # 1e-8
+manager = create_omega_manager()
+
+# Pass an ABSOLUTE path. `load_config` resolves a relative name against the package's own
+# config directory, so a bare "experiment.yaml" looks for mfgarchon/config/configs/, not
+# your working directory.
+cfg = manager.load_config(str(Path("experiment.yaml").resolve()))
+
+# The OmegaConf object carries the YAML's own vocabulary
+print(cfg.problem.T)        # 2.0
+print(cfg.solver.tolerance)  # 1e-8
+
+# Cross to Pydantic when you want validation. `bridge_to_pydantic` is that crossing
+# (Issue #1010); the model's field names are its own (hjb, fp, picard, backend, logging),
+# not the YAML's.
+config = bridge_to_pydantic(cfg, MFGSolverConfig)
+print(config.picard.max_iterations)
 ```
 
 ### Pattern 3: Hybrid (Production Recommended)
@@ -202,18 +214,22 @@ print(config.solver.tolerance) # 1e-8
 Best for: Production runs where both flexibility and validation matter.
 
 ```python
-from mfgarchon.config import MFGSolverConfig, create_omega_manager, load_effective_config
+from pathlib import Path
 
-# 1. Load flexible YAML and validate against the Pydantic model.
-#    `load_effective_config` does both, which is the single validation crossing (#1010).
-config = load_effective_config("experiment.yaml", MFGSolverConfig)
+from mfgarchon.config import MFGSolverConfig, bridge_to_pydantic, create_omega_manager
 
-# 2. For composition, overrides or parameter sweeps, go through the manager --
-#    OmegaConf handles YAML transport, the Pydantic model owns the schema.
 manager = create_omega_manager()
-sweep = manager.create_parameter_sweep(config, {"solver.tolerance": [1e-6, 1e-8]})
 
-# 3. Solve with the validated config
+# 1. Load flexible YAML. Absolute path -- see the note in Pattern 2.
+cfg = manager.load_config(str(Path("experiment.yaml").resolve()))
+
+# 2. Compose, override or sweep while it is still an OmegaConf object
+sweep = manager.create_parameter_sweep(cfg, {"solver.tolerance": [1e-6, 1e-8]})
+
+# 3. Cross to Pydantic once, at the point where validation should happen (#1010)
+config = bridge_to_pydantic(cfg, MFGSolverConfig)
+
+# 4. Solve with the validated config
 result = problem.solve(config=config)
 
 # 4. Save effective config for reproducibility
@@ -277,14 +293,24 @@ validation crossing. OmegaConf now handles YAML transport only.
 
 ```python
 from mfgarchon.config import (
-    load_effective_config,   # YAML -> validated Pydantic model (the usual entry point)
-    load_solver_config,      # YAML -> SolverConfig
+    create_omega_manager,    # YAML -> OmegaConf: composition, overrides, parameter sweeps
+    bridge_to_pydantic,      # OmegaConf -> Pydantic: THE validation crossing (#1010)
+    load_solver_config,      # YAML -> SolverConfig, for the FLAT solver schema only
     load_experiment_config,  # composed experiment config, with **overrides
-    save_effective_config,   # write the config a run actually used
-    create_omega_manager,    # composition, overrides, parameter sweeps
-    bridge_to_pydantic,      # explicit crossing, when you already hold a DictConfig
+    save_effective_config,   # write the config a run actually used, as resolved_config.json
+    load_effective_config,   # read one of those snapshots BACK -- it parses JSON, not YAML
 )
 ```
+
+Two of these are easy to reach for and wrong:
+
+- **`load_effective_config` does not read YAML.** It is the read-back half of
+  `save_effective_config`, and it calls `json.load` on a `resolved_config.json` that a previous
+  run wrote. Handing it a YAML file raises `JSONDecodeError` from inside a function that exists,
+  which is a worse diagnostic than a missing name would have been.
+- **`load_solver_config` does parse YAML, but only the flat solver schema.** A nested tree with
+  `problem:` / `solver:` / `experiment:` keys is rejected with
+  `Unknown top-level key(s) [...] The solver-config schema is flat`.
 
 ---
 
@@ -328,10 +354,11 @@ Both systems support IDE autocompletion:
 config: MFGSolverConfig = MFGSolverConfig(...)
 config.tolerance  # IDE knows this is float
 
-# Loading YAML returns the same typed model: OmegaConf carries the text, the
-# Pydantic class owns the schema, and validation happens once at the crossing.
-loaded: MFGSolverConfig = load_effective_config("config.yaml", MFGSolverConfig)
-loaded.solver.tolerance  # IDE knows this is float
+# OmegaConf carries the YAML's own vocabulary; the Pydantic class owns its own schema.
+# The two are different namespaces, and the crossing is where validation happens.
+cfg = create_omega_manager().load_config(str(Path("config.yaml").resolve()))
+cfg.solver.tolerance                          # the YAML's key, untyped
+bridge_to_pydantic(cfg, MFGSolverConfig).picard.max_iterations  # the model's field, typed
 ```
 
 ### 3. Validate Early
@@ -370,10 +397,11 @@ problem:
 **Solution**: Use the structured loading functions:
 ```python
 # Bad
-config = OmegaConf.load("config.yaml")  # Returns DictConfig -- unvalidated
+config = OmegaConf.load("config.yaml")  # Returns DictConfig -- never validated
 
 # Good
-config = load_effective_config("config.yaml", MFGSolverConfig)  # Returns a validated model
+cfg = create_omega_manager().load_config(str(Path("config.yaml").resolve()))
+config = bridge_to_pydantic(cfg, MFGSolverConfig)  # validated at the crossing
 ```
 
 ### Validation Error on Bridge
