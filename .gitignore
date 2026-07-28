@@ -71,6 +71,10 @@ type_system_temp.py
 .claude/temp/
 .claude/cache/
 .claude/personal/
+# Review agents and EnterWorktree create checkouts here. Untracked, but `git add -A` will
+# commit one as an embedded repository if it is not ignored, and the doc-API ratchet used to
+# scan them as if they were part of the tree (Issue #1759).
+.claude/worktrees/
 .ai-cache/
 
 # Note: This allows contributors to maintain personal AI guidelines,

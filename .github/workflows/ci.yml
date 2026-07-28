@@ -109,6 +109,15 @@ jobs:
         echo "Checking for NEW fail-fast violations (broad/bare except, silent pass, hasattr) vs baseline..."
         python scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 
+    # Belongs in this tier, not nightly: it is 3 s of pure AST with no optional dependencies,
+    # and the artefact it guards -- documentation -- is the one a PR is most likely to touch
+    # without running anything locally. Issue #1759.
+    - name: Doc-API ratchet (docs teach no API the package lacks)
+      timeout-minutes: 1
+      run: |
+        echo "Checking that fenced doc examples resolve against the package..."
+        python scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
+
   # === PHASE 1: Import Validation ===
   # Note: Ruff formatting, linting, and MyPy checks run in modern_quality.yml workflow
   import-validation:
