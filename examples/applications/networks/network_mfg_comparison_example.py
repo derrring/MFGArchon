@@ -184,7 +184,6 @@ class NetworkMFGBenchmark:
                 "fp_solver_type": "flow",
                 "damping_factor": 0.6,
                 "hjb_kwargs": {"cfl_factor": 0.3},
-                "fp_kwargs": {"enforce_mass_conservation": True},
             },
         }
 

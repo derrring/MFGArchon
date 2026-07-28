@@ -13,12 +13,20 @@ Measured on a 5x5 grid network before the change:
 
 all returning unit mass.
 
-**Why the renormalisation stays here, unlike GFDM (#1752).** Measured, not assumed: with
-the renormalisation removed this scheme drifts 0.00% on two configurations and 0.01% on a
-clipping one, because the graph inflow-outflow form conserves by construction. It is not
-masking a non-conservative scheme the way GFDM's was. It is also a named user-facing option
-(`enforce_mass_conservation=`), already gated off for mass-changing node BCs by #1478, not
-a silent internal repair. The clip was the silent part, and that is what is gated.
+**`enforce_mass_conservation` went with it.** The first version of this change kept the
+option, on the grounds that the scheme conserves anyway so the option was harmless. That
+reasoning is backwards: measuring the option to be inert is an argument for deleting it, not
+for keeping it. Conservation is a property of the discretisation, and a post-hoc rescale
+does not make a scheme conservative -- it makes one look conservative. Neither branch of the
+flag was useful: when the scheme conserves it does nothing, and when it does not it forces
+the output to lie. There is no setting of a boolean that fixes a discretisation.
+
+It had a second use that was worse than the per-step one: it divided the caller's **initial
+condition** by its own total, so a density of mass 5.0 silently became the evolution of a
+density of mass 1.0. The FP equation is linear in m, so that is not bookkeeping -- it
+answers a different question by a factor the caller never sees.
+
+Both are gone. The drift is reported instead.
 """
 
 from __future__ import annotations
@@ -84,17 +92,29 @@ def test_a_healthy_solve_still_runs():
     assert abs(float(result[-1].sum()) - 1.0) < 1e-9
 
 
-def test_the_scheme_conserves_mass_without_the_renormalisation():
-    """Justifies keeping `enforce_mass_conservation`, which GFDM's equivalent did not.
+def test_the_scheme_conserves_without_anything_enforcing_it():
+    """Conservation is now a measured property of the scheme, not something imposed.
 
-    The point of #1683 is that a repair which forces conservation makes a broken solve look
-    healthy. That argument only applies if the underlying scheme is not conservative. Here
-    it is: running the raw steps with the clip but WITHOUT the division by total mass leaves
-    the final mass at 1.000000. Removing the option would therefore delete a user-facing
-    knob without exposing anything -- so it stays, on evidence rather than by analogy.
+    The graph inflow-outflow form conserves by construction, which is exactly why the flag
+    that used to divide by the total was pointless. This asserts the property directly, on
+    the public path with nothing rescaling the output.
 
-    If this ever fails, the network scheme has stopped conserving and
-    `enforce_mass_conservation` has silently become the same mask GFDM's was (#1752).
+    If this ever fails, the scheme has stopped conserving -- and that is now visible, which
+    is the whole point. It is not a reason to reinstate the division.
+    """
+    result = _solve()
+    assert abs(float(result[-1].sum()) - 1.0) < 1e-4, (
+        f"final mass {float(result[-1].sum()):.6f} from a unit initial mass: the graph "
+        f"inflow-outflow form no longer conserves"
+    )
+
+
+def test_the_initial_condition_is_no_longer_silently_normalised():
+    """It divided M[0] by its own total, so mass 5.0 became the evolution of mass 1.0.
+
+    The FP equation is linear in m: rescaling the initial condition rescales the entire
+    answer. A caller who passed an unnormalised density got a solve of a different problem,
+    at a factor they were never told about.
     """
     network = GridNetwork(width=5, height=5)
     network.create_network()
@@ -102,16 +122,55 @@ def test_the_scheme_conserves_mass_without_the_renormalisation():
     solver = FPNetworkSolver(problem, diffusion_coefficient=0.1)
 
     n = network.num_nodes
-    m = np.zeros(n)
-    m[n // 2] = 1.0
+    m0 = np.zeros(n)
+    m0[n // 2] = 5.0
     nodes = np.arange(n, dtype=float)
     u = np.tile((nodes - n / 2.0) ** 2 / n, (NT + 1, 1))
 
-    for k in range(NT):
-        solver._current_rates = solver._precompute_transition_rates(m, u[k], k * (T / NT))
-        m = np.maximum(solver._explicit_step(m, u[k], k * (T / NT)), 0.0)
-
-    assert abs(float(m.sum()) - 1.0) < 1e-4, (
-        f"unnormalised mass {float(m.sum()):.6f}: the graph inflow-outflow form no longer "
-        f"conserves, so enforce_mass_conservation is now hiding a scheme defect (cf. #1752)"
+    result = solver.solve_fp_system(m0, u)
+    assert abs(float(result[0].sum()) - 5.0) < 1e-12, "the initial condition was rewritten"
+    assert abs(float(result[-1].sum()) - 5.0) < 1e-3, (
+        f"final mass {float(result[-1].sum()):.6f}: a linear equation must carry the caller's "
+        f"normalisation through, not snap it to 1.0"
     )
+
+
+def test_the_removed_flag_raises_on_both_values():
+    """A user who passed False was asking for what is now the only behaviour.
+
+    Accepting either value silently would hide that the semantics moved, which is the
+    failure mode this whole issue is about.
+    """
+    network = GridNetwork(width=3, height=3)
+    network.create_network()
+    problem = NetworkMFGProblem(geometry=network, T=T, Nt=5)
+    for value in (True, False):
+        with pytest.raises(NotImplementedError, match="Issue #1683"):
+            FPNetworkSolver(problem, enforce_mass_conservation=value)
+
+
+def test_a_drift_that_does_happen_is_reported():
+    """The other half of removing the division: if it does not conserve, say so.
+
+    Driven by an absorbing-shaped perturbation rather than a broken scheme -- mass genuinely
+    leaves, and the solve reports the number instead of scaling it back to the input total.
+    """
+    network = GridNetwork(width=5, height=5)
+    network.create_network()
+    problem = NetworkMFGProblem(geometry=network, T=T, Nt=NT)
+    solver = FPNetworkSolver(problem, diffusion_coefficient=0.1)
+
+    n = network.num_nodes
+    m0 = np.zeros(n)
+    m0[n // 2] = 1.0
+    nodes = np.arange(n, dtype=float)
+    u = np.tile((nodes - n / 2.0) ** 2 / n, (NT + 1, 1))
+
+    original = solver._explicit_step
+
+    def leaky(m, u_cur, t):
+        return 0.99 * original(m, u_cur, t)
+
+    solver._explicit_step = leaky
+    with pytest.warns(RuntimeWarning, match="total mass changed by"):
+        solver.solve_fp_system(m0, u)

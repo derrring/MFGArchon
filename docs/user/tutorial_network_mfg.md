@@ -452,7 +452,6 @@ create_network_visualizer(problem=None, network_data=None) -> NetworkMFGVisualiz
 - `damping_factor`: Picard damping parameter (0.5-0.8 recommended)
 - `cfl_factor`: CFL stability factor for explicit schemes
 - `diffusion_coefficient`: Network diffusion strength
-- `enforce_mass_conservation`: Whether to enforce mass conservation
 
 **Visualization Options:**
 - `interactive`: Use Plotly for interactive plots
@@ -518,7 +517,6 @@ hjb_solver = NetworkHJBSolver(
 fp_solver = NetworkFlowFPSolver(
     problem,
     diffusion_coefficient=0.1,
-    enforce_mass_conservation=True
 )
 
 # Combine in custom MFG solver

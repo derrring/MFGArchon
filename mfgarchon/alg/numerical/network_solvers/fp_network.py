@@ -84,7 +84,7 @@ class FPNetworkSolver(BaseFPSolver):
         cfl_factor: float = 0.5,
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
-        enforce_mass_conservation: bool = True,
+        enforce_mass_conservation: bool | None = None,
     ):
         """
         Initialize network FP solver.
@@ -99,25 +99,24 @@ class FPNetworkSolver(BaseFPSolver):
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
-            enforce_mass_conservation: Whether to enforce mass conservation
+            enforce_mass_conservation: REMOVED (Issue #1683). Passing any value raises.
+                Conservation is a property of the discretisation, not a switch: when the
+                scheme conserves the flag did nothing, and when it did not the flag forced
+                the output to look conserved. Neither branch was useful.
         """
         super().__init__(problem)
 
         self.network_problem = problem
 
-        # Issue #1478 (Stage 2b): the FP now HONORS the geometry-owned node-BC via the single-source
+        # Issue #1478 (Stage 2b): the FP HONORS the geometry-owned node-BC via the single-source
         # GraphApplicator. ABSORBING nodes are exits (their mass leaves, m -> 0), applied to the
-        # density field each step; DIRICHLET / NEUMANN are no-ops on density. The mass renorm is gated
-        # OFF whenever the BC changes total mass (ABSORBING / SOURCE) — else it would manufacture
-        # false conservation and hide the absorption (the #1456 silent-wrong-answer class).
+        # density field each step; DIRICHLET / NEUMANN are no-ops on density.
+        #
+        # #1478 gated the mass renormalisation OFF for ABSORBING / SOURCE so it would not
+        # manufacture false conservation and hide the absorption. That gate is gone with the
+        # renormalisation itself (#1683): the absorbing case was not a special case needing an
+        # exemption, it was the case that made the general behaviour visible.
         self._node_applicator = problem._node_applicator
-        self._mass_changing_bc = False
-        node_bc = problem.geometry.get_boundary_conditions()
-        if node_bc is not None:
-            from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
-
-            mass_changing = {GraphBCType.ABSORBING, GraphBCType.SOURCE}
-            self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
 
         self.scheme = scheme
         # Issue #1541 / RFC #1574: scheme="upwind" was an identity map (the paired edge flows cancel
@@ -152,13 +151,32 @@ class FPNetworkSolver(BaseFPSolver):
                 "the implicit scheme is a direct sparse solve (spsolve), not iterative, so "
                 "max_iterations is never used. Omit it (default 1000)."
             )
+        # Issue #1683: `enforce_mass_conservation` normalised the caller's initial condition to
+        # unit mass and divided every step by its total. Both were removed. Conservation is a
+        # property of the discretisation: this scheme conserves by construction (measured at
+        # 0.00-0.01% drift over 20 steps with the division removed), so the flag did nothing on
+        # a healthy solve -- and on an unhealthy one it forced the output to look conserved,
+        # which is the defect #1683 exists to remove. There is no setting of a boolean that
+        # makes a non-conservative scheme conservative.
+        #
+        # The default is a sentinel rather than a bool so that BOTH `True` and `False` raise.
+        # A user who passed `False` was asking for the honest behaviour, which is now the only
+        # behaviour; silently accepting either value would hide that the semantics moved.
+        if enforce_mass_conservation is not None:
+            raise NotImplementedError(
+                f"FPNetworkSolver(enforce_mass_conservation={enforce_mass_conservation!r}) was "
+                "removed in Issue #1683. It normalised your initial condition to unit mass and "
+                "divided every step by its total, so the returned density was exactly "
+                "mass-conserving whatever the scheme produced. The scheme conserves by "
+                "construction, so there is nothing to enforce; the drift is now reported and "
+                "the density you get back is the one the scheme computed. Drop the argument."
+            )
         if tolerance != 1e-6:
             raise NotImplementedError(
                 f"FPNetworkSolver(tolerance={tolerance}) is not implemented (Issue #1426): the "
                 "implicit scheme is a direct sparse solve, so there is no iterative tolerance. Omit "
                 "it (default 1e-6)."
             )
-        self.enforce_mass_conservation = enforce_mass_conservation
         self._current_rates: dict | None = None  # Issue #913: precomputed per timestep
 
         # Network properties
@@ -317,11 +335,10 @@ class FPNetworkSolver(BaseFPSolver):
             # Set initial condition
             M[0, :] = M_initial
 
-            # Normalize initial condition if needed
-            if self.enforce_mass_conservation:
-                total_mass = np.sum(M[0, :])
-                if total_mass > 1e-12:
-                    M[0, :] /= total_mass
+            # Issue #1683: this divided M[0] by its own total, so a caller who passed a density
+            # of mass 5.0 silently got the evolution of a density of mass 1.0 -- a different
+            # problem from the one they posed. The FP equation is linear in m, so the rescale is
+            # not harmless bookkeeping; it changes the answer by a factor the caller never sees.
 
             # Forward time stepping with progress bar
             from mfgarchon.utils.progress import create_progress_bar, should_show_progress
@@ -369,17 +386,33 @@ class FPNetworkSolver(BaseFPSolver):
                     ),
                 )
 
-                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
-                # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
-                # With an absorbing / source node the total mass legitimately changes, so renormalizing
-                # would manufacture false conservation and hide the absorption.
+                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING ->
+                # the exit node's mass leaves, m -> 0). DIRICHLET / NEUMANN are no-ops on density.
                 if self._node_applicator is not None:
                     M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
 
-                if self.enforce_mass_conservation and not self._mass_changing_bc:
-                    total_mass = np.sum(M[n + 1, :])
-                    if total_mass > 1e-12:
-                        M[n + 1, :] /= total_mass
+            # Issue #1683: conservation is now reported, not imposed. This scheme conserves by
+            # construction, so on a healthy solve the drift is at round-off and nothing is
+            # logged; a drift that shows up here is the scheme failing, which is the thing the
+            # old `enforce_mass_conservation` division made unobservable.
+            #
+            # Not gated on the node BC: with an ABSORBING or SOURCE node the mass legitimately
+            # changes, and reporting that is correct -- it is the absorption, measured. The
+            # message says what the number is rather than calling it an error, because only the
+            # caller knows which of the two they configured.
+            mass_initial = float(np.sum(M[0, :]))
+            if mass_initial > 0:
+                drift = abs(float(np.sum(M[-1, :])) - mass_initial) / mass_initial
+                if drift > 1e-6:
+                    warnings.warn(
+                        f"Network FP solve: total mass changed by {drift:.3%} over the solve "
+                        f"({mass_initial:.6g} -> {float(np.sum(M[-1, :])):.6g}). With an "
+                        f"absorbing or source node this is the boundary flux and is expected. "
+                        f"Without one it is the scheme losing mass, and the density returned "
+                        f"carries that drift rather than being rescaled to hide it (Issue #1683).",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
             return M
         finally:
