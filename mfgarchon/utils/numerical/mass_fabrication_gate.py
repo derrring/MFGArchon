@@ -18,8 +18,26 @@ the three quantities the repair itself fixes. Issue #1671 is the case in point: 
 grew 1.0 -> 6378.77 while `min(M)` read +0.037 -- non-negative, finite, and entirely
 wrong.
 
-Round-off gives ~1e-15. A scheme that has genuinely failed gives O(1). There is no
-interesting régime between them, which is why a single threshold works.
+Round-off gives ~1e-15 **where it occurs at all**. A scheme that has genuinely failed gives
+O(1). The default threshold sits between them.
+
+Whether that picture holds is a per-site empirical question, and the two sites measured answer
+it opposite ways -- so measure before adopting the default at a third.
+
+- **GFDM** (576 configurations): nothing lands in `(0, 1.86e-06)`. The distribution is
+  `{exactly 0}` union `[1.86e-06, O(1)]`, so every value in `[0, 1.9e-06]` is behaviourally
+  identical there. The default is right, and no tighter value buys anything.
+- **The network graph scheme** (3704 configurations): the fabricated fraction runs continuously
+  from 1e-9 to O(1), and the default rejected solves whose honest answer was a drift of 5.8e-5.
+  It passes its own `threshold=` (`fp_network.py`, `_MAX_NETWORK_CLIP_FABRICATION`), chosen for
+  zero false negatives out of 2941 broken solves at a cost of 31 false positives out of 533
+  honest ones. No value separates the two populations there -- on scale-free topologies they
+  abut at a ratio of 1.011 -- because the per-step observable is a discordant proxy for the
+  drift it protects (16% of pairs rank-inverted). #1758 tracks that.
+
+What is single-sourced here is the **invariant** -- how fabricated mass is defined and compared.
+A tolerance is not an invariant: it belongs to the scheme whose discretisation error it has to
+clear, the same way a solver tolerance does.
 
 ## What this cannot see, and why no threshold fixes it
 
@@ -40,11 +58,10 @@ The observable falls five orders and then to exactly zero -- nothing goes negati
 while the end-to-end error climbs seven. At Nt=2560 the solve is maximally wrong and
 maximally clean by this function's own criterion.
 
-**Scope of that measurement.** It is one site. The obvious generalisation -- "any fixed
-threshold is defeatable by refining dt at any caller" -- was asserted during review and then
-withdrawn, because the attempt to reproduce it at the FDM time-stepping site produced a null
-with no working positive control. So: demonstrated at the GFDM site, open elsewhere. Do not
-cite it as a general property of this function until a second site shows it.
+**Demonstrated at GFDM only.** The general form -- "any fixed threshold is defeatable by
+refining dt at any caller" -- is not established; an attempt to reproduce it at the FDM
+time-stepping site produced a null with no working positive control. Do not cite it as a
+property of this function until a second site shows it.
 
 What is general, and does not depend on that table: this gate rules out a step that repairs a
 sign violation large enough to matter. It does not certify that a solve converged. A caller
@@ -71,17 +88,14 @@ omitting the weights silently measures a different quantity than the solver's ow
 functional. Hence `weights=None` means "uniform, and I have checked that it is", not "I
 did not think about it".
 
-The check is mechanical: read what the caller itself compares to decide mass changed, and
-match the gate to that. Worked example -- GFDM compares `np.sum(M)` against `np.sum(m_init)`
-and carries no cell measure anywhere (the only weights under `gfdm_components/` are
-least-squares stencil and interpolation weights), so `weights=None` is not merely the default
-there, it is the only correct value.
+The check is mechanical: read what the caller itself compares to decide mass changed, and match
+the gate to that. Worked example -- GFDM compares `np.sum(M)` against `np.sum(m_init)` and
+carries no cell measure anywhere (the only weights under `gfdm_components/` are least-squares
+stencil and interpolation weights), so `weights=None` is not merely the default there, it is
+the only correct value.
 
-An earlier version of this paragraph offered "GFDM quadrature" as the paradigm non-uniform
-case. That was wrong, and wrong in a specific way worth naming: it reasoned from the family
-name rather than from the code, so the first caller it warned about was one where the warning
-did not apply. The replacement then over-corrected by counting callers it had not read. Check
-each site; do not generalise from the scheme family, and do not generalise from this file.
+Read the site. The scheme family does not tell you: "GFDM" names a stencil construction, not a
+quadrature, and reasoning from the name gets this backwards.
 
 ## Not for input validation
 

@@ -32,7 +32,39 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+_logger = get_logger(__name__)
+
+# Issue #1683: this path does NOT use the shared default of 1e-8. The shared gate's docstring
+# argued one threshold suffices because "round-off gives ~1e-15, a failed scheme gives O(1),
+# there is no interesting regime between them". That is false here: the fabricated fraction
+# runs continuously from 1e-9 to O(1), and 1e-8 rejected solves whose honest answer was a
+# drift of 5.8e-5 -- including one this change originally cited as evidence that the scheme
+# conserves.
+#
+# Chosen against 3704 configurations (grid, random and scale-free topologies; both schemes;
+# D from 0.005 to 10; Nt from 3 to 100), classifying a solve as honest when its true ungated
+# final drift is below 1e-3 and broken at 1e-2 or above:
+#
+#     false negatives (broken solves admitted)   0 of 2941
+#     false positives (honest solves refused)   31 of  533   -- all with drift in [1e-4, 1e-3)
+#
+# The safety direction is what this gate is for, and it is intact: nothing broken passes.
+#
+# What is NOT true, and was claimed in an earlier version of this comment: that there is a
+# 2.1-order gap. That was measured on grids only. On scale-free topologies the honest and
+# broken populations abut -- highest honest 9.6026e-04 against lowest broken 9.7067e-04, a
+# ratio of 1.011 -- so no scalar separates them there, and the per-population optima differ by
+# 5.5x. This constant is a defensible line, not a separating one, and #1758 tracks the fact
+# that a scalar is the wrong shape for this quantity at all.
+#
+# What is single-sourced is the INVARIANT, which is still the shared owner's. A tolerance is
+# not an invariant: it belongs to the scheme whose discretisation error it must sit above, the
+# same way a solver tolerance does. Re-measure if the transition-rate computation changes.
+_MAX_NETWORK_CLIP_FABRICATION = 1e-4
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,7 +115,7 @@ class FPNetworkSolver(BaseFPSolver):
         cfl_factor: float = 0.5,
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
-        enforce_mass_conservation: bool = True,
+        enforce_mass_conservation: bool | None = None,
     ):
         """
         Initialize network FP solver.
@@ -98,25 +130,24 @@ class FPNetworkSolver(BaseFPSolver):
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
-            enforce_mass_conservation: Whether to enforce mass conservation
+            enforce_mass_conservation: REMOVED (Issue #1683). Passing any value raises.
+                Conservation is a property of the discretisation, not a switch: when the
+                scheme conserves the flag did nothing, and when it did not the flag forced
+                the output to look conserved. Neither branch was useful.
         """
         super().__init__(problem)
 
         self.network_problem = problem
 
-        # Issue #1478 (Stage 2b): the FP now HONORS the geometry-owned node-BC via the single-source
+        # Issue #1478 (Stage 2b): the FP HONORS the geometry-owned node-BC via the single-source
         # GraphApplicator. ABSORBING nodes are exits (their mass leaves, m -> 0), applied to the
-        # density field each step; DIRICHLET / NEUMANN are no-ops on density. The mass renorm is gated
-        # OFF whenever the BC changes total mass (ABSORBING / SOURCE) — else it would manufacture
-        # false conservation and hide the absorption (the #1456 silent-wrong-answer class).
+        # density field each step; DIRICHLET / NEUMANN are no-ops on density.
+        #
+        # #1478 gated the mass renormalisation OFF for ABSORBING / SOURCE so it would not
+        # manufacture false conservation and hide the absorption. That gate is gone with the
+        # renormalisation itself (#1683): the absorbing case was not a special case needing an
+        # exemption, it was the case that made the general behaviour visible.
         self._node_applicator = problem._node_applicator
-        self._mass_changing_bc = False
-        node_bc = problem.geometry.get_boundary_conditions()
-        if node_bc is not None:
-            from mfgarchon.geometry.boundary.applicator_graph import GraphBCType
-
-            mass_changing = {GraphBCType.ABSORBING, GraphBCType.SOURCE}
-            self._mass_changing_bc = any(bc.bc_type in mass_changing for bc in node_bc.node_bcs)
 
         self.scheme = scheme
         # Issue #1541 / RFC #1574: scheme="upwind" was an identity map (the paired edge flows cancel
@@ -137,6 +168,8 @@ class FPNetworkSolver(BaseFPSolver):
         # from the problem (NetworkMFGProblem carries no sigma, unlike MFGProblem — sourcing it is
         # the #1470 Strand C follow-up). For backward compatibility an unspecified diffusion still
         # falls back to 0.1, but the solve WARNS when that fallback is silently relied on.
+        # Issue #1683: highest drift already reported by this instance; see the report site.
+        self._reported_mass_drift = 0.0
         self._diffusion_was_defaulted = diffusion_coefficient is None
         self.diffusion_coefficient = 0.1 if diffusion_coefficient is None else diffusion_coefficient
         self.cfl_factor = cfl_factor
@@ -151,13 +184,32 @@ class FPNetworkSolver(BaseFPSolver):
                 "the implicit scheme is a direct sparse solve (spsolve), not iterative, so "
                 "max_iterations is never used. Omit it (default 1000)."
             )
+        # Issue #1683: `enforce_mass_conservation` normalised the caller's initial condition to
+        # unit mass and divided every step by its total. Both were removed. Conservation is a
+        # property of the discretisation: this scheme conserves by construction (measured at
+        # 0.00-0.01% drift over 20 steps with the division removed), so the flag did nothing on
+        # a healthy solve -- and on an unhealthy one it forced the output to look conserved,
+        # which is the defect #1683 exists to remove. There is no setting of a boolean that
+        # makes a non-conservative scheme conservative.
+        #
+        # The default is a sentinel rather than a bool so that BOTH `True` and `False` raise.
+        # A user who passed `False` was asking for the honest behaviour, which is now the only
+        # behaviour; silently accepting either value would hide that the semantics moved.
+        if enforce_mass_conservation is not None:
+            raise NotImplementedError(
+                f"FPNetworkSolver(enforce_mass_conservation={enforce_mass_conservation!r}) was "
+                "removed in Issue #1683. It normalised your initial condition to unit mass and "
+                "divided every step by its total, so the returned density was exactly "
+                "mass-conserving whatever the scheme produced. The scheme conserves by "
+                "construction, so there is nothing to enforce; the drift is now reported and "
+                "the density you get back is the one the scheme computed. Drop the argument."
+            )
         if tolerance != 1e-6:
             raise NotImplementedError(
                 f"FPNetworkSolver(tolerance={tolerance}) is not implemented (Issue #1426): the "
                 "implicit scheme is a direct sparse solve, so there is no iterative tolerance. Omit "
                 "it (default 1e-6)."
             )
-        self.enforce_mass_conservation = enforce_mass_conservation
         self._current_rates: dict | None = None  # Issue #913: precomputed per timestep
 
         # Network properties
@@ -316,11 +368,10 @@ class FPNetworkSolver(BaseFPSolver):
             # Set initial condition
             M[0, :] = M_initial
 
-            # Normalize initial condition if needed
-            if self.enforce_mass_conservation:
-                total_mass = np.sum(M[0, :])
-                if total_mass > 1e-12:
-                    M[0, :] /= total_mass
+            # Issue #1683: this divided M[0] by its own total, so a caller who passed a density
+            # of mass 5.0 silently got the evolution of a density of mass 1.0 -- a different
+            # problem from the one they posed. The FP equation is linear in m, so the rescale is
+            # not harmless bookkeeping; it changes the answer by a factor the caller never sees.
 
             # Forward time stepping with progress bar
             from mfgarchon.utils.progress import create_progress_bar, should_show_progress
@@ -347,20 +398,80 @@ class FPNetworkSolver(BaseFPSolver):
                 else:  # implicit
                     M[n + 1, :] = self._implicit_step(M[n, :], u_current, t)
 
-                # Enforce non-negativity
-                M[n + 1, :] = np.maximum(M[n + 1, :], 0)
+                # Issue #1683: this clipped to zero and then divided by the total, so the
+                # returned density was non-negative AND exactly unit-mass whatever the step
+                # produced -- the two properties a caller would check to decide the solve was
+                # healthy, both supplied by the repair rather than by the physics. Measured on
+                # a 5x5 grid network: a steep value field clips 1.66% of the present mass on
+                # 19 of 20 steps, and dt past the CFL limit clips 60.1% on every step. Both
+                # returned unit mass.
+                #
+                # The node masses are the mass functional here (`np.sum` at line ~363 below is
+                # the solver's own notion of total mass), so the ratio needs no weights.
+                M[n + 1, :] = clip_nonnegative_or_raise(
+                    M[n + 1, :],
+                    context=f"Network FP solve: at step {n + 1}/{n_intervals}, scheme={self.scheme!r}",
+                    remedy=(
+                        "Increase Nt. Switching to implicit does not help -- it raises "
+                        "earlier on the same configuration, because its drift term is explicit "
+                        "too. Lowering the diffusion coefficient does clear the gate "
+                        "eventually (measured: at u=50 the fabricated fraction falls with D and "
+                        "the solve completes at D <= 1e-4), but D is physics rather than a "
+                        "discretisation knob -- changing it answers a different question."
+                        if self.scheme == "explicit"
+                        else "Increase Nt. Despite the name, `_implicit_step` is IMEX: only "
+                        "the diffusion is solved implicitly, and the drift term is explicit "
+                        "(see `_implicit_step`, 'Drift terms (explicit for simplicity)'), so it "
+                        "carries a forward-Euler restriction. Measured on a 5x5 grid at D=0.1: "
+                        "Nt=3 stops at 10.991%, Nt=20 and Nt=100 both complete."
+                    ),
+                    threshold=_MAX_NETWORK_CLIP_FABRICATION,
+                )
 
-                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING -> the
-                # exit node's mass leaves, m -> 0), then renormalize ONLY when the BC is mass-conserving.
-                # With an absorbing / source node the total mass legitimately changes, so renormalizing
-                # would manufacture false conservation and hide the absorption.
+                # Issue #1478: apply the geometry-owned node-BC to the density field (ABSORBING ->
+                # the exit node's mass leaves, m -> 0). DIRICHLET / NEUMANN are no-ops on density.
                 if self._node_applicator is not None:
                     M[n + 1, :] = self._node_applicator.apply_fp(M[n + 1, :], t)
 
-                if self.enforce_mass_conservation and not self._mass_changing_bc:
-                    total_mass = np.sum(M[n + 1, :])
-                    if total_mass > 1e-12:
-                        M[n + 1, :] /= total_mass
+            # Issue #1683: conservation is now reported, not imposed. This scheme conserves by
+            # construction, so on a healthy solve the drift is at round-off and nothing is
+            # logged; a drift that shows up here is the scheme failing, which is the thing the
+            # old `enforce_mass_conservation` division made unobservable.
+            #
+            # A logger rather than `warnings.warn`, for two measured reasons. (1) This method
+            # carries two `@deprecated_parameter` decorators, so `stacklevel=2` resolved to
+            # `utils/deprecation.py` rather than to the caller -- the user could not tell which
+            # solve drifted. (2) The drift value is in the message text, so `warnings`' dedup
+            # keys on a string that changes every Picard iteration: a 15-iteration coupled solve
+            # with an absorbing node emitted 15 warnings for behaviour that is correct. The GFDM
+            # sibling reports its drift the same way.
+            #
+            # Not gated on the node BC: with an ABSORBING or SOURCE node the mass legitimately
+            # changes, and reporting that is correct -- it is the absorption, measured. The
+            # message says what the number is rather than calling it an error, because only the
+            # caller knows which of the two they configured.
+            mass_initial = float(np.sum(M[0, :]))
+            if mass_initial > 0:
+                mass_final = float(np.sum(M[-1, :]))
+                drift = abs(mass_final - mass_initial) / mass_initial
+                # Report the first drift and any escalation, not every call. A coupled solve
+                # invokes this once per Picard iteration, and neither channel dedups for us:
+                # `warnings` keys on the message text, which carries the drift value and so
+                # differs every iteration, and `logging` does not dedup at all. Measured before
+                # this guard: 15 iterations -> 15 records; 20 identical solves -> 20 records.
+                # A drift that grows is worth another line; one that repeats is not.
+                if drift > 1e-6 and drift > self._reported_mass_drift * 1.05:
+                    self._reported_mass_drift = drift
+                    _logger.warning(
+                        "Network FP solve: total mass changed by %.3f%% over the solve "
+                        "(%.6g -> %.6g). With an absorbing or source node this is the boundary "
+                        "flux and is expected. Without one it is the scheme losing mass, and the "
+                        "density returned carries that drift rather than being rescaled to hide "
+                        "it (Issue #1683). Repeats are suppressed unless the drift grows.",
+                        drift * 100.0,
+                        mass_initial,
+                        mass_final,
+                    )
 
             return M
         finally:

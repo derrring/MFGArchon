@@ -42,7 +42,6 @@ class TestFPNetworkSolverInitialization:
         assert solver.cfl_factor == 0.5
         assert solver.max_iterations == 1000
         assert solver.tolerance == 1e-6
-        assert solver.enforce_mass_conservation is True
 
     def test_explicit_scheme_initialization(self):
         """Test initialization with explicit scheme."""
@@ -155,11 +154,12 @@ class TestFPNetworkSolverInitialization:
             Nt=10,
         )
 
-        solver_with = FPNetworkSolver(problem, enforce_mass_conservation=True)
-        solver_without = FPNetworkSolver(problem, enforce_mass_conservation=False)
-
-        assert solver_with.enforce_mass_conservation is True
-        assert solver_without.enforce_mass_conservation is False
+        # Issue #1683: the flag was removed. BOTH values raise -- a user who passed False was
+        # asking for the honest behaviour, which is now the only behaviour, and silently
+        # accepting either would hide that the semantics moved.
+        for value in (True, False):
+            with pytest.raises(NotImplementedError, match="enforce_mass_conservation"):
+                FPNetworkSolver(problem, enforce_mass_conservation=value)
 
     def test_network_properties_extracted(self):
         """Test that network properties are properly extracted."""
@@ -453,7 +453,7 @@ class TestFPNetworkSolverNumericalProperties:
             Nt=15,
         )
 
-        solver = FPNetworkSolver(problem, scheme="implicit", enforce_mass_conservation=True)
+        solver = FPNetworkSolver(problem, scheme="implicit")
 
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
@@ -627,7 +627,7 @@ class TestFPNetworkSolverIntegration:
 
 class TestFPNetworkSolverAbsorbingNodeBC:
     """Issue #1478 (Stage 2b): FPNetworkSolver honors an ABSORBING (exit) node — its mass leaves
-    (``m -> 0``) and the mass renorm is gated off so the absorption is not hidden.
+    (``m -> 0``) and the absorption is reported rather than renormalised away (the renorm and its gate were removed in #1683).
     """
 
     def _network(self, absorbing_node=None):
@@ -651,11 +651,26 @@ class TestFPNetworkSolverAbsorbingNodeBC:
         assert np.allclose(m[1:, 0], 0.0), "the absorbing node's density is zeroed each step"
 
     def test_no_node_bc_constructs_and_conserves(self):
-        """No node BC -> construction unchanged and mass is conserved (renorm active)."""
+        """No node BC -> construction unchanged and mass is conserved.
+
+        Issue #1683: this asserted `solver._mass_changing_bc is False` and never solved
+        anything, so despite its name it verified which branch the renormalisation would
+        take rather than whether mass was conserved. That flag existed only to gate the
+        renormalisation and went with it. The test now runs the solve and checks the
+        property it claims -- which is a stronger assertion, and one the old version would
+        have passed even if the scheme lost half its mass.
+        """
         problem = NetworkMFGProblem(geometry=self._network(), T=0.5, Nt=10)
-        solver = FPNetworkSolver(problem)  # no raise
+        solver = FPNetworkSolver(problem, diffusion_coefficient=0.1)
         assert solver.num_nodes == 9
-        assert solver._mass_changing_bc is False
+
+        n = problem.num_nodes
+        m0 = np.ones(n) / n
+        m = solver.solve_fp_system(M_initial=m0, potential_field=np.zeros((11, n)))
+        assert abs(float(m[-1].sum()) - float(m[0].sum())) < 1e-9, (
+            f"no absorbing node, so mass must be conserved by the scheme: "
+            f"{float(m[0].sum()):.9f} -> {float(m[-1].sum()):.9f}"
+        )
 
 
 class TestFPNetworkDiffusionDefaultWarning1532:
