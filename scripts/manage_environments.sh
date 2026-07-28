@@ -186,7 +186,11 @@ show_env_info() {
     if [[ -n "$CONDA_DEFAULT_ENV" ]] && [[ "$CONDA_DEFAULT_ENV" == mfg* ]]; then
         echo
         print_info "Current environment details:"
-        python verify_environment.py 2>/dev/null || print_warning "Could not run environment verification"
+        # Removed with tests/verify_environment.py (#1716). The call named a bare
+        # relative path the file never occupied, and `|| print_warning` swallowed the
+        # resulting "file not found" -- so it reported a soft warning whether or not
+        # anything ran. `python -c "import mfgarchon"` below is the real check.
+        python -c "import mfgarchon" 2>/dev/null || print_warning "mfgarchon does not import in this environment"
     fi
 }
 
@@ -215,7 +219,7 @@ activate_env() {
     fi
 
     print_status "Environment $env_name activated!"
-    print_info "Run 'python verify_environment.py' to test the setup"
+    print_info "Run 'python -c \"import mfgarchon\"' to test the setup"
 }
 
 # Main menu
