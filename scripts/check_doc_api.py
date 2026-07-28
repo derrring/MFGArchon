@@ -94,6 +94,8 @@ class PackageIndex:
     def __init__(self, package_root: Path):
         self.provides: dict[str, set[str]] = {}
         self.params: dict[str, set[str] | None] = {}
+        # Modules whose surface a star import makes undeterminable from source.
+        self.unresolvable: set[str] = set()
         for path in sorted(package_root.rglob("*.py")):
             if set(path.relative_to(package_root.parent).parts) & EXEMPT_DIRS:
                 continue
@@ -107,26 +109,48 @@ class PackageIndex:
                 parts.pop()
             module = ".".join(parts) if parts else package_root.name
             names = self.provides.setdefault(module, set())
-            # Top-level definitions only: a class defined inside a function is not an export.
-            for node in tree.body:
-                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                    names.add(node.name)
-                    self._record_params(node)
-                elif isinstance(node, ast.Assign):
-                    for t in node.targets:
-                        if isinstance(t, ast.Name):
-                            names.add(t.id)
+            # Definitions can sit under a top-level `if TORCH_AVAILABLE:` or `try:`, which is
+            # how this package guards optional dependencies -- reading only `tree.body` made
+            # every symbol in such a module read as absent. Descend one level into those.
+            self._collect_definitions(tree.body, names)
             # Imports and __all__ entries anywhere in the file, not just at top level. Optional
             # dependencies are re-exported from inside `try:` blocks and `if TYPE_CHECKING:`
-            # guards -- `backends/__init__.py` hides 7 of its 11 imports that way and
-            # `reinforcement/environments/__init__.py` hides 22 of 54. Reading only the top
-            # level made this check's findings substantially false-positive; reading the whole
-            # tree removed that. `--stats` shows how much each __init__ file hides today.
+            # guards -- reading only the top level made this check substantially
+            # false-positive; `--stats` reports the exemptions this leaves in force.
             for node in ast.walk(tree):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     names.update(a.asname or a.name.split(".")[0] for a in node.names if a.name != "*")
+                    if any(a.name == "*" for a in node.names):
+                        # A star import means this module's surface cannot be determined from
+                        # its own source. Asserting a symbol is ABSENT from it would be a
+                        # false positive, so the module is marked unresolvable instead.
+                        self.unresolvable.add(module)
             names.update(self._all_entries(tree))
         self.known: set[str] = {n for v in self.provides.values() for n in v}
+
+    def _collect_definitions(self, body: list[ast.stmt], names: set[str], depth: int = 0) -> None:
+        """Top-level definitions, plus one level inside `if` / `try` guards."""
+        for node in body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+                self._record_params(node)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        names.add(t.id)
+            elif isinstance(node, (ast.AnnAssign, ast.TypeAlias)):
+                target = getattr(node, "target", None) or getattr(node, "name", None)
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+            elif depth == 0 and isinstance(node, (ast.If, ast.Try)):
+                for branch in (
+                    getattr(node, "body", []),
+                    getattr(node, "orelse", []),
+                    getattr(node, "finalbody", []),
+                ):
+                    self._collect_definitions(branch, names, depth + 1)
+                for handler in getattr(node, "handlers", []):
+                    self._collect_definitions(handler.body, names, depth + 1)
 
     @staticmethod
     def _all_entries(tree: ast.Module) -> set[str]:
@@ -239,6 +263,8 @@ def scan_document(path: Path, index: PackageIndex) -> dict[str, list[str]]:
                         if a.name == "*":
                             continue
                         submodule = f"{module}.{a.name}"
+                        if module in index.unresolvable:
+                            continue  # star import: this module's surface is undeterminable
                         if not index.module_known(module) or not (
                             index.module_provides(module, a.name) or index.module_known(submodule)
                         ):
@@ -256,7 +282,11 @@ def scan_document(path: Path, index: PackageIndex) -> dict[str, list[str]]:
         # an unrelated object. The index records top-level definitions, so the comparison has
         # to be against top-level ones.
         for n in tree.body:
-            if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in index.known:
+            # Names shorter than three characters are mathematical notation in this corpus,
+            # not API claims: a doc defining `def f(x, y, m)` for a running cost collided with
+            # a bare `f` the package happens to bind. Same namespace-collision class as
+            # comparing a doc method against a top-level function of the same name.
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and len(n.name) > 2 and n.name in index.known:
                 real = index.params.get(n.name)
                 if real is not None:
                     sketched = _sketched_params(n)
@@ -298,19 +328,42 @@ def _sketched_params(node: ast.ClassDef | ast.FunctionDef) -> set[str]:
 def tracked_markdown(repo: Path) -> list[Path]:
     """`git ls-files`, not `rglob`.
 
-    The baseline is committed, so the measurement has to be over what is committed. Reading
-    the filesystem makes the count depend on whatever is lying around: a worktree under
-    `.claude/worktrees/` (which `.gitignore` does not cover, and which the review tooling
-    creates) took `bad_imports` from 102 to 188, and a single untracked scratch note took it
-    to 103. Either turns `local_ci.sh` red on an otherwise clean checkout.
+    The baseline is committed, so the measurement has to be over files git knows about.
+    Reading the filesystem instead makes the count depend on whatever is lying around: a
+    worktree under `.claude/worktrees/` (which `.gitignore` does not cover, and which the
+    review tooling creates) took `bad_imports` from 102 to 188, and a single untracked scratch
+    note took it to 103. Either turns `local_ci.sh` red on an otherwise clean checkout.
+
+    `ls-files` reports the **index**, not `HEAD`, and the index can name a path the working
+    tree no longer has -- `rm foo.md` without `git rm` leaves the entry. Reading those blindly
+    crashed the whole gate with a `FileNotFoundError`, and since `local_ci.sh` is wired into
+    pre-push, that is every push after a plain `rm`. Missing entries are skipped and named:
+    a deleted doc that carried findings still turns the ratchet red through the bidirectional
+    check, so skipping cannot hide a regression.
     """
     out = subprocess.run(
         ["git", "-C", str(repo), "ls-files", "-z", "--", "*.md"],
         capture_output=True,
-        check=True,
         text=True,
     )
-    return [repo / rel for rel in out.stdout.split("\0") if rel]
+    if out.returncode != 0:
+        raise SystemExit(
+            f"cannot list tracked markdown in {repo}: git exited {out.returncode}.\n"
+            f"  {out.stderr.strip()}\n"
+            f"This check scopes itself by git because its baseline is committed. Run it from "
+            f"inside the repository, or pass --path pointing at the repository root."
+        )
+    # `dict.fromkeys`, not a list: during a merge conflict `ls-files` emits one line per
+    # stage, so an unmerged doc appears three times and every finding in it is counted three
+    # times -- the ratchet would go red on a conflict rather than on a doc defect.
+    paths = [repo / rel for rel in dict.fromkeys(r for r in out.stdout.split("\0") if r)]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        shown = ", ".join(str(p.relative_to(repo)) for p in missing[:5])
+        extra = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
+        print(f"note: {len(missing)} tracked doc(s) are gone from the working tree, skipping: {shown}{extra}")
+        print("      `git rm` them to record the deletion, or restore them.")
+    return [p for p in paths if p.exists()]
 
 
 def scan(repo: Path) -> dict[str, list[str]]:
@@ -383,9 +436,26 @@ def report_stats(repo: Path) -> None:
     # or **kwargs), or never recorded at all (a class with no own `__init__` returns before
     # recording). The first version of this counter measured only the first shape and reported
     # a fraction of the real exemption -- an undercount in the tool that counts exemptions.
-    explicitly_none = sum(1 for v in index.params.values() if v is None)
-    never_recorded = len(index.known - set(index.params))
-    checkable = sum(1 for v in index.params.values() if v is not None)
+    # Partition over the names that could HAVE a signature -- top-level classes and functions
+    # defined in the package. Dividing by every known name conflates "is a constant, so of
+    # course it has no signature" with "is a class whose signature could not be read", and
+    # reports the exemption as several times larger than it is.
+    definitions: set[str] = set()
+    for path in sorted((repo / "mfgarchon").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                definitions.add(node.name)
+    definitions &= index.known
+    # `scan_document` reaches a signature only through `index.known`, so a name recorded in
+    # `params` but absent from `known` is never checked and must not count as covered.
+    checkable = {n for n, v in index.params.items() if v is not None and n in index.known}
+    explicitly_none = {n for n, v in index.params.items() if v is None} & definitions
+    never_recorded = definitions - set(index.params)
+
     own_defs: set[str] = set()
     imported_only: set[str] = set()
     for path in sorted((repo / "mfgarchon").rglob("*.py")):
@@ -393,26 +463,32 @@ def report_stats(repo: Path) -> None:
             tree = ast.parse(path.read_text(errors="replace"))
         except SyntaxError:
             continue
-        for node in tree.body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                own_defs.add(node.name)
+        index._collect_definitions(tree.body, own_defs)
+        own_defs |= index._all_entries(tree)
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 imported_only.update(a.asname or a.name.split(".")[0] for a in node.names if a.name != "*")
     third_party = imported_only - own_defs
     placeheld = sorted(n for n in index.known if PLACEHOLDER.match(n))
 
-    print(f"names the package provides                  {len(index.known)}")
-    print(f"modules indexed                             {len(index.provides)}")
-    print(f"markdown files tracked by git               {len(tracked_markdown(repo))}")
+    covered = len(checkable & definitions)
+    print(f"names the package provides                   {len(index.known)}")
+    print(f"modules indexed                              {len(index.provides)}")
+    print(f"markdown files tracked by git                {len(tracked_markdown(repo))}")
     print()
-    print(f"names whose kwargs CAN be checked            {checkable}")
+    print(f"top-level classes and functions              {len(definitions)}")
+    print(f"  of those, kwargs CAN be checked            {covered}")
     print()
-    print("exemptions currently in force (each weakens a check):")
-    print(f"  signature recorded as unusable -- **kwargs or defined in 2 modules  {explicitly_none}")
-    print(f"  no signature recorded at all -- e.g. a class with no own __init__   {never_recorded}")
-    print(f"  known only via a third-party import (weakens unknown_calls)        {len(third_party)}")
-    print(f"  real package names matched by PLACEHOLDER and skipped              {len(placeheld)}")
+    print("exemptions in force among those definitions (each weakens the kwarg check):")
+    print(f"  signature unusable -- **kwargs, or defined in two modules   {len(explicitly_none)}")
+    print(f"  no signature recorded -- e.g. a class with no own __init__  {len(never_recorded)}")
+    assert covered + len(explicitly_none) + len(never_recorded) == len(definitions), (
+        "the three buckets must partition the definitions; they do not, so one of them is "
+        "double-counting or leaving a gap"
+    )
+    print()
+    print(f"known only via a third-party import (weakens unknown_calls)  {len(third_party)}")
+    print(f"real package names matched by PLACEHOLDER and skipped        {len(placeheld)}")
     if placeheld:
         print(f"      {', '.join(placeheld[:8])}{' ...' if len(placeheld) > 8 else ''}")
 
