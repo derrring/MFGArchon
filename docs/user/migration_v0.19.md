@@ -118,19 +118,19 @@ from mfgarchon.config.pydantic_config import (
 )
 ```
 
-If you were following those doc examples, you were already getting `ImportError` — the code simply was never there. For preset patterns, use the real factory functions from `mfgarchon.factory`:
+If you were following those doc examples, you were already getting `ImportError` — the code simply was never there.
+
+The `mfgarchon.factory` presets this section once pointed at as the replacement —
+`create_fast_solver`, `create_accurate_solver`, `create_research_solver` — have since been
+removed too, and raise `NotImplementedError` on call (Issue #1709). There is no preset
+layer. Solve through the problem, and pass a `MFGSolverConfig` when you need explicit
+control:
 
 ```python
-from mfgarchon.factory import (
-    create_fast_solver,
-    create_accurate_solver,
-    create_research_solver,
-)
-
-solver = create_fast_solver(problem)      # or create_accurate_solver(problem)
+result = problem.solve()                                  # defaults
+result = problem.solve(max_iterations=200, tolerance=1e-8)
+result = problem.solve(config=MFGSolverConfig(...))        # explicit control
 ```
-
-These factories construct a solver directly; they do not return a `MFGSolverConfig` object. For explicit config control, construct `MFGSolverConfig(...)` directly.
 
 ## Step 4: Update YAML configs if affected
 

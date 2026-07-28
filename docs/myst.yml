@@ -22,11 +22,9 @@ project:
         - file: user/core_objects.md
         - file: user/configuration_system.md
         - file: user/usage_patterns.md
-        - file: user/migration.md
 
     - title: Solver Guides
       children:
-        - file: user/SOLVER_SELECTION_GUIDE.md
         - file: user/HJB_SOLVER_SELECTION_GUIDE.md
         - file: user/stochastic_mfg_guide.md
         - file: user/multidimensional_mfg_guide.md

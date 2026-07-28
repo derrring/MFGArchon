@@ -68,15 +68,20 @@ Keep changes minimal + focused; no legacy fallbacks (use mature utilities direct
 The domain model **is** the API (kernel scope discipline: no premature convenience/factory explosion — wrappers wait until post-1.0):
 ```python
 problem = MFGProblem(...)
-result = problem.solve()
+result = problem.solve()                                     # Auto Mode
+result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)    # Safe Mode: pick the scheme
+result = problem.solve(hjb_solver=hjb, fp_solver=fp)         # Expert Mode: bring your own pair
 result = problem.solve(max_iterations=200, tolerance=1e-8)   # explicit params, not magic "mode=" strings
-solver = create_standard_solver(problem, custom_config=config)   # factory only when truly needed
 ```
+There is no factory to reach for. `create_standard_solver` does not exist and
+`create_fast_solver` / `create_research_solver` / `create_basic_solver` /
+`create_accurate_solver` raise on call; `create_solver` is deprecated in favour of the
+same three modes (#580). This file taught two of them as current until #1709.
 
 ### Import style
 ```python
 from mfgarchon import MFGProblem, BoundaryConditions
-from mfgarchon.factory import create_fast_solver
+from mfgarchon.types import NumericalScheme
 from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 ```
 

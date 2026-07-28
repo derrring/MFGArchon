@@ -203,78 +203,7 @@ class MFGPhysicalConstraints(PhysicalConstraints):
     bounded_variables: Dict[str, Tuple[float, float]] = {}
 ```
 
-### 4. ✅ **Factory Pattern for Complex Object Creation**
-
-#### What Made This Successful:
-```python
-# MFGArchon Success Pattern
-from mfgarchon.factory import create_research_solver
-from mfgarchon.config import MFGSolverConfig
-
-# Simple, type-safe solver creation
-config = MFGSolverConfig()  # sensible defaults
-solver = create_research_solver(
-    problem=problem,
-    config=config,
-)
-
-# The factory handles:
-# - Configuration validation
-# - Dependency injection
-# - Parameter translation
-# - Error checking
-# - Solver instantiation
-```
-
-#### Why This Works:
-1. **Encapsulates Complexity** - Hide complex instantiation logic
-2. **Type Safety** - All inputs validated before creation
-3. **Consistent Interface** - Same pattern for all solver types
-4. **Dependency Injection** - Automatic injection of logger, validator, etc.
-5. **Error Messages** - Clear feedback when creation fails
-
-#### Generalization Strategy:
-```python
-# Abstract Framework Pattern
-class UniversalSolverFactory:
-    """Universal factory for all scientific solvers"""
-    
-    def __init__(self, container: DependencyContainer):
-        self.container = container
-        self._domain_plugins = {}
-    
-    def create_solver(self, 
-                     domain: str,
-                     solver_type: str, 
-                     config: ScientificConfig) -> ScientificSolver:
-        """Universal solver creation with validation"""
-        
-        # Validate request
-        request = SolverCreationRequest(
-            domain=domain,
-            solver_type=solver_type,
-            config=config
-        )
-        
-        # Get domain plugin
-        plugin = self._get_domain_plugin(domain)
-        
-        # Create solver
-        solver = plugin.create_solver(solver_type, config)
-        
-        # Inject universal dependencies
-        self._inject_dependencies(solver)
-        
-        return solver
-    
-    def _inject_dependencies(self, solver: ScientificSolver):
-        """Inject framework dependencies"""
-        solver.logger = self.container.resolve(UniversalLogger)
-        solver.validator = self.container.resolve(UniversalValidator)
-        solver.metrics = self.container.resolve(MetricsCollector)
-```
-
-### 5. ✅ **Structured Result Objects with Metadata**
+### 4. ✅ **Structured Result Objects with Metadata**
 
 #### What Made This Successful:
 ```python
@@ -357,7 +286,7 @@ class PerformanceMetrics(BaseModel):
     backend_used: str
 ```
 
-### 6. ✅ **Notebook-First Reporting and Visualization**
+### 5. ✅ **Notebook-First Reporting and Visualization**
 
 #### What Made This Successful:
 ```python
@@ -435,99 +364,18 @@ class DomainReportingPlugin(ABC):
         pass
 ```
 
-### 7. ✅ **Configuration Presets for Common Use Cases**
+### Retired: the factory pattern and its presets
 
-#### What Made This Successful:
-```python
-# MFGArchon Success Pattern
-from mfgarchon.factory import (
-    create_fast_solver,
-    create_accurate_solver,
-    create_research_solver,
-)
-from mfgarchon.config import MFGSolverConfig
+Two sections here held up `create_research_solver` / `create_fast_solver` /
+`create_accurate_solver` as design successes -- a "Factory Pattern for Complex Object
+Creation" and "Configuration Presets for Common Use Cases". Those factories were
+removed; calling them raises. The sections were removed with them (Issue #1709) rather
+than rewritten, because the pattern itself is what the project decided against:
+`CLAUDE.md` states the domain model **is** the API, and that convenience wrappers wait
+until post-1.0. A document holding up the opposite as exemplary was not a stale example,
+it was a contradicted argument.
 
-# Preset solver factories (the real API — construct directly with your problem)
-# fast_solver     = create_fast_solver(problem)       # Quick results, reasonable accuracy
-# accurate_solver = create_accurate_solver(problem)   # High accuracy, longer runtime
-# research_solver = create_research_solver(problem)   # Maximum accuracy, full logging
-#
-# For explicit config control use MFGSolverConfig(...) directly.
-
-# Each preset encodes domain expertise:
-# - Appropriate tolerance values
-# - Iteration limits
-# - Validation settings
-# - Logging configuration
-```
-
-#### Why This Works:
-1. **Reduces Cognitive Load** - Users don't need to understand all parameters
-2. **Encodes Expertise** - Best practices built into presets
-3. **Reduces Errors** - Pre-validated parameter combinations
-4. **Progressive Complexity** - Easy start, more control when needed
-5. **Consistent Results** - Same preset gives reproducible behavior
-
-#### Generalization Strategy:
-```python
-# Abstract Framework Pattern
-class ConfigurationPresets:
-    """Universal configuration presets"""
-    
-    def __init__(self, domain_plugins: Dict[str, DomainPlugin]):
-        self.domain_plugins = domain_plugins
-    
-    def create_preset(self, 
-                     preset_type: str,
-                     domain: str,
-                     **overrides) -> ScientificConfig:
-        """Create configuration preset for domain"""
-        
-        # Get domain plugin
-        plugin = self.domain_plugins[domain]
-        
-        # Create base configuration
-        if preset_type == "fast":
-            base_config = self._create_fast_base()
-        elif preset_type == "accurate":
-            base_config = self._create_accurate_base()
-        elif preset_type == "research":
-            base_config = self._create_research_base()
-        else:
-            raise ValueError(f"Unknown preset type: {preset_type}")
-        
-        # Add domain-specific configuration
-        domain_config = plugin.create_preset_config(preset_type)
-        base_config.domain_config = domain_config
-        
-        # Apply overrides
-        for key, value in overrides.items():
-            setattr(base_config, key, value)
-        
-        return base_config
-
-# Preset definitions encode expertise
-class PresetDefinitions:
-    """Standard preset definitions"""
-    
-    @staticmethod
-    def fast_preset() -> Dict[str, Any]:
-        return {
-            'convergence': {
-                'max_iterations': 50,
-                'tolerance': 1e-4,
-                'check_frequency': 5
-            },
-            'resources': {
-                'max_memory_gb': 8,
-                'max_compute_hours': 1
-            },
-            'validation': {
-                'enable_physical_constraints': True,
-                'validation_tolerance': 1e-2
-            }
-        }
-```
+The surviving API is `problem.solve()` in its three modes (Issue #580).
 
 ## Anti-Patterns to Avoid
 

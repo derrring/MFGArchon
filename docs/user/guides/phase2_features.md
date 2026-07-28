@@ -16,23 +16,20 @@ This guide covers all Phase 2 improvements:
 
 The `solve_mfg()` function provides a one-line interface for solving MFG problems with automatic configuration and method selection.
 
-**Before (Factory API - ~30 lines)**:
+**With explicit configuration**:
 ```python
 from mfgarchon import MFGProblem
-from mfgarchon.factory import create_standard_solver
-from mfgarchon.config import create_fast_config
+from mfgarchon.config import MFGSolverConfig
 
 problem = MFGProblem()
-config = create_fast_config()
-config.max_iterations = 100
-config.tolerance_U = 1e-5
+config = MFGSolverConfig(picard={"max_iterations": 100, "tolerance": 1e-5})
 
-solver = create_standard_solver(
-    problem=problem,
-    custom_config=config
-)
-result = solver.solve(verbose=True)
+result = problem.solve(config=config, verbose=True)
 ```
+
+`MFGSolverConfig` is nested (`picard`, `hjb`, `fp`, `backend`, `logging`); the flat
+`config.max_iterations = ...` this block used raises
+`ValueError: "MFGSolverConfig" object has no field`.
 
 **After (solve_mfg() - 1 line)**:
 ```python
@@ -438,10 +435,10 @@ density_2d = particles_to_grid_kde_2d(
 Particle interpolation is used internally by hybrid solvers:
 
 ```python
-from mfgarchon.factory import create_standard_solver
+from mfgarchon.types import NumericalScheme
 
-# Standard solver uses HJB-FDM + FP-Particle (hybrid)
-solver = create_standard_solver(problem, "fixed_point")
+# The default pairing is HJB-FDM + FP-Particle (hybrid)
+result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
 
 # Internally:
 # 1. HJB solve on grid → value function U
@@ -652,7 +649,7 @@ class Difference:
 
 **See Also**:
 - [Quickstart Guide](../quickstart.md) - Getting started with solve_mfg()
-- [Solver Selection Guide](../SOLVER_SELECTION_GUIDE.md) - Choosing the right solver
+- [HJB Solver Selection Guide](../HJB_SOLVER_SELECTION_GUIDE.md) - Choosing the right solver
 - [Examples](../../examples/) - Working demonstrations
 
 **Examples**:

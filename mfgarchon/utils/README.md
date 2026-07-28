@@ -501,7 +501,6 @@ result = solver.solve(**config['execution'])
 ### Research Workflow
 ```python
 # Complete research workflow with utilities
-from mfgarchon import create_research_solver
 from mfgarchon.utils import progress, validation, exceptions
 from mfgarchon.utils.solver_result import SolverResult
 
@@ -511,15 +510,9 @@ def run_experiment(config_file):
         # Load configuration
         config = load_config_file(config_file)
         
-        # Create solver with progress monitoring
-        solver = create_research_solver(
-            problem, collocation_points,
-            **config['solver_params']
-        )
-        
-        # Solve with timing
+        # Solve with progress monitoring and timing
         with SolverTimer("Experiment") as timer:
-            result = solver.solve(verbose=True)
+            result = problem.solve(config=config, verbose=True)
         
         # Validate and return structured result
         validated_result = validation.validate_mfg_solution(
@@ -549,13 +542,10 @@ def production_solve(problem_spec, solver_config):
     
     # Create solver with enhancements
     solver = create_solver(**config)
-    solver.enable_progress(True)
-    solver.enable_timing(True)
-    
     # Solve with comprehensive error handling
     try:
         with SolverTimer("Production Solve") as timer:
-            result = solver.solve()
+            result = problem.solve(verbose=True)
             
         # Validate results
         validated_result = validation.validate_solver_result(result)

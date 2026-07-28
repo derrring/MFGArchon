@@ -421,13 +421,9 @@ print(f"Congestion weight γ: {problem.congestion_weight}")
 # TODO: Full solver integration pending
 # For now, this demonstrates the API pattern
 
-from mfgarchon.factory import create_fast_solver
-
-# Create solver (will use problem's Hamiltonian with congestion term)
-solver = create_fast_solver(problem)
-
-# Solve coupled HJB-FP system
-result = solver.solve()
+# Solve the coupled HJB-FP system. The problem's Hamiltonian, including the
+# congestion term, is what the solve reads -- there is nothing to configure here.
+result = problem.solve()
 
 # Extract solution
 U = result.U  # Value function
