@@ -79,6 +79,14 @@ step "Fail-fast ratchet"
 "$PY" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
 
+# Docs are the one artefact nothing else runs: this suite never imports a doc example, so a
+# rename leaves every tutorial that used the old name teaching a NameError (Issue #1759).
+# Pure AST, no imports -- importing would make the count depend on which optional
+# dependencies are installed, and would drift with the environment rather than with the docs.
+step "Doc-API ratchet"
+"$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
+check $? "docs teach no more missing API than the baseline records"
+
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
   # here that measures the product rather than the source. Counts of tests, issues or
