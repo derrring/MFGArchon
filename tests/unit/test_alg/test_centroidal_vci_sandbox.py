@@ -9,6 +9,7 @@ import numpy as np
 from mfgarchon.alg.numerical.meshless_galerkin.centroidal_vci_sandbox import (
     CentroidalVC2SCNIOperatorSandbox,
     PairedMFGOperatorSandbox,
+    boundary_complete_cvt_rectangle,
 )
 from mfgarchon.alg.numerical.meshless_galerkin.voronoi_cells import clipped_voronoi_cells
 
@@ -115,37 +116,60 @@ class TestCentroidalVC2Geometry:
         assert sandbox.diagnostics.corrected_patch_defect < 1e-12
         assert sandbox.diagnostics.stiffness_nullity == 1
 
-    def test_boundary_complete_lloyd_cloud_passes(self):
-        from mfgarchon.geometry.collocation import ImplicitDomainCollocation
-        from mfgarchon.geometry.implicit import Hyperrectangle
+    def test_boundary_complete_cvt_is_deterministic_and_keeps_fitted_boundary(self):
+        first = boundary_complete_cvt_rectangle(7, BOUNDS, seed=4, iterations=10)
+        second = boundary_complete_cvt_rectangle(7, BOUNDS, seed=4, iterations=10)
+        assert np.array_equal(first.nodes, second.nodes)
+        assert np.array_equal(first.boundary_mask, second.boundary_mask)
+        assert len(first.nodes) == 7**2
+        assert np.count_nonzero(first.boundary_mask) == 4 * (7 - 1)
+        boundary = first.nodes[first.boundary_mask]
+        on_box = (boundary[:, 0] == 0.0) | (boundary[:, 0] == 1.0) | (boundary[:, 1] == 0.0) | (boundary[:, 1] == 1.0)
+        assert np.all(on_box)
+        assert not first.nodes.flags.writeable
+        assert not first.boundary_mask.flags.writeable
 
-        interior = ImplicitDomainCollocation(Hyperrectangle(bounds=BOUNDS)).sample_interior(
-            80,
-            method="lloyd",
-            seed=0,
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            ({"resolution": 4}, "resolution >= 5"),
+            ({"resolution": 7, "iterations": -1}, "iterations >= 0"),
+            ({"resolution": 7, "jitter_fraction": 0.5}, "jitter_fraction"),
+            ({"resolution": 7, "relaxation": 0.0}, "relaxation"),
+            ({"resolution": 7, "bounds": [(0.0, 1.0)]}, r"shape \(2, 2\)"),
+            ({"resolution": 7, "bounds": [(0.0, 1.0), (1.0, 0.0)]}, "finite increasing bounds"),
+        ],
+    )
+    def test_boundary_complete_cvt_rejects_invalid_family_parameters(self, options, message):
+        arguments = {"bounds": BOUNDS, **options}
+        with pytest.raises(ValueError, match=message):
+            boundary_complete_cvt_rectangle(**arguments)
+
+    @pytest.mark.parametrize(
+        ("resolution", "seed"),
+        [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
+    )
+    def test_boundary_complete_cvt_family_passes_refinement_gate(self, resolution, seed):
+        cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+        sandbox = CentroidalVC2SCNIOperatorSandbox(
+            cloud.nodes,
+            rho=3.0 * cloud.nominal_spacing,
+            bounds=BOUNDS,
         )
-        interior = interior[
-            (interior[:, 0] > 0.035) & (interior[:, 0] < 0.965) & (interior[:, 1] > 0.035) & (interior[:, 1] < 0.965)
-        ]
-        boundary_axis = np.linspace(0.0, 1.0, 12)
-        boundary = np.vstack(
-            [
-                np.column_stack([boundary_axis, np.zeros_like(boundary_axis)]),
-                np.column_stack([boundary_axis, np.ones_like(boundary_axis)]),
-                np.column_stack([np.zeros_like(boundary_axis[1:-1]), boundary_axis[1:-1]]),
-                np.column_stack([np.ones_like(boundary_axis[1:-1]), boundary_axis[1:-1]]),
-            ]
-        )
-        nodes = np.vstack([interior, boundary])
-        h = 1.0 / np.sqrt(len(nodes))
-        sandbox = CentroidalVC2SCNIOperatorSandbox(nodes, rho=3.5 * h, bounds=BOUNDS)
         diagnostics = sandbox.diagnostics
+        assert cloud.max_interior_centroid_offset_ratio < 0.025
+        assert cloud.min_separation_ratio > 0.8
+        assert cloud.min_cell_area_ratio > 0.25
+        assert cloud.max_cell_area_ratio < 1.6
+        assert cloud.max_cell_diameter_ratio < 1.5
         assert diagnostics.local_rank_min == 5
+        assert diagnostics.local_condition_max < 15.0
         assert diagnostics.quadratic_gradient_defect < 1e-8
         assert diagnostics.corrected_patch_defect < 1e-12
-        assert diagnostics.correction_ratio_max < 0.5
-        assert diagnostics.mass_condition < 1e5
-        assert diagnostics.gauge_coercivity_min > 1.0
+        assert diagnostics.correction_ratio_max < 0.2
+        assert diagnostics.mass_condition < 250.0
+        assert diagnostics.gauge_coercivity_min > 9.0
+        assert diagnostics.gauge_smallest_singular_value > 9.0
         assert diagnostics.stiffness_nullity == 1
 
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):

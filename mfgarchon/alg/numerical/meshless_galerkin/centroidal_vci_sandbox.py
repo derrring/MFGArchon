@@ -60,6 +60,111 @@ class _EdgeQuadrature:
     normal_weights: NDArray
 
 
+@dataclass(frozen=True)
+class BoundaryCompleteCVTCloud:
+    """A rectangle cloud with fixed boundary sites and Lloyd-relaxed interior sites."""
+
+    nodes: NDArray
+    boundary_mask: NDArray
+    resolution: int
+    seed: int
+    iterations: int
+    nominal_spacing: float
+    max_interior_centroid_offset_ratio: float
+    min_separation_ratio: float
+    min_cell_area_ratio: float
+    max_cell_area_ratio: float
+    max_cell_diameter_ratio: float
+
+    @property
+    def cell_area_ratio(self) -> float:
+        return self.max_cell_area_ratio / self.min_cell_area_ratio
+
+
+def boundary_complete_cvt_rectangle(
+    resolution: int,
+    bounds: list[tuple[float, float]],
+    *,
+    seed: int = 0,
+    iterations: int = 30,
+    jitter_fraction: float = 0.35,
+    relaxation: float = 1.0,
+) -> BoundaryCompleteCVTCloud:
+    """Build a deterministic boundary-complete constrained-CVT cloud.
+
+    The boundary sites are the boundary of a tensor grid and remain fixed.
+    Interior sites start from independently jittered tensor-grid positions and
+    undergo exact clipped-Voronoi centroid updates. The construction has exactly
+    ``resolution**2`` sites and keeps ``4 * (resolution - 1)`` fitted boundary
+    sites at every level.
+
+    This is a research family constructor. It does not claim that arbitrary
+    interior-only clouds become admissible after adding boundary samples.
+    """
+    if resolution < 5:
+        raise ValueError(f"Boundary-complete CVT requires resolution >= 5, got {resolution}.")
+    if iterations < 0:
+        raise ValueError(f"Boundary-complete CVT requires iterations >= 0, got {iterations}.")
+    if not 0.0 <= jitter_fraction < 0.5:
+        raise ValueError(f"jitter_fraction must lie in [0, 0.5), got {jitter_fraction}.")
+    if not 0.0 < relaxation <= 1.0:
+        raise ValueError(f"relaxation must lie in (0, 1], got {relaxation}.")
+    bounds_array = np.asarray(bounds, dtype=np.float64)
+    if bounds_array.shape != (2, 2):
+        raise ValueError(f"Boundary-complete CVT requires bounds with shape (2, 2), got {bounds_array.shape}.")
+    spans = bounds_array[:, 1] - bounds_array[:, 0]
+    if not np.all(np.isfinite(bounds_array)) or np.any(spans <= 0.0):
+        raise ValueError(f"Boundary-complete CVT requires finite increasing bounds, got {bounds}.")
+
+    axes = [np.linspace(bounds_array[direction, 0], bounds_array[direction, 1], resolution) for direction in range(2)]
+    coordinates = np.meshgrid(*axes, indexing="ij")
+    nodes = np.stack([coordinate.ravel() for coordinate in coordinates], axis=1)
+    indices: tuple[NDArray, NDArray] = np.meshgrid(np.arange(resolution), np.arange(resolution), indexing="ij")
+    boundary_mask = (
+        (indices[0] == 0) | (indices[0] == resolution - 1) | (indices[1] == 0) | (indices[1] == resolution - 1)
+    ).ravel()
+    interior_mask = ~boundary_mask
+    grid_spacings = spans / (resolution - 1)
+    rng = np.random.default_rng(seed)
+    nodes[interior_mask] += (
+        jitter_fraction
+        * rng.uniform(-1.0, 1.0, size=(int(np.count_nonzero(interior_mask)), 2))
+        * grid_spacings[None, :]
+    )
+
+    for _ in range(iterations):
+        cells = clipped_voronoi_cells(nodes, bounds)
+        centroids = np.vstack([cell.centroid for cell in cells])
+        nodes[interior_mask] += relaxation * (centroids[interior_mask] - nodes[interior_mask])
+
+    cells = clipped_voronoi_cells(nodes, bounds)
+    centroids = np.vstack([cell.centroid for cell in cells])
+    nominal_spacing = float(np.max(grid_spacings))
+    centroid_offsets = np.linalg.norm(centroids[interior_mask] - nodes[interior_mask], axis=1)
+    nearest_distances, _ = cKDTree(nodes).query(nodes, k=2)
+    cell_areas = np.array([cell.area for cell in cells], dtype=np.float64)
+    nominal_cell_area = float(np.prod(spans) / len(nodes))
+    cell_diameters = np.array(
+        [np.max(np.linalg.norm(cell.polygon[:, None, :] - cell.polygon[None, :, :], axis=2)) for cell in cells],
+        dtype=np.float64,
+    )
+    nodes.setflags(write=False)
+    boundary_mask.setflags(write=False)
+    return BoundaryCompleteCVTCloud(
+        nodes=nodes,
+        boundary_mask=boundary_mask,
+        resolution=resolution,
+        seed=seed,
+        iterations=iterations,
+        nominal_spacing=nominal_spacing,
+        max_interior_centroid_offset_ratio=float(np.max(centroid_offsets) / nominal_spacing),
+        min_separation_ratio=float(np.min(nearest_distances[:, 1]) / nominal_spacing),
+        min_cell_area_ratio=float(np.min(cell_areas) / nominal_cell_area),
+        max_cell_area_ratio=float(np.max(cell_areas) / nominal_cell_area),
+        max_cell_diameter_ratio=float(np.max(cell_diameters) / nominal_spacing),
+    )
+
+
 def _edge_quadrature(cells: list[CellGeometry], n_gauss: int) -> _EdgeQuadrature:
     if n_gauss < 2:
         raise ValueError("VC2 edge quadrature requires at least two Gauss points per edge.")
