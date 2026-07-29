@@ -70,7 +70,7 @@
         "exception": "NotImplementedError",
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
-      "intended": "ABSENT \u2014 #1553. HJBGFDMSolver(derivative_method='rbf') has no working differentiation-weight builder since #1526 and raises NotImplementedError by design. Not a regression; the cell exists so that reinstating RBF cannot land unnoticed.",
+      "intended": "ABSENT BY DESIGN \u2014 not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue \u2014 the cell exists so that doing so cannot land unnoticed.",
       "status": "UNSUPPORTED"
     },
     "regime_switching/non_negativity": {
