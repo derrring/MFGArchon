@@ -34,6 +34,19 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: both fixtures were regenerated for #1745. The inner HJB Newton used to declare
+# convergence on the STEP norm and never checked the residual, so the previous baselines pinned
+# a less-converged answer. Measured at THIS configuration, before and after:
+#
+#     final HJB residual   2.151e-05  ->  2.262e-07     (95x smaller)
+#     median residual      3.005e-04  ->  2.090e-05     (14x smaller)
+#     inner iterations           105  ->        185     (the cost)
+#
+# The U difference is ~3.9e-07 absolute, 4.2e-04 relative -- below the ~4e-4 lambda/alpha drift
+# this gate exists to catch, and `test_baseline_is_sensitive_to_control_cost` still passes, so
+# regenerating did not make the gate vacuous. Regenerated because the new answer is measurably
+# closer to a root, not because it was in the way.
+#
 # NOTE: solver_golden_lq_fdm.npz was regenerated 2026-06-24 for the G-017 fix (#1420). The prior
 # baseline encoded the bug: with control_cost=1.0 but coupling_coefficient left at its default 0.5,
 # the FP drift was -0.5*grad(U) (c_eff=2) while the HJB used c=1. The corrected FP drift single-sources
