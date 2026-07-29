@@ -14,11 +14,15 @@ skfem = pytest.importorskip("skfem", reason="scikit-fem required")
 
 
 def _p2_basis_box():
-    mesh = skfem.MeshTri.init_sqsymmetric().refined(2).with_boundaries(
-        {
-            "x_min": lambda x: np.isclose(x[0], 0.0),
-            "y_min": lambda x: np.isclose(x[1], 0.0),
-        }
+    mesh = (
+        skfem.MeshTri.init_sqsymmetric()
+        .refined(2)
+        .with_boundaries(
+            {
+                "x_min": lambda x: np.isclose(x[0], 0.0),
+                "y_min": lambda x: np.isclose(x[1], 0.0),
+            }
+        )
     )
     from mfgarchon.alg.numerical.fem.assembly import create_basis
 

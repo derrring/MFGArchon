@@ -461,12 +461,17 @@ class FPFDMSolver(BaseFPSolver):
                 )
             drift_field = velocity_field
 
-        # Handle deprecated potential_field (old drift_field with U-potential)
+        # Two live channels, not an alias pair: drift_field carries the velocity alpha*,
+        # potential_field carries the value function U (this solver forms alpha = -c*grad(U)
+        # internally). Passing both is ambiguous, which is what this refuses -- neither is
+        # deprecated (#1771).
         if potential_field is not None:
             if drift_field is not None:
                 raise ValueError(
-                    "Cannot specify both drift_field and potential_field. "
-                    "potential_field is deprecated; pass velocity via drift_field instead."
+                    "Cannot specify both drift_field and potential_field: they are different "
+                    "objects, not two names for one. drift_field is the velocity alpha*; "
+                    "potential_field is the value function U, from which this solver forms "
+                    "alpha = -coupling_coefficient*grad(U) itself. Pass whichever you have."
                 )
             # potential_field is U-potential — route through internal U path
             effective_U = potential_field

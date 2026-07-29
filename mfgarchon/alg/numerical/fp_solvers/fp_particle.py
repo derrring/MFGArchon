@@ -1349,12 +1349,14 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             M_solution: Density evolution on grid, shape (Nt+1, *grid_shape)
         """
-        # Handle deprecated potential_field -> drift_field
+        # This solver is DriftConvention.VALUE_FUNCTION: it consumes U, so potential_field is
+        # the canonical name here and drift_field is the alias (#919, #1771).
         if potential_field is not None:
             if drift_field is not None:
                 raise ValueError(
-                    "Cannot specify both drift_field and potential_field. "
-                    "Use drift_field (potential_field is deprecated)."
+                    "Cannot specify both drift_field and potential_field. This solver consumes "
+                    "the value function U, so pass it as potential_field; drift_field is the "
+                    "deprecated alias for the same slot on this solver."
                 )
             drift_field = potential_field
 

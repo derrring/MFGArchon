@@ -95,7 +95,9 @@ def test_fp_sl_accepts_supported(bc_factory):
 
 # Issue #1562: Dirichlet is NOT faithfully enforced by WENO (weak boundary node, NaN on
 # inconsistent IC/BC), so it is dropped from _SUPPORTED_BC_TYPES and now fails loud like Robin.
-@pytest.mark.parametrize("bc", [robin_bc(dimension=1), uniform_bc(BCType.REFLECTING, dimension=1), dirichlet_bc(dimension=1)])
+@pytest.mark.parametrize(
+    "bc", [robin_bc(dimension=1), uniform_bc(BCType.REFLECTING, dimension=1), dirichlet_bc(dimension=1)]
+)
 def test_hjb_weno_fails_loud_on_unsupported(bc):
     with pytest.raises(NotImplementedError, match="does not support"):
         HJBWENOSolver(_problem(bc))

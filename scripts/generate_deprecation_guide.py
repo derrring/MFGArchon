@@ -19,12 +19,41 @@ from collections import defaultdict
 from pathlib import Path
 
 
-def scan_all_deprecations() -> list[dict]:
-    """Scan mfgarchon for all deprecated items."""
-    import mfgarchon
-    from mfgarchon.utils.deprecation import scan_deprecated
+class PartialScanError(RuntimeError):
+    """The environment cannot import every submodule, so the scan is incomplete."""
 
-    return scan_deprecated(mfgarchon, recursive=True)
+
+def scan_all_deprecations() -> list[dict]:
+    """Scan mfgarchon for all deprecated items.
+
+    Uses ``strict=True``. The scan walks the package by importing it, so a submodule needing an
+    optional extra (``torch`` lives in the ``nn``/``all`` extras, not in the core dependencies)
+    is unimportable on a default install -- and the non-strict walk skips it silently along with
+    everything below it in that branch. Measured: 72 deduplicated items with torch present, 41
+    without, on an unmodified tree.
+
+    That is fatal for a generated artifact. Writing a truncated guide deletes real deprecations
+    from the user-facing doc, and comparing against one turns a correct tree red. So a partial
+    scan raises here rather than returning a smaller answer, and the two callers below decide
+    what to do about it -- refuse to write, and decline to verify.
+    """
+    try:
+        # Inside the try: importing the package IS the first thing that fails when an extra is
+        # missing (Issue #1773), so leaving these outside let the very failure this guards
+        # escape as a raw traceback.
+        import mfgarchon
+        from mfgarchon.utils.deprecation import scan_deprecated
+
+        return scan_deprecated(mfgarchon, recursive=True, strict=True)
+    except Exception as exc:
+        # Broad on purpose, and NOT fail-silent: every path out of here is a loud, named
+        # PartialScan that stops the caller from writing or from claiming a verification.
+        # Broad because a missing extra does not always surface as ImportError -- with torch
+        # absent, `mfgarchon.alg.neural.nn.feedforward` catches the ImportError, sets a flag
+        # nothing reads, and then evaluates `class X(nn.Module)`, so the observed failure is
+        # NameError (Issue #1773). Narrowing to ImportError would let that one through as a
+        # traceback out of a doc tool.
+        raise PartialScanError(f"{type(exc).__name__}: {exc}") from exc
 
 
 def group_by_version(items: list[dict]) -> dict[str, list[dict]]:
@@ -167,10 +196,28 @@ def main():
     )
     args = parser.parse_args()
 
-    items = scan_all_deprecations()
-    guide = generate_guide(items)
-
     output_path = Path(args.output)
+
+    try:
+        items = scan_all_deprecations()
+    except PartialScanError as exc:
+        # This environment cannot see the whole package, so neither answer it could give is
+        # usable. Writing would delete real deprecations from a user-facing doc; comparing would
+        # fail a correct tree. --check therefore reports that it did NOT verify and exits 0: a
+        # green that means "I could not look" has to say so, and blocking every contributor on a
+        # default install is not a thing a freshness check may do.
+        where = "verify" if args.check else "regenerate"
+        print(f"SKIPPED: cannot {where} {output_path} in this environment.\n{exc}", file=sys.stderr)
+        if args.check:
+            print(
+                "The guide is unverified here, not stale. Install the optional extras "
+                "(`pip install -e .[all]`) to have this check do anything.",
+                file=sys.stderr,
+            )
+            return 0
+        return 1
+
+    guide = generate_guide(items)
 
     if args.check:
         if not output_path.exists():
@@ -190,4 +237,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main() returns an exit code; discarding it made a refusal to regenerate look like
+    # a success to every caller, including the pre-push gate.
+    sys.exit(main() or 0)

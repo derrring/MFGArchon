@@ -516,8 +516,9 @@ def resolve_fp_drift_kwargs(
     Resolution rules (matching the FP-solver semantics post-v0.18.6):
         - Explicit ``drift_field`` override → pass it through verbatim (velocity).
         - Smooth separable $H$ → pass $U$ as ``potential_field`` (the FP solver derives
-          the velocity $\\alpha = -c\\,\\nabla U$ internally; ``potential_field`` is the
-          deprecated-but-routing U-potential entry point).
+          the velocity $\\alpha = -c\\,\\nabla U$ internally; ``potential_field`` is the live
+          U-potential channel -- it was marked deprecated until #1771, in the wrong direction,
+          while this very line emitted it on the default path).
         - Non-smooth $H$ on a ``VELOCITY``-channel solver → pass the face-centered velocity
           $\\alpha^*$ as ``drift_field`` (see :func:`compute_fp_velocity_field`).
         - Non-smooth $H$ on a ``VALUE_FUNCTION`` solver (only ``potential_field=U``) → raise:
