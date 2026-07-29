@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -1069,12 +1070,12 @@ def newton_hjb_step(
     bc_values: dict[str, float] | None = None,  # Issue #574
     source_term: np.ndarray | None = None,  # MMS verification
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, float]:
     dx = problem.geometry.get_grid_spacing()[0]
     dx_norm = dx if abs(dx) > 1e-12 else 1.0
 
     if has_nan_or_inf(U_n_current_newton_iterate, backend):
-        return U_n_current_newton_iterate, np.inf
+        return U_n_current_newton_iterate, np.inf, np.inf
 
     residual_F_U = compute_hjb_residual(
         U_n_current_newton_iterate,
@@ -1092,8 +1093,13 @@ def newton_hjb_step(
         source_term=source_term,
         cross_density_at_n=cross_density_at_n,  # Issue #1071
     )
+    # Issue #1745: the residual at the CURRENT iterate is already in hand for the linear
+    # solve. Returning it costs nothing and gives the caller the quantity that actually says
+    # whether this is a root; the step norm below says only that the iteration stopped moving.
+    residual_norm = float(np.linalg.norm(residual_F_U) * np.sqrt(dx_norm))
+
     if has_nan_or_inf(residual_F_U, backend):
-        return U_n_current_newton_iterate, np.inf
+        return U_n_current_newton_iterate, np.inf, np.inf
 
     # Jacobian uses U_k_n_from_prev_picard for its H-part if problem provides specific terms
     jacobian_J_U = compute_hjb_jacobian(
@@ -1111,7 +1117,7 @@ def newton_hjb_step(
         cross_density_at_n=cross_density_at_n,  # Issue #1071
     )
     if np.any(np.isnan(jacobian_J_U.data)) or np.any(np.isinf(jacobian_J_U.data)):
-        return U_n_current_newton_iterate, np.inf
+        return U_n_current_newton_iterate, np.inf, np.inf
 
     delta_U = np.zeros_like(U_n_current_newton_iterate)
     l2_error_of_step = np.inf
@@ -1151,7 +1157,7 @@ def newton_hjb_step(
 
     U_n_next_newton_iterate = U_n_current_newton_iterate + delta_U
 
-    return U_n_next_newton_iterate, l2_error_of_step
+    return U_n_next_newton_iterate, l2_error_of_step, residual_norm
 
 
 def solve_hjb_timestep_newton(
@@ -1198,15 +1204,16 @@ def solve_hjb_timestep_newton(
     if has_nan_or_inf(U_n_current_newton_iterate, backend):
         return U_n_current_newton_iterate
 
-    final_l2_error = np.inf
+    final_residual_norm = np.inf
     converged = False
+    stop_reason = "iteration budget exhausted"
 
     for iiter in range(max_newton_iterations):
         # Ensure t_idx_n is not None
         if t_idx_n is None:
             t_idx_n = 0  # Default time index
 
-        U_n_next_newton_iterate, l2_error = newton_hjb_step(
+        U_n_next_newton_iterate, _step_norm, residual_norm = newton_hjb_step(
             U_n_current_newton_iterate,
             U_n_plus_1_from_hjb_step,
             U_k_n_from_prev_picard,  # Pass U from prev Picard for Jacobian
@@ -1227,18 +1234,44 @@ def solve_hjb_timestep_newton(
         if has_nan_or_inf(U_n_next_newton_iterate, backend):
             break
 
-        if iiter > 0 and l2_error > final_l2_error * 0.9999 and l2_error > newton_tolerance:
-            break
-
-        U_n_current_newton_iterate = U_n_next_newton_iterate
-        final_l2_error = l2_error
-
-        if l2_error < newton_tolerance:
+        # Issue #1745: convergence is tested on the RESIDUAL, not on the step.
+        #
+        # This loop used to declare `converged` when the step norm fell below tolerance. A small
+        # step does not imply a root -- a stalled iteration produces one, and so does a large
+        # Jacobian. Measured before the change, on 1-D FDM_UPWIND solves, the step criterion
+        # accepted iterates whose HJB residual was 59-77x the requested tolerance at N=21 and
+        # 267-402x at N=41. It got WORSE under refinement, so the error did not vanish in the
+        # limit and could contaminate a convergence-rate study.
+        #
+        # `residual_norm` is measured at the iterate ENTERING this step, which is the standard
+        # Newton structure (test F(x_k), then step) and costs nothing -- the residual was
+        # already assembled for the linear solve.
+        if residual_norm < newton_tolerance:
             converged = True
             break
 
-    if not converged and max_newton_iterations > 0 and not (np.isnan(final_l2_error) or np.isinf(final_l2_error)):
-        pass
+        # Non-decrease guard, also moved from the step norm to the residual. A step that does
+        # not reduce the residual is not progress, whatever it does to the iterate.
+        if iiter > 0 and residual_norm > final_residual_norm * 0.9999:
+            stop_reason = "residual stopped decreasing"
+            break
+
+        U_n_current_newton_iterate = U_n_next_newton_iterate
+        final_residual_norm = residual_norm
+
+    # Issue #1745: this branch was a literal `pass`. The inner Newton could fail to converge and
+    # nothing said so -- `converged` is local and never returned, so no caller could see it, and
+    # the outer Picard loop treated a failed HJB solve exactly like a successful one.
+    if not converged and max_newton_iterations > 0:
+        warnings.warn(
+            f"HJB inner Newton did not converge at t_idx={t_idx_n}: {stop_reason} after "
+            f"{max_newton_iterations} iterations, residual {final_residual_norm:.3e} against a "
+            f"tolerance of {newton_tolerance:.3e}. The value function returned for this timestep "
+            f"is not a root of the discrete HJB, and the outer iteration will consume it as if "
+            f"it were (Issue #1745).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # Enforce BC on solution (Issue #542)
     # BC-aware Laplacian uses ghost cells for derivatives, but boundary values must be explicitly set
