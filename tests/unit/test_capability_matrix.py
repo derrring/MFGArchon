@@ -520,3 +520,124 @@ def test_summarise_never_raises_on_any_shape(cm):
     ]
     for art in shapes:
         assert isinstance(cm._summarise(art), str), f"raised or returned non-str for {art!r}"
+
+
+def test_a_note_is_dropped_when_the_failure_itself_changes(cm, monkeypatch, tmp_path, capsys):
+    """Carry-forward must not preserve an annotation across a different failure.
+
+    Requiring only "status is still non-PASS" let a note survive an arbitrary change of failure:
+    swap the exception for an unrelated one and the note is preserved verbatim while the run still
+    reports "0 unexplained". Because the note is an unchanged line, it does not appear in the
+    reviewer's diff at all -- only the artifact does. That is how an annotation outlives the
+    evidence it cites, which is what happened to this file's own #1745 note.
+    """
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "x/y": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "mass gate refused"},
+                        "intended": "INTENDED - the guard is doing its job",
+                    }
+                }
+            }
+        )
+    )
+
+    def different_failure():
+        raise RuntimeError("LU factorisation is singular")
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": different_failure})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    rewritten = json.loads(baseline.read_text())["cells"]["x/y"]
+    assert rewritten["artifact"]["exception"] == "RuntimeError", "the artifact must be refreshed"
+    assert "intended" not in rewritten, (
+        "the note described a ValueError from the mass gate and must not be carried onto an "
+        "unrelated RuntimeError -- the cell has to read as unexplained so someone looks at it"
+    )
+
+
+def test_a_note_survives_a_regeneration_that_changes_nothing(cm, monkeypatch, tmp_path):
+    """The counterpart: gating on the exception must not throw away still-valid notes.
+
+    Without this, the gate above would be indistinguishable from deleting carry-forward.
+    """
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "x/y": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "mass gate refused"},
+                        "intended": "INTENDED - the guard is doing its job",
+                    }
+                }
+            }
+        )
+    )
+
+    def same_failure():
+        raise ValueError("mass gate refused")
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": same_failure})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    rewritten = json.loads(baseline.read_text())["cells"]["x/y"]
+    assert rewritten["intended"] == "INTENDED - the guard is doing its job"
+
+
+def test_json_mode_emits_json_and_nothing_else(cm, monkeypatch, capsys):
+    """`--json` must be parseable by a non-Python reader.
+
+    The cells run real coupled solves, which write to stdout from three independent places --
+    library INFO logging, Rich progress bars, and plain prints -- so the flag never produced
+    parseable output. Suppressing them one at a time leaves the next addition free to break it
+    again, so the whole evaluation is redirected; this pins the property, not the mechanism.
+    """
+
+    def noisy_pass():
+        print("INFO: solver chatter that would corrupt the stream")
+        return "PASS", {"note": "fine"}
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": noisy_pass})
+    _run_main(cm, monkeypatch, ["--json"])
+
+    parsed = json.loads(capsys.readouterr().out)
+    assert set(parsed) == {"x/y"}
+    assert parsed["x/y"]["status"] == "PASS"
+
+
+def test_the_baseline_comment_names_no_flag_that_does_not_exist(cm, monkeypatch, tmp_path):
+    """The written `_comment` told readers to "See --explain."; argparse has no such flag.
+
+    A generated artifact that instructs the reader to run a command which exits 2 is the same
+    defect class as an error message naming a fix that does not work. Asks the parser the script
+    actually builds, so the check cannot drift from what the CLI accepts.
+    """
+    import argparse
+
+    seen = {}
+    real_parse = argparse.ArgumentParser.parse_args
+
+    def capture(self, *a, **kw):
+        seen["flags"] = set(self._option_string_actions)
+        return real_parse(self, *a, **kw)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", capture)
+
+    baseline = tmp_path / "fresh.json"
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: ("PASS", {})})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    declared = seen["flags"]
+    assert "--write-baseline" in declared, "the capture did not observe the real parser"
+
+    comment = json.loads(baseline.read_text())["_comment"]
+    # `--` alone is the prose dash this comment uses, not a flag.
+    cited = {tok.rstrip(".,;:") for tok in comment.split() if tok.startswith("--") and len(tok) > 2}
+    assert cited, "nothing cited would make this check pass vacuously"
+    assert cited <= declared, f"_comment cites flags the CLI does not accept: {sorted(cited - declared)}"

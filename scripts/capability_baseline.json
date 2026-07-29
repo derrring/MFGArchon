@@ -14,7 +14,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
-      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 2.42e-01 because they share HJBFDMSolver; SL_LINEAR does not and passes. PRs #1763/#1764 make the Newton stop lying about it but do not yet make it converge.",
+      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 1.17e-05 because they share HJBFDMSolver; SL_LINEAR does not and passes. The inner Newton's tolerance is 1e-6 and its budget is 30 iterations, so this is 11.7x the tolerance -- it is not diverging, it fails to close the last order of magnitude in the budget. Diagnose the convergence rate and the iteration budget, NOT a broken Jacobian. (Before #1763/#1764 this cell recorded 2.42e-01, which was the step norm the Newton was testing instead of the residual; that number would send you hunting the wrong defect.)",
       "status": "UNSUPPORTED"
     },
     "fdm_upwind/mass_conservation": {
@@ -33,7 +33,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
-      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d (identical residual, shared HJBFDMSolver).",
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
     },
     "fvm_muscl/mass_conservation": {
@@ -51,7 +51,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
-      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d (identical residual, shared HJBFDMSolver).",
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
     },
     "fvm_vs_fdm/agreement": {
@@ -78,7 +78,7 @@
         "exception": "ValueError",
         "message": "FP solver: at timestep 7/10, advection_scheme='divergence_upwind': density went to -1.031e-03. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than reporti"
       },
-      "intended": "INTENDED \u2014 same guard, divergence_upwind at timestep 7 (0.015% fabricated). The cell is recording that the guard fires, which is the behaviour under test.",
+      "intended": "DEFECT \u2014 #1681, which is OPEN and labelled type: bug. divergence_upwind drives the density negative at timestep 7 (0.015% fabricated) in a scheme that is supposed to preserve positivity. The mass-fabrication guard firing is correct guard behaviour, but the cell is not recording the guard -- it is recording the scheme defect the guard found, and the fixture is deliberately not retuned because the run maximum decays only first-order in dt, so clearing the threshold extrapolates to NT ~ 3e6 and would hide the defect. Contrast fdm_centered/mass_conservation, which is genuinely INTENDED: no open issue asserts that divergence_centered must be positivity-preserving at that Peclet. The discriminating question is whether an OPEN issue says this configuration should work.",
       "status": "UNSUPPORTED"
     },
     "sl_linear/mass_conservation": {

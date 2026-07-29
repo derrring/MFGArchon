@@ -52,6 +52,7 @@ implied absent:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -383,10 +384,10 @@ def _fvm_fdm_agreement_cell():
 
         p_fvm = _construct("FVM problem", _lq_problem_1d)
         dx = p_fvm.geometry.get_grid_spacing()[0]
-        r_fvm = p_fvm.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
+        r_fvm = p_fvm.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4, verbose=False)
 
         p_fdm = _construct("FDM problem", _lq_problem_1d)
-        r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4)
+        r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4, verbose=False)
 
         def verdict():
             M_fvm, M_fdm = _density(r_fvm), np.asarray(r_fdm.M, dtype=float)
@@ -423,7 +424,7 @@ def _fvm_mass_cell():
         from mfgarchon.types import NumericalScheme
 
         problem = _construct("FVM problem", _lq_problem_1d)
-        result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
+        result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4, verbose=False)
 
         def verdict():
             M = _density(result)
@@ -740,6 +741,25 @@ def self_test() -> int:
     return 0
 
 
+def _note_still_applies(prior_cell: dict | None, current: dict) -> bool:
+    """Whether a carried-forward ``intended`` note still describes what the cell now does.
+
+    Carry-forward previously required only that the status stayed non-PASS, so a note survived an
+    arbitrary change of failure: swap the exception for an unrelated one and the note is preserved
+    verbatim while the run still reports "0 unexplained". The note is an unchanged line, so it does
+    not appear in the reviewer's diff at all -- only the artifact does. That is how an annotation
+    outlives the evidence it cites, which is exactly the defect this file's own #1745 note had.
+
+    Requiring the exception type to match means a changed failure drops the note, the cell reads as
+    unexplained, and someone has to look at it.
+    """
+    if prior_cell is None or "intended" not in prior_cell or current["status"] == "PASS":
+        return False
+    prior_exc = (prior_cell.get("artifact") or {}).get("exception")
+    current_exc = (current.get("artifact") or {}).get("exception")
+    return prior_exc == current_exc
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="Emit full results as JSON")
@@ -759,7 +779,16 @@ def main() -> None:
     if args.self_test:
         sys.exit(self_test())
 
-    results = evaluate()
+    # --json must emit JSON and nothing else. The cells run real coupled solves, and those
+    # write to stdout from three independent places -- library INFO logging, Rich progress bars,
+    # and any print added later -- so `--json` never actually produced parseable output. Suppress
+    # per-source and the next source added breaks it again; redirect the whole evaluation instead,
+    # to stderr, so the diagnostics are still visible when a human is watching.
+    if args.json:
+        with contextlib.redirect_stdout(sys.stderr):
+            results = evaluate()
+    else:
+        results = evaluate()
 
     if args.json:
         print(json.dumps(results, indent=2, sort_keys=True))
@@ -799,7 +828,8 @@ def main() -> None:
             print(
                 f"\nNote: {args.write_baseline} does not exist, so no `intended` notes were "
                 "carried forward. Non-PASS cells in the new file will read as unexplained. "
-                "Regenerate in place to preserve them."
+                "Regenerate in place to preserve them.",
+                file=sys.stderr,
             )
         payload = {
             "_comment": (
@@ -810,12 +840,12 @@ def main() -> None:
                 "(fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. "
                 "Regenerate with --write-baseline. A non-PASS cell may carry an `intended` "
                 "note saying WHY it is not PASS; cells without one are unexplained and are the "
-                "actual backlog. See --explain."
+                "actual backlog."
             ),
             "cells": {
                 k: (
                     {"status": v["status"], "artifact": v["artifact"], "intended": prior[k]["intended"]}
-                    if k in prior and "intended" in prior[k] and v["status"] != "PASS"
+                    if _note_still_applies(prior.get(k), v)
                     else {"status": v["status"], "artifact": v["artifact"]}
                 )
                 for k, v in results.items()
