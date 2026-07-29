@@ -20,6 +20,7 @@ References:
 
 from __future__ import annotations
 
+import time
 import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
@@ -297,7 +298,8 @@ class NewtonSolver(NonlinearSolver):
         tolerance: float = 1e-6,
         jacobian: Callable[[NDArray], NDArray | sparse.spmatrix] | None = None,
         sparse: bool = True,
-        line_search: bool = False,
+        line_search: bool = True,
+        divergence_tolerance: float = 1e4,
         finite_diff_epsilon: float = 1e-7,
         use_jax_autodiff: bool | Literal["auto"] = "auto",
     ):
@@ -310,7 +312,16 @@ class NewtonSolver(NonlinearSolver):
             jacobian: Optional Jacobian function J: x → ∂F/∂x
                      If None, uses autodiff (if JAX available) or finite differences
             sparse: Use sparse linear solver (for large systems)
-            line_search: Enable backtracking line search
+            line_search: Backtracking line search. **On by default (Issue #1745)** -- a
+                Newton that accepts a step increasing the residual can walk away from a root
+                it had almost reached. Measured on a 2-D HJB solve: the residual converged to
+                1.57e-03 in five iterations, then diverged geometrically to 2.42e-01 because
+                the full step increased it (1.63e-03) where a half step would have quartered
+                it (3.95e-04). No surveyed library -- PETSc, KINSOL, SciPy, Optimistix,
+                Trilinos NOX -- ships an unchecked full step as what a caller gets by
+                omission. Pass False only with a reason.
+            divergence_tolerance: stop when the residual exceeds this multiple of the initial
+                one. Always applied, line search or not (PETSc default, 1e4).
             finite_diff_epsilon: Step size for finite differences
             use_jax_autodiff: Whether to use JAX automatic differentiation:
                 - True: Use JAX autodiff (raises error if JAX not available)
@@ -329,6 +340,8 @@ class NewtonSolver(NonlinearSolver):
         self.jacobian_func = jacobian
         self.use_sparse = sparse
         self.line_search = line_search
+        # PETSc's SNESSetDivergenceTolerance default, and always on there for the same reason.
+        self.divergence_tolerance = divergence_tolerance
         self.epsilon = finite_diff_epsilon
 
         # Configure JAX autodiff
@@ -432,11 +445,47 @@ class NewtonSolver(NonlinearSolver):
             # Solve linear system: J δx = -F
             delta_x = self._solve_linear_system(J, -F_current.flatten(), original_shape)
 
-            # Line search (optional)
+            # Line search (on by default; Issue #1745)
             if self.line_search:
                 alpha = self._backtracking_line_search(F, x_current, delta_x, F_current)
+                if alpha == 0.0:
+                    return self._stop(
+                        x_current,
+                        is_scalar,
+                        iteration,
+                        residual_norm,
+                        residual_history,
+                        start_time,
+                        jacobian_evals,
+                        reason="line_search_failed",
+                        detail=(
+                            "no step along the Newton direction reduced the residual. The "
+                            "direction may be wrong (check the Jacobian) or the iterate may "
+                            "be at a local minimum of ||F|| that is not a root."
+                        ),
+                    )
             else:
                 alpha = 1.0
+
+            # Divergence guard, always on. PETSc keeps SNESSetDivergenceTolerance active
+            # regardless of line search for the same reason: a run that has grown this far past
+            # its starting residual is not going to recover, and the remaining iterations only
+            # delay the diagnosis.
+            if residual_norm > self.divergence_tolerance * residual_history[0]:
+                return self._stop(
+                    x_current,
+                    is_scalar,
+                    iteration,
+                    residual_norm,
+                    residual_history,
+                    start_time,
+                    jacobian_evals,
+                    reason="diverged",
+                    detail=(
+                        f"residual grew to {residual_norm:.3e}, more than "
+                        f"{self.divergence_tolerance:g}x the initial {residual_history[0]:.3e}."
+                    ),
+                )
 
             # Update
             x_current = x_current + alpha * delta_x
@@ -504,6 +553,51 @@ class NewtonSolver(NonlinearSolver):
 
         return delta_x_flat.reshape(original_shape)
 
+    def _stop(
+        self,
+        x_current,
+        is_scalar: bool,
+        iteration: int,
+        residual: float,
+        residual_history: list[float],
+        start_time: float,
+        jacobian_evals: int,
+        *,
+        reason: str,
+        detail: str,
+    ):
+        """Stop with a NAMED outcome rather than exhausting the iteration budget.
+
+        Issue #1745: "no acceptable step" and "diverged" are different from "ran out of
+        iterations", and a caller that cannot tell them apart cannot act on any of them. Every
+        surveyed library types these separately -- PETSc SNES_DIVERGED_LINE_SEARCH /
+        SNES_DIVERGED_DTOL, KINSOL KIN_LINESEARCH_NONCONV. The reason travels in `extra` so the
+        SolverInfo signature is unchanged.
+        """
+        warnings.warn(f"Newton stopped: {reason}. {detail}", RuntimeWarning, stacklevel=3)
+        return (
+            x_current.item() if is_scalar else x_current,
+            SolverInfo(
+                converged=False,
+                # `iteration + 1`, matching the converged and budget-exhausted paths: the
+                # invariant across all three is `iterations == len(residual_history)`. Passing
+                # the raw 0-based index produced "failed to converge after 0 iterations", which
+                # reads as though the solver never ran.
+                iterations=iteration + 1,
+                residual=float(residual),
+                residual_history=residual_history,
+                solver_time=time.time() - start_time,
+                # Splatted, NOT `extra={...}`. `SolverInfo.__init__` takes `**extra`, so a
+                # keyword literally named `extra` nests one level: callers found
+                # `info.extra["extra"]["reason"]` while every doc said `info.extra["reason"]`.
+                # It also shadowed `jacobian_evals`, so `newton_mfg_solver.py`'s
+                # `extra.get("jacobian_evals", 0)` reported 0 on every stop path.
+                reason=reason,
+                detail=detail,
+                jacobian_evals=jacobian_evals,
+            ),
+        )
+
     def _backtracking_line_search(
         self,
         F: Callable[[NDArray], NDArray],
@@ -521,21 +615,27 @@ class NewtonSolver(NonlinearSolver):
         """
         alpha = alpha_init
         norm_F_x = np.linalg.norm(F_x.flatten())
-        norm_delta = np.linalg.norm(delta_x.flatten())
 
         for _ in range(20):  # Max 20 backtracking steps
             x_trial = x + alpha * delta_x
             F_trial = F(x_trial)
             norm_F_trial = np.linalg.norm(F_trial.flatten())
 
-            # Armijo condition
-            if norm_F_trial <= norm_F_x - c * alpha * norm_delta**2:
+            # Armijo sufficient decrease, in the standard form for a residual norm:
+            #   ||F(x + a*d)|| <= (1 - c*a) * ||F(x)||
+            # The previous form subtracted `c * alpha * ||delta_x||^2` from ||F(x)||, which
+            # compares a residual norm against a STEP norm -- different units, and the term is
+            # so small near a solution that it accepted essentially any decrease.
+            if norm_F_trial <= (1.0 - c * alpha) * norm_F_x:
                 return alpha
 
             alpha *= rho
 
-        # If line search fails, return small step
-        return alpha
+        # No acceptable step. Return 0.0 rather than the last tiny alpha: a step that does not
+        # reduce the residual is not worth taking, and reporting the failure is the caller's
+        # only chance to act on it. PETSc types this as SNES_DIVERGED_LINE_SEARCH rather than
+        # continuing; the previous code returned ~1e-6 and burned the remaining iterations.
+        return 0.0
 
 
 class PolicyIterationSolver(NonlinearSolver):
