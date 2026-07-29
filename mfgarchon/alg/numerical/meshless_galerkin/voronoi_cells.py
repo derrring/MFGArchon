@@ -33,10 +33,11 @@ if TYPE_CHECKING:
 
 @dataclass
 class CellGeometry:
-    """A clipped Voronoi cell: CCW polygon, area, and boundary-edge normals/lengths/midpoints."""
+    """A clipped Voronoi cell: CCW polygon, exact centroid, area, and boundary-edge geometry."""
 
     polygon: NDArray  # (V, 2) CCW vertices
     area: float  # |Omega_a|
+    centroid: NDArray  # (2,), exact centroid of the polygonal cell
     edge_midpoints: NDArray  # (E, 2)
     edge_normals: NDArray  # (E, 2) outward unit normals
     edge_lengths: NDArray  # (E,)
@@ -83,6 +84,22 @@ def _polygon_area_ccw(poly: NDArray) -> float:
         return 0.0
     x, y = poly[:, 0], poly[:, 1]
     return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _polygon_centroid(poly: NDArray) -> NDArray:
+    """Exact area centroid of a nondegenerate polygon."""
+    x, y = poly[:, 0], poly[:, 1]
+    cross = x * np.roll(y, -1) - np.roll(x, -1) * y
+    twice_area = float(np.sum(cross))
+    if abs(twice_area) <= 2e-14:
+        raise ValueError("Cannot compute the centroid of a degenerate Voronoi polygon.")
+    return np.array(
+        [
+            np.sum((x + np.roll(x, -1)) * cross),
+            np.sum((y + np.roll(y, -1)) * cross),
+        ],
+        dtype=np.float64,
+    ) / (3.0 * twice_area)
 
 
 def _cell_edges(poly: NDArray):
@@ -158,6 +175,7 @@ def clipped_voronoi_cells(
                 f"SCNI: node {a} at {np.round(xa, 4).tolist()} has an empty/degenerate Voronoi cell "
                 f"(area={area:.2e}); check the cloud / bounds / domain (#1139)."
             )
+        centroid = _polygon_centroid(poly)
         mids, normals, lengths = _cell_edges(poly)
         closure = float(np.abs((normals * lengths[:, None]).sum(axis=0)).max())
         if closure > 1e-9:
@@ -165,7 +183,7 @@ def clipped_voronoi_cells(
                 f"SCNI: node {a} cell is not closed (||sum_e n_e L_e|| = {closure:.2e}); an open "
                 "polygon breaks the SCNI integration constraint (mass conservation) (#1139)."
             )
-        cells.append(CellGeometry(poly, area, mids, normals, lengths))
+        cells.append(CellGeometry(poly, area, centroid, mids, normals, lengths))
     return cells
 
 
