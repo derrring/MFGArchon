@@ -308,7 +308,6 @@ class FPFDMSolver(BaseFPSolver):
     @deprecated_parameter(param_name="tensor_diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="volatility_matrix", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="velocity_field", since="v0.18.6", replacement="drift_field")
-    @deprecated_parameter(param_name="potential_field", since="v0.18.6", replacement="drift_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -321,7 +320,9 @@ class FPFDMSolver(BaseFPSolver):
         volatility_matrix: np.ndarray | Callable | None = None,  # Deprecated: use volatility_field
         # Deprecated: velocity_field renamed to drift_field (v0.18.6)
         velocity_field: np.ndarray | None = None,
-        # Deprecated: old drift_field (U-potential) renamed to potential_field (v0.18.6)
+        # Live second channel: value function U (solver forms alpha = -c*grad(U) internally).
+        # v0.18.6 (#919) swapped the names -- U moved here from drift_field, which now means
+        # the velocity alpha*. This is the rename's destination, not a legacy alias.
         potential_field: np.ndarray | None = None,
         # MMS verification support
         source_term: Callable | None = None,

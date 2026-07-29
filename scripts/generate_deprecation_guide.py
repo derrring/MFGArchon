@@ -178,7 +178,7 @@ def main():
             sys.exit(1)
         existing = output_path.read_text()
         if existing.strip() == guide.strip():
-            print(f"OK: {output_path} is up-to-date ({len(items)} items)")
+            print(f"OK: {output_path} is up-to-date ({len(deduplicate(items))} items)")
             sys.exit(0)
         else:
             print(f"FAIL: {output_path} is out-of-date. Run: python scripts/generate_deprecation_guide.py")
@@ -186,7 +186,7 @@ def main():
     else:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(guide)
-        print(f"Generated {output_path} ({len(items)} items, {len(guide)} chars)")
+        print(f"Generated {output_path} ({len(deduplicate(items))} items, {len(guide)} chars)")
 
 
 if __name__ == "__main__":

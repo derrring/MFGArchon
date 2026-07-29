@@ -1301,8 +1301,9 @@ class FPParticleSolver(BaseFPSolver):
         drift_is_precomputed: bool = False,
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
-        # Deprecated parameter names for backward compatibility
-        potential_field: np.ndarray | None = None,  # DEPRECATED: use drift_field
+        # This solver is DriftConvention.VALUE_FUNCTION: U is the input it consumes, so
+        # potential_field is the correct name and drift_field is the alias (#919).
+        potential_field: np.ndarray | None = None,  # value function U (VALUE_FUNCTION channel)
     ) -> np.ndarray:
         """
         Solve FP system using particle method with unified API.
