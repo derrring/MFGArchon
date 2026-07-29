@@ -1252,8 +1252,22 @@ def solve_hjb_timestep_newton(
 
         # Non-decrease guard, also moved from the step norm to the residual. A step that does
         # not reduce the residual is not progress, whatever it does to the iterate.
+        #
+        # `final_residual_norm` is overwritten here so the warning below describes the iterate
+        # actually returned. At this point `U_n_current_newton_iterate` has NOT been advanced --
+        # line below -- so `residual_norm`, measured at it, is its residual. Reporting the
+        # previous (better) iterate's residual instead described a point the caller never
+        # receives: measured, up to 8.5x better than the truth.
+        #
+        # Returning the best-seen iterate instead was tried and reverted. It made 90 of 96 inner
+        # solves on the multi-population fixture return their INPUT unchanged -- an identity map
+        # dressed as a solve, which erased the cross-coupling that
+        # test_hjb_sees_cross_density_bug_1157 exists to detect. On a configuration where Newton
+        # never improves on its starting point, "the best iterate" is the starting point, and
+        # handing that back silently is a worse failure than handing back a moved one.
         if iiter > 0 and residual_norm > final_residual_norm * 0.9999:
             stop_reason = "residual stopped decreasing"
+            final_residual_norm = residual_norm
             break
 
         U_n_current_newton_iterate = U_n_next_newton_iterate
