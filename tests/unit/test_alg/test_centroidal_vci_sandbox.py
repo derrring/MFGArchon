@@ -14,6 +14,13 @@ from mfgarchon.alg.numerical.meshless_galerkin.centroidal_vci_sandbox import (
     PairedMFGOperatorSandbox,
     boundary_complete_cvt_rectangle,
 )
+from mfgarchon.alg.numerical.meshless_galerkin.discretization import MeshlessGalerkinDiscretization
+from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import (
+    monomial_exponents,
+    shape_functions_and_grads,
+)
+from mfgarchon.alg.numerical.meshless_galerkin.quadrature import tensor_gauss
+from mfgarchon.alg.numerical.meshless_galerkin.scni_discretization import MeshlessSCNIDiscretization
 from mfgarchon.alg.numerical.meshless_galerkin.voronoi_cells import clipped_voronoi_cells
 
 BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
@@ -44,6 +51,97 @@ def _boundary_complete_case(
         bounds=BOUNDS,
     )
     return cloud, sandbox
+
+
+def _solve_neumann_system(K, M, load, left_null):
+    one = np.ones(len(K))
+    mean_constraint = M @ one
+    saddle = np.block(
+        [
+            [K, left_null[:, None]],
+            [mean_constraint[None, :], np.zeros((1, 1))],
+        ]
+    )
+    augmented_load = np.append(load, 0.0)
+    augmented_solution = np.linalg.solve(saddle, augmented_load)
+    relative_residual = np.linalg.norm(saddle @ augmented_solution - augmented_load) / np.linalg.norm(load)
+    gauge_defect = float(abs(mean_constraint @ augmented_solution[:-1]))
+    return augmented_solution[:-1], relative_residual, gauge_defect
+
+
+def _physical_poisson_errors(
+    reconstructed_values,
+    reconstructed_gradient,
+    exact_values,
+    exact_gradient,
+    weights,
+):
+    value_error = reconstructed_values - exact_values
+    value_error -= float(weights @ value_error / np.sum(weights))
+    l2_error = float(np.sqrt(weights @ value_error**2))
+    h1_error = float(np.sqrt(weights @ np.sum((reconstructed_gradient - exact_gradient) ** 2, axis=1)))
+    return l2_error, h1_error
+
+
+@cache
+def _matched_cost_arms(resolution: int, seed: int):
+    cloud, sandbox = _boundary_complete_case(resolution, seed)
+    rho = 3.0 * cloud.nominal_spacing
+    E = sandbox.value_operator().toarray()
+    W = sandbox.weights
+    trial_gradients = [gradient.toarray() for gradient in sandbox.trial_gradient()]
+    M = sandbox.mass().toarray()
+
+    plain_scni = MeshlessSCNIDiscretization(
+        cloud.nodes,
+        rho=rho,
+        degree=2,
+        bounds=BOUNDS,
+        n_edge_gauss=4,
+    )
+    # Halving every oriented edge count also pairs physical-boundary edges, so this
+    # undercounts an optimized VC2 implementation and biases the budget in VC2's favor.
+    optimistic_vc2_budget = sandbox.centroid_evaluation_count + (sandbox.edge_evaluation_count + 1) // 2
+    common_cells = max(1, int(np.floor(np.sqrt(optimistic_vc2_budget) / 4)))
+    common_points, common_weights = tensor_gauss(BOUNDS, n_cells=common_cells, n_gauss=4)
+    common = MeshlessGalerkinDiscretization(
+        cloud.nodes,
+        rho,
+        2,
+        common_points,
+        common_weights,
+    )
+    _, pointwise_gradients = shape_functions_and_grads(
+        sandbox.evaluation_points,
+        cloud.nodes,
+        rho,
+        monomial_exponents(2, 2),
+        "numpy",
+        check_conditioning=True,
+    )
+    arms = {
+        "plain_scni": (
+            plain_scni.stiffness().toarray(),
+            plain_scni.mass().toarray(),
+            trial_gradients,
+        ),
+        "centroidal_scni": (
+            sum(gradient.T @ (W[:, None] * gradient) for gradient in trial_gradients),
+            M,
+            trial_gradients,
+        ),
+        "vc2": (
+            sandbox.stiffness().toarray(),
+            M,
+            trial_gradients,
+        ),
+        "common_quadrature": (
+            common.stiffness().toarray(),
+            common.mass().toarray(),
+            [pointwise_gradients[:, :, direction] for direction in range(2)],
+        ),
+    }
+    return cloud, sandbox, E, W, arms, len(common_points), optimistic_vc2_budget
 
 
 @pytest.fixture(scope="module")
@@ -206,7 +304,6 @@ class TestCentroidalVC2Geometry:
             points = sandbox.evaluation_points
             exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
             forcing = (kx**2 + ky**2) * np.pi**2 * exact_values
-            exact_values -= float(sandbox.weights @ exact_values / np.sum(sandbox.weights))
             exact_gradient = np.column_stack(
                 [
                     -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
@@ -217,29 +314,21 @@ class TestCentroidalVC2Geometry:
             E = sandbox.value_operator().toarray()
             M = sandbox.mass().toarray()
             K = sandbox.stiffness().toarray()
-            one = np.ones(sandbox.n_dof)
-            mean_constraint = M @ one
             left_null = sandbox.left_null_vector()
             load = E.T @ (sandbox.weights * forcing)
-            saddle = np.block(
-                [
-                    [K, left_null[:, None]],
-                    [mean_constraint[None, :], np.zeros((1, 1))],
-                ]
-            )
-            augmented_load = np.append(load, 0.0)
-            augmented_solution = np.linalg.solve(saddle, augmented_load)
-            solution = augmented_solution[:-1]
-            relative_saddle_residual = np.linalg.norm(saddle @ augmented_solution - augmented_load) / np.linalg.norm(
-                load
-            )
+            solution, relative_saddle_residual, gauge_defect = _solve_neumann_system(K, M, load, left_null)
             assert relative_saddle_residual < 1e-12
-            assert abs(mean_constraint @ solution) < 1e-12
+            assert gauge_defect < 1e-12
 
             reconstructed_values = E @ solution
             reconstructed_gradient = np.column_stack([gradient @ solution for gradient in sandbox.trial_gradient()])
-            l2_error = float(np.sqrt(sandbox.weights @ (reconstructed_values - exact_values) ** 2))
-            h1_error = float(np.sqrt(sandbox.weights @ np.sum((reconstructed_gradient - exact_gradient) ** 2, axis=1)))
+            l2_error, h1_error = _physical_poisson_errors(
+                reconstructed_values,
+                reconstructed_gradient,
+                exact_values,
+                exact_gradient,
+                sandbox.weights,
+            )
             compatibility_ratio = float(abs(left_null @ load) / (np.linalg.norm(left_null) * np.linalg.norm(load)))
             records.append((cloud.nominal_spacing, l2_error, h1_error, compatibility_ratio))
 
@@ -254,6 +343,77 @@ class TestCentroidalVC2Geometry:
         h1_rate = float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0])
         assert l2_rate > minimum_l2_rate
         assert h1_rate > minimum_h1_rate
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_matched_cost_poisson_records_vc2_gain_and_common_quadrature_gap(self, wave_numbers, seed):
+        records = {
+            "plain_scni": [],
+            "centroidal_scni": [],
+            "vc2": [],
+            "common_quadrature": [],
+        }
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox, E, W, arms, common_count, optimistic_vc2_budget = _matched_cost_arms(resolution, seed)
+            assert 0.75 * optimistic_vc2_budget < common_count <= optimistic_vc2_budget
+            points = sandbox.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+            forcing_nodes = (
+                (kx**2 + ky**2)
+                * np.pi**2
+                * np.cos(kx * np.pi * cloud.nodes[:, 0])
+                * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            )
+            for name, (K, M, gradients) in arms.items():
+                one = np.ones(sandbox.n_dof)
+                left_null = sandbox.left_null_vector() if name == "vc2" else one / len(one)
+                solution, relative_residual, gauge_defect = _solve_neumann_system(
+                    K,
+                    M,
+                    M @ forcing_nodes,
+                    left_null,
+                )
+                assert relative_residual < 1e-12
+                assert gauge_defect < 1e-12
+                reconstructed_gradient = np.column_stack([gradient @ solution for gradient in gradients])
+                l2_error, h1_error = _physical_poisson_errors(
+                    E @ solution,
+                    reconstructed_gradient,
+                    exact_values,
+                    exact_gradient,
+                    W,
+                )
+                records[name].append((cloud.nominal_spacing, l2_error, h1_error))
+
+        rates = {}
+        for name, arm_records in records.items():
+            spacings, l2_errors, h1_errors = map(np.asarray, zip(*arm_records, strict=True))
+            assert np.all(np.diff(l2_errors) < 0.0)
+            assert np.all(np.diff(h1_errors) < 0.0)
+            rates[name] = (
+                float(np.polyfit(np.log(spacings), np.log(l2_errors), 1)[0]),
+                float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0]),
+            )
+
+        assert rates["plain_scni"][1] < 1.6
+        assert rates["centroidal_scni"][1] < 1.8
+        assert rates["vc2"][1] > 2.0
+        assert rates["common_quadrature"][1] > 2.0
+        plain_finest = records["plain_scni"][-1]
+        centroidal_finest = records["centroidal_scni"][-1]
+        vc2_finest = records["vc2"][-1]
+        common_finest = records["common_quadrature"][-1]
+        assert vc2_finest[2] < 0.3 * plain_finest[2]
+        assert vc2_finest[2] < 0.4 * centroidal_finest[2]
+        assert common_finest[2] < 0.55 * vc2_finest[2]
+        assert common_finest[1] < 0.06 * vc2_finest[1]
 
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):
         from mfgarchon.geometry.collocation import ImplicitDomainCollocation

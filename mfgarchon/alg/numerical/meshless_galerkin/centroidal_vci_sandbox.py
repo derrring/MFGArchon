@@ -583,6 +583,14 @@ class CentroidalVC2SCNIOperatorSandbox:
         return self._centroids
 
     @property
+    def centroid_evaluation_count(self) -> int:
+        return len(self._centroids)
+
+    @property
+    def edge_evaluation_count(self) -> int:
+        return len(self._edge_points)
+
+    @property
     def weights(self) -> NDArray:
         return self._weights
 
