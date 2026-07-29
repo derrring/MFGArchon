@@ -1,29 +1,29 @@
 {
-  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline.",
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog.",
   "cells": {
     "fdm_centered/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
-        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.769e-01. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than repor"
+        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.762e-01. Clipping it to zero would fabricate 5.722% of the total mass, so the solve is stopped rather than repor"
       },
-      "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.744% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
+      "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.722% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
       "status": "UNSUPPORTED"
     },
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
-      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 1.17e-05 because they share HJBFDMSolver; SL_LINEAR does not and passes. The inner Newton's tolerance is 1e-6 and its budget is 30 iterations, so this is 11.7x the tolerance -- it is not diverging, it fails to close the last order of magnitude in the budget. Diagnose the convergence rate and the iteration budget, NOT a broken Jacobian. (Before #1763/#1764 this cell recorded 2.42e-01, which was the step norm the Newton was testing instead of the residual; that number would send you hunting the wrong defect.)",
+      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 1.17e-05 because they share HJBFDMSolver; SL_LINEAR does not and passes. The inner Newton's tolerance is 1e-6 and its budget is 30 iterations, so this is 11.7x the tolerance -- it is not diverging, it fails to close the last order of magnitude in the budget. Diagnose the convergence rate and the iteration budget, NOT a broken Jacobian. (Before #1763 this cell recorded 2.42e-01. That WAS a residual, not a step norm: `git show 005a10f5~1` has `residual_norm = np.linalg.norm(F_current.flatten())`, and #1763's own body records the residual converging to 1.57e-03 in five iterations and then diverging geometrically to 2.42e-01 because the full step increased it where a half step would have quartered it. #1763 fixed that by defaulting line_search=True. #1764 changed the convergence test in base_hjb.py, which is NOT on this cell's path -- it reaches NewtonSolver via hjb_fdm.py. Do not read the old number as a bad criterion; it recorded a real divergence that is now fixed.)",
       "status": "UNSUPPORTED"
     },
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
-        "mass_max": 1.0000000000000004,
+        "mass_max": 1.0000000000000002,
         "mass_t0": 1.0000000000000002,
-        "max_drift": 2.220446049250313e-16,
-        "min_density": 0.007498923701786717,
+        "max_drift": 1.2212453270876722e-15,
+        "min_density": 0.007498923710795448,
         "tolerance": 1.0000000000000003e-09
       },
       "status": "PASS"
@@ -31,7 +31,7 @@
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
       "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
@@ -49,7 +49,7 @@
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
       "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
@@ -57,11 +57,11 @@
     "fvm_vs_fdm/agreement": {
       "artifact": {
         "all_finite": true,
-        "rel_l2_M": 0.04890589064334588,
-        "rel_l2_M_terminal": 0.04285364468545015,
-        "rel_l2_U": 0.0272298496449295,
+        "rel_l2_M": 0.04890580973631817,
+        "rel_l2_M_terminal": 0.04285356047380676,
+        "rel_l2_U": 0.027229780657619235,
         "tolerance": 0.07,
-        "worst": 0.04890589064334588
+        "worst": 0.04890580973631817
       },
       "status": "PASS"
     },
