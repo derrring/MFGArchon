@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from functools import cache
+
 import pytest
 
 import numpy as np
 
 from mfgarchon.alg.numerical.meshless_galerkin.centroidal_vci_sandbox import (
+    BoundaryCompleteCVTCloud,
     CentroidalVC2SCNIOperatorSandbox,
     PairedMFGOperatorSandbox,
     boundary_complete_cvt_rectangle,
@@ -27,6 +30,20 @@ def _jittered_grid(n: int, seed: int) -> np.ndarray:
     perturbation = np.random.default_rng(seed).uniform(-1.0, 1.0, size=(int(interior.sum()), 2))
     nodes[interior] += 0.15 / (n - 1) * perturbation
     return nodes
+
+
+@cache
+def _boundary_complete_case(
+    resolution: int,
+    seed: int,
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVC2SCNIOperatorSandbox]:
+    cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+    sandbox = CentroidalVC2SCNIOperatorSandbox(
+        cloud.nodes,
+        rho=3.0 * cloud.nominal_spacing,
+        bounds=BOUNDS,
+    )
+    return cloud, sandbox
 
 
 @pytest.fixture(scope="module")
@@ -150,12 +167,7 @@ class TestCentroidalVC2Geometry:
         [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
     )
     def test_boundary_complete_cvt_family_passes_refinement_gate(self, resolution, seed):
-        cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
-        sandbox = CentroidalVC2SCNIOperatorSandbox(
-            cloud.nodes,
-            rho=3.0 * cloud.nominal_spacing,
-            bounds=BOUNDS,
-        )
+        cloud, sandbox = _boundary_complete_case(resolution, seed)
         diagnostics = sandbox.diagnostics
         assert cloud.max_interior_centroid_offset_ratio < 0.025
         assert cloud.min_separation_ratio > 0.8
@@ -171,6 +183,77 @@ class TestCentroidalVC2Geometry:
         assert diagnostics.gauge_coercivity_min > 9.0
         assert diagnostics.gauge_smallest_singular_value > 9.0
         assert diagnostics.stiffness_nullity == 1
+
+    @pytest.mark.parametrize(
+        ("wave_numbers", "minimum_l2_rate", "minimum_h1_rate"),
+        [
+            ((1, 1), 1.95, 2.2),
+            ((2, 1), 1.75, 2.15),
+        ],
+    )
+    @pytest.mark.parametrize("seed", range(3))
+    def test_boundary_complete_cvt_poisson_neumann_converges(
+        self,
+        wave_numbers,
+        minimum_l2_rate,
+        minimum_h1_rate,
+        seed,
+    ):
+        records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox = _boundary_complete_case(resolution, seed)
+            points = sandbox.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            forcing = (kx**2 + ky**2) * np.pi**2 * exact_values
+            exact_values -= float(sandbox.weights @ exact_values / np.sum(sandbox.weights))
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+
+            E = sandbox.value_operator().toarray()
+            M = sandbox.mass().toarray()
+            K = sandbox.stiffness().toarray()
+            one = np.ones(sandbox.n_dof)
+            mean_constraint = M @ one
+            left_null = sandbox.left_null_vector()
+            load = E.T @ (sandbox.weights * forcing)
+            saddle = np.block(
+                [
+                    [K, left_null[:, None]],
+                    [mean_constraint[None, :], np.zeros((1, 1))],
+                ]
+            )
+            augmented_load = np.append(load, 0.0)
+            augmented_solution = np.linalg.solve(saddle, augmented_load)
+            solution = augmented_solution[:-1]
+            relative_saddle_residual = np.linalg.norm(saddle @ augmented_solution - augmented_load) / np.linalg.norm(
+                load
+            )
+            assert relative_saddle_residual < 1e-12
+            assert abs(mean_constraint @ solution) < 1e-12
+
+            reconstructed_values = E @ solution
+            reconstructed_gradient = np.column_stack([gradient @ solution for gradient in sandbox.trial_gradient()])
+            l2_error = float(np.sqrt(sandbox.weights @ (reconstructed_values - exact_values) ** 2))
+            h1_error = float(np.sqrt(sandbox.weights @ np.sum((reconstructed_gradient - exact_gradient) ** 2, axis=1)))
+            compatibility_ratio = float(abs(left_null @ load) / (np.linalg.norm(left_null) * np.linalg.norm(load)))
+            records.append((cloud.nominal_spacing, l2_error, h1_error, compatibility_ratio))
+
+        spacings, l2_errors, h1_errors, compatibility_ratios = map(np.asarray, zip(*records, strict=True))
+        assert np.all(np.diff(l2_errors) < 0.0)
+        assert np.all(np.diff(h1_errors) < 0.0)
+        assert l2_errors[-1] < 0.12 * l2_errors[0]
+        assert h1_errors[-1] < 0.08 * h1_errors[0]
+        assert np.max(compatibility_ratios) < 4e-3
+        assert compatibility_ratios[-1] < 2e-4
+        l2_rate = float(np.polyfit(np.log(spacings), np.log(l2_errors), 1)[0])
+        h1_rate = float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0])
+        assert l2_rate > minimum_l2_rate
+        assert h1_rate > minimum_h1_rate
 
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):
         from mfgarchon.geometry.collocation import ImplicitDomainCollocation
