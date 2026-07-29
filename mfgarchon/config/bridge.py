@@ -18,6 +18,7 @@ See `docs/development/PYDANTIC_OMEGACONF_COOPERATION.md` for the full guide.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -78,6 +79,27 @@ def bridge_to_pydantic[T: BaseModel](
 
     # Convert to plain Python dict
     container: dict[str, Any] = OmegaConf.to_container(omega_cfg, resolve=True)  # type: ignore[assignment]
+
+    # Issue #1766: config models now forbid unknown fields, so a typo in Python is an error
+    # rather than a silently dropped keyword. A YAML file is not the same boundary. Top-level
+    # interpolation anchors are a legitimate OmegaConf idiom -- `base_tol: 1e-6` with
+    # `picard.tolerance: ${base_tol}` -- and they are scaffolding, not configuration, so they
+    # have no field to land in. Drop them here, but SAY which: a silent drop at a transport
+    # boundary is how a genuine top-level typo would disappear.
+    #
+    # Only the top level is filtered. Nested keys still reach their own model, so
+    # `picard.toleranse` is still a hard error.
+    scaffolding = sorted(set(container) - set(pydantic_cls.model_fields))
+    if scaffolding:
+        container = {k: v for k, v in container.items() if k not in scaffolding}
+        warnings.warn(
+            f"bridge_to_pydantic: dropped {len(scaffolding)} top-level key(s) that "
+            f"{pydantic_cls.__name__} has no field for: {', '.join(scaffolding)}. Interpolation "
+            f"anchors are expected here and are already resolved; anything else is a typo that "
+            f"will not take effect.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Validate with Pydantic
     if strict:

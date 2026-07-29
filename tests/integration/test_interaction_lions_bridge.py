@@ -31,7 +31,7 @@ from mfgarchon.alg.numerical.coupling.lions_correction import (
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.config import MFGSolverConfig
+from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -428,7 +428,7 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
 def _solve_terminal_density(problem, g, iters=3):
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem)
-    iterator = FixedPointIterator(problem, hjb, fp, config=MFGSolverConfig(max_iterations=iters))
+    iterator = FixedPointIterator(problem, hjb, fp, config=MFGSolverConfig(picard=PicardConfig(max_iterations=iters)))
     result = iterator.solve()
     M = result.M if hasattr(result, "M") else result[1]
     m_terminal = M[-1].ravel()

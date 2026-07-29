@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mfgarchon.config import MFGSolverConfig
+from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.factory.solver_factory import (
     SolverFactory,
     create_accurate_solver,
@@ -96,7 +96,11 @@ def test_create_solver_with_custom_config():
     problem = MockMFGProblem()
     mock_hjb = Mock()
     mock_fp = Mock()
-    custom_config = MFGSolverConfig(convergence_tolerance=1e-8)
+    # Issue #1766: this was `MFGSolverConfig(convergence_tolerance=1e-8)`. That field
+    # belongs to the RL config, not this one, and Pydantic silently dropped it -- so a
+    # test named "custom config" was exercising the DEFAULT config with 1e-8 as
+    # decoration. `picard.tolerance` is the real knob.
+    custom_config = MFGSolverConfig(picard=PicardConfig(tolerance=1e-8))
 
     with patch("mfgarchon.factory.solver_factory.FixedPointIterator") as MockIterator:
         MockIterator.return_value = Mock()

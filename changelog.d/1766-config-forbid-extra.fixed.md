@@ -1,0 +1,9 @@
+Configuration models reject unknown fields instead of dropping them (#1766). Pydantic ignores
+extras by default, so `PicardConfig(anderson_acceleration=True)` constructed cleanly, discarded
+the field, and left `anderson_memory` at 0 — Anderson off while the caller had just asked for it.
+`BaseConfig` was a bare alias for Pydantic's `BaseModel`, exported but inherited by nothing; it is
+now a real base owning `extra="forbid"`, and the 24 config models inherit it. Deprecated aliases
+are unaffected: they are popped by a `mode="before"` validator before the check runs. The
+OmegaConf bridge drops top-level keys with no matching field — interpolation anchors are a
+legitimate idiom there — but warns which, since a silent drop at a transport boundary is how a
+real typo would disappear; nested keys still reach their own model and still raise.

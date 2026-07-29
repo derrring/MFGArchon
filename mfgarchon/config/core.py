@@ -15,18 +15,39 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-# Type alias for solver configuration base class
-# All solver configs inherit from Pydantic BaseModel
-BaseConfig = BaseModel
+class BaseConfig(BaseModel):
+    """Base for every configuration model in this package.
+
+    Issue #1766. This was `BaseConfig = BaseModel`, a bare alias exported in `__all__` that
+    nothing inherited and that carried no policy -- a name promising a config base and
+    delivering Pydantic's.
+
+    It exists now to own one thing: **unknown fields are an error**. Pydantic ignores extras by
+    default, so `PicardConfig(anderson_acceleration=True)` constructed cleanly, dropped the
+    field, and left `anderson_memory` at 0 -- Anderson off while the caller had just asked for
+    it, with nothing raised. The API v1.0 design note taught exactly that call. A misspelled or
+    obsolete field in any config was accepted and discarded.
+
+    This is the fail-fast rule the package already applies to dead solver knobs (#1426 raises on
+    `FPNetworkSolver(max_iterations=...)` rather than ignoring it); the config layer was the one
+    place still accepting them silently.
+
+    Deprecated aliases are unaffected: they are translated by `model_validator(mode="before")`
+    hooks that `pop` the legacy key before validation runs, so `extra="forbid"` never sees it.
+    Verified against `PicardConfig(damping_factor=0.7)`, which still warns and still sets
+    `relaxation=0.7`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(BaseConfig):
     """
     Configuration for logging and progress reporting.
 
@@ -55,7 +76,7 @@ class LoggingConfig(BaseModel):
         return self
 
 
-class BackendConfig(BaseModel):
+class BackendConfig(BaseConfig):
     """
     Configuration for computational backend.
 
@@ -81,7 +102,7 @@ class BackendConfig(BaseModel):
         return self
 
 
-class PicardConfig(BaseModel):
+class PicardConfig(BaseConfig):
     """
     Configuration for Picard (fixed-point) iteration with under-relaxation.
 
@@ -180,7 +201,7 @@ class PicardConfig(BaseModel):
         return self
 
 
-class MFGSolverConfig(BaseModel):
+class MFGSolverConfig(BaseConfig):
     """
     Unified MFG solver configuration.
 
