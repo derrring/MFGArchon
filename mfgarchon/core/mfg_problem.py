@@ -136,6 +136,23 @@ def _volatility_to_diffusion(
 # ============================================================================
 
 
+def _values_equal(a: object, b: object) -> bool:
+    """Structural equality for geometry attribute values, arrays and nested containers included."""
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        arr_a, arr_b = np.asarray(a), np.asarray(b)
+        return arr_a.shape == arr_b.shape and bool(np.array_equal(arr_a, arr_b))
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(_values_equal(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return set(a) == set(b) and all(_values_equal(a[k], b[k]) for k in a)
+    try:
+        return bool(a == b)
+    except (ValueError, TypeError):
+        # A value whose __eq__ is not boolean (a ragged array, a comparison that raises).
+        # Identity is the only thing left that is safe to assert.
+        return a is b
+
+
 def _same_geometry(a: object, b: object) -> bool:
     """Whether two geometries discretise space identically (Issue #1765).
 
@@ -144,48 +161,33 @@ def _same_geometry(a: object, b: object) -> bool:
     difference. Compared by value rather than by identity, so two separately-constructed but
     identical grids are not spuriously rejected.
 
-    Compares the **node set itself**, not a list of attribute names. An earlier version compared
-    ``Nx_points`` / ``bounds`` / ``num_nodes`` and accepted a pair as soon as any ONE of them
-    matched, which let through the two cases this function exists to catch: two ``Mesh2D``
-    instances differing tenfold in ``mesh_size`` (only ``bounds`` is comparable, and it matches),
-    and two ``TensorProductGrid``s with equal ``bounds`` and ``Nx_points`` but different node
-    coordinates under ``spacing_type="custom"``.
+    Compares the type and the full instance state. Two earlier versions failed, both by assuming
+    something about the geometry hierarchy that is not true of it:
 
-    Fails closed when the node set cannot be obtained -- an ungenerated ``Mesh2D`` raises rather
-    than returning points, and an unrecognised geometry may expose nothing at all. Refusing is
-    the safe direction when the failure mode being prevented is a silent wrong answer, and an
-    ungenerated mesh has no discretisation for the question to be about.
+    - Comparing a fixed list of attribute names (``Nx_points`` / ``bounds`` / ``num_nodes``) and
+      accepting as soon as ANY ONE matched let through two ``Mesh2D`` differing tenfold in
+      ``mesh_size`` (only ``bounds`` is comparable, and it matches) and two ``TensorProductGrid``
+      with equal ``bounds`` and ``Nx_points`` but different node coordinates.
+    - Comparing ``get_collocation_points()`` assumed that method is a stable identity function.
+      It is not: on ``TensorProductGrid`` it is a deterministic accessor, on ``Mesh2D`` it raises
+      until ``generate_mesh()``, on ``Hyperrectangle`` it is a *sampler* whose first parameter is
+      required (so the call raised ``TypeError`` straight through ``MFGProblem.__init__``), and on
+      ``ImplicitDomain`` it draws fresh random points every call, so two identical ``Hypersphere``
+      never compared equal -- and paid a 6-second, 668 MiB draw at d=5 to reach that wrong answer.
+
+    Instance state needs no such assumption: it is what the constructor was given, it is cheap,
+    and it discriminates every case above. A geometry whose state cannot be compared falls back to
+    identity, which refuses -- the safe direction when the failure being prevented is a silent
+    wrong answer.
     """
     if a is b:
         return True
-    pa, pb = _node_set(a), _node_set(b)
-    if pa is None or pb is None:
+    if type(a) is not type(b):
         return False
-    return pa.shape == pb.shape and np.array_equal(pa, pb)
-
-
-def _node_set(geometry: object) -> np.ndarray | None:
-    """The geometry's node coordinates, or ``None`` when they cannot be obtained."""
-    getter = getattr(geometry, "get_collocation_points", None)
-    if not callable(getter):
-        return None
-    try:
-        return np.asarray(getter(), dtype=float)
-    except (ValueError, NotImplementedError, AttributeError) as exc:
-        # Mesh2D raises ValueError("Mesh not yet generated") until generate_mesh() is called.
-        # Named rather than broad: a geometry that fails here for some OTHER reason should
-        # surface as itself, not be folded into "cannot compare". Logged rather than swallowed --
-        # the caller turns this into a refusal, and the user needs to know which geometry could
-        # not answer and why.
-        from mfgarchon.utils.mfg_logging import get_logger
-
-        get_logger(__name__).debug(
-            "%s could not produce its node set (%s: %s); the geometry pair will be refused",
-            type(geometry).__name__,
-            type(exc).__name__,
-            exc,
-        )
-        return None
+    state_a, state_b = vars(a), vars(b)
+    if set(state_a) != set(state_b):
+        return False
+    return all(_values_equal(state_a[k], state_b[k]) for k in state_a)
 
 
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
@@ -379,9 +381,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # discarded, so the FP equation silently solved on the HJB grid (Issue #1765).
             # Differing geometries now raise NotImplementedError. To resample between two
             # resolutions, drive GeometryProjector explicitly:
-            from mfgarchon.geometry.projection import GeometryProjector
+            from mfgarchon.geometry import GeometryProjector, TensorProductGrid
+            from mfgarchon.geometry.boundary import no_flux_bc
+            hjb_grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[41], boundary_conditions=no_flux_bc(1))
+            fp_grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[11], boundary_conditions=no_flux_bc(1))
             projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
-            m_on_fp = projector.project_hjb_to_fp(m_on_hjb)
+            m_on_fp = projector.project_hjb_to_fp(np.zeros(41))
 
             # Advanced: State-dependent diffusion (callable)
             def density_dependent_diffusion(t, x, m):
@@ -657,7 +662,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # `_init_geometry(final_hjb_geometry, ...)` sets `self.geometry`, which is the single
             # attribute every solver reads, so the FP solver silently runs on the HJB grid.
             #
-            # Measured: a 41-point HJB grid with an 11-point FP grid returned `M.shape == (11, 41)`
+            # Measured: a 41-point HJB grid with an 11-point FP grid returned a density whose SPATIAL
+            # axis is 41 -- the HJB grid's -- and the FP CFL log reported the HJB grid's dx=0.025
             # and the FP CFL log reported the HJB grid's `dx=0.025`. No error, no warning, and
             # every downstream number -- mass, convergence rate, timings -- computed on a grid the
             # caller did not choose.

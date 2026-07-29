@@ -1,7 +1,7 @@
 # [SUPERSEDED 2026-07-30] Dual Geometry Usage Guide
 
 **Status**: ⛔ **SUPERSEDED — the problem-level API this guide teaches now raises.**
-**SUPERSEDED-BY**: `GeometryProjector` (`mfgarchon/geometry/projection.py`); Issue #1765
+**SUPERSEDED-BY**: `GeometryProjector` (`mfgarchon/operators/interpolation/projection.py`, re-exported as `mfgarchon.geometry.GeometryProjector`); Issue #1765
 **Created**: 2025-11-10 · **Superseded**: 2026-07-30
 **Audience**: MFGArchon users (researchers, application developers)
 
@@ -19,13 +19,13 @@
 > **What to do instead.** Drive the projection explicitly, which is what the refusal's error
 > message says:
 >
-> ```python
-> from mfgarchon.geometry.projection import GeometryProjector
->
-> projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
-> m_on_fp = projector.project_hjb_to_fp(m_on_hjb)
-> u_on_hjb = projector.project_fp_to_hjb(u_on_fp)
-> ```
+```python
+from mfgarchon.geometry import GeometryProjector
+
+projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
+m_on_fp = projector.project_hjb_to_fp(m_on_hjb)
+u_on_hjb = projector.project_fp_to_hjb(u_on_fp)
+```
 >
 > `GeometryProjector` is unaffected and round-trips correctly; only the automatic problem-level
 > wiring is absent.

@@ -8,7 +8,8 @@ r"""Dual geometry is refused rather than silently ignored (#1765).
     grep -rln "hjb_geometry\|fp_geometry" mfgarchon/alg/   -> nothing
 
 Measured before the change: a 41-point HJB grid with an 11-point FP grid returned
-`M.shape == (11, 41)` and the FP CFL log reported the HJB grid's `dx=0.025`. No error, no
+a density whose spatial axis was 41, the HJB grid's rather than the FP grid's 11, and the FP
+CFL log reported the HJB grid's `dx=0.025`. No error, no
 warning, and every downstream number computed on a grid the caller did not choose.
 
 Refusing is the honest state until the projector is wired. Had the parameter never existed, the
@@ -131,20 +132,14 @@ def test_grids_with_equal_bounds_and_count_but_different_nodes_are_refused():
 
 
 def test_meshes_that_expose_only_bounds_are_refused_rather_than_assumed_equal():
-    """A geometry that cannot produce its node set is refused, not accepted on one attribute.
+    """Two Mesh2D over the same rectangle at different resolutions are not the same geometry.
 
-    Two ``Mesh2D`` instances over the same rectangle with a tenfold difference in ``mesh_size``
-    have neither ``Nx_points`` nor ``num_nodes``, so attribute-name comparison found only
-    ``bounds``, matched it, and returned True. ``examples/advanced/geometry_advanced/
-    dual_geometry_fem_mesh.py`` is exactly a ``Mesh2D``-as-``fp_geometry`` script.
-
-    Fail-closed also covers the reason a naive node-set comparison is not enough: an ungenerated
-    mesh RAISES from ``get_collocation_points()`` rather than returning points, so the comparison
-    must treat "cannot obtain" as "refuse" rather than letting the exception escape.
+    Neither has ``Nx_points`` nor ``num_nodes``, so comparing a fixed list of attribute names
+    found only ``bounds``, matched it, and returned True -- a tenfold mesh-resolution difference
+    read as "same geometry". ``examples/advanced/geometry_advanced/dual_geometry_fem_mesh.py``
+    is exactly a ``Mesh2D``-as-``fp_geometry`` script.
     """
-    import pytest
-
-    from mfgarchon.core.mfg_problem import _node_set, _same_geometry
+    from mfgarchon.core.mfg_problem import _same_geometry
     from mfgarchon.geometry.meshes import Mesh2D
 
     fine = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0), mesh_size=0.05)
@@ -152,9 +147,47 @@ def test_meshes_that_expose_only_bounds_are_refused_rather_than_assumed_equal():
 
     assert not hasattr(fine, "Nx_points")
     assert not hasattr(fine, "num_nodes")
-    with pytest.raises(ValueError, match="not yet generated"):
-        fine.get_collocation_points()
 
-    assert _node_set(fine) is None
     assert not _same_geometry(fine, coarse)
     assert _same_geometry(fine, fine), "identity must still short-circuit"
+
+
+def test_geometries_whose_point_set_is_a_sampler_do_not_crash_the_constructor():
+    """`get_collocation_points()` is not a stable identity function across this hierarchy.
+
+    An intermediate fix compared it directly. On ``Hyperrectangle`` it is a *sampler* whose first
+    parameter ``n_interior`` is required, so the zero-arg call raised ``TypeError`` straight
+    through ``MFGProblem.__init__`` -- a construction that worked on main became a crash, and the
+    exception named neither the geometries nor Issue #1765.
+    """
+    import inspect
+
+    from mfgarchon.core.mfg_problem import _same_geometry
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    params = inspect.signature(Hyperrectangle.get_collocation_points).parameters
+    assert "n_interior" in params, "this test guards against calling that sampler with no arguments"
+
+    a = Hyperrectangle(bounds=[(0.0, 1.0), (0.0, 1.0)])
+    b = Hyperrectangle(bounds=[(0.0, 1.0), (0.0, 1.0)])
+    assert _same_geometry(a, b), "two identically-constructed Hyperrectangles are the same geometry"
+    assert not _same_geometry(a, Hyperrectangle(bounds=[(0.0, 2.0), (0.0, 1.0)]))
+
+
+def test_a_randomly_sampled_point_set_does_not_make_identical_domains_differ():
+    """``ImplicitDomain.get_collocation_points()`` draws fresh random points on every call.
+
+    Comparing that draw made two identical ``Hypersphere`` compare unequal, so the constructor
+    refused them with a message saying the geometries differ -- they do not. It also paid the
+    draw twice to get there (measured 6.2 s / 668 MiB at d=5) before returning the wrong answer.
+    """
+    from mfgarchon.core.mfg_problem import _same_geometry
+    from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+
+    a = Hypersphere(center=[0.0, 0.0], radius=1.0)
+    b = Hypersphere(center=[0.0, 0.0], radius=1.0)
+    assert not np.array_equal(a.get_collocation_points(), b.get_collocation_points()), (
+        "if this ever becomes deterministic the regression this test guards is gone"
+    )
+    assert _same_geometry(a, b), "identical domains must not be refused because the sampler is random"
+    assert not _same_geometry(a, Hypersphere(center=[0.0, 0.0], radius=2.0))
