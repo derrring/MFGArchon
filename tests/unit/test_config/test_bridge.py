@@ -235,3 +235,55 @@ class TestNoVestigialOmegaToPydanticBridge1392:
         from mfgarchon.config import bridge_to_pydantic
 
         assert callable(bridge_to_pydantic)
+
+
+def test_a_deprecated_alias_survives_the_top_level_filter():
+    """The scaffolding filter must not eat a deprecated alias before it can be translated.
+
+    The filter added for Issue #1766 ran on `model_fields`, and an alias is by definition not a
+    field, so a top-level `damping_factor` was dropped: the value reverted to the default and the
+    warning called a documented alias "a typo that will not take effect". That is the same
+    silent-drop failure the `extra="forbid"` change exists to eliminate, reintroduced by its own
+    mitigation.
+
+    Direct construction was never affected -- only the bridge -- so this pins the bridge path.
+    """
+    import warnings
+
+    from omegaconf import OmegaConf
+
+    from mfgarchon.config.bridge import bridge_to_pydantic
+    from mfgarchon.config.core import PicardConfig
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = bridge_to_pydantic(OmegaConf.create({"damping_factor": 0.7}), PicardConfig)
+
+    assert cfg.relaxation == 0.7, "the alias was dropped and the default silently reinstated"
+    assert PicardConfig(damping_factor=0.7).relaxation == 0.7, "direct construction must agree"
+
+    kinds = [type(w.message) for w in caught]
+    assert DeprecationWarning in kinds, "the alias must still announce that it is deprecated"
+    assert not [w for w in caught if isinstance(w.message, UserWarning) and "typo" in str(w.message)], (
+        "a documented alias must not be reported as a typo"
+    )
+
+
+def test_the_alias_map_has_one_owner():
+    """The bridge and the validator must read the same alias set, not two copies.
+
+    They disagreed exactly because the map was a local variable inside the validator and the
+    bridge could not see it. If a future alias is added to only one of them, the bridge starts
+    dropping it again with no test failing anywhere else.
+    """
+    from mfgarchon.config.core import PicardConfig
+
+    aliases = PicardConfig.LEGACY_FIELD_ALIASES
+    assert aliases, "the map must be reachable from the class, not buried in the validator"
+    for legacy, canonical in aliases.items():
+        assert legacy not in PicardConfig.model_fields, f"{legacy} is an alias, not a field"
+        assert canonical in PicardConfig.model_fields, f"{canonical} must be a real field"
+        # Round-trip with the canonical field's own default, so the value is type-correct for
+        # every alias (they do not all map to floats -- adaptive_damping maps to a bool).
+        probe = PicardConfig.model_fields[canonical].get_default(call_default_factory=True)
+        assert PicardConfig(**{legacy: probe}).model_dump()[canonical] == probe

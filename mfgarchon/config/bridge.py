@@ -70,7 +70,7 @@ def bridge_to_pydantic[T: BaseModel](
     >>>
     >>> # Convert to validated Pydantic model
     >>> config = bridge_to_pydantic(omega_cfg, MFGSolverConfig)
-    >>> print(config.tolerance)  # Type-safe access
+    >>> print(config.picard.tolerance)  # Type-safe access; tolerance lives under picard
     """
     from omegaconf import OmegaConf
 
@@ -89,7 +89,12 @@ def bridge_to_pydantic[T: BaseModel](
     #
     # Only the top level is filtered. Nested keys still reach their own model, so
     # `picard.toleranse` is still a hard error.
-    scaffolding = sorted(set(container) - set(pydantic_cls.model_fields))
+    # A deprecated alias is by definition not in `model_fields`, so filtering on fields alone
+    # dropped it before the `mode="before"` validator could translate it -- the value silently
+    # reverted to its default and the warning below called a documented alias a typo. Union in
+    # the model's own alias map so the two agree; the map has one owner on the model.
+    accepted = set(pydantic_cls.model_fields) | set(getattr(pydantic_cls, "LEGACY_FIELD_ALIASES", {}))
+    scaffolding = sorted(set(container) - accepted)
     if scaffolding:
         container = {k: v for k, v in container.items() if k not in scaffolding}
         warnings.warn(
@@ -141,7 +146,7 @@ def save_effective_config(
     >>> from mfgarchon.config import MFGSolverConfig
     >>> from mfgarchon.config.bridge import save_effective_config
     >>>
-    >>> config = MFGSolverConfig(tolerance=1e-8, max_iterations=200)
+    >>> config = MFGSolverConfig(picard=PicardConfig(tolerance=1e-8, max_iterations=200))
     >>> path = save_effective_config(config, "results/experiment_001")
     >>> print(f"Config saved to {path}")
 

@@ -143,14 +143,15 @@ graph LR
 Best for: Unit tests, simple scripts, programmatic configuration.
 
 ```python
-from mfgarchon.config import MFGSolverConfig, HJBConfig, FPConfig
+from mfgarchon.config import MFGSolverConfig, HJBConfig, FPConfig, ParticleConfig, PicardConfig
 
-# Create configuration directly in Python
+# Create configuration directly in Python. The structure is nested: solver-specific settings
+# live under the method that owns them, and iteration control lives under `picard`. Since
+# Issue #1766 an unknown or misplaced key raises instead of vanishing, so the shape matters.
 config = MFGSolverConfig(
     hjb=HJBConfig(method="gfdm", accuracy_order=2),
-    fp=FPConfig(method="particle", num_particles=5000),
-    tolerance=1e-8,
-    max_iterations=100,
+    fp=FPConfig(method="particle", particle=ParticleConfig(num_particles=5000)),
+    picard=PicardConfig(max_iterations=100, tolerance=1e-8),
 )
 
 # Use with solver

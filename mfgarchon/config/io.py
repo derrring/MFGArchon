@@ -105,7 +105,7 @@ def load_solver_config(path: str | Path) -> SolverConfig:
         return SolverConfig.model_validate(data)
     except Exception as e:
         raise ValueError(
-            f"Invalid configuration in {path}:\n{e}\n\nSee docs/user_guide/configuration.md for YAML format examples."
+            f"Invalid configuration in {path}:\n{e}\n\nSee docs/user/configuration_system.md for YAML format examples."
         ) from e
 
 

@@ -13,7 +13,7 @@ Key Principle
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -155,6 +155,18 @@ class PicardConfig(BaseConfig):
     anderson_memory: int = Field(default=0, ge=0)
     verbose: bool = True
 
+    #: Legacy field names accepted with a DeprecationWarning (v0.19.1), mapped to the canonical
+    #: name. Read by `_translate_legacy_damping_names` below AND by `config.bridge`, which must
+    #: not filter these out before the validator can translate them (Issue #1766 follow-up): the
+    #: bridge filters on `model_fields`, and an alias is by definition not a field. One owner.
+    LEGACY_FIELD_ALIASES: ClassVar[dict[str, str]] = {
+        "damping_factor": "relaxation",
+        "damping_factor_M": "relaxation_M",
+        "damping_schedule": "relaxation_schedule",
+        "damping_schedule_M": "relaxation_schedule_M",
+        "adaptive_damping": "adaptive_relaxation",
+    }
+
     @model_validator(mode="before")
     @classmethod
     def _translate_legacy_damping_names(cls, values: Any) -> Any:
@@ -169,14 +181,7 @@ class PicardConfig(BaseConfig):
         if not isinstance(values, dict):
             return values
         data = dict(values)
-        legacy_map = {
-            "damping_factor": "relaxation",
-            "damping_factor_M": "relaxation_M",
-            "damping_schedule": "relaxation_schedule",
-            "damping_schedule_M": "relaxation_schedule_M",
-            "adaptive_damping": "adaptive_relaxation",
-        }
-        for legacy, canonical in legacy_map.items():
+        for legacy, canonical in cls.LEGACY_FIELD_ALIASES.items():
             if legacy in data:
                 if canonical in data:
                     raise ValueError(
@@ -232,7 +237,7 @@ class MFGSolverConfig(BaseConfig):
     >>> # Programmatically
     >>> config = MFGSolverConfig(
     ...     hjb=HJBConfig(method="fdm", accuracy_order=2),
-    ...     fp=FPConfig(method="particle", num_particles=5000),
+    ...     fp=FPConfig(method="particle", particle=ParticleConfig(num_particles=5000)),
     ...     picard=PicardConfig(max_iterations=50, tolerance=1e-6)
     ... )
 
