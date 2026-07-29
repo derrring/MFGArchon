@@ -137,35 +137,55 @@ def _volatility_to_diffusion(
 
 
 def _same_geometry(a: object, b: object) -> bool:
-    """Whether two geometries describe the same discrete grid (Issue #1765).
+    """Whether two geometries discretise space identically (Issue #1765).
 
     Identical geometries make the dual-geometry path equivalent to the unified one, so they are
     allowed through; differing ones are refused because nothing downstream honours the
-    difference. Compared on the attributes that decide the discretisation rather than by
-    identity, so two separately-constructed but identical grids are not spuriously rejected.
+    difference. Compared by value rather than by identity, so two separately-constructed but
+    identical grids are not spuriously rejected.
 
-    Unknown geometry types compare False -- refusing an unrecognised pair is the safe direction
-    when the failure mode being prevented is a silent wrong answer.
+    Compares the **node set itself**, not a list of attribute names. An earlier version compared
+    ``Nx_points`` / ``bounds`` / ``num_nodes`` and accepted a pair as soon as any ONE of them
+    matched, which let through the two cases this function exists to catch: two ``Mesh2D``
+    instances differing tenfold in ``mesh_size`` (only ``bounds`` is comparable, and it matches),
+    and two ``TensorProductGrid``s with equal ``bounds`` and ``Nx_points`` but different node
+    coordinates under ``spacing_type="custom"``.
+
+    Fails closed when the node set cannot be obtained -- an ungenerated ``Mesh2D`` raises rather
+    than returning points, and an unrecognised geometry may expose nothing at all. Refusing is
+    the safe direction when the failure mode being prevented is a silent wrong answer, and an
+    ungenerated mesh has no discretisation for the question to be about.
     """
     if a is b:
         return True
-    # Compare the attributes BOTH objects have. Requiring all of them to be present rejected two
-    # identical TensorProductGrids, because a grid has no `num_nodes` -- the first version of this
-    # function returned False for a pair it should have accepted.
-    compared = 0
-    for attr in ("Nx_points", "bounds", "num_nodes"):
-        av, bv = getattr(a, attr, None), getattr(b, attr, None)
-        if av is None and bv is None:
-            continue
-        if av is None or bv is None:
-            return False
-        av, bv = np.asarray(av), np.asarray(bv)
-        if av.shape != bv.shape or not np.array_equal(av, bv):
-            return False
-        compared += 1
-    # Nothing comparable was found: an unrecognised geometry type. Refuse, because the failure
-    # mode being prevented is a silent wrong answer.
-    return compared > 0
+    pa, pb = _node_set(a), _node_set(b)
+    if pa is None or pb is None:
+        return False
+    return pa.shape == pb.shape and np.array_equal(pa, pb)
+
+
+def _node_set(geometry: object) -> np.ndarray | None:
+    """The geometry's node coordinates, or ``None`` when they cannot be obtained."""
+    getter = getattr(geometry, "get_collocation_points", None)
+    if not callable(getter):
+        return None
+    try:
+        return np.asarray(getter(), dtype=float)
+    except (ValueError, NotImplementedError, AttributeError) as exc:
+        # Mesh2D raises ValueError("Mesh not yet generated") until generate_mesh() is called.
+        # Named rather than broad: a geometry that fails here for some OTHER reason should
+        # surface as itself, not be folded into "cannot compare". Logged rather than swallowed --
+        # the caller turns this into a refusal, and the user needs to know which geometry could
+        # not answer and why.
+        from mfgarchon.utils.mfg_logging import get_logger
+
+        get_logger(__name__).debug(
+            "%s could not produce its node set (%s: %s); the geometry pair will be refused",
+            type(geometry).__name__,
+            type(exc).__name__,
+            exc,
+        )
+        return None
 
 
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
@@ -283,6 +303,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             spatial_discretization: List of grid points per dimension
                                    Example: [50, 50] for 51×51 grid
             geometry: BaseGeometry object for complex domains (unified mode)
+            hjb_geometry / fp_geometry: Must be specified together AND must discretise space
+                identically -- differing geometries raise NotImplementedError (Issue #1765),
+                because nothing downstream resamples between them. Use GeometryProjector to
+                move fields between two resolutions explicitly.
             obstacles: List of obstacle geometries
             hjb_geometry: Geometry for HJB solver (dual geometry mode, Issue #257)
             fp_geometry: Geometry for FP solver (dual geometry mode, Issue #257)
@@ -350,18 +374,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 components=components
             )
 
-            # Mode 6: Dual geometry (Issue #257) - Separate geometries for HJB and FP
-            from mfgarchon.geometry import TensorProductGrid
-            from mfgarchon.geometry.boundary import no_flux_bc
-            hjb_grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[51, 51], boundary_conditions=no_flux_bc(2))
-            fp_grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[21, 21], boundary_conditions=no_flux_bc(2))
-            problem = MFGProblem(
-                hjb_geometry=hjb_grid,
-                fp_geometry=fp_grid,
-                time_domain=(1.0, 50),
-                diffusion=0.1
-            )
-            # Automatically creates geometry_projector for mapping between geometries
+            # Mode 6: Dual geometry (Issue #257) - REFUSED when the two geometries differ.
+            # Nothing downstream honours the difference: the FP geometry was accepted and then
+            # discarded, so the FP equation silently solved on the HJB grid (Issue #1765).
+            # Differing geometries now raise NotImplementedError. To resample between two
+            # resolutions, drive GeometryProjector explicitly:
+            from mfgarchon.geometry.projection import GeometryProjector
+            projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
+            m_on_fp = projector.project_hjb_to_fp(m_on_hjb)
 
             # Advanced: State-dependent diffusion (callable)
             def density_dependent_diffusion(t, x, m):

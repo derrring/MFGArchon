@@ -1,8 +1,39 @@
-# Dual Geometry Usage Guide
+# [SUPERSEDED 2026-07-30] Dual Geometry Usage Guide
 
-**Status**: ✅ COMPLETED (Issue #257)
-**Created**: 2025-11-10
+**Status**: ⛔ **SUPERSEDED — the problem-level API this guide teaches now raises.**
+**SUPERSEDED-BY**: `GeometryProjector` (`mfgarchon/geometry/projection.py`); Issue #1765
+**Created**: 2025-11-10 · **Superseded**: 2026-07-30
 **Audience**: MFGArchon users (researchers, application developers)
+
+> ## Read this before the rest of the page
+>
+> Every example below passes two *different* geometries to `MFGProblem(hjb_geometry=...,
+> fp_geometry=...)`. That construction now raises `NotImplementedError`.
+>
+> The reason is not a policy change. **Nothing downstream ever resampled between the two
+> geometries.** `MFGProblem` accepted both, kept the HJB one, and discarded the FP one, so the FP
+> equation silently solved on the HJB grid — a wrong answer with no error and no warning
+> (Issue #1765). The capability this guide describes was never implemented; the guide described
+> the intent.
+>
+> **What to do instead.** Drive the projection explicitly, which is what the refusal's error
+> message says:
+>
+> ```python
+> from mfgarchon.geometry.projection import GeometryProjector
+>
+> projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
+> m_on_fp = projector.project_hjb_to_fp(m_on_hjb)
+> u_on_hjb = projector.project_fp_to_hjb(u_on_fp)
+> ```
+>
+> `GeometryProjector` is unaffected and round-trips correctly; only the automatic problem-level
+> wiring is absent.
+>
+> Two further reasons not to copy from this page: the examples use `dimension=`, deprecated on
+> `TensorProductGrid`; and the header claimed `✅ COMPLETED (Issue #257)` for eight months while
+> the feature silently did the wrong thing. The text below is kept for the design intent, not as
+> working instructions.
 
 ## Overview
 
