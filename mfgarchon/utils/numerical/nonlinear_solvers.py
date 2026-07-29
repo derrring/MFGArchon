@@ -579,11 +579,22 @@ class NewtonSolver(NonlinearSolver):
             x_current.item() if is_scalar else x_current,
             SolverInfo(
                 converged=False,
-                iterations=iteration,
+                # `iteration + 1`, matching the converged and budget-exhausted paths: the
+                # invariant across all three is `iterations == len(residual_history)`. Passing
+                # the raw 0-based index produced "failed to converge after 0 iterations", which
+                # reads as though the solver never ran.
+                iterations=iteration + 1,
                 residual=float(residual),
                 residual_history=residual_history,
                 solver_time=time.time() - start_time,
-                extra={"reason": reason, "detail": detail, "jacobian_evals": jacobian_evals},
+                # Splatted, NOT `extra={...}`. `SolverInfo.__init__` takes `**extra`, so a
+                # keyword literally named `extra` nests one level: callers found
+                # `info.extra["extra"]["reason"]` while every doc said `info.extra["reason"]`.
+                # It also shadowed `jacobian_evals`, so `newton_mfg_solver.py`'s
+                # `extra.get("jacobian_evals", 0)` reported 0 on every stop path.
+                reason=reason,
+                detail=detail,
+                jacobian_evals=jacobian_evals,
             ),
         )
 
