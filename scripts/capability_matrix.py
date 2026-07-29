@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import traceback
@@ -782,6 +783,24 @@ def main() -> None:
         sys.exit(2)
 
     if args.write_baseline:
+        # Carry forward any `intended` annotations. A regeneration that silently dropped them
+        # would retire the distinction on its first use, which is how this kind of mechanism
+        # usually dies. A cell that has RECOVERED loses its annotation on purpose: the claim
+        # "this configuration is no longer refused" is exactly the one that needs review.
+        prior: dict = {}
+        if os.path.exists(args.write_baseline):
+            with open(args.write_baseline) as fh:
+                prior = json.load(fh).get("cells", {})
+        elif any(v["status"] != "PASS" for v in results.values()):
+            # Writing to a path with no prior file. In-place regeneration carries annotations
+            # forward; writing somewhere new cannot, and silently emitting an unannotated
+            # baseline is how the distinction would be lost the first time someone redirects
+            # the output. Say so.
+            print(
+                f"\nNote: {args.write_baseline} does not exist, so no `intended` notes were "
+                "carried forward. Non-PASS cells in the new file will read as unexplained. "
+                "Regenerate in place to preserve them."
+            )
         payload = {
             "_comment": (
                 "Executed capability of the solve surface. --check-baseline compares STATUS "
@@ -789,9 +808,18 @@ def main() -> None:
                 "change that recovers it. The artifact blocks are a record for diffing by a "
                 "human reviewer, NOT a gate -- a cell can degrade within its own tolerance "
                 "(fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. "
-                "Regenerate with --write-baseline."
+                "Regenerate with --write-baseline. A non-PASS cell may carry an `intended` "
+                "note saying WHY it is not PASS; cells without one are unexplained and are the "
+                "actual backlog. See --explain."
             ),
-            "cells": {k: {"status": v["status"], "artifact": v["artifact"]} for k, v in results.items()},
+            "cells": {
+                k: (
+                    {"status": v["status"], "artifact": v["artifact"], "intended": prior[k]["intended"]}
+                    if k in prior and "intended" in prior[k] and v["status"] != "PASS"
+                    else {"status": v["status"], "artifact": v["artifact"]}
+                )
+                for k, v in results.items()
+            },
         }
         # allow_nan=False: Python would otherwise emit a bare `NaN` token, which is
         # not JSON and which every non-Python reader rejects. A non-finite artifact
@@ -812,12 +840,31 @@ def main() -> None:
         with open(args.check_baseline) as fh:
             baseline = json.load(fh)["cells"]
         problems = compare_to_baseline(_statuses(results), baseline)
+        # A non-PASS cell without an `intended` note is unexplained. This is the number that
+        # matters, not the count of UNSUPPORTED: "drive UNSUPPORTED to 0" is satisfiable by
+        # loosening a guard or by quietly picking a configuration the guard does not refuse,
+        # and neither is visible in a status count. An `intended` note makes the difference
+        # between "the gate correctly refuses this" and "this does not work" a written claim.
+        unexplained = [
+            f"  {name}: {info['status']} with no `intended` note"
+            for name, info in sorted(baseline.items())
+            if info["status"] != "PASS" and "intended" not in info
+        ]
+        if unexplained:
+            print(f"\n{len(unexplained)} non-PASS cell(s) with no recorded reason:")
+            print("\n".join(unexplained))
+            print('  Add "intended": "<why>" to each in the baseline, or fix the cell.')
         if problems:
             print("\nCapability baseline mismatch:")
             print("\n".join(problems))
             print("\nIf the change is intended, regenerate with --write-baseline in the same commit.")
             sys.exit(1)
-        print(f"\nCapability matches baseline ({len(baseline)} cells).")
+        explained = sum(1 for i in baseline.values() if i["status"] != "PASS" and "intended" in i)
+        non_pass = sum(1 for i in baseline.values() if i["status"] != "PASS")
+        print(
+            f"\nCapability matches baseline ({len(baseline)} cells; "
+            f"{non_pass - explained} of {non_pass} non-PASS cells unexplained)."
+        )
         sys.exit(0)
 
     sys.exit(0)

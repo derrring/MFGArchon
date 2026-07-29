@@ -6,6 +6,7 @@
         "exception": "ValueError",
         "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.769e-01. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than repor"
       },
+      "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.744% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
       "status": "UNSUPPORTED"
     },
     "fdm_centered_2d/mass_conservation": {
@@ -13,6 +14,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
+      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 2.42e-01 because they share HJBFDMSolver; SL_LINEAR does not and passes. PRs #1763/#1764 make the Newton stop lying about it but do not yet make it converge.",
       "status": "UNSUPPORTED"
     },
     "fdm_upwind/mass_conservation": {
@@ -31,6 +33,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d (identical residual, shared HJBFDMSolver).",
       "status": "UNSUPPORTED"
     },
     "fvm_muscl/mass_conservation": {
@@ -48,6 +51,7 @@
         "exception": "ConvergenceError",
         "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
       },
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d (identical residual, shared HJBFDMSolver).",
       "status": "UNSUPPORTED"
     },
     "fvm_vs_fdm/agreement": {
@@ -66,6 +70,7 @@
         "exception": "NotImplementedError",
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
+      "intended": "ABSENT \u2014 #1553. HJBGFDMSolver(derivative_method='rbf') has no working differentiation-weight builder since #1526 and raises NotImplementedError by design. Not a regression; the cell exists so that reinstating RBF cannot land unnoticed.",
       "status": "UNSUPPORTED"
     },
     "regime_switching/non_negativity": {
@@ -73,6 +78,7 @@
         "exception": "ValueError",
         "message": "FP solver: at timestep 7/10, advection_scheme='divergence_upwind': density went to -1.031e-03. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than reporti"
       },
+      "intended": "INTENDED \u2014 same guard, divergence_upwind at timestep 7 (0.015% fabricated). The cell is recording that the guard fires, which is the behaviour under test.",
       "status": "UNSUPPORTED"
     },
     "sl_linear/mass_conservation": {
