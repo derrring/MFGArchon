@@ -714,6 +714,18 @@ def test_module_exports_are_classes():
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Issue #1765: MFGProblem accepted two geometries, built a GeometryProjector and then "
+        "discarded the distinction -- nothing under mfgarchon/alg/ reads it, so the FP solve ran "
+        "on the HJB grid and returned a plausible answer on a grid the caller did not choose. "
+        "Differing geometries are now refused. These tests describe the capability as it should "
+        "work once the projector is wired into the coupling loop, so they are kept rather than "
+        "deleted: strict=True means wiring it makes them XPASS and fails the build until the "
+        "marker goes."
+    ),
+)
 def test_dual_geometry_specification():
     """Test MFGProblem with separate HJB and FP geometries (Issue #257)."""
     # Create two different 2D grids with BC
@@ -823,6 +835,18 @@ def test_dual_geometry_error_on_conflict():
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Issue #1765: MFGProblem accepted two geometries, built a GeometryProjector and then "
+        "discarded the distinction -- nothing under mfgarchon/alg/ reads it, so the FP solve ran "
+        "on the HJB grid and returned a plausible answer on a grid the caller did not choose. "
+        "Differing geometries are now refused. These tests describe the capability as it should "
+        "work once the projector is wired into the coupling loop, so they are kept rather than "
+        "deleted: strict=True means wiring it makes them XPASS and fails the build until the "
+        "marker goes."
+    ),
+)
 def test_dual_geometry_projector_attributes():
     """Test that geometry projector has correct attributes."""
     hjb_grid = TensorProductGrid(
@@ -851,6 +875,18 @@ def test_dual_geometry_projector_attributes():
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Issue #1765: MFGProblem accepted two geometries, built a GeometryProjector and then "
+        "discarded the distinction -- nothing under mfgarchon/alg/ reads it, so the FP solve ran "
+        "on the HJB grid and returned a plausible answer on a grid the caller did not choose. "
+        "Differing geometries are now refused. These tests describe the capability as it should "
+        "work once the projector is wired into the coupling loop, so they are kept rather than "
+        "deleted: strict=True means wiring it makes them XPASS and fails the build until the "
+        "marker goes."
+    ),
+)
 def test_dual_geometry_with_1d_grids():
     """Test dual geometry with 1D grids."""
     # Create two 1D grids with different resolutions

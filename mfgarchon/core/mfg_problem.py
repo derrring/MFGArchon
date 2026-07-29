@@ -136,6 +136,38 @@ def _volatility_to_diffusion(
 # ============================================================================
 
 
+def _same_geometry(a: object, b: object) -> bool:
+    """Whether two geometries describe the same discrete grid (Issue #1765).
+
+    Identical geometries make the dual-geometry path equivalent to the unified one, so they are
+    allowed through; differing ones are refused because nothing downstream honours the
+    difference. Compared on the attributes that decide the discretisation rather than by
+    identity, so two separately-constructed but identical grids are not spuriously rejected.
+
+    Unknown geometry types compare False -- refusing an unrecognised pair is the safe direction
+    when the failure mode being prevented is a silent wrong answer.
+    """
+    if a is b:
+        return True
+    # Compare the attributes BOTH objects have. Requiring all of them to be present rejected two
+    # identical TensorProductGrids, because a grid has no `num_nodes` -- the first version of this
+    # function returned False for a pair it should have accepted.
+    compared = 0
+    for attr in ("Nx_points", "bounds", "num_nodes"):
+        av, bv = getattr(a, attr, None), getattr(b, attr, None)
+        if av is None and bv is None:
+            continue
+        if av is None or bv is None:
+            return False
+        av, bv = np.asarray(av), np.asarray(bv)
+        if av.shape != bv.shape or not np.array_equal(av, bv):
+            return False
+        compared += 1
+    # Nothing comparable was found: an unrecognised geometry type. Refuse, because the failure
+    # mode being prevented is a silent wrong answer.
+    return compared > 0
+
+
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
     """
     Unified MFG problem class that can handle both predefined and custom formulations.
@@ -598,10 +630,34 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise ValueError(
                     "Specify EITHER 'geometry' (unified) OR ('hjb_geometry', 'fp_geometry') (dual), not both"
                 )
-            # Use dual geometries
+            # Issue #1765: dual geometry is accepted here and then ignored. This branch builds
+            # `self.geometry_projector`, but NOTHING on the solver side reads it --
+            # `grep -rn "geometry_projector" mfgarchon/` returns hits only inside this file, and
+            # nothing under `mfgarchon/alg/` mentions `hjb_geometry` or `fp_geometry`. Below,
+            # `_init_geometry(final_hjb_geometry, ...)` sets `self.geometry`, which is the single
+            # attribute every solver reads, so the FP solver silently runs on the HJB grid.
+            #
+            # Measured: a 41-point HJB grid with an 11-point FP grid returned `M.shape == (11, 41)`
+            # and the FP CFL log reported the HJB grid's `dx=0.025`. No error, no warning, and
+            # every downstream number -- mass, convergence rate, timings -- computed on a grid the
+            # caller did not choose.
+            #
+            # Refusing is the honest state until the projector is wired: had the parameter simply
+            # not existed, this call would have raised `TypeError`. `GeometryProjector` itself
+            # works and stays usable directly; it is the MFGProblem plumbing that is missing.
+            if not _same_geometry(hjb_geometry, fp_geometry):
+                raise NotImplementedError(
+                    "MFGProblem(hjb_geometry=..., fp_geometry=...) with DIFFERENT geometries is "
+                    "not implemented (Issue #1765). The geometries are accepted and a "
+                    "GeometryProjector is built, but no solver reads it -- the FP solve would run "
+                    "on the HJB grid and return a result that looks like what you asked for. "
+                    "Pass a single `geometry=` until the projector is wired, or use "
+                    "GeometryProjector directly if you are doing the projection yourself."
+                )
+
+            # Identical geometries are equivalent to the unified path and are allowed through.
             final_hjb_geometry = hjb_geometry
             final_fp_geometry = fp_geometry
-            # Create projector for mapping between geometries
             from mfgarchon.geometry import GeometryProjector
 
             self.geometry_projector = GeometryProjector(
