@@ -7,10 +7,11 @@ problems to solve (mathematical definitions - those are MFGProblem instances).
 
 Quick Start
 -----------
->>> from mfgarchon.config import SolverConfig, HJBConfig, FPConfig
+>>> from mfgarchon.config import FPConfig, HJBConfig, ParticleConfig, PicardConfig, SolverConfig
 >>> config = SolverConfig(
 ...     hjb=HJBConfig(method="fdm", accuracy_order=2),
-...     fp=FPConfig(method="particle", num_particles=5000),
+...     fp=FPConfig(method="particle", particle=ParticleConfig(num_particles=5000)),
+...     picard=PicardConfig(max_iterations=100, tolerance=1e-8),
 ... )
 
 >>> # Or load from YAML

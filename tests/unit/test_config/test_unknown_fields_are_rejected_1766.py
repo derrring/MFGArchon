@@ -73,3 +73,60 @@ def test_a_nested_typo_still_fails_through_the_bridge():
     cfg = omegaconf.OmegaConf.create({"picard": {"toleranse": 1e-6}})
     with pytest.raises(ValidationError, match=r"[Ee]xtra inputs"):
         bridge_to_pydantic(cfg, MFGSolverConfig)
+
+
+def test_the_config_packages_own_examples_construct():
+    """Every self-contained `>>>` example in `mfgarchon.config` must run.
+
+    `extra="forbid"` converts a misplaced key from silently-dropped to a hard raise, which turns
+    every stale docstring example in this package from misleading-but-running into crashing. Four
+    sites taught `FPConfig(method="particle", num_particles=5000)` -- `num_particles` lives under
+    `fp.particle` -- and each was found one at a time, by a human reading, because nothing checks
+    Python docstrings: `scripts/check_doc_api.py` globs `*.md`, and `pytest.ini` sets no
+    `--doctest-modules`.
+
+    Executes rather than parses. Blocks that touch the filesystem are skipped by their imports,
+    not by matching on prose, so a block cannot opt itself out by rewording.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+    import re
+
+    import mfgarchon.config as config_pkg
+
+    filesystem_names = ("from_yaml", "load_solver_config", "save_effective_config", "load_effective_config")
+    failures = []
+    executed = 0
+
+    modules = [config_pkg]
+    for info in pkgutil.walk_packages(config_pkg.__path__, prefix="mfgarchon.config."):
+        try:
+            modules.append(importlib.import_module(info.name))
+        except Exception:
+            continue
+
+    for module in modules:
+        for holder in [module, *(o for _, o in inspect.getmembers(module, inspect.isclass))]:
+            doc = inspect.getdoc(holder) or ""
+            # One namespace per docstring, as doctest does: a later block legitimately builds on
+            # an import from an earlier one, and executing blocks in isolation would report that
+            # as a NameError the reader never sees.
+            namespace: dict = {}
+            for block in re.findall(r"((?:^|\n)>>> .*?)(?=\n\s*\n|\Z)", doc, re.S):
+                lines = []
+                for line in block.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith((">>> ", "... ")):
+                        lines.append(stripped[4:])
+                code = "\n".join(lines).strip()
+                if not code or any(name in code for name in filesystem_names):
+                    continue
+                executed += 1
+                try:
+                    exec(compile(code, f"<{getattr(holder, '__name__', holder)}>", "exec"), namespace)
+                except Exception as exc:
+                    failures.append(f"{getattr(holder, '__name__', holder)}: {type(exc).__name__}: {exc}")
+
+    assert executed >= 3, f"only {executed} example blocks found; the scan is probably not seeing docstrings"
+    assert not failures, "config docstring examples that do not run:\n  " + "\n  ".join(failures)

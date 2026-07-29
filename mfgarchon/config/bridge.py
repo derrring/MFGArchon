@@ -143,7 +143,7 @@ def save_effective_config(
 
     Examples
     --------
-    >>> from mfgarchon.config import MFGSolverConfig
+    >>> from mfgarchon.config import MFGSolverConfig, PicardConfig
     >>> from mfgarchon.config.bridge import save_effective_config
     >>>
     >>> config = MFGSolverConfig(picard=PicardConfig(tolerance=1e-8, max_iterations=200))

@@ -2,7 +2,7 @@ Configuration models reject unknown fields instead of dropping them (#1766). Pyd
 extras by default, so `PicardConfig(anderson_acceleration=True)` constructed cleanly, discarded
 the field, and left `anderson_memory` at 0 — Anderson off while the caller had just asked for it.
 `BaseConfig` was a bare alias for Pydantic's `BaseModel`, exported but inherited by nothing; it is
-now a real base owning `extra="forbid"`, and the 24 config models inherit it. Deprecated aliases
+now a real base owning `extra="forbid"`, and the 23 config models inherit it. Deprecated aliases
 are unaffected: they are translated by a `mode="before"` validator before the check runs, and the
 alias map is a class attribute (`PicardConfig.LEGACY_FIELD_ALIASES`) rather than a local inside
 that validator, so the bridge can honour it too. The OmegaConf bridge drops top-level keys with no

@@ -231,6 +231,10 @@ class MFGSolverConfig(BaseConfig):
 
     Examples
     --------
+    >>> from mfgarchon.config import (
+    ...     FPConfig, HJBConfig, MFGSolverConfig, ParticleConfig, PicardConfig,
+    ... )
+
     >>> # From YAML file
     >>> config = MFGSolverConfig.from_yaml("config.yaml")
 
@@ -241,15 +245,6 @@ class MFGSolverConfig(BaseConfig):
     ...     picard=PicardConfig(max_iterations=50, tolerance=1e-6)
     ... )
 
-    >>> # With builder
-    >>> from mfgarchon.config import ConfigBuilder
-    >>> config = (
-    ...     ConfigBuilder()
-    ...     .solver_hjb(method="fdm", accuracy_order=2)
-    ...     .solver_fp(method="particle", num_particles=5000)
-    ...     .picard(max_iterations=50)
-    ...     .build()
-    ... )
     """
 
     hjb: HJBConfig = Field(default_factory=lambda: HJBConfig())
