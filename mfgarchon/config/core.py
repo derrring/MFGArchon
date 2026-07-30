@@ -13,20 +13,41 @@ Key Principle
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-# Type alias for solver configuration base class
-# All solver configs inherit from Pydantic BaseModel
-BaseConfig = BaseModel
+class BaseConfig(BaseModel):
+    """Base for every configuration model in this package.
+
+    Issue #1766. This was `BaseConfig = BaseModel`, a bare alias exported in `__all__` that
+    nothing inherited and that carried no policy -- a name promising a config base and
+    delivering Pydantic's.
+
+    It exists now to own one thing: **unknown fields are an error**. Pydantic ignores extras by
+    default, so `PicardConfig(anderson_acceleration=True)` constructed cleanly, dropped the
+    field, and left `anderson_memory` at 0 -- Anderson off while the caller had just asked for
+    it, with nothing raised. The API v1.0 design note taught exactly that call. A misspelled or
+    obsolete field in any config was accepted and discarded.
+
+    This is the fail-fast rule the package already applies to dead solver knobs (#1426 raises on
+    `FPNetworkSolver(max_iterations=...)` rather than ignoring it); the config layer was the one
+    place still accepting them silently.
+
+    Deprecated aliases are unaffected: they are translated by `model_validator(mode="before")`
+    hooks that `pop` the legacy key before validation runs, so `extra="forbid"` never sees it.
+    Verified against `PicardConfig(damping_factor=0.7)`, which still warns and still sets
+    `relaxation=0.7`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(BaseConfig):
     """
     Configuration for logging and progress reporting.
 
@@ -55,7 +76,7 @@ class LoggingConfig(BaseModel):
         return self
 
 
-class BackendConfig(BaseModel):
+class BackendConfig(BaseConfig):
     """
     Configuration for computational backend.
 
@@ -81,7 +102,7 @@ class BackendConfig(BaseModel):
         return self
 
 
-class PicardConfig(BaseModel):
+class PicardConfig(BaseConfig):
     """
     Configuration for Picard (fixed-point) iteration with under-relaxation.
 
@@ -134,6 +155,18 @@ class PicardConfig(BaseModel):
     anderson_memory: int = Field(default=0, ge=0)
     verbose: bool = True
 
+    #: Legacy field names accepted with a DeprecationWarning (v0.19.1), mapped to the canonical
+    #: name. Read by `_translate_legacy_damping_names` below AND by `config.bridge`, which must
+    #: not filter these out before the validator can translate them (Issue #1766 follow-up): the
+    #: bridge filters on `model_fields`, and an alias is by definition not a field. One owner.
+    LEGACY_FIELD_ALIASES: ClassVar[dict[str, str]] = {
+        "damping_factor": "relaxation",
+        "damping_factor_M": "relaxation_M",
+        "damping_schedule": "relaxation_schedule",
+        "damping_schedule_M": "relaxation_schedule_M",
+        "adaptive_damping": "adaptive_relaxation",
+    }
+
     @model_validator(mode="before")
     @classmethod
     def _translate_legacy_damping_names(cls, values: Any) -> Any:
@@ -148,14 +181,7 @@ class PicardConfig(BaseModel):
         if not isinstance(values, dict):
             return values
         data = dict(values)
-        legacy_map = {
-            "damping_factor": "relaxation",
-            "damping_factor_M": "relaxation_M",
-            "damping_schedule": "relaxation_schedule",
-            "damping_schedule_M": "relaxation_schedule_M",
-            "adaptive_damping": "adaptive_relaxation",
-        }
-        for legacy, canonical in legacy_map.items():
+        for legacy, canonical in cls.LEGACY_FIELD_ALIASES.items():
             if legacy in data:
                 if canonical in data:
                     raise ValueError(
@@ -180,7 +206,7 @@ class PicardConfig(BaseModel):
         return self
 
 
-class MFGSolverConfig(BaseModel):
+class MFGSolverConfig(BaseConfig):
     """
     Unified MFG solver configuration.
 
@@ -205,25 +231,20 @@ class MFGSolverConfig(BaseModel):
 
     Examples
     --------
+    >>> from mfgarchon.config import (
+    ...     FPConfig, HJBConfig, MFGSolverConfig, ParticleConfig, PicardConfig,
+    ... )
+
     >>> # From YAML file
     >>> config = MFGSolverConfig.from_yaml("config.yaml")
 
     >>> # Programmatically
     >>> config = MFGSolverConfig(
     ...     hjb=HJBConfig(method="fdm", accuracy_order=2),
-    ...     fp=FPConfig(method="particle", num_particles=5000),
+    ...     fp=FPConfig(method="particle", particle=ParticleConfig(num_particles=5000)),
     ...     picard=PicardConfig(max_iterations=50, tolerance=1e-6)
     ... )
 
-    >>> # With builder
-    >>> from mfgarchon.config import ConfigBuilder
-    >>> config = (
-    ...     ConfigBuilder()
-    ...     .solver_hjb(method="fdm", accuracy_order=2)
-    ...     .solver_fp(method="particle", num_particles=5000)
-    ...     .picard(max_iterations=50)
-    ...     .build()
-    ... )
     """
 
     hjb: HJBConfig = Field(default_factory=lambda: HJBConfig())

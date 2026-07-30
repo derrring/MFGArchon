@@ -17,14 +17,16 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
+
+from mfgarchon.config.core import BaseConfig
 
 # =============================================================================
 # ITERATION METHODS
 # =============================================================================
 
 
-class NewtonConfig(BaseModel):
+class NewtonConfig(BaseConfig):
     """
     Newton iteration configuration for nonlinear solvers.
 
@@ -48,7 +50,7 @@ class NewtonConfig(BaseModel):
 # =============================================================================
 
 
-class FDMConfig(BaseModel):
+class FDMConfig(BaseConfig):
     """
     Finite Difference Method configuration.
 
@@ -69,7 +71,7 @@ class FDMConfig(BaseModel):
 # =============================================================================
 
 
-class FEMConfig(BaseModel):
+class FEMConfig(BaseConfig):
     """
     Finite Element Method configuration.
 
@@ -112,7 +114,7 @@ class FEMConfig(BaseModel):
 # =============================================================================
 
 
-class QPConfig(BaseModel):
+class QPConfig(BaseConfig):
     """
     QP monotonicity enforcement configuration for GFDM.
 
@@ -139,7 +141,7 @@ class QPConfig(BaseModel):
     constraint_mode: Literal["indirect", "hamiltonian"] = "indirect"
 
 
-class NeighborhoodConfig(BaseModel):
+class NeighborhoodConfig(BaseConfig):
     """
     Neighborhood construction configuration for GFDM.
 
@@ -167,7 +169,7 @@ class NeighborhoodConfig(BaseModel):
     max_delta_multiplier: float = Field(default=5.0, gt=1.0)
 
 
-class DerivativeConfig(BaseModel):
+class DerivativeConfig(BaseConfig):
     """
     Derivative approximation method configuration for GFDM.
 
@@ -186,7 +188,7 @@ class DerivativeConfig(BaseModel):
     rbf_poly_degree: int = Field(default=2, ge=0)
 
 
-class BoundaryAccuracyConfig(BaseModel):
+class BoundaryAccuracyConfig(BaseConfig):
     """
     Boundary accuracy techniques for GFDM (Issue #531).
 
@@ -213,7 +215,7 @@ class BoundaryAccuracyConfig(BaseModel):
         return self
 
 
-class GFDMConfig(BaseModel):
+class GFDMConfig(BaseConfig):
     """
     Generalized Finite Difference Method (meshfree) configuration.
 
@@ -260,7 +262,7 @@ class GFDMConfig(BaseModel):
 # =============================================================================
 
 
-class SLConfig(BaseModel):
+class SLConfig(BaseConfig):
     """
     Semi-Lagrangian method configuration.
 
@@ -287,7 +289,7 @@ class SLConfig(BaseModel):
 # =============================================================================
 
 
-class WENOConfig(BaseModel):
+class WENOConfig(BaseConfig):
     """
     WENO (Weighted Essentially Non-Oscillatory) scheme configuration.
 
@@ -314,7 +316,7 @@ class WENOConfig(BaseModel):
 # =============================================================================
 
 
-class ParticleConfig(BaseModel):
+class ParticleConfig(BaseConfig):
     """
     Particle-based method configuration.
 
@@ -345,7 +347,7 @@ class ParticleConfig(BaseModel):
     mode: Literal["hybrid", "collocation"] = "hybrid"
     external_particles: Any = Field(default=None, exclude=True)
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
     def validate_collocation_mode(self) -> ParticleConfig:
@@ -376,7 +378,7 @@ class ParticleConfig(BaseModel):
 # =============================================================================
 
 
-class NetworkConfig(BaseModel):
+class NetworkConfig(BaseConfig):
     """
     Network/graph-based method configuration.
 
@@ -396,7 +398,7 @@ class NetworkConfig(BaseModel):
 # =============================================================================
 
 
-class HJBConfig(BaseModel):
+class HJBConfig(BaseConfig):
     """
     HJB solver configuration (composite).
 
@@ -452,7 +454,7 @@ class HJBConfig(BaseModel):
         return self
 
 
-class FPConfig(BaseModel):
+class FPConfig(BaseConfig):
     """
     FP solver configuration (composite).
 

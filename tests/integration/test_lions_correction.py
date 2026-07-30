@@ -17,7 +17,7 @@ from mfgarchon.alg.numerical.coupling.lions_correction import (
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.config import MFGSolverConfig
+from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -265,7 +265,7 @@ class TestLionsCorrectionEndToEnd:
         hjb1, fp1 = HJBFDMSolver(problem_plain), FPFDMSolver(problem_plain)
         hjb2, fp2 = HJBFDMSolver(problem_lions), FPFDMSolver(problem_lions)
 
-        config = MFGSolverConfig(max_iterations=5)
+        config = MFGSolverConfig(picard=PicardConfig(max_iterations=5))
         iter1 = FixedPointIterator(problem_plain, hjb1, fp1, config=config)
         iter2 = FixedPointIterator(problem_lions, hjb2, fp2, config=config)
 
@@ -290,7 +290,7 @@ class TestLionsCorrectionEndToEnd:
 
         problem = _make_problem(Nx=Nx, source_term_hjb=source)
         hjb, fp = HJBFDMSolver(problem), FPFDMSolver(problem)
-        config = MFGSolverConfig(max_iterations=5)
+        config = MFGSolverConfig(picard=PicardConfig(max_iterations=5))
         iterator = FixedPointIterator(problem, hjb, fp, config=config)
 
         result = iterator.solve()

@@ -10,7 +10,7 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 import numpy as np
 
@@ -22,13 +22,14 @@ import numpy as np
 # See Issue #1010 (B5).
 from numpy.typing import NDArray  # noqa: TC002  (pydantic 2.12.5 needs runtime resolution)
 
+from mfgarchon.config.core import BaseConfig
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
 
 logger = get_logger(__name__)
 
 
-class ArrayValidationConfig(BaseModel):
+class ArrayValidationConfig(BaseConfig):
     """Configuration for array validation tolerances and checks."""
 
     mass_conservation_rtol: float = Field(1e-3, gt=0.0, description="Relative tolerance for mass conservation")
@@ -38,7 +39,7 @@ class ArrayValidationConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
-class MFGGridConfig(BaseModel):
+class MFGGridConfig(BaseConfig):
     """
     MFG grid configuration with automatic validation.
 
@@ -112,7 +113,7 @@ class MFGGridConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
-class MFGArrays(BaseModel):
+class MFGArrays(BaseConfig):
     """
     MFG solution arrays with comprehensive shape and property validation.
 
@@ -384,10 +385,10 @@ class MFGArrays(BaseModel):
 
         return stats
 
-    model_config = {"arbitrary_types_allowed": True, "validate_assignment": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
 
-class CollocationConfig(BaseModel):
+class CollocationConfig(BaseConfig):
     """
     Collocation points configuration with advanced validation.
 
@@ -454,10 +455,10 @@ class CollocationConfig(BaseModel):
 
         return self
 
-    model_config = {"arbitrary_types_allowed": True, "validate_assignment": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
 
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(BaseConfig):
     """
     Complete experiment configuration with array validation.
 
