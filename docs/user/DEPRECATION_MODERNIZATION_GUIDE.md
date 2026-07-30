@@ -19,14 +19,36 @@ python -W error::DeprecationWarning -c 'import mfgarchon; ...'
 
 ---
 
+## Do not migrate these across solvers
+
+The identifiers below are **deprecated in one place and the recommended replacement in another**. That is not a mistake in this guide: the same word names different quantities on different solvers, and each row is correct for the API it names.
+
+It does mean a migration you read on one row **does not transfer** to another solver. Both parameters usually exist on both solvers, so applying the wrong one is accepted silently and changes the answer rather than raising. Check the target solver's `solve_*` docstring for what the parameter means there before renaming anything.
+
+### `drift_field`
+
+| in this API | `drift_field` is | migration on that row |
+|---|---|---|
+| `FPFDMSolver.solve_fp_system()` | the destination | `velocity_field` -> `drift_field` |
+| `FPFEMSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `FPNetworkSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `FPSLAdjointSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `FPSLJacobianSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `FPSLSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `MeshlessGalerkinFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `NetworkFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+| `WeakFormFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+
+---
+
 ## Deprecated since v0.21.0
 
 *2 items*
 
 ### Parameters
 
-- **`drift_field`** in `FPNetworkSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
-- **`drift_field`** in `NetworkFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
+- **`drift_field`** in `FPNetworkSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `NetworkFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 
 ---
 
@@ -50,9 +72,9 @@ python -W error::DeprecationWarning -c 'import mfgarchon; ...'
 
 ### Parameters
 
-- **`drift_field`** in `FPFEMSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
-- **`drift_field`** in `MeshlessGalerkinFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
-- **`drift_field`** in `WeakFormFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
+- **`drift_field`** in `FPFEMSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `MeshlessGalerkinFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `WeakFormFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 
 ---
 
@@ -100,10 +122,10 @@ python -W error::DeprecationWarning -c 'import mfgarchon; ...'
 
 ### Parameters
 
-- **`velocity_field`** in `FPFDMSolver.solve_fp_system()` — use `drift_field` instead (remove by v0.25.0)
-- **`drift_field`** in `FPSLAdjointSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
-- **`drift_field`** in `FPSLJacobianSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
-- **`drift_field`** in `FPSLSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0)
+- **`velocity_field`** in `FPFDMSolver.solve_fp_system()` — use `drift_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `FPSLAdjointSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `FPSLJacobianSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
+- **`drift_field`** in `FPSLSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 
 ---
 

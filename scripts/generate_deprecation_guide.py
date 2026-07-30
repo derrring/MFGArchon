@@ -59,12 +59,107 @@ def deduplicate(items: list[dict]) -> list[dict]:
     return unique
 
 
-def format_item(item: dict) -> str:
+def _short_name(item: dict) -> str:
+    """The bare identifier a user types, without the owning class/method path."""
+    return item.get("name", "").split(".")[-1]
+
+
+def find_name_collisions(items: list[dict]) -> dict[str, dict[str, list[str]]]:
+    """Identifiers that are deprecated in one place and the recommended replacement in another.
+
+    A guide that lists both without saying so tells a reader to migrate TO a name on one line and
+    AWAY from it on the next, with nothing marking the two as different quantities. The reader's
+    reasonable conclusion -- that the name is being phased out everywhere -- is the wrong one, and
+    the API accepts the wrong migration without a warning because both parameters exist.
+
+    Measured instance, the one that motivated this (Issue #1043 / #1044): `drift_field` is the
+    replacement for `velocity_field` on `FPFDMSolver`, where it means the optimal control a*, and
+    is simultaneously deprecated in favour of `potential_field` on seven solvers, where it means
+    the value function U. A correct FDM caller who follows the seven rows migrates
+    `drift_field=alpha` to `potential_field=alpha`; the solver then computes -c*grad(alpha), which
+    for a constant control is zero, so the advection vanishes silently. On a 21-point 1D problem
+    with alpha = 1.0 the density centroid moves 0.3 -> 0.5055 correctly and 0.3 -> 0.3151 after
+    the migration: a 37.7% error, no exception, no warning.
+
+    Returns ``{name: {"deprecated_in": [...], "replaces": [...]}}``, each entry carrying the owning
+    ``method`` and the ``other`` name on that side, so a reader can act on one row without
+    reconstructing the pairing. Empty when the guide is unambiguous, which is the state to aim for
+    -- a collision is a legitimate transient, not a permanent design, and this surfaces it rather
+    than deciding it.
+    """
+    collisions: dict[str, dict[str, list[dict]]] = {}
+    replaced_names = {i.get("replacement", "") for i in items}
+    for name in {_short_name(i) for i in items if _short_name(i)}:
+        if name not in replaced_names:
+            continue
+        collisions[name] = {
+            # Where this name is itself on the way out, and what it points at.
+            "deprecated_in": sorted(
+                (
+                    {"method": i.get("name", "").rsplit(".", 1)[0], "other": i.get("replacement", "")}
+                    for i in items
+                    if _short_name(i) == name
+                ),
+                key=lambda d: d["method"],
+            ),
+            # Where this name is the destination, and which name it replaces there.
+            "replaces": sorted(
+                (
+                    {"method": i.get("name", "").rsplit(".", 1)[0], "other": _short_name(i)}
+                    for i in items
+                    if i.get("replacement", "") == name
+                ),
+                key=lambda d: d["method"],
+            ),
+        }
+    return collisions
+
+
+def format_collisions(collisions: dict[str, dict[str, list[dict]]]) -> list[str]:
+    """The warning section. Placed before the version listings, not after."""
+    if not collisions:
+        return []
+    lines = [
+        "## Do not migrate these across solvers",
+        "",
+        "The identifiers below are **deprecated in one place and the recommended replacement in "
+        "another**. That is not a mistake in this guide: the same word names different quantities "
+        "on different solvers, and each row is correct for the API it names.",
+        "",
+        "It does mean a migration you read on one row **does not transfer** to another solver. "
+        "Both parameters usually exist on both solvers, so applying the wrong one is accepted "
+        "silently and changes the answer rather than raising. Check the target solver's `solve_*` "
+        "docstring for what the parameter means there before renaming anything.",
+        "",
+    ]
+    for name, sides in sorted(collisions.items()):
+        lines.append(f"### `{name}`")
+        lines.append("")
+        lines.append("| in this API | `" + name + "` is | migration on that row |")
+        lines.append("|---|---|---|")
+        for row in sides["replaces"]:
+            lines.append(f"| `{row['method']}()` | the destination | `{row['other']}` -> `{name}` |")
+        for row in sides["deprecated_in"]:
+            lines.append(f"| `{row['method']}()` | itself deprecated | `{name}` -> `{row['other']}` |")
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+    return lines
+
+
+def format_item(item: dict, collisions: dict[str, dict] | None = None) -> str:
     """Format a single deprecation item as markdown."""
     name = item.get("name", "unknown")
     replacement = item.get("replacement", "N/A")
     removal = item.get("removal", "v1.0.0")
     item_type = item.get("type", "unknown")
+    # A reader scanning one row must see the ambiguity without reading the whole guide.
+    flag = ""
+    if collisions:
+        hit = {_short_name(item), replacement} & set(collisions)
+        if hit:
+            flag = " [see *Do not migrate these across solvers*: "
+            flag += ", ".join(f"`{h}`" for h in sorted(hit)) + "]"
 
     if item_type == "parameter":
         # "ClassName.method.param_name" -> extract parts
@@ -72,22 +167,23 @@ def format_item(item: dict) -> str:
         if len(parts) >= 2:
             func_name = ".".join(parts[:-1])
             param = parts[-1]
-            return f"- **`{param}`** in `{func_name}()` — use `{replacement}` instead (remove by {removal})"
-        return f"- **`{name}`** — use `{replacement}` instead (remove by {removal})"
+            return f"- **`{param}`** in `{func_name}()` — use `{replacement}` instead (remove by {removal}){flag}"
+        return f"- **`{name}`** — use `{replacement}` instead (remove by {removal}){flag}"
     elif item_type == "function":
-        return f"- **`{name}()`** — use `{replacement}` instead (remove by {removal})"
+        return f"- **`{name}()`** — use `{replacement}` instead (remove by {removal}){flag}"
     elif item_type == "property":
-        return f"- **`{name}`** (property) — use `{replacement}` instead (remove by {removal})"
+        return f"- **`{name}`** (property) — use `{replacement}` instead (remove by {removal}){flag}"
     elif item_type == "alias":
-        return f"- **`{name}`** (import alias) — use `{replacement}` instead (remove by {removal})"
+        return f"- **`{name}`** (import alias) — use `{replacement}` instead (remove by {removal}){flag}"
     else:
-        return f"- **`{name}`** ({item_type}) — use `{replacement}` instead (remove by {removal})"
+        return f"- **`{name}`** ({item_type}) — use `{replacement}` instead (remove by {removal}){flag}"
 
 
 def generate_guide(items: list[dict]) -> str:
     """Generate the full markdown guide."""
     items = deduplicate(items)
     groups = group_by_version(items)
+    collisions = find_name_collisions(items)
 
     lines = [
         "# Deprecation Modernization Guide",
@@ -112,6 +208,8 @@ def generate_guide(items: list[dict]) -> str:
         "---",
         "",
     ]
+
+    lines.extend(format_collisions(collisions))
 
     for version, version_items in groups.items():
         # Sub-group by type
@@ -138,7 +236,7 @@ def generate_guide(items: list[dict]) -> str:
                 lines.append(f"### {type_labels.get(t, t.title())}")
                 lines.append("")
                 for item in type_items:
-                    lines.append(format_item(item))
+                    lines.append(format_item(item, collisions))
                 lines.append("")
 
         # Any remaining types
@@ -148,7 +246,7 @@ def generate_guide(items: list[dict]) -> str:
                 lines.append(f"### {t.title()}")
                 lines.append("")
                 for item in type_items:
-                    lines.append(format_item(item))
+                    lines.append(format_item(item, collisions))
                 lines.append("")
 
         lines.append("---")
