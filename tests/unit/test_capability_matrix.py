@@ -525,38 +525,46 @@ def test_summarise_never_raises_on_any_shape(cm):
 def test_a_note_is_dropped_when_the_failure_itself_changes(cm, monkeypatch, tmp_path, capsys):
     """Carry-forward must not preserve an annotation across a different failure.
 
-    Requiring only "status is still non-PASS" let a note survive an arbitrary change of failure:
-    swap the exception for an unrelated one and the note is preserved verbatim while the run still
-    reports "0 unexplained". Because the note is an unchanged line, it does not appear in the
-    reviewer's diff at all -- only the artifact does. That is how an annotation outlives the
-    evidence it cites, which is what happened to this file's own #1745 note.
+    The fixture below is the ORIGINAL defect, not a synthetic stand-in: the #1745 note cited
+    residual 2.42e-01 beside an artifact that had since become 1.17e-05. The first version of
+    this gate compared only `artifact["exception"]`, and both sides of that case are
+    ConvergenceError -- so it carried the stale note forward and the run still reported zero
+    unexplained cells. A guard checked against a case invented from the description of a defect
+    will miss the defect; it has to be checked against the instance.
     """
     baseline = tmp_path / "baseline.json"
     baseline.write_text(
         json.dumps(
             {
                 "cells": {
-                    "x/y": {
+                    "fdm_centered_2d/mass_conservation": {
                         "status": "UNSUPPORTED",
-                        "artifact": {"exception": "ValueError", "message": "mass gate refused"},
-                        "intended": "INTENDED - the guard is doing its job",
+                        "artifact": {
+                            "exception": "ConvergenceError",
+                            "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)",
+                        },
+                        "intended": "DEFECT - identical residual 2.42e-01, so it is DIVERGING.",
                     }
                 }
             }
         )
     )
 
-    def different_failure():
-        raise RuntimeError("LU factorisation is singular")
+    class ConvergenceError(RuntimeError):
+        """Same TYPE as the baseline artifact records. That is the whole point of the case:
+        exception-type comparison cannot tell these two failures apart."""
 
-    monkeypatch.setattr(cm, "CELLS", {"x/y": different_failure})
+    def same_exception_different_residual():
+        raise ConvergenceError("newton solver failed to converge after 30 iterations (residual: 1.17e-05)")
+
+    monkeypatch.setattr(cm, "CELLS", {"fdm_centered_2d/mass_conservation": same_exception_different_residual})
     _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
 
-    rewritten = json.loads(baseline.read_text())["cells"]["x/y"]
-    assert rewritten["artifact"]["exception"] == "RuntimeError", "the artifact must be refreshed"
+    rewritten = json.loads(baseline.read_text())["cells"]["fdm_centered_2d/mass_conservation"]
+    assert "1.17e-05" in rewritten["artifact"]["message"], "the artifact must be refreshed"
     assert "intended" not in rewritten, (
-        "the note described a ValueError from the mass gate and must not be carried onto an "
-        "unrelated RuntimeError -- the cell has to read as unexplained so someone looks at it"
+        "the note said 2.42e-01 and DIVERGING; the cell now records 1.17e-05. Same exception "
+        "type, different failure -- the note must be dropped so the cell reads as unexplained"
     )
 
 

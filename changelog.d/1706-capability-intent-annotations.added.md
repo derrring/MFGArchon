@@ -1,8 +1,10 @@
 - **A non-PASS capability cell now says whether it is intended.** `scripts/capability_baseline.json`
   carries an `intended` note on each non-PASS cell; cells without one are unexplained and are the
   actual backlog, which `--check-baseline` now reports. Three defects found in review are fixed
-  with it: the `#1745` note cited residual `2.42e-01` as if the number were still current and described it as a step norm; it was a real residual, from a full-step Newton diverging geometrically, which `#1763` fixed by defaulting `line_search=True`.17e-05`, 11.7x the `1e-6` tolerance, so the
-  cell is not diverging and the diagnosis is the convergence rate, not a broken Jacobian;
+  with it: the `#1745` note cited residual `2.42e-01` as if it were current. That number was a
+  real residual -- a full-step Newton diverging geometrically, which `#1763` fixed by defaulting
+  `line_search=True` -- but the cell now records `1.17e-05`, 11.7x the `1e-6` tolerance, so it is
+  not diverging and the diagnosis is the convergence rate rather than a broken Jacobian;
   `regime_switching/non_negativity` was labelled INTENDED while `#1681` is open and labelled
   `type: bug`, which dropped an open bug out of the very backlog metric this change introduces;
   and the written `_comment` told readers to "See `--explain`", a flag that does not exist.

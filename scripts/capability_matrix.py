@@ -755,9 +755,11 @@ def _note_still_applies(prior_cell: dict | None, current: dict) -> bool:
     """
     if prior_cell is None or "intended" not in prior_cell or current["status"] == "PASS":
         return False
-    prior_exc = (prior_cell.get("artifact") or {}).get("exception")
-    current_exc = (current.get("artifact") or {}).get("exception")
-    return prior_exc == current_exc
+    # The WHOLE artifact, not just the exception type. Comparing types alone was blind to the
+    # case this gate was written for: the #1745 note cited residual 2.42e-01 beside an artifact
+    # that had become 1.17e-05, and both sides are ConvergenceError -- so the stale note carried
+    # forward and the run still reported zero unexplained cells.
+    return (prior_cell.get("artifact") or {}) == (current.get("artifact") or {})
 
 
 def main() -> None:
@@ -863,7 +865,8 @@ def main() -> None:
             sys.exit(1)
         with open(args.write_baseline, "w") as fh:
             fh.write(body + "\n")
-        print(f"\nBaseline written to {args.write_baseline}")
+        # stderr under --json so the two flags together still emit parseable output.
+        print(f"\nBaseline written to {args.write_baseline}", file=sys.stderr if args.json else sys.stdout)
         sys.exit(0)
 
     if args.check_baseline:
@@ -893,7 +896,8 @@ def main() -> None:
         non_pass = sum(1 for i in baseline.values() if i["status"] != "PASS")
         print(
             f"\nCapability matches baseline ({len(baseline)} cells; "
-            f"{non_pass - explained} of {non_pass} non-PASS cells unexplained)."
+            f"{non_pass - explained} of {non_pass} non-PASS cells unexplained).",
+            file=sys.stderr if args.json else sys.stdout,
         )
         sys.exit(0)
 
