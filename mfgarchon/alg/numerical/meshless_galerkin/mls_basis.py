@@ -1,6 +1,7 @@
 """
 Dimension-agnostic Moving Least Squares (MLS) shape functions with full
-derivatives. Two interchangeable derivative backends:
+derivatives and evaluation-centered shifted/scaled moments. Two interchangeable
+derivative backends:
 
 - ``"numpy"`` (default): analytic derivatives, core dependencies only.
 - ``"jax"`` (optional): autodiff through the moment matrix; requires jax.
@@ -73,7 +74,10 @@ def shape_functions_and_grads_numpy(
 ) -> tuple[NDArray, NDArray]:
     r"""MLS shape functions and full gradients via analytic differentiation.
 
-    phi_j(x) = omega_j(x) p(x)^T M(x)^{-1} p(x_j),  M(x) = sum_l omega_l p_l p_l^T.
+    At each evaluation point, the polynomial basis is frozen at that point and
+    scaled by ``rho``. This is an invertible basis change, so it preserves the
+    exact-arithmetic MLS shape functions and derivatives while making the moment
+    condition number translation- and scale-independent.
 
     Using gamma = M^{-1} p, s_j = (P gamma)_j, the full gradient is
         d_c phi_j = (d_c omega_j) s_j + omega_j (P (beta_c - w_c))_j,
@@ -85,54 +89,60 @@ def shape_functions_and_grads_numpy(
     x_eval = np.asarray(x_eval, dtype=np.float64)
     nodes = np.asarray(nodes, dtype=np.float64)
     Q, d = x_eval.shape
+    N = len(nodes)
+    m = len(exponents)
+    if Q == 0:
+        return np.empty((0, N)), np.empty((0, N, d))
 
-    diffs = x_eval[:, None, :] - nodes[None, :, :]  # (Q,N,d), x - x_l
-    dist = np.linalg.norm(diffs, axis=2)  # (Q,N)
-    r = dist / rho
-    omega = _wendland_c2(r)  # (Q,N)
-    wprime = _wendland_c2_deriv(r)  # (Q,N)
+    origin = np.zeros((1, d), dtype=np.float64)
+    p = _poly_batch(origin, exponents)[0]
+    dp = _poly_grad_batch(origin, exponents)[0] / rho
+    phi = np.empty((Q, N), dtype=np.float64)
+    grad = np.empty((Q, N, d), dtype=np.float64)
+    batch_size = max(1, min(Q, 4_000_000 // max(N * m, 1)))
 
-    P = _poly_batch(nodes, exponents)  # (N,m)
-    p = _poly_batch(x_eval, exponents)  # (Q,m)
-    dp = _poly_grad_batch(x_eval, exponents)  # (Q,m,d)
+    for start in range(0, Q, batch_size):
+        stop = min(start + batch_size, Q)
+        evaluation_batch = x_eval[start:stop]
+        diffs = evaluation_batch[:, None, :] - nodes[None, :, :]
+        dist = np.linalg.norm(diffs, axis=2)
+        r = dist / rho
+        omega = _wendland_c2(r)
+        wprime = _wendland_c2_deriv(r)
 
-    M = np.einsum("qn,ni,nj->qij", omega, P, P)  # (Q,m,m)
-    if check_conditioning:
-        # Issue #1485: on the Gauss-quadrature ASSEMBLY path, a near-singular MLS moment matrix M (too
-        # few nodes inside a quadrature point's support -> rank-deficient) yields garbage shape
-        # functions that np.linalg.solve does NOT flag (near-, not exactly, singular). Fail loud. The
-        # SCNI path does NOT pass check_conditioning: its nodal-smoothed gradients tolerate poor
-        # pointwise conditioning, so it stays exempt (do not move this guard into the shared basis).
-        conds = np.linalg.cond(M)  # (Q,)
-        worst = float(np.max(conds)) if conds.size else 0.0
-        if not np.isfinite(worst) or worst > 1e12:
-            q_bad = int(np.argmax(conds))
-            raise np.linalg.LinAlgError(
-                f"MLS moment matrix is ill-conditioned at quadrature point {q_bad} (cond={worst:.2e} "
-                f"> 1e12): too few nodes cover its support (rho={rho} too small, or a gap / degenerate "
-                f"cloud). The shape functions would be silently garbage. Increase the support radius "
-                f"rho, densify the cloud, or lower the polynomial degree (Issue #1485)."
-            )
-    # numpy>=2.0: a (Q,m,m) with b (Q,m) is read as a single matrix RHS; pass an
-    # explicit (Q,m,1) column stack and squeeze to get batched vector solves.
-    gamma = np.linalg.solve(M, p[..., None])[..., 0]  # (Q,m)
-    s = np.einsum("qm,nm->qn", gamma, P)  # (Q,N)
-    phi = omega * s
+        local_nodes = -diffs / rho
+        P = np.ones((stop - start, N, m), dtype=np.float64)
+        for c in range(d):
+            P *= local_nodes[:, :, c, None] ** exponents[None, None, :, c]
+        M = np.einsum("qn,qni,qnj->qij", omega, P, P)
+        if check_conditioning:
+            conds = np.linalg.cond(M)
+            worst = float(np.max(conds)) if conds.size else 0.0
+            if not np.isfinite(worst) or worst > 1e12:
+                local_bad = int(np.argmax(conds))
+                q_bad = start + local_bad
+                raise np.linalg.LinAlgError(
+                    f"MLS moment matrix is ill-conditioned at quadrature point {q_bad} (cond={worst:.2e} "
+                    f"> 1e12): too few nodes cover its support (rho={rho} too small, or a gap / degenerate "
+                    f"cloud). The shape functions would be silently garbage. Increase the support radius "
+                    f"rho, densify the cloud, or lower the polynomial degree (Issue #1485)."
+                )
 
-    # weight gradient: d omega_l/dx_c = w'(r_l) (x - x_l)_c / (rho * dist_l).
-    # dist_l = 0 only when x hits a node, where w'(0) = 0, so the row is 0;
-    # the safe denominator just avoids 0/0.
-    safe = np.where(dist == 0.0, 1.0, dist)
-    domega = (wprime / (rho * safe))[..., None] * diffs  # (Q,N,d)
+        right_hand_side = np.broadcast_to(p, (stop - start, m))
+        gamma = np.linalg.solve(M, right_hand_side[..., None])[..., 0]
+        s = np.einsum("qnm,qm->qn", P, gamma)
+        phi[start:stop] = omega * s
 
-    grad = np.empty((Q, P.shape[0], d))
-    for c in range(d):
-        dM = np.einsum("qn,ni,nj->qij", domega[:, :, c], P, P)  # (Q,m,m)
-        beta = np.linalg.solve(M, dp[:, :, c][..., None])[..., 0]  # (Q,m)
-        u = np.einsum("qij,qj->qi", dM, gamma)  # (Q,m)
-        w_c = np.linalg.solve(M, u[..., None])[..., 0]  # (Q,m)
-        ds = np.einsum("qm,nm->qn", beta - w_c, P)  # (Q,N)
-        grad[:, :, c] = domega[:, :, c] * s + omega * ds
+        safe = np.where(dist == 0.0, 1.0, dist)
+        domega = (wprime / (rho * safe))[..., None] * diffs
+        for c in range(d):
+            dM = np.einsum("qn,qni,qnj->qij", domega[:, :, c], P, P)
+            derivative_rhs = np.broadcast_to(dp[:, c], (stop - start, m))
+            beta = np.linalg.solve(M, derivative_rhs[..., None])[..., 0]
+            u = np.einsum("qij,qj->qi", dM, gamma)
+            w_c = np.linalg.solve(M, u[..., None])[..., 0]
+            ds = np.einsum("qnm,qm->qn", P, beta - w_c)
+            grad[start:stop, :, c] = domega[:, :, c] * s + omega * ds
     return phi, grad
 
 
@@ -153,15 +163,18 @@ def shape_functions_and_grads_jax(
     jax.config.update("jax_enable_x64", True)
     nodes_j = jnp.asarray(nodes, dtype=jnp.float64)
     exps_j = jnp.asarray(exponents)
-    P = jnp.prod(nodes_j[:, None, :] ** exps_j[None, :, :], axis=2)  # (N,m)
 
     def phi_at(x):  # x (d,) -> (N,)
+        center = jax.lax.stop_gradient(x)
+        local_nodes = (nodes_j - center[None, :]) / rho
+        local_evaluation = (x - center) / rho
+        P = jnp.prod(local_nodes[:, None, :] ** exps_j[None, :, :], axis=2)
         sq = jnp.sum((nodes_j - x[None, :]) ** 2, axis=1)
         is_zero = sq == 0.0
         dist = jnp.where(is_zero, 0.0, jnp.sqrt(jnp.where(is_zero, 1.0, sq)))
         r = dist / rho
         w = jnp.where(r < 1.0, (1.0 - r) ** 4 * (4.0 * r + 1.0), 0.0)
-        p = jnp.prod(x[None, :] ** exps_j, axis=1)  # (m,)
+        p = jnp.prod(local_evaluation[None, :] ** exps_j, axis=1)
         M = jnp.einsum("n,ni,nj->ij", w, P, P)
         return (P @ jnp.linalg.solve(M, p)) * w
 
