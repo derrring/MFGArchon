@@ -112,3 +112,73 @@ class TestDeadOptionFailLoud:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+class TestDeadOptionsAreProvablyDead:
+    """The guards refuse options that are "stored but never read". This proves the "never read".
+
+    Issue #1714: `pytest.raises` on a guard's own message records that the guard fires. For a
+    dead-option guard it cannot record the thing that makes refusing correct — that the parameter
+    genuinely has no effect. "I could not find a reader" and "there is no reader" look identical
+    in a test that only asserts the raise, and the first is what a grep gives you.
+
+    Injecting the option AFTER construction bypasses the guard and lets the claim be measured
+    directly: set it to two wildly different values and compare the solutions. Byte-identical
+    output over a real solve is evidence no grep can produce.
+    """
+
+    def test_fp_gfdm_boundary_indices_and_domain_bounds_change_nothing(self):
+        # A gentler problem than the shared `_problem()` fixture, which at T=1.0 / sigma=0.5 drives
+        # the unstabilised GFDM flux past the mass-fabrication gate (#1752) before the comparison
+        # can run. The point here is byte-identity between two runs, so the configuration only has
+        # to be one the solver completes.
+        comp = MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        )
+        domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+        problem = MFGProblem(geometry=domain, T=0.2, Nt=8, sigma=0.3, components=comp)
+
+        points = _pts(problem)
+        n = points.shape[0]
+        xs = points[:, 0]
+        m_initial = np.exp(-((xs - 0.35) ** 2) / (2 * 0.09**2))
+        m_initial /= m_initial.sum()
+        drift = np.zeros((problem.Nt + 1, n))
+
+        def solve(**injected):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                solver = FPGFDMSolver(problem, collocation_points=points)
+                for name, value in injected.items():
+                    # The solver stores these privately. Setting a public name would create a NEW
+                    # attribute nothing reads, and byte-identity would follow trivially -- the test
+                    # would pass while measuring nothing. Assert the target exists first.
+                    assert hasattr(solver, name), (
+                        f"{name!r} is not an attribute of the constructed solver; injecting it "
+                        f"would prove nothing about whether the option is read"
+                    )
+                    setattr(solver, name, value)
+                return solver.solve_fp_system(m_initial.copy(), drift_field=drift)
+
+        baseline = solve()
+        assert np.all(np.isfinite(baseline)), "the baseline solve must succeed for this to mean anything"
+        assert baseline.std() > 1e-6, "a constant solution would make byte-identity vacuous"
+
+        # Two values as far apart as the parameter admits: nothing marked boundary, everything
+        # marked boundary, and a domain fifty times the real one.
+        assert np.array_equal(solve(_boundary_indices={0, 1}), baseline), (
+            "boundary_indices={0, 1} changed the solution -- it is read somewhere, and the guard's "
+            "claim that it is stored-but-never-read is wrong"
+        )
+        assert np.array_equal(solve(_boundary_indices=set(range(n))), baseline), (
+            "marking every node as a boundary changed the solution; boundary_indices is live"
+        )
+        assert np.array_equal(solve(_domain_bounds=[(-50.0, 50.0)]), baseline), (
+            "a domain 50x the real one changed the solution; domain_bounds is live"
+        )
