@@ -1,8 +1,7 @@
 # [FROZEN 2026-07-30] Continuous MFG Environments User Guide
 
 > ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
-> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". The status line
-> below predates that decision. Treat everything here as illustrative of intent rather than as a
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status, version and readiness marker in this document predates that decision. Treat everything here as illustrative of intent rather than as a
 > supported contract: the behaviour is not pinned, and it may change or be removed without a
 > deprecation cycle.
 

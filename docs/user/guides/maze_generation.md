@@ -1,8 +1,7 @@
 # [FROZEN 2026-07-30] Maze Generation Guide for MFG-RL Research
 
 > ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
-> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status
-> line in this document predates that decision. Treat everything here as illustrative of
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status, version and readiness marker in this document predates that decision. Treat everything here as illustrative of
 > intent rather than as a supported contract: the behaviour is not pinned, and it may change
 > or be removed without a deprecation cycle.
 

@@ -28,3 +28,9 @@
   matching rather than a grep (which counted `mfgarchon.alg.neural_solvers` as a hit); all four are
   marked, and every trailing `**Status**` line in them -- one still read "Production-Ready" 435
   lines under a freeze banner -- now agrees with the header.
+  A third review found the same gap one level up: `--self-test` covers `_references`, the code that
+  turns a source file into a detection, and stops there. The two set differences in `main()` that
+  turn a detection into a failure had no control, and three single-line mutations left
+  `--check-baseline` at exit 0 while `--self-test` printed PASSED -- including one that killed the
+  drop-detection this ratchet is advertised on. `tests/unit/test_check_frozen_areas.py` now pins
+  both directions against a synthetic tree, as `test_check_fail_fast.py` does for its sibling.
