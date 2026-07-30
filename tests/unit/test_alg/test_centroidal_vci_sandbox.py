@@ -91,6 +91,22 @@ def _boundary_complete_stabilized_vc4_case(
     return cloud, sandbox
 
 
+@cache
+def _degree_four_evaluation_matched_common_case(resolution: int, seed: int):
+    cloud, candidate = _boundary_complete_stabilized_vc4_case(resolution, seed)
+    evaluation_budget = candidate.centroid_evaluation_count + candidate.edge_evaluation_count
+    common_cells = max(1, int(np.floor(np.sqrt(evaluation_budget) / 4)))
+    common_points, common_weights = tensor_gauss(BOUNDS, n_cells=common_cells, n_gauss=4)
+    common = MeshlessGalerkinDiscretization(
+        cloud.nodes,
+        rho=4.5 * cloud.nominal_spacing,
+        degree=4,
+        quad_points=common_points,
+        quad_weights=common_weights,
+    )
+    return candidate, common.stiffness().toarray(), common.mass().toarray(), len(common_points), evaluation_budget
+
+
 def _solve_neumann_system(K, M, load, left_null):
     one = np.ones(len(K))
     mean_constraint = M @ one
@@ -722,6 +738,74 @@ class TestCentroidalVCGeometry:
         assert l2_errors[-1] < 1e-3
         assert h1_errors[-1] < 0.022
         assert np.all(np.diff(h1_errors) < 0.0)
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    def test_stabilized_aligned_vc4_does_not_dominate_evaluation_matched_common(self, wave_numbers):
+        candidate_records = []
+        common_records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, candidate = _boundary_complete_stabilized_vc4_case(resolution, 0)
+            matched_candidate, common_K, common_M, common_count, candidate_budget = (
+                _degree_four_evaluation_matched_common_case(resolution, 0)
+            )
+            assert matched_candidate is candidate
+            assert 0.8 * candidate_budget < common_count <= candidate_budget
+            points = candidate.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+            forcing_nodes = (
+                (kx**2 + ky**2)
+                * np.pi**2
+                * np.cos(kx * np.pi * cloud.nodes[:, 0])
+                * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            )
+            E = candidate.value_operator().toarray()
+            gradients = [gradient.toarray() for gradient in candidate.trial_gradient()]
+            one = np.ones(candidate.n_dof)
+            arms = {
+                "candidate": (
+                    candidate.stiffness().toarray(),
+                    candidate.mass().toarray(),
+                    candidate.left_null_vector(),
+                ),
+                "common": (common_K, common_M, one / len(one)),
+            }
+            for name, (K, M, left_null) in arms.items():
+                solution, relative_residual, gauge_defect = _solve_neumann_system(
+                    K,
+                    M,
+                    M @ forcing_nodes,
+                    left_null,
+                )
+                assert relative_residual < 1e-12
+                assert gauge_defect < 1e-12
+                reconstructed_gradient = np.column_stack([gradient @ solution for gradient in gradients])
+                errors = _physical_poisson_errors(
+                    E @ solution,
+                    reconstructed_gradient,
+                    exact_values,
+                    exact_gradient,
+                    candidate.weights,
+                )
+                record = (cloud.nominal_spacing, *errors)
+                if name == "candidate":
+                    candidate_records.append(record)
+                else:
+                    common_records.append(record)
+
+        _, candidate_l2, candidate_h1 = map(np.asarray, zip(*candidate_records, strict=True))
+        _, common_l2, common_h1 = map(np.asarray, zip(*common_records, strict=True))
+        assert common_l2[-1] < 0.4 * candidate_l2[-1]
+        if wave_numbers == (1, 1):
+            assert candidate_h1[-1] < 0.6 * common_h1[-1]
+        else:
+            assert common_h1[-1] < 0.5 * candidate_h1[-1]
 
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):
         from mfgarchon.geometry.collocation import ImplicitDomainCollocation
