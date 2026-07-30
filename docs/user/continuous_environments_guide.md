@@ -1,10 +1,16 @@
-# Continuous MFG Environments User Guide
+# [FROZEN 2026-07-30] Continuous MFG Environments User Guide
+
+> ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status, version and readiness marker in this document predates that decision. Treat everything here as illustrative of intent rather than as a
+> supported contract: the behaviour is not pinned, and it may change or be removed without a
+> deprecation cycle.
+
 
 Comprehensive guide to the continuous action space environments in MFGArchon's reinforcement learning framework.
 
 ## Overview
 
-The continuous environments library provides **5 production-ready environments** for benchmarking RL algorithms (DDPG, TD3, SAC) on diverse Mean Field Game problems. Each environment demonstrates different aspects of MFG theory and provides distinct algorithmic challenges.
+The continuous environments library provides **5 prototype environments** (described as production-ready before the freeze) for benchmarking RL algorithms (DDPG, TD3, SAC) on diverse Mean Field Game problems. Each environment demonstrates different aspects of MFG theory and provides distinct algorithmic challenges.
 
 **Package**: `mfgarchon.alg.reinforcement.environments`
 **Base Class**: `ContinuousMFGEnvBase`

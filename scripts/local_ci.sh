@@ -87,6 +87,15 @@ step "Doc-API ratchet"
 "$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 check $? "docs teach no more missing API than the baseline records"
 
+step "Frozen prototype areas"
+# alg/neural and alg/reinforcement are prototypes, not under development (CLAUDE.md). The
+# counter-intuitive half of that freeze is that ADDING TESTS is also out: coverage reads as a
+# promise the behaviour is intended, and on a placeholder that promise is false. Prose alone does
+# not hold this line -- hasattr is banned by the same conventions and was written into a test on
+# 2026-07-30 because the fail-fast ratchet does not scan tests/ (#1780).
+"$PY" scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
+check $? "no new tests against a frozen prototype paradigm"
+
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
   # here that measures the product rather than the source. Counts of tests, issues or

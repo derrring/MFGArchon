@@ -1,6 +1,12 @@
-# Multi-Population Continuous Control - Quick Start Guide
+# [FROZEN 2026-07-30] Multi-Population Continuous Control - Quick Start Guide
 
-**Status**: Production-Ready ✅
+**Status**: ⛔ Frozen prototype — see the banner below
+
+> ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status, version and readiness marker in this document predates that decision. Treat everything here as illustrative of intent rather than as a
+> supported contract: the behaviour is not pinned, and it may change or be removed without a
+> deprecation cycle.
+
 **Version**: Phase 3.4
 **Last Updated**: October 2025
 
@@ -428,5 +434,5 @@ print(f"Final rewards - Pop 1: {np.mean(stats['episode_rewards'][1][-100:]):.2f}
 ---
 
 **Version**: 1.0
-**Status**: Production-Ready ✅
+**Status**: ⛔ Frozen prototype — see the banner at the top of this guide
 **Last Updated**: October 2025

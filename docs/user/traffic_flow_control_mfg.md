@@ -1,7 +1,12 @@
-# Traffic Flow Control with Mean Field Games
+# [FROZEN 2026-07-30] Traffic Flow Control with Mean Field Games
+
+> ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status, version and readiness marker in this document predates that decision. Treat everything here as illustrative of
+> intent rather than as a supported contract: the behaviour is not pinned, and it may change
+> or be removed without a deprecation cycle.
 
 **Date**: October 2025
-**Status**: Phase 4.2.1 - Real-World Application
+**Status**: ⛔ Frozen prototype (was: Phase 4.2.1 - Real-World Application)
 **Application Domain**: Autonomous Vehicle Coordination
 
 ---
@@ -408,6 +413,6 @@ python examples/advanced/traffic_flow_mfg.py
 - Provides foundation for autonomous vehicle coordination
 - Validates theoretical MFG framework with practical implementation
 
-**Status**: Phase 4.2.1 Complete (October 2025)
+**Status**: ⛔ Frozen prototype (was: Phase 4.2.1 Complete, October 2025)
 
 **Next Application**: Financial Markets MFG (Phase 4.2.2)
