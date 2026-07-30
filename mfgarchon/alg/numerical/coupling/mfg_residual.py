@@ -28,7 +28,7 @@ import numpy as np
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import assert_bc_providers_resolvable
+from .base_mfg import assert_bc_providers_resolvable, resolve_volatility_kwarg
 from .fixed_point_utils import resolve_fp_drift_kwargs
 from .source_composition import compose_fp_source, compose_hjb_source
 
@@ -211,8 +211,19 @@ class MFGResidual:
         if self._hjb_sig_params is not None:
             if "show_progress" in self._hjb_sig_params:
                 kwargs["show_progress"] = False
-            if "volatility_field" in self._hjb_sig_params and self.volatility_field is not None:
-                kwargs["volatility_field"] = self.volatility_field
+            # Issue #1783: one owner with Picard. This site carried a private copy that
+            # silently dropped the field for a solver taking **kwargs -- three lines above a
+            # branch already raising for exactly that situation with source_term (#1430).
+            kwargs.update(
+                resolve_volatility_kwarg(
+                    self._hjb_sig_params,
+                    self.volatility_field,
+                    self.problem,
+                    type(self.hjb_solver).__name__,
+                    "solve_hjb_system",
+                    "HJB",
+                )
+            )
             # Issue #1430: fail loud like the Picard path (Issue #1424) instead of silently
             # dropping a composed source the solver cannot accept. Compose unconditionally; if
             # the problem defines a source but this HJB solver's signature lacks source_term,
@@ -262,8 +273,16 @@ class MFGResidual:
         kwargs: dict[str, Any] = {}
         if "show_progress" in params:
             kwargs["show_progress"] = False
-        if "volatility_field" in params and self.volatility_field is not None:
-            kwargs["volatility_field"] = self.volatility_field
+        kwargs.update(
+            resolve_volatility_kwarg(
+                params,
+                self.volatility_field,
+                self.problem,
+                type(self.fp_solver).__name__,
+                "solve_fp_system",
+                "FP",
+            )
+        )
 
         if M is None:
             M = np.broadcast_to(self.M_initial, self.solution_shape) if self.M_initial is not None else U

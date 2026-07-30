@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import numbers
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +70,72 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
         )
 
 
+def matches_problem_sigma(problem: Any, volatility_field: Any) -> bool:
+    """Whether this field is indistinguishable from the problem's own sigma.
+
+    Scalars only. An array or callable cannot be shown equivalent to sigma without evaluating it,
+    and guessing there is what #1316 was about, so those are never called indistinguishable.
+    ``numbers.Real`` rather than ``(int, float)``: ``np.float32(0.3)`` is neither, and rejecting it
+    would refuse a solve that is byte-identical to one it accepts.
+    """
+    sigma = getattr(problem, "sigma", None)
+    if not isinstance(volatility_field, numbers.Real) or not isinstance(sigma, numbers.Real):
+        return False
+    return abs(float(volatility_field) - float(sigma)) <= 1e-12
+
+
+def resolve_volatility_kwarg(
+    params: Any, volatility_field: Any, problem: Any, solver_name: str, method: str, side: str
+) -> dict[str, Any]:
+    """The ``volatility_field`` kwarg for ``method``, or ``{}`` when there is nothing to forward.
+
+    One owner for all four coupling call sites -- both Picard sides (:class:`BaseCouplingIterator`)
+    and both Newton sides (:class:`~.mfg_residual.MFGResidual`). Issue #1783 was filed against two
+    of them, and a review of the first fix found the same silent drop still live on the other two.
+    The four sites each restated the same three-way decision, and the restatement is what let them
+    disagree; a fifth site restating it is the next instance, so the decision lives here only.
+
+    Three outcomes, in this order:
+
+    - **The solver names the parameter: forward it, unconditionally.** Including when the field is
+      indistinguishable from ``problem.sigma`` -- it is still the caller's explicit value, and
+      ``problem.volatility_field`` is not always ``problem.sigma``. Construct with an array sigma
+      and the field is the array while ``problem.sigma`` is its mean, so a solver that falls back
+      through ``get_diffusion_coefficient_field(None)`` would pick up the array. Declining to
+      forward an "equivalent" scalar hands the solver a different field than the one asked for.
+      The first fix of #1783 put the forward inside the hazard branch and did exactly that.
+    - **The solver does not name it, and the field is a hazard: raise.** Signature introspection
+      answers "does this callable name the parameter", not "can this solver consume it", and a
+      ``**kwargs`` override makes those two diverge. Measured on the meshless pair, whose HJB
+      wrapper delegates through ``(*args, use_newton=None, **kwargs)``: with ``problem.sigma = 0.3``
+      and a field of mean 0.7, the HJB side ran at D = 0.045 while the paired FP side -- which does
+      name the parameter -- ran at D = 0.245. A 5.4x mismatch, no warning, and a converged density
+      for a problem nobody posed. Treating ``VAR_KEYWORD`` as accept-anything was the other
+      candidate; it assumes a solver consumes what it swallows, the assumption that produced #1316.
+    - **The solver does not name it, and the field is indistinguishable: drop it silently**, because
+      dropping it changes nothing. ``MFGProblem.volatility_field`` defaults to ``problem.sigma``, so
+      the coupling loop hands a non-None value on EVERY ordinary solve; refusing those is a refusal
+      to run at all, which the full suite caught two tests deep in the meshless recipe when the
+      first version of this fix keyed on "is not None".
+    """
+    if volatility_field is None:
+        return {}
+    if "volatility_field" in params:
+        return {"volatility_field": volatility_field}
+    if matches_problem_sigma(problem, volatility_field):
+        return {}
+    other = "FP" if side == "HJB" else "HJB"
+    raise NotImplementedError(
+        f"{solver_name}.{method} does not accept 'volatility_field', but a volatility_field was "
+        f"supplied. Its signature is ({', '.join(sorted(params))}). Dropping it would leave the "
+        f"{side} side on problem.sigma while the {other} side uses the field, so the two equations "
+        f"would be solved with different diffusion and the result would be neither problem "
+        f"(Issue #1783). Either declare volatility_field on the solver's {method}, or remove it "
+        f"from the solve. A solver taking **kwargs does not count as accepting it -- the parameter "
+        f"must be named."
+    )
+
+
 class BaseCouplingIterator(ABC):
     """
     Abstract base class for iterative coupling solvers (Picard, block, fictitious play).
@@ -120,60 +187,6 @@ class BaseCouplingIterator(ABC):
         # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
         self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 
-    def _matches_problem_sigma(self, volatility_field: Any) -> bool:
-        """Whether this field is indistinguishable from the problem's own sigma.
-
-        ``MFGProblem.volatility_field`` defaults to ``problem.sigma``, so the coupling loop hands a
-        non-None value on EVERY ordinary solve. Refusing those is a refusal to run at all -- the
-        full suite caught exactly that, two tests deep in the meshless recipe, when the first
-        version of this fix keyed on "is not None". The hazard is a field that would make the two
-        sides disagree, not a field that exists.
-
-        Scalars only. An array or callable cannot be shown equivalent to sigma without evaluating
-        it, and guessing there is what #1316 was about, so those always reach the capability check.
-        """
-        # getattr on self too: a caller that borrows this method without a problem (a minimal test
-        # double does exactly that) gets "not equivalent", which routes to the capability check --
-        # the conservative direction, and the one that keeps this method total.
-        sigma = getattr(getattr(self, "problem", None), "sigma", None)
-        if not isinstance(volatility_field, (int, float)) or not isinstance(sigma, (int, float)):
-            return False
-        return abs(float(volatility_field) - float(sigma)) <= 1e-12
-
-    @staticmethod
-    def _require_kwarg(params: Any, name: str, solver_name: str, method: str, consequence: str) -> None:
-        """Refuse to forward a kwarg the solver does not name. One owner for both sides.
-
-        Issue #1783. Signature introspection answers "does this callable name the parameter", not
-        "can this solver consume it", and a ``**kwargs`` override makes those two diverge. The
-        previous form dropped the value silently when the name was absent -- three lines above a
-        branch that raises for exactly the same situation with ``source_term`` (#1424). Two
-        adjacent branches of one function, opposite policies.
-
-        Measured on the meshless pair, whose HJB solver declares ``(self, *args, **kwargs)``:
-        with ``problem.sigma = 0.3`` and a field of mean 0.7, the HJB side ran at D = 0.045 while
-        the paired FP side -- which does name the parameter -- ran at D = 0.245. A 5.4x mismatch,
-        no warning, and a converged density for a problem nobody posed.
-
-        Refusing rather than guessing is deliberate. Treating ``VAR_KEYWORD`` as accept-anything
-        was the other candidate, and it assumes a solver consumes what it swallows -- the
-        assumption that produced #1316.
-
-        Not every non-None value is a hazard. ``problem.volatility_field`` defaults to
-        ``problem.sigma``, so a scalar equal to it changes nothing on either side and refusing it
-        would break every ordinary solve -- the full suite caught exactly that, two tests deep in
-        the meshless recipe. The caller filters those out before asking; this helper answers only
-        the narrow question of whether the parameter can be forwarded at all.
-        """
-        if name in params:
-            return
-        raise NotImplementedError(
-            f"{solver_name}.{method} does not accept {name!r}, but a {name} was supplied. Its "
-            f"signature is ({', '.join(params)}). {consequence} (Issue #1783). Either declare "
-            f"{name} on the solver's {method}, or remove it from the solve. A solver taking "
-            f"**kwargs does not count as accepting it -- the parameter must be named."
-        )
-
     def _build_hjb_kwargs(
         self,
         *,
@@ -189,17 +202,16 @@ class BaseCouplingIterator(ABC):
         params = self._hjb_sig_params
         if params is None:
             return kwargs
-        if volatility_field is not None and not self._matches_problem_sigma(volatility_field):
-            self._require_kwarg(
+        kwargs.update(
+            resolve_volatility_kwarg(
                 params,
-                "volatility_field",
+                volatility_field,
+                self.problem,
                 self._hjb_solver_name,
                 "solve_hjb_system",
-                "Dropping it would leave the HJB side on problem.sigma while the FP side uses the "
-                "field, so the two equations would be solved with different diffusion and the "
-                "result would be neither problem.",
+                "HJB",
             )
-            kwargs["volatility_field"] = volatility_field
+        )
         if source_term is not None:
             if "source_term" not in params:
                 raise NotImplementedError(
@@ -229,17 +241,16 @@ class BaseCouplingIterator(ABC):
             return kwargs
         if "drift_field" in params and drift_field is not None:
             kwargs["drift_field"] = drift_field
-        if volatility_field is not None and not self._matches_problem_sigma(volatility_field):
-            self._require_kwarg(
+        kwargs.update(
+            resolve_volatility_kwarg(
                 params,
-                "volatility_field",
+                volatility_field,
+                self.problem,
                 self._fp_solver_name,
                 "solve_fp_system",
-                "Dropping it would leave the FP side on problem.sigma while the HJB side uses the "
-                "field, so the two equations would be solved with different diffusion and the "
-                "result would be neither problem.",
+                "FP",
             )
-            kwargs["volatility_field"] = volatility_field
+        )
         if source_term is not None:
             if "source_term" not in params:
                 raise NotImplementedError(

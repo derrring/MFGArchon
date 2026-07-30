@@ -17,12 +17,24 @@ Three lines below, the same function already raised for exactly this situation w
 from __future__ import annotations
 
 import inspect
+import pathlib
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
+from mfgarchon.alg.numerical.coupling import base_mfg
+from mfgarchon.alg.numerical.coupling.base_mfg import resolve_volatility_kwarg
+
+
+@dataclass
+class _Problem:
+    """Only the two attributes the owner reads."""
+
+    sigma: Any
+    volatility_field: Any = None
 
 
 def test_a_var_keyword_override_does_not_count_as_accepting_the_parameter():
@@ -39,13 +51,13 @@ def test_a_var_keyword_override_does_not_count_as_accepting_the_parameter():
     )
 
     with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
-        BaseCouplingIterator._require_kwarg(
-            params, "volatility_field", "FakeSolver", "solve_hjb_system", "Consequence."
-        )
+        resolve_volatility_kwarg(params, 0.7, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB")
 
     # And it does NOT refuse when the parameter is named.
     named = inspect.signature(lambda self, volatility_field=None: None).parameters
-    BaseCouplingIterator._require_kwarg(named, "volatility_field", "FakeSolver", "solve_hjb_system", "Consequence.")
+    assert resolve_volatility_kwarg(named, 0.7, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB") == {
+        "volatility_field": 0.7
+    }
 
 
 def test_the_message_names_the_signature_and_the_consequence():
@@ -57,13 +69,7 @@ def test_the_message_names_the_signature_and_the_consequence():
     """
     params = inspect.signature(lambda self, *args, **kwargs: None).parameters
     with pytest.raises(NotImplementedError) as exc:
-        BaseCouplingIterator._require_kwarg(
-            params,
-            "volatility_field",
-            "MeshlessGalerkinHJBSolver",
-            "solve_hjb_system",
-            "Dropping it would leave the two equations on different diffusion.",
-        )
+        resolve_volatility_kwarg(params, 0.7, _Problem(0.3), "MeshlessGalerkinHJBSolver", "solve_hjb_system", "HJB")
     message = str(exc.value)
     assert "MeshlessGalerkinHJBSolver.solve_hjb_system" in message
     assert "different diffusion" in message, "the consequence must be stated, not just the refusal"
@@ -72,19 +78,59 @@ def test_the_message_names_the_signature_and_the_consequence():
     )
 
 
-def test_both_coupling_sides_route_through_one_owner():
-    """HJB and FP had two copies of this gate. A fix to one is a fix to one.
+def test_every_coupling_path_routes_through_one_owner():
+    """Four call sites, one decision. Scanned across the package, not one class.
 
-    The repo's dominant defect class is a convention with a private copy on a neighbouring path;
-    this pins that the two sides share an owner rather than agreeing by coincidence.
+    The first version of this test read ``inspect.getsource(BaseCouplingIterator)`` and was green
+    while ``mfg_residual`` -- the Newton coupling path, in the same package -- carried two live
+    inline copies that dropped the field silently. A single-owner guard scoped to one class cannot
+    see the neighbouring path, which is the whole shape it exists to catch.
     """
-    source = inspect.getsource(BaseCouplingIterator)
-    assert source.count("_require_kwarg") >= 3, (
-        "expected one definition and two call sites; a lower count means one side has drifted back to an inline check"
+    package = pathlib.Path(base_mfg.__file__).parent
+    modules = sorted(package.glob("*.py"))
+    assert len(modules) >= 4, f"expected the coupling package, found {len(modules)} files"
+
+    inline = {m.name: m.read_text(encoding="utf-8").count('"volatility_field" in ') for m in modules}
+    assert sum(inline.values()) == 1, (
+        f"exactly one membership test may exist -- the one inside resolve_volatility_kwarg. Found "
+        f"{ {k: v for k, v in inline.items() if v} }. An inline copy is the form that dropped the "
+        f"value silently on both Picard (#1783) and Newton (found reviewing the #1783 fix)."
     )
-    assert source.count('"volatility_field" in params') == 0, (
-        "an inline membership test has reappeared -- that is the form that dropped the value silently"
-    )
+    assert inline["base_mfg.py"] == 1, "the surviving one must be the owner's"
+
+    # Per file, not a total: a total lets one path lose a call site while another gains one.
+    uses = {m.name: m.read_text(encoding="utf-8").count("resolve_volatility_kwarg(") for m in modules}
+    assert uses["base_mfg.py"] == 3, f"Picard: expected the definition + both sides, found {uses['base_mfg.py']}"
+    assert uses["mfg_residual.py"] == 2, f"Newton: expected both sides, found {uses['mfg_residual.py']}"
+
+
+def test_an_exempt_scalar_is_still_forwarded_when_the_solver_names_it():
+    """Indistinguishable from sigma is a reason not to REFUSE, not a reason not to FORWARD.
+
+    The first fix of #1783 put the forward inside the hazard branch, so a scalar equal to
+    ``problem.sigma`` stopped being forwarded at all. That is silent-wrong in the same way the
+    original defect was: ``problem.volatility_field`` is not always ``problem.sigma`` -- construct
+    with an array sigma and the field is the array while ``sigma`` is its mean -- so a solver
+    falling back through ``get_diffusion_coefficient_field(None)`` picks up the array instead of
+    the constant the caller asked for.
+    """
+    named = inspect.signature(lambda self, volatility_field=None: None).parameters
+    array_sigma = _Problem(0.3, volatility_field=np.full(9, 0.3))
+    assert resolve_volatility_kwarg(named, 0.3, array_sigma, "FDM", "solve_hjb_system", "HJB") == {
+        "volatility_field": 0.3
+    }, "an explicit override must reach the solver even when it equals problem.sigma"
+
+    # The exemption still applies where it was needed: a solver that cannot take it, and a field
+    # whose loss changes nothing. Without this branch every ordinary solve would refuse.
+    kw_only = inspect.signature(lambda self, *args, **kwargs: None).parameters
+    assert resolve_volatility_kwarg(kw_only, 0.3, _Problem(0.3), "X", "solve_hjb_system", "HJB") == {}
+
+
+def test_a_numpy_scalar_is_not_a_hazard():
+    """``np.float32(0.3)`` is neither ``int`` nor ``float``; refusing it refuses an identical solve."""
+    kw_only = inspect.signature(lambda self, *args, **kwargs: None).parameters
+    p = _Problem(np.float32(0.3))
+    assert resolve_volatility_kwarg(kw_only, np.float32(0.3), p, "X", "solve_hjb_system", "HJB") == {}
 
 
 def test_the_meshless_pair_is_refused_end_to_end():

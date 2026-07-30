@@ -34,10 +34,10 @@ _SIGMA_LO, _SIGMA_HI = 0.1, 0.5  # mean 0.3
 class _HJBKwargBuilder(BaseCouplingIterator):
     """Minimal stand-in for the coupling seam.
 
-    Subclasses rather than borrowing the single method: `_build_hjb_kwargs` now delegates to
-    sibling helpers on the class (`_matches_problem_sigma`, `_require_kwarg`, #1783), and a double
-    that copies one method silently loses them. Inheriting keeps the double honest about what the
-    seam actually depends on.
+    Subclasses rather than borrowing the single method. `_build_hjb_kwargs` reads `self.problem`
+    and delegates to the module-level `resolve_volatility_kwarg` (#1783); a double that copies one
+    method off the class keeps compiling while quietly diverging from what the seam depends on.
+    Inheriting makes that dependency fail loud instead.
     """
 
     def __init__(self):

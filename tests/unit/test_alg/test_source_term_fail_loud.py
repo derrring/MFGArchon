@@ -15,9 +15,21 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
 
 
-class _Builder:
-    _build_hjb_kwargs = BaseCouplingIterator._build_hjb_kwargs
-    _build_fp_kwargs = BaseCouplingIterator._build_fp_kwargs
+class _Builder(BaseCouplingIterator):
+    """Subclass, not a method-borrowing double.
+
+    Borrowing `_build_*_kwargs` onto a bare class was green only because these tests never pass
+    `volatility_field`; adding one such case raised `AttributeError` on the seam's other
+    dependencies instead of testing anything (#1783 review). Inheriting keeps the double honest.
+    """
+
+    problem = None
+
+    def solve(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
+        raise NotImplementedError
+
+    def get_results(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
+        raise NotImplementedError
 
     def __init__(self, hjb_params, fp_params):
         self._hjb_sig_params = hjb_params
@@ -58,3 +70,14 @@ class TestSourceTermFailLoud:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+def test_the_double_carries_the_whole_seam_not_one_borrowed_method():
+    """Guard on the fixture itself: it must reach every dependency of `_build_hjb_kwargs`.
+
+    A double that borrows one method passes this file's cases and fails the moment an unrelated
+    test adds a `volatility_field`, reporting an `AttributeError` about the fixture rather than a
+    fact about the code. Exercising the other branch here keeps that discoverable in this file.
+    """
+    b = _Builder(hjb_params={"M_density", "U_terminal", "volatility_field"}, fp_params=set())
+    assert b._build_hjb_kwargs(volatility_field=0.42) == {"volatility_field": 0.42}
