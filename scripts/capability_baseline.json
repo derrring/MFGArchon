@@ -1,27 +1,29 @@
 {
-  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline.",
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog.",
   "cells": {
     "fdm_centered/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
-        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.769e-01. Clipping it to zero would fabricate 5.744% of the total mass, so the solve is stopped rather than repor"
+        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.762e-01. Clipping it to zero would fabricate 5.722% of the total mass, so the solve is stopped rather than repor"
       },
+      "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.722% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
       "status": "UNSUPPORTED"
     },
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
+      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 1.17e-05 because they share HJBFDMSolver; SL_LINEAR does not and passes. The inner Newton's tolerance is 1e-6 and its budget is 30 iterations, so this is 11.7x the tolerance -- it is not diverging, it fails to close the last order of magnitude in the budget. Start with the convergence rate and the iteration budget rather than the Jacobian: at max_iterations=400 the recorded solve does converge, at iteration 67 (9.685e-07). But it is not settled -- the NEXT Newton in the same cell then stops after 2 iterations at 4.568e+01 with reason='line_search_failed' and the solver's own detail 'the direction may be wrong (check the Jacobian)'. The Jacobian on this path is finite-difference (hjb_fdm.py:312 passes jacobian=None) and the observed rate is q-linear ~0.87, not quadratic. #1763's own body disclosed that raising the budget 'exposes a different failure further into the solve that I have not characterised'; that is still true. (Before #1763 this cell recorded 2.42e-01. That WAS a residual, not a step norm: `git show 005a10f5~1` has `residual_norm = np.linalg.norm(F_current.flatten())`, and #1763's own body records the residual converging to 1.57e-03 in five iterations and then diverging geometrically to 2.42e-01 because the full step increased it where a half step would have quartered it. #1763 fixed that by defaulting line_search=True. #1764 changed the convergence test in base_hjb.py, which is NOT on this cell's path -- it reaches NewtonSolver via hjb_fdm.py. Do not read the old number as a bad criterion; it recorded a real divergence that is now fixed.)",
       "status": "UNSUPPORTED"
     },
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
-        "mass_max": 1.0000000000000004,
+        "mass_max": 1.0000000000000002,
         "mass_t0": 1.0000000000000002,
-        "max_drift": 2.220446049250313e-16,
-        "min_density": 0.007498923701786717,
+        "max_drift": 1.2212453270876722e-15,
+        "min_density": 0.007498923710795448,
         "tolerance": 1.0000000000000003e-09
       },
       "status": "PASS"
@@ -29,8 +31,9 @@
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
     },
     "fvm_muscl/mass_conservation": {
@@ -46,18 +49,19 @@
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
       },
+      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
       "status": "UNSUPPORTED"
     },
     "fvm_vs_fdm/agreement": {
       "artifact": {
         "all_finite": true,
-        "rel_l2_M": 0.04890589064334588,
-        "rel_l2_M_terminal": 0.04285364468545015,
-        "rel_l2_U": 0.0272298496449295,
+        "rel_l2_M": 0.04890580973631817,
+        "rel_l2_M_terminal": 0.04285356047380676,
+        "rel_l2_U": 0.027229780657619235,
         "tolerance": 0.07,
-        "worst": 0.04890589064334588
+        "worst": 0.04890580973631817
       },
       "status": "PASS"
     },
@@ -66,6 +70,7 @@
         "exception": "NotImplementedError",
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
+      "intended": "ABSENT BY DESIGN \u2014 not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue \u2014 the cell exists so that doing so cannot land unnoticed.",
       "status": "UNSUPPORTED"
     },
     "regime_switching/non_negativity": {
@@ -73,6 +78,7 @@
         "exception": "ValueError",
         "message": "FP solver: at timestep 7/10, advection_scheme='divergence_upwind': density went to -1.031e-03. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than reporti"
       },
+      "intended": "DEFECT \u2014 #1681, which is OPEN and labelled type: bug. divergence_upwind drives the density negative at timestep 7 (0.015% fabricated) in a scheme that is supposed to preserve positivity. The mass-fabrication guard firing is correct guard behaviour, but the cell is not recording the guard -- it is recording the scheme defect the guard found, and the fixture is deliberately not retuned because the run maximum decays only first-order in dt, so clearing the threshold extrapolates to NT ~ 3e6 and would hide the defect. Contrast fdm_centered/mass_conservation, which is genuinely INTENDED: no open issue asserts that divergence_centered must be positivity-preserving at that Peclet. The discriminating question is whether an OPEN issue says this configuration should work.",
       "status": "UNSUPPORTED"
     },
     "sl_linear/mass_conservation": {

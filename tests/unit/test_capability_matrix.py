@@ -520,3 +520,189 @@ def test_summarise_never_raises_on_any_shape(cm):
     ]
     for art in shapes:
         assert isinstance(cm._summarise(art), str), f"raised or returned non-str for {art!r}"
+
+
+def test_a_note_is_dropped_when_the_failure_itself_changes(cm, monkeypatch, tmp_path, capsys):
+    """Carry-forward must not preserve an annotation across a different failure.
+
+    The fixture below is the ORIGINAL defect, not a synthetic stand-in: the #1745 note cited
+    residual 2.42e-01 beside an artifact that had since become 1.17e-05. The first version of
+    this gate compared only `artifact["exception"]`, and both sides of that case are
+    ConvergenceError -- so it carried the stale note forward and the run still reported zero
+    unexplained cells. A guard checked against a case invented from the description of a defect
+    will miss the defect; it has to be checked against the instance.
+    """
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "fdm_centered_2d/mass_conservation": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {
+                            "exception": "ConvergenceError",
+                            "message": "newton solver failed to converge after 30 iterations (residual: 2.42e-01)",
+                        },
+                        "intended": "DEFECT - identical residual 2.42e-01, so it is DIVERGING.",
+                    }
+                }
+            }
+        )
+    )
+
+    class ConvergenceError(RuntimeError):
+        """Same TYPE as the baseline artifact records. That is the whole point of the case:
+        exception-type comparison cannot tell these two failures apart."""
+
+    def same_exception_different_residual():
+        raise ConvergenceError("newton solver failed to converge after 30 iterations (residual: 1.17e-05)")
+
+    monkeypatch.setattr(cm, "CELLS", {"fdm_centered_2d/mass_conservation": same_exception_different_residual})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    rewritten = json.loads(baseline.read_text())["cells"]["fdm_centered_2d/mass_conservation"]
+    assert "1.17e-05" in rewritten["artifact"]["message"], "the artifact must be refreshed"
+    assert "intended" not in rewritten, (
+        "the note said 2.42e-01 and DIVERGING; the cell now records 1.17e-05. Same exception "
+        "type, different failure -- the note must be dropped so the cell reads as unexplained"
+    )
+
+
+def test_a_note_survives_a_regeneration_that_changes_nothing(cm, monkeypatch, tmp_path):
+    """The counterpart: gating on the whole artifact must not throw away still-valid notes.
+
+    Without this, the gate above would be indistinguishable from deleting carry-forward.
+    """
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "x/y": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "mass gate refused"},
+                        "intended": "INTENDED - the guard is doing its job",
+                    }
+                }
+            }
+        )
+    )
+
+    def same_failure():
+        raise ValueError("mass gate refused")
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": same_failure})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    rewritten = json.loads(baseline.read_text())["cells"]["x/y"]
+    assert rewritten["intended"] == "INTENDED - the guard is doing its job"
+
+
+def test_json_mode_emits_json_and_nothing_else(cm, monkeypatch, capsys):
+    """`--json` must be parseable by a non-Python reader.
+
+    The cells run real coupled solves, which write to stdout from three independent places --
+    library INFO logging, Rich progress bars, and plain prints -- so the flag never produced
+    parseable output. Suppressing them one at a time leaves the next addition free to break it
+    again, so the whole evaluation is redirected; this pins the property, not the mechanism.
+    """
+
+    def noisy_pass():
+        print("INFO: solver chatter that would corrupt the stream")
+        return "PASS", {"note": "fine"}
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": noisy_pass})
+    _run_main(cm, monkeypatch, ["--json"])
+
+    parsed = json.loads(capsys.readouterr().out)
+    assert set(parsed) == {"x/y"}
+    assert parsed["x/y"]["status"] == "PASS"
+
+
+def test_the_baseline_comment_names_no_flag_that_does_not_exist(cm, monkeypatch, tmp_path):
+    """The written `_comment` told readers to "See --explain."; argparse has no such flag.
+
+    A generated artifact that instructs the reader to run a command which exits 2 is the same
+    defect class as an error message naming a fix that does not work. Asks the parser the script
+    actually builds, so the check cannot drift from what the CLI accepts.
+    """
+    import argparse
+
+    seen = {}
+    real_parse = argparse.ArgumentParser.parse_args
+
+    def capture(self, *a, **kw):
+        seen["flags"] = set(self._option_string_actions)
+        return real_parse(self, *a, **kw)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", capture)
+
+    baseline = tmp_path / "fresh.json"
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: ("PASS", {})})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(baseline)])
+
+    declared = seen["flags"]
+    assert "--write-baseline" in declared, "the capture did not observe the real parser"
+
+    comment = json.loads(baseline.read_text())["_comment"]
+    # `--` alone is the prose dash this comment uses, not a flag.
+    cited = {tok.rstrip(".,;:") for tok in comment.split() if tok.startswith("--") and len(tok) > 2}
+    assert cited, "nothing cited would make this check pass vacuously"
+    assert cited <= declared, f"_comment cites flags the CLI does not accept: {sorted(cited - declared)}"
+
+
+def test_json_stays_parseable_when_a_cell_has_no_note(cm, monkeypatch, tmp_path, capsys):
+    """`--json` must emit JSON in the state the unexplained-cell report exists to describe.
+
+    Routing prints one at a time is how this broke twice: a fix said "both remaining prints" when
+    there were four, and the two it missed fire only when a non-PASS cell lacks a note -- exactly
+    when the new feature has something to say. The state below is reached through the documented
+    CLI, not by hand-editing: a baseline written to a NEW path carries no notes forward.
+    """
+    fresh = tmp_path / "fresh.json"
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: (_ for _ in ()).throw(ValueError("refused"))})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(fresh)])
+    capsys.readouterr()
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: (_ for _ in ()).throw(ValueError("refused"))})
+    _run_main(cm, monkeypatch, ["--json", "--check-baseline", str(fresh)])
+
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert set(parsed) == {"x/y"}
+
+
+def test_the_unexplained_count_is_derived_not_asserted(cm, monkeypatch, tmp_path, capsys):
+    """The headline metric this feature introduces had no test; it could be wired to a constant.
+
+    Two cells, one annotated and one not, so a hardcoded 0 or a hardcoded len() both fail.
+    """
+    baseline = tmp_path / "b.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "a/annotated": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "refused"},
+                        "intended": "INTENDED - the guard fired",
+                    },
+                    "b/bare": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "refused"},
+                    },
+                }
+            }
+        )
+    )
+
+    def refused():
+        raise ValueError("refused")
+
+    monkeypatch.setattr(cm, "CELLS", {"a/annotated": refused, "b/bare": refused})
+    _run_main(cm, monkeypatch, ["--check-baseline", str(baseline)])
+
+    report = capsys.readouterr().out
+    assert "1 non-PASS cell(s) with no recorded reason" in report, report
+    assert "b/bare" in report
+    assert "a/annotated" not in report.split("no recorded reason")[-1]

@@ -52,7 +52,9 @@ implied absent:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
 import time
 import traceback
@@ -382,10 +384,10 @@ def _fvm_fdm_agreement_cell():
 
         p_fvm = _construct("FVM problem", _lq_problem_1d)
         dx = p_fvm.geometry.get_grid_spacing()[0]
-        r_fvm = p_fvm.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
+        r_fvm = p_fvm.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4, verbose=False)
 
         p_fdm = _construct("FDM problem", _lq_problem_1d)
-        r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4)
+        r_fdm = p_fdm.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4, verbose=False)
 
         def verdict():
             M_fvm, M_fdm = _density(r_fvm), np.asarray(r_fdm.M, dtype=float)
@@ -422,7 +424,7 @@ def _fvm_mass_cell():
         from mfgarchon.types import NumericalScheme
 
         problem = _construct("FVM problem", _lq_problem_1d)
-        result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
+        result = problem.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4, verbose=False)
 
         def verdict():
             M = _density(result)
@@ -739,6 +741,34 @@ def self_test() -> int:
     return 0
 
 
+def _note_still_applies(prior_cell: dict | None, current: dict) -> bool:
+    """Whether a carried-forward ``intended`` note still describes what the cell now does.
+
+    Carry-forward previously required only that the status stayed non-PASS, so a note survived an
+    arbitrary change of failure: swap the exception for an unrelated one and the note is preserved
+    verbatim while the run still reports "0 unexplained". The note is an unchanged line, so it does
+    not appear in the reviewer's diff at all -- only the artifact does. That is how an annotation
+    outlives the evidence it cites, which is exactly the defect this file's own #1745 note had.
+
+    Requiring the whole artifact to match means a changed failure drops the note, the cell reads as
+    unexplained, and someone has to look at it. Comparing only the exception TYPE was the first
+    attempt and was blind to the motivating case -- a note citing residual 2.42e-01 beside an
+    artifact that had become 1.17e-05, ConvergenceError on both sides.
+
+    Consequence worth knowing before annotating a FAIL cell: a FAIL artifact is a measurement, and
+    measurements move, so its note will be dropped on the next regeneration. That is the safe
+    direction (the cell reads as unexplained and gets looked at) but it makes `intended` awkward
+    for FAIL cells. Every non-PASS cell today is exception-shaped, so this is latent.
+    """
+    if prior_cell is None or "intended" not in prior_cell or current["status"] == "PASS":
+        return False
+    # The WHOLE artifact, not just the exception type. Comparing types alone was blind to the
+    # case this gate was written for: the #1745 note cited residual 2.42e-01 beside an artifact
+    # that had become 1.17e-05, and both sides are ConvergenceError -- so the stale note carried
+    # forward and the run still reported zero unexplained cells.
+    return (prior_cell.get("artifact") or {}) == (current.get("artifact") or {})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="Emit full results as JSON")
@@ -758,10 +788,25 @@ def main() -> None:
     if args.self_test:
         sys.exit(self_test())
 
-    results = evaluate()
+    # --json must emit JSON and nothing else. The cells run real coupled solves, and those
+    # write to stdout from three independent places -- library INFO logging, Rich progress bars,
+    # and any print added later -- so `--json` never actually produced parseable output. Suppress
+    # per-source and the next source added breaks it again; redirect the whole evaluation instead,
+    # to stderr, so the diagnostics are still visible when a human is watching.
+    if args.json:
+        with contextlib.redirect_stdout(sys.stderr):
+            results = evaluate()
+    else:
+        results = evaluate()
 
     if args.json:
         print(json.dumps(results, indent=2, sort_keys=True))
+        sys.stdout.flush()
+        # Everything after the blob goes to stderr. Routing prints one at a time is how this
+        # broke twice: the fix said "both remaining prints" when there were four, and the two it
+        # missed fire exactly when the new unexplained-cell report has something to say. One
+        # redirect cannot be defeated by a print added later.
+        sys.stdout = sys.stderr
     else:
         print_report(results)
 
@@ -782,6 +827,25 @@ def main() -> None:
         sys.exit(2)
 
     if args.write_baseline:
+        # Carry forward any `intended` annotations. A regeneration that silently dropped them
+        # would retire the distinction on its first use, which is how this kind of mechanism
+        # usually dies. A cell that has RECOVERED loses its annotation on purpose: the claim
+        # "this configuration is no longer refused" is exactly the one that needs review.
+        prior: dict = {}
+        if os.path.exists(args.write_baseline):
+            with open(args.write_baseline) as fh:
+                prior = json.load(fh).get("cells", {})
+        elif any(v["status"] != "PASS" for v in results.values()):
+            # Writing to a path with no prior file. In-place regeneration carries annotations
+            # forward; writing somewhere new cannot, and silently emitting an unannotated
+            # baseline is how the distinction would be lost the first time someone redirects
+            # the output. Say so.
+            print(
+                f"\nNote: {args.write_baseline} does not exist, so no `intended` notes were "
+                "carried forward. Non-PASS cells in the new file will read as unexplained. "
+                "Regenerate in place to preserve them.",
+                file=sys.stderr,
+            )
         payload = {
             "_comment": (
                 "Executed capability of the solve surface. --check-baseline compares STATUS "
@@ -789,9 +853,18 @@ def main() -> None:
                 "change that recovers it. The artifact blocks are a record for diffing by a "
                 "human reviewer, NOT a gate -- a cell can degrade within its own tolerance "
                 "(fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. "
-                "Regenerate with --write-baseline."
+                "Regenerate with --write-baseline. A non-PASS cell may carry an `intended` "
+                "note saying WHY it is not PASS; cells without one are unexplained and are the "
+                "actual backlog."
             ),
-            "cells": {k: {"status": v["status"], "artifact": v["artifact"]} for k, v in results.items()},
+            "cells": {
+                k: (
+                    {"status": v["status"], "artifact": v["artifact"], "intended": prior[k]["intended"]}
+                    if _note_still_applies(prior.get(k), v)
+                    else {"status": v["status"], "artifact": v["artifact"]}
+                )
+                for k, v in results.items()
+            },
         }
         # allow_nan=False: Python would otherwise emit a bare `NaN` token, which is
         # not JSON and which every non-Python reader rejects. A non-finite artifact
@@ -805,19 +878,40 @@ def main() -> None:
             sys.exit(1)
         with open(args.write_baseline, "w") as fh:
             fh.write(body + "\n")
-        print(f"\nBaseline written to {args.write_baseline}")
+        # stderr under --json so the two flags together still emit parseable output.
+        print(f"\nBaseline written to {args.write_baseline}", file=sys.stderr if args.json else sys.stdout)
         sys.exit(0)
 
     if args.check_baseline:
         with open(args.check_baseline) as fh:
             baseline = json.load(fh)["cells"]
         problems = compare_to_baseline(_statuses(results), baseline)
+        # A non-PASS cell without an `intended` note is unexplained. This is the number that
+        # matters, not the count of UNSUPPORTED: "drive UNSUPPORTED to 0" is satisfiable by
+        # loosening a guard or by quietly picking a configuration the guard does not refuse,
+        # and neither is visible in a status count. An `intended` note makes the difference
+        # between "the gate correctly refuses this" and "this does not work" a written claim.
+        unexplained = [
+            f"  {name}: {info['status']} with no `intended` note"
+            for name, info in sorted(baseline.items())
+            if info["status"] != "PASS" and "intended" not in info
+        ]
+        if unexplained:
+            print(f"\n{len(unexplained)} non-PASS cell(s) with no recorded reason:")
+            print("\n".join(unexplained))
+            print('  Add "intended": "<why>" to each in the baseline, or fix the cell.')
         if problems:
             print("\nCapability baseline mismatch:")
             print("\n".join(problems))
             print("\nIf the change is intended, regenerate with --write-baseline in the same commit.")
             sys.exit(1)
-        print(f"\nCapability matches baseline ({len(baseline)} cells).")
+        explained = sum(1 for i in baseline.values() if i["status"] != "PASS" and "intended" in i)
+        non_pass = sum(1 for i in baseline.values() if i["status"] != "PASS")
+        print(
+            f"\nCapability matches baseline ({len(baseline)} cells; "
+            f"{non_pass - explained} of {non_pass} non-PASS cells unexplained).",
+            file=sys.stderr if args.json else sys.stdout,
+        )
         sys.exit(0)
 
     sys.exit(0)
