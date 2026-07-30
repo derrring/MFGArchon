@@ -120,6 +120,60 @@ class BaseCouplingIterator(ABC):
         # Issue #1489 (S1): cache the FP solver's drift-input convention for resolve_fp_drift_kwargs.
         self._fp_drift_convention = getattr(fp_solver, "_drift_convention", None)
 
+    def _matches_problem_sigma(self, volatility_field: Any) -> bool:
+        """Whether this field is indistinguishable from the problem's own sigma.
+
+        ``MFGProblem.volatility_field`` defaults to ``problem.sigma``, so the coupling loop hands a
+        non-None value on EVERY ordinary solve. Refusing those is a refusal to run at all -- the
+        full suite caught exactly that, two tests deep in the meshless recipe, when the first
+        version of this fix keyed on "is not None". The hazard is a field that would make the two
+        sides disagree, not a field that exists.
+
+        Scalars only. An array or callable cannot be shown equivalent to sigma without evaluating
+        it, and guessing there is what #1316 was about, so those always reach the capability check.
+        """
+        # getattr on self too: a caller that borrows this method without a problem (a minimal test
+        # double does exactly that) gets "not equivalent", which routes to the capability check --
+        # the conservative direction, and the one that keeps this method total.
+        sigma = getattr(getattr(self, "problem", None), "sigma", None)
+        if not isinstance(volatility_field, (int, float)) or not isinstance(sigma, (int, float)):
+            return False
+        return abs(float(volatility_field) - float(sigma)) <= 1e-12
+
+    @staticmethod
+    def _require_kwarg(params: Any, name: str, solver_name: str, method: str, consequence: str) -> None:
+        """Refuse to forward a kwarg the solver does not name. One owner for both sides.
+
+        Issue #1783. Signature introspection answers "does this callable name the parameter", not
+        "can this solver consume it", and a ``**kwargs`` override makes those two diverge. The
+        previous form dropped the value silently when the name was absent -- three lines above a
+        branch that raises for exactly the same situation with ``source_term`` (#1424). Two
+        adjacent branches of one function, opposite policies.
+
+        Measured on the meshless pair, whose HJB solver declares ``(self, *args, **kwargs)``:
+        with ``problem.sigma = 0.3`` and a field of mean 0.7, the HJB side ran at D = 0.045 while
+        the paired FP side -- which does name the parameter -- ran at D = 0.245. A 5.4x mismatch,
+        no warning, and a converged density for a problem nobody posed.
+
+        Refusing rather than guessing is deliberate. Treating ``VAR_KEYWORD`` as accept-anything
+        was the other candidate, and it assumes a solver consumes what it swallows -- the
+        assumption that produced #1316.
+
+        Not every non-None value is a hazard. ``problem.volatility_field`` defaults to
+        ``problem.sigma``, so a scalar equal to it changes nothing on either side and refusing it
+        would break every ordinary solve -- the full suite caught exactly that, two tests deep in
+        the meshless recipe. The caller filters those out before asking; this helper answers only
+        the narrow question of whether the parameter can be forwarded at all.
+        """
+        if name in params:
+            return
+        raise NotImplementedError(
+            f"{solver_name}.{method} does not accept {name!r}, but a {name} was supplied. Its "
+            f"signature is ({', '.join(params)}). {consequence} (Issue #1783). Either declare "
+            f"{name} on the solver's {method}, or remove it from the solve. A solver taking "
+            f"**kwargs does not count as accepting it -- the parameter must be named."
+        )
+
     def _build_hjb_kwargs(
         self,
         *,
@@ -135,7 +189,16 @@ class BaseCouplingIterator(ABC):
         params = self._hjb_sig_params
         if params is None:
             return kwargs
-        if "volatility_field" in params and volatility_field is not None:
+        if volatility_field is not None and not self._matches_problem_sigma(volatility_field):
+            self._require_kwarg(
+                params,
+                "volatility_field",
+                self._hjb_solver_name,
+                "solve_hjb_system",
+                "Dropping it would leave the HJB side on problem.sigma while the FP side uses the "
+                "field, so the two equations would be solved with different diffusion and the "
+                "result would be neither problem.",
+            )
             kwargs["volatility_field"] = volatility_field
         if source_term is not None:
             if "source_term" not in params:
@@ -166,7 +229,16 @@ class BaseCouplingIterator(ABC):
             return kwargs
         if "drift_field" in params and drift_field is not None:
             kwargs["drift_field"] = drift_field
-        if "volatility_field" in params and volatility_field is not None:
+        if volatility_field is not None and not self._matches_problem_sigma(volatility_field):
+            self._require_kwarg(
+                params,
+                "volatility_field",
+                self._fp_solver_name,
+                "solve_fp_system",
+                "Dropping it would leave the FP side on problem.sigma while the HJB side uses the "
+                "field, so the two equations would be solved with different diffusion and the "
+                "result would be neither problem.",
+            )
             kwargs["volatility_field"] = volatility_field
         if source_term is not None:
             if "source_term" not in params:

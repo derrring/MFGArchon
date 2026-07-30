@@ -31,12 +31,25 @@ _N = 21
 _SIGMA_LO, _SIGMA_HI = 0.1, 0.5  # mean 0.3
 
 
-class _HJBKwargBuilder:
-    _build_hjb_kwargs = BaseCouplingIterator._build_hjb_kwargs
+class _HJBKwargBuilder(BaseCouplingIterator):
+    """Minimal stand-in for the coupling seam.
+
+    Subclasses rather than borrowing the single method: `_build_hjb_kwargs` now delegates to
+    sibling helpers on the class (`_matches_problem_sigma`, `_require_kwarg`, #1783), and a double
+    that copies one method silently loses them. Inheriting keeps the double honest about what the
+    seam actually depends on.
+    """
 
     def __init__(self):
         self._hjb_sig_params = {"volatility_field"}
         self._hjb_solver_name = "HJBGFDMSolver"
+        self.problem = None  # no problem: a scalar can never be shown equivalent to sigma
+
+    def solve(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
+        raise NotImplementedError
+
+    def get_results(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
+        raise NotImplementedError
 
 
 def _problem(sigma=0.3):
