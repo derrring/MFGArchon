@@ -146,6 +146,51 @@ class TestGradientUpwind:
         assert error < 0.1
 
     @pytest.mark.unit
+    def test_selection_rule_is_the_godunov_one_not_merely_accurate(self):
+        """Which stencil is selected, asserted as an identity rather than a tolerance.
+
+        `test_monotone_increasing` states the rule in its docstring and cannot see it. Forward and
+        backward differences are both O(h) on smooth data, and on `u = x**2` their errors are
+        *equal in magnitude* -- 0.0100 each at n=100, symmetric about the exact value -- so no
+        tolerance separates them at any n. Inverting the selection in `gradient_upwind` leaves
+        that test green.
+
+        What separates them is the value: at x = 0.5, backward = 0.990000 and forward = 1.010000,
+        differing by exactly h*u'' = 0.02. So compare against the stencil functions directly.
+
+        Both branches are covered. Only the increasing one had a test, so the forward branch --
+        reached whenever information travels left, which is half of every advection problem -- was
+        exercised by nothing in this directory.
+
+        Interior only: these stencils use ``np.roll``, so at node 0 the backward difference wraps
+        to node n-1 and reads a spurious -98.01 on this fixture. The wraparound is the caller's
+        problem (``fix_boundaries_one_sided`` exists for it) and not what the selection rule says.
+        """
+        n = 100
+        x = np.linspace(0, 1, n, endpoint=False)
+        h = x[1] - x[0]
+
+        rising = x**2  # du/dx >= 0 -> information flows right -> read from the LEFT
+        interior = slice(1, -1)
+        np.testing.assert_array_equal(
+            gradient_upwind(rising, axis=0, h=h)[interior],
+            gradient_backward(rising, axis=0, h=h)[interior],
+            err_msg="increasing u must select the backward (upwind) stencil",
+        )
+
+        falling = -(x**2)  # du/dx < 0 -> information flows left -> read from the RIGHT
+        np.testing.assert_array_equal(
+            gradient_upwind(falling, axis=0, h=h)[interior],
+            gradient_forward(falling, axis=0, h=h)[interior],
+            err_msg="decreasing u must select the forward (upwind) stencil",
+        )
+
+        # The two candidates must actually differ here, or the identities above are vacuous.
+        assert not np.allclose(gradient_backward(rising, axis=0, h=h), gradient_forward(rising, axis=0, h=h)), (
+            "fixture too smooth to distinguish the stencils"
+        )
+
+    @pytest.mark.unit
     def test_result_shape(self):
         """Output shape should match input."""
         u = np.random.randn(50)
