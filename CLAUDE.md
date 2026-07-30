@@ -24,6 +24,26 @@ Production-ready infrastructure for Mean Field Games research and applications.
 
 **Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical algorithms (FDM, FEM, GFDM, DGM, PINN, Actor-Critic, PPO); ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
 
+### ⛔ FROZEN: `alg/neural/` and `alg/reinforcement/` — prototype, not under development
+
+**These two paradigms are design prototypes / placeholders. Do not develop them until told
+otherwise, by name.** That includes: adding features, adding tests, refactoring, fixing
+non-blocking defects, and "improving coverage while I'm here".
+
+What is still allowed without asking:
+- Keeping them **importable** — a change elsewhere that would break `import mfgarchon` must not.
+- A **one-line** fix for something that breaks the gate or the build.
+- **Recording** a defect as a GitHub issue. Filing is free; fixing is not.
+
+Why the ban includes tests, which is the counter-intuitive part: adding tests to a placeholder
+makes it look like it has a pinned contract. A later reader — human or agent — reads coverage as a
+promise that the behaviour is intended and load-bearing, and starts preserving decisions nobody
+made. An untested prototype is honestly labelled; a tested one is not.
+
+If a campaign sweeps the whole repo (a ratchet, an audit, a convention migration), these two
+directories are **out of scope by default** and their exclusion should be stated in the PR rather
+than silently assumed.
+
 ### MFG-Research: Private Research Repository
 Novel/experimental algorithms, unpublished methods. **Key principle**: MFG-Research **imports** MFGArchon but **never modifies** it.
 

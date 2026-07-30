@@ -1,5 +1,16 @@
 """
+[FROZEN PROTOTYPE — not under development]
+
 Reinforcement Learning paradigm for MFG problems.
+
+⛔ This paradigm is a DESIGN PROTOTYPE / PLACEHOLDER. It is not under active development and
+should not be extended, refactored, or given test coverage without an explicit instruction naming
+it. See CLAUDE.md § "FROZEN: alg/neural/ and alg/reinforcement/".
+
+Adding tests here is discouraged for a reason worth stating: coverage reads as a promise that the
+behaviour is intended and load-bearing. On a placeholder that promise is false, and it makes later
+readers preserve decisions nobody made. Record defects as issues instead — filing is free.
+
 
 This module contains agent-based approaches for solving Mean Field Games:
 - core: Base classes and shared infrastructure for MFG-RL
