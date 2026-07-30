@@ -168,3 +168,51 @@ def test_meshdata_to_skfem_fails_loud_on_wrong_node_count():
     )
     with pytest.raises(ValueError, match="expects 3 nodes"):
         meshdata_to_skfem(md)
+
+
+def test_a_mislabelled_quad_connectivity_silently_becomes_half_the_domain():
+    """The guard's claim, measured: scikit-fem truncates and loses exactly half the domain.
+
+    Issue #1714: this file was one of the 20 fail-loud test files with no numeric assertion.
+    `pytest.raises` on the validation message records that the guard fires; it does not record
+    that the alternative is a mesh covering half the geometry the caller described.
+
+    The guard's comment says scikit-fem "silently TRUNCATES a connectivity with the wrong node
+    count (e.g. a 4-node quad mislabeled 'triangle' is sliced to 3 rows -> a wrong half-domain
+    mesh, no error)". Reproduced verbatim on the unit square:
+
+        connectivity given   (4, 1)   four nodes, one quad
+        MeshTri accepted     (3, 1)   fourth row dropped
+        warnings             none
+        resulting area       0.5      against 1.0 for the square
+
+    Half, not approximately half -- the quad is split and one triangle is kept. A solve on that
+    mesh converges, conserves mass, and answers a question about a different domain.
+    """
+    import warnings
+
+    import numpy as np
+
+    points = np.array([[0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]])
+    quad_connectivity = np.array([[0], [1], [2], [3]])
+    assert quad_connectivity.shape[0] == 4, "the fixture must supply a 4-node element"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        truncated = skfem.MeshTri(points, quad_connectivity)
+
+    assert truncated.t.shape[0] == 3, (
+        f"scikit-fem must truncate to 3 rows for this test to be about anything; got {truncated.t.shape[0]}"
+    )
+    assert not caught, (
+        f"the truncation must be silent -- that is why the guard exists. Warnings seen: "
+        f"{[type(c.message).__name__ for c in caught]}"
+    )
+
+    basis = skfem.Basis(truncated, skfem.ElementTriP1())
+    area = float(np.asarray(basis.dx).sum())
+    assert area == pytest.approx(0.5, abs=1e-12), (
+        f"the truncated mesh must cover exactly half the unit square -- the quad is split and one "
+        f"triangle kept. Got {area}. If this ever equals 1.0, scikit-fem has started handling the "
+        f"mislabelled connectivity and the guard is refusing something that would have worked."
+    )

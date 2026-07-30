@@ -16,3 +16,7 @@
   to exactly 0.000000, because a P2 field carries all its mass in the edge DOFs that padding
   zeroes. That is the same shape-function identity behind the P2 lumping guard, so two independent
   guards rest on one fact.
+  Third: `test_fem_adapter_issue1260.py` now measures the truncation its guard describes — a
+  4-node quad connectivity handed to `MeshTri` is sliced to 3 rows with no warning, and the
+  resulting mesh covers exactly 0.5 of the unit square. Half the domain, silently, and a solve on
+  it converges and conserves mass while answering a question about a different geometry.
