@@ -178,3 +178,152 @@ def test_declared_conventions_match_solver_traits():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_resolver_never_emits_a_deprecated_kwarg():
+    """The kwarg ``resolve_fp_drift_kwargs`` emits must be live on the receiving solver.
+
+    Issue #919 attached a deprecation to ``potential_field`` on ``FPFDMSolver`` — the
+    *destination* of the v0.18.6 rename — pointing users back at ``drift_field``, whose
+    meaning had just been changed to the velocity. Two failures followed, and this test
+    pins both: the advice was wrong (obeying it advects ``U`` as if it were alpha*), and
+    the deprecation was un-completable, because the resolver emits ``potential_field=U``
+    on the default smooth-separable path that both Picard and Newton take. Removing it
+    at the scheduled v0.25.0 would have broken the library's own primary path.
+    """
+    import inspect
+
+    from mfgarchon.alg.numerical.coupling.fixed_point_utils import resolve_fp_drift_kwargs
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
+    from mfgarchon.utils.deprecation import get_deprecated_parameters
+
+    problem = _problem(QuadraticControlCost(control_cost=1.0))
+    U, M = _state(problem)
+
+    for solver_cls in (FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLJacobianSolver):
+        method = solver_cls.solve_fp_system
+        sig_params = set(inspect.signature(method).parameters)
+        emitted, _ = resolve_fp_drift_kwargs(
+            problem, sig_params, None, U, M, drift_convention=solver_cls._drift_convention
+        )
+        deprecated = {d["param"] for d in get_deprecated_parameters(method)}
+        collision = set(emitted) & deprecated
+        assert not collision, (
+            f"{solver_cls.__name__}: resolve_fp_drift_kwargs emits {sorted(emitted)}, but "
+            f"{sorted(collision)} is deprecated on this solver. Either the routing or the "
+            f"deprecation is wrong — the library cannot schedule its own primary path for removal."
+        )
+
+
+def test_potential_field_is_never_deprecated_on_any_fp_solver():
+    """``potential_field`` is the value-function channel on every FP solver that has one.
+
+    On a VALUE_FUNCTION solver it is the canonical name; on a VELOCITY solver it is a live second
+    channel (the solver forms alpha = -c*grad(U) internally). It is never an alias for
+    ``drift_field``, so it must never carry a deprecation -- in either direction.
+
+    Enumerates ``BaseFPSolver`` subclasses rather than a hand-written list. An earlier version
+    named six classes, which left ``WeakFormFPSolver``, ``FPFEMSolver``,
+    ``MeshlessGalerkinFPSolver`` and ``FPGFDMSolver`` outside the pin: adding the deprecation to
+    ``WeakFormFPSolver`` left every test in this file green. A test that names its instances
+    cannot pin a class.
+    """
+    import inspect
+
+    # Import the solver modules EXPLICITLY. `import mfgarchon` alone left WeakFormFPSolver out of
+    # __subclasses__() when this test ran in isolation -- it only entered because a sibling test
+    # earlier in the file imports it, so the enumeration silently covered 7 classes standalone and
+    # 10 under full collection. A pin whose coverage depends on collection order is not a pin.
+    from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+    from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver  # noqa: F401
+    from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver  # noqa: F401
+    from mfgarchon.utils.deprecation import get_deprecated_parameters
+
+    def all_subclasses(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from all_subclasses(sub)
+
+    checked = []
+    for solver_cls in sorted(set(all_subclasses(BaseFPSolver)), key=lambda c: c.__name__):
+        method = getattr(solver_cls, "solve_fp_system", None)
+        if method is None or "potential_field" not in inspect.signature(method).parameters:
+            continue
+        checked.append(solver_cls.__name__)
+        deprecated = {d["param"] for d in get_deprecated_parameters(method)}
+        assert "potential_field" not in deprecated, (
+            f"{solver_cls.__name__}: potential_field is marked deprecated. It is the value-"
+            f"function channel, not an alias for drift_field, which carries the velocity."
+        )
+
+    # Calibrated ABOVE the degraded count, not below it: standalone the enumeration reached 7,
+    # so a `>= 6` guard could never fire on the very gap it was written to catch.
+    assert "WeakFormFPSolver" in checked, (
+        f"WeakFormFPSolver is not in the enumeration ({checked}); it is a VALUE_FUNCTION solver "
+        f"with a live potential_field, and it was the class the earlier hand-written list missed"
+    )
+    assert len(checked) >= 8, (
+        f"only {len(checked)} solvers expose potential_field ({checked}); the enumeration is not "
+        f"seeing the solver modules, which would make this pass vacuously"
+    )
+
+
+def test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field():
+    """The two channels are different objects, which is why the deprecation had to go (#1771).
+
+    ``FPFDMSolver`` is ``DriftConvention.VELOCITY``: ``drift_field`` is the velocity alpha*, and
+    ``potential_field`` is the value function U, from which the solver forms
+    alpha = -c*grad(U) itself. Until #1771 the library deprecated ``potential_field`` and told
+    users to "pass velocity via drift_field instead" -- following that advice advects U as if it
+    were a velocity.
+
+    This test IS the evidence for that claim. The figures originally quoted in the PR body came
+    from an unrecorded setup and could not be reproduced by an independent reviewer across twelve
+    parameter combinations; a number in prose with no committed way to regenerate it is not
+    evidence, so the measurement lives here where it runs on every suite.
+    """
+    import warnings
+
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+
+    n, nt = 41, 10
+    problem = _problem(QuadraticControlCost(control_cost=1.0))
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=nt,
+        T=0.2,
+        sigma=0.2,
+        components=MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+
+    xs = np.linspace(0.0, 1.0, n)
+    u = np.tile((xs - 0.8) ** 2, (nt + 1, 1))
+    m0 = np.exp(-((xs - 0.3) ** 2) / (2 * 0.08**2))
+    m0 /= m0.sum()
+
+    def centre_of_mass(m_traj):
+        return float((m_traj[-1] * xs).sum() / m_traj[-1].sum())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        as_potential = centre_of_mass(FPFDMSolver(problem).solve_fp_system(m0.copy(), potential_field=u))
+        as_drift = centre_of_mass(FPFDMSolver(problem).solve_fp_system(m0.copy(), drift_field=u))
+
+    relative = abs(as_potential - as_drift) / abs(as_potential)
+    assert relative > 0.05, (
+        f"U as potential_field gives centre of mass {as_potential:.6f}, U as drift_field gives "
+        f"{as_drift:.6f} ({relative:.2%} apart). If these ever agree, the two channels have "
+        f"become the same object and the argument for #1771 no longer holds."
+    )

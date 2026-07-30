@@ -1301,8 +1301,9 @@ class FPParticleSolver(BaseFPSolver):
         drift_is_precomputed: bool = False,
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
-        # Deprecated parameter names for backward compatibility
-        potential_field: np.ndarray | None = None,  # DEPRECATED: use drift_field
+        # This solver is DriftConvention.VALUE_FUNCTION: U is the input it consumes, so
+        # potential_field is the correct name and drift_field is the alias (#919).
+        potential_field: np.ndarray | None = None,  # value function U (VALUE_FUNCTION channel)
     ) -> np.ndarray:
         """
         Solve FP system using particle method with unified API.
@@ -1348,12 +1349,14 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             M_solution: Density evolution on grid, shape (Nt+1, *grid_shape)
         """
-        # Handle deprecated potential_field -> drift_field
+        # This solver is DriftConvention.VALUE_FUNCTION: it consumes U, so potential_field is
+        # the canonical name here and drift_field is the alias (#919, #1771).
         if potential_field is not None:
             if drift_field is not None:
                 raise ValueError(
-                    "Cannot specify both drift_field and potential_field. "
-                    "Use drift_field (potential_field is deprecated)."
+                    "Cannot specify both drift_field and potential_field. This solver consumes "
+                    "the value function U, so potential_field is the name for it here; "
+                    "drift_field is accepted as an alias for the same slot. Pass one."
                 )
             drift_field = potential_field
 

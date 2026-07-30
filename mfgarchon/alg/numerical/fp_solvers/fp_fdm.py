@@ -308,7 +308,6 @@ class FPFDMSolver(BaseFPSolver):
     @deprecated_parameter(param_name="tensor_diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="volatility_matrix", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="velocity_field", since="v0.18.6", replacement="drift_field")
-    @deprecated_parameter(param_name="potential_field", since="v0.18.6", replacement="drift_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
@@ -321,7 +320,9 @@ class FPFDMSolver(BaseFPSolver):
         volatility_matrix: np.ndarray | Callable | None = None,  # Deprecated: use volatility_field
         # Deprecated: velocity_field renamed to drift_field (v0.18.6)
         velocity_field: np.ndarray | None = None,
-        # Deprecated: old drift_field (U-potential) renamed to potential_field (v0.18.6)
+        # Live second channel: value function U (solver forms alpha = -c*grad(U) internally).
+        # v0.18.6 (#919) swapped the names -- U moved here from drift_field, which now means
+        # the velocity alpha*. This is the rename's destination, not a legacy alias.
         potential_field: np.ndarray | None = None,
         # MMS verification support
         source_term: Callable | None = None,
@@ -460,12 +461,17 @@ class FPFDMSolver(BaseFPSolver):
                 )
             drift_field = velocity_field
 
-        # Handle deprecated potential_field (old drift_field with U-potential)
+        # Two live channels, not an alias pair: drift_field carries the velocity alpha*,
+        # potential_field carries the value function U (this solver forms alpha = -c*grad(U)
+        # internally). Passing both is ambiguous, which is what this refuses -- neither is
+        # deprecated (#1771).
         if potential_field is not None:
             if drift_field is not None:
                 raise ValueError(
-                    "Cannot specify both drift_field and potential_field. "
-                    "potential_field is deprecated; pass velocity via drift_field instead."
+                    "Cannot specify both drift_field and potential_field: they are different "
+                    "objects, not two names for one. drift_field is the velocity alpha*; "
+                    "potential_field is the value function U, from which this solver forms "
+                    "alpha = -coupling_coefficient*grad(U) itself. Pass whichever you have."
                 )
             # potential_field is U-potential — route through internal U path
             effective_U = potential_field

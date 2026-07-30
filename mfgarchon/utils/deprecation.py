@@ -644,6 +644,11 @@ def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, An
         module: Top-level module to scan (e.g., `import mfgarchon; scan_deprecated(mfgarchon)`)
         recursive: If True, scan submodules recursively
 
+    NOTE: this walks the package by IMPORTING it, so an unimportable submodule -- one needing an
+    optional extra -- is skipped along with everything below it, and the caller cannot tell.
+    Measured on mfgarchon: 72 deduplicated items with torch present, 41 without. Do not compare
+    this result against a committed artifact without solving that first (Issue #1774).
+
     Returns:
         List of dicts with keys: type, name, module, since, replacement, removal
 
