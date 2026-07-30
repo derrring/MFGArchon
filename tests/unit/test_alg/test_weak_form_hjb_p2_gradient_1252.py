@@ -187,3 +187,54 @@ def test_p1_hjb_fem_gradient_recovery_unchanged():
     # Also confirm P1 uses lumped path (not consistent-mass)
     assert not solver._use_consistent_mass, "P1 must use lumped path, not consistent-mass"
     assert solver._M_lu is None, "P1 must not build LU factorisation"
+
+
+def test_p2_vertex_shape_functions_integrate_to_zero_which_is_why_lumping_is_invalid():
+    """The guard's reason is a checkable identity; this file only tested that it raises.
+
+    Issue #1714: 47 of the 85 tests the fail-loud campaign added can only fail if the guard is
+    deleted, and reverse-applying the guard hunk gives `DID NOT RAISE` every time -- never a wrong
+    number. This file was one of the 20 with no numeric assertion.
+
+    The guard refuses row-sum mass lumping for P2+ on a specific mathematical ground: the P2 vertex
+    shape function N_i = lambda_i(2*lambda_i - 1) integrates to ZERO over a triangle, so the
+    consistent-mass row sum at a vertex DOF is ~0, and the old clamp to 1e-15 turned 1/M into 1e15
+    and multiplied the recovered gradient into garbage. The midside function 4*lambda_i*lambda_j
+    integrates to 1/6, so the collapse is specific to vertices, not a uniform scaling.
+
+    Asserting that identity is what makes the refusal correct rather than merely cautious, and it
+    holds whether or not the guard is present.
+    """
+    import numpy as np
+
+    def integrate_reference_triangle(f, n=400):
+        """Midpoint rule over the unit triangle; exact enough to separate 0 from 1/6."""
+        h = 1.0 / n
+        total = 0.0
+        for i in range(n):
+            for j in range(n - i):
+                l1, l2 = (i + 1 / 3) * h, (j + 1 / 3) * h
+                l3 = 1.0 - l1 - l2
+                if l3 < 0:
+                    continue
+                total += f(l1, l2, l3) * h * h
+        return total
+
+    p1_vertex = integrate_reference_triangle(lambda a, b, c: a)
+    p2_vertex = integrate_reference_triangle(lambda a, b, c: a * (2 * a - 1))
+    p2_midside = integrate_reference_triangle(lambda a, b, c: 4 * a * b)
+
+    assert p1_vertex == pytest.approx(1 / 6, abs=2e-3), (
+        f"P1 vertex shape functions integrate to 1/6, giving strictly positive row sums -- this is "
+        f"why lumping is valid at P1. Got {p1_vertex}."
+    )
+    assert p2_midside == pytest.approx(1 / 6, abs=2e-3), (
+        f"P2 midside functions integrate to 1/6, so the collapse is not a uniform scaling. Got {p2_midside}."
+    )
+    assert abs(p2_vertex) < 0.01 * p2_midside, (
+        f"P2 vertex shape functions must integrate to ~0 -- that is the entire reason row-sum "
+        f"lumping is invalid at P2 and why the clamp to 1e-15 produced 1e15-scaled gradients. "
+        f"Got {p2_vertex} against a midside value of {p2_midside}. If this ever becomes O(1), the "
+        f"guard is refusing a configuration that would have worked."
+    )
+    assert np.sign(p1_vertex) == 1, "P1 row sums must be positive, not merely non-zero"
