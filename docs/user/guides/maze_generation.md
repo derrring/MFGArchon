@@ -1,6 +1,12 @@
-# Maze Generation Guide for MFG-RL Research
+# [FROZEN 2026-07-30] Maze Generation Guide for MFG-RL Research
 
-**Status**: Production-Ready
+> ⛔ **FROZEN PROTOTYPE.** `mfgarchon.alg.reinforcement` is a design prototype, not under
+> development — see `CLAUDE.md` § "FROZEN: alg/neural/ and alg/reinforcement/". Every status
+> line in this document predates that decision. Treat everything here as illustrative of
+> intent rather than as a supported contract: the behaviour is not pinned, and it may change
+> or be removed without a deprecation cycle.
+
+**Status**: ⛔ Frozen prototype — see the banner at the top of this guide
 **Date**: 2025-10-01
 **Scope**: Comprehensive guide to maze generation algorithms and hybrid methods for MFG research
 
@@ -469,5 +475,5 @@ from mfgarchon.alg.reinforcement.environments import (
 ---
 
 **Last Updated**: 2025-10-01
-**Status**: Production-Ready
+**Status**: ⛔ Frozen prototype — see the banner at the top of this guide
 **Related Issues**: #57 (Advanced Maze Generation), #54 (RL Paradigm Development)

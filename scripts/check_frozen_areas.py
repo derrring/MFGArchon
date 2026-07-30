@@ -182,20 +182,43 @@ def self_test() -> int:
             return 1
         baseline.write_text(json.dumps({"counts": dict.fromkeys(FROZEN_PACKAGES, 0), "files": before}) + "\n")
 
-        # The change this exists to catch, in each of the three shapes a test can take.
-        for name, body in (
-            ("test_from.py", "from mfgarchon.alg.reinforcement.algorithms import x\n"),
-            ("test_import.py", "import mfgarchon.alg.neural.nn\n"),
-            ("test_indented.py", "def test_a():\n    from mfgarchon.alg.neural import core\n"),
+        # One fixture per branch of _references. The first version of this list held the three
+        # shapes the ORIGINAL regex already handled, so the two branches added to close the
+        # review's blockers -- the string literal and `from mfgarchon.alg import <frozen>` --
+        # had no positive control: deleting either left the gate green while reopening the exact
+        # blocker, and neither is load-bearing for any file in the current baseline, so nothing
+        # else in the suite would have noticed. Add a branch to _references, add a row here.
+        for branch, name, body in (
+            ("ast.Import", "test_import.py", "import mfgarchon.alg.neural.nn\n"),
+            (
+                "ast.ImportFrom (frozen module)",
+                "test_from.py",
+                "from mfgarchon.alg.reinforcement.algorithms import x\n",
+            ),
+            (
+                "ast.ImportFrom (frozen name off mfgarchon.alg)",
+                "test_pkg_symbol.py",
+                "from mfgarchon.alg import reinforcement\n",
+            ),
+            (
+                "ast.Constant (dynamic import by string)",
+                "test_dynamic.py",
+                'import importlib\n\nmod = importlib.import_module("mfgarchon.alg.neural.nn")\n',
+            ),
+            (
+                "ast.walk reaches function scope",
+                "test_indented.py",
+                "def test_a():\n    from mfgarchon.alg.neural import core\n",
+            ),
         ):
             (root / "unit" / name).write_text(body)
             after = offending_files(root)
-            if not any(after.values()):
-                print(f"SELF-TEST FAILED: {name} was not detected")
-                return 1
             (root / "unit" / name).unlink()
+            if not any(after.values()):
+                print(f"SELF-TEST FAILED: {branch} not detected ({name})")
+                return 1
 
-        print("SELF-TEST PASSED: from-import, plain import, and function-scoped import all detected")
+        print("SELF-TEST PASSED: all 5 detector branches have a positive control")
         return 0
 
 

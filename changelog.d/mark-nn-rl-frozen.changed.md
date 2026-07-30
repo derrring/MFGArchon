@@ -18,3 +18,13 @@
   package as "Production-Ready ✅" are marked, `CLAUDE.md`'s Scope line no longer lists DGM/PINN/
   Actor-Critic under ✅ two lines above the ⛔, and four frozen-area issues are labelled
   `status: blocked` instead of reading as available work.
+  A second review found the two branches added to close the first review's blockers had no
+  positive control: the self-test covered exactly the three shapes the original regex already
+  handled, so deleting either new branch left the gate green while reopening the exact blocker.
+  Neither is load-bearing for any of the 14 baselined files -- all 14 carry a static import -- so
+  a baseline regeneration, the full suite and CI would all have passed over it. There is now one
+  fixture per detector branch, each labelled with the branch it exercises, and deleting a branch
+  fails naming it. Four documents teach a frozen package, enumerated with the checker's own prefix
+  matching rather than a grep (which counted `mfgarchon.alg.neural_solvers` as a hit); all four are
+  marked, and every trailing `**Status**` line in them -- one still read "Production-Ready" 435
+  lines under a freeze banner -- now agrees with the header.
