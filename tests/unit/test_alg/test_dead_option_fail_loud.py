@@ -159,7 +159,8 @@ class TestDeadOptionsAreProvablyDead:
                     # The solver stores these privately. Setting a public name would create a NEW
                     # attribute nothing reads, and byte-identity would follow trivially -- the test
                     # would pass while measuring nothing. Assert the target exists first.
-                    assert hasattr(solver, name), (
+                    _absent = object()
+                    assert getattr(solver, name, _absent) is not _absent, (
                         f"{name!r} is not an attribute of the constructed solver; injecting it "
                         f"would prove nothing about whether the option is read"
                     )
