@@ -136,58 +136,29 @@ def _volatility_to_diffusion(
 # ============================================================================
 
 
-def _values_equal(a: object, b: object) -> bool:
-    """Structural equality for geometry attribute values, arrays and nested containers included."""
-    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
-        arr_a, arr_b = np.asarray(a), np.asarray(b)
-        return arr_a.shape == arr_b.shape and bool(np.array_equal(arr_a, arr_b))
-    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
-        return len(a) == len(b) and all(_values_equal(x, y) for x, y in zip(a, b, strict=True))
-    if isinstance(a, dict) and isinstance(b, dict):
-        return set(a) == set(b) and all(_values_equal(a[k], b[k]) for k in a)
-    try:
-        return bool(a == b)
-    except (ValueError, TypeError):
-        # A value whose __eq__ is not boolean (a ragged array, a comparison that raises).
-        # Identity is the only thing left that is safe to assert.
-        return a is b
-
-
 def _same_geometry(a: object, b: object) -> bool:
-    """Whether two geometries discretise space identically (Issue #1765).
+    """Whether the two geometry arguments are the same geometry (Issue #1765).
 
-    Identical geometries make the dual-geometry path equivalent to the unified one, so they are
-    allowed through; differing ones are refused because nothing downstream honours the
-    difference. Compared by value rather than by identity, so two separately-constructed but
-    identical grids are not spuriously rejected.
+    Identity, not equality. Three attempts at proving two separately-constructed geometries
+    describe the same discretisation each shipped a defect that a review had to find:
 
-    Compares the type and the full instance state. Two earlier versions failed, both by assuming
-    something about the geometry hierarchy that is not true of it:
+    - comparing a fixed list of attribute names accepted a pair as soon as ANY ONE matched, so
+      two ``Mesh2D`` differing tenfold in ``mesh_size`` compared equal;
+    - comparing ``get_collocation_points()`` assumed a uniform accessor, but that method is a
+      deterministic accessor on grids, raises on an ungenerated ``Mesh2D``, is a *sampler* with a
+      required argument on ``Hyperrectangle``, and a fresh random draw on ``ImplicitDomain``;
+    - comparing instance state via ``vars()`` conflated the discretisation with the object's
+      lifecycle, so a grid that had merely been USED (a populated ``_flattened_cache``) stopped
+      equalling an identical fresh one, and two identically-built ``Mesh1D`` were refused because
+      ``MeshData.__eq__`` returns an array.
 
-    - Comparing a fixed list of attribute names (``Nx_points`` / ``bounds`` / ``num_nodes``) and
-      accepting as soon as ANY ONE matched let through two ``Mesh2D`` differing tenfold in
-      ``mesh_size`` (only ``bounds`` is comparable, and it matches) and two ``TensorProductGrid``
-      with equal ``bounds`` and ``Nx_points`` but different node coordinates.
-    - Comparing ``get_collocation_points()`` assumed that method is a stable identity function.
-      It is not: on ``TensorProductGrid`` it is a deterministic accessor, on ``Mesh2D`` it raises
-      until ``generate_mesh()``, on ``Hyperrectangle`` it is a *sampler* whose first parameter is
-      required (so the call raised ``TypeError`` straight through ``MFGProblem.__init__``), and on
-      ``ImplicitDomain`` it draws fresh random points every call, so two identical ``Hypersphere``
-      never compared equal -- and paid a 6-second, 668 MiB draw at d=5 to reach that wrong answer.
-
-    Instance state needs no such assumption: it is what the constructor was given, it is cheap,
-    and it discriminates every case above. A geometry whose state cannot be compared falls back to
-    identity, which refuses -- the safe direction when the failure being prevented is a silent
-    wrong answer.
+    Each attempt was a cleverer structural comparison and each had a case it did not anticipate.
+    Identity has none: it cannot be fooled, it costs nothing, and its only failure direction is
+    refusing something that would have been fine -- which is loud, and which the error message
+    tells the caller how to resolve in one edit. A silent wrong answer is the thing being
+    prevented; over-refusing is not that.
     """
-    if a is b:
-        return True
-    if type(a) is not type(b):
-        return False
-    state_a, state_b = vars(a), vars(b)
-    if set(state_a) != set(state_b):
-        return False
-    return all(_values_equal(state_a[k], state_b[k]) for k in state_a)
+    return a is b
 
 
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
@@ -673,12 +644,20 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # works and stays usable directly; it is the MFGProblem plumbing that is missing.
             if not _same_geometry(hjb_geometry, fp_geometry):
                 raise NotImplementedError(
-                    "MFGProblem(hjb_geometry=..., fp_geometry=...) with DIFFERENT geometries is "
-                    "not implemented (Issue #1765). The geometries are accepted and a "
+                    "MFGProblem(hjb_geometry=..., fp_geometry=...) requires the SAME geometry "
+                    "object for both (Issue #1765). Two geometries are accepted and a "
                     "GeometryProjector is built, but no solver reads it -- the FP solve would run "
-                    "on the HJB grid and return a result that looks like what you asked for. "
-                    "Pass a single `geometry=` until the projector is wired, or use "
-                    "GeometryProjector directly if you are doing the projection yourself."
+                    "on the HJB grid and return a result that looks like what you asked for.\n"
+                    "  - Same discretisation for both? Pass `geometry=` once, or bind one object "
+                    "to both names.\n"
+                    "  - Genuinely want two resolutions? Drive it yourself:\n"
+                    "      from mfgarchon.geometry import GeometryProjector\n"
+                    "      projector = GeometryProjector(hjb_geometry=a, fp_geometry=b)\n"
+                    "      m_on_fp = projector.project_hjb_to_fp(m_on_hjb)\n"
+                    "This compares identity, not equality: three attempts at deciding whether two "
+                    "separately-built geometries describe the same discretisation each shipped a "
+                    "wrong answer, and over-refusing is recoverable in one edit where a silent "
+                    "wrong answer is not."
                 )
 
             # Identical geometries are equivalent to the unified path and are allowed through.

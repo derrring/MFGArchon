@@ -8,3 +8,5 @@ every downstream number computed on a grid the caller did not choose. Identical 
 still accepted (equivalent to the unified path), and `GeometryProjector` is unchanged and still
 usable directly. Wiring the projector into the coupling loop is the follow-up; refusing is the
 honest state until then.
+
+  The two geometries must be the **same object**. Deciding whether two separately-constructed geometries describe the same discretisation was attempted three times -- an attribute-name list, the collocation point set, and full instance state -- and each shipped a defect a review had to find: a 10x `mesh_size` difference read as identical, a `TypeError` out of `MFGProblem.__init__` for a `Hyperrectangle`, two identical `Hypersphere` refused, and a grid that had merely been used no longer equalling a fresh one. Identity cannot be fooled, and over-refusing costs one edit where the silent wrong answer being prevented costs a result. The error message names both routes -- pass `geometry=` once, or drive `GeometryProjector` yourself -- and a test executes both.

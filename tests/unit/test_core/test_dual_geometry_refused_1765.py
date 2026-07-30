@@ -63,20 +63,6 @@ def test_the_message_names_the_workaround():
     assert "GeometryProjector" in message, "the projector still works standalone; say so"
 
 
-def test_identical_geometries_are_still_accepted():
-    """Two separately-constructed identical grids are equivalent to the unified path.
-
-    The first version of the comparison required `Nx_points`, `bounds` AND `num_nodes` to be
-    present on both, and a `TensorProductGrid` has no `num_nodes` -- so it rejected a pair it
-    should have accepted. Compared on the attributes both objects actually have.
-    """
-    problem = _problem(_grid(41), _grid(41))
-    assert problem.geometry.Nx_points == [41]
-
-    same = _grid(21)
-    assert _problem(same, same).geometry.Nx_points == [21]
-
-
 def test_the_workaround_the_error_message_names_actually_works():
     """The refusal points users at `GeometryProjector`; that path must round-trip, not just import.
 
@@ -99,95 +85,42 @@ def test_the_workaround_the_error_message_names_actually_works():
     assert np.all(np.isfinite(back))
 
 
-def test_grids_with_equal_bounds_and_count_but_different_nodes_are_refused():
-    """Same bounds, same Nx_points, different node coordinates is a different discretisation.
+def test_the_same_object_passed_twice_is_accepted():
+    """One object bound to both names is the unified path, and must still work."""
+    g = _grid(21)
+    assert _problem(g, g).geometry.Nx_points == [21]
 
-    The first version of ``_same_geometry`` compared the attribute names
-    ``Nx_points`` / ``bounds`` / ``num_nodes``. Both are equal here, so the pair was accepted and
-    the FP geometry silently discarded -- the exact failure this refusal exists to prevent,
-    passing through the guard written to prevent it. A Chebyshev grid on the same interval with
-    the same point count has dx wrong by several times near the endpoints.
+
+def test_two_separately_built_geometries_are_refused_even_when_identical():
+    """The comparison is identity, not equality -- deliberately, and this pins that.
+
+    Three attempts at deciding whether two separately-constructed geometries describe the same
+    discretisation each shipped a wrong answer: an attribute-name list accepted a 10x mesh-size
+    difference, a node-set comparison crashed on `Hyperrectangle` and refused two identical
+    `Hypersphere`, and `vars()` refused a grid that had merely been used. Identity cannot be
+    fooled. Over-refusing costs the caller one edit; the silent wrong answer this prevents costs
+    them a paper.
     """
+    a, b = _grid(21), _grid(21)
+    assert a is not b
+    with pytest.raises(NotImplementedError, match="SAME geometry object"):
+        _problem(a, b)
+
+
+def test_the_refusal_names_two_routes_that_both_work():
+    """An error message is only as good as the actions it names; both are executed here."""
     import numpy as np
 
-    from mfgarchon.core.mfg_problem import _same_geometry
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry import GeometryProjector
 
-    bc = no_flux_bc(dimension=1)
-    uniform = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=bc)
-    chebyshev = TensorProductGrid(
-        bounds=[(0.0, 1.0)],
-        Nx_points=[11],
-        boundary_conditions=bc,
-        spacing_type="custom",
-        custom_coordinates=[np.sort(0.5 - 0.5 * np.cos(np.linspace(0, np.pi, 11)))],
-    )
+    with pytest.raises(NotImplementedError) as exc:
+        _problem(_grid(41), _grid(11))
+    message = str(exc.value)
 
-    assert np.array_equal(uniform.bounds, chebyshev.bounds)
-    assert list(uniform.Nx_points) == list(chebyshev.Nx_points)
-    assert not np.allclose(uniform.get_collocation_points(), chebyshev.get_collocation_points())
+    assert "geometry=" in message
+    g = _grid(21)
+    assert _problem(g, g).geometry.Nx_points == [21], "route 1 from the message must work"
 
-    assert not _same_geometry(uniform, chebyshev)
-
-
-def test_meshes_that_expose_only_bounds_are_refused_rather_than_assumed_equal():
-    """Two Mesh2D over the same rectangle at different resolutions are not the same geometry.
-
-    Neither has ``Nx_points`` nor ``num_nodes``, so comparing a fixed list of attribute names
-    found only ``bounds``, matched it, and returned True -- a tenfold mesh-resolution difference
-    read as "same geometry". ``examples/advanced/geometry_advanced/dual_geometry_fem_mesh.py``
-    is exactly a ``Mesh2D``-as-``fp_geometry`` script.
-    """
-    from mfgarchon.core.mfg_problem import _same_geometry
-    from mfgarchon.geometry.meshes import Mesh2D
-
-    fine = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0), mesh_size=0.05)
-    coarse = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0), mesh_size=0.5)
-
-    assert not hasattr(fine, "Nx_points")
-    assert not hasattr(fine, "num_nodes")
-
-    assert not _same_geometry(fine, coarse)
-    assert _same_geometry(fine, fine), "identity must still short-circuit"
-
-
-def test_geometries_whose_point_set_is_a_sampler_do_not_crash_the_constructor():
-    """`get_collocation_points()` is not a stable identity function across this hierarchy.
-
-    An intermediate fix compared it directly. On ``Hyperrectangle`` it is a *sampler* whose first
-    parameter ``n_interior`` is required, so the zero-arg call raised ``TypeError`` straight
-    through ``MFGProblem.__init__`` -- a construction that worked on main became a crash, and the
-    exception named neither the geometries nor Issue #1765.
-    """
-    import inspect
-
-    from mfgarchon.core.mfg_problem import _same_geometry
-    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
-
-    params = inspect.signature(Hyperrectangle.get_collocation_points).parameters
-    assert "n_interior" in params, "this test guards against calling that sampler with no arguments"
-
-    a = Hyperrectangle(bounds=[(0.0, 1.0), (0.0, 1.0)])
-    b = Hyperrectangle(bounds=[(0.0, 1.0), (0.0, 1.0)])
-    assert _same_geometry(a, b), "two identically-constructed Hyperrectangles are the same geometry"
-    assert not _same_geometry(a, Hyperrectangle(bounds=[(0.0, 2.0), (0.0, 1.0)]))
-
-
-def test_a_randomly_sampled_point_set_does_not_make_identical_domains_differ():
-    """``ImplicitDomain.get_collocation_points()`` draws fresh random points on every call.
-
-    Comparing that draw made two identical ``Hypersphere`` compare unequal, so the constructor
-    refused them with a message saying the geometries differ -- they do not. It also paid the
-    draw twice to get there (measured 6.2 s / 668 MiB at d=5) before returning the wrong answer.
-    """
-    from mfgarchon.core.mfg_problem import _same_geometry
-    from mfgarchon.geometry.implicit.hypersphere import Hypersphere
-
-    a = Hypersphere(center=[0.0, 0.0], radius=1.0)
-    b = Hypersphere(center=[0.0, 0.0], radius=1.0)
-    assert not np.array_equal(a.get_collocation_points(), b.get_collocation_points()), (
-        "if this ever becomes deterministic the regression this test guards is gone"
-    )
-    assert _same_geometry(a, b), "identical domains must not be refused because the sampler is random"
-    assert not _same_geometry(a, Hypersphere(center=[0.0, 0.0], radius=2.0))
+    assert "GeometryProjector" in message
+    projector = GeometryProjector(hjb_geometry=_grid(41), fp_geometry=_grid(11))
+    assert projector.project_hjb_to_fp(np.zeros(41)).shape == (11,), "route 2 must work"
