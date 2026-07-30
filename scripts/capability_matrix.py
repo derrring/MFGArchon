@@ -750,8 +750,15 @@ def _note_still_applies(prior_cell: dict | None, current: dict) -> bool:
     not appear in the reviewer's diff at all -- only the artifact does. That is how an annotation
     outlives the evidence it cites, which is exactly the defect this file's own #1745 note had.
 
-    Requiring the exception type to match means a changed failure drops the note, the cell reads as
-    unexplained, and someone has to look at it.
+    Requiring the whole artifact to match means a changed failure drops the note, the cell reads as
+    unexplained, and someone has to look at it. Comparing only the exception TYPE was the first
+    attempt and was blind to the motivating case -- a note citing residual 2.42e-01 beside an
+    artifact that had become 1.17e-05, ConvergenceError on both sides.
+
+    Consequence worth knowing before annotating a FAIL cell: a FAIL artifact is a measurement, and
+    measurements move, so its note will be dropped on the next regeneration. That is the safe
+    direction (the cell reads as unexplained and gets looked at) but it makes `intended` awkward
+    for FAIL cells. Every non-PASS cell today is exception-shaped, so this is latent.
     """
     if prior_cell is None or "intended" not in prior_cell or current["status"] == "PASS":
         return False
@@ -794,6 +801,12 @@ def main() -> None:
 
     if args.json:
         print(json.dumps(results, indent=2, sort_keys=True))
+        sys.stdout.flush()
+        # Everything after the blob goes to stderr. Routing prints one at a time is how this
+        # broke twice: the fix said "both remaining prints" when there were four, and the two it
+        # missed fire exactly when the new unexplained-cell report has something to say. One
+        # redirect cannot be defeated by a print added later.
+        sys.stdout = sys.stderr
     else:
         print_report(results)
 

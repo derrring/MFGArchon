@@ -11,7 +11,7 @@
 - **Carry-forward no longer preserves a note across a changed failure.** Requiring only "still
   non-PASS" let an annotation survive an arbitrary change of exception while the run still reported
   zero unexplained cells — and because the note is an unchanged line, it never appeared in the
-  reviewer's diff. It is now dropped unless the artifact's exception is unchanged.
+  reviewer's diff. It is now dropped unless the whole artifact is unchanged. Comparing only the exception type was blind to the case that motivated the gate: a note citing residual `2.42e-01` beside an artifact that had become `1.17e-05`, `ConvergenceError` on both sides.
 - **`--json` emits JSON.** The cells run real coupled solves that wrote to stdout from three
   independent places (library INFO logging, Rich progress bars, plain prints), so the flag never
   produced parseable output. The evaluation is redirected to stderr rather than each source being

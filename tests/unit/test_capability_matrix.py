@@ -569,7 +569,7 @@ def test_a_note_is_dropped_when_the_failure_itself_changes(cm, monkeypatch, tmp_
 
 
 def test_a_note_survives_a_regeneration_that_changes_nothing(cm, monkeypatch, tmp_path):
-    """The counterpart: gating on the exception must not throw away still-valid notes.
+    """The counterpart: gating on the whole artifact must not throw away still-valid notes.
 
     Without this, the gate above would be indistinguishable from deleting carry-forward.
     """
@@ -649,3 +649,60 @@ def test_the_baseline_comment_names_no_flag_that_does_not_exist(cm, monkeypatch,
     cited = {tok.rstrip(".,;:") for tok in comment.split() if tok.startswith("--") and len(tok) > 2}
     assert cited, "nothing cited would make this check pass vacuously"
     assert cited <= declared, f"_comment cites flags the CLI does not accept: {sorted(cited - declared)}"
+
+
+def test_json_stays_parseable_when_a_cell_has_no_note(cm, monkeypatch, tmp_path, capsys):
+    """`--json` must emit JSON in the state the unexplained-cell report exists to describe.
+
+    Routing prints one at a time is how this broke twice: a fix said "both remaining prints" when
+    there were four, and the two it missed fire only when a non-PASS cell lacks a note -- exactly
+    when the new feature has something to say. The state below is reached through the documented
+    CLI, not by hand-editing: a baseline written to a NEW path carries no notes forward.
+    """
+    fresh = tmp_path / "fresh.json"
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: (_ for _ in ()).throw(ValueError("refused"))})
+    _run_main(cm, monkeypatch, ["--write-baseline", str(fresh)])
+    capsys.readouterr()
+
+    monkeypatch.setattr(cm, "CELLS", {"x/y": lambda: (_ for _ in ()).throw(ValueError("refused"))})
+    _run_main(cm, monkeypatch, ["--json", "--check-baseline", str(fresh)])
+
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert set(parsed) == {"x/y"}
+
+
+def test_the_unexplained_count_is_derived_not_asserted(cm, monkeypatch, tmp_path, capsys):
+    """The headline metric this feature introduces had no test; it could be wired to a constant.
+
+    Two cells, one annotated and one not, so a hardcoded 0 or a hardcoded len() both fail.
+    """
+    baseline = tmp_path / "b.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": {
+                    "a/annotated": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "refused"},
+                        "intended": "INTENDED - the guard fired",
+                    },
+                    "b/bare": {
+                        "status": "UNSUPPORTED",
+                        "artifact": {"exception": "ValueError", "message": "refused"},
+                    },
+                }
+            }
+        )
+    )
+
+    def refused():
+        raise ValueError("refused")
+
+    monkeypatch.setattr(cm, "CELLS", {"a/annotated": refused, "b/bare": refused})
+    _run_main(cm, monkeypatch, ["--check-baseline", str(baseline)])
+
+    report = capsys.readouterr().out
+    assert "1 non-PASS cell(s) with no recorded reason" in report, report
+    assert "b/bare" in report
+    assert "a/annotated" not in report.split("no recorded reason")[-1]
