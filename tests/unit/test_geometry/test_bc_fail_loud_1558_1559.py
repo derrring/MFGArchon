@@ -108,7 +108,10 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
 
     Coercing periodic to no-flux does not perturb the answer, it replaces it: mass that should
     wrap to the far side is held against the near wall instead. The mutation that reddens THIS
-    test is a change to the periodic wrap in assembly, not the deletion of a guard.
+    test is a change to the `divergence_upwind` periodic wrap in assembly, not the deletion of a
+    guard. Scope: the wrap is copy-pasted into all four advection-scheme interior handlers and
+    only the default one is covered here -- disabling it in the gradient_upwind,
+    gradient_centered or divergence_centered handlers leaves this green.
     """
     import numpy as np
 
@@ -157,3 +160,12 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
     for name, density in (("no-flux", reflecting), ("periodic", wrapping)):
         assert np.all(np.isfinite(density)), f"{name} produced a non-finite density"
         assert density.min() >= -1e-12, f"{name} produced a negative density: {density.min():.3e}"
+        # Two-sided. Without this the assertions above are one-sided -- ANY corruption that makes
+        # the two BCs differ MORE passes. Measured: routing the no-flux wall to the interior
+        # handler leaks 54% of its mass (sum 0.461 instead of 1.0) and makes the test greener,
+        # ratio 340 -> 617. Residuals here are 3.9e-15 and 4.4e-16, so this has five orders of
+        # margin over the tolerance.
+        assert abs(density.sum() - 1.0) < 1e-10, (
+            f"{name} did not conserve mass: sum {density.sum():.6f}. A leak makes the two BCs "
+            f"differ more, so the comparison above would read it as success."
+        )
