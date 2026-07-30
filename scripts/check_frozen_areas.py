@@ -12,8 +12,9 @@ into a test anyway on 2026-07-30, because the fail-fast ratchet scans `mfgarchon
 So the freeze gets a counter, not just a paragraph.
 
 WHAT THIS DOES NOT DO. It counts test FILES that import a frozen package; it does not read intent
-and it does not look at line counts. Deleting a frozen test lowers the count and the baseline must
-be regenerated, which is the same ratchet shape as `check_fail_fast.py`. The explicitly allowed
+and it does not look at line counts. Deleting a frozen test drops it from the set and the baseline
+must be regenerated in the same change -- the shape `check_doc_api.py` uses, which hard-fails on
+a drop. (`check_fail_fast.py` only nudges and exits 0; citing it here was wrong.) The explicitly allowed
 actions -- keeping the packages importable, a one-line build fix, filing an issue -- add no test
 file and cannot trip it.
 """
@@ -21,8 +22,8 @@ file and cannot trip it.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -30,23 +31,58 @@ FROZEN_PACKAGES = ("mfgarchon.alg.neural", "mfgarchon.alg.reinforcement")
 
 # Matches `from mfgarchon.alg.neural...` and `import mfgarchon.alg.neural...`, including
 # submodules, and tolerates leading whitespace for imports inside a function or fixture.
-_IMPORT = re.compile(
-    r"^\s*(?:from|import)\s+(" + "|".join(re.escape(p) for p in FROZEN_PACKAGES) + r")\b",
-    re.MULTILINE,
-)
+_PREFIXES = tuple(FROZEN_PACKAGES)
+
+
+def _names_a_frozen_package(text: str) -> bool:
+    """Whether this string names a frozen package or one of its submodules."""
+    return any(text == p or text.startswith(p + ".") for p in _PREFIXES)
+
+
+def _references(path: Path) -> set[str]:
+    """Frozen packages this file reaches, by AST -- imports AND string literals.
+
+    Regex over `from|import <dotted>` was the first form and it missed the idiom this very
+    baseline depends on. `test_mean_field_rl_requires_pop_state_1508.py` reaches three frozen RL
+    algorithms through `@pytest.mark.parametrize` + `importlib.import_module(name)`, and was
+    counted only because of one unrelated static import elsewhere in the file. Lifting its
+    parametrised half into a new file passed the gate.
+
+    So string literals count too. `importlib.import_module("mfgarchon.alg.neural.nn")`,
+    `pytest.importorskip(...)` (20+ uses in this suite) and `patch("mfgarchon.alg.neural.nn.MLP")`
+    are all house style here, not evasion.
+
+    Also handles `from mfgarchon.alg import neural`, where the frozen name is the imported symbol
+    rather than part of the module path -- the shape `mfgarchon/alg/__init__.py` exports and
+    `from mfgarchon.alg import SchemeFamily` already uses in six test files.
+    """
+    found: set[str] = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _names_a_frozen_package(alias.name):
+                    found.add(next(p for p in _PREFIXES if alias.name.startswith(p)))
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if _names_a_frozen_package(node.module):
+                found.add(next(p for p in _PREFIXES if node.module.startswith(p)))
+            else:
+                # `from mfgarchon.alg import neural`
+                for alias in node.names:
+                    dotted = f"{node.module}.{alias.name}"
+                    if _names_a_frozen_package(dotted):
+                        found.add(next(p for p in _PREFIXES if dotted.startswith(p)))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if _names_a_frozen_package(node.value):
+                found.add(next(p for p in _PREFIXES if node.value.startswith(p)))
+    return found
 
 
 def offending_files(tests_root: Path) -> dict[str, list[str]]:
-    """Test files importing each frozen package, keyed by package."""
+    """Test files reaching each frozen package, keyed by package."""
     found: dict[str, list[str]] = {p: [] for p in FROZEN_PACKAGES}
     for path in sorted(tests_root.rglob("*.py")):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            # A file that cannot be read cannot be classified; surfacing it is more useful than
-            # skipping it silently, which would let the count drift down for the wrong reason.
-            raise
-        for package in {m.group(1) for m in _IMPORT.finditer(text)}:
+        for package in _references(path):
             found[package].append(str(path))
     return found
 
@@ -86,14 +122,22 @@ def main() -> int:
         return 0
 
     if args.check_baseline:
+        # As check_doc_api.py does: a gate whose self-test is an opt-in flag has its verification
+        # happen once, by hand, and never again.
+        if self_test() != 0:
+            return 1
         baseline = json.loads(Path(args.check_baseline).read_text())
-        recorded = baseline["counts"]
-        grew = {p: (recorded.get(p, 0), counts[p]) for p in counts if counts[p] > recorded.get(p, 0)}
-        if grew:
+        recorded = {p: set(baseline["files"].get(p, [])) for p in FROZEN_PACKAGES}
+        # Sets, not counts. A count nets to zero on delete-one-add-one, which is exactly the shape
+        # of "I removed a frozen test and added a different one" -- the second half is the thing
+        # this gate exists to stop.
+        added = {p: sorted(set(found[p]) - recorded[p]) for p in FROZEN_PACKAGES}
+        added = {p: f for p, f in added.items() if f}
+        if added:
             print("FAIL: new tests added against a FROZEN prototype paradigm.")
-            for package, (was, now) in sorted(grew.items()):
-                print(f"  {package}: {was} -> {now} test file(s)")
-                for path in sorted(set(found[package]) - set(baseline["files"].get(package, []))):
+            for package, files in sorted(added.items()):
+                print(f"  {package}:")
+                for path in files:
                     print(f"      + {path}")
             print(
                 "\nalg/neural and alg/reinforcement are prototypes, not under development "
@@ -103,9 +147,10 @@ def main() -> int:
                 f"{args.check_baseline}"
             )
             return 1
-        shrank = {p: (recorded.get(p, 0), counts[p]) for p in counts if counts[p] < recorded.get(p, 0)}
-        if shrank:
-            print(f"FAIL: frozen-area test count DROPPED {shrank} -- regenerate the baseline.")
+        removed = {p: sorted(recorded[p] - set(found[p])) for p in FROZEN_PACKAGES}
+        removed = {p: f for p, f in removed.items() if f}
+        if removed:
+            print(f"FAIL: frozen-area tests disappeared {removed} -- regenerate the baseline.")
             return 1
         print(f"OK: no new tests against frozen paradigms {counts}")
         return 0
@@ -121,7 +166,14 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "tests"
         (root / "unit").mkdir(parents=True)
-        (root / "unit" / "test_clean.py").write_text("from mfgarchon.core import mfg_problem\n")
+        # Positive control on the NEAREST false-positive class: a sibling package under alg/.
+        # A mutant broadening the match to `mfgarchon.alg.*` would flag every numerical test, and
+        # a clean fixture that only imports mfgarchon.core would not notice.
+        (root / "unit" / "test_clean.py").write_text(
+            "from mfgarchon.core import mfg_problem\n"
+            "from mfgarchon.alg.numerical.fp_solvers import fp_fdm\n"
+            'import importlib; importlib.import_module("mfgarchon.alg.numerical")\n'
+        )
         baseline = Path(tmp) / "baseline.json"
 
         before = offending_files(root)

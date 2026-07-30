@@ -22,7 +22,7 @@
 ### MFGArchon: Public Infrastructure Package
 Production-ready infrastructure for Mean Field Games research and applications.
 
-**Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical algorithms (FDM, FEM, GFDM, DGM, PINN, Actor-Critic, PPO); ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
+**Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical numerical algorithms (FDM, FEM, GFDM); ⛔ the neural and RL families (DGM, PINN, Actor-Critic, PPO) are **in scope as a direction but FROZEN as code** — see the next section; ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
 
 ### ⛔ FROZEN: `alg/neural/` and `alg/reinforcement/` — prototype, not under development
 
@@ -142,7 +142,8 @@ The axiom testing discipline governs **what** a test must cover (edge/stress/fai
 | Code type | Changes often? | Public API? | Test type |
 |:----------|:--------------|:------------|:----------|
 | `solve_mfg()`, config system | No | Yes | Unit |
-| New HJB/FP solver, experimental RL | Yes | Maybe/No | Smoke |
+| New HJB/FP solver | Yes | Maybe/No | Smoke |
+| `alg/neural`, `alg/reinforcement` | — | — | **None — frozen, see above** |
 | Visualization | Sometimes | Yes | Smoke |
 | Utility function | No | Internal | Unit or smoke |
 
