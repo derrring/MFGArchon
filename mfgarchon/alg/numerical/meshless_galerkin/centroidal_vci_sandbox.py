@@ -4,12 +4,17 @@ This module is deliberately outside ``WeakFormDiscretization``. It is an admissi
 gate for a candidate Petrov-Galerkin method, not a production solver backend.
 
 The construction uses clipped Voronoi centroids ``c_a`` as sampling points,
-``M = E.T @ W @ E`` with ``E[a, i] = phi_i(c_a)``, the SCNI cell-average trial
-gradient, and a local variational-consistency correction of the test gradient.
+``M = E.T @ W @ E`` with ``E[a, i] = phi_i(c_a)``, a selectable SCNI
+cell-average or centroid-pointwise trial gradient, and a local
+variational-consistency correction of the test gradient.
 The correction targets shifted/scaled weak moments through degree two, three,
-or four, including boundary fluxes. Degree-two MLS makes only the quadratic
-discrete patch exact; higher target moments and the actual discrete patch are
-reported separately.
+or four, including boundary fluxes. The MLS trial degree is selected
+independently, so target weak moments and the actual discrete patch are reported
+separately.
+
+An optional local polynomial-null stabilization is a research diagnostic, not a
+production backend. It tests whether a symmetric positive-semidefinite correction
+can remove non-polynomial negative modes without changing the target patch.
 
 All nonlinear MFG blocks are derived from one residual. The forward spatial
 operator is therefore the transpose of the complete analytic Jacobian; no
@@ -41,7 +46,11 @@ class VCIAdmissionDiagnostics:
 
     ``corrected_patch_defect`` uses exact target-polynomial gradients.
     ``discrete_patch_defect`` instead applies the assembled stiffness to nodal
-    polynomial values and therefore includes the degree-two trial-gradient error.
+    polynomial values and therefore includes any trial-gradient error at the
+    selected VCI target degree.
+
+    ``raw_gauge_coercivity_min`` is measured before polynomial-null
+    stabilization; ``gauge_coercivity_min`` is measured after it.
     """
 
     local_rank_min: int
@@ -56,8 +65,14 @@ class VCIAdmissionDiagnostics:
     plain_patch_defect: float
     corrected_patch_defect: float
     discrete_patch_defect: float
+    stabilization_rank_min: int
+    stabilization_condition_max: float
+    stabilization_support_count_min: int
+    stabilization_support_count_max: int
+    stabilization_patch_defect: float
     right_constant_defect: float
     left_constant_defect: float
+    raw_gauge_coercivity_min: float
     gauge_coercivity_min: float
     gauge_smallest_singular_value: float
     stiffness_nullity: int
@@ -283,8 +298,9 @@ def _as_vector(values: NDArray, size: int, name: str) -> NDArray:
 class CentroidalVCISCNIOperatorSandbox:
     """Dense research sandbox for the centroidal VCI-SCNI operator gate.
 
-    The MLS trial basis is two-dimensional and degree-two. The shifted/scaled
-    variational correction can target degrees two through four. The sandbox
+    The MLS trial basis is two-dimensional and can have degree two through four.
+    The shifted/scaled variational correction independently targets degrees two
+    through four. The sandbox
     supports rectangular clipping and the existing polygonal SDF-chord clipping.
     Dense diagnostics are intentional: promotion to a production sparse backend
     is blocked until the operator gate passes across cloud families and refinement.
@@ -302,6 +318,11 @@ class CentroidalVCISCNIOperatorSandbox:
         backend: str = "numpy",
         n_edge_gauss: int = 4,
         vci_support_radius: float | None = None,
+        trial_gradient_mode: str = "scni",
+        test_gradient_base: str = "trial",
+        polynomial_null_stabilization: float = 0.0,
+        stabilization_support_radius: float | None = None,
+        max_stabilization_condition: float = 1e8,
         rank_tolerance: float = 1e-11,
         max_local_condition: float = 1e8,
         max_mass_condition: float = 1e6,
@@ -312,18 +333,45 @@ class CentroidalVCISCNIOperatorSandbox:
         self._nodes = np.asarray(nodes, dtype=np.float64)
         if self._nodes.ndim != 2 or self._nodes.shape[1] != 2:
             raise ValueError(f"Centroidal VCI-SCNI requires nodes with shape (N, 2), got {self._nodes.shape}.")
-        if len(self._nodes) < 6:
-            raise ValueError("Centroidal VCI-SCNI requires at least six nodes for a degree-two MLS basis.")
         if not np.all(np.isfinite(self._nodes)):
             raise ValueError("Centroidal VCI-SCNI nodes must all be finite.")
         if len(np.unique(self._nodes, axis=0)) != len(self._nodes):
             raise ValueError("Centroidal VCI-SCNI does not admit duplicate nodes.")
-        if degree != 2:
-            raise ValueError(f"Centroidal VCI-SCNI implements MLS degree=2 only, got degree={degree}.")
+        if not isinstance(degree, Integral) or degree not in (2, 3, 4):
+            raise ValueError(f"Centroidal VCI-SCNI requires MLS degree in {{2, 3, 4}}, got {degree}.")
+        required_nodes = len(monomial_exponents(2, int(degree)))
+        if len(self._nodes) < required_nodes:
+            raise ValueError(
+                f"Centroidal VCI-SCNI degree-{degree} MLS requires at least {required_nodes} nodes, "
+                f"got {len(self._nodes)}."
+            )
         if not isinstance(vci_degree, Integral) or vci_degree not in (2, 3, 4):
             raise ValueError(f"Centroidal VCI-SCNI requires vci_degree in {{2, 3, 4}}, got {vci_degree}.")
         if backend != "numpy":
             raise ValueError("Centroidal VCI-SCNI admission diagnostics require backend='numpy'.")
+        if trial_gradient_mode not in {"scni", "pointwise"}:
+            raise ValueError(
+                "Centroidal VCI-SCNI requires trial_gradient_mode in {'scni', 'pointwise'}, "
+                f"got {trial_gradient_mode!r}."
+            )
+        if test_gradient_base not in {"trial", "scni"}:
+            raise ValueError(
+                f"Centroidal VCI-SCNI requires test_gradient_base in {{'trial', 'scni'}}, got {test_gradient_base!r}."
+            )
+        if not np.isfinite(polynomial_null_stabilization) or polynomial_null_stabilization < 0.0:
+            raise ValueError(
+                f"polynomial_null_stabilization must be finite and nonnegative, got {polynomial_null_stabilization}."
+            )
+        if stabilization_support_radius is not None and (
+            not np.isfinite(stabilization_support_radius) or stabilization_support_radius <= 0.0
+        ):
+            raise ValueError(
+                f"stabilization_support_radius must be finite and positive, got {stabilization_support_radius}."
+            )
+        if not np.isfinite(max_stabilization_condition) or max_stabilization_condition <= 1.0:
+            raise ValueError(
+                f"max_stabilization_condition must be finite and greater than one, got {max_stabilization_condition}."
+            )
         if not np.isfinite(rho) or rho <= 0.0:
             raise ValueError(f"Centroidal VCI-SCNI requires rho > 0, got {rho}.")
         if len(bounds) != 2 or any(len(bound) != 2 or bound[1] <= bound[0] for bound in bounds):
@@ -349,7 +397,15 @@ class CentroidalVCISCNIOperatorSandbox:
         self._n_dof = len(self._nodes)
         self._rho = float(rho)
         self._bounds = [(float(lower), float(upper)) for lower, upper in bounds]
-        self._exponents = monomial_exponents(2, 2)
+        self._degree = int(degree)
+        self._exponents = monomial_exponents(2, self._degree)
+        self._trial_gradient_mode = trial_gradient_mode
+        self._test_gradient_base = test_gradient_base
+        self._polynomial_null_stabilization = float(polynomial_null_stabilization)
+        self._stabilization_support_radius = float(
+            stabilization_support_radius if stabilization_support_radius is not None else rho
+        )
+        self._max_stabilization_condition = float(max_stabilization_condition)
         self._vci_degree = int(vci_degree)
         self._vci_constraint_count = len(_polynomial_exponents(self._vci_degree)) - 1
         self._correction_exponents = _polynomial_exponents(self._vci_degree - 1)
@@ -370,7 +426,7 @@ class CentroidalVCISCNIOperatorSandbox:
         self._edge_points = edge_rule.points
         self._edge_normal_weights = edge_rule.normal_weights
 
-        self._E, _ = shape_functions_and_grads(
+        self._E, centroid_gradients = shape_functions_and_grads(
             self._centroids,
             self._nodes,
             self._rho,
@@ -378,6 +434,7 @@ class CentroidalVCISCNIOperatorSandbox:
             backend,
             check_conditioning=True,
         )
+        pointwise_gradients = [centroid_gradients[:, :, direction] for direction in range(2)]
         self._edge_phi, _ = shape_functions_and_grads(
             self._edge_points,
             self._nodes,
@@ -386,17 +443,42 @@ class CentroidalVCISCNIOperatorSandbox:
             backend,
             check_conditioning=True,
         )
-        self._G = self._assemble_trial_gradient(edge_rule)
-        self._Gbar, ranks, conditions, correction_ratios = self._assemble_test_gradient()
+        scni_gradients = self._assemble_scni_gradient(edge_rule)
+        self._G = scni_gradients if trial_gradient_mode == "scni" else pointwise_gradients
+        base_test_gradients = self._G if test_gradient_base == "trial" else scni_gradients
+        self._Gbar, ranks, conditions, correction_ratios = self._assemble_test_gradient(base_test_gradients)
         self._M = self._E.T @ (self._weights[:, None] * self._E)
-        self._K = sum(
+        self._raw_K = sum(
             test_gradient.T @ (self._weights[:, None] * trial_gradient)
             for test_gradient, trial_gradient in zip(self._Gbar, self._G, strict=True)
         )
-        self._diagnostics = self._compute_diagnostics(ranks, conditions, correction_ratios)
+        if self._polynomial_null_stabilization > 0.0:
+            (
+                self._stabilization,
+                stabilization_ranks,
+                stabilization_conditions,
+                stabilization_support_counts,
+                stabilization_patch_defect,
+            ) = self._assemble_polynomial_null_stabilization()
+        else:
+            self._stabilization = np.zeros_like(self._raw_K)
+            stabilization_ranks = []
+            stabilization_conditions = []
+            stabilization_support_counts = []
+            stabilization_patch_defect = 0.0
+        self._K = self._raw_K + self._polynomial_null_stabilization * self._stabilization
+        self._diagnostics = self._compute_diagnostics(
+            ranks,
+            conditions,
+            correction_ratios,
+            stabilization_ranks,
+            stabilization_conditions,
+            stabilization_support_counts,
+            stabilization_patch_defect,
+        )
         self._enforce_admission_gates()
 
-    def _assemble_trial_gradient(self, edge_rule: _EdgeQuadrature) -> list[NDArray]:
+    def _assemble_scni_gradient(self, edge_rule: _EdgeQuadrature) -> list[NDArray]:
         gradients = []
         for direction in range(2):
             accumulator: NDArray = np.zeros((self._n_dof, self._n_dof), dtype=np.float64)
@@ -406,8 +488,11 @@ class CentroidalVCISCNIOperatorSandbox:
             gradients.append(accumulator)
         return gradients
 
-    def _assemble_test_gradient(self) -> tuple[list[NDArray], list[int], list[float], list[float]]:
-        test_gradients = [gradient.copy() for gradient in self._G]
+    def _assemble_test_gradient(
+        self,
+        base_test_gradients: list[NDArray],
+    ) -> tuple[list[NDArray], list[int], list[float], list[float]]:
+        test_gradients = [gradient.copy() for gradient in base_test_gradients]
         nearest_distances, _ = cKDTree(self._nodes).query(self._nodes, k=2)
         local_scales = nearest_distances[:, 1]
         if np.any(local_scales <= 1e-14):
@@ -484,7 +569,7 @@ class CentroidalVCISCNIOperatorSandbox:
                     f"> {self._max_local_condition:.3e}."
                 )
 
-            base_gradient = np.column_stack([gradient[:, i] for gradient in self._G])
+            base_gradient = np.column_stack([gradient[:, i] for gradient in base_test_gradients])
             base_term = np.einsum(
                 "a,ad,akd->k",
                 self._weights,
@@ -526,6 +611,67 @@ class CentroidalVCISCNIOperatorSandbox:
             correction_ratios.append(float(correction_norm / base_norm))
         return test_gradients, ranks, conditions, correction_ratios
 
+    def _assemble_polynomial_null_stabilization(
+        self,
+    ) -> tuple[NDArray, list[int], list[float], list[int], float]:
+        """Assemble a local PSD stabilization that annihilates target polynomials.
+
+        Dividing each stencil projector by its support count prevents its
+        high-frequency scale from growing merely because the stencil contains
+        more nodes. This normalization remains an empirical sandbox choice.
+        """
+        stabilization = np.zeros((self._n_dof, self._n_dof), dtype=np.float64)
+        tree = cKDTree(self._nodes)
+        nearest_distances, _ = tree.query(self._nodes, k=2)
+        local_scales = nearest_distances[:, 1]
+        polynomial_count = len(_polynomial_exponents(self._vci_degree))
+        ranks = []
+        conditions = []
+        support_counts = []
+        for i, center in enumerate(self._nodes):
+            support = np.sort(
+                np.asarray(tree.query_ball_point(center, self._stabilization_support_radius), dtype=np.int64)
+            )
+            support_count = len(support)
+            support_counts.append(support_count)
+            if support_count < polynomial_count:
+                raise ValueError(
+                    f"Polynomial-null stabilization rank failure at node {i}: support_nodes={support_count} "
+                    f"< polynomial_basis_size={polynomial_count} "
+                    f"(support_radius={self._stabilization_support_radius:.6g})."
+                )
+            local_points = (self._nodes[support] - center[None, :]) / local_scales[i]
+            polynomial_values, _, _ = _polynomial_data(
+                local_points,
+                np.zeros(2, dtype=np.float64),
+                np.ones(2, dtype=np.float64),
+                self._vci_degree,
+            )
+            left_vectors, singular_values, _ = np.linalg.svd(polynomial_values, full_matrices=False)
+            relative_cutoff = self._rank_tolerance * singular_values[0]
+            rank = int(np.count_nonzero(singular_values > relative_cutoff))
+            ranks.append(rank)
+            if rank < polynomial_count:
+                raise ValueError(
+                    f"Polynomial-null stabilization rank failure at node {i}: rank={rank}, "
+                    f"required={polynomial_count}, support_nodes={support_count}, "
+                    f"support_radius={self._stabilization_support_radius:.6g}."
+                )
+            condition = float(singular_values[0] / singular_values[-1])
+            conditions.append(condition)
+            if not np.isfinite(condition) or condition > self._max_stabilization_condition:
+                raise np.linalg.LinAlgError(
+                    f"Polynomial-null stabilization is ill-conditioned at node {i}: cond={condition:.3e} "
+                    f"> {self._max_stabilization_condition:.3e}."
+                )
+            polynomial_basis = left_vectors[:, :polynomial_count]
+            residual_projector = np.eye(support_count) - polynomial_basis @ polynomial_basis.T
+            stabilization[np.ix_(support, support)] += residual_projector / support_count
+
+        node_values, _, _, _ = self._global_patch_data(self._vci_degree)
+        patch_defect = float(np.max(np.abs(stabilization @ node_values)))
+        return stabilization, ranks, conditions, support_counts, patch_defect
+
     def _global_patch_data(self, degree: int) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         center = np.array(
             [0.5 * (lower + upper) for lower, upper in self._bounds],
@@ -560,6 +706,10 @@ class CentroidalVCISCNIOperatorSandbox:
         ranks: list[int],
         conditions: list[float],
         correction_ratios: list[float],
+        stabilization_ranks: list[int],
+        stabilization_conditions: list[float],
+        stabilization_support_counts: list[int],
+        stabilization_patch_defect: float,
     ) -> VCIAdmissionDiagnostics:
         one = np.ones(self._n_dof)
         quadratic_values, quadratic_gradients, _, _ = self._global_patch_data(2)
@@ -572,14 +722,22 @@ class CentroidalVCISCNIOperatorSandbox:
             float(np.max(np.abs(gradient @ vci_values - vci_gradients[:, :, direction])))
             for direction, gradient in enumerate(self._G)
         )
-        symmetric_stiffness = 0.5 * (self._K + self._K.T)
         mean_constraint = self._M @ one
         gauge_basis = linalg.null_space(mean_constraint[None, :])
-        gauge_stiffness = gauge_basis.T @ symmetric_stiffness @ gauge_basis
         gauge_mass = gauge_basis.T @ self._M @ gauge_basis
+        symmetric_stiffness = 0.5 * (self._K + self._K.T)
+        gauge_stiffness = gauge_basis.T @ symmetric_stiffness @ gauge_basis
         gauge_coercivity = float(
             linalg.eigvalsh(gauge_stiffness, gauge_mass, subset_by_index=[0, 0], check_finite=False)[0]
         )
+        if self._polynomial_null_stabilization == 0.0:
+            raw_gauge_coercivity = gauge_coercivity
+        else:
+            raw_symmetric_stiffness = 0.5 * (self._raw_K + self._raw_K.T)
+            raw_gauge_stiffness = gauge_basis.T @ raw_symmetric_stiffness @ gauge_basis
+            raw_gauge_coercivity = float(
+                linalg.eigvalsh(raw_gauge_stiffness, gauge_mass, subset_by_index=[0, 0], check_finite=False)[0]
+            )
         gauge_cholesky = np.linalg.cholesky(gauge_mass)
         reduced_operator = gauge_basis.T @ self._K @ gauge_basis
         left_scaled = linalg.solve_triangular(
@@ -611,8 +769,14 @@ class CentroidalVCISCNIOperatorSandbox:
             plain_patch_defect=self._weak_patch_defect(self._G, self._vci_degree),
             corrected_patch_defect=self._weak_patch_defect(self._Gbar, self._vci_degree),
             discrete_patch_defect=self._discrete_patch_defect(),
+            stabilization_rank_min=min(stabilization_ranks, default=0),
+            stabilization_condition_max=max(stabilization_conditions, default=0.0),
+            stabilization_support_count_min=min(stabilization_support_counts, default=0),
+            stabilization_support_count_max=max(stabilization_support_counts, default=0),
+            stabilization_patch_defect=stabilization_patch_defect,
             right_constant_defect=float(np.max(np.abs(self._K @ one))),
             left_constant_defect=float(np.max(np.abs(one @ self._K))),
+            raw_gauge_coercivity_min=raw_gauge_coercivity,
             gauge_coercivity_min=gauge_coercivity,
             gauge_smallest_singular_value=gauge_smallest_singular,
             stiffness_nullity=stiffness_nullity,
@@ -625,6 +789,7 @@ class CentroidalVCISCNIOperatorSandbox:
             "trial-gradient constants": diagnostics.trial_constant_defect,
             "quadratic centroid gradient": diagnostics.quadratic_gradient_defect,
             f"degree-{self._vci_degree} corrected target weak patch": diagnostics.corrected_patch_defect,
+            "polynomial-null stabilization patch": diagnostics.stabilization_patch_defect,
             "right constant nullity": diagnostics.right_constant_defect,
         }
         failed_exactness = {name: value for name, value in exactness_defects.items() if value > self._patch_tolerance}
@@ -666,6 +831,22 @@ class CentroidalVCISCNIOperatorSandbox:
         return self._vci_degree
 
     @property
+    def degree(self) -> int:
+        return self._degree
+
+    @property
+    def trial_gradient_mode(self) -> str:
+        return self._trial_gradient_mode
+
+    @property
+    def test_gradient_base(self) -> str:
+        return self._test_gradient_base
+
+    @property
+    def polynomial_null_stabilization(self) -> float:
+        return self._polynomial_null_stabilization
+
+    @property
     def nodes(self) -> NDArray:
         return self._nodes
 
@@ -703,6 +884,9 @@ class CentroidalVCISCNIOperatorSandbox:
 
     def stiffness(self) -> sparse.csr_matrix:
         return sparse.csr_matrix(self._K)
+
+    def stabilization(self) -> sparse.csr_matrix:
+        return sparse.csr_matrix(self._stabilization)
 
     def reconstructed_density(self, coefficients: NDArray) -> NDArray:
         vector = _as_vector(coefficients, self._n_dof, "Density coefficients")

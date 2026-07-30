@@ -70,6 +70,27 @@ def _boundary_complete_vc4_case(
     return cloud, sandbox
 
 
+@cache
+def _boundary_complete_stabilized_vc4_case(
+    resolution: int,
+    seed: int,
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVCISCNIOperatorSandbox]:
+    cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+    sandbox = CentroidalVCISCNIOperatorSandbox(
+        cloud.nodes,
+        rho=4.5 * cloud.nominal_spacing,
+        bounds=BOUNDS,
+        degree=4,
+        vci_degree=4,
+        vci_support_radius=4.0 * cloud.nominal_spacing,
+        trial_gradient_mode="pointwise",
+        test_gradient_base="trial",
+        polynomial_null_stabilization=0.1,
+        stabilization_support_radius=4.5 * cloud.nominal_spacing,
+    )
+    return cloud, sandbox
+
+
 def _solve_neumann_system(K, M, load, left_null):
     one = np.ones(len(K))
     mean_constraint = M @ one
@@ -580,6 +601,128 @@ class TestCentroidalVCGeometry:
         assert vc4_h1[-1] < 0.4 * common_h1[-1]
         assert common_l2[-1] < 0.35 * vc4_l2[-1]
 
+    @pytest.mark.parametrize(
+        ("resolution", "seed"),
+        [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
+    )
+    def test_stabilized_aligned_vc4_family_restores_coercivity_without_changing_p4(self, resolution, seed):
+        _cloud, sandbox = _boundary_complete_stabilized_vc4_case(resolution, seed)
+        diagnostics = sandbox.diagnostics
+        assert sandbox.degree == 4
+        assert sandbox.vci_degree == 4
+        assert sandbox.trial_gradient_mode == "pointwise"
+        assert sandbox.test_gradient_base == "trial"
+        assert sandbox.polynomial_null_stabilization == 0.1
+        assert diagnostics.local_rank_min == 14
+        assert diagnostics.local_condition_max < 1700.0
+        assert diagnostics.correction_ratio_max < 0.72
+        assert diagnostics.mass_condition < 3600.0
+        assert diagnostics.vci_trial_gradient_defect < 2e-12
+        assert diagnostics.corrected_patch_defect < 1e-14
+        assert diagnostics.discrete_patch_defect < 1e-12
+        assert diagnostics.stabilization_rank_min == 15
+        assert diagnostics.stabilization_condition_max < 4700.0
+        assert diagnostics.stabilization_support_count_min >= 20
+        assert diagnostics.stabilization_support_count_max <= 68
+        assert diagnostics.stabilization_patch_defect < 1e-14
+        assert diagnostics.raw_gauge_coercivity_min < -9.0
+        assert diagnostics.gauge_coercivity_min > 7.7
+        assert diagnostics.gauge_smallest_singular_value > 9.8
+        assert diagnostics.stiffness_nullity == 1
+
+    def test_local_polynomial_null_stabilization_is_symmetric_psd_and_annihilates_p4(self):
+        cloud, sandbox = _boundary_complete_stabilized_vc4_case(11, 0)
+        stabilization = sandbox.stabilization().toarray()
+        node_values, _, _ = _polynomial_data(
+            cloud.nodes,
+            np.array([0.5, 0.5]),
+            np.ones(2),
+            degree=4,
+        )
+        assert np.allclose(stabilization, stabilization.T, rtol=0.0, atol=1e-14)
+        assert np.linalg.eigvalsh(stabilization).min() > -1e-12
+        assert np.max(np.abs(stabilization @ node_values)) < 1e-14
+
+    def test_degree_three_mls_dispatch_preserves_the_vci_gate(self):
+        sandbox = CentroidalVCISCNIOperatorSandbox(
+            _grid(7),
+            rho=3.5 / 6.0,
+            bounds=BOUNDS,
+            degree=3,
+            vci_degree=3,
+            vci_support_radius=3.5 / 6.0,
+        )
+        assert sandbox.degree == 3
+        assert sandbox.diagnostics.corrected_patch_defect < 1e-12
+        assert sandbox.diagnostics.gauge_coercivity_min > 9.0
+        assert sandbox.diagnostics.stiffness_nullity == 1
+
+    @pytest.mark.parametrize("test_gradient_base", ["trial", "scni"])
+    def test_pointwise_trial_gradient_dispatch_preserves_the_quadratic_patch(self, test_gradient_base):
+        sandbox = CentroidalVCISCNIOperatorSandbox(
+            _grid(7),
+            rho=0.5,
+            bounds=BOUNDS,
+            trial_gradient_mode="pointwise",
+            test_gradient_base=test_gradient_base,
+        )
+        assert sandbox.trial_gradient_mode == "pointwise"
+        assert sandbox.test_gradient_base == test_gradient_base
+        assert sandbox.diagnostics.discrete_patch_defect < 1e-12
+        assert sandbox.diagnostics.gauge_coercivity_min > 9.0
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_stabilized_aligned_vc4_poisson_converges_near_fourth_order(self, wave_numbers, seed):
+        records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox = _boundary_complete_stabilized_vc4_case(resolution, seed)
+            points = sandbox.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            forcing_nodes = (
+                (kx**2 + ky**2)
+                * np.pi**2
+                * np.cos(kx * np.pi * cloud.nodes[:, 0])
+                * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            )
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+
+            E = sandbox.value_operator().toarray()
+            M = sandbox.mass().toarray()
+            K = sandbox.stiffness().toarray()
+            solution, relative_residual, gauge_defect = _solve_neumann_system(
+                K,
+                M,
+                M @ forcing_nodes,
+                sandbox.left_null_vector(),
+            )
+            assert relative_residual < 1e-12
+            assert gauge_defect < 1e-12
+            reconstructed_gradient = np.column_stack([gradient @ solution for gradient in sandbox.trial_gradient()])
+            l2_error, h1_error = _physical_poisson_errors(
+                E @ solution,
+                reconstructed_gradient,
+                exact_values,
+                exact_gradient,
+                sandbox.weights,
+            )
+            records.append((cloud.nominal_spacing, l2_error, h1_error))
+
+        spacings, l2_errors, h1_errors = map(np.asarray, zip(*records, strict=True))
+        l2_rate = float(np.polyfit(np.log(spacings), np.log(l2_errors), 1)[0])
+        h1_rate = float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0])
+        assert l2_rate > 3.65
+        assert h1_rate > 3.6
+        assert l2_errors[-1] < 1e-3
+        assert h1_errors[-1] < 0.022
+        assert np.all(np.diff(h1_errors) < 0.0)
+
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):
         from mfgarchon.geometry.collocation import ImplicitDomainCollocation
         from mfgarchon.geometry.implicit import Hyperrectangle
@@ -629,6 +772,65 @@ class TestCentroidalVCGeometry:
             CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, vci_degree=5)
         with pytest.raises(ValueError, match=r"vci_degree in \{2, 3, 4\}"):
             CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, vci_degree=4.0)
+
+    def test_unsupported_mls_degree_fails_before_geometry_assembly(self):
+        with pytest.raises(ValueError, match=r"MLS degree in \{2, 3, 4\}"):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, degree=5)
+        with pytest.raises(ValueError, match=r"MLS degree in \{2, 3, 4\}"):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, degree=4.0)
+
+    def test_mls_degree_requires_enough_nodes_before_geometry_assembly(self):
+        with pytest.raises(ValueError, match="degree-4 MLS requires at least 15 nodes"):
+            CentroidalVCISCNIOperatorSandbox(_grid(3), rho=0.75, bounds=BOUNDS, degree=4)
+
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            ({"trial_gradient_mode": "unknown"}, "trial_gradient_mode"),
+            ({"test_gradient_base": "unknown"}, "test_gradient_base"),
+        ],
+    )
+    def test_unsupported_gradient_modes_fail_before_geometry_assembly(self, options, message):
+        with pytest.raises(ValueError, match=message):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, **options)
+
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            ({"polynomial_null_stabilization": -0.1}, "finite and nonnegative"),
+            ({"polynomial_null_stabilization": np.nan}, "finite and nonnegative"),
+            ({"stabilization_support_radius": 0.0}, "finite and positive"),
+            ({"max_stabilization_condition": 1.0}, "greater than one"),
+        ],
+    )
+    def test_invalid_polynomial_null_stabilization_parameters_fail_before_geometry_assembly(
+        self,
+        options,
+        message,
+    ):
+        with pytest.raises(ValueError, match=message):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, **options)
+
+    def test_polynomial_null_stabilization_fails_on_rank_deficient_support(self):
+        nodes = _grid(7)
+        with pytest.raises(ValueError, match="Polynomial-null stabilization rank failure"):
+            CentroidalVCISCNIOperatorSandbox(
+                nodes,
+                rho=0.5,
+                bounds=BOUNDS,
+                polynomial_null_stabilization=0.1,
+                stabilization_support_radius=0.01,
+            )
+
+    def test_polynomial_null_stabilization_fails_on_ill_conditioned_projection(self):
+        with pytest.raises(np.linalg.LinAlgError, match="Polynomial-null stabilization is ill-conditioned"):
+            CentroidalVCISCNIOperatorSandbox(
+                _grid(7),
+                rho=0.5,
+                bounds=BOUNDS,
+                polynomial_null_stabilization=0.1,
+                max_stabilization_condition=1.01,
+            )
 
     def test_condition_gate_fails_loud(self):
         n = 7
