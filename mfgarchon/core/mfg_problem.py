@@ -136,6 +136,31 @@ def _volatility_to_diffusion(
 # ============================================================================
 
 
+def _same_geometry(a: object, b: object) -> bool:
+    """Whether the two geometry arguments are the same geometry (Issue #1765).
+
+    Identity, not equality. Three attempts at proving two separately-constructed geometries
+    describe the same discretisation each shipped a defect that a review had to find:
+
+    - comparing a fixed list of attribute names accepted a pair as soon as ANY ONE matched, so
+      two ``Mesh2D`` differing tenfold in ``mesh_size`` compared equal;
+    - comparing ``get_collocation_points()`` assumed a uniform accessor, but that method is a
+      deterministic accessor on grids, raises on an ungenerated ``Mesh2D``, is a *sampler* with a
+      required argument on ``Hyperrectangle``, and a fresh random draw on ``ImplicitDomain``;
+    - comparing instance state via ``vars()`` conflated the discretisation with the object's
+      lifecycle, so a grid that had merely been USED (a populated ``_flattened_cache``) stopped
+      equalling an identical fresh one, and two identically-built ``Mesh1D`` were refused because
+      ``MeshData.__eq__`` returns an array.
+
+    Each attempt was a cleverer structural comparison and each had a case it did not anticipate.
+    Identity has none: it cannot be fooled, it costs nothing, and its only failure direction is
+    refusing something that would have been fine -- which is loud, and which the error message
+    tells the caller how to resolve in one edit. A silent wrong answer is the thing being
+    prevented; over-refusing is not that.
+    """
+    return a is b
+
+
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
     """
     Unified MFG problem class that can handle both predefined and custom formulations.
@@ -251,6 +276,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             spatial_discretization: List of grid points per dimension
                                    Example: [50, 50] for 51×51 grid
             geometry: BaseGeometry object for complex domains (unified mode)
+            hjb_geometry / fp_geometry: Must be specified together AND must be the SAME OBJECT.
+                Two separately-constructed geometries raise NotImplementedError even when they are
+                built identically (Issue #1765) -- the check is identity, not equality, because
+                three attempts at deciding whether two objects describe the same discretisation
+                each shipped a wrong answer. Nothing downstream resamples between two geometries,
+                so bind one object to both names, or drive GeometryProjector yourself.
             obstacles: List of obstacle geometries
             hjb_geometry: Geometry for HJB solver (dual geometry mode, Issue #257)
             fp_geometry: Geometry for FP solver (dual geometry mode, Issue #257)
@@ -318,18 +349,17 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 components=components
             )
 
-            # Mode 6: Dual geometry (Issue #257) - Separate geometries for HJB and FP
-            from mfgarchon.geometry import TensorProductGrid
+            # Mode 6: Dual geometry (Issue #257) - REFUSED when the two geometries differ.
+            # Nothing downstream honours the difference: the FP geometry was accepted and then
+            # discarded, so the FP equation silently solved on the HJB grid (Issue #1765).
+            # Differing geometries now raise NotImplementedError. To resample between two
+            # resolutions, drive GeometryProjector explicitly:
+            from mfgarchon.geometry import GeometryProjector, TensorProductGrid
             from mfgarchon.geometry.boundary import no_flux_bc
-            hjb_grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[51, 51], boundary_conditions=no_flux_bc(2))
-            fp_grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[21, 21], boundary_conditions=no_flux_bc(2))
-            problem = MFGProblem(
-                hjb_geometry=hjb_grid,
-                fp_geometry=fp_grid,
-                time_domain=(1.0, 50),
-                diffusion=0.1
-            )
-            # Automatically creates geometry_projector for mapping between geometries
+            hjb_grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[41], boundary_conditions=no_flux_bc(1))
+            fp_grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[11], boundary_conditions=no_flux_bc(1))
+            projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
+            m_on_fp = projector.project_hjb_to_fp(np.zeros(41))
 
             # Advanced: State-dependent diffusion (callable)
             def density_dependent_diffusion(t, x, m):
@@ -598,10 +628,43 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise ValueError(
                     "Specify EITHER 'geometry' (unified) OR ('hjb_geometry', 'fp_geometry') (dual), not both"
                 )
-            # Use dual geometries
+            # Issue #1765: dual geometry is accepted here and then ignored. This branch builds
+            # `self.geometry_projector`, but NOTHING on the solver side reads it --
+            # `grep -rn "geometry_projector" mfgarchon/` returns hits only inside this file, and
+            # nothing under `mfgarchon/alg/` mentions `hjb_geometry` or `fp_geometry`. Below,
+            # `_init_geometry(final_hjb_geometry, ...)` sets `self.geometry`, which is the single
+            # attribute every solver reads, so the FP solver silently runs on the HJB grid.
+            #
+            # Measured: a 41-point HJB grid with an 11-point FP grid returned a density whose SPATIAL
+            # axis is 41 -- the HJB grid's -- and the FP CFL log reported the HJB grid's dx=0.025.
+            # No error, no warning, and
+            # every downstream number -- mass, convergence rate, timings -- computed on a grid the
+            # caller did not choose.
+            #
+            # Refusing is the honest state until the projector is wired: had the parameter simply
+            # not existed, this call would have raised `TypeError`. `GeometryProjector` itself
+            # works and stays usable directly; it is the MFGProblem plumbing that is missing.
+            if not _same_geometry(hjb_geometry, fp_geometry):
+                raise NotImplementedError(
+                    "MFGProblem(hjb_geometry=..., fp_geometry=...) requires the SAME geometry "
+                    "object for both (Issue #1765). Two geometries are accepted and a "
+                    "GeometryProjector is built, but no solver reads it -- the FP solve would run "
+                    "on the HJB grid and return a result that looks like what you asked for.\n"
+                    "  - Same discretisation for both? Pass `geometry=` once, or bind one object "
+                    "to both names.\n"
+                    "  - Genuinely want two resolutions? Drive it yourself:\n"
+                    "      from mfgarchon.geometry import GeometryProjector\n"
+                    "      projector = GeometryProjector(hjb_geometry=a, fp_geometry=b)\n"
+                    "      m_on_fp = projector.project_hjb_to_fp(m_on_hjb)\n"
+                    "This compares identity, not equality: three attempts at deciding whether two "
+                    "separately-built geometries describe the same discretisation each shipped a "
+                    "wrong answer, and over-refusing is recoverable in one edit where a silent "
+                    "wrong answer is not."
+                )
+
+            # Identical geometries are equivalent to the unified path and are allowed through.
             final_hjb_geometry = hjb_geometry
             final_fp_geometry = fp_geometry
-            # Create projector for mapping between geometries
             from mfgarchon.geometry import GeometryProjector
 
             self.geometry_projector = GeometryProjector(

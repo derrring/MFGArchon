@@ -1,0 +1,13 @@
+`MFGProblem(hjb_geometry=..., fp_geometry=...)` now requires the two arguments to be the SAME
+OBJECT, and raises `NotImplementedError` otherwise (#1765). They were accepted, a `GeometryProjector` was built, and the
+distinction was then discarded — `self.geometry` is set from the HJB one and is the single
+attribute every solver reads, so a 41-point HJB grid with an 11-point FP grid returned
+a density whose SPATIAL axis is 41 -- the HJB grid's, not the FP grid's 11 -- with the FP
+solver logging the HJB grid's `dx`. No error, no warning, and
+every downstream number computed on a grid the caller did not choose. One object bound to both names is accepted -- that is equivalent to the
+unified path. Two separately-constructed geometries are refused **even when built identically**;
+see the note below for why the check is identity rather than equality. `GeometryProjector` is
+unchanged and still usable directly. Wiring the projector into the coupling loop is the follow-up; refusing is the
+honest state until then.
+
+  The two geometries must be the **same object**. Deciding whether two separately-constructed geometries describe the same discretisation was attempted three times -- an attribute-name list, the collocation point set, and full instance state -- and each shipped a defect a review had to find: a 10x `mesh_size` difference read as identical, a `TypeError` out of `MFGProblem.__init__` for a `Hyperrectangle`, two identical `Hypersphere` refused, and a grid that had merely been used no longer equalling a fresh one. Identity cannot be fooled, and over-refusing costs one edit where the silent wrong answer being prevented costs a result. The error message names both routes -- pass `geometry=` once, or drive `GeometryProjector` yourself -- and a test executes both.

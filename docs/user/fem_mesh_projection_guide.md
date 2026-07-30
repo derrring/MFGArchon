@@ -1,11 +1,28 @@
-# FEM Mesh Projection Guide
+# [PARTIALLY-SUPERSEDED 2026-07-30] FEM Mesh Projection Guide
 
-**Status**: ✅ Supported (Basic + Optimized)
-**Created**: 2025-11-10
+**Status**: ⚠️ **The `GeometryProjector` half is current. The `MFGProblem(hjb_geometry=...,
+fp_geometry=...)` half now raises.**
+**SUPERSEDED-BY**: `GeometryProjector` (`mfgarchon/operators/interpolation/projection.py`,
+re-exported as `mfgarchon.geometry.GeometryProjector`); Issue #1765
+**Created**: 2025-11-10 · **Partially superseded**: 2026-07-30
+
+> **What changed.** Every `MFGProblem(hjb_geometry=grid, fp_geometry=mesh, ...)` call on this page
+> now raises `NotImplementedError`. `MFGProblem` accepted both geometries, kept the HJB one and
+> discarded the FP one, so the FP equation silently solved on the HJB grid (Issue #1765). The
+> projection machinery this guide describes is real and unaffected — it is the automatic
+> problem-level wiring that was never implemented. Drive the projector directly:
+>
+> ```python
+> from mfgarchon.geometry import GeometryProjector
+> projector = GeometryProjector(hjb_geometry=grid, fp_geometry=mesh)
+> ```
+>
+> See also `docs/user/dual_geometry_usage.md`, superseded in full for the same reason.
 
 ## Quick Answer
 
-**Yes, FEM meshes work with dual geometry projections!**
+**FEM meshes work with `GeometryProjector`.** They do not work as an `fp_geometry=` argument to
+`MFGProblem` — see the banner above.
 
 - ✅ **Basic support**: Works out-of-the-box via nearest neighbor fallback
 - ✅ **Optimized support**: Easy to add via Delaunay interpolation
