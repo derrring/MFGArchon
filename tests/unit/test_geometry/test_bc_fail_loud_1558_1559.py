@@ -89,3 +89,83 @@ def test_legacy_mishandled_bc_fails_loud():
     solver.boundary_conditions = LegacyBC(type="neumann", left_value=0.0, right_value=0.0)
     M = solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
     assert np.all(np.isfinite(M))
+
+
+def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless():
+    """The guard refuses to coerce a legacy periodic BC to no-flux. This measures the difference.
+
+    Issue #1714: a fail-loud test that only asserts `pytest.raises` records that the guard fires,
+    never what it prevents. The mutation that reddens such a test is "delete the guard", and its
+    output is `DID NOT RAISE` — a symptom with no diagnosis.
+
+    The guard's own comment states the claim and says it was "verified with an off-center bump",
+    but that verification was never committed. Reproduced here: a bump at x=0.12, sigma=0.35,
+    T=0.4 on 61 nodes, solved once under each canonical BC.
+
+        mass in the last five nodes, no-flux    3.24e-04
+        mass in the last five nodes, periodic   1.10e-01     340x
+        relative L1 difference over the field   55%
+
+    Coercing periodic to no-flux does not perturb the answer, it replaces it: mass that should
+    wrap to the far side is held against the near wall instead. The mutation that reddens THIS
+    test is a change to the `divergence_upwind` periodic wrap in assembly, not the deletion of a
+    guard. Scope: the wrap is copy-pasted into all four advection-scheme interior handlers and
+    only the default one is covered here -- disabling it in the gradient_upwind,
+    gradient_centered or divergence_centered handlers leaves this green.
+    """
+    import numpy as np
+
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+
+    n_points, n_steps = 61, 20
+    xs = np.linspace(0.0, 1.0, n_points)
+
+    def final_density(boundary_conditions):
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_points], boundary_conditions=boundary_conditions)
+        components = MFGComponents(
+            m_initial=lambda x: 1.0,
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        )
+        problem = MFGProblem(geometry=geometry, T=0.4, Nt=n_steps, sigma=0.35, components=components)
+        # Off-centre so the near wall is reached long before the far one; a centred bump would
+        # reach both walls together and the two BCs would look alike.
+        m_initial = np.exp(-((xs - 0.12) ** 2) / (2 * 0.05**2))
+        m_initial /= m_initial.sum()
+        return FPFDMSolver(problem).solve_fp_system(m_initial, potential_field=np.zeros((n_steps + 1, n_points)))[-1]
+
+    reflecting = final_density(no_flux_bc(dimension=1))
+    wrapping = final_density(periodic_bc(dimension=1))
+
+    far_wall = slice(-5, None)
+    assert wrapping[far_wall].sum() > 100 * reflecting[far_wall].sum(), (
+        f"periodic must carry mass to the far wall that no-flux does not: got "
+        f"{wrapping[far_wall].sum():.3e} against {reflecting[far_wall].sum():.3e}. If these ever "
+        f"agree, coercing one BC to the other is harmless and the guard is refusing nothing."
+    )
+
+    relative_l1 = np.abs(wrapping - reflecting).sum() / reflecting.sum()
+    assert relative_l1 > 0.2, (
+        f"the two boundary conditions must differ by O(1) over the field, not at the margin; got {relative_l1:.1%}"
+    )
+
+    for name, density in (("no-flux", reflecting), ("periodic", wrapping)):
+        assert np.all(np.isfinite(density)), f"{name} produced a non-finite density"
+        assert density.min() >= -1e-12, f"{name} produced a negative density: {density.min():.3e}"
+        # Two-sided. Without this the assertions above are one-sided -- ANY corruption that makes
+        # the two BCs differ MORE passes. Measured: routing the no-flux wall to the interior
+        # handler leaks 54% of its mass (sum 0.461 instead of 1.0) and makes the test greener,
+        # ratio 340 -> 617. Residuals here are 3.9e-15 and 4.4e-16, so this has five orders of
+        # margin over the tolerance.
+        assert abs(density.sum() - 1.0) < 1e-10, (
+            f"{name} did not conserve mass: sum {density.sum():.6f}. A leak makes the two BCs "
+            f"differ more, so the comparison above would read it as success."
+        )
