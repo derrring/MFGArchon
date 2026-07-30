@@ -87,13 +87,6 @@ step "Doc-API ratchet"
 "$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 check $? "docs teach no more missing API than the baseline records"
 
-step "Deprecation guide freshness"
-# docs/user/DEPRECATION_MODERNIZATION_GUIDE.md is generated, and drifted from v0.19.2 to
-# v0.21.0 unnoticed because --check existed but was wired into nothing. A stale guide
-# advertises deprecations that no longer exist and hides ones that do.
-"$PY" scripts/generate_deprecation_guide.py --check >/dev/null
-check $? "deprecation guide matches a fresh generation"
-
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
   # here that measures the product rather than the source. Counts of tests, issues or

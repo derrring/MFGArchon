@@ -633,7 +633,7 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
             )
 
 
-def scan_deprecated(module: Any, *, recursive: bool = True, strict: bool = False) -> list[dict[str, Any]]:
+def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, Any]]:
     """
     Scan a module tree for all decorated deprecated items.
 
@@ -643,13 +643,11 @@ def scan_deprecated(module: Any, *, recursive: bool = True, strict: bool = False
     Args:
         module: Top-level module to scan (e.g., `import mfgarchon; scan_deprecated(mfgarchon)`)
         recursive: If True, scan submodules recursively
-        strict: Raise `ImportError` instead of skipping a submodule that will not import.
-            The default (False) is why this scan is environment-dependent: one unimportable
-            submodule silently drops every module downstream of it in that branch, so a machine
-            without an optional extra installed reports a smaller set with no indication that
-            anything was missed. Any caller whose output is compared against a committed
-            artifact must pass True -- otherwise a partial scan is indistinguishable from a
-            shrinking codebase.
+
+    NOTE: this walks the package by IMPORTING it, so an unimportable submodule -- one needing an
+    optional extra -- is skipped along with everything below it, and the caller cannot tell.
+    Measured on mfgarchon: 72 deduplicated items with torch present, 41 without. Do not compare
+    this result against a committed artifact without solving that first (Issue #1774).
 
     Returns:
         List of dicts with keys: type, name, module, since, replacement, removal
@@ -701,24 +699,10 @@ def scan_deprecated(module: Any, *, recursive: bool = True, strict: bool = False
                     try:
                         submod = importlib.import_module(submod_name)
                         _scan_module(submod)
-                    except Exception as exc:
-                        if strict:
-                            raise ImportError(
-                                f"scan_deprecated(strict=True): cannot import {submod_name!r} "
-                                f"({type(exc).__name__}: {exc}). The scan would silently omit it "
-                                f"and everything below it, so the result cannot be compared "
-                                f"against a committed artifact. Install the optional extra this "
-                                f"module needs, or scan with strict=False and accept a partial "
-                                f"result."
-                            ) from exc
+                    except Exception:
                         logger.debug("Cannot import submodule %s", submod_name, exc_info=True)
                         continue
             except Exception:
-                if strict:
-                    # The inner handler raises ImportError to report an unimportable submodule;
-                    # swallowing it here would make strict= inert, which is what it was until a
-                    # mutation check caught it.
-                    raise
                 logger.debug("Cannot walk submodules of %s", mod_name, exc_info=True)
 
     _scan_module(module)

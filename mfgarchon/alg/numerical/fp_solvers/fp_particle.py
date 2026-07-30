@@ -1355,8 +1355,8 @@ class FPParticleSolver(BaseFPSolver):
             if drift_field is not None:
                 raise ValueError(
                     "Cannot specify both drift_field and potential_field. This solver consumes "
-                    "the value function U, so pass it as potential_field; drift_field is the "
-                    "deprecated alias for the same slot on this solver."
+                    "the value function U, so potential_field is the name for it here; "
+                    "drift_field is accepted as an alias for the same slot. Pass one."
                 )
             drift_field = potential_field
 

@@ -233,8 +233,13 @@ def test_potential_field_is_never_deprecated_on_any_fp_solver():
     """
     import inspect
 
-    import mfgarchon  # noqa: F401  -- imports the solver modules so the subclasses register
+    # Import the solver modules EXPLICITLY. `import mfgarchon` alone left WeakFormFPSolver out of
+    # __subclasses__() when this test ran in isolation -- it only entered because a sibling test
+    # earlier in the file imports it, so the enumeration silently covered 7 classes standalone and
+    # 10 under full collection. A pin whose coverage depends on collection order is not a pin.
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
+    from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver  # noqa: F401
+    from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver  # noqa: F401
     from mfgarchon.utils.deprecation import get_deprecated_parameters
 
     def all_subclasses(cls):
@@ -254,9 +259,15 @@ def test_potential_field_is_never_deprecated_on_any_fp_solver():
             f"function channel, not an alias for drift_field, which carries the velocity."
         )
 
-    assert len(checked) >= 6, (
-        f"only {len(checked)} solvers expose potential_field ({checked}); the enumeration is "
-        f"probably not seeing the solver modules, which would make this pass vacuously"
+    # Calibrated ABOVE the degraded count, not below it: standalone the enumeration reached 7,
+    # so a `>= 6` guard could never fire on the very gap it was written to catch.
+    assert "WeakFormFPSolver" in checked, (
+        f"WeakFormFPSolver is not in the enumeration ({checked}); it is a VALUE_FUNCTION solver "
+        f"with a live potential_field, and it was the class the earlier hand-written list missed"
+    )
+    assert len(checked) >= 8, (
+        f"only {len(checked)} solvers expose potential_field ({checked}); the enumeration is not "
+        f"seeing the solver modules, which would make this pass vacuously"
     )
 
 
