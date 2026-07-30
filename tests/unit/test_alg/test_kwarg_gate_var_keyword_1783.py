@@ -187,3 +187,81 @@ def test_the_meshless_pair_is_refused_end_to_end():
         FixedPointIterator(problem, *pair(), volatility_field=np.linspace(0.5, 0.9, n)).solve(
             max_iterations=2, verbose=False
         )
+
+
+def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
+    """The Newton half of the fix, exercised rather than counted.
+
+    `test_every_coupling_path_routes_through_one_owner` reads source text, so it stays green if a
+    call site keeps the call and passes the wrong argument. Changing `self.volatility_field` to
+    `None` at either `mfg_residual` site leaves every test in this file passing while the Newton
+    gate stops both forwarding and refusing -- strictly worse than the pre-PR behaviour, which at
+    least forwarded to solvers that name the parameter.
+
+    Before this, no test in the repository constructed `MFGResidual` or `NewtonMFGSolver` with a
+    `volatility_field` at all: 26 construction sites, none passing one.
+    """
+    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
+    from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+    from mfgarchon.alg.numerical.meshless_galerkin.hjb_solver import MeshlessGalerkinHJBSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    n = 21
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        T=0.2,
+        Nt=5,
+        sigma=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    points = np.linspace(0.0, 1.0, n).reshape(-1, 1)
+    delta = 2.6 / np.sqrt(n)
+    hjb = MeshlessGalerkinHJBSolver(problem, points, delta=delta)
+    fp = MeshlessGalerkinFPSolver(problem, points, delta=delta)
+    assert "volatility_field" not in inspect.signature(hjb.solve_hjb_system).parameters, (
+        "this solver must be the **kwargs shape, or the test does not exercise the hole"
+    )
+
+    shape = (problem.Nt + 1, n)
+    M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
+    U0 = np.zeros(shape)
+
+    # A field the two sides would disagree about: mean 0.7 against problem.sigma = 0.3.
+    hazard = np.linspace(0.5, 0.9, n)
+    residual = MFGResidual(problem, hjb, fp, volatility_field=hazard)
+    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
+        residual.compute_hjb_output(M0, U0)
+
+    # And the FP side, which DOES name the parameter, must actually RECEIVE it. Asserting only
+    # that the call returns a well-shaped array leaves the site pinned by nothing: replacing the
+    # forwarded value with None still returns an array, it is just a different problem's array.
+    seen: dict[str, object] = {}
+    inner = fp.solve_fp_system
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return inner(*args, **kwargs)
+
+    fp.solve_fp_system = spy
+    try:
+        assert residual.compute_fp_output(U0, M0).shape == shape
+    finally:
+        fp.solve_fp_system = inner
+    assert "volatility_field" in seen, "the FP side names the parameter, so it must be forwarded"
+    assert np.array_equal(seen["volatility_field"], hazard)
+
+    # No field, no refusal -- the Newton path must still run ordinarily.
+    MFGResidual(problem, hjb, fp).compute_hjb_output(M0, U0)
