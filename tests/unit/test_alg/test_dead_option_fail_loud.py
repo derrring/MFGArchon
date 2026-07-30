@@ -123,7 +123,7 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
     in a test that only asserts the raise, and the first is what a grep gives you.
 
     Injecting the option AFTER construction bypasses the guard and lets the claim be measured:
-    set it to values as far apart as the parameter admits and compare the solutions. Byte-identical
+    set it to values that a reader would act on differently and compare the solutions. Byte-identical
     output over a real solve is evidence no grep can produce.
 
     SCOPE, stated because it is narrower than "the option is dead". What this establishes is that
@@ -132,7 +132,7 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
 
     - A read with no effect on the output -- into a log record, a metric -- is not detected.
     - Construction-time consumption is out of reach by design: ``TaylorOperator`` is built at
-      ``fp_gfdm.py:168`` BEFORE the attributes are stored at :186, and threading an option in
+      ``fp_gfdm.py:176`` BEFORE the attributes are stored at :186, and threading an option in
       there is how ``obstacle_sdf`` was wired (#1556). The pre-existing ``..._raises`` tests cover
       the construction path; this covers the solve path.
     - Semantics that only appear in configurations this does not run: 2-D, a boundary type other
@@ -166,7 +166,10 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
         # plausibly acquire -- masking the normal flux at boundary nodes -- would be invisible and
         # this test would keep asserting the option is dead while a real implementation changed
         # the solve.
-        drift = np.tile(0.6 * np.sin(np.pi * xs), (problem.Nt + 1, 1))
+        # Nonzero AT THE WALLS too. 0.6*sin(pi*x) vanishes at x=0 and x=1, so a reader that
+        # enforces no-flux only at nodes carrying an outward normal would zero a flux that is
+        # already zero and stay invisible. The offset makes wall-restricted masking observable.
+        drift = np.tile(0.3 + 0.6 * np.sin(np.pi * xs), (problem.Nt + 1, 1))
 
         def solve(upwind_scheme="none", **injected):
             with warnings.catch_warnings():
@@ -195,8 +198,9 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
             f"relative change from t=0 to t=T is only {evolution:.2%}"
         )
 
-        # Two values as far apart as the parameter admits: nothing marked boundary, everything
-        # marked boundary, and a domain fifty times the real one.
+        # Probes chosen so a reader would act on them differently -- NOT merely 'far apart',
+        # which is what the superset bound (-50, 50) looked like and was not: it reclassifies
+        # zero nodes against the None fallback. The subset below reclassifies 17 of 21.
         assert np.array_equal(solve(_boundary_indices={0, 1}), baseline), (
             "boundary_indices={0, 1} changed the solution -- it is read somewhere, and the guard's "
             "claim that it is stored-but-never-read is wrong"
@@ -219,6 +223,10 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
         # The upwind path is a different divergence routine (_compute_upwind_divergence), so a
         # reader living there would be invisible to the default scheme alone.
         upwind_baseline = solve(upwind_scheme="linear")
+        # Checked BEFORE the difference assertion: an all-NaN upwind solve satisfies
+        # `not array_equal` (NaN != NaN) and the failure would then be reported as
+        # "boundary_indices is read on the upwind path", which is the wrong diagnosis.
+        assert np.all(np.isfinite(upwind_baseline)), "the upwind solve produced a non-finite value"
         assert not np.array_equal(upwind_baseline, baseline), (
             "the two schemes must differ, or running both proves nothing about coverage"
         )
