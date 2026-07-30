@@ -114,17 +114,29 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
 
 
-class TestDeadOptionsAreProvablyDead:
-    """The guards refuse options that are "stored but never read". This proves the "never read".
+class TestDeadOptionsHaveNoEffectOnTheSolve:
+    """The guards refuse options that are "stored but never read". This measures the effect.
 
     Issue #1714: `pytest.raises` on a guard's own message records that the guard fires. For a
     dead-option guard it cannot record the thing that makes refusing correct — that the parameter
     genuinely has no effect. "I could not find a reader" and "there is no reader" look identical
     in a test that only asserts the raise, and the first is what a grep gives you.
 
-    Injecting the option AFTER construction bypasses the guard and lets the claim be measured
-    directly: set it to two wildly different values and compare the solutions. Byte-identical
+    Injecting the option AFTER construction bypasses the guard and lets the claim be measured:
+    set it to values as far apart as the parameter admits and compare the solutions. Byte-identical
     output over a real solve is evidence no grep can produce.
+
+    SCOPE, stated because it is narrower than "the option is dead". What this establishes is that
+    no code reached by ``solve_fp_system`` on this configuration branches on either value in a way
+    that changes the returned array. Three things it does NOT establish:
+
+    - A read with no effect on the output -- into a log record, a metric -- is not detected.
+    - Construction-time consumption is out of reach by design: ``TaylorOperator`` is built at
+      ``fp_gfdm.py:168`` BEFORE the attributes are stored at :186, and threading an option in
+      there is how ``obstacle_sdf`` was wired (#1556). The pre-existing ``..._raises`` tests cover
+      the construction path; this covers the solve path.
+    - Semantics that only appear in configurations this does not run: 2-D, a boundary type other
+      than no-flux, ``upwind_scheme`` other than the default.
     """
 
     def test_fp_gfdm_boundary_indices_and_domain_bounds_change_nothing(self):
@@ -149,12 +161,17 @@ class TestDeadOptionsAreProvablyDead:
         xs = points[:, 0]
         m_initial = np.exp(-((xs - 0.35) ** 2) / (2 * 0.09**2))
         m_initial /= m_initial.sum()
-        drift = np.zeros((problem.Nt + 1, n))
+        # A NONZERO drift. With drift=0 the flux m*drift is identically zero and the entire
+        # advective half of the solver is inert, so the semantics boundary_indices would most
+        # plausibly acquire -- masking the normal flux at boundary nodes -- would be invisible and
+        # this test would keep asserting the option is dead while a real implementation changed
+        # the solve.
+        drift = np.tile(0.6 * np.sin(np.pi * xs), (problem.Nt + 1, 1))
 
-        def solve(**injected):
+        def solve(upwind_scheme="none", **injected):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                solver = FPGFDMSolver(problem, collocation_points=points)
+                solver = FPGFDMSolver(problem, collocation_points=points, upwind_scheme=upwind_scheme)
                 for name, value in injected.items():
                     # The solver stores these privately. Setting a public name would create a NEW
                     # attribute nothing reads, and byte-identity would follow trivially -- the test
@@ -169,7 +186,14 @@ class TestDeadOptionsAreProvablyDead:
 
         baseline = solve()
         assert np.all(np.isfinite(baseline)), "the baseline solve must succeed for this to mean anything"
-        assert baseline.std() > 1e-6, "a constant solution would make byte-identity vacuous"
+        # Vacuity guard on the EVOLUTION, not on the field: M[0] is the non-constant initial
+        # condition and contributes std ~0.07 by itself, so `baseline.std() > 0` passes even for a
+        # solver that returns M[t] = M[0] at every step and computes nothing.
+        evolution = np.abs(baseline[-1] - baseline[0]).sum() / np.abs(baseline[0]).sum()
+        assert evolution > 0.05, (
+            f"the solve must actually evolve the density for byte-identity to mean anything; "
+            f"relative change from t=0 to t=T is only {evolution:.2%}"
+        )
 
         # Two values as far apart as the parameter admits: nothing marked boundary, everything
         # marked boundary, and a domain fifty times the real one.
@@ -182,4 +206,22 @@ class TestDeadOptionsAreProvablyDead:
         )
         assert np.array_equal(solve(_domain_bounds=[(-50.0, 50.0)]), baseline), (
             "a domain 50x the real one changed the solution; domain_bounds is live"
+        )
+        # A SUBSET as well. [(-50, 50)] is a superset of both the real domain and the None
+        # fallback, so the two are indistinguishable under any containment predicate -- 0 of 21
+        # nodes change classification. [(0.4, 0.6)] reclassifies 17 of 21, which is what a
+        # containment or boundary-detection reader would act on.
+        assert np.array_equal(solve(_domain_bounds=[(0.4, 0.6)]), baseline), (
+            "a domain covering a fifth of the real one changed the solution; domain_bounds is "
+            "live as a containment or boundary-detection window"
+        )
+
+        # The upwind path is a different divergence routine (_compute_upwind_divergence), so a
+        # reader living there would be invisible to the default scheme alone.
+        upwind_baseline = solve(upwind_scheme="linear")
+        assert not np.array_equal(upwind_baseline, baseline), (
+            "the two schemes must differ, or running both proves nothing about coverage"
+        )
+        assert np.array_equal(solve(upwind_scheme="linear", _boundary_indices=set(range(n))), upwind_baseline), (
+            "boundary_indices is read on the upwind divergence path"
         )
