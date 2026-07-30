@@ -124,3 +124,42 @@ def test_the_refusal_names_two_routes_that_both_work():
     assert "GeometryProjector" in message
     projector = GeometryProjector(hjb_geometry=_grid(41), fp_geometry=_grid(11))
     assert projector.project_hjb_to_fp(np.zeros(41)).shape == (11,), "route 2 must work"
+
+
+def test_the_projector_round_trips_between_two_resolutions():
+    """`GeometryProjector` is the capability the refusal points at; it needs its own coverage.
+
+    The three dual-geometry tests that exercised `problem.geometry_projector` are now
+    `xfail(strict=True)` -- correctly, they describe the capability as it will work once the
+    projector is wired into the coupling loop. But that left the projector itself untested in this
+    mode, so a regression in it would show up only as those xfails quietly starting to pass.
+
+    This drives it standalone, which is exactly what the error message tells a caller to do.
+    """
+    import numpy as np
+
+    from mfgarchon.geometry import GeometryProjector
+
+    fine, coarse = _grid(41), _grid(11)
+    projector = GeometryProjector(hjb_geometry=fine, fp_geometry=coarse)
+
+    # A linear field must survive a round trip through both directions on the interior, where no
+    # extrapolation is involved -- a constant would pass under almost any broken implementation.
+    xs = np.linspace(0.0, 1.0, 41)
+    on_hjb = 2.0 * xs + 1.0
+
+    on_fp = projector.project_hjb_to_fp(on_hjb)
+    assert on_fp.shape == (11,)
+    expected_fp = 2.0 * np.linspace(0.0, 1.0, 11) + 1.0
+    assert np.allclose(on_fp, expected_fp, atol=1e-8), (
+        f"projecting a linear field onto the coarse grid gave {on_fp[:3]}, expected {expected_fp[:3]}"
+    )
+
+    back = projector.project_fp_to_hjb(on_fp)
+    assert back.shape == (41,)
+    assert np.all(np.isfinite(back))
+    interior = slice(1, -1)
+    assert np.allclose(back[interior], on_hjb[interior], atol=1e-8), (
+        "a linear field must round-trip on the interior; it does not, so the projector is lossy "
+        "in a way the refusal's advice does not warn about"
+    )

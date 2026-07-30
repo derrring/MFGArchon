@@ -276,10 +276,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             spatial_discretization: List of grid points per dimension
                                    Example: [50, 50] for 51×51 grid
             geometry: BaseGeometry object for complex domains (unified mode)
-            hjb_geometry / fp_geometry: Must be specified together AND must discretise space
-                identically -- differing geometries raise NotImplementedError (Issue #1765),
-                because nothing downstream resamples between them. Use GeometryProjector to
-                move fields between two resolutions explicitly.
+            hjb_geometry / fp_geometry: Must be specified together AND must be the SAME OBJECT.
+                Two separately-constructed geometries raise NotImplementedError even when they are
+                built identically (Issue #1765) -- the check is identity, not equality, because
+                three attempts at deciding whether two objects describe the same discretisation
+                each shipped a wrong answer. Nothing downstream resamples between two geometries,
+                so bind one object to both names, or drive GeometryProjector yourself.
             obstacles: List of obstacle geometries
             hjb_geometry: Geometry for HJB solver (dual geometry mode, Issue #257)
             fp_geometry: Geometry for FP solver (dual geometry mode, Issue #257)
@@ -634,8 +636,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # attribute every solver reads, so the FP solver silently runs on the HJB grid.
             #
             # Measured: a 41-point HJB grid with an 11-point FP grid returned a density whose SPATIAL
-            # axis is 41 -- the HJB grid's -- and the FP CFL log reported the HJB grid's dx=0.025
-            # and the FP CFL log reported the HJB grid's `dx=0.025`. No error, no warning, and
+            # axis is 41 -- the HJB grid's -- and the FP CFL log reported the HJB grid's dx=0.025.
+            # No error, no warning, and
             # every downstream number -- mass, convergence rate, timings -- computed on a grid the
             # caller did not choose.
             #
