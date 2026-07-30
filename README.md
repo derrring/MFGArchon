@@ -71,7 +71,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - **Unified BC Framework** - 4-layer architecture with adjoint-consistent provider pattern
 - **Network MFG** - Graph-coupled multi-node solvers with pluggable coupling operators
 - **Measure-Dependent MFG** - MeasureField, Lions derivative, Wasserstein distance (Layer 2)
-- **Reinforcement Learning** - Complete RL framework (DDPG, TD3, SAC)
+- **Reinforcement Learning** - ⛔ Frozen design prototype (DDPG, TD3, SAC) — see `CLAUDE.md`
 - **GPU Acceleration** - PyTorch, JAX, Numba backends
 
 ---
@@ -102,7 +102,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - **Semi-Lagrangian** - Adaptive time-stepping with periodic BC support
 - **WENO** - High-order (5th) shock-capturing with high-order ghost nodes
 - **FEM** - scikit-fem based P1/P2 finite elements on unstructured meshes
-- **Neural (DGM, PINN)** - Deep learning for high dimensions
+- **Neural (DGM, PINN)** - ⛔ Frozen design prototype — see `CLAUDE.md`
 
 ### Fokker-Planck Solvers
 - **FDM** - Conservative finite difference with dict-dispatched BC
@@ -134,7 +134,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ```bash
 pip install mfgarchon          # Batteries included (FDM, FEM, GFDM, viz, config)
-pip install mfgarchon[nn]      # + PyTorch, RL (DGM, PINN, Actor-Critic, PPO)
+pip install mfgarchon[nn]      # + PyTorch (live: torch backends), gymnasium/SB3 (frozen RL only)
 pip install mfgarchon[all]     # + JAX, Numba, profiling tools
 ```
 

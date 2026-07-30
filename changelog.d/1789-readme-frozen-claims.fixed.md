@@ -1,0 +1,14 @@
+- **README no longer advertises the frozen packages as complete** (#1789). `Reinforcement Learning -
+  Complete RL framework (DDPG, TD3, SAC)` and `Neural (DGM, PINN) - Deep learning for high
+  dimensions` were the strongest unreconciled maturity claims in the repo, on the front page, while
+  both packages are frozen design prototypes (`CLAUDE.md`).
+
+  They survived the #1782 marker sweep because that sweep enumerated documents with the frozen
+  checker's own prefix matching — deliberately, since an ad-hoc grep counts `mfgarchon.alg.
+  neural_solvers`, an unrelated package, as a hit. README describes the packages in prose with no
+  dotted module path, so the rule that made the enumeration correct is the rule that made it blind.
+  A marker sweep keyed on import paths cannot see a capability claim that does not import.
+
+  The `[nn]` extra line is split rather than marked wholesale: measured, `torch` serves five
+  non-frozen modules (`backends/`, `utils/acceleration/`) while `gymnasium` and `stable-baselines3`
+  have zero importers outside `alg/reinforcement/`.
