@@ -1,4 +1,4 @@
-"""Operator sandbox for centroidal VC2-SCNI and an exactly paired MFG linearization.
+"""Operator sandbox for centroidal VCI-SCNI and an exactly paired MFG linearization.
 
 This module is deliberately outside ``WeakFormDiscretization``. It is an admission
 gate for a candidate Petrov-Galerkin method, not a production solver backend.
@@ -6,8 +6,10 @@ gate for a candidate Petrov-Galerkin method, not a production solver backend.
 The construction uses clipped Voronoi centroids ``c_a`` as sampling points,
 ``M = E.T @ W @ E`` with ``E[a, i] = phi_i(c_a)``, the SCNI cell-average trial
 gradient, and a local variational-consistency correction of the test gradient.
-The correction enforces the degree-two weak patch, including boundary fluxes,
-through five shifted/scaled constraints per test function.
+The correction targets shifted/scaled weak moments through degree two, three,
+or four, including boundary fluxes. Degree-two MLS makes only the quadratic
+discrete patch exact; higher target moments and the actual discrete patch are
+reported separately.
 
 All nonlinear MFG blocks are derived from one residual. The forward spatial
 operator is therefore the transpose of the complete analytic Jacobian; no
@@ -17,6 +19,7 @@ independent advection assembly exists here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -33,8 +36,13 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class VC2AdmissionDiagnostics:
-    """Numerical invariants that decide whether a cloud is admitted by the sandbox."""
+class VCIAdmissionDiagnostics:
+    """Numerical invariants that decide whether a cloud is admitted by the sandbox.
+
+    ``corrected_patch_defect`` uses exact target-polynomial gradients.
+    ``discrete_patch_defect`` instead applies the assembled stiffness to nodal
+    polynomial values and therefore includes the degree-two trial-gradient error.
+    """
 
     local_rank_min: int
     local_condition_max: float
@@ -44,8 +52,10 @@ class VC2AdmissionDiagnostics:
     value_constant_defect: float
     trial_constant_defect: float
     quadratic_gradient_defect: float
+    vci_trial_gradient_defect: float
     plain_patch_defect: float
     corrected_patch_defect: float
+    discrete_patch_defect: float
     right_constant_defect: float
     left_constant_defect: float
     gauge_coercivity_min: float
@@ -167,7 +177,7 @@ def boundary_complete_cvt_rectangle(
 
 def _edge_quadrature(cells: list[CellGeometry], n_gauss: int) -> _EdgeQuadrature:
     if n_gauss < 2:
-        raise ValueError("VC2 edge quadrature requires at least two Gauss points per edge.")
+        raise ValueError("VCI edge quadrature requires at least two Gauss points per edge.")
     xi, wi = np.polynomial.legendre.leggauss(n_gauss)
     t = 0.5 * (xi + 1.0)
     points: list[NDArray] = []
@@ -188,7 +198,7 @@ def _edge_quadrature(cells: list[CellGeometry], n_gauss: int) -> _EdgeQuadrature
             cell_indices.append(np.full(n_gauss, a, dtype=np.int64))
             normal_weights.append(edge_weights[:, None] * normal[None, :])
     if not points:
-        raise ValueError("VC2 edge quadrature found no nondegenerate cell edges.")
+        raise ValueError("VCI edge quadrature found no nondegenerate cell edges.")
     return _EdgeQuadrature(
         points=np.vstack(points),
         cell_indices=np.concatenate(cell_indices),
@@ -196,21 +206,68 @@ def _edge_quadrature(cells: list[CellGeometry], n_gauss: int) -> _EdgeQuadrature
     )
 
 
-def _p2_data(points: NDArray, center: NDArray, scales: NDArray) -> tuple[NDArray, NDArray, NDArray]:
-    """Values, gradients, and Laplacians of a shifted/scaled basis of ``P2``."""
-    sx = (points[:, 0] - center[0]) / scales[0]
-    sy = (points[:, 1] - center[1]) / scales[1]
-    values = np.column_stack([np.ones(len(points)), sx, sy, sx**2, sx * sy, sy**2])
-    gradients: NDArray = np.zeros((len(points), 6, 2), dtype=np.float64)
-    gradients[:, 1, 0] = 1.0 / scales[0]
-    gradients[:, 2, 1] = 1.0 / scales[1]
-    gradients[:, 3, 0] = 2.0 * sx / scales[0]
-    gradients[:, 4, 0] = sy / scales[0]
-    gradients[:, 4, 1] = sx / scales[1]
-    gradients[:, 5, 1] = 2.0 * sy / scales[1]
-    laplacians: NDArray = np.zeros((len(points), 6), dtype=np.float64)
-    laplacians[:, 3] = 2.0 / scales[0] ** 2
-    laplacians[:, 5] = 2.0 / scales[1] ** 2
+def _polynomial_exponents(degree: int) -> NDArray:
+    return np.asarray(
+        [
+            (x_degree, total_degree - x_degree)
+            for total_degree in range(degree + 1)
+            for x_degree in range(total_degree, -1, -1)
+        ],
+        dtype=np.int64,
+    )
+
+
+def _monomial_values(scaled_points: NDArray, exponents: NDArray) -> NDArray:
+    return np.prod(scaled_points[:, None, :] ** exponents[None, :, :], axis=2)
+
+
+def _polynomial_data(
+    points: NDArray,
+    center: NDArray,
+    scales: NDArray,
+    degree: int,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Values, gradients, and Laplacians of a shifted/scaled total-degree basis."""
+    scaled_points = (points - center[None, :]) / scales[None, :]
+    if degree == 2:
+        sx = scaled_points[:, 0]
+        sy = scaled_points[:, 1]
+        values = np.column_stack([np.ones(len(points)), sx, sy, sx**2, sx * sy, sy**2])
+        quadratic_gradients: NDArray = np.zeros((len(points), 6, 2), dtype=np.float64)
+        quadratic_gradients[:, 1, 0] = 1.0 / scales[0]
+        quadratic_gradients[:, 2, 1] = 1.0 / scales[1]
+        quadratic_gradients[:, 3, 0] = 2.0 * sx / scales[0]
+        quadratic_gradients[:, 4, 0] = sy / scales[0]
+        quadratic_gradients[:, 4, 1] = sx / scales[1]
+        quadratic_gradients[:, 5, 1] = 2.0 * sy / scales[1]
+        quadratic_laplacians: NDArray = np.zeros((len(points), 6), dtype=np.float64)
+        quadratic_laplacians[:, 3] = 2.0 / scales[0] ** 2
+        quadratic_laplacians[:, 5] = 2.0 / scales[1] ** 2
+        return values, quadratic_gradients, quadratic_laplacians
+
+    exponents = _polynomial_exponents(degree)
+    values = _monomial_values(scaled_points, exponents)
+    gradients: NDArray = np.zeros((len(points), len(exponents), 2), dtype=np.float64)
+    laplacians: NDArray = np.zeros((len(points), len(exponents)), dtype=np.float64)
+    for basis_index, exponent in enumerate(exponents):
+        for direction in range(2):
+            if exponent[direction] > 0:
+                gradient_exponent = exponent.copy()
+                gradient_exponent[direction] -= 1
+                gradients[:, basis_index, direction] = (
+                    exponent[direction]
+                    / scales[direction]
+                    * _monomial_values(scaled_points, gradient_exponent[None, :])[:, 0]
+                )
+            if exponent[direction] > 1:
+                laplacian_exponent = exponent.copy()
+                laplacian_exponent[direction] -= 2
+                laplacians[:, basis_index] += (
+                    exponent[direction]
+                    * (exponent[direction] - 1)
+                    / scales[direction] ** 2
+                    * _monomial_values(scaled_points, laplacian_exponent[None, :])[:, 0]
+                )
     return values, gradients, laplacians
 
 
@@ -223,13 +280,14 @@ def _as_vector(values: NDArray, size: int, name: str) -> NDArray:
     return array
 
 
-class CentroidalVC2SCNIOperatorSandbox:
-    """Dense research sandbox for the centroidal VC2-SCNI operator gate.
+class CentroidalVCISCNIOperatorSandbox:
+    """Dense research sandbox for the centroidal VCI-SCNI operator gate.
 
-    The current implementation is two-dimensional and degree-two. It supports
-    rectangular clipping and the existing polygonal SDF-chord clipping. Dense
-    diagnostics are intentional: promotion to a production sparse backend is
-    blocked until the operator gate passes across cloud families and refinement.
+    The MLS trial basis is two-dimensional and degree-two. The shifted/scaled
+    variational correction can target degrees two through four. The sandbox
+    supports rectangular clipping and the existing polygonal SDF-chord clipping.
+    Dense diagnostics are intentional: promotion to a production sparse backend
+    is blocked until the operator gate passes across cloud families and refinement.
     """
 
     def __init__(
@@ -239,6 +297,7 @@ class CentroidalVC2SCNIOperatorSandbox:
         bounds: list[tuple[float, float]],
         *,
         degree: int = 2,
+        vci_degree: int = 2,
         sdf: Callable[[NDArray], NDArray] | None = None,
         backend: str = "numpy",
         n_edge_gauss: int = 4,
@@ -252,36 +311,38 @@ class CentroidalVC2SCNIOperatorSandbox:
     ) -> None:
         self._nodes = np.asarray(nodes, dtype=np.float64)
         if self._nodes.ndim != 2 or self._nodes.shape[1] != 2:
-            raise ValueError(f"Centroidal VC2-SCNI requires nodes with shape (N, 2), got {self._nodes.shape}.")
+            raise ValueError(f"Centroidal VCI-SCNI requires nodes with shape (N, 2), got {self._nodes.shape}.")
         if len(self._nodes) < 6:
-            raise ValueError("Centroidal VC2-SCNI requires at least six nodes for a degree-two MLS basis.")
+            raise ValueError("Centroidal VCI-SCNI requires at least six nodes for a degree-two MLS basis.")
         if not np.all(np.isfinite(self._nodes)):
-            raise ValueError("Centroidal VC2-SCNI nodes must all be finite.")
+            raise ValueError("Centroidal VCI-SCNI nodes must all be finite.")
         if len(np.unique(self._nodes, axis=0)) != len(self._nodes):
-            raise ValueError("Centroidal VC2-SCNI does not admit duplicate nodes.")
+            raise ValueError("Centroidal VCI-SCNI does not admit duplicate nodes.")
         if degree != 2:
-            raise ValueError(f"Centroidal VC2-SCNI implements degree=2 only, got degree={degree}.")
+            raise ValueError(f"Centroidal VCI-SCNI implements MLS degree=2 only, got degree={degree}.")
+        if not isinstance(vci_degree, Integral) or vci_degree not in (2, 3, 4):
+            raise ValueError(f"Centroidal VCI-SCNI requires vci_degree in {{2, 3, 4}}, got {vci_degree}.")
         if backend != "numpy":
-            raise ValueError("Centroidal VC2-SCNI admission diagnostics require backend='numpy'.")
+            raise ValueError("Centroidal VCI-SCNI admission diagnostics require backend='numpy'.")
         if not np.isfinite(rho) or rho <= 0.0:
-            raise ValueError(f"Centroidal VC2-SCNI requires rho > 0, got {rho}.")
+            raise ValueError(f"Centroidal VCI-SCNI requires rho > 0, got {rho}.")
         if len(bounds) != 2 or any(len(bound) != 2 or bound[1] <= bound[0] for bound in bounds):
-            raise ValueError(f"Centroidal VC2-SCNI requires two increasing bounds, got {bounds}.")
+            raise ValueError(f"Centroidal VCI-SCNI requires two increasing bounds, got {bounds}.")
         bounds_array = np.asarray(bounds, dtype=np.float64)
         if not np.all(np.isfinite(bounds_array)):
-            raise ValueError(f"Centroidal VC2-SCNI bounds must be finite, got {bounds}.")
+            raise ValueError(f"Centroidal VCI-SCNI bounds must be finite, got {bounds}.")
         bound_tolerance = 1e-12 * max(float(np.max(bounds_array[:, 1] - bounds_array[:, 0])), 1.0)
         outside_bounds = np.any(
             (self._nodes < bounds_array[:, 0] - bound_tolerance) | (self._nodes > bounds_array[:, 1] + bound_tolerance)
         )
         if outside_bounds:
-            raise ValueError("Centroidal VC2-SCNI nodes must lie inside bounds.")
+            raise ValueError("Centroidal VCI-SCNI nodes must lie inside bounds.")
         if sdf is not None:
             signed_distances = np.asarray(sdf(self._nodes), dtype=np.float64).ravel()
             if signed_distances.shape != (len(self._nodes),) or not np.all(np.isfinite(signed_distances)):
-                raise ValueError("Centroidal VC2-SCNI sdf(nodes) must return one finite value per node.")
+                raise ValueError("Centroidal VCI-SCNI sdf(nodes) must return one finite value per node.")
             if np.any(signed_distances > bound_tolerance):
-                raise ValueError("Centroidal VC2-SCNI nodes must lie inside the sdf domain.")
+                raise ValueError("Centroidal VCI-SCNI nodes must lie inside the sdf domain.")
         if rank_tolerance <= 0.0 or rank_tolerance >= 1.0:
             raise ValueError(f"rank_tolerance must lie in (0, 1), got {rank_tolerance}.")
 
@@ -289,6 +350,9 @@ class CentroidalVC2SCNIOperatorSandbox:
         self._rho = float(rho)
         self._bounds = [(float(lower), float(upper)) for lower, upper in bounds]
         self._exponents = monomial_exponents(2, 2)
+        self._vci_degree = int(vci_degree)
+        self._vci_constraint_count = len(_polynomial_exponents(self._vci_degree)) - 1
+        self._correction_exponents = _polynomial_exponents(self._vci_degree - 1)
         self._rank_tolerance = float(rank_tolerance)
         self._max_local_condition = float(max_local_condition)
         self._max_mass_condition = float(max_mass_condition)
@@ -348,38 +412,46 @@ class CentroidalVC2SCNIOperatorSandbox:
         local_scales = nearest_distances[:, 1]
         if np.any(local_scales <= 1e-14):
             bad = int(np.argmin(local_scales))
-            raise ValueError(f"VC2 local scale vanishes at node {bad}; duplicate or coincident nodes are not admitted.")
+            raise ValueError(f"VCI local scale vanishes at node {bad}; duplicate or coincident nodes are not admitted.")
 
         ranks = []
         conditions = []
         correction_ratios = []
+        correction_basis_count = len(self._correction_exponents)
         for i in range(self._n_dof):
             distances = np.linalg.norm(self._centroids - self._nodes[i], axis=1)
             support = distances <= self._vci_support_radius * (1.0 + 10.0 * np.finfo(float).eps)
             support_count = int(np.count_nonzero(support))
-            if support_count < 3:
+            if support_count < correction_basis_count:
                 raise ValueError(
-                    f"VC2 local constraint rank failure at node {i}: fewer than three support cells "
-                    f"(support_cells={support_count}, support_radius={self._vci_support_radius:.6g})."
+                    f"VCI local constraint rank failure at node {i}: support_cells={support_count} "
+                    f"< correction_basis_size={correction_basis_count} "
+                    f"(support_radius={self._vci_support_radius:.6g})."
                 )
             h_i = float(local_scales[i])
             local_scale = np.array([h_i, h_i], dtype=np.float64)
-            _, centroid_gradients, centroid_laplacians = _p2_data(
+            _, centroid_gradients, centroid_laplacians = _polynomial_data(
                 self._centroids,
                 self._nodes[i],
                 local_scale,
+                self._vci_degree,
             )
-            _, edge_gradients, _ = _p2_data(self._edge_points, self._nodes[i], local_scale)
+            _, edge_gradients, _ = _polynomial_data(
+                self._edge_points,
+                self._nodes[i],
+                local_scale,
+                self._vci_degree,
+            )
 
             shifted = (self._centroids[support] - self._nodes[i]) / h_i
-            correction_basis = np.column_stack([np.ones(support_count), shifted])
+            correction_basis = _monomial_values(shifted, self._correction_exponents)
             weighted_gram = correction_basis.T @ (self._weights[support, None] * correction_basis)
             correction_metric = linalg.block_diag(weighted_gram, weighted_gram)
             try:
                 metric_cholesky = np.linalg.cholesky(correction_metric)
             except np.linalg.LinAlgError as error:
                 raise np.linalg.LinAlgError(
-                    f"VC2 local correction metric is singular at node {i} with {support_count} support cells."
+                    f"VCI local correction metric is singular at node {i} with {support_count} support cells."
                 ) from error
 
             constraint = np.einsum(
@@ -387,7 +459,7 @@ class CentroidalVC2SCNIOperatorSandbox:
                 self._weights[support],
                 correction_basis,
                 centroid_gradients[support, 1:, :],
-            ).reshape(5, 6)
+            ).reshape(self._vci_constraint_count, 2 * correction_basis_count)
             whitened_constraint = linalg.solve_triangular(
                 metric_cholesky,
                 constraint.T,
@@ -398,16 +470,17 @@ class CentroidalVC2SCNIOperatorSandbox:
             relative_cutoff = self._rank_tolerance * singular_values[0] if singular_values.size else np.inf
             rank = int(np.count_nonzero(singular_values > relative_cutoff))
             ranks.append(rank)
-            if rank < 5:
+            if rank < self._vci_constraint_count:
                 raise ValueError(
-                    f"VC2 local constraint rank failure at node {i}: rank={rank}, required=5, "
+                    f"VCI local constraint rank failure at node {i}: rank={rank}, "
+                    f"required={self._vci_constraint_count}, "
                     f"support_cells={support_count}, support_radius={self._vci_support_radius:.6g}."
                 )
             condition = float(singular_values[0] / singular_values[-1])
             conditions.append(condition)
             if not np.isfinite(condition) or condition > self._max_local_condition:
                 raise np.linalg.LinAlgError(
-                    f"VC2 local constraint is ill-conditioned at node {i}: cond={condition:.3e} "
+                    f"VCI local constraint is ill-conditioned at node {i}: cond={condition:.3e} "
                     f"> {self._max_local_condition:.3e}."
                 )
 
@@ -441,31 +514,31 @@ class CentroidalVC2SCNIOperatorSandbox:
                 lower=False,
                 check_finite=False,
             )
-            correction_x = correction_basis @ coefficients[:3]
-            correction_y = correction_basis @ coefficients[3:]
+            correction_x = correction_basis @ coefficients[:correction_basis_count]
+            correction_y = correction_basis @ coefficients[correction_basis_count:]
             test_gradients[0][support, i] += correction_x
             test_gradients[1][support, i] += correction_y
 
             correction_norm = np.sqrt(np.sum(self._weights[support] * (correction_x**2 + correction_y**2)))
             base_norm = np.sqrt(np.sum(self._weights * np.sum(base_gradient**2, axis=1)))
             if base_norm <= 1e-14:
-                raise ValueError(f"VC2 base test-gradient norm vanishes at node {i}.")
+                raise ValueError(f"VCI base test-gradient norm vanishes at node {i}.")
             correction_ratios.append(float(correction_norm / base_norm))
         return test_gradients, ranks, conditions, correction_ratios
 
-    def _global_patch_data(self) -> tuple[NDArray, NDArray, NDArray, NDArray]:
+    def _global_patch_data(self, degree: int) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         center = np.array(
             [0.5 * (lower + upper) for lower, upper in self._bounds],
             dtype=np.float64,
         )
         scales = np.array([upper - lower for lower, upper in self._bounds], dtype=np.float64)
-        node_values, _, _ = _p2_data(self._nodes, center, scales)
-        _, centroid_gradients, centroid_laplacians = _p2_data(self._centroids, center, scales)
-        _, edge_gradients, _ = _p2_data(self._edge_points, center, scales)
+        node_values, _, _ = _polynomial_data(self._nodes, center, scales, degree)
+        _, centroid_gradients, centroid_laplacians = _polynomial_data(self._centroids, center, scales, degree)
+        _, edge_gradients, _ = _polynomial_data(self._edge_points, center, scales, degree)
         return node_values, centroid_gradients, centroid_laplacians, edge_gradients
 
-    def _weak_patch_defect(self, test_gradients: list[NDArray]) -> float:
-        _, centroid_gradients, centroid_laplacians, edge_gradients = self._global_patch_data()
+    def _weak_patch_defect(self, test_gradients: list[NDArray], degree: int) -> float:
+        _, centroid_gradients, centroid_laplacians, edge_gradients = self._global_patch_data(degree)
         volume_gradient = sum(
             gradient.T @ (self._weights[:, None] * centroid_gradients[:, :, direction])
             for direction, gradient in enumerate(test_gradients)
@@ -475,16 +548,28 @@ class CentroidalVC2SCNIOperatorSandbox:
         boundary_flux = self._edge_phi.T @ normal_derivatives
         return float(np.max(np.abs(volume_gradient + volume_laplacian - boundary_flux)))
 
+    def _discrete_patch_defect(self) -> float:
+        node_values, _, centroid_laplacians, edge_gradients = self._global_patch_data(self._vci_degree)
+        volume_laplacian = self._E.T @ (self._weights[:, None] * centroid_laplacians)
+        normal_derivatives = np.einsum("qkd,qd->qk", edge_gradients, self._edge_normal_weights)
+        boundary_flux = self._edge_phi.T @ normal_derivatives
+        return float(np.max(np.abs(self._K @ node_values + volume_laplacian - boundary_flux)))
+
     def _compute_diagnostics(
         self,
         ranks: list[int],
         conditions: list[float],
         correction_ratios: list[float],
-    ) -> VC2AdmissionDiagnostics:
+    ) -> VCIAdmissionDiagnostics:
         one = np.ones(self._n_dof)
-        node_values, centroid_gradients, _, _ = self._global_patch_data()
-        gradient_defect = max(
-            float(np.max(np.abs(gradient @ node_values - centroid_gradients[:, :, direction])))
+        quadratic_values, quadratic_gradients, _, _ = self._global_patch_data(2)
+        quadratic_gradient_defect = max(
+            float(np.max(np.abs(gradient @ quadratic_values - quadratic_gradients[:, :, direction])))
+            for direction, gradient in enumerate(self._G)
+        )
+        vci_values, vci_gradients, _, _ = self._global_patch_data(self._vci_degree)
+        vci_gradient_defect = max(
+            float(np.max(np.abs(gradient @ vci_values - vci_gradients[:, :, direction])))
             for direction, gradient in enumerate(self._G)
         )
         symmetric_stiffness = 0.5 * (self._K + self._K.T)
@@ -513,7 +598,7 @@ class CentroidalVC2SCNIOperatorSandbox:
         stiffness_singular_values = np.linalg.svd(self._K, compute_uv=False)
         nullity_threshold = 1e-10 * float(stiffness_singular_values[0])
         stiffness_nullity = int(np.count_nonzero(stiffness_singular_values <= nullity_threshold))
-        return VC2AdmissionDiagnostics(
+        return VCIAdmissionDiagnostics(
             local_rank_min=min(ranks),
             local_condition_max=max(conditions),
             correction_ratio_median=float(np.median(correction_ratios)),
@@ -521,9 +606,11 @@ class CentroidalVC2SCNIOperatorSandbox:
             mass_condition=float(np.linalg.cond(self._M)),
             value_constant_defect=float(np.max(np.abs(self._E @ one - 1.0))),
             trial_constant_defect=max(float(np.max(np.abs(gradient @ one))) for gradient in self._G),
-            quadratic_gradient_defect=gradient_defect,
-            plain_patch_defect=self._weak_patch_defect(self._G),
-            corrected_patch_defect=self._weak_patch_defect(self._Gbar),
+            quadratic_gradient_defect=quadratic_gradient_defect,
+            vci_trial_gradient_defect=vci_gradient_defect,
+            plain_patch_defect=self._weak_patch_defect(self._G, self._vci_degree),
+            corrected_patch_defect=self._weak_patch_defect(self._Gbar, self._vci_degree),
+            discrete_patch_defect=self._discrete_patch_defect(),
             right_constant_defect=float(np.max(np.abs(self._K @ one))),
             left_constant_defect=float(np.max(np.abs(one @ self._K))),
             gauge_coercivity_min=gauge_coercivity,
@@ -537,33 +624,33 @@ class CentroidalVC2SCNIOperatorSandbox:
             "value partition of unity": diagnostics.value_constant_defect,
             "trial-gradient constants": diagnostics.trial_constant_defect,
             "quadratic centroid gradient": diagnostics.quadratic_gradient_defect,
-            "corrected weak patch": diagnostics.corrected_patch_defect,
+            f"degree-{self._vci_degree} corrected target weak patch": diagnostics.corrected_patch_defect,
             "right constant nullity": diagnostics.right_constant_defect,
         }
         failed_exactness = {name: value for name, value in exactness_defects.items() if value > self._patch_tolerance}
         if failed_exactness:
             details = ", ".join(f"{name}={value:.3e}" for name, value in failed_exactness.items())
             raise ValueError(
-                f"Centroidal VC2-SCNI exactness gate failed ({details}); tolerance={self._patch_tolerance:.3e}."
+                f"Centroidal VCI-SCNI exactness gate failed ({details}); tolerance={self._patch_tolerance:.3e}."
             )
         if not np.isfinite(diagnostics.mass_condition) or diagnostics.mass_condition > self._max_mass_condition:
             raise np.linalg.LinAlgError(
-                f"Centroidal VC2-SCNI mass gate failed: cond(M)={diagnostics.mass_condition:.3e} "
+                f"Centroidal VCI-SCNI mass gate failed: cond(M)={diagnostics.mass_condition:.3e} "
                 f"> {self._max_mass_condition:.3e}."
             )
         if diagnostics.correction_ratio_max > self._max_correction_ratio:
             raise ValueError(
-                f"Centroidal VC2-SCNI correction gate failed: max ratio={diagnostics.correction_ratio_max:.3e} "
+                f"Centroidal VCI-SCNI correction gate failed: max ratio={diagnostics.correction_ratio_max:.3e} "
                 f"> {self._max_correction_ratio:.3e}."
             )
         if diagnostics.gauge_coercivity_min <= self._min_gauge_coercivity:
             raise ValueError(
-                f"Centroidal VC2-SCNI gauge-coercivity gate failed: lambda_min="
+                f"Centroidal VCI-SCNI gauge-coercivity gate failed: lambda_min="
                 f"{diagnostics.gauge_coercivity_min:.3e} <= {self._min_gauge_coercivity:.3e}."
             )
         if diagnostics.stiffness_nullity != 1:
             raise ValueError(
-                f"Centroidal VC2-SCNI kernel gate failed: nullity={diagnostics.stiffness_nullity}, expected 1."
+                f"Centroidal VCI-SCNI kernel gate failed: nullity={diagnostics.stiffness_nullity}, expected 1."
             )
 
     @property
@@ -573,6 +660,10 @@ class CentroidalVC2SCNIOperatorSandbox:
     @property
     def dim(self) -> int:
         return 2
+
+    @property
+    def vci_degree(self) -> int:
+        return self._vci_degree
 
     @property
     def nodes(self) -> NDArray:
@@ -595,7 +686,7 @@ class CentroidalVC2SCNIOperatorSandbox:
         return self._weights
 
     @property
-    def diagnostics(self) -> VC2AdmissionDiagnostics:
+    def diagnostics(self) -> VCIAdmissionDiagnostics:
         return self._diagnostics
 
     def value_operator(self) -> sparse.csr_matrix:
@@ -625,7 +716,7 @@ class CentroidalVC2SCNIOperatorSandbox:
         vector = left_singular_vectors[:, -1]
         normalization = float(vector @ np.ones(self._n_dof))
         if abs(normalization) <= 1e-14:
-            raise ValueError("Centroidal VC2-SCNI left null vector has zero constant pairing.")
+            raise ValueError("Centroidal VCI-SCNI left null vector has zero constant pairing.")
         return vector / normalization
 
 
@@ -634,7 +725,7 @@ class PairedMFGOperatorSandbox:
 
     def __init__(
         self,
-        discretization: CentroidalVC2SCNIOperatorSandbox,
+        discretization: CentroidalVCISCNIOperatorSandbox,
         *,
         diffusion: float,
         hamiltonian: Callable[[NDArray, NDArray], NDArray],

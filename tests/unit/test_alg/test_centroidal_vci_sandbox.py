@@ -1,4 +1,4 @@
-"""Admission tests for the experimental centroidal VC2-SCNI operator sandbox."""
+"""Admission tests for the experimental centroidal VCI-SCNI operator sandbox."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ import numpy as np
 
 from mfgarchon.alg.numerical.meshless_galerkin.centroidal_vci_sandbox import (
     BoundaryCompleteCVTCloud,
-    CentroidalVC2SCNIOperatorSandbox,
+    CentroidalVCISCNIOperatorSandbox,
     PairedMFGOperatorSandbox,
+    _polynomial_data,
     boundary_complete_cvt_rectangle,
 )
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import MeshlessGalerkinDiscretization
@@ -43,12 +44,28 @@ def _jittered_grid(n: int, seed: int) -> np.ndarray:
 def _boundary_complete_case(
     resolution: int,
     seed: int,
-) -> tuple[BoundaryCompleteCVTCloud, CentroidalVC2SCNIOperatorSandbox]:
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVCISCNIOperatorSandbox]:
     cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
-    sandbox = CentroidalVC2SCNIOperatorSandbox(
+    sandbox = CentroidalVCISCNIOperatorSandbox(
         cloud.nodes,
         rho=3.0 * cloud.nominal_spacing,
         bounds=BOUNDS,
+    )
+    return cloud, sandbox
+
+
+@cache
+def _boundary_complete_vc4_case(
+    resolution: int,
+    seed: int,
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVCISCNIOperatorSandbox]:
+    cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+    sandbox = CentroidalVCISCNIOperatorSandbox(
+        cloud.nodes,
+        rho=3.0 * cloud.nominal_spacing,
+        bounds=BOUNDS,
+        vci_degree=4,
+        vci_support_radius=4.0 * cloud.nominal_spacing,
     )
     return cloud, sandbox
 
@@ -100,9 +117,10 @@ def _matched_cost_arms(resolution: int, seed: int):
         n_edge_gauss=4,
     )
     # Halving every oriented edge count also pairs physical-boundary edges, so this
-    # undercounts an optimized VC2 implementation and biases the budget in VC2's favor.
-    optimistic_vc2_budget = sandbox.centroid_evaluation_count + (sandbox.edge_evaluation_count + 1) // 2
-    common_cells = max(1, int(np.floor(np.sqrt(optimistic_vc2_budget) / 4)))
+    # undercounts an optimized VCI implementation and biases the MLS-evaluation
+    # budget in VCI's favor. Local moment-solve cost is not included.
+    optimistic_vci_evaluation_budget = sandbox.centroid_evaluation_count + (sandbox.edge_evaluation_count + 1) // 2
+    common_cells = max(1, int(np.floor(np.sqrt(optimistic_vci_evaluation_budget) / 4)))
     common_points, common_weights = tensor_gauss(BOUNDS, n_cells=common_cells, n_gauss=4)
     common = MeshlessGalerkinDiscretization(
         cloud.nodes,
@@ -141,19 +159,19 @@ def _matched_cost_arms(resolution: int, seed: int):
             [pointwise_gradients[:, :, direction] for direction in range(2)],
         ),
     }
-    return cloud, sandbox, E, W, arms, len(common_points), optimistic_vc2_budget
+    return cloud, sandbox, E, W, arms, len(common_points), optimistic_vci_evaluation_budget
 
 
 @pytest.fixture(scope="module")
-def structured_sandbox() -> CentroidalVC2SCNIOperatorSandbox:
+def structured_sandbox() -> CentroidalVCISCNIOperatorSandbox:
     n = 7
-    return CentroidalVC2SCNIOperatorSandbox(_grid(n), rho=3.0 / (n - 1), bounds=BOUNDS)
+    return CentroidalVCISCNIOperatorSandbox(_grid(n), rho=3.0 / (n - 1), bounds=BOUNDS)
 
 
 @pytest.fixture(scope="module")
-def jittered_sandbox() -> CentroidalVC2SCNIOperatorSandbox:
+def jittered_sandbox() -> CentroidalVCISCNIOperatorSandbox:
     n = 7
-    return CentroidalVC2SCNIOperatorSandbox(
+    return CentroidalVCISCNIOperatorSandbox(
         _jittered_grid(n, seed=0),
         rho=3.2 / (n - 1),
         bounds=BOUNDS,
@@ -181,7 +199,42 @@ def _stabilization_jacobian(_points: np.ndarray, momentum: np.ndarray) -> np.nda
     return jacobian.reshape(count, dim, dim)
 
 
-class TestCentroidalVC2Geometry:
+class TestCentroidalVCGeometry:
+    def test_degree_four_polynomial_derivatives_are_independently_pinned(self):
+        points = np.array([[0.2, -0.1], [0.8, 0.7]])
+        center = np.array([0.1, -0.3])
+        scales = np.array([0.5, 2.0])
+        values, gradients, laplacians = _polynomial_data(points, center, scales, degree=4)
+        sx = (points[:, 0] - center[0]) / scales[0]
+        sy = (points[:, 1] - center[1]) / scales[1]
+
+        assert values.shape == (2, 15)
+        assert np.allclose(values[:, 11], sx**3 * sy)
+        assert np.allclose(gradients[:, 11, 0], 3.0 * sx**2 * sy / scales[0])
+        assert np.allclose(gradients[:, 11, 1], sx**3 / scales[1])
+        assert np.allclose(laplacians[:, 11], 6.0 * sx * sy / scales[0] ** 2)
+        assert np.allclose(values[:, 12], sx**2 * sy**2)
+        assert np.allclose(gradients[:, 12, 0], 2.0 * sx * sy**2 / scales[0])
+        assert np.allclose(gradients[:, 12, 1], 2.0 * sx**2 * sy / scales[1])
+        assert np.allclose(
+            laplacians[:, 12],
+            2.0 * sy**2 / scales[0] ** 2 + 2.0 * sx**2 / scales[1] ** 2,
+        )
+
+    def test_degree_three_vci_branch_is_admitted(self):
+        n = 7
+        sandbox = CentroidalVCISCNIOperatorSandbox(
+            _grid(n),
+            rho=3.0 / (n - 1),
+            bounds=BOUNDS,
+            vci_degree=3,
+            vci_support_radius=4.0 / (n - 1),
+        )
+        diagnostics = sandbox.diagnostics
+        assert diagnostics.local_rank_min == 9
+        assert diagnostics.corrected_patch_defect < 1e-12
+        assert diagnostics.stiffness_nullity == 1
+
     def test_polygon_centroids_are_exact_on_a_cartesian_tiling(self):
         cells = clipped_voronoi_cells(_grid(3), BOUNDS)
         assert np.allclose(cells[0].centroid, [0.125, 0.125], atol=1e-14)
@@ -221,7 +274,7 @@ class TestCentroidalVC2Geometry:
         )
         sdf = lambda points: np.linalg.norm(np.atleast_2d(points) - center, axis=1) - radius  # noqa: E731
         nodes = grid[sdf(grid) <= 1e-14]
-        sandbox = CentroidalVC2SCNIOperatorSandbox(
+        sandbox = CentroidalVCISCNIOperatorSandbox(
             nodes,
             rho=3.0 * 0.8 / (n - 1),
             bounds=[(0.1, 0.9), (0.1, 0.9)],
@@ -355,8 +408,8 @@ class TestCentroidalVC2Geometry:
         }
         kx, ky = wave_numbers
         for resolution in (7, 9, 11, 13, 17, 21):
-            cloud, sandbox, E, W, arms, common_count, optimistic_vc2_budget = _matched_cost_arms(resolution, seed)
-            assert 0.75 * optimistic_vc2_budget < common_count <= optimistic_vc2_budget
+            cloud, sandbox, E, W, arms, common_count, optimistic_vci_budget = _matched_cost_arms(resolution, seed)
+            assert 0.75 * optimistic_vci_budget < common_count <= optimistic_vci_budget
             points = sandbox.evaluation_points
             exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
             exact_gradient = np.column_stack(
@@ -415,6 +468,118 @@ class TestCentroidalVC2Geometry:
         assert common_finest[2] < 0.55 * vc2_finest[2]
         assert common_finest[1] < 0.06 * vc2_finest[1]
 
+    @pytest.mark.parametrize(
+        ("resolution", "seed"),
+        [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
+    )
+    def test_vc4_family_preserves_target_moments_and_stability(self, resolution, seed):
+        _cloud, sandbox = _boundary_complete_vc4_case(resolution, seed)
+        diagnostics = sandbox.diagnostics
+        assert sandbox.vci_degree == 4
+        assert diagnostics.local_rank_min == 14
+        assert diagnostics.local_condition_max < 1700.0
+        assert diagnostics.correction_ratio_max < 0.7
+        assert diagnostics.mass_condition < 250.0
+        assert diagnostics.quadratic_gradient_defect < 1e-8
+        assert diagnostics.corrected_patch_defect < 1e-11
+        assert diagnostics.discrete_patch_defect < 1e-2
+        assert diagnostics.gauge_coercivity_min > 7.5
+        assert diagnostics.stiffness_nullity == 1
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_vc4_discrete_quartic_patch_converges_without_claiming_trial_exactness(self, seed):
+        records = []
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox = _boundary_complete_vc4_case(resolution, seed)
+            diagnostics = sandbox.diagnostics
+            assert diagnostics.vci_trial_gradient_defect > diagnostics.discrete_patch_defect
+            records.append((cloud.nominal_spacing, diagnostics.discrete_patch_defect))
+        spacings, defects = map(np.asarray, zip(*records, strict=True))
+        assert np.all(np.diff(defects) < 0.0)
+        rate = float(np.polyfit(np.log(spacings), np.log(defects), 1)[0])
+        assert rate > 2.6
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_vc4_beats_mls_evaluation_budget_matched_common_in_h1_but_not_l2(self, wave_numbers, seed):
+        vc4_records = []
+        common_records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, vc4 = _boundary_complete_vc4_case(resolution, seed)
+            _, _, E, W, arms, common_count, optimistic_vci_budget = _matched_cost_arms(resolution, seed)
+            assert 0.75 * optimistic_vci_budget < common_count <= optimistic_vci_budget
+            points = vc4.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+            forcing_nodes = (
+                (kx**2 + ky**2)
+                * np.pi**2
+                * np.cos(kx * np.pi * cloud.nodes[:, 0])
+                * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            )
+            vc4_K = vc4.stiffness().toarray()
+            vc4_M = vc4.mass().toarray()
+            vc4_solution, vc4_residual, vc4_gauge = _solve_neumann_system(
+                vc4_K,
+                vc4_M,
+                vc4_M @ forcing_nodes,
+                vc4.left_null_vector(),
+            )
+            assert vc4_residual < 1e-12
+            assert vc4_gauge < 1e-12
+            vc4_gradient = np.column_stack([gradient @ vc4_solution for gradient in vc4.trial_gradient()])
+            vc4_records.append(
+                (
+                    cloud.nominal_spacing,
+                    *_physical_poisson_errors(
+                        E @ vc4_solution,
+                        vc4_gradient,
+                        exact_values,
+                        exact_gradient,
+                        W,
+                    ),
+                )
+            )
+
+            common_K, common_M, common_gradients = arms["common_quadrature"]
+            one = np.ones(vc4.n_dof)
+            common_solution, common_residual, common_gauge = _solve_neumann_system(
+                common_K,
+                common_M,
+                common_M @ forcing_nodes,
+                one / len(one),
+            )
+            assert common_residual < 1e-12
+            assert common_gauge < 1e-12
+            common_gradient = np.column_stack([gradient @ common_solution for gradient in common_gradients])
+            common_records.append(
+                (
+                    cloud.nominal_spacing,
+                    *_physical_poisson_errors(
+                        E @ common_solution,
+                        common_gradient,
+                        exact_values,
+                        exact_gradient,
+                        W,
+                    ),
+                )
+            )
+
+        spacings, vc4_l2, vc4_h1 = map(np.asarray, zip(*vc4_records, strict=True))
+        _, common_l2, common_h1 = map(np.asarray, zip(*common_records, strict=True))
+        assert np.all(np.diff(vc4_l2) < 0.0)
+        assert np.all(np.diff(vc4_h1) < 0.0)
+        vc4_h1_rate = float(np.polyfit(np.log(spacings), np.log(vc4_h1), 1)[0])
+        assert vc4_h1_rate > 2.75
+        assert vc4_h1[-1] < 0.4 * common_h1[-1]
+        assert common_l2[-1] < 0.35 * vc4_l2[-1]
+
     def test_interior_only_lloyd_cloud_fails_the_mass_gate(self):
         from mfgarchon.geometry.collocation import ImplicitDomainCollocation
         from mfgarchon.geometry.implicit import Hyperrectangle
@@ -426,7 +591,7 @@ class TestCentroidalVC2Geometry:
         )
         h = 1.0 / np.sqrt(len(nodes))
         with pytest.raises(np.linalg.LinAlgError, match=r"mass gate failed: cond\(M\)"):
-            CentroidalVC2SCNIOperatorSandbox(nodes, rho=4.0 * h, bounds=BOUNDS)
+            CentroidalVCISCNIOperatorSandbox(nodes, rho=4.0 * h, bounds=BOUNDS)
 
     def test_mass_and_petrov_nullspaces_are_not_conflated(self, structured_sandbox):
         E = structured_sandbox.value_operator().toarray()
@@ -445,8 +610,8 @@ class TestCentroidalVC2Geometry:
 
     def test_rank_deficient_local_support_fails_loud(self):
         n = 7
-        with pytest.raises(ValueError, match="VC2 local constraint rank failure"):
-            CentroidalVC2SCNIOperatorSandbox(
+        with pytest.raises(ValueError, match="VCI local constraint rank failure"):
+            CentroidalVCISCNIOperatorSandbox(
                 _grid(n),
                 rho=3.0 / (n - 1),
                 bounds=BOUNDS,
@@ -457,12 +622,18 @@ class TestCentroidalVC2Geometry:
         nodes = _grid(7)
         nodes[1] = nodes[0]
         with pytest.raises(ValueError, match="does not admit duplicate nodes"):
-            CentroidalVC2SCNIOperatorSandbox(nodes, rho=0.5, bounds=BOUNDS)
+            CentroidalVCISCNIOperatorSandbox(nodes, rho=0.5, bounds=BOUNDS)
+
+    def test_unsupported_vci_degree_fails_before_geometry_assembly(self):
+        with pytest.raises(ValueError, match=r"vci_degree in \{2, 3, 4\}"):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, vci_degree=5)
+        with pytest.raises(ValueError, match=r"vci_degree in \{2, 3, 4\}"):
+            CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, vci_degree=4.0)
 
     def test_condition_gate_fails_loud(self):
         n = 7
-        with pytest.raises(np.linalg.LinAlgError, match="VC2 local constraint is ill-conditioned"):
-            CentroidalVC2SCNIOperatorSandbox(
+        with pytest.raises(np.linalg.LinAlgError, match="VCI local constraint is ill-conditioned"):
+            CentroidalVCISCNIOperatorSandbox(
                 _grid(n),
                 rho=3.0 / (n - 1),
                 bounds=BOUNDS,
