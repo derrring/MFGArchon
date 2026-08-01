@@ -767,8 +767,9 @@ class TestCentroidalVCGeometry:
         [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
     )
     def test_edge_energy_stabilized_vc4_family_has_physical_spectral_bounds(self, resolution, seed):
-        _cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+        cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
         diagnostics = sandbox.diagnostics
+        spacing = cloud.nominal_spacing
         assert sandbox.stabilization_metric == "edge_energy"
         assert diagnostics.stabilization_rank_min == 15
         assert diagnostics.stabilization_condition_max < 5100.0
@@ -780,6 +781,10 @@ class TestCentroidalVCGeometry:
         assert diagnostics.gauge_smallest_singular_value > 9.8
         assert diagnostics.discrete_patch_defect < 7e-14
         assert diagnostics.stiffness_nullity == 1
+        assert diagnostics.value_weighted_column_sum_max / spacing**2 < 2.3
+        assert diagnostics.test_gradient_weighted_column_sum_max / spacing < 6.0
+        assert diagnostics.edge_value_weighted_column_sum_max / spacing < 9.5
+        assert diagnostics.frame_gauge_euclidean_coercivity_min / spacing**2 > 0.35
 
         one = np.ones(sandbox.n_dof)
         mass = sandbox.mass().toarray()
@@ -843,8 +848,9 @@ class TestCentroidalVCGeometry:
         [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
     )
     def test_variable_coefficient_edge_vc4_family_preserves_patch_and_spectral_bounds(self, resolution, seed):
-        _cloud, sandbox = _boundary_complete_variable_edge_stabilized_vc4_case(resolution, seed)
+        cloud, sandbox = _boundary_complete_variable_edge_stabilized_vc4_case(resolution, seed)
         diagnostics = sandbox.diagnostics
+        spacing = cloud.nominal_spacing
         sampled_min, sampled_max = sandbox.sampled_elliptic_coefficient_bounds
         assert sandbox.has_spatial_elliptic_coefficient
         assert 0.8 <= sampled_min < sampled_max <= 1.2
@@ -859,6 +865,10 @@ class TestCentroidalVCGeometry:
         assert diagnostics.gauge_coercivity_min > 7.55
         assert diagnostics.gauge_smallest_singular_value > 9.74
         assert diagnostics.stiffness_nullity == 1
+        assert diagnostics.value_weighted_column_sum_max / spacing**2 < 2.3
+        assert diagnostics.test_gradient_weighted_column_sum_max / spacing < 6.2
+        assert diagnostics.edge_value_weighted_column_sum_max / spacing < 9.5
+        assert diagnostics.frame_gauge_euclidean_coercivity_min / spacing**2 > 0.35
 
         one = np.ones(sandbox.n_dof)
         mass = sandbox.mass().toarray()

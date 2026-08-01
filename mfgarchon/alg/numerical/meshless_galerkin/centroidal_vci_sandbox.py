@@ -58,6 +58,10 @@ class VCIAdmissionDiagnostics:
 
     ``raw_gauge_coercivity_min`` is measured before polynomial-null
     stabilization; ``gauge_coercivity_min`` is measured after it.
+
+    The weighted column sums and ``frame_gauge_euclidean_coercivity_min``
+    are unscaled. An admitted family must compare them with its registered
+    spacing as $O(h^2)$, $O(h)$, $O(h)$, and $\\Omega(h^2)$, respectively.
     """
 
     local_rank_min: int
@@ -77,6 +81,10 @@ class VCIAdmissionDiagnostics:
     stabilization_support_count_min: int
     stabilization_support_count_max: int
     stabilization_patch_defect: float
+    value_weighted_column_sum_max: float
+    test_gradient_weighted_column_sum_max: float
+    edge_value_weighted_column_sum_max: float
+    frame_gauge_euclidean_coercivity_min: float
     right_constant_defect: float
     left_constant_defect: float
     raw_gauge_coercivity_min: float
@@ -883,6 +891,17 @@ class CentroidalVCISCNIOperatorSandbox:
         mean_constraint = self._M @ one
         gauge_basis = linalg.null_space(mean_constraint[None, :])
         gauge_mass = gauge_basis.T @ self._M @ gauge_basis
+        positive_frame = (
+            sum(gradient.T @ (self._elliptic_weights[:, None] * gradient) for gradient in self._G)
+            + self._polynomial_null_stabilization * self._stabilization
+        )
+        frame_gauge_euclidean_coercivity = float(
+            linalg.eigvalsh(
+                gauge_basis.T @ positive_frame @ gauge_basis,
+                subset_by_index=[0, 0],
+                check_finite=False,
+            )[0]
+        )
         symmetric_stiffness = 0.5 * (self._K + self._K.T)
         gauge_stiffness = gauge_basis.T @ symmetric_stiffness @ gauge_basis
         gauge_coercivity = float(
@@ -932,6 +951,24 @@ class CentroidalVCISCNIOperatorSandbox:
             stabilization_support_count_min=min(stabilization_support_counts, default=0),
             stabilization_support_count_max=max(stabilization_support_counts, default=0),
             stabilization_patch_defect=stabilization_patch_defect,
+            value_weighted_column_sum_max=float(np.max(np.sum(self._weights[:, None] * np.abs(self._E), axis=0))),
+            test_gradient_weighted_column_sum_max=float(
+                np.max(
+                    np.sum(
+                        self._weights[:, None] * np.sqrt(sum(gradient**2 for gradient in self._Gbar)),
+                        axis=0,
+                    )
+                )
+            ),
+            edge_value_weighted_column_sum_max=float(
+                np.max(
+                    np.sum(
+                        np.linalg.norm(self._edge_normal_weights, axis=1)[:, None] * np.abs(self._edge_phi),
+                        axis=0,
+                    )
+                )
+            ),
+            frame_gauge_euclidean_coercivity_min=frame_gauge_euclidean_coercivity,
             right_constant_defect=float(np.max(np.abs(self._K @ one))),
             left_constant_defect=float(np.max(np.abs(one @ self._K))),
             raw_gauge_coercivity_min=raw_gauge_coercivity,
