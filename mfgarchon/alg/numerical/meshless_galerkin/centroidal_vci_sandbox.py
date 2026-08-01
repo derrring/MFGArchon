@@ -14,7 +14,9 @@ separately.
 
 An optional local polynomial-null stabilization is a research diagnostic, not a
 production backend. It tests whether a symmetric positive-semidefinite correction
-can remove non-polynomial negative modes without changing the target patch.
+can remove non-polynomial negative modes without changing the target patch. The
+stabilization metric is either the original Euclidean stencil metric or a physical
+edge-gradient energy assembled from the already-required cell-edge evaluations.
 
 All nonlinear MFG blocks are derived from one residual. The forward spatial
 operator is therefore the transpose of the complete analytic Jacobian; no
@@ -321,6 +323,7 @@ class CentroidalVCISCNIOperatorSandbox:
         trial_gradient_mode: str = "scni",
         test_gradient_base: str = "trial",
         polynomial_null_stabilization: float = 0.0,
+        stabilization_metric: str = "euclidean",
         stabilization_support_radius: float | None = None,
         max_stabilization_condition: float = 1e8,
         rank_tolerance: float = 1e-11,
@@ -362,6 +365,16 @@ class CentroidalVCISCNIOperatorSandbox:
             raise ValueError(
                 f"polynomial_null_stabilization must be finite and nonnegative, got {polynomial_null_stabilization}."
             )
+        if stabilization_metric not in {"euclidean", "edge_energy"}:
+            raise ValueError(
+                "Centroidal VCI-SCNI requires stabilization_metric in "
+                f"{{'euclidean', 'edge_energy'}}, got {stabilization_metric!r}."
+            )
+        if stabilization_metric == "edge_energy" and stabilization_support_radius is not None:
+            raise ValueError(
+                "stabilization_support_radius is not defined for stabilization_metric='edge_energy'; "
+                "the active edge MLS stencil determines its support."
+            )
         if stabilization_support_radius is not None and (
             not np.isfinite(stabilization_support_radius) or stabilization_support_radius <= 0.0
         ):
@@ -402,6 +415,7 @@ class CentroidalVCISCNIOperatorSandbox:
         self._trial_gradient_mode = trial_gradient_mode
         self._test_gradient_base = test_gradient_base
         self._polynomial_null_stabilization = float(polynomial_null_stabilization)
+        self._stabilization_metric = stabilization_metric
         self._stabilization_support_radius = float(
             stabilization_support_radius if stabilization_support_radius is not None else rho
         )
@@ -425,6 +439,19 @@ class CentroidalVCISCNIOperatorSandbox:
         edge_rule = _edge_quadrature(cells, n_edge_gauss)
         self._edge_points = edge_rule.points
         self._edge_normal_weights = edge_rule.normal_weights
+        self._edge_cell_indices = edge_rule.cell_indices
+        edge_measures = np.linalg.norm(edge_rule.normal_weights, axis=1)
+        cell_perimeters = np.bincount(
+            edge_rule.cell_indices,
+            weights=edge_measures,
+            minlength=self._n_dof,
+        )
+        if np.any(cell_perimeters <= 0.0):
+            bad = int(np.argmin(cell_perimeters))
+            raise ValueError(f"VCI cell {bad} has nonpositive boundary measure.")
+        self._edge_energy_weights = (
+            edge_measures * self._weights[edge_rule.cell_indices] / cell_perimeters[edge_rule.cell_indices]
+        )
 
         self._E, centroid_gradients = shape_functions_and_grads(
             self._centroids,
@@ -435,7 +462,7 @@ class CentroidalVCISCNIOperatorSandbox:
             check_conditioning=True,
         )
         pointwise_gradients = [centroid_gradients[:, :, direction] for direction in range(2)]
-        self._edge_phi, _ = shape_functions_and_grads(
+        self._edge_phi, edge_point_gradients = shape_functions_and_grads(
             self._edge_points,
             self._nodes,
             self._rho,
@@ -459,7 +486,7 @@ class CentroidalVCISCNIOperatorSandbox:
                 stabilization_conditions,
                 stabilization_support_counts,
                 stabilization_patch_defect,
-            ) = self._assemble_polynomial_null_stabilization()
+            ) = self._assemble_polynomial_null_stabilization(edge_point_gradients)
         else:
             self._stabilization = np.zeros_like(self._raw_K)
             stabilization_ranks = []
@@ -613,12 +640,15 @@ class CentroidalVCISCNIOperatorSandbox:
 
     def _assemble_polynomial_null_stabilization(
         self,
+        edge_point_gradients: NDArray,
     ) -> tuple[NDArray, list[int], list[float], list[int], float]:
         """Assemble a local PSD stabilization that annihilates target polynomials.
 
-        Dividing each stencil projector by its support count prevents its
-        high-frequency scale from growing merely because the stencil contains
-        more nodes. This normalization remains an empirical sandbox choice.
+        The Euclidean metric divides each stencil projector by its support count;
+        this remains the challenged baseline. The edge-energy metric sandwiches
+        each cell's positive boundary-gradient energy with the same local
+        polynomial-complement projector. Its boundary weights sum to the cell
+        area, so the metric has the scale of a volume gradient energy.
         """
         stabilization = np.zeros((self._n_dof, self._n_dof), dtype=np.float64)
         tree = cKDTree(self._nodes)
@@ -629,16 +659,27 @@ class CentroidalVCISCNIOperatorSandbox:
         conditions = []
         support_counts = []
         for i, center in enumerate(self._nodes):
-            support = np.sort(
-                np.asarray(tree.query_ball_point(center, self._stabilization_support_radius), dtype=np.int64)
-            )
+            if self._stabilization_metric == "euclidean":
+                support = np.sort(
+                    np.asarray(tree.query_ball_point(center, self._stabilization_support_radius), dtype=np.int64)
+                )
+                edge_rows = None
+            else:
+                edge_rows = np.flatnonzero(self._edge_cell_indices == i)
+                local_edge_gradients = edge_point_gradients[edge_rows]
+                support = np.flatnonzero(np.max(np.abs(local_edge_gradients), axis=(0, 2)) > 0.0)
             support_count = len(support)
             support_counts.append(support_count)
             if support_count < polynomial_count:
+                support_description = (
+                    f"support_radius={self._stabilization_support_radius:.6g}"
+                    if edge_rows is None
+                    else "support=active edge MLS stencil"
+                )
                 raise ValueError(
                     f"Polynomial-null stabilization rank failure at node {i}: support_nodes={support_count} "
                     f"< polynomial_basis_size={polynomial_count} "
-                    f"(support_radius={self._stabilization_support_radius:.6g})."
+                    f"({support_description})."
                 )
             local_points = (self._nodes[support] - center[None, :]) / local_scales[i]
             polynomial_values, _, _ = _polynomial_data(
@@ -652,10 +693,15 @@ class CentroidalVCISCNIOperatorSandbox:
             rank = int(np.count_nonzero(singular_values > relative_cutoff))
             ranks.append(rank)
             if rank < polynomial_count:
+                support_description = (
+                    f"support_radius={self._stabilization_support_radius:.6g}"
+                    if edge_rows is None
+                    else "support=active edge MLS stencil"
+                )
                 raise ValueError(
                     f"Polynomial-null stabilization rank failure at node {i}: rank={rank}, "
                     f"required={polynomial_count}, support_nodes={support_count}, "
-                    f"support_radius={self._stabilization_support_radius:.6g}."
+                    f"{support_description}."
                 )
             condition = float(singular_values[0] / singular_values[-1])
             conditions.append(condition)
@@ -666,7 +712,18 @@ class CentroidalVCISCNIOperatorSandbox:
                 )
             polynomial_basis = left_vectors[:, :polynomial_count]
             residual_projector = np.eye(support_count) - polynomial_basis @ polynomial_basis.T
-            stabilization[np.ix_(support, support)] += residual_projector / support_count
+            if edge_rows is None:
+                local_stabilization = residual_projector / support_count
+            else:
+                local_edge_gradients = edge_point_gradients[edge_rows][:, support, :]
+                local_metric = np.einsum(
+                    "q,qid,qjd->ij",
+                    self._edge_energy_weights[edge_rows],
+                    local_edge_gradients,
+                    local_edge_gradients,
+                )
+                local_stabilization = residual_projector @ local_metric @ residual_projector
+            stabilization[np.ix_(support, support)] += local_stabilization
 
         node_values, _, _, _ = self._global_patch_data(self._vci_degree)
         patch_defect = float(np.max(np.abs(stabilization @ node_values)))
@@ -845,6 +902,10 @@ class CentroidalVCISCNIOperatorSandbox:
     @property
     def polynomial_null_stabilization(self) -> float:
         return self._polynomial_null_stabilization
+
+    @property
+    def stabilization_metric(self) -> str:
+        return self._stabilization_metric
 
     @property
     def nodes(self) -> NDArray:

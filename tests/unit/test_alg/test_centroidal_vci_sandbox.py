@@ -7,6 +7,7 @@ from functools import cache
 import pytest
 
 import numpy as np
+from scipy import linalg
 
 from mfgarchon.alg.numerical.meshless_galerkin.centroidal_vci_sandbox import (
     BoundaryCompleteCVTCloud,
@@ -89,6 +90,51 @@ def _boundary_complete_stabilized_vc4_case(
         stabilization_support_radius=4.5 * cloud.nominal_spacing,
     )
     return cloud, sandbox
+
+
+@cache
+def _boundary_complete_edge_stabilized_vc4_case(
+    resolution: int,
+    seed: int,
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVCISCNIOperatorSandbox]:
+    cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+    sandbox = CentroidalVCISCNIOperatorSandbox(
+        cloud.nodes,
+        rho=4.5 * cloud.nominal_spacing,
+        bounds=BOUNDS,
+        degree=4,
+        vci_degree=4,
+        vci_support_radius=4.0 * cloud.nominal_spacing,
+        trial_gradient_mode="pointwise",
+        test_gradient_base="trial",
+        polynomial_null_stabilization=0.1,
+        stabilization_metric="edge_energy",
+    )
+    return cloud, sandbox
+
+
+@cache
+def _degree_four_reference_stiffness(resolution: int, seed: int) -> np.ndarray:
+    cloud, _candidate = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+    points, weights = tensor_gauss(BOUNDS, n_cells=resolution - 1, n_gauss=4)
+    reference = MeshlessGalerkinDiscretization(
+        cloud.nodes,
+        rho=4.5 * cloud.nominal_spacing,
+        degree=4,
+        quad_points=points,
+        quad_weights=weights,
+    )
+    return reference.stiffness().toarray()
+
+
+@cache
+def _edge_stabilization_dual_data(resolution: int, seed: int):
+    _cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+    one = np.ones(sandbox.n_dof)
+    mass = sandbox.mass().toarray()
+    gauge_basis = linalg.null_space((mass @ one)[None, :])
+    reference = gauge_basis.T @ _degree_four_reference_stiffness(resolution, seed) @ gauge_basis
+    return sandbox.stabilization().toarray(), gauge_basis, linalg.cho_factor(reference, check_finite=False)
 
 
 @cache
@@ -659,6 +705,76 @@ class TestCentroidalVCGeometry:
         assert np.linalg.eigvalsh(stabilization).min() > -1e-12
         assert np.max(np.abs(stabilization @ node_values)) < 1e-14
 
+    @pytest.mark.parametrize(
+        ("resolution", "seed"),
+        [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
+    )
+    def test_edge_energy_stabilized_vc4_family_has_physical_spectral_bounds(self, resolution, seed):
+        _cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+        diagnostics = sandbox.diagnostics
+        assert sandbox.stabilization_metric == "edge_energy"
+        assert diagnostics.stabilization_rank_min == 15
+        assert diagnostics.stabilization_condition_max < 5100.0
+        assert diagnostics.stabilization_support_count_min >= 23
+        assert diagnostics.stabilization_support_count_max <= 86
+        assert diagnostics.stabilization_patch_defect < 5e-15
+        assert diagnostics.raw_gauge_coercivity_min < -9.0
+        assert diagnostics.gauge_coercivity_min > 7.6
+        assert diagnostics.gauge_smallest_singular_value > 9.8
+        assert diagnostics.discrete_patch_defect < 7e-14
+        assert diagnostics.stiffness_nullity == 1
+
+        one = np.ones(sandbox.n_dof)
+        mass = sandbox.mass().toarray()
+        gauge_basis = linalg.null_space((mass @ one)[None, :])
+        candidate = 0.5 * (sandbox.stiffness().toarray() + sandbox.stiffness().toarray().T)
+        reference = _degree_four_reference_stiffness(resolution, seed)
+        relative_spectrum = linalg.eigvalsh(
+            gauge_basis.T @ candidate @ gauge_basis,
+            gauge_basis.T @ reference @ gauge_basis,
+            check_finite=False,
+        )
+        assert relative_spectrum[0] > 0.075
+        assert relative_spectrum[-1] < 2.45
+
+    def test_edge_energy_stabilization_is_symmetric_psd_and_annihilates_p4(self):
+        cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(11, 0)
+        stabilization = sandbox.stabilization().toarray()
+        node_values, _, _ = _polynomial_data(
+            cloud.nodes,
+            np.array([0.5, 0.5]),
+            np.ones(2),
+            degree=4,
+        )
+        assert np.allclose(stabilization, stabilization.T, rtol=0.0, atol=1e-14)
+        assert np.linalg.eigvalsh(stabilization).min() > -1e-12
+        assert np.max(np.abs(stabilization @ node_values)) < 5e-15
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_edge_energy_stabilization_is_smoothly_consistent(self, wave_numbers, seed):
+        records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, _sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+            stabilization, gauge_basis, reference_factor = _edge_stabilization_dual_data(resolution, seed)
+            node_values = np.cos(kx * np.pi * cloud.nodes[:, 0]) * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            defect = stabilization @ node_values
+            energy = float(np.sqrt(max(node_values @ defect, 0.0)))
+            reduced_defect = gauge_basis.T @ defect
+            dual = float(
+                np.sqrt(reduced_defect @ linalg.cho_solve(reference_factor, reduced_defect, check_finite=False))
+            )
+            records.append((cloud.nominal_spacing, energy, dual))
+
+        spacings, energy_defects, dual_defects = map(np.asarray, zip(*records, strict=True))
+        energy_rate = float(np.polyfit(np.log(spacings), np.log(energy_defects), 1)[0])
+        dual_rate = float(np.polyfit(np.log(spacings), np.log(dual_defects), 1)[0])
+        assert energy_rate > 2.2
+        assert dual_rate > 3.05
+        assert np.all(np.diff(energy_defects) < 0.0)
+        assert np.all(np.diff(dual_defects) < 0.0)
+
     def test_degree_three_mls_dispatch_preserves_the_vci_gate(self):
         sandbox = CentroidalVCISCNIOperatorSandbox(
             _grid(7),
@@ -737,6 +853,56 @@ class TestCentroidalVCGeometry:
         assert h1_rate > 3.6
         assert l2_errors[-1] < 1e-3
         assert h1_errors[-1] < 0.022
+        assert np.all(np.diff(h1_errors) < 0.0)
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_edge_energy_stabilized_vc4_poisson_converges(self, wave_numbers, seed):
+        records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
+            points = sandbox.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            forcing_nodes = (
+                (kx**2 + ky**2)
+                * np.pi**2
+                * np.cos(kx * np.pi * cloud.nodes[:, 0])
+                * np.cos(ky * np.pi * cloud.nodes[:, 1])
+            )
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+            mass = sandbox.mass().toarray()
+            solution, relative_residual, gauge_defect = _solve_neumann_system(
+                sandbox.stiffness().toarray(),
+                mass,
+                mass @ forcing_nodes,
+                sandbox.left_null_vector(),
+            )
+            assert relative_residual < 1e-12
+            assert gauge_defect < 1e-12
+            reconstructed_gradient = np.column_stack([gradient @ solution for gradient in sandbox.trial_gradient()])
+            errors = _physical_poisson_errors(
+                sandbox.value_operator() @ solution,
+                reconstructed_gradient,
+                exact_values,
+                exact_gradient,
+                sandbox.weights,
+            )
+            records.append((cloud.nominal_spacing, *errors))
+
+        spacings, l2_errors, h1_errors = map(np.asarray, zip(*records, strict=True))
+        l2_rate = float(np.polyfit(np.log(spacings), np.log(l2_errors), 1)[0])
+        h1_rate = float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0])
+        assert l2_rate > 3.7
+        assert h1_rate > 3.0
+        assert l2_errors[-1] < 2.1e-3
+        assert h1_errors[-1] < 0.033
+        assert np.all(np.diff(l2_errors) < 0.0)
         assert np.all(np.diff(h1_errors) < 0.0)
 
     @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
@@ -883,7 +1049,12 @@ class TestCentroidalVCGeometry:
         [
             ({"polynomial_null_stabilization": -0.1}, "finite and nonnegative"),
             ({"polynomial_null_stabilization": np.nan}, "finite and nonnegative"),
+            ({"stabilization_metric": "unknown"}, "stabilization_metric"),
             ({"stabilization_support_radius": 0.0}, "finite and positive"),
+            (
+                {"stabilization_metric": "edge_energy", "stabilization_support_radius": 0.5},
+                "active edge MLS stencil determines its support",
+            ),
             ({"max_stabilization_condition": 1.0}, "greater than one"),
         ],
     )
