@@ -12,6 +12,11 @@ or four, including boundary fluxes. The MLS trial degree is selected
 independently, so target weak moments and the actual discrete patch are reported
 separately.
 
+For a spatial elliptic coefficient, the coefficient value and its exact gradient
+must be supplied together. The same sampled coefficient then drives the local VCI
+constraints, the Petrov stiffness, the edge-energy stabilization, and the patch
+diagnostic for ``-div(a grad u)``.
+
 An optional local polynomial-null stabilization is a research diagnostic, not a
 production backend. It tests whether a symmetric positive-semidefinite correction
 can remove non-polynomial negative modes without changing the target patch. The
@@ -297,6 +302,20 @@ def _as_vector(values: NDArray, size: int, name: str) -> NDArray:
     return array
 
 
+def _evaluate_field(
+    field: Callable[[NDArray], NDArray],
+    points: NDArray,
+    expected_shape: tuple[int, ...],
+    name: str,
+) -> NDArray:
+    values = np.asarray(field(points), dtype=np.float64)
+    if values.shape != expected_shape:
+        raise ValueError(f"{name} must return shape {expected_shape}, got {values.shape}.")
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{name} returned non-finite values.")
+    return values
+
+
 class CentroidalVCISCNIOperatorSandbox:
     """Dense research sandbox for the centroidal VCI-SCNI operator gate.
 
@@ -317,6 +336,8 @@ class CentroidalVCISCNIOperatorSandbox:
         degree: int = 2,
         vci_degree: int = 2,
         sdf: Callable[[NDArray], NDArray] | None = None,
+        elliptic_coefficient: Callable[[NDArray], NDArray] | None = None,
+        elliptic_coefficient_gradient: Callable[[NDArray], NDArray] | None = None,
         backend: str = "numpy",
         n_edge_gauss: int = 4,
         vci_support_radius: float | None = None,
@@ -352,6 +373,12 @@ class CentroidalVCISCNIOperatorSandbox:
             raise ValueError(f"Centroidal VCI-SCNI requires vci_degree in {{2, 3, 4}}, got {vci_degree}.")
         if backend != "numpy":
             raise ValueError("Centroidal VCI-SCNI admission diagnostics require backend='numpy'.")
+        if (elliptic_coefficient is None) != (elliptic_coefficient_gradient is None):
+            raise ValueError("elliptic_coefficient and elliptic_coefficient_gradient must be supplied together.")
+        if elliptic_coefficient is not None and (
+            not callable(elliptic_coefficient) or not callable(elliptic_coefficient_gradient)
+        ):
+            raise TypeError("elliptic_coefficient and elliptic_coefficient_gradient must be callable.")
         if trial_gradient_mode not in {"scni", "pointwise"}:
             raise ValueError(
                 "Centroidal VCI-SCNI requires trial_gradient_mode in {'scni', 'pointwise'}, "
@@ -384,6 +411,18 @@ class CentroidalVCISCNIOperatorSandbox:
         if not np.isfinite(max_stabilization_condition) or max_stabilization_condition <= 1.0:
             raise ValueError(
                 f"max_stabilization_condition must be finite and greater than one, got {max_stabilization_condition}."
+            )
+        if elliptic_coefficient is not None and (
+            degree != 4
+            or vci_degree != 4
+            or trial_gradient_mode != "pointwise"
+            or test_gradient_base != "trial"
+            or polynomial_null_stabilization <= 0.0
+            or stabilization_metric != "edge_energy"
+        ):
+            raise ValueError(
+                "The spatial elliptic-coefficient gate is only defined for the aligned degree-4 VCI candidate "
+                "with pointwise trial gradients, trial-based test correction, and positive edge-energy stabilization."
             )
         if not np.isfinite(rho) or rho <= 0.0:
             raise ValueError(f"Centroidal VCI-SCNI requires rho > 0, got {rho}.")
@@ -429,6 +468,7 @@ class CentroidalVCISCNIOperatorSandbox:
         self._max_correction_ratio = float(max_correction_ratio)
         self._min_gauge_coercivity = float(min_gauge_coercivity)
         self._patch_tolerance = float(patch_tolerance)
+        self._has_spatial_elliptic_coefficient = elliptic_coefficient is not None
         self._vci_support_radius = float(vci_support_radius if vci_support_radius is not None else rho)
         if self._vci_support_radius <= 0.0:
             raise ValueError(f"vci_support_radius must be positive, got {self._vci_support_radius}.")
@@ -452,6 +492,40 @@ class CentroidalVCISCNIOperatorSandbox:
         self._edge_energy_weights = (
             edge_measures * self._weights[edge_rule.cell_indices] / cell_perimeters[edge_rule.cell_indices]
         )
+        if elliptic_coefficient is None or elliptic_coefficient_gradient is None:
+            self._centroid_elliptic_coefficient = np.ones(self._n_dof, dtype=np.float64)
+            self._centroid_elliptic_coefficient_gradient = np.zeros((self._n_dof, 2), dtype=np.float64)
+            self._edge_elliptic_coefficient = np.ones(len(self._edge_points), dtype=np.float64)
+        else:
+            self._centroid_elliptic_coefficient = _evaluate_field(
+                elliptic_coefficient,
+                self._centroids,
+                (self._n_dof,),
+                "elliptic_coefficient(centroids)",
+            )
+            self._centroid_elliptic_coefficient_gradient = _evaluate_field(
+                elliptic_coefficient_gradient,
+                self._centroids,
+                (self._n_dof, 2),
+                "elliptic_coefficient_gradient(centroids)",
+            )
+            self._edge_elliptic_coefficient = _evaluate_field(
+                elliptic_coefficient,
+                self._edge_points,
+                (len(self._edge_points),),
+                "elliptic_coefficient(edge_points)",
+            )
+        sampled_coefficient_min = min(
+            float(np.min(self._centroid_elliptic_coefficient)),
+            float(np.min(self._edge_elliptic_coefficient)),
+        )
+        if sampled_coefficient_min <= 0.0:
+            raise ValueError(
+                "elliptic_coefficient must be strictly positive at all centroid and edge samples; "
+                f"sampled minimum={sampled_coefficient_min:.6g}."
+            )
+        self._elliptic_weights = self._weights * self._centroid_elliptic_coefficient
+        self._edge_elliptic_energy_weights = self._edge_energy_weights * self._edge_elliptic_coefficient
 
         self._E, centroid_gradients = shape_functions_and_grads(
             self._centroids,
@@ -476,7 +550,7 @@ class CentroidalVCISCNIOperatorSandbox:
         self._Gbar, ranks, conditions, correction_ratios = self._assemble_test_gradient(base_test_gradients)
         self._M = self._E.T @ (self._weights[:, None] * self._E)
         self._raw_K = sum(
-            test_gradient.T @ (self._weights[:, None] * trial_gradient)
+            test_gradient.T @ (self._elliptic_weights[:, None] * trial_gradient)
             for test_gradient, trial_gradient in zip(self._Gbar, self._G, strict=True)
         )
         if self._polynomial_null_stabilization > 0.0:
@@ -557,7 +631,8 @@ class CentroidalVCISCNIOperatorSandbox:
 
             shifted = (self._centroids[support] - self._nodes[i]) / h_i
             correction_basis = _monomial_values(shifted, self._correction_exponents)
-            weighted_gram = correction_basis.T @ (self._weights[support, None] * correction_basis)
+            local_elliptic_weights = self._elliptic_weights[support]
+            weighted_gram = correction_basis.T @ (local_elliptic_weights[:, None] * correction_basis)
             correction_metric = linalg.block_diag(weighted_gram, weighted_gram)
             try:
                 metric_cholesky = np.linalg.cholesky(correction_metric)
@@ -568,7 +643,7 @@ class CentroidalVCISCNIOperatorSandbox:
 
             constraint = np.einsum(
                 "a,al,akd->kdl",
-                self._weights[support],
+                local_elliptic_weights,
                 correction_basis,
                 centroid_gradients[support, 1:, :],
             ).reshape(self._vci_constraint_count, 2 * correction_basis_count)
@@ -599,22 +674,21 @@ class CentroidalVCISCNIOperatorSandbox:
             base_gradient = np.column_stack([gradient[:, i] for gradient in base_test_gradients])
             base_term = np.einsum(
                 "a,ad,akd->k",
-                self._weights,
+                self._elliptic_weights,
                 base_gradient,
                 centroid_gradients,
+            )
+            elliptic_divergence = self._elliptic_polynomial_divergence(
+                centroid_gradients,
+                centroid_laplacians,
             )
             volume_term = np.einsum(
                 "a,a,ak->k",
                 self._weights,
                 self._E[:, i],
-                centroid_laplacians,
+                elliptic_divergence,
             )
-            boundary_term = np.einsum(
-                "q,qkd,qd->k",
-                self._edge_phi[:, i],
-                edge_gradients,
-                self._edge_normal_weights,
-            )
+            boundary_term = self._edge_phi[:, i] @ self._elliptic_normal_derivatives(edge_gradients)
             residual = (-volume_term + boundary_term - base_term)[1:]
 
             multiplier_matrix = whitened_constraint @ whitened_constraint.T
@@ -713,12 +787,12 @@ class CentroidalVCISCNIOperatorSandbox:
             polynomial_basis = left_vectors[:, :polynomial_count]
             residual_projector = np.eye(support_count) - polynomial_basis @ polynomial_basis.T
             if edge_rows is None:
-                local_stabilization = residual_projector / support_count
+                local_stabilization = self._centroid_elliptic_coefficient[i] * residual_projector / support_count
             else:
                 local_edge_gradients = edge_point_gradients[edge_rows][:, support, :]
                 local_metric = np.einsum(
                     "q,qid,qjd->ij",
-                    self._edge_energy_weights[edge_rows],
+                    self._edge_elliptic_energy_weights[edge_rows],
                     local_edge_gradients,
                     local_edge_gradients,
                 )
@@ -740,21 +814,48 @@ class CentroidalVCISCNIOperatorSandbox:
         _, edge_gradients, _ = _polynomial_data(self._edge_points, center, scales, degree)
         return node_values, centroid_gradients, centroid_laplacians, edge_gradients
 
+    def _elliptic_polynomial_divergence(
+        self,
+        centroid_gradients: NDArray,
+        centroid_laplacians: NDArray,
+    ) -> NDArray:
+        return self._centroid_elliptic_coefficient[:, None] * centroid_laplacians + np.einsum(
+            "ad,akd->ak",
+            self._centroid_elliptic_coefficient_gradient,
+            centroid_gradients,
+        )
+
+    def _elliptic_normal_derivatives(self, edge_gradients: NDArray) -> NDArray:
+        return np.einsum(
+            "q,qkd,qd->qk",
+            self._edge_elliptic_coefficient,
+            edge_gradients,
+            self._edge_normal_weights,
+        )
+
     def _weak_patch_defect(self, test_gradients: list[NDArray], degree: int) -> float:
         _, centroid_gradients, centroid_laplacians, edge_gradients = self._global_patch_data(degree)
         volume_gradient = sum(
-            gradient.T @ (self._weights[:, None] * centroid_gradients[:, :, direction])
+            gradient.T @ (self._elliptic_weights[:, None] * centroid_gradients[:, :, direction])
             for direction, gradient in enumerate(test_gradients)
         )
-        volume_laplacian = self._E.T @ (self._weights[:, None] * centroid_laplacians)
-        normal_derivatives = np.einsum("qkd,qd->qk", edge_gradients, self._edge_normal_weights)
+        elliptic_divergence = self._elliptic_polynomial_divergence(
+            centroid_gradients,
+            centroid_laplacians,
+        )
+        volume_laplacian = self._E.T @ (self._weights[:, None] * elliptic_divergence)
+        normal_derivatives = self._elliptic_normal_derivatives(edge_gradients)
         boundary_flux = self._edge_phi.T @ normal_derivatives
         return float(np.max(np.abs(volume_gradient + volume_laplacian - boundary_flux)))
 
     def _discrete_patch_defect(self) -> float:
-        node_values, _, centroid_laplacians, edge_gradients = self._global_patch_data(self._vci_degree)
-        volume_laplacian = self._E.T @ (self._weights[:, None] * centroid_laplacians)
-        normal_derivatives = np.einsum("qkd,qd->qk", edge_gradients, self._edge_normal_weights)
+        node_values, centroid_gradients, centroid_laplacians, edge_gradients = self._global_patch_data(self._vci_degree)
+        elliptic_divergence = self._elliptic_polynomial_divergence(
+            centroid_gradients,
+            centroid_laplacians,
+        )
+        volume_laplacian = self._E.T @ (self._weights[:, None] * elliptic_divergence)
+        normal_derivatives = self._elliptic_normal_derivatives(edge_gradients)
         boundary_flux = self._edge_phi.T @ normal_derivatives
         return float(np.max(np.abs(self._K @ node_values + volume_laplacian - boundary_flux)))
 
@@ -908,6 +1009,23 @@ class CentroidalVCISCNIOperatorSandbox:
         return self._stabilization_metric
 
     @property
+    def has_spatial_elliptic_coefficient(self) -> bool:
+        return self._has_spatial_elliptic_coefficient
+
+    @property
+    def sampled_elliptic_coefficient_bounds(self) -> tuple[float, float]:
+        return (
+            min(
+                float(np.min(self._centroid_elliptic_coefficient)),
+                float(np.min(self._edge_elliptic_coefficient)),
+            ),
+            max(
+                float(np.max(self._centroid_elliptic_coefficient)),
+                float(np.max(self._edge_elliptic_coefficient)),
+            ),
+        )
+
+    @property
     def nodes(self) -> NDArray:
         return self._nodes
 
@@ -982,6 +1100,11 @@ class PairedMFGOperatorSandbox:
             raise ValueError(f"diffusion must be finite and nonnegative, got {diffusion}.")
         if (stabilization_flux is None) != (stabilization_jacobian is None):
             raise ValueError("stabilization_flux and stabilization_jacobian must be supplied together.")
+        if discretization.has_spatial_elliptic_coefficient and stabilization_flux is not None:
+            raise ValueError(
+                "A coefficient-weighted VCI test gradient cannot also assemble stabilization_flux; "
+                "that nonlinear flux requires its own variational correction."
+            )
         self._discretization = discretization
         self._diffusion = float(diffusion)
         self._hamiltonian = hamiltonian

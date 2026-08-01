@@ -28,6 +28,19 @@ from mfgarchon.alg.numerical.meshless_galerkin.voronoi_cells import clipped_voro
 BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
 
 
+def _smooth_elliptic_coefficient(points: np.ndarray) -> np.ndarray:
+    return 1.0 + 0.2 * np.sin(2.0 * np.pi * points[:, 0]) * np.cos(2.0 * np.pi * points[:, 1])
+
+
+def _smooth_elliptic_coefficient_gradient(points: np.ndarray) -> np.ndarray:
+    return np.column_stack(
+        [
+            0.4 * np.pi * np.cos(2.0 * np.pi * points[:, 0]) * np.cos(2.0 * np.pi * points[:, 1]),
+            -0.4 * np.pi * np.sin(2.0 * np.pi * points[:, 0]) * np.sin(2.0 * np.pi * points[:, 1]),
+        ]
+    )
+
+
 def _grid(n: int) -> np.ndarray:
     axis = np.linspace(0.0, 1.0, n)
     return np.stack([coordinate.ravel() for coordinate in np.meshgrid(axis, axis, indexing="ij")], axis=1)
@@ -114,6 +127,29 @@ def _boundary_complete_edge_stabilized_vc4_case(
 
 
 @cache
+def _boundary_complete_variable_edge_stabilized_vc4_case(
+    resolution: int,
+    seed: int,
+) -> tuple[BoundaryCompleteCVTCloud, CentroidalVCISCNIOperatorSandbox]:
+    cloud = boundary_complete_cvt_rectangle(resolution, BOUNDS, seed=seed)
+    sandbox = CentroidalVCISCNIOperatorSandbox(
+        cloud.nodes,
+        rho=4.5 * cloud.nominal_spacing,
+        bounds=BOUNDS,
+        degree=4,
+        vci_degree=4,
+        vci_support_radius=4.0 * cloud.nominal_spacing,
+        trial_gradient_mode="pointwise",
+        test_gradient_base="trial",
+        polynomial_null_stabilization=0.1,
+        stabilization_metric="edge_energy",
+        elliptic_coefficient=_smooth_elliptic_coefficient,
+        elliptic_coefficient_gradient=_smooth_elliptic_coefficient_gradient,
+    )
+    return cloud, sandbox
+
+
+@cache
 def _degree_four_reference_stiffness(resolution: int, seed: int) -> np.ndarray:
     cloud, _candidate = _boundary_complete_edge_stabilized_vc4_case(resolution, seed)
     points, weights = tensor_gauss(BOUNDS, n_cells=resolution - 1, n_gauss=4)
@@ -125,6 +161,27 @@ def _degree_four_reference_stiffness(resolution: int, seed: int) -> np.ndarray:
         quad_weights=weights,
     )
     return reference.stiffness().toarray()
+
+
+@cache
+def _degree_four_variable_reference_stiffness(resolution: int, seed: int) -> np.ndarray:
+    cloud, _candidate = _boundary_complete_variable_edge_stabilized_vc4_case(resolution, seed)
+    points, weights = tensor_gauss(BOUNDS, n_cells=resolution - 1, n_gauss=4)
+    _, gradients = shape_functions_and_grads(
+        points,
+        cloud.nodes,
+        4.5 * cloud.nominal_spacing,
+        monomial_exponents(2, 4),
+        "numpy",
+        check_conditioning=True,
+    )
+    return np.einsum(
+        "q,q,qid,qjd->ij",
+        weights,
+        _smooth_elliptic_coefficient(points),
+        gradients,
+        gradients,
+    )
 
 
 @cache
@@ -750,6 +807,73 @@ class TestCentroidalVCGeometry:
         assert np.linalg.eigvalsh(stabilization).min() > -1e-12
         assert np.max(np.abs(stabilization @ node_values)) < 5e-15
 
+    def test_explicit_unit_elliptic_coefficient_is_identical_to_default_path(self):
+        cloud, baseline = _boundary_complete_edge_stabilized_vc4_case(7, 0)
+        explicit = CentroidalVCISCNIOperatorSandbox(
+            cloud.nodes,
+            rho=4.5 * cloud.nominal_spacing,
+            bounds=BOUNDS,
+            degree=4,
+            vci_degree=4,
+            vci_support_radius=4.0 * cloud.nominal_spacing,
+            trial_gradient_mode="pointwise",
+            test_gradient_base="trial",
+            polynomial_null_stabilization=0.1,
+            stabilization_metric="edge_energy",
+            elliptic_coefficient=lambda points: np.ones(len(points)),
+            elliptic_coefficient_gradient=lambda points: np.zeros_like(points),
+        )
+        assert not baseline.has_spatial_elliptic_coefficient
+        assert explicit.has_spatial_elliptic_coefficient
+        assert explicit.sampled_elliptic_coefficient_bounds == (1.0, 1.0)
+        assert np.array_equal(explicit.stiffness().toarray(), baseline.stiffness().toarray())
+        assert np.array_equal(explicit.stabilization().toarray(), baseline.stabilization().toarray())
+        assert all(
+            np.array_equal(explicit_gradient.toarray(), baseline_gradient.toarray())
+            for explicit_gradient, baseline_gradient in zip(
+                explicit.test_gradient(),
+                baseline.test_gradient(),
+                strict=True,
+            )
+        )
+        assert explicit.diagnostics == baseline.diagnostics
+
+    @pytest.mark.parametrize(
+        ("resolution", "seed"),
+        [(resolution, seed) for resolution in (7, 9, 11, 13, 17, 21) for seed in range(3)],
+    )
+    def test_variable_coefficient_edge_vc4_family_preserves_patch_and_spectral_bounds(self, resolution, seed):
+        _cloud, sandbox = _boundary_complete_variable_edge_stabilized_vc4_case(resolution, seed)
+        diagnostics = sandbox.diagnostics
+        sampled_min, sampled_max = sandbox.sampled_elliptic_coefficient_bounds
+        assert sandbox.has_spatial_elliptic_coefficient
+        assert 0.8 <= sampled_min < sampled_max <= 1.2
+        assert sampled_max - sampled_min > 0.39
+        assert diagnostics.local_rank_min == 14
+        assert diagnostics.local_condition_max < 1700.0
+        assert diagnostics.correction_ratio_max < 0.72
+        assert diagnostics.corrected_patch_defect < 8e-15
+        assert diagnostics.discrete_patch_defect < 7e-14
+        assert diagnostics.stabilization_patch_defect < 1e-14
+        assert diagnostics.raw_gauge_coercivity_min < -9.0
+        assert diagnostics.gauge_coercivity_min > 7.55
+        assert diagnostics.gauge_smallest_singular_value > 9.74
+        assert diagnostics.stiffness_nullity == 1
+
+        one = np.ones(sandbox.n_dof)
+        mass = sandbox.mass().toarray()
+        gauge_basis = linalg.null_space((mass @ one)[None, :])
+        stiffness = sandbox.stiffness().toarray()
+        symmetric_stiffness = 0.5 * (stiffness + stiffness.T)
+        reference = _degree_four_variable_reference_stiffness(resolution, seed)
+        relative_spectrum = linalg.eigvalsh(
+            gauge_basis.T @ symmetric_stiffness @ gauge_basis,
+            gauge_basis.T @ reference @ gauge_basis,
+            check_finite=False,
+        )
+        assert relative_spectrum[0] > 0.07
+        assert relative_spectrum[-1] < 2.6
+
     @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
     @pytest.mark.parametrize("seed", range(3))
     def test_edge_energy_stabilization_is_smoothly_consistent(self, wave_numbers, seed):
@@ -904,6 +1028,115 @@ class TestCentroidalVCGeometry:
         assert h1_errors[-1] < 0.033
         assert np.all(np.diff(l2_errors) < 0.0)
         assert np.all(np.diff(h1_errors) < 0.0)
+
+    @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_variable_coefficient_edge_vc4_poisson_converges(self, wave_numbers, seed):
+        records = []
+        kx, ky = wave_numbers
+        for resolution in (7, 9, 11, 13, 17, 21):
+            cloud, sandbox = _boundary_complete_variable_edge_stabilized_vc4_case(resolution, seed)
+            points = sandbox.evaluation_points
+            exact_values = np.cos(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1])
+            exact_gradient = np.column_stack(
+                [
+                    -kx * np.pi * np.sin(kx * np.pi * points[:, 0]) * np.cos(ky * np.pi * points[:, 1]),
+                    -ky * np.pi * np.cos(kx * np.pi * points[:, 0]) * np.sin(ky * np.pi * points[:, 1]),
+                ]
+            )
+            coefficient = _smooth_elliptic_coefficient(points)
+            coefficient_gradient = _smooth_elliptic_coefficient_gradient(points)
+            forcing = (kx**2 + ky**2) * np.pi**2 * coefficient * exact_values - np.sum(
+                coefficient_gradient * exact_gradient, axis=1
+            )
+            value_operator = sandbox.value_operator().toarray()
+            mass = sandbox.mass().toarray()
+            load = value_operator.T @ (sandbox.weights * forcing)
+            solution, relative_residual, gauge_defect = _solve_neumann_system(
+                sandbox.stiffness().toarray(),
+                mass,
+                load,
+                sandbox.left_null_vector(),
+            )
+            assert relative_residual < 2e-12
+            assert gauge_defect < 2e-12
+            reconstructed_gradient = np.column_stack([gradient @ solution for gradient in sandbox.trial_gradient()])
+            errors = _physical_poisson_errors(
+                value_operator @ solution,
+                reconstructed_gradient,
+                exact_values,
+                exact_gradient,
+                sandbox.weights,
+            )
+            records.append((cloud.nominal_spacing, *errors))
+
+        spacings, l2_errors, h1_errors = map(np.asarray, zip(*records, strict=True))
+        l2_rate = float(np.polyfit(np.log(spacings), np.log(l2_errors), 1)[0])
+        h1_rate = float(np.polyfit(np.log(spacings), np.log(h1_errors), 1)[0])
+        assert l2_rate > 3.35
+        assert h1_rate > 2.7
+        assert l2_errors[-1] < 2.1e-3
+        assert h1_errors[-1] < 0.033
+        assert np.all(np.diff(l2_errors) < 0.0)
+        assert np.all(np.diff(h1_errors) < 0.0)
+
+    def test_variable_coefficient_vci_correction_beats_frozen_constant_correction(self):
+        _cloud, variable = _boundary_complete_variable_edge_stabilized_vc4_case(21, 0)
+        _, constant = _boundary_complete_edge_stabilized_vc4_case(21, 0)
+        points = variable.evaluation_points
+        coefficient = _smooth_elliptic_coefficient(points)
+        elliptic_weights = variable.weights * coefficient
+        frozen_stiffness = sum(
+            test_gradient.toarray().T @ (elliptic_weights[:, None] * trial_gradient.toarray())
+            for test_gradient, trial_gradient in zip(
+                constant.test_gradient(),
+                constant.trial_gradient(),
+                strict=True,
+            )
+        )
+        frozen_stiffness += 0.1 * variable.stabilization().toarray()
+
+        exact_values = np.cos(np.pi * points[:, 0]) * np.cos(np.pi * points[:, 1])
+        exact_gradient = np.column_stack(
+            [
+                -np.pi * np.sin(np.pi * points[:, 0]) * np.cos(np.pi * points[:, 1]),
+                -np.pi * np.cos(np.pi * points[:, 0]) * np.sin(np.pi * points[:, 1]),
+            ]
+        )
+        forcing = 2.0 * np.pi**2 * coefficient * exact_values - np.sum(
+            _smooth_elliptic_coefficient_gradient(points) * exact_gradient, axis=1
+        )
+        value_operator = variable.value_operator().toarray()
+        mass = variable.mass().toarray()
+        load = value_operator.T @ (variable.weights * forcing)
+        frozen_left_null = np.linalg.svd(frozen_stiffness)[0][:, -1]
+        frozen_left_null /= frozen_left_null @ np.ones(variable.n_dof)
+        errors = []
+        for stiffness, left_null in (
+            (variable.stiffness().toarray(), variable.left_null_vector()),
+            (frozen_stiffness, frozen_left_null),
+        ):
+            solution, relative_residual, gauge_defect = _solve_neumann_system(
+                stiffness,
+                mass,
+                load,
+                left_null,
+            )
+            assert relative_residual < 2e-12
+            assert gauge_defect < 2e-12
+            reconstructed_gradient = np.column_stack([gradient @ solution for gradient in variable.trial_gradient()])
+            errors.append(
+                _physical_poisson_errors(
+                    value_operator @ solution,
+                    reconstructed_gradient,
+                    exact_values,
+                    exact_gradient,
+                    variable.weights,
+                )
+            )
+        variable_errors, frozen_errors = errors
+        assert variable_errors[0] < 0.1 * frozen_errors[0]
+        assert variable_errors[1] < 0.1 * frozen_errors[1]
 
     @pytest.mark.parametrize("wave_numbers", [(1, 1), (2, 1), (2, 2), (3, 1)])
     def test_stabilized_aligned_vc4_does_not_dominate_evaluation_matched_common(self, wave_numbers):
@@ -1066,6 +1299,98 @@ class TestCentroidalVCGeometry:
         with pytest.raises(ValueError, match=message):
             CentroidalVCISCNIOperatorSandbox(_grid(7), rho=0.5, bounds=BOUNDS, **options)
 
+    @pytest.mark.parametrize(
+        ("options", "exception", "message"),
+        [
+            (
+                {"elliptic_coefficient": lambda points: np.ones(len(points))},
+                ValueError,
+                "must be supplied together",
+            ),
+            (
+                {"elliptic_coefficient_gradient": lambda points: np.zeros_like(points)},
+                ValueError,
+                "must be supplied together",
+            ),
+            (
+                {
+                    "elliptic_coefficient": 1.0,
+                    "elliptic_coefficient_gradient": lambda points: np.zeros_like(points),
+                },
+                TypeError,
+                "must be callable",
+            ),
+            (
+                {
+                    "elliptic_coefficient": lambda points: np.ones((len(points), 1)),
+                    "elliptic_coefficient_gradient": lambda points: np.zeros_like(points),
+                },
+                ValueError,
+                "elliptic_coefficient\\(centroids\\) must return shape",
+            ),
+            (
+                {
+                    "elliptic_coefficient": lambda points: np.ones(len(points)),
+                    "elliptic_coefficient_gradient": lambda points: np.zeros(len(points)),
+                },
+                ValueError,
+                "elliptic_coefficient_gradient\\(centroids\\) must return shape",
+            ),
+            (
+                {
+                    "elliptic_coefficient": lambda points: np.full(len(points), np.nan),
+                    "elliptic_coefficient_gradient": lambda points: np.zeros_like(points),
+                },
+                ValueError,
+                "returned non-finite values",
+            ),
+            (
+                {
+                    "elliptic_coefficient": lambda points: np.ones(len(points)),
+                    "elliptic_coefficient_gradient": lambda points: np.full_like(points, np.inf),
+                },
+                ValueError,
+                "returned non-finite values",
+            ),
+            (
+                {
+                    "elliptic_coefficient": lambda points: np.where(points[:, 0] == 0.0, -1.0, 1.0),
+                    "elliptic_coefficient_gradient": lambda points: np.zeros_like(points),
+                },
+                ValueError,
+                "must be strictly positive",
+            ),
+        ],
+    )
+    def test_invalid_elliptic_coefficient_contract_fails_loudly(self, options, exception, message):
+        aligned_options = {
+            "degree": 4,
+            "vci_degree": 4,
+            "vci_support_radius": 4.0 / 6.0,
+            "trial_gradient_mode": "pointwise",
+            "test_gradient_base": "trial",
+            "polynomial_null_stabilization": 0.1,
+            "stabilization_metric": "edge_energy",
+        }
+        with pytest.raises(exception, match=message):
+            CentroidalVCISCNIOperatorSandbox(
+                _grid(7),
+                rho=4.5 / 6.0,
+                bounds=BOUNDS,
+                **aligned_options,
+                **options,
+            )
+
+    def test_spatial_elliptic_coefficient_rejects_untested_operator_branch(self):
+        with pytest.raises(ValueError, match="only defined for the aligned degree-4 VCI candidate"):
+            CentroidalVCISCNIOperatorSandbox(
+                _grid(7),
+                rho=0.5,
+                bounds=BOUNDS,
+                elliptic_coefficient=lambda points: np.ones(len(points)),
+                elliptic_coefficient_gradient=lambda points: np.zeros_like(points),
+            )
+
     def test_polynomial_null_stabilization_fails_on_rank_deficient_support(self):
         nodes = _grid(7)
         with pytest.raises(ValueError, match="Polynomial-null stabilization rank failure"):
@@ -1099,6 +1424,18 @@ class TestCentroidalVCGeometry:
 
 
 class TestPairedMFGOperator:
+    def test_variable_elliptic_correction_cannot_be_reused_for_nonlinear_stabilization(self):
+        _cloud, sandbox = _boundary_complete_variable_edge_stabilized_vc4_case(7, 0)
+        with pytest.raises(ValueError, match="requires its own variational correction"):
+            PairedMFGOperatorSandbox(
+                sandbox,
+                diffusion=0.07,
+                hamiltonian=_hamiltonian,
+                hamiltonian_gradient=_hamiltonian_gradient,
+                stabilization_flux=_stabilization_flux,
+                stabilization_jacobian=_stabilization_jacobian,
+            )
+
     def test_complete_analytic_jacobian_matches_centered_difference(self, structured_sandbox):
         operator = PairedMFGOperatorSandbox(
             structured_sandbox,
