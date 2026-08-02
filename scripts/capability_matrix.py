@@ -448,11 +448,19 @@ def _fvm_mass_cell():
 def _regime_switching_cell():
     """Two-regime Markov-switching MFG: every regime density stays non-negative.
 
-    Mirrors the #1681 reproducer
+    Mirrors what was the #1681 reproducer
     (tests/integration/test_phase1_5_validation.py::test_regime_switching_iterator_runs)
-    at its original NT=10. That fixture is deliberately not retuned: the run maximum
-    decays only first-order in dt, so clearing the guard threshold extrapolates to
-    NT ~ 3e6 and refining would hide the defect rather than fix it.
+    at its original NT=10.
+
+    [SUPERSEDED 2026-08-02] This docstring used to add: "That fixture is deliberately not
+    retuned: the run maximum decays only first-order in dt, so clearing the guard threshold
+    extrapolates to NT ~ 3e6 and refining would hide the defect rather than fix it." That
+    described the negative density #1681 recorded, which is fixed -- the diagonal Markov
+    outflow is no longer passed to the FP solver as a lagged source, and both regime
+    densities are now strictly positive (min 8.4e-04), stable under dt-refinement. The
+    fixture stays at NT=10 for continuity of the record, not to preserve a defect.
+    SUPERSEDED-BY: the cell's `intended` note in capability_baseline.json, and #1798 --
+    what fails here now is this cell's own per-regime mass oracle, not the solve.
 
     Reached through the deep module path. ``RegimeSwitchingIterator`` is exported from
     no package ``__init__``, so unlike every other cell here this one is not on the

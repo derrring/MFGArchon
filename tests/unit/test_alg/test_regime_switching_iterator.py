@@ -474,15 +474,68 @@ class TestDiagonalOutflowIsNotALaggedSource:
         assert masses[1, -1] < masses[1, 0], "regime 1 should lose mass (pi_1 = 1/3)"
 
     def test_outflow_horizon_beyond_float64_accuracy_is_refused(self):
-        """The integrating factor spans exp(q_k T); past the limit it must stop, not degrade."""
-        problems = [_make_problem(coupling_strength=c, sigma=0.1) for c in (1.0, 0.5)]
-        for p in problems:
-            p.T, p.Nt = 100.0, 10
-        Q = np.array([[-2.0, 2.0], [1.0, -1.0]])  # q_0 * T = 200 > 50
+        """The integrating factor spans exp(q_k T); past the limit it must stop, not degrade.
+
+        The horizon comes from the CONSTRUCTOR, not from assigning ``p.T`` afterwards: ``dt`` is
+        computed once in ``__init__`` (#1797), so a post-hoc ``p.T = 100.0`` on a problem built at
+        ``T=0.5`` leaves the real time grid spanning 0.5 and the trigger would be a fiction the
+        guard happens to read off the stale attribute. An earlier version of this test did exactly
+        that -- the same trap this class's closed-form fixture was repaired for.
+        """
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=10.0, Nt=10) for c in (1.0, 0.5)]
+        assert problems[0].Nt * problems[0].dt == pytest.approx(problems[0].T), "fixture horizon is inconsistent"
+        Q = np.array([[-8.0, 8.0], [1.0, -1.0]])  # q_0 * T = 80 > 50
         with pytest.raises(ValueError, match=r"q_k\*T"):
             RegimeSwitchingIterator(
                 problems=problems,
                 regime_config=RegimeSwitchingConfig(transition_matrix=Q),
                 hjb_solvers=[HJBFDMSolver(p) for p in problems],
                 fp_solvers=[FPFDMSolver(p) for p in problems],
+            )
+
+    def test_inhomogeneous_fp_boundary_data_is_refused(self):
+        """The factor is exact only for homogeneous BCs; inhomogeneous data must not solve.
+
+        Before the guard, ``dirichlet_bc(value=0.2)`` returned ``m(T, x_min) = 0.180967`` and
+        ``0.163746`` for ``q_k = 0.1`` and ``0.2`` -- both exactly ``0.2 * exp(-q_k T)``. The solve
+        succeeded and reported nothing.
+        """
+        from mfgarchon.geometry.boundary import dirichlet_bc
+
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
+        for p in problems:
+            p.geometry.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
+        with pytest.raises(ValueError, match=r"non-zero boundary data"):
+            RegimeSwitchingIterator(
+                problems=problems,
+                regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+                hjb_solvers=[HJBFDMSolver(p) for p in problems],
+                fp_solvers=[FPFDMSolver(p) for p in problems],
+            )
+
+    def test_homogeneous_boundary_data_still_constructs(self):
+        """Negative control: the guard must not refuse the configurations that are exact.
+
+        Without this, a guard that raised unconditionally would pass the test above and look
+        correct -- the failure mode that keeps recurring in this repo's own tooling.
+        """
+        from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
+
+        Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
+        for label, bc in (
+            ("no_flux", no_flux_bc),
+            ("zero dirichlet", lambda dimension: dirichlet_bc(value=0.0, dimension=dimension)),
+        ):
+            problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
+            for p in problems:
+                p.geometry.boundary_conditions = bc(dimension=1)
+            (
+                RegimeSwitchingIterator(
+                    problems=problems,
+                    regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+                    hjb_solvers=[HJBFDMSolver(p) for p in problems],
+                    fp_solvers=[FPFDMSolver(p) for p in problems],
+                ),
+                f"{label} must construct",
             )

@@ -57,6 +57,29 @@ if TYPE_CHECKING:
 _MAX_OUTFLOW_HORIZON = 50.0
 
 
+def _boundary_datum_defeats_integrating_factor(seg: Any) -> str | None:
+    """Why this segment's data is not homogeneous, or None if it is safe.
+
+    Returns a phrase for the caller's message rather than a bool, so the error names the
+    specific reason instead of restating the rule.
+    """
+    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+
+    value = getattr(seg, "value", None)
+    if value is None:
+        return None
+    if isinstance(value, AdjointConsistentProvider):
+        # d_n log(exp(-q t) n) = d_n log(n): the provider reads a logarithmic derivative,
+        # so a t-dependent scalar multiple of the density leaves its data unchanged.
+        return None
+    if callable(value):
+        return "supplies boundary data through a callable, which cannot be shown to be zero"
+    arr = np.asarray(value, dtype=float)
+    if np.all(arr == 0.0):
+        return None
+    return f"carries non-zero boundary data ({arr.reshape(-1)[0]:.6g})"
+
+
 @dataclass
 class RegimeSwitchingResult:
     """Result container for regime-switching MFG."""
@@ -182,7 +205,48 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # Only meaningful once validate() has established the generator structure the
         # integrating factor relies on (non-negative off-diagonals, zero row sums).
         self._assert_outflow_horizon_representable(K, regime_config.transition_matrix)
+        self._assert_fp_boundary_data_is_homogeneous(K, regime_config.transition_matrix)
         self._last_result: RegimeSwitchingResult | None = None
+
+    def _assert_fp_boundary_data_is_homogeneous(self, K: int, Q: NDArray) -> None:
+        """Refuse FP boundary data the integrating factor would silently rescale.
+
+        ``m^k = exp(-q_k t) n^k`` reproduces the intended equation only for operations
+        positively homogeneous of degree 1. The operator, the non-negativity clip and the
+        mass-fabrication ratio all are. **Imposing inhomogeneous boundary data is not**:
+        it is affine, so the solver pins ``n^k`` to ``g`` and the recovered density carries
+        ``g * exp(-q_k t)`` instead of ``g``. Measured on a two-regime fixture with
+        ``dirichlet_bc(value=0.2)``, ``m(T, x_min)`` came back 0.180967 and 0.163746 against
+        the intended 0.2 -- ratios matching ``exp(-q_k T)`` to six digits at two different
+        rates.
+
+        Refusing is the honest disposition rather than the capability: carrying the factor
+        into the boundary data means making it time-dependent inside the FP solve, which is
+        a larger change than the positivity fix this guard belongs to (Issue #1805).
+
+        Zero data of ANY type is fine -- ``g = 0`` makes the condition homogeneous, so
+        no-flux, homogeneous Neumann and homogeneous Dirichlet all pass. Providers that
+        return a logarithmic derivative are also exact, because
+        ``d_n log(exp(-q t) n) = d_n log(n)``; ``AdjointConsistentProvider`` is the case in
+        the tree and is allowed by name rather than by guessing at a callable's range.
+        """
+        for k in range(K):
+            if self._outflow_rate(k, K, Q) == 0.0:
+                continue  # no factor is applied to this regime, so nothing is rescaled
+            for seg in getattr(self._problems[k].geometry.boundary_conditions, "segments", ()) or ():
+                offence = _boundary_datum_defeats_integrating_factor(seg)
+                if offence is not None:
+                    msg = (
+                        f"RegimeSwitchingIterator[regime {k}]: boundary segment "
+                        f"{seg.name!r} ({seg.bc_type}) {offence}. Since Issue #1681 the diagonal "
+                        "outflow is carried by the factor exp(-q_k t), which is exact only for "
+                        "boundary conditions that are homogeneous in the density; with data g != 0 "
+                        "the solve would return g*exp(-q_k t) at the boundary instead of g, "
+                        "silently. Use homogeneous data (no-flux, or zero Dirichlet/Neumann), or "
+                        "an AdjointConsistentProvider, whose log-derivative is invariant. "
+                        "Inhomogeneous data on a regime with q_k > 0 is Issue #1805."
+                    )
+                    raise ValueError(msg)
 
     def _assert_outflow_horizon_representable(self, K: int, Q: NDArray) -> None:
         """Refuse a horizon on which the diagonal integrating factor loses the density.
