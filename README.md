@@ -8,7 +8,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19251867.svg)](https://doi.org/10.5281/zenodo.19251867)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/derrring/MFGArchon/blob/main/LICENSE)
 
-A Python framework for solving Mean Field Game systems using modern numerical methods, GPU acceleration, and reinforcement learning.
+A Python framework for solving Mean Field Game systems using modern numerical methods and GPU acceleration.
 
 ---
 
@@ -65,13 +65,13 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 ## Key Features
 
 - **Clean API** - `Model` (game rules) + `Domain` (space) + `Conditions` (data) = `Problem.solve()`
-- **Modular** - Mix and match HJB + FP solvers (FDM, GFDM, Semi-Lagrangian, WENO, Particles, FEM, Neural)
+- **Modular** - Mix and match HJB + FP solvers (FDM, GFDM, Semi-Lagrangian, WENO, Particles, FEM)
 - **Multi-Dimensional** - 1D/2D/3D/nD support with TensorProductGrid and implicit domains
 - **Geometry Traits** - 12 protocol-based traits for solver-geometry compatibility validation
 - **Unified BC Framework** - 4-layer architecture with adjoint-consistent provider pattern
 - **Network MFG** - Graph-coupled multi-node solvers with pluggable coupling operators
 - **Measure-Dependent MFG** - MeasureField, Lions derivative, Wasserstein distance (Layer 2)
-- **Reinforcement Learning** - Complete RL framework (DDPG, TD3, SAC)
+- **Reinforcement Learning** - ⛔ Frozen design prototype (DDPG, TD3, SAC) — see `CLAUDE.md`
 - **GPU Acceleration** - PyTorch, JAX, Numba backends
 
 ---
@@ -102,7 +102,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - **Semi-Lagrangian** - Adaptive time-stepping with periodic BC support
 - **WENO** - High-order (5th) shock-capturing with high-order ghost nodes
 - **FEM** - scikit-fem based P1/P2 finite elements on unstructured meshes
-- **Neural (DGM, PINN)** - Deep learning for high dimensions
+- **Neural (DGM, PINN)** - ⛔ Frozen design prototype — see `CLAUDE.md`
 
 ### Fokker-Planck Solvers
 - **FDM** - Conservative finite difference with dict-dispatched BC
@@ -134,7 +134,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ```bash
 pip install mfgarchon          # Batteries included (FDM, FEM, GFDM, viz, config)
-pip install mfgarchon[nn]      # + PyTorch, RL (DGM, PINN, Actor-Critic, PPO)
+pip install mfgarchon[nn]      # + PyTorch (live: torch backends), gymnasium/SB3 (frozen RL only)
 pip install mfgarchon[all]     # + JAX, Numba, profiling tools
 ```
 

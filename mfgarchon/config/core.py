@@ -22,26 +22,18 @@ if TYPE_CHECKING:
 
 
 class BaseConfig(BaseModel):
-    """Base for every configuration model in this package.
+    """Base for every configuration model in this package: unknown fields are an error.
 
-    Issue #1766. This was `BaseConfig = BaseModel`, a bare alias exported in `__all__` that
-    nothing inherited and that carried no policy -- a name promising a config base and
-    delivering Pydantic's.
+    Inherit from this, not from ``BaseModel``. Pydantic ignores extras by default, so a config
+    class that inherited ``BaseModel`` would let ``PicardConfig(anderson_acceleration=True)``
+    construct cleanly, drop the field, and leave ``anderson_memory`` at 0 -- Anderson off while
+    the caller just asked for it, nothing raised. Under ``BaseConfig`` it raises, which is what
+    ``test_unknown_fields_are_rejected_1766.py`` pins. Same fail-fast rule as dead solver knobs
+    (#1426, #1766).
 
-    It exists now to own one thing: **unknown fields are an error**. Pydantic ignores extras by
-    default, so `PicardConfig(anderson_acceleration=True)` constructed cleanly, dropped the
-    field, and left `anderson_memory` at 0 -- Anderson off while the caller had just asked for
-    it, with nothing raised. The API v1.0 design note taught exactly that call. A misspelled or
-    obsolete field in any config was accepted and discarded.
-
-    This is the fail-fast rule the package already applies to dead solver knobs (#1426 raises on
-    `FPNetworkSolver(max_iterations=...)` rather than ignoring it); the config layer was the one
-    place still accepting them silently.
-
-    Deprecated aliases are unaffected: they are translated by `model_validator(mode="before")`
-    hooks that `pop` the legacy key before validation runs, so `extra="forbid"` never sees it.
-    Verified against `PicardConfig(damping_factor=0.7)`, which still warns and still sets
-    `relaxation=0.7`.
+    Deprecated aliases still work, and the ordering is why: their
+    ``model_validator(mode="before")`` hooks ``pop`` the legacy key before validation runs, so
+    ``extra="forbid"`` never sees it. An alias translated after validation would raise instead.
     """
 
     model_config = ConfigDict(extra="forbid")

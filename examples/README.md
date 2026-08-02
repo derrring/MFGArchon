@@ -103,7 +103,9 @@ Constrained optimization:
 - `lagrangian_constrained_optimization.py` - Lagrangian optimization
 
 #### [machine_learning/](advanced/machine_learning/)
-Neural network and RL solvers:
+Neural network and RL solvers. ⛔ These exercise `alg/neural` and `alg/reinforcement`, which are
+**frozen design prototypes** and not under development — see `CLAUDE.md`. They run, but nothing
+here is a pinned contract.
 - `pinn_mfg_example.py` - Physics-Informed Neural Networks
 - `pinn_bayesian_mfg_demo.py` - Bayesian PINN with uncertainty
 - `adaptive_pinn_demo.py` - Adaptive training strategies
@@ -111,7 +113,7 @@ Neural network and RL solvers:
 - `neural_operator_mfg_demo.py` - Neural operators for MFG
 
 ##### [rl_algorithms/](advanced/machine_learning/rl_algorithms/)
-Reinforcement learning methods:
+Reinforcement learning methods (⛔ frozen prototype, as above):
 - `rl_intro_comparison.py` - RL algorithms overview
 - `nash_q_learning_demo.py` - Nash Q-Learning
 - `continuous_action_ddpg_demo.py` - Deep Deterministic Policy Gradient
@@ -158,7 +160,7 @@ Generated outputs and visualizations (gitignored, auto-regenerated).
 | **Configure solvers** | [tutorials/05_config_system.py](tutorials/05_config_system.py) |
 | **Try advanced solvers** | [advanced/solvers_advanced/](advanced/solvers_advanced/) |
 | **Apply MFG to real problems** | [advanced/applications/](advanced/applications/) |
-| **Use neural networks** | [advanced/machine_learning/](advanced/machine_learning/) |
+| **Use neural networks** (⛔ frozen prototype) | [advanced/machine_learning/](advanced/machine_learning/) |
 | **Work with complex geometry** | [advanced/geometry_advanced/](advanced/geometry_advanced/) |
 
 ---
