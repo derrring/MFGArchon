@@ -132,7 +132,13 @@ class TestGradientUpwind:
 
     @pytest.mark.unit
     def test_monotone_increasing(self):
-        """For monotone increasing u, upwind should select backward difference."""
+        """Accuracy on monotone increasing u: gradient_upwind is within 0.02 of 2x.
+
+        This does NOT check which branch was selected, despite what its name suggests. Forward
+        and backward differences are equal in magnitude on ``u = x**2``, so inverting the
+        selection leaves this green at any tolerance. The selection is pinned by identity in
+        ``test_selection_rule_is_the_godunov_one_not_merely_accurate`` below.
+        """
         n = 100
         x = np.linspace(0, 1, n, endpoint=False)
         h = x[1] - x[0]
@@ -144,6 +150,95 @@ class TestGradientUpwind:
         # Upwind is O(h) accurate
         error = np.max(np.abs(du[5:-5] - expected[5:-5]))
         assert error < 0.1
+
+    @pytest.mark.unit
+    def test_selection_rule_is_the_godunov_one_not_merely_accurate(self):
+        """Which stencil is selected, asserted as an identity rather than a tolerance.
+
+        `test_monotone_increasing` states the rule in its docstring and cannot see it. Forward and
+        backward differences are both O(h) on smooth data, and on `u = x**2` their errors are
+        *equal in magnitude* -- 0.0100 each at n=100, symmetric about the exact value -- so no
+        tolerance separates them at any n. Inverting the selection in `gradient_upwind` leaves
+        that test green.
+
+        What separates them is the value: at x = 0.5, backward = 0.990000 and forward = 1.010000,
+        differing by exactly h*u'' = 0.02. So compare against the stencil functions directly.
+
+        Both branches are covered. What was missing is a test that can SEE which one was taken:
+        the forward branch executes on every run of `test_result_shape` (its `np.random.randn(50)`
+        sends a mean of 25 nodes of 50 down it, and zero of 20000 replications sent none), but that
+        test asserts only the output shape, so inverting the selection leaves it green. Line
+        coverage of the branch was never the gap; a discriminating assertion was.
+
+        Interior only: these stencils use ``np.roll``, so at node 0 the backward difference wraps
+        to node n-1 and reads a spurious -98.01 on this fixture. The wraparound is the caller's
+        problem (``fix_boundaries_one_sided`` exists for it) and not what the selection rule says.
+        """
+        n = 100
+        x = np.linspace(0, 1, n, endpoint=False)
+        h = x[1] - x[0]
+
+        rising = x**2  # du/dx >= 0 -> information flows right -> read from the LEFT
+        interior = slice(1, -1)
+        np.testing.assert_array_equal(
+            gradient_upwind(rising, axis=0, h=h)[interior],
+            gradient_backward(rising, axis=0, h=h)[interior],
+            err_msg="increasing u must select the backward (upwind) stencil",
+        )
+
+        falling = -(x**2)  # du/dx < 0 -> information flows left -> read from the RIGHT
+        np.testing.assert_array_equal(
+            gradient_upwind(falling, axis=0, h=h)[interior],
+            gradient_forward(falling, axis=0, h=h)[interior],
+            err_msg="decreasing u must select the forward (upwind) stencil",
+        )
+
+        # The two candidates must differ ON THE SLICE THE IDENTITIES USE, or those identities are
+        # vacuous. Comparing full arrays is a different check: node 0's backward difference wraps,
+        # so `not allclose(full)` is satisfied by the wraparound alone. On a linear `rising` both
+        # identities pass vacuously (interior forward == backward) while a full-array guard still
+        # reports "they differ" -- the guard certifying its own blind spot.
+        for label, fixture in (("rising", rising), ("falling", falling)):
+            assert not np.allclose(
+                gradient_backward(fixture, axis=0, h=h)[interior],
+                gradient_forward(fixture, axis=0, h=h)[interior],
+            ), f"{label} is too smooth to distinguish the stencils -- the identities prove nothing"
+
+    @pytest.mark.unit
+    def test_the_selection_predicate_is_pinned_not_only_the_branch_bodies(self):
+        """The tie-break at ``grad_central == 0``, which strictly monotone fixtures never reach.
+
+        The test above uses monotone fixtures, so `sign(grad_forward) == sign(grad_backward) ==
+        sign(grad_central)` at every interior node and `grad_central` is never zero. That pins
+        which stencil each branch returns, but not the predicate choosing between them -- and the
+        predicate is what makes the scheme Godunov. Three non-equivalent mutations survive without
+        this: `>=` weakened to `>`, and the predicate reading `grad_forward` or `grad_backward`
+        instead of `grad_central`.
+
+        A quadratic with an interior extremum puts a node exactly on the tie, `grad_central == 0.0`
+        to the bit. The documented rule sends it to the backward stencil (`>= 0`).
+
+        **Both** signs are needed. At a maximum `grad_backward` is positive, so a mutant predicate
+        reading `grad_backward` agrees with the correct one by coincidence and survives; at a
+        minimum it is negative and they part. One extremum is not a probe of the tie, it is a probe
+        of one side of it.
+        """
+        n = 100
+        x = np.linspace(0, 1, n, endpoint=False)
+        h = x[1] - x[0]
+
+        for label, u in (("maximum", -((x - 0.5) ** 2)), ("minimum", (x - 0.5) ** 2)):
+            tie = int(np.argmin(np.abs(x - 0.5)))
+            bwd = gradient_backward(u, axis=0, h=h)
+            fwd = gradient_forward(u, axis=0, h=h)
+            central = (fwd + bwd) / 2.0
+            assert central[tie] == 0.0, (
+                f"{label}: the fixture must land a node exactly on the tie, got {central[tie]!r}"
+            )
+            assert bwd[tie] != fwd[tie], f"{label}: the branches must disagree at the tie"
+
+            got = gradient_upwind(u, axis=0, h=h)[tie]
+            assert got == bwd[tie], f"{label}: grad_central == 0 must take the backward branch, as the >= says"
 
     @pytest.mark.unit
     def test_result_shape(self):
