@@ -76,7 +76,7 @@ dependencies = [
 #
 #   pip install mfgarchon          -> default (batteries included)
 #   pip install mfgarchon[core]    -> minimal (CI, Docker, embedding)
-#   pip install mfgarchon[nn]      -> + PyTorch, RL
+#   pip install mfgarchon[nn]      -> + PyTorch (live), gymnasium/SB3 (frozen RL only)
 #   pip install mfgarchon[all]     -> + JAX, performance, everything
 #   pip install mfgarchon[dev]     -> development tools
 
@@ -96,18 +96,18 @@ core = [
     "typing-inspection",
 ]
 
-# Neural network and reinforcement learning solvers
-# Adds: DGM, PINN, Actor-Critic, PPO
+# torch is live -- it backs mfgarchon.backends and utils/acceleration. The rest serve only
+# alg/neural and alg/reinforcement, which are FROZEN design prototypes (CLAUDE.md).
 nn = [
-    "torch>=2.0",              # PyTorch (DGM, PINN)
-    "gymnasium>=0.29",         # RL environments
-    "stable-baselines3>=2.0",  # RL algorithms (AC, PPO)
-    "tensorboard>=2.20.0",       # Training visualization
+    "torch>=2.0",              # PyTorch: backends/, utils/acceleration/ (live), and DGM/PINN (frozen)
+    "gymnasium>=0.29",         # frozen RL only: zero importers outside alg/reinforcement/
+    "stable-baselines3>=2.0",  # frozen RL only: one importer, alg/reinforcement/__init__.py
+    "tensorboard>=2.20.0",       # zero importers anywhere in the repo
 ]
 
 # Everything: default + nn + JAX + performance + advanced viz
 all = [
-    # Neural/RL (same as nn)
+    # Same as [nn]: torch is live, the rest serve only the frozen alg/neural + alg/reinforcement
     "torch>=2.0",
     "gymnasium>=0.29",
     "stable-baselines3>=2.0",

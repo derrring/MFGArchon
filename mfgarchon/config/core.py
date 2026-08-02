@@ -24,10 +24,12 @@ if TYPE_CHECKING:
 class BaseConfig(BaseModel):
     """Base for every configuration model in this package: unknown fields are an error.
 
-    Inherit from this, not from ``BaseModel``. Pydantic ignores extras by default, so
-    ``PicardConfig(anderson_acceleration=True)`` constructs cleanly, drops the field, and leaves
-    ``anderson_memory`` at 0 -- Anderson off while the caller just asked for it, nothing raised.
-    Same fail-fast rule as dead solver knobs (#1426, #1766).
+    Inherit from this, not from ``BaseModel``. Pydantic ignores extras by default, so a config
+    class that inherited ``BaseModel`` would let ``PicardConfig(anderson_acceleration=True)``
+    construct cleanly, drop the field, and leave ``anderson_memory`` at 0 -- Anderson off while
+    the caller just asked for it, nothing raised. Under ``BaseConfig`` it raises, which is what
+    ``test_unknown_fields_are_rejected_1766.py`` pins. Same fail-fast rule as dead solver knobs
+    (#1426, #1766).
 
     Deprecated aliases still work, and the ordering is why: their
     ``model_validator(mode="before")`` hooks ``pop`` the legacy key before validation runs, so

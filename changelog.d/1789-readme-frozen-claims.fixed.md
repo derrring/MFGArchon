@@ -12,3 +12,10 @@
   The `[nn]` extra line is split rather than marked wholesale: measured, `torch` serves five
   non-frozen modules (`backends/`, `utils/acceleration/`) while `gymnasium` and `stable-baselines3`
   have zero importers outside `alg/reinforcement/`.
+
+  Review found the first pass had marked the bullet list and missed the two strongest claims in the
+  same file: the one-line project description (`...GPU acceleration, and reinforcement learning`)
+  and a feature-parity bullet listing `Neural` as interchangeable with FDM/FEM/WENO. The same
+  sentence lives in `CITATION.cff`, which is DOI-attached and rendered by Zenodo, and `pyproject.toml`
+  still attributed `torch` to DGM/PINN — a divergence this PR's own README edit created. All four
+  corrected, and the per-dependency attribution is now recorded beside the requirement it explains.

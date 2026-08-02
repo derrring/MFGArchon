@@ -8,7 +8,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19251867.svg)](https://doi.org/10.5281/zenodo.19251867)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/derrring/MFGArchon/blob/main/LICENSE)
 
-A Python framework for solving Mean Field Game systems using modern numerical methods, GPU acceleration, and reinforcement learning.
+A Python framework for solving Mean Field Game systems using modern numerical methods and GPU acceleration.
 
 ---
 
@@ -65,7 +65,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 ## Key Features
 
 - **Clean API** - `Model` (game rules) + `Domain` (space) + `Conditions` (data) = `Problem.solve()`
-- **Modular** - Mix and match HJB + FP solvers (FDM, GFDM, Semi-Lagrangian, WENO, Particles, FEM, Neural)
+- **Modular** - Mix and match HJB + FP solvers (FDM, GFDM, Semi-Lagrangian, WENO, Particles, FEM)
 - **Multi-Dimensional** - 1D/2D/3D/nD support with TensorProductGrid and implicit domains
 - **Geometry Traits** - 12 protocol-based traits for solver-geometry compatibility validation
 - **Unified BC Framework** - 4-layer architecture with adjoint-consistent provider pattern
