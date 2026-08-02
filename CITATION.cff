@@ -22,4 +22,4 @@ keywords:
   - generalized-finite-differences
 abstract: >-
   A comprehensive Python framework for solving Mean Field Game (MFG) systems
-  using modern numerical methods, GPU acceleration, and reinforcement learning.
+  using modern numerical methods and GPU acceleration.
