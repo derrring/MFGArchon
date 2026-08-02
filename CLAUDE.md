@@ -147,6 +147,37 @@ The axiom testing discipline governs **what** a test must cover (edge/stress/fai
 | Visualization | Sometimes | Yes | Smoke |
 | Utility function | No | Internal | Unit or smoke |
 
+### Closing out a fix ⚠️ — name the oracle, or say there isn't one
+
+"Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
+conventions the discrimination ratchet tracks are noticed by **192 distinct tests** out of 5,683 —
+**3.4%** react when the physics the library exists to get right is broken. (The baseline's kill
+counts sum to 200; 8 tests are killed by more than one mutation, so the sum over-counts and the
+honest figure is the lower one.) Of the tests whose *names* claim `single_source` / `cross_path` /
+`_agree`, **60% are inert** (#1715). And
+the yield runs the other way too: #1660's 17 nightly "failures" resolved as 8 fixture rot from the
+#1442 drift migration, 2 tests measuring the wrong quantity, 7 timeouts — **zero** product
+regressions caught by a test.
+
+So state which of these the fix ends with, in the PR body, in this order of preference:
+
+1. **An external oracle** — a law the scheme must reproduce, computed independently of the scheme.
+   Regime masses against `M(0) @ expm(Qt)`; an LQG analytic solution; a closed form. Cannot go
+   tautological when the two paths are later consolidated, which is what kills agreement tests.
+2. **A mutation-verified convention pin** — the mutation and its kill count stated. Unverified, a
+   pin is a claim about discrimination with no measurement behind it.
+3. **A capability cell** — when the question is "can this configuration solve at all". Deliberately
+   fixed-size: the matrix must not grow with the library.
+4. **A happy-path assertion** — admit it as such, and say what it would not catch.
+
+"There is no oracle for this yet" is an acceptable close-out and a fileable issue. A green suite is
+not evidence: on every defect independent review found in #1802, the full local gate was green
+(5776 and 5781 passed) with the defect present.
+
+Cf. axiom `feedback_net_negative_test_mass` (adding must be indicated by a measurement, not by
+"should test more") and `feedback_test_discrimination_unmeasured` (assert on disagreement, not
+validity — every one of those defects sat on a covered line).
+
 ---
 
 ## 🔧 Development workflow
