@@ -22,40 +22,71 @@ cd "$(dirname "$0")/.."
 # from a real red gate on content, so the hook has never once been able to pass, and the habit it
 # produced was `--no-verify`.
 #
-# The import check is the load-bearing part, not the path search. A machine with any python on
-# PATH resolves the first candidate happily and then runs the "authoritative gate" against an
-# interpreter that cannot import the package under test -- a green-looking run that measured
-# nothing. Requiring `import mfgarchon` is the positive control that we found the right env.
-resolve_python() {
-  local candidate
-  for candidate in "${MFG_PYTHON:-}" python python3 \
-                   /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python; do
-    [[ -z "$candidate" ]] && continue
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    if "$candidate" -c 'import mfgarchon' >/dev/null 2>&1; then
-      command -v "$candidate"
-      return 0
-    fi
-  done
-  return 1
+# The probe is the load-bearing part, not the path search: any python on PATH satisfies a path
+# search and would then run the "authoritative gate" against an interpreter that cannot run the
+# suite -- a green-looking run that measured nothing. See `usable_python` for why the obvious
+# form of that probe does not work.
+cannot_run() {  # environment failure: say that nothing was measured, and exit distinguishably
+  printf '\n\033[31mGATE CANNOT RUN\033[0m -- %s\n' "$1"
+  printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
+  printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
+  printf 'or set MFG_PYTHON to an interpreter with the package and the test tooling installed.\n'
+  exit 2
 }
 
-if ! PY=$(resolve_python); then
-  printf '\n\033[31mGATE CANNOT RUN\033[0m -- no interpreter on PATH can `import mfgarchon`.\n'
-  printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so this\n'
-  printf 'says nothing about whether the change is sound. Activate the env (conda activate\n'
-  printf 'mfg_env) or set MFG_PYTHON to an interpreter with the package installed.\n'
-  exit 2
+# The probe runs from `/`, and that is the whole of it. Run from here it proves nothing: line 15
+# already put cwd at the repo root, which CONTAINS `mfgarchon/`, and `python -c` puts cwd on
+# sys.path -- so any interpreter with the third-party dependencies imports the source tree in
+# place and passes. Measured: `/usr/bin/python3 -c 'import mfgarchon'` reaches base_solver.py from
+# the repo root and fails only at `import numpy`, while from `/` it is a clean ModuleNotFoundError.
+# An empty `mfgarchon/__init__.py` in any scratch directory satisfies the from-here version.
+#
+# Demanding the token back on stdout is the second half, and it is not paranoia: `MFG_PYTHON=echo`
+# makes `echo -c 'import mfgarchon'` exit 0, so an exit-status-only probe accepts /bin/echo as the
+# interpreter and every subsequent check passes trivially -- GATE GREEN, exit 0, nothing run.
+# Probed from a WRITABLE scratch directory rather than `/`, which would be the obvious choice:
+# importing this package has a filesystem side effect -- `utils/performance/monitoring.py:413`
+# builds a module-level PerformanceMonitor whose __init__ runs `Path("performance_data").mkdir()`,
+# cwd-relative -- so `cd / && python -c 'import mfgarchon'` dies with `Errno 30 Read-only file
+# system` on a perfectly good interpreter. The scratch dir keeps the property that matters (the
+# source tree is not in cwd) without depending on cwd being writable.
+usable_python() {
+  local candidate=$1 out probe_dir
+  command -v "$candidate" >/dev/null 2>&1 || return 1
+  probe_dir=$(mktemp -d) || return 1
+  out=$(cd "$probe_dir" && "$candidate" -c 'import mfgarchon, pytest, xdist, sys; sys.stdout.write("MFGARCHON_OK")' 2>/dev/null)
+  rm -rf "$probe_dir"
+  [[ "$out" == "MFGARCHON_OK" ]] || return 1
+  return 0
+}
+
+# An explicitly set MFG_PYTHON is an operator statement, not a hint. `main` honoured it
+# unconditionally (`PY="${MFG_PYTHON:-python}"`), so a wrong value failed loudly and attributably.
+# Searching past it would silently run the authoritative gate against an interpreter the operator
+# did not name -- a silent fallback, in the script whose own third check ratchets against those.
+if [[ -n "${MFG_PYTHON:-}" ]]; then
+  usable_python "$MFG_PYTHON" \
+    || cannot_run "MFG_PYTHON=$MFG_PYTHON cannot import mfgarchon + pytest + xdist (probed from /).
+It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
+  PY=$(command -v "$MFG_PYTHON")
+else
+  PY=""
+  for candidate in python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python; do
+    if usable_python "$candidate"; then PY=$(command -v "$candidate"); break; fi
+  done
+  [[ -n "$PY" ]] || cannot_run "no interpreter on PATH can import mfgarchon + pytest + xdist."
 fi
 
-# ruff ships in the same env; prefer its bin dir over whatever else is on PATH.
-RUFF="$(dirname "$PY")/ruff"
-[[ -x "$RUFF" ]] || RUFF="$(command -v ruff || true)"
-if [[ -z "$RUFF" ]]; then
-  printf '\n\033[31mGATE CANNOT RUN\033[0m -- ruff not found next to %s nor on PATH.\n' "$PY"
-  printf 'Environment failure, not a code failure -- nothing was measured.\n'
-  exit 2
-fi
+# `-m ruff`, not a path next to $PY: `dirname` is wrong for any shimmed or symlinked interpreter
+# (pyenv/asdf/uv shims, /usr/local/bin/python), where `command -v` deliberately does not resolve
+# the link and the sibling `ruff` does not exist beside the shim.
+"$PY" -m ruff --version >/dev/null 2>&1 || cannot_run "ruff is not installed in $PY."
+RUFF=("$PY" -m ruff)
+
+# Print what was measured. The tail of this run is the merge evidence the PR template asks for,
+# and a verdict that does not name the interpreter it ran is not evidence.
+printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
+printf 'gate ruff        : %s\n' "$("$PY" -m ruff --version 2>&1)"
 
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
@@ -71,17 +102,17 @@ check() {
 # real signal, but blocking the whole gate on it would be worse than running it.
 RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$(dirname "$0")/../.pre-commit-config.yaml" 2>/dev/null \
   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
-RUFF_HAVE=$("$RUFF" --version 2>/dev/null | awk '{print $2}')
+RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s on PATH, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
     "$RUFF_HAVE" "$RUFF_PIN"
 fi
 
 step "Ruff format"
-"$RUFF" format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
+"${RUFF[@]}" format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
-"$RUFF" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
+"${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
 
 step "Workflow integrity"
 # Parsing is NOT sufficient and this check knows it: a workflow gutted down to one job,
