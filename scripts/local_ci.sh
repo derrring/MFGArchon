@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.."
 #
 # The probe is the load-bearing part, not the path search: any python on PATH satisfies a path
 # search and would then run the "authoritative gate" against an interpreter that cannot run the
-# suite -- a green-looking run that measured nothing. See `usable_python` for why the obvious
+# suite -- a green-looking run that measured nothing. See `resolved_python` for why the obvious
 # form of that probe does not work.
 cannot_run() {  # environment failure: say that nothing was measured, and exit distinguishably
   printf '\n\033[31mGATE CANNOT RUN\033[0m -- %s\n' "$1"
@@ -34,29 +34,49 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
   exit 2
 }
 
-# The probe runs from `/`, and that is the whole of it. Run from here it proves nothing: line 15
-# already put cwd at the repo root, which CONTAINS `mfgarchon/`, and `python -c` puts cwd on
-# sys.path -- so any interpreter with the third-party dependencies imports the source tree in
-# place and passes. Measured: `/usr/bin/python3 -c 'import mfgarchon'` reaches base_solver.py from
-# the repo root and fails only at `import numpy`, while from `/` it is a clean ModuleNotFoundError.
-# An empty `mfgarchon/__init__.py` in any scratch directory satisfies the from-here version.
+# The probe runs from a scratch directory OUTSIDE the source tree, and that placement is the
+# whole of it. Run from here it proves nothing: line 15 already put cwd at the repo root, which
+# CONTAINS `mfgarchon/`, and `python -c` puts cwd on sys.path -- so any interpreter with the
+# third-party dependencies imports the source tree in place and passes. Measured:
+# `/usr/bin/python3 -c 'import mfgarchon'` reaches base_solver.py from the repo root and fails
+# only at `import numpy`, and an empty `mfgarchon/__init__.py` in any directory satisfies it.
+#
+# A scratch dir rather than `/`, which would be the obvious choice: importing this package has a
+# filesystem side effect -- `utils/performance/monitoring.py:413` builds a module-level
+# PerformanceMonitor whose __init__ runs a cwd-relative `Path("performance_data").mkdir()` -- so
+# `cd / && python -c 'import mfgarchon'` dies with `Errno 30 Read-only file system` on a perfectly
+# good interpreter (#1674; delete this paragraph when that is fixed).
 #
 # Demanding the token back on stdout is the second half, and it is not paranoia: `MFG_PYTHON=echo`
 # makes `echo -c 'import mfgarchon'` exit 0, so an exit-status-only probe accepts /bin/echo as the
-# interpreter and every subsequent check passes trivially -- GATE GREEN, exit 0, nothing run.
-# Probed from a WRITABLE scratch directory rather than `/`, which would be the obvious choice:
-# importing this package has a filesystem side effect -- `utils/performance/monitoring.py:413`
-# builds a module-level PerformanceMonitor whose __init__ runs `Path("performance_data").mkdir()`,
-# cwd-relative -- so `cd / && python -c 'import mfgarchon'` dies with `Errno 30 Read-only file
-# system` on a perfectly good interpreter. The scratch dir keeps the property that matters (the
-# source tree is not in cwd) without depending on cwd being writable.
-usable_python() {
+# interpreter and every subsequent check passes trivially -- GATE GREEN, exit 0, nothing run. It
+# is not adversary-proof: a purpose-built script that prints the token defeats it. The bar it
+# raises is from "defeated by /bin/echo by accident" to "requires a deliberate forgery".
+#
+# The candidate is ABSOLUTIZED before the probe runs, and `resolved_python` echoes that absolute
+# path back for the caller to use. Resolving at one cwd and executing at another silently refused
+# every relative interpreter -- `.venv/bin/python`, the commonest project-local layout -- while
+# claiming it could not import the package. It could; only the probe's `cd` could not find it.
+#
+# Which modules must import depends on what will actually run, so that --fast (pure AST and file
+# scanning, per CLAUDE.md the iterate-while-working mode) is not gated on the test tooling it
+# never invokes. `yaml` is in the list because the workflow-integrity step needs it and it is NOT
+# a declared dependency -- it arrives transitively via omegaconf, so an environment can satisfy
+# `import mfgarchon` and still fail that step with a bare ModuleNotFoundError under a GATE RED.
+probe_modules() {
+  if [[ $FAST -eq 1 ]]; then printf 'mfgarchon, yaml'; else printf 'mfgarchon, yaml, pytest, xdist'; fi
+}
+
+resolved_python() {
   local candidate=$1 out probe_dir
-  command -v "$candidate" >/dev/null 2>&1 || return 1
+  candidate=$(command -v "$candidate" 2>/dev/null) || return 1
+  [[ -n "$candidate" ]] || return 1
+  [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
   probe_dir=$(mktemp -d) || return 1
-  out=$(cd "$probe_dir" && "$candidate" -c 'import mfgarchon, pytest, xdist, sys; sys.stdout.write("MFGARCHON_OK")' 2>/dev/null)
+  out=$(cd "$probe_dir" && "$candidate" -c "import $(probe_modules), sys; sys.stdout.write('MFGARCHON_OK')" 2>/dev/null)
   rm -rf "$probe_dir"
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
+  printf '%s' "$candidate"
   return 0
 }
 
@@ -64,17 +84,21 @@ usable_python() {
 # unconditionally (`PY="${MFG_PYTHON:-python}"`), so a wrong value failed loudly and attributably.
 # Searching past it would silently run the authoritative gate against an interpreter the operator
 # did not name -- a silent fallback, in the script whose own third check ratchets against those.
-if [[ -n "${MFG_PYTHON:-}" ]]; then
-  usable_python "$MFG_PYTHON" \
-    || cannot_run "MFG_PYTHON=$MFG_PYTHON cannot import mfgarchon + pytest + xdist (probed from /).
-It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
-  PY=$(command -v "$MFG_PYTHON")
+# `+x`, not `:-`: an explicitly EMPTY MFG_PYTHON is still an operator statement, and it is what
+# `MFG_PYTHON="$SOME_UNSET_VAR"` produces. Under `-n` it read as unset and silently searched --
+# the one surviving fall-through beneath an absolute "it is used or nothing is" claim.
+if [[ -n "${MFG_PYTHON+x}" ]]; then
+  PY=$(resolved_python "$MFG_PYTHON") \
+    || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} cannot import $(probe_modules) (probed from a
+scratch directory outside the source tree). It is set explicitly, so it is used or nothing is:
+this does NOT fall back to another interpreter."
 else
   PY=""
   for candidate in python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python; do
-    if usable_python "$candidate"; then PY=$(command -v "$candidate"); break; fi
+    if PY=$(resolved_python "$candidate"); then break; fi
+    PY=""
   done
-  [[ -n "$PY" ]] || cannot_run "no interpreter on PATH can import mfgarchon + pytest + xdist."
+  [[ -n "$PY" ]] || cannot_run "no interpreter on PATH can import $(probe_modules)."
 fi
 
 # `-m ruff`, not a path next to $PY: `dirname` is wrong for any shimmed or symlinked interpreter
@@ -83,8 +107,9 @@ fi
 "$PY" -m ruff --version >/dev/null 2>&1 || cannot_run "ruff is not installed in $PY."
 RUFF=("$PY" -m ruff)
 
-# Print what was measured. The tail of this run is the merge evidence the PR template asks for,
-# and a verdict that does not name the interpreter it ran is not evidence.
+# Print what was measured, at the head for a live run and again beside the verdict, because the
+# PR template asks a human to paste the LAST lines and a head-only line never reaches them.
+# This line is the only tell for a forged interpreter, so it has to be in the pasted evidence.
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("$PY" -m ruff --version 2>&1)"
 
@@ -104,7 +129,7 @@ RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$(dirname "$0")/../.pre-commit-
   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
 RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
-  printf '\033[33mWARN\033[0m ruff %s on PATH, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
+  printf '\033[33mWARN\033[0m ruff %s in the gate interpreter, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
     "$RUFF_HAVE" "$RUFF_PIN"
 fi
 
@@ -188,7 +213,7 @@ else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'
 fi
 
-printf '\n'
+printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 if [[ $fail -eq 0 ]]; then
   printf '\033[32mGATE GREEN\033[0m -- safe to push.\n'
 else

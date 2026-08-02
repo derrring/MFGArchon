@@ -14,5 +14,9 @@ token: an in-tree probe passes on any interpreter that merely has the third-part
 (cwd is on `sys.path`, and cwd is the repo root, which contains the package), and an
 exit-status-only probe accepts `/bin/echo` as an interpreter.
 
-Every run now prints the interpreter and ruff version it used, so the pasted gate output that
-serves as merge evidence states what was actually measured.
+Every run prints the interpreter and ruff version it used, at the head and again beside the
+verdict, so the pasted tail that serves as merge evidence states what was actually measured.
+
+`--fast` no longer requires the test tooling it does not invoke, and the probe covers `yaml`,
+which the workflow-integrity step needs and which is not a declared dependency (it arrives
+transitively via omegaconf).
