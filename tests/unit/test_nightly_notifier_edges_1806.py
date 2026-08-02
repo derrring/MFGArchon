@@ -94,7 +94,7 @@ def _fires(condition: str, results: dict[str, str]) -> bool:
         "_ANY_BAD": any(v == "failure" for v in results.values()),
         "_ANY_CANCELLED": any(v == "cancelled" for v in results.values()),
     }
-    fired = bool(eval(expr, {"__builtins__": {}}, env))  # noqa: S307 - the repo's own workflow file
+    fired = bool(eval(expr, {"__builtins__": {}}, env))
     return fired and (env["_ALL_OK"] if implicit_success else True)
 
 
