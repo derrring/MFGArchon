@@ -162,6 +162,29 @@ def interpolate_value_nd(
     return float(result[0])
 
 
+# Which interpolation methods each path in this module actually HONOURS, and the minimum
+# points per axis each needs. One owner, because the two paths honour different sets and the
+# gap between "accepted" and "honoured" is the defect both #1809 and #1664 describe:
+#
+#   1D  (interpolate_value_1d)  is `if method == "cubic": PCHIP else: linear` -- it recognises
+#       exactly two. `nearest`/`slinear`/`quintic` reach it and silently return linear, so the
+#       same public argument names a different interpolant than it does in nD (measured: 8.0
+#       against 10.0 for `nearest` on the same profile).
+#   nD  (interpolate_value_nd)  maps onto RegularGridInterpolator, which additionally REFUSES a
+#       grid with fewer points on an axis than the method needs -- 4 for cubic, 6 for quintic,
+#       measured rather than read from the docs. That refusal is the only condition that reaches
+#       the RBF fallback below (#1664); everything else -- out of bounds, NaN, inf, a descending
+#       axis, an unknown method name -- returns silently.
+HONOURED_METHODS_1D = frozenset({"linear", "cubic"})
+HONOURED_METHODS_ND = frozenset({"linear", "slinear", "nearest", "cubic", "quintic"})
+MIN_POINTS_PER_AXIS = {"linear": 2, "slinear": 2, "nearest": 1, "cubic": 4, "quintic": 6}
+
+
+def honoured_methods(dimension: int) -> frozenset[str]:
+    """The interpolation methods this module honours at ``dimension``."""
+    return HONOURED_METHODS_1D if dimension == 1 else HONOURED_METHODS_ND
+
+
 def interpolate_value_rbf_fallback(
     U_values: np.ndarray,
     x_query: np.ndarray,

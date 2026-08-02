@@ -361,6 +361,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             else:
                 logger.info(f"ADI diffusion enabled for nD solve: {adi_msg}")
 
+        # Issues #1809 / #1664: refuse an interpolation_method this solver will not honour, at
+        # THIS problem's dimension and grid. Until now the argument was stored unvalidated and
+        # both interpolators defaulted to linear for anything unrecognised, so `nearest` meant
+        # nearest in nD and linear in 1D (measured: 10.0 against 8.0 on one profile), and a typo
+        # was accepted and silently downgraded. Runs after the dimension/grid branches because
+        # the honoured set and the per-axis minimum both depend on them.
+        self._validate_interpolation_method()
+
         # Setup JAX functions if available
         if self.use_jax:
             self._setup_jax_functions()
@@ -397,6 +405,58 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 )
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
+
+    def _validate_interpolation_method(self) -> None:
+        """Refuse an ``interpolation_method`` this solver will not honour here.
+
+        Two ways the declared method used to differ from the honoured one, both silent:
+
+        - **Not implemented at this dimension.** The 1D path is ``if method == "cubic": PCHIP
+          else: linear``, so ``nearest``/``slinear``/``quintic`` reached it and returned linear
+          while the same argument selected a genuinely different interpolant in nD. Measured on
+          ``U = [0, 10, 0, 10, 0]`` at ``x = 0.30``: ``nearest`` gives 8.0 in 1D, 10.0 in nD.
+          An unrecognised string -- a typo -- collapsed to linear at both dimensions (#1809).
+        - **The grid is too small for it.** ``RegularGridInterpolator`` needs 4 points per axis
+          for ``cubic`` and 6 for ``quintic``, and raises otherwise. That raise is the only
+          condition that reaches the RBF fallback, whose chain then degrades the request to
+          ``RBF -> nearest neighbour`` behind ``logger.debug`` (#1664).
+
+        Refusing is the honest disposition for both. Implementing the missing 1D methods is a
+        capability decision, not a bug fix, and silently substituting an interpolant of a
+        different order is precisely what these two issues are about.
+        """
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_interpolation import (
+            MIN_POINTS_PER_AXIS,
+            honoured_methods,
+        )
+
+        method = self.interpolation_method
+        allowed = honoured_methods(self.dimension)
+        if method not in allowed:
+            extra = (
+                " It is honoured in higher dimensions but not at dimension 1, where this solver "
+                f"implements only {sorted(honoured_methods(1))}; it would have returned linear."
+                if method in MIN_POINTS_PER_AXIS
+                else ""
+            )
+            raise ValueError(
+                f"HJBSemiLagrangianSolver: interpolation_method={method!r} is not honoured at "
+                f"dimension {self.dimension}. Honoured here: {sorted(allowed)}.{extra} An "
+                "unhonoured method used to return a linear interpolant silently (Issue #1809)."
+            )
+
+        need = MIN_POINTS_PER_AXIS.get(method, 1)
+        shape = tuple(self._grid_shape) if self.dimension > 1 else (len(self.x_grid),)
+        short = [(ax, n) for ax, n in enumerate(shape) if n < need]
+        if short:
+            ax, n = short[0]
+            raise ValueError(
+                f"HJBSemiLagrangianSolver: interpolation_method={method!r} needs at least {need} "
+                f"points per axis, but axis {ax} has {n} (grid shape {shape}). The interpolator "
+                "raises on this, and the fallback chain would substitute an RBF or a "
+                "nearest-neighbour value for the method you asked for (Issue #1664). Refine the "
+                f"grid on axis {ax}, or choose a method the grid supports."
+            )
 
     def _setup_jax_functions(self):
         """Setup JAX-accelerated functions for performance."""
