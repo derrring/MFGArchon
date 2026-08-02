@@ -251,8 +251,12 @@ class TestRegimeSwitchingCrossTermSign:
 
     The DPP chain term ``sum_j Q[k,j](v^k - v^j)`` sits on the HJB LHS, and the HJB
     solver subtracts the source (``Phi_U -= source_term``), so the source must equal
-    ``-cross``. A ``+cross`` source flips the inter-regime value coupling. The FP source
-    (``+inflow Q[j,k]m^j - outflow Q[k,j]m^k``) was already correct and must be unchanged.
+    ``-cross``. A ``+cross`` source flips the inter-regime value coupling.
+
+    The FP side carries the same signs -- inflow adds, outflow removes -- but since
+    Issue #1681 they arrive on two different channels: the inflow through ``source_term``,
+    the outflow through the integrating factor, because a lagged sink defeats the scheme's
+    positivity. What has to stay pinned is the sign of each, not which channel it used.
     """
 
     def _iterator(self):
@@ -276,7 +280,7 @@ class TestRegimeSwitchingCrossTermSign:
         src1 = iterator._make_hjb_source(1, 2, Q, Us_full, [None, None])
         np.testing.assert_allclose(src1(0.0, x), -Q[1, 0] * (v1 - v0) * np.ones(N))
 
-    def test_fp_source_sign_unchanged(self):
+    def test_fp_inflow_enters_the_source_with_a_positive_sign(self):
         iterator, problems, Q = self._iterator()
         Nt, N = problems[0].Nt, 5
         x = np.linspace(0.0, 1.0, N)
@@ -284,7 +288,42 @@ class TestRegimeSwitchingCrossTermSign:
         Ms = [m0 * np.ones((Nt + 1, N)), m1 * np.ones((Nt + 1, N))]
 
         src0 = iterator._make_fp_source(0, 2, Q, Ms)
-        np.testing.assert_allclose(src0(0.0, x), (Q[1, 0] * m1 - Q[0, 1] * m0) * np.ones(N))
+        # At t=0 the integrating factor is 1, so the source is the bare inflow.
+        np.testing.assert_allclose(src0(0.0, x), Q[1, 0] * m1 * np.ones(N))
+        assert (src0(0.0, x) > 0).all(), "inflow must be non-negative; the scheme's positivity rests on it"
+
+    def test_fp_outflow_is_a_decay_with_the_rate_the_generator_names(self):
+        """Same sign as before #1681 (mass leaves regime k), now on the factor channel."""
+        iterator, problems, Q = self._iterator()
+        q_0 = iterator._outflow_rate(0, 2, Q)
+        assert q_0 == pytest.approx(Q[0, 1]), "outflow rate must be the off-diagonal row sum"
+        assert q_0 > 0, "a positive q_k is what makes the factor exp(-q_k t) a sink"
+
+        # A constant field must come back monotonically reduced, by exactly exp(-q_0 t).
+        Nt, N = problems[0].Nt, 5
+        N_k = np.ones((Nt + 1, N))
+        recovered = iterator._undo_integrating_factor(0, q_0, N_k)
+        t_grid = np.arange(Nt + 1) * problems[0].dt
+        np.testing.assert_allclose(recovered, np.exp(-q_0 * t_grid)[:, None] * N_k)
+        assert recovered[-1].max() < recovered[0].min(), "outflow sign flipped: regime k gained mass"
+
+    def test_source_and_factor_reconstruct_the_original_right_hand_side(self):
+        """The split is a change of channel, not of equation.
+
+        ``d/dt[exp(-q t) n] = exp(-q t) (n' - q n)``, so with ``n' = L n + exp(q t) * inflow``
+        the recovered ``m`` solves ``m' = L m + inflow - q m`` -- the right-hand side this
+        class pinned before #1681. Checked at t=0, where the factor is 1 and the two forms
+        must agree term by term.
+        """
+        iterator, problems, Q = self._iterator()
+        Nt, N = problems[0].Nt, 5
+        x = np.linspace(0.0, 1.0, N)
+        m0, m1 = 0.7, 0.3
+        Ms = [m0 * np.ones((Nt + 1, N)), m1 * np.ones((Nt + 1, N))]
+
+        inflow = iterator._make_fp_source(0, 2, Q, Ms)(0.0, x)
+        outflow = iterator._outflow_rate(0, 2, Q) * m0 * np.ones(N)
+        np.testing.assert_allclose(inflow - outflow, (Q[1, 0] * m1 - Q[0, 1] * m0) * np.ones(N))
 
 
 class TestRegimeFPDriftConvention:
@@ -329,4 +368,86 @@ class TestRegimeFPDriftConvention:
             assert "drift_field" not in keys, (
                 f"regime {k}: value function wrongly passed as drift_field (velocity alpha*); "
                 "#1315 silent-wrong-equilibrium"
+            )
+
+
+class TestDiagonalOutflowIsNotALaggedSource:
+    """Issue #1681: the diagonal transition term must not reach the FP solver as a source.
+
+    ``d_t m^k - L^k[m^k] = sum_j Q[j,k] m^j - q_k m^k``. A positivity-preserving ``L^k``
+    keeps ``m^k >= 0`` against a **non-negative** source; the second term is neither
+    non-negative nor proportional to the density the current step actually has, and
+    passing it lagged drove ``divergence_upwind`` to ``-1.0e-03`` on a plain LQ problem.
+    The fix carries it in an integrating factor instead, so these tests pin the split,
+    not the symptom.
+    """
+
+    def _solve(self, Nt=10, T=1.0, max_iterations=3):
+        problems = [_make_problem(coupling_strength=c, sigma=0.1) for c in (1.0, 0.5)]
+        for p in problems:
+            p.T, p.Nt = T, Nt
+        Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
+        iterator = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=[FPFDMSolver(p) for p in problems],
+            max_iterations=max_iterations,
+            tolerance=1e-4,
+            damping=0.5,
+        )
+        return problems, Q, iterator.solve()
+
+    def test_every_regime_density_stays_non_negative(self):
+        """The invariant the lagged sink broke. Reverting the split reddens this."""
+        _problems, _Q, result = self._solve()
+        for k, dens in enumerate(result.densities):
+            M = np.asarray(dens, dtype=float)
+            assert np.isfinite(M).all(), f"regime {k}: non-finite density"
+            assert M.min() >= 0.0, (
+                f"regime {k}: density went to {M.min():.4e}. The diagonal outflow is back in "
+                "the FP source term (Issue #1681); divergence_upwind cannot preserve "
+                "positivity against a lagged negative source."
+            )
+
+    def test_regime_masses_track_the_markov_chain_closed_form(self):
+        """External oracle: mass transfer obeys ``M(t) = M(0) expm(Qt)``, independent of x.
+
+        Integrating the FP system over a no-flux domain kills the transport term, so the
+        regime masses solve the Markov chain's own ODE. That is not a second discretisation
+        of the same scheme -- it is the continuous law the scheme is supposed to reproduce,
+        so this cannot go tautological the way a path-A-vs-path-B agreement test does.
+        """
+        from scipy.linalg import expm
+
+        problems, Q, result = self._solve()
+        dx = problems[0].geometry.get_grid_spacing()[0]
+        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.densities])
+        t_grid = np.arange(problems[0].Nt + 1) * problems[0].dt
+        exact = np.array([masses[:, 0] @ expm(Q * t) for t in t_grid]).T
+
+        rel = np.abs(masses - exact).max() / np.abs(exact).max()
+        # 2.3e-03 measured at this fixture (Nt=10, 3 Picard iterations). The residual is the
+        # lagged INFLOW plus the piecewise-constant-in-time source, and it does not clean up
+        # under dt-refinement alone at fixed iteration count -- recorded, not hidden.
+        assert rel < 5e-3, f"regime masses deviate {rel:.3e} from M(0) @ expm(Qt)"
+
+        # Direction is part of the claim: stationary pi = [2/3, 1/3] from equal initial
+        # masses means regime 0 must GAIN and regime 1 must LOSE. A sign-flipped transfer
+        # would keep the magnitude and fail here.
+        assert masses[0, -1] > masses[0, 0], "regime 0 should gain mass (pi_0 = 2/3)"
+        assert masses[1, -1] < masses[1, 0], "regime 1 should lose mass (pi_1 = 1/3)"
+
+    def test_outflow_horizon_beyond_float64_accuracy_is_refused(self):
+        """The integrating factor spans exp(q_k T); past the limit it must stop, not degrade."""
+        problems = [_make_problem(coupling_strength=c, sigma=0.1) for c in (1.0, 0.5)]
+        for p in problems:
+            p.T, p.Nt = 100.0, 10
+        Q = np.array([[-2.0, 2.0], [1.0, -1.0]])  # q_0 * T = 200 > 50
+        with pytest.raises(ValueError, match=r"q_k\*T"):
+            RegimeSwitchingIterator(
+                problems=problems,
+                regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+                hjb_solvers=[HJBFDMSolver(p) for p in problems],
+                fp_solvers=[FPFDMSolver(p) for p in problems],
             )

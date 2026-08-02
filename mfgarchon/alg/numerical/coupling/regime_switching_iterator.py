@@ -12,6 +12,11 @@ reads other regimes' value functions, each FP has mass transfer terms.
 
 Issue #925: Part of Phase 2 (Generalized PDE & Institutional MFG Plan).
 
+The FP right-hand side is split before it reaches the solver: the off-diagonal inflow
+goes through `source_term`, while the diagonal outflow `-q_k m^k` is carried by an
+integrating factor, because a lagged sink defeats the scheme's positivity (Issue #1681).
+See `_make_fp_source`.
+
 Design constraints (from Dev Plan Rev 4):
 - Default Gauss-Seidel update (Constraint #3): uses updated v^j for j < k
 - Cross-terms injected via source_term parameter (#921)
@@ -44,6 +49,12 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+# Largest q_k*T for which the diagonal integrating factor of Issue #1681 is accurate in
+# float64. exp(50) is ~5e21: the source spans 21 orders across the horizon, which still
+# leaves the early timesteps most of the mantissa. float64 does not overflow until ~709,
+# so this is a precision bound, not a range one, and it is deliberately well inside it.
+_MAX_OUTFLOW_HORIZON = 50.0
 
 
 @dataclass
@@ -168,7 +179,34 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"RegimeSwitchingIterator[regime {_k}]")
 
         regime_config.validate()
+        # Only meaningful once validate() has established the generator structure the
+        # integrating factor relies on (non-negative off-diagonals, zero row sums).
+        self._assert_outflow_horizon_representable(K, regime_config.transition_matrix)
         self._last_result: RegimeSwitchingResult | None = None
+
+    def _assert_outflow_horizon_representable(self, K: int, Q: NDArray) -> None:
+        """Refuse a horizon on which the diagonal integrating factor loses the density.
+
+        ``_make_fp_source`` scales the inflow by ``exp(q_k t)`` and ``solve`` divides it
+        back out. In real arithmetic that is exact for any ``q_k T``; in float64 the source
+        spans ``exp(q_k T)`` across the horizon, so past a few tens of e-folds the early
+        timesteps are computed against a source many orders below the late ones and the
+        recovered density loses its leading digits. Stopping is the honest response --
+        silently returning it is the defect class this fix exists to remove.
+        """
+        for k in range(K):
+            q_k = self._outflow_rate(k, K, Q)
+            span = q_k * self._problems[k].T
+            if span > _MAX_OUTFLOW_HORIZON:
+                msg = (
+                    f"RegimeSwitchingIterator[regime {k}]: total outflow rate q_k={q_k:.4g} over "
+                    f"horizon T={self._problems[k].T:.4g} gives q_k*T={span:.4g}, above the limit "
+                    f"{_MAX_OUTFLOW_HORIZON:.0f} at which the diagonal integrating factor "
+                    "(Issue #1681) stays accurate in float64. Shorten T, lower the transition "
+                    "rates, or solve the horizon in segments and restart the iterator from the "
+                    "intermediate densities."
+                )
+                raise ValueError(msg)
 
     def _make_hjb_source(
         self,
@@ -220,9 +258,32 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         Q: NDArray,
         Ms: list[NDArray],
     ) -> Callable:
-        """Build FP source term for regime k with mass transfer."""
+        """Build the FP inflow source for regime k, pre-scaled by the integrating factor.
+
+        The mass-transfer right-hand side splits into an off-diagonal inflow and a
+        diagonal outflow::
+
+            d_t m^k - L^k[m^k] = sum_{j!=k} Q[j,k] m^j  -  q_k m^k,   q_k = sum_{j!=k} Q[k,j]
+
+        Only the first part is genuinely external. The second is linear in the unknown,
+        and passing it as a lagged source is what drove ``divergence_upwind`` negative
+        (Issue #1681): a positivity-preserving ``L^k`` guarantees non-negativity against a
+        **non-negative** source, and ``-q_k m^k`` evaluated at the previous Picard iterate
+        is neither non-negative nor proportional to the density actually present, so it
+        subtracts mass the current iterate no longer has.
+
+        Substituting ``m^k = exp(-q_k t) n^k`` removes the diagonal exactly::
+
+            d_t n^k - L^k[n^k] = exp(+q_k t) * sum_{j!=k} Q[j,k] m^j
+
+        ``RegimeSwitchingConfig.validate`` enforces ``Q[j,k] >= 0`` off-diagonal, so this
+        source is non-negative and ``n^k >= 0`` follows from the scheme; ``solve`` then
+        recovers ``m^k = exp(-q_k t) n^k >= 0``. The remaining lag is on the inflow only,
+        where it costs accuracy rather than positivity.
+        """
         dt_k = self._problems[k].dt
         Nt_k = self._problems[k].Nt
+        q_k = self._outflow_rate(k, K, Q)
 
         def source(t: float, x: NDArray) -> NDArray:
             n = min(round(t / dt_k), Nt_k) if dt_k > 0 else 0
@@ -230,12 +291,21 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             for j in range(K):
                 if j != k:
                     m_j = Ms[j] if Ms[j].ndim == 1 else (Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1])
-                    m_k = Ms[k] if Ms[k].ndim == 1 else (Ms[k][n] if n < Ms[k].shape[0] else Ms[k][-1])
                     s += Q[j, k] * m_j  # inflow from j
-                    s -= Q[k, j] * m_k  # outflow to j
-            return s
+            return np.exp(q_k * t) * s
 
         return source
+
+    @staticmethod
+    def _outflow_rate(k: int, K: int, Q: NDArray) -> float:
+        """Total transition rate out of regime k, ``q_k = sum_{j!=k} Q[k,j]``."""
+        return float(sum(Q[k, j] for j in range(K) if j != k))
+
+    def _undo_integrating_factor(self, k: int, q_k: float, N_k: NDArray) -> NDArray:
+        """Recover ``m^k = exp(-q_k t) n^k`` on regime k's time grid."""
+        t_grid = np.arange(self._problems[k].Nt + 1) * self._problems[k].dt
+        factor = np.exp(-q_k * t_grid)
+        return N_k * factor.reshape((-1,) + (1,) * (N_k.ndim - 1))
 
     def solve(self) -> RegimeSwitchingResult:
         """Run Picard iteration over K coupled regime systems.
@@ -307,12 +377,14 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     )
                     fp_kwargs.update(drift_kwargs)
                     if use_positional_U:
-                        M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
+                        N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], **fp_kwargs)
                     else:
-                        M_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
+                        N_k = self._fp[k].solve_fp_system(m0_k, **fp_kwargs)
                 else:
-                    M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
-                Ms_new[k] = M_k
+                    N_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
+                # The solve returned n^k; the diagonal outflow lives in the integrating
+                # factor, not in the source (see _make_fp_source, Issue #1681).
+                Ms_new[k] = self._undo_integrating_factor(k, self._outflow_rate(k, K, Q), N_k)
 
             # --- Damping ---
             theta = self._damping
