@@ -86,9 +86,19 @@ probe_modules() {
 # The file, not a variable: `PY=$(resolved_python ...)` runs the function in a SUBSHELL, so any
 # variable it sets is discarded before the caller can read it. Writing to a path the parent knows
 # is what makes the interpreter's own stderr survive the capture.
-PROBE_ERR_FILE=$(mktemp) || PROBE_ERR_FILE=/dev/null
-trap 'rm -f "$PROBE_ERR_FILE"' EXIT INT TERM
-probe_err() { tail -3 "$PROBE_ERR_FILE" 2>/dev/null; }
+PROBE_ERR_FILE=$(mktemp) || PROBE_ERR_FILE=""
+# Two traps, not one. A handler installed for INT that only cleans up does NOT end the script:
+# bash runs it and RESUMES at the next command. Measured with that single trap in place, Ctrl-C
+# during --fast let the run continue and render `GATE RED -- do not push` over an interrupted
+# run -- an operator event wearing a content verdict, which is the failure class this script
+# exists to remove. Worse, a SIGINT inside the 4.2 s pass-1 probe killed that probe and let the
+# search fall through to the next candidate, silently changing which interpreter the gate used.
+# `exit 130` is what restores the untrapped behaviour that `main` had for free.
+[[ -n "$PROBE_ERR_FILE" ]] && trap 'rm -f "$PROBE_ERR_FILE"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE"; exit 130' INT TERM
+# tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
+# source echo and the caret, dropping the `File ...` line that names the culprit.
+probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
 
 resolved_python() {
   local candidate=$1 want_package=${2:-} out probe_dir modules
@@ -98,7 +108,7 @@ resolved_python() {
   modules=$(probe_modules)
   [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
   probe_dir=$(mktemp -d) || return 1
-  out=$(cd "$probe_dir" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"$PROBE_ERR_FILE")
+  out=$(cd "$probe_dir" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
   rm -rf "$probe_dir"
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
   printf '%s' "$candidate"
