@@ -75,11 +75,27 @@
     },
     "regime_switching/non_negativity": {
       "artifact": {
-        "exception": "ValueError",
-        "message": "FP solver: at timestep 7/10, advection_scheme='divergence_upwind': density went to -1.031e-03. Clipping it to zero would fabricate 0.015% of the total mass, so the solve is stopped rather than reporti"
+        "all_finite": true,
+        "max_rel_drift": 0.0888200989332657,
+        "min_density": 0.0008425476627731638,
+        "regimes": [
+          {
+            "all_finite": true,
+            "max_rel_drift": 0.0888200989332657,
+            "min_density": 0.0008425476627731638,
+            "regime": 0
+          },
+          {
+            "all_finite": true,
+            "max_rel_drift": 0.08602951245459423,
+            "min_density": 0.0011239694836673332,
+            "regime": 1
+          }
+        ],
+        "tolerance": 1e-06
       },
-      "intended": "DEFECT \u2014 #1681, which is OPEN and labelled type: bug. divergence_upwind drives the density negative at timestep 7 (0.015% fabricated) in a scheme that is supposed to preserve positivity. The mass-fabrication guard firing is correct guard behaviour, but the cell is not recording the guard -- it is recording the scheme defect the guard found, and the fixture is deliberately not retuned because the run maximum decays only first-order in dt, so clearing the threshold extrapolates to NT ~ 3e6 and would hide the defect. Contrast fdm_centered/mass_conservation, which is genuinely INTENDED: no open issue asserts that divergence_centered must be positivity-preserving at that Peclet. The discriminating question is whether an OPEN issue says this configuration should work.",
-      "status": "UNSUPPORTED"
+      "intended": "DEFECT — #1798, and NOT the defect this cell recorded before. The solve now RUNS: #1681 is fixed and both regime densities are strictly positive (min 8.4e-04), where this cell previously raised at the mass-fabrication gate every run. What fails is the cell's own oracle, which gates PER-REGIME mass drift at 1e-6. A regime's mass is not conserved in a Markov-switching model -- the generator transfers it. For this cell's Q the stationary distribution is [2/3, 1/3] against equal initial masses, so the measured 8.9%/8.6% is approximately RIGHT, not approximately wrong; integrating the FP system over the no-flux domain leaves M(t) = M(0) expm(Qt), and the run tracks it to 2.2e-03. The conserved quantity is the sum over regimes: 1.4e-03 here, 8.0e-04 by 30 Picard iterations, 6.7e-04 at Nt=80. Do NOT turn this PASS by relaxing 1e-6 to fit the measurement -- #1767 named that route as one the matrix exists to catch; #1798 records the three honest replacements. Note for the next regeneration: this is the first FAIL cell, so _note_still_applies drops this annotation as soon as any of these floats move, exactly as that function's docstring predicts. That is the safe direction, but it means the note is not durable here the way an exception-shaped one is.",
+      "status": "FAIL"
     },
     "sl_linear/mass_conservation": {
       "artifact": {
