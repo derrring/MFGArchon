@@ -183,6 +183,60 @@ def test_substepping_does_not_change_which_backend_runs(backend_counter):
     )
 
 
+class TestTheFoldOvershootsAndTheInterpolantMustSurviveIt:
+    """`[0, 1]` is the one domain where this cannot fire, and every fixture above uses it.
+
+    `reflect_into_domain` computes ``xmin + span - |((x - xmin) mod 2*span) - span|``, which
+    rounds OUTWARD when the endpoints are not exactly representable:
+
+        bounds (0.0, 1.0)   reflect(xmin) = 0.0                  exact
+        bounds (-0.3, 1.7)  reflect(xmin) = -0.30000000000000004  2.8e-17 BELOW xmin
+        bounds (0.1, 0.9)   reflect(xmin) = 0.09999999999999998   below xmin
+
+    Both interpolants the batch path used to build extrapolated, so that overshoot cost ~1e-17
+    of error. `PchipInterpolator(extrapolate=False)` returns NaN instead, and `solve_banded`
+    rejects it -- so consolidating onto PCHIP turned a rounding artefact into an aborted solve.
+    Caught in review; the acceptance tests above are all on `[0, 1]` and are structurally
+    incapable of seeing it.
+    """
+
+    @pytest.mark.parametrize("bounds", [(-0.3, 1.7), (0.1, 0.9), (0.0, 1.0)], ids=str)
+    @pytest.mark.parametrize("method", ["cubic", "linear"])
+    def test_a_solve_survives_a_non_representable_domain(self, bounds, method):
+        problem = MFGProblem(
+            geometry=TensorProductGrid(bounds=[bounds], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1)),
+            T=0.4,
+            Nt=8,
+            sigma=0.2,
+            components=MFGComponents(
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x) - 0.5) ** 2),
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0),
+                    coupling=lambda m: m,
+                    coupling_dm=lambda m: 1.0,
+                ),
+            ),
+        )
+        solver = HJBSemiLagrangianSolver(problem, interpolation_method=method, characteristic_solver="explicit_euler")
+        u = np.zeros((9, 41))
+        u[-1] = problem.get_u_terminal()
+        result = solver.solve_hjb_system(np.ones((9, 41)), u[-1], u)
+        assert np.all(np.isfinite(result)), (
+            f"non-finite value function on bounds={bounds}, method={method}: the reflect fold "
+            "overshoots by ~1 ULP and the interpolant returned NaN rather than clamping"
+        )
+
+    def test_the_fold_really_does_overshoot(self):
+        """Pin the mechanism, not just the symptom -- otherwise a later 'fix' to the interpolant
+        can hide it while the fold still returns points outside the domain."""
+        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import reflect_into_domain
+
+        lo, hi = -0.3, 1.7
+        folded = reflect_into_domain(np.array([[lo]]), np.array([lo]), np.array([hi]))[0, 0]
+        assert folded < lo, "fixture is stale: this domain no longer exercises the outward rounding"
+
+
 @pytest.mark.parametrize("method", ["linear", "cubic"])
 def test_the_stochastic_path_consults_the_owner(method, monkeypatch):
     """Coverage gap this file had: every case above uses explicit_euler + adi.

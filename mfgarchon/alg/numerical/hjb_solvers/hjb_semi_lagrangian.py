@@ -166,7 +166,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             problem: MFG problem instance
             interpolation_method: Method for interpolating values
                 - 'linear': Linear interpolation (fastest, C⁰ continuous)
-                - 'cubic': Cubic spline interpolation (slower, C² continuous)
+                - 'cubic': Monotone cubic Hermite (PCHIP) -- slower, C¹, and monotone. NOT a C² spline:
+              Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up, so the accuracy
+              on smooth data is 2nd order here against the 4th order a not-a-knot spline gives.
                 - 'quintic': Quintic interpolation (slowest, highest accuracy, nD only)
                 - 'nearest': Nearest neighbor (for debugging)
             optimization_method: Method for Hamiltonian optimization ('brent', 'golden')
@@ -459,7 +461,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         that restated the monotone policy a third time. It therefore missed the other half:
         ``nearest`` and ``slinear`` are honoured at nD, are equally non-monotone, and were
         remapped to linear with no warning at all -- measured on one 7x7 profile, ``nearest``
-        0.0688 against ``linear`` 0.2732. `monotone_downgrade` is the single owner of which
+        0.0688 against ``linear`` 0.2732. `sl_backend` is the single owner of which
         methods get overridden, so this cannot drift from the dispatch again (#1810, #1811).
 
         The two cases are disclosed differently because they are different: cubic/quintic are
@@ -1276,6 +1278,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator
 
+                # Clamp to the grid range before interpolating. `reflect_into_domain` rounds
+                # OUTWARD for endpoints that are not exactly representable -- reflect(-0.3)
+                # is -0.30000000000000004, 2.8e-17 below x_grid[0] -- and PCHIP with
+                # extrapolate=False returns NaN there, which solve_banded then rejects with
+                # "array must not contain infs or NaNs". Both interpolants this site used to
+                # build extrapolated, so the overshoot was harmless; PCHIP does not, which
+                # turned a 1-ULP artefact into an aborted solve on any domain like [-0.3, 1.7].
+                # The pointwise sibling has always clamped (hjb_sl_interpolation.py:73-76);
+                # this is that same semantics, which is what makes the two paths agree.
+                x_departures = np.clip(x_departures, self.x_grid[0], self.x_grid[-1])
+
                 backend = sl_backend(self.interpolation_method, 1, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=False)(x_departures)
@@ -1630,9 +1643,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         algorithm differs, but because collapsing them changes the numerics
         (verified non-byte-identical):
 
-        - **Interpolation backend**: 1D uses ``numpy.interp`` (linear) /
-          ``PchipInterpolator`` (cubic), which *clamp* out-of-bounds feet to
-          the endpoint value; nD uses ``RegularGridInterpolator``, which
+        - **Interpolation backend**: 1D uses ``numpy.interp`` (linear), which *clamps*
+          out-of-bounds feet to the endpoint value, or ``PchipInterpolator`` (cubic), which
+          with ``extrapolate=False`` returns **NaN** -- these are NOT the same policy, and
+          this sentence claimed they were until #1811 traced an aborted solve back to it.
+          nD uses ``RegularGridInterpolator``, which
           *extrapolates* (``fill_value=None``). Under reflect/wrap BC every
           foot is in-bounds and the two agree to ~1 ULP; they diverge only for
           ``clamp`` BC (Dirichlet/none), where clamp vs. extrapolation are
