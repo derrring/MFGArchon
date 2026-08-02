@@ -162,6 +162,52 @@ def interpolate_value_nd(
     return float(result[0])
 
 
+# Which interpolation methods each path in this module actually HONOURS, and the minimum
+# points per axis each needs. One owner, because the two paths honour different sets and the
+# gap between "accepted" and "honoured" is the defect both #1809 and #1664 describe:
+#
+#   1D  (interpolate_value_1d)  is `if method == "cubic": PCHIP else: linear` -- it recognises
+#       exactly two. `nearest`/`slinear`/`quintic` reach it and silently return linear, so the
+#       same public argument names a different interpolant than it does in nD (measured: 8.0
+#       against 10.0 for `nearest` on the same profile).
+#   nD  (interpolate_value_nd)  maps onto RegularGridInterpolator, which additionally REFUSES a
+#       grid with fewer points on an axis than the method needs -- 4 for cubic, 6 for quintic,
+#       measured rather than read from the docs. That refusal is the only condition that reaches
+#       the RBF fallback below (#1664); everything else -- out of bounds, NaN, inf, a descending
+#       axis, an unknown method name -- returns silently.
+HONOURED_METHODS_1D = frozenset({"linear", "cubic"})
+HONOURED_METHODS_ND = frozenset({"linear", "slinear", "nearest", "cubic", "quintic"})
+
+# Minimum points per axis, PER DIMENSION, because the two paths use different machinery and
+# therefore have different boundaries. Measured, not read from docs:
+#
+#   nD: `RegularGridInterpolator` under THIS module's construction arguments
+#       (`bounds_error=False, fill_value=None`). Those arguments matter -- with scipy's
+#       defaults `linear` and `nearest` measure 2 rather than 1, because querying an interior
+#       point on a one-point axis is then out of bounds and raises for a different reason.
+#       Pinned against scipy directly in the test suite, since for these numbers scipy IS the
+#       external oracle.
+#   1D: `PchipInterpolator` / `CubicSpline`, which never touch RegularGridInterpolator. They do
+#       not raise on a short grid -- they return the LINEAR value, which is the failure this
+#       module is guarding against. Measured on a non-linear profile: at n=2 cubic and linear
+#       agree exactly (so cubic is not honoured), at n=3 they differ (0.7477 vs 0.9256), so the
+#       1D boundary is 3. Applying the nD table here refused a configuration in which cubic was
+#       genuinely honoured -- the inverse of the defect this guard exists to fix.
+MIN_POINTS_PER_AXIS_ND = {"linear": 1, "slinear": 2, "nearest": 1, "cubic": 4, "quintic": 6}
+MIN_POINTS_PER_AXIS_1D = {"linear": 2, "cubic": 3}
+
+
+def honoured_methods(dimension: int) -> frozenset[str]:
+    """The interpolation methods this module honours at ``dimension``."""
+    return HONOURED_METHODS_1D if dimension == 1 else HONOURED_METHODS_ND
+
+
+def min_points_per_axis(method: str, dimension: int) -> int:
+    """Smallest per-axis point count at which ``method`` is honoured at ``dimension``."""
+    table = MIN_POINTS_PER_AXIS_1D if dimension == 1 else MIN_POINTS_PER_AXIS_ND
+    return table.get(method, 1)
+
+
 def interpolate_value_rbf_fallback(
     U_values: np.ndarray,
     x_query: np.ndarray,
