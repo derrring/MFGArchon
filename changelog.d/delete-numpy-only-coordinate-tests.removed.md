@@ -30,9 +30,25 @@
   If `hjb_gfdm.py` switched to string keys tomorrow, all 11 stay green. The file made Bug #13 look
   pinned while pinning nothing, which is worse than an absent test.
 
-  The convention **is** pinned, elsewhere and for real: `test_hjb_gfdm_solver.py:421` calls the
-  actual `solver.approximate_derivatives()` and indexes the result with `derivs[(1,)]`, so a switch
-  to string keys raises `KeyError` there. Four more files do the same. Checked before deleting, not
-  after.
+  The convention **is** pinned, elsewhere and for real — but not where this fragment first said.
+  Mutating `gfdm_strategies.py:931` to emit string keys and running the five files originally cited
+  here gives **134 passed**. They cannot fail: `test_hjb_gfdm_solver.py:424` is `if (1,) in derivs:`
+  with the assertion at :425 *inside* the guard, so string keys make the body vacuous rather than
+  raising, and `test_collocation_gfdm_hjb.py:164` carries the same shape. The file that actually
+  kills that mutation is `tests/unit/test_alg/test_hjb_gfdm_bc_newton_residual.py` — 9 failed under
+  it, 9 passed after `git checkout --`, which is the counterfactual this claim owes.
 
-  Net for this change: **−744 lines**, 6187 → 6176 collected.
+  The five guarded assertions are their own defect and are filed as #1799: a convention check
+  written as `if <convention holds>: assert <consequence>` is self-satisfying, the #1714/#1715
+  family with a different mechanism.
+
+  Known false negative, left for #1800: `tests/unit/test_alg/test_bug15_sigma_fix.py` is the same
+  construct as the file deleted above — it re-implements the production dispatch inline and asserts
+  on its own copy, and two mutations of the real `_get_sigma_value` leave all four of its tests
+  green. It survived the read-through because its docstring contains the literal string
+  `mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py:1573-1583`, so a substring grep matches it where
+  an import-parse does not. Recorded rather than swept in, since the Bug #15 convention is genuinely
+  pinned by `test_hjb_gfdm_bug15.py`.
+
+  Net for this change: **755 test lines deleted, −717 for the branch**; **6205 → 6176 collected**
+  (the two files carry 29 tests between them).
