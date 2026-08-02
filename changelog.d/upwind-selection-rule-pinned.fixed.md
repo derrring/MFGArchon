@@ -11,8 +11,9 @@
   and reads a spurious $-98.01$ on this fixture).
 
   Both branches are covered now. Only the increasing one had a test, so the forward branch — taken
-  whenever information travels left, which is half of every advection problem — was exercised by
-  nothing in `tests/unit/test_operators`. Found by a mutation sweep: inverting the rule left all 348
+  whenever information travels left, which is half of every advection problem — was *asserted* by
+  nothing in `tests/unit/test_operators`. It was executed: `test_result_shape` sends 22–25 of 50
+  random nodes down it, and checks only `.shape`. Found by a mutation sweep: inverting the rule left all 348
   tests in that directory green, and was caught only downstream, by
   `tests/integration/test_hjb_fdm_2d_validation.py::test_2d_solve_fixed_point`.
 
