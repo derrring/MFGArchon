@@ -10,10 +10,52 @@
 #         ./scripts/local_ci.sh --fast     # skip the test suite (lint/format/ratchet only)
 set -uo pipefail
 
-PY="${MFG_PYTHON:-python}"
 FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 cd "$(dirname "$0")/.."
+
+# Resolve the interpreter and the linter EXPLICITLY, because this script's callers do not agree
+# on the environment. Interactively it is run from an activated conda env, where bare `python`
+# and `ruff` resolve. The pre-push hook is not: pre-commit invokes it with its own PATH, conda
+# is not activated, and every single check then failed with `command not found` while the script
+# printed a per-check FAIL and `GATE RED -- do not push`. That is indistinguishable at a glance
+# from a real red gate on content, so the hook has never once been able to pass, and the habit it
+# produced was `--no-verify`.
+#
+# The import check is the load-bearing part, not the path search. A machine with any python on
+# PATH resolves the first candidate happily and then runs the "authoritative gate" against an
+# interpreter that cannot import the package under test -- a green-looking run that measured
+# nothing. Requiring `import mfgarchon` is the positive control that we found the right env.
+resolve_python() {
+  local candidate
+  for candidate in "${MFG_PYTHON:-}" python python3 \
+                   /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python; do
+    [[ -z "$candidate" ]] && continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import mfgarchon' >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! PY=$(resolve_python); then
+  printf '\n\033[31mGATE CANNOT RUN\033[0m -- no interpreter on PATH can `import mfgarchon`.\n'
+  printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so this\n'
+  printf 'says nothing about whether the change is sound. Activate the env (conda activate\n'
+  printf 'mfg_env) or set MFG_PYTHON to an interpreter with the package installed.\n'
+  exit 2
+fi
+
+# ruff ships in the same env; prefer its bin dir over whatever else is on PATH.
+RUFF="$(dirname "$PY")/ruff"
+[[ -x "$RUFF" ]] || RUFF="$(command -v ruff || true)"
+if [[ -z "$RUFF" ]]; then
+  printf '\n\033[31mGATE CANNOT RUN\033[0m -- ruff not found next to %s nor on PATH.\n' "$PY"
+  printf 'Environment failure, not a code failure -- nothing was measured.\n'
+  exit 2
+fi
 
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
@@ -29,17 +71,17 @@ check() {
 # real signal, but blocking the whole gate on it would be worse than running it.
 RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$(dirname "$0")/../.pre-commit-config.yaml" 2>/dev/null \
   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
-RUFF_HAVE=$(ruff --version 2>/dev/null | awk '{print $2}')
+RUFF_HAVE=$("$RUFF" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s on PATH, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
     "$RUFF_HAVE" "$RUFF_PIN"
 fi
 
 step "Ruff format"
-ruff format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
+"$RUFF" format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
-ruff check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
+"$RUFF" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
 
 step "Workflow integrity"
 # Parsing is NOT sufficient and this check knows it: a workflow gutted down to one job,
