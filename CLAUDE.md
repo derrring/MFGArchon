@@ -149,10 +149,12 @@ The axiom testing discipline governs **what** a test must cover (edge/stress/fai
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
-"Add a test" is **not** the default close-out for a fix here. Measured on this repo: ~200 kills
-across the six load-bearing conventions the discrimination ratchet tracks, in a 5,683-test suite —
-about **3.5%** of tests react when the physics the library exists to get right is broken; of the
-tests whose *names* claim `single_source` / `cross_path` / `_agree`, **60% are inert** (#1715). And
+"Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
+conventions the discrimination ratchet tracks are noticed by **192 distinct tests** out of 5,683 —
+**3.4%** react when the physics the library exists to get right is broken. (The baseline's kill
+counts sum to 200; 8 tests are killed by more than one mutation, so the sum over-counts and the
+honest figure is the lower one.) Of the tests whose *names* claim `single_source` / `cross_path` /
+`_agree`, **60% are inert** (#1715). And
 the yield runs the other way too: #1660's 17 nightly "failures" resolved as 8 fixture rot from the
 #1442 drift migration, 2 tests measuring the wrong quantity, 7 timeouts — **zero** product
 regressions caught by a test.
