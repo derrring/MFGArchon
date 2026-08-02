@@ -57,27 +57,25 @@ if TYPE_CHECKING:
 _MAX_OUTFLOW_HORIZON = 50.0
 
 
-def _boundary_datum_defeats_integrating_factor(seg: Any) -> str | None:
-    """Why this segment's data is not homogeneous, or None if it is safe.
+def _fp_boundary_conditions(fp_solver: Any, problem: Any) -> Any:
+    """The BC object the FP solve will actually impose.
 
-    Returns a phrase for the caller's message rather than a bool, so the error names the
-    specific reason instead of restating the rule.
+    NOT ``problem.geometry.boundary_conditions``. ``FPFDMSolver`` resolves its BC from a
+    documented hierarchy (``fp_fdm.py``) in which an explicit ``boundary_conditions=``
+    kwarg and ``problem.components.boundary_conditions`` both **outrank** geometry. The
+    solvers are constructor arguments here, so that cascade has already run by the time
+    this iterator is built, and the solver's own attribute is the single authoritative
+    answer.
+
+    #1802's first version of the guard read geometry instead, and both higher-priority
+    routes walked past it: the predicate flagged the object the solver used and returned
+    clean for the object the guard looked at. Falling back to geometry only when the
+    solver exposes nothing keeps non-FDM solvers covered.
     """
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
-
-    value = getattr(seg, "value", None)
-    if value is None:
-        return None
-    if isinstance(value, AdjointConsistentProvider):
-        # d_n log(exp(-q t) n) = d_n log(n): the provider reads a logarithmic derivative,
-        # so a t-dependent scalar multiple of the density leaves its data unchanged.
-        return None
-    if callable(value):
-        return "supplies boundary data through a callable, which cannot be shown to be zero"
-    arr = np.asarray(value, dtype=float)
-    if np.all(arr == 0.0):
-        return None
-    return f"carries non-zero boundary data ({arr.reshape(-1)[0]:.6g})"
+    resolved = getattr(fp_solver, "boundary_conditions", None)
+    if resolved is not None:
+        return resolved
+    return getattr(getattr(problem, "geometry", None), "boundary_conditions", None)
 
 
 @dataclass
@@ -225,28 +223,40 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         a larger change than the positivity fix this guard belongs to (Issue #1805).
 
         Zero data of ANY type is fine -- ``g = 0`` makes the condition homogeneous, so
-        no-flux, homogeneous Neumann and homogeneous Dirichlet all pass. Providers that
-        return a logarithmic derivative are also exact, because
-        ``d_n log(exp(-q t) n) = d_n log(n)``; ``AdjointConsistentProvider`` is the case in
-        the tree and is allowed by name rather than by guessing at a callable's range.
+        no-flux, homogeneous Neumann and homogeneous Dirichlet all pass. ``bc_types=None``
+        because the transform breaks on inhomogeneous data of *every* type, unlike #1686's
+        gate, which honours all types but Neumann.
+
+        Two things this guard got wrong on its first cut, both reachable by ordinary
+        constructor arguments and both returning the rescaled density:
+
+        - it read ``problem.geometry.boundary_conditions`` while the solve uses what the FP
+          solver resolved, and geometry is only third in that hierarchy. See
+          ``_fp_boundary_conditions``.
+        - it iterated ``segments`` and never read ``default_bc``/``default_value``. A
+          fall-through wall carries data too; #1686 had already closed that exact hole in
+          ``base_solver.py`` 300 lines away, which is why the predicate is now shared
+          rather than restated here.
         """
+        from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
+
         for k in range(K):
             if self._outflow_rate(k, K, Q) == 0.0:
                 continue  # no factor is applied to this regime, so nothing is rescaled
-            for seg in getattr(self._problems[k].geometry.boundary_conditions, "segments", ()) or ():
-                offence = _boundary_datum_defeats_integrating_factor(seg)
-                if offence is not None:
-                    msg = (
-                        f"RegimeSwitchingIterator[regime {k}]: boundary segment "
-                        f"{seg.name!r} ({seg.bc_type}) {offence}. Since Issue #1681 the diagonal "
-                        "outflow is carried by the factor exp(-q_k t), which is exact only for "
-                        "boundary conditions that are homogeneous in the density; with data g != 0 "
-                        "the solve would return g*exp(-q_k t) at the boundary instead of g, "
-                        "silently. Use homogeneous data (no-flux, or zero Dirichlet/Neumann), or "
-                        "an AdjointConsistentProvider, whose log-derivative is invariant. "
-                        "Inhomogeneous data on a regime with q_k > 0 is Issue #1805."
-                    )
-                    raise ValueError(msg)
+            bc = _fp_boundary_conditions(self._fp[k], self._problems[k])
+            offences = describe_inhomogeneous_bc_data(bc, bc_types=None)
+            if offences:
+                msg = (
+                    f"RegimeSwitchingIterator[regime {k}]: the boundary conditions this FP solver "
+                    f"will impose carry data that is not verifiably zero: {offences}. Since Issue "
+                    "#1681 the diagonal outflow is carried by the factor exp(-q_k t), which is "
+                    "exact only for boundary conditions homogeneous in the density; with data "
+                    "g != 0 the solve would return g*exp(-q_k t) at the boundary instead of g, "
+                    "silently. Use homogeneous data -- no-flux, or zero Dirichlet/Neumann, on "
+                    "both the segments and the fall-through default. Inhomogeneous data on a "
+                    "regime with q_k > 0 is Issue #1805."
+                )
+                raise ValueError(msg)
 
     def _assert_outflow_horizon_representable(self, K: int, Q: NDArray) -> None:
         """Refuse a horizon on which the diagonal integrating factor loses the density.

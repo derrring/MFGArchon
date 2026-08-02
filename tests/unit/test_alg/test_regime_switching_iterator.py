@@ -493,25 +493,50 @@ class TestDiagonalOutflowIsNotALaggedSource:
                 fp_solvers=[FPFDMSolver(p) for p in problems],
             )
 
-    def test_inhomogeneous_fp_boundary_data_is_refused(self):
+    # Every route by which inhomogeneous data can reach the FP solve. The first version of
+    # this pin covered only `geometry`, and review proved the other three walked past the
+    # guard and returned m(T,x) = 0.180967 / 0.163746 against an intended 0.2 -- exactly
+    # g*exp(-q_k T) at two different rates. Parametrised so adding a route is one line.
+    @pytest.mark.parametrize(
+        "route",
+        ["geometry", "fp_solver_kwarg", "problem_components", "default_bc_fallthrough"],
+    )
+    def test_inhomogeneous_fp_boundary_data_is_refused(self, route):
         """The factor is exact only for homogeneous BCs; inhomogeneous data must not solve.
 
-        Before the guard, ``dirichlet_bc(value=0.2)`` returned ``m(T, x_min) = 0.180967`` and
-        ``0.163746`` for ``q_k = 0.1`` and ``0.2`` -- both exactly ``0.2 * exp(-q_k T)``. The solve
-        succeeded and reported nothing.
+        `geometry` is third in FPFDMSolver's resolution hierarchy, so a guard that reads it
+        sees a clean object while the solver imposes a dirty one; `default_bc_fallthrough`
+        is the channel #1686 had already found in `base_solver.py`.
         """
-        from mfgarchon.geometry.boundary import dirichlet_bc
+        from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc
 
         problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
-        for p in problems:
-            p.geometry.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        fp_kwargs = {}
+        if route == "geometry":
+            for p in problems:
+                p.geometry.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        elif route == "fp_solver_kwarg":
+            fp_kwargs = {"boundary_conditions": dirichlet_bc(value=0.2, dimension=1)}
+        elif route == "problem_components":
+            for p in problems:
+                p.components.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        elif route == "default_bc_fallthrough":
+            for p in problems:
+                p.geometry.boundary_conditions = BoundaryConditions(
+                    dimension=1,
+                    segments=[BCSegment(name="left0", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min")],
+                    default_bc=BCType.DIRICHLET,
+                    default_value=0.2,
+                    domain_bounds=[[0.0, 1.0]],
+                )
+
         Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
-        with pytest.raises(ValueError, match=r"non-zero boundary data"):
+        with pytest.raises(ValueError, match=r"not verifiably zero"):
             RegimeSwitchingIterator(
                 problems=problems,
                 regime_config=RegimeSwitchingConfig(transition_matrix=Q),
                 hjb_solvers=[HJBFDMSolver(p) for p in problems],
-                fp_solvers=[FPFDMSolver(p) for p in problems],
+                fp_solvers=[FPFDMSolver(p, **fp_kwargs) for p in problems],
             )
 
     def test_homogeneous_boundary_data_still_constructs(self):

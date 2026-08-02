@@ -186,3 +186,83 @@ def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternati
             f"which wall carries which condition. {alternative}"
         )
     return get_bc_type_string(boundary_conditions)
+
+
+def describe_inhomogeneous_bc_data(
+    boundary_conditions: Any,
+    *,
+    bc_types: set[Any] | None = None,
+) -> list[object]:
+    """Values attached to ``boundary_conditions`` that are not verifiably zero.
+
+    One owner for the question "is this boundary datum ``g = 0``?", asked by every guard
+    that honours only the homogeneous case. Returns a sorted, de-duplicated list of
+    descriptions, empty when every datum in scope is provably zero.
+
+    Two channels, and both are load-bearing:
+
+    - each entry in ``segments``;
+    - the **fall-through** ``default_bc`` / ``default_value``, which is a value too. Issue
+      #1686 recorded that checking only ``segments`` left the original silent discard
+      reachable through ``default_bc=NEUMANN, default_value=g``, and #1802's first guard
+      reproduced that hole 300 lines away, which is why this lives in one place now.
+
+    Anything that cannot be compared to zero here -- a provider, a callable, an
+    unrecognised type -- is **described rather than assumed homogeneous**, so the caller
+    refuses it. ``isinstance(value, (int, float))`` alone would accept
+    ``neumann_bc(value=lambda t: 5.0)`` and discard it silently, which is the behaviour
+    these gates exist to stop.
+
+    Args:
+        boundary_conditions: a ``BoundaryConditions``-like object. Anything without
+            ``segments`` is not one (a string sentinel, ``None``) and yields ``[]``.
+        bc_types: restrict to segments/defaults of these ``BCType``\\ s. ``None`` means
+            every type, which is what a caller whose transform breaks on ANY inhomogeneous
+            condition wants; a caller that honours only one type passes that type.
+
+    Returns:
+        Descriptions of the offending values, e.g. ``[0.2]``, ``['<callable>']``.
+    """
+    import numpy as np
+
+    from mfgarchon.geometry.boundary.providers import is_provider
+
+    def _describe(value: Any) -> object | None:
+        """A description if this value is not verifiably zero, else None.
+
+        ``float()`` is reached only for things it accepts: an array or a provider would
+        otherwise raise TypeError out of a capability gate, and an all-zero array is a
+        legitimate ``g = 0`` that must not crash.
+        """
+        if value is None:
+            return None
+        if is_provider(value):
+            return "<provider>"
+        if callable(value):
+            return "<callable>"
+        if isinstance(value, np.ndarray):
+            return None if not value.any() else "<array>"
+        try:
+            return None if float(value) == 0.0 else float(value)
+        except (TypeError, ValueError):
+            return f"<unrecognised {type(value).__name__}>"
+
+    segments = getattr(boundary_conditions, "segments", None)
+    if segments is None:
+        return []
+
+    found: list[object] = []
+    for seg in segments:
+        if bc_types is not None and seg.bc_type not in bc_types:
+            continue
+        described = _describe(getattr(seg, "value", None))
+        if described is not None:
+            found.append(described)
+
+    default_bc = getattr(boundary_conditions, "default_bc", None)
+    if default_bc is not None and (bc_types is None or default_bc in bc_types):
+        described = _describe(getattr(boundary_conditions, "default_value", None))
+        if described is not None:
+            found.append(described)
+
+    return sorted(set(found), key=repr)
