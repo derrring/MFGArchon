@@ -270,11 +270,18 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         """
         for k in range(K):
             q_k = self._outflow_rate(k, K, Q)
-            span = q_k * self._problems[k].T
+            # Nt*dt, NOT T. The factor is evaluated on the grid _undo_integrating_factor
+            # builds -- `np.arange(Nt + 1) * dt` -- and `dt` is computed once in
+            # MFGProblem.__init__ while `T` stays publicly assignable (#1797), so the two
+            # disagree exactly when someone sets T afterwards. Measuring T would have this
+            # guard checking a horizon the transform never spans.
+            p = self._problems[k]
+            span = q_k * p.Nt * p.dt
             if span > _MAX_OUTFLOW_HORIZON:
                 msg = (
                     f"RegimeSwitchingIterator[regime {k}]: total outflow rate q_k={q_k:.4g} over "
-                    f"horizon T={self._problems[k].T:.4g} gives q_k*T={span:.4g}, above the limit "
+                    f"the solved horizon Nt*dt={p.Nt * p.dt:.4g} (problem.T reads {p.T:.4g}) gives "
+                    f"q_k*T={span:.4g}, above the limit "
                     f"{_MAX_OUTFLOW_HORIZON:.0f} at which the diagonal integrating factor "
                     "(Issue #1681) stays accurate in float64. Shorten T, lower the transition "
                     "rates, or solve the horizon in segments and restart the iterator from the "
@@ -403,6 +410,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # The repo already treats a construction-time BC snapshot as a defect class:
         # fp_semi_lagrangian_adjoint.py declines to cache the geometry's BC for this reason,
         # and #1699 records the same bypass for _validate_bc_support.
+        # validate() first: both asserts below document the generator structure it establishes
+        # (non-negative off-diagonals, zero row sums) as their precondition, and Q is the same
+        # mutable array they re-read.
+        self._regime.validate()
         self._assert_outflow_horizon_representable(K, Q)
         self._assert_fp_boundary_data_is_homogeneous(K, Q)
 
