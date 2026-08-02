@@ -23,8 +23,14 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 
-def _make_problem(coupling_strength: float = 1.0, sigma: float = 0.3) -> MFGProblem:
-    """Create a simple 1D MFG problem for one regime."""
+def _make_problem(coupling_strength: float = 1.0, sigma: float = 0.3, T: float = 0.5, Nt: int = 10) -> MFGProblem:
+    """Create a simple 1D MFG problem for one regime.
+
+    ``T``/``Nt`` are constructor parameters because ``dt`` is a plain attribute computed
+    once in ``__init__``: assigning ``problem.T`` afterwards leaves ``dt`` at its old value
+    and the problem then reports a horizon its own time grid does not span. Measured:
+    ``T=0.5, Nt=10`` gives ``dt=0.05``, and ``p.T = 1.0`` leaves ``dt=0.05``.
+    """
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: coupling_strength * m,
@@ -39,8 +45,8 @@ def _make_problem(coupling_strength: float = 1.0, sigma: float = 0.3) -> MFGProb
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0)], Nx_points=[31 + 1], boundary_conditions=no_flux_bc(dimension=1)
         ),
-        T=0.5,
-        Nt=10,
+        T=T,
+        Nt=Nt,
         sigma=sigma,
         components=components,
     )
@@ -292,6 +298,37 @@ class TestRegimeSwitchingCrossTermSign:
         np.testing.assert_allclose(src0(0.0, x), Q[1, 0] * m1 * np.ones(N))
         assert (src0(0.0, x) > 0).all(), "inflow must be non-negative; the scheme's positivity rests on it"
 
+    def test_inflow_is_pre_scaled_by_the_integrating_factor_at_every_t(self):
+        """Both halves of the substitution, pinned as an identity rather than an error bound.
+
+        ``m^k = exp(-q_k t) n^k`` only reproduces the intended equation if the source carries
+        ``exp(+q_k t)``. Dropping that scaling while keeping the recovery factor damps the
+        INFLOW instead of the outflow -- silently wrong physics, and the whole unit suite
+        passed under it. The closed-form test could not see it because at t=0 the factor is 1
+        and this class had checked nowhere else. So assert the factor directly, at t>0.
+        """
+        iterator, problems, Q = self._iterator()
+        Nt, N = problems[0].Nt, 5
+        x = np.linspace(0.0, 1.0, N)
+        m0, m1 = 0.7, 0.3
+        Ms = [m0 * np.ones((Nt + 1, N)), m1 * np.ones((Nt + 1, N))]
+
+        q_0 = iterator._outflow_rate(0, 2, Q)
+        src0 = iterator._make_fp_source(0, 2, Q, Ms)
+        for t in (problems[0].dt, 3 * problems[0].dt, problems[0].T):
+            np.testing.assert_allclose(
+                src0(t, x),
+                np.exp(q_0 * t) * Q[1, 0] * m1 * np.ones(N),
+                err_msg=f"source at t={t} is not exp(+q_k t)-scaled; the substitution is half-applied",
+            )
+        # And the two halves must cancel: source * recovery == the un-substituted inflow.
+        t_grid = np.arange(Nt + 1) * problems[0].dt
+        scaled = np.array([src0(t, x) for t in t_grid])
+        np.testing.assert_allclose(
+            iterator._undo_integrating_factor(0, q_0, scaled),
+            Q[1, 0] * m1 * np.ones((Nt + 1, N)),
+        )
+
     def test_fp_outflow_is_a_decay_with_the_rate_the_generator_names(self):
         """Same sign as before #1681 (mass leaves regime k), now on the factor channel."""
         iterator, problems, Q = self._iterator()
@@ -383,9 +420,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
     """
 
     def _solve(self, Nt=10, T=1.0, max_iterations=3):
-        problems = [_make_problem(coupling_strength=c, sigma=0.1) for c in (1.0, 0.5)]
-        for p in problems:
-            p.T, p.Nt = T, Nt
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=T, Nt=Nt) for c in (1.0, 0.5)]
         Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
         iterator = RegimeSwitchingIterator(
             problems=problems,
