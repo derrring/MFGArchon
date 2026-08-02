@@ -30,7 +30,7 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
   printf '\n\033[31mGATE CANNOT RUN\033[0m -- %s\n' "$1"
   printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
   printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
-  printf 'or set MFG_PYTHON to an interpreter with the package and the test tooling installed.\n'
+  printf 'or set MFG_PYTHON to an interpreter with that tooling installed.\n'
   exit 2
 }
 
@@ -58,22 +58,47 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
 # every relative interpreter -- `.venv/bin/python`, the commonest project-local layout -- while
 # claiming it could not import the package. It could; only the probe's `cd` could not find it.
 #
-# Which modules must import depends on what will actually run, so that --fast (pure AST and file
-# scanning, per CLAUDE.md the iterate-while-working mode) is not gated on the test tooling it
-# never invokes. `yaml` is in the list because the workflow-integrity step needs it and it is NOT
-# a declared dependency -- it arrives transitively via omegaconf, so an environment can satisfy
-# `import mfgarchon` and still fail that step with a bare ModuleNotFoundError under a GATE RED.
+# The probe tests TOOLING, never the package under test. That distinction is the point, and
+# getting it wrong inverts this script's whole thesis: under the editable install this repo uses,
+# `import mfgarchon` eagerly loads 268 submodules -- the very tree being reviewed -- so a branch
+# whose `__init__` is mid-refactor made the probe fail, and the gate then announced "ENVIRONMENT
+# failure, not a code failure: nothing was measured" over what was purely a code failure, with an
+# exit code telling the reader not to look at the code. `main` ran the ruff and ratchet checks and
+# reported it correctly.
+#
+# So `mfgarchon` is a PREFERENCE for choosing between interpreters (pass 1 below), never a reason
+# to refuse. If the package does not import, the checks that need it say so, with the traceback,
+# under a GATE RED -- which is a verdict about content, and is the true one.
+#
+# What must import is what will actually run. `--fast` (ruff plus three stdlib-only AST scanners,
+# per CLAUDE.md the iterate-while-working mode) needs neither the package nor the test tooling.
+# `yaml` is listed because the workflow-integrity step needs it and it is NOT a declared
+# dependency -- it arrives transitively via omegaconf, so an environment can look complete and
+# still fail that step with a bare ModuleNotFoundError under a GATE RED.
 probe_modules() {
-  if [[ $FAST -eq 1 ]]; then printf 'mfgarchon, yaml'; else printf 'mfgarchon, yaml, pytest, xdist'; fi
+  if [[ $FAST -eq 1 ]]; then printf 'yaml'; else printf 'yaml, pytest, xdist'; fi
 }
 
+# Usage: resolved_python <candidate> [with_package]
+# Echoes the absolute interpreter path on success. `probe_err` carries the interpreter's own
+# stderr, because discarding it leaves "no module named xdist" indistinguishable from a traceback
+# out of the package -- which is exactly the distinction the message above has to get right.
+# The file, not a variable: `PY=$(resolved_python ...)` runs the function in a SUBSHELL, so any
+# variable it sets is discarded before the caller can read it. Writing to a path the parent knows
+# is what makes the interpreter's own stderr survive the capture.
+PROBE_ERR_FILE=$(mktemp) || PROBE_ERR_FILE=/dev/null
+trap 'rm -f "$PROBE_ERR_FILE"' EXIT INT TERM
+probe_err() { tail -3 "$PROBE_ERR_FILE" 2>/dev/null; }
+
 resolved_python() {
-  local candidate=$1 out probe_dir
+  local candidate=$1 want_package=${2:-} out probe_dir modules
   candidate=$(command -v "$candidate" 2>/dev/null) || return 1
   [[ -n "$candidate" ]] || return 1
   [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
+  modules=$(probe_modules)
+  [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
   probe_dir=$(mktemp -d) || return 1
-  out=$(cd "$probe_dir" && "$candidate" -c "import $(probe_modules), sys; sys.stdout.write('MFGARCHON_OK')" 2>/dev/null)
+  out=$(cd "$probe_dir" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"$PROBE_ERR_FILE")
   rm -rf "$probe_dir"
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
   printf '%s' "$candidate"
@@ -87,18 +112,32 @@ resolved_python() {
 # `+x`, not `:-`: an explicitly EMPTY MFG_PYTHON is still an operator statement, and it is what
 # `MFG_PYTHON="$SOME_UNSET_VAR"` produces. Under `-n` it read as unset and silently searched --
 # the one surviving fall-through beneath an absolute "it is used or nothing is" claim.
+CANDIDATES=(python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python)
+
 if [[ -n "${MFG_PYTHON+x}" ]]; then
   PY=$(resolved_python "$MFG_PYTHON") \
-    || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} cannot import $(probe_modules) (probed from a
-scratch directory outside the source tree). It is set explicitly, so it is used or nothing is:
-this does NOT fall back to another interpreter."
+    || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
+$(probe_modules), probed from a scratch directory outside the source tree.
+$(probe_err)
+It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
 else
+  # Pass 1 prefers an interpreter that ALSO imports the package, so that on a normal machine the
+  # gate picks the project env rather than whichever python happens to carry pytest.
   PY=""
-  for candidate in python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python; do
-    if PY=$(resolved_python "$candidate"); then break; fi
+  for candidate in "${CANDIDATES[@]}"; do
+    if PY=$(resolved_python "$candidate" with_package); then break; fi
     PY=""
   done
-  [[ -n "$PY" ]] || cannot_run "no interpreter on PATH can import $(probe_modules)."
+  # Pass 2 drops that preference. Refusing here would turn a broken package into an "environment
+  # failure" verdict; instead the gate runs, and the checks that need the package report why.
+  if [[ -z "$PY" ]]; then
+    for candidate in "${CANDIDATES[@]}"; do
+      if PY=$(resolved_python "$candidate"); then break; fi
+      PY=""
+    done
+  fi
+  [[ -n "$PY" ]] || cannot_run "no interpreter found that can import $(probe_modules).
+$(probe_err)"
 fi
 
 # `-m ruff`, not a path next to $PY: `dirname` is wrong for any shimmed or symlinked interpreter
@@ -214,6 +253,7 @@ else
 fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
+printf 'gate ruff        : %s\n' "$("$PY" -m ruff --version 2>&1)"
 if [[ $fail -eq 0 ]]; then
   printf '\033[32mGATE GREEN\033[0m -- safe to push.\n'
 else
