@@ -132,7 +132,13 @@ class TestGradientUpwind:
 
     @pytest.mark.unit
     def test_monotone_increasing(self):
-        """For monotone increasing u, upwind should select backward difference."""
+        """Accuracy on monotone increasing u: gradient_upwind is within 0.02 of 2x.
+
+        This does NOT check which branch was selected, despite what its name suggests. Forward
+        and backward differences are equal in magnitude on ``u = x**2``, so inverting the
+        selection leaves this green at any tolerance. The selection is pinned by identity in
+        ``test_selection_rule_is_the_godunov_one_not_merely_accurate`` below.
+        """
         n = 100
         x = np.linspace(0, 1, n, endpoint=False)
         h = x[1] - x[0]
@@ -158,9 +164,11 @@ class TestGradientUpwind:
         What separates them is the value: at x = 0.5, backward = 0.990000 and forward = 1.010000,
         differing by exactly h*u'' = 0.02. So compare against the stencil functions directly.
 
-        Both branches are covered. Only the increasing one had a test, so the forward branch --
-        reached whenever information travels left, which is half of every advection problem -- was
-        exercised by nothing in this directory.
+        Both branches are covered. What was missing is a test that can SEE which one was taken:
+        the forward branch executes on every run of `test_result_shape` (its `np.random.randn(50)`
+        sends a mean of 25 nodes of 50 down it, and zero of 20000 replications sent none), but that
+        test asserts only the output shape, so inverting the selection leaves it green. Line
+        coverage of the branch was never the gap; a discriminating assertion was.
 
         Interior only: these stencils use ``np.roll``, so at node 0 the backward difference wraps
         to node n-1 and reads a spurious -98.01 on this fixture. The wraparound is the caller's

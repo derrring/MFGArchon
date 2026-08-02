@@ -12,8 +12,10 @@
 
   Both branches are covered now. Only the increasing one had a test, so the forward branch — taken
   whenever information travels left, which is half of every advection problem — was *asserted* by
-  nothing in `tests/unit/test_operators`. It was executed: `test_result_shape` sends 22–25 of 50
-  random nodes down it, and checks only `.shape`. Found by a mutation sweep: inverting the rule left all 348
+  nothing in `tests/unit/test_operators`. It was executed: `test_result_shape` sends a mean of 25
+  of its 50 random nodes down it — zero of 20000 replications sent none — and checks only `.shape`.
+  (The draw is unseeded, so the count is a random variable; an earlier version of this line quoted
+  a 22–25 window that holds on 55% of runs.) Found by a mutation sweep: inverting the rule left all 348
   tests in that directory green, and was caught only downstream, by
   `tests/integration/test_hjb_fdm_2d_validation.py::test_2d_solve_fixed_point`.
 
