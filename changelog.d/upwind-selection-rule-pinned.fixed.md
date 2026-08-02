@@ -15,3 +15,18 @@
   nothing in `tests/unit/test_operators`. Found by a mutation sweep: inverting the rule left all 348
   tests in that directory green, and was caught only downstream, by
   `tests/integration/test_hjb_fdm_2d_validation.py::test_2d_solve_fixed_point`.
+
+  Review found the first version's vacuity guard vacuous in the same way it was written to prevent:
+  it compared the FULL arrays while the identities it certifies are asserted on `[1:-1]`, so node
+  0's wraparound alone satisfied it. On a linear fixture both identities pass vacuously (interior
+  forward == backward) and the guard still reported "they differ". It now uses the same slice, on
+  both fixtures.
+
+  Review also found three non-equivalent mutations surviving, all in the *predicate* rather than
+  the branch bodies: `>=` weakened to `>`, and the predicate reading `grad_forward` or
+  `grad_backward` instead of `grad_central`. Strictly monotone fixtures never reach
+  `grad_central == 0`, so they pin which stencil each branch returns and not the rule choosing
+  between them — and that rule is what makes the scheme Godunov. A quadratic with an interior
+  extremum lands a node exactly on the tie. **Both** signs are needed: at a maximum `grad_backward`
+  is positive and a `grad_backward` predicate agrees by coincidence; at a minimum it is negative
+  and they part. All five mutations now redden.
