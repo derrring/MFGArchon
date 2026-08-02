@@ -96,8 +96,9 @@ core = [
     "typing-inspection",
 ]
 
-# torch is live -- it backs mfgarchon.backends and utils/acceleration. The rest serve only
-# alg/neural and alg/reinforcement, which are FROZEN design prototypes (CLAUDE.md).
+# torch is live -- it backs mfgarchon.backends and utils/acceleration. Of the rest, gymnasium and
+# stable-baselines3 serve only alg/reinforcement, a FROZEN design prototype (CLAUDE.md), and
+# tensorboard serves nothing.
 nn = [
     "torch>=2.0",              # PyTorch: backends/, utils/acceleration/ (live), and DGM/PINN (frozen)
     "gymnasium>=0.29",         # frozen RL only: zero importers outside alg/reinforcement/
@@ -107,7 +108,8 @@ nn = [
 
 # Everything: default + nn + JAX + performance + advanced viz
 all = [
-    # Same as [nn]: torch is live, the rest serve only the frozen alg/neural + alg/reinforcement
+    # Same as [nn]: torch is live; gymnasium and stable-baselines3 serve only the frozen
+    # alg/reinforcement, and tensorboard has no importer anywhere in the repo.
     "torch>=2.0",
     "gymnasium>=0.29",
     "stable-baselines3>=2.0",

@@ -9,9 +9,11 @@
   dotted module path, so the rule that made the enumeration correct is the rule that made it blind.
   A marker sweep keyed on import paths cannot see a capability claim that does not import.
 
-  The `[nn]` extra line is split rather than marked wholesale: measured, `torch` serves five
-  non-frozen modules (`backends/`, `utils/acceleration/`) while `gymnasium` and `stable-baselines3`
-  have zero importers outside `alg/reinforcement/`.
+  The `[nn]` extra line is split rather than marked wholesale: measured, `torch` is imported by
+  four non-frozen modules (three under `backends/`, one under `utils/acceleration/`) while
+  `gymnasium` and `stable-baselines3` have zero importers outside `alg/reinforcement/` and
+  `tensorboard` has none anywhere. (`utils/dependencies.py` names `torch` in a string for
+  `is_available` and does not import it, so it is not a fifth.)
 
   Review found the first pass had marked the bullet list and missed the two strongest claims in the
   same file: the one-line project description (`...GPU acceleration, and reinforcement learning`)
