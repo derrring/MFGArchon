@@ -225,3 +225,66 @@ jobs:
               labels: ['automated', 'area: testing', 'priority: high', 'type: bug'],
             });
           }
+
+  # The closing edge. notify-on-failure had only an opening one: it filed or commented when a run
+  # was not green and did nothing when one was, so every issue it created outlived its own cause
+  # until a human swept it. #1703 sat open at `priority: high` through eight consecutive green
+  # nightlies for exactly that reason (Issue #1806).
+  resolve-on-success:
+    needs: [full-test-suite, capability-matrix]
+    # Requires both dependencies to be literally 'success'. NOT `success()` and not "the absence of
+    # failure": notify-on-failure documents why -- a shard that blows the timeout reports
+    # `cancelled`, and treating not-failed as green would close the issue on the runs that most
+    # need it open.
+    if: >-
+      ${{ needs.full-test-suite.result == 'success'
+          && needs.capability-matrix.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/github-script@v9
+      with:
+        script: |
+          const date = new Date().toISOString().split('T')[0];
+          const title = 'Nightly full test suite is failing';
+          const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          // Match on title AND the `automated` label, the same pair notify-on-failure creates
+          // with. A human-filed issue that happens to share the title carries no `automated`
+          // label and must survive: a robot closing a person's issue is worse than a stale one.
+          const existing = await github.paginate(github.rest.issues.listForRepo, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            labels: 'automated',
+            per_page: 100,
+          });
+          // `issues.listForRepo` returns pull requests too -- GitHub's REST API treats every
+          // PR as an issue -- and this job CLOSES what it selects, unlike the notifier which
+          // only comments. Identify them by the `pull_request` key and skip them.
+          const open = existing.find(i => i.title === title && !i.pull_request);
+          if (!open) {
+            core.info('No open automated nightly-failure issue to resolve.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: open.number,
+            body: [
+              `Nightly is green as of ${date}; closing.`,
+              '',
+              `Run: ${url}`,
+              '',
+              'Filed and closed by `nightly.yml`. If the suite breaks again a new issue is opened',
+              'rather than this one reopened, so each report carries the run that produced it.',
+            ].join('\n'),
+          });
+          await github.rest.issues.update({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: open.number,
+            state: 'closed',
+            state_reason: 'completed',
+          });
+          core.info(`Closed #${open.number}.`);
