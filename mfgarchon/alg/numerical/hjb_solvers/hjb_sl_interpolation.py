@@ -177,12 +177,35 @@ def interpolate_value_nd(
 #       axis, an unknown method name -- returns silently.
 HONOURED_METHODS_1D = frozenset({"linear", "cubic"})
 HONOURED_METHODS_ND = frozenset({"linear", "slinear", "nearest", "cubic", "quintic"})
-MIN_POINTS_PER_AXIS = {"linear": 2, "slinear": 2, "nearest": 1, "cubic": 4, "quintic": 6}
+
+# Minimum points per axis, PER DIMENSION, because the two paths use different machinery and
+# therefore have different boundaries. Measured, not read from docs:
+#
+#   nD: `RegularGridInterpolator` under THIS module's construction arguments
+#       (`bounds_error=False, fill_value=None`). Those arguments matter -- with scipy's
+#       defaults `linear` and `nearest` measure 2 rather than 1, because querying an interior
+#       point on a one-point axis is then out of bounds and raises for a different reason.
+#       Pinned against scipy directly in the test suite, since for these numbers scipy IS the
+#       external oracle.
+#   1D: `PchipInterpolator` / `CubicSpline`, which never touch RegularGridInterpolator. They do
+#       not raise on a short grid -- they return the LINEAR value, which is the failure this
+#       module is guarding against. Measured on a non-linear profile: at n=2 cubic and linear
+#       agree exactly (so cubic is not honoured), at n=3 they differ (0.7477 vs 0.9256), so the
+#       1D boundary is 3. Applying the nD table here refused a configuration in which cubic was
+#       genuinely honoured -- the inverse of the defect this guard exists to fix.
+MIN_POINTS_PER_AXIS_ND = {"linear": 1, "slinear": 2, "nearest": 1, "cubic": 4, "quintic": 6}
+MIN_POINTS_PER_AXIS_1D = {"linear": 2, "cubic": 3}
 
 
 def honoured_methods(dimension: int) -> frozenset[str]:
     """The interpolation methods this module honours at ``dimension``."""
     return HONOURED_METHODS_1D if dimension == 1 else HONOURED_METHODS_ND
+
+
+def min_points_per_axis(method: str, dimension: int) -> int:
+    """Smallest per-axis point count at which ``method`` is honoured at ``dimension``."""
+    table = MIN_POINTS_PER_AXIS_1D if dimension == 1 else MIN_POINTS_PER_AXIS_ND
+    return table.get(method, 1)
 
 
 def interpolate_value_rbf_fallback(

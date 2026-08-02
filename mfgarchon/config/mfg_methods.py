@@ -271,7 +271,12 @@ class SLConfig(BaseConfig):
 
     Attributes
     ----------
-    interpolation_method : Literal["linear", "cubic", "rbf"]
+    interpolation_method : Literal["linear", "slinear", "nearest", "cubic", "quintic"]
+        Interpolation for the semi-Lagrangian lookup. NOT every value is honoured at
+        every dimension -- 1D honours only "linear" and "cubic" -- and the solver
+        refuses the combinations it would otherwise silently downgrade (Issue #1809).
+        "rbf" was accepted here and is not an interpolation method the solver has ever
+        implemented; it reached the solver and returned linear.
         Interpolation method for foot-of-characteristic (default: cubic)
     rk_order : Literal[1, 2, 3, 4]
         Runge-Kutta order for characteristic tracing (default: 2)
@@ -279,7 +284,7 @@ class SLConfig(BaseConfig):
         CFL number for stability (default: 0.5)
     """
 
-    interpolation_method: Literal["linear", "cubic", "rbf"] = "cubic"
+    interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"
     rk_order: Literal[1, 2, 3, 4] = 2
     cfl_number: float = Field(default=0.5, gt=0, le=1.0)
 

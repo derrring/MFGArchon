@@ -27,10 +27,12 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_interpolation import (
-    MIN_POINTS_PER_AXIS,
+    HONOURED_METHODS_ND,
+    MIN_POINTS_PER_AXIS_ND,
     honoured_methods,
     interpolate_value_1d,
     interpolate_value_nd,
+    min_points_per_axis,
 )
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -97,14 +99,17 @@ class TestUnhonouredMethodsAreRefused:
 class TestGridTooSmallForTheMethodIsRefused:
     @pytest.mark.parametrize(("method", "n"), [("cubic", 3), ("quintic", 5)], ids=["cubic-on-3", "quintic-on-5"])
     def test_below_the_per_axis_minimum_is_refused(self, method, n):
-        assert n < MIN_POINTS_PER_AXIS[method], "fixture must actually be below the minimum"
-        with pytest.raises(ValueError, match=r"needs at least \d+ points per axis"):
+        need = min_points_per_axis(method, 2)
+        assert n < need, "fixture must actually be below the minimum"
+        # The stated number, not `\d+`: a message that announces a different minimum than the
+        # one enforced is a silent drift, and `\d+` matched it happily.
+        with pytest.raises(ValueError, match=rf"needs at least {need} points per axis"):
             HJBSemiLagrangianSolver(_problem(2, n), interpolation_method=method)
 
     @pytest.mark.parametrize(("method", "n"), [("cubic", 4), ("quintic", 6)], ids=["cubic-at-4", "quintic-at-6"])
     def test_exactly_at_the_minimum_is_accepted(self, method, n):
         """The boundary of the refusal, on the accepting side -- an off-by-one here refuses valid work."""
-        assert n == MIN_POINTS_PER_AXIS[method]
+        assert n == min_points_per_axis(method, 2)
         HJBSemiLagrangianSolver(_problem(2, n), interpolation_method=method)
 
 
@@ -126,3 +131,94 @@ class TestHonouredConfigurationsStillConstruct:
     def test_every_honoured_combination_constructs(self, dimension, n, method):
         solver = HJBSemiLagrangianSolver(_problem(dimension, n), interpolation_method=method)
         assert solver.interpolation_method == method
+
+
+class TestTheMinimaAreAnchoredToScipy:
+    """For the per-axis minima, scipy IS the external oracle -- so consult it, not our table.
+
+    Every other assertion in this file re-reads the same dict the guard reads, which cannot
+    detect the dict being wrong. If scipy ever changed a minimum, the guard would accept a grid
+    the interpolator then refuses at runtime, and #1664's silent RBF-to-nearest degradation would
+    reopen behind a green suite. This is the one part of the change with a law outside the code.
+    """
+
+    @pytest.mark.parametrize("method", sorted(HONOURED_METHODS_ND))
+    def test_scipy_agrees_with_the_nd_table(self, method):
+        from scipy.interpolate import RegularGridInterpolator
+
+        need = MIN_POINTS_PER_AXIS_ND[method]
+
+        def rgi_works(n: int) -> bool:
+            coords = (np.linspace(0.0, 1.0, n),) * 2
+            try:  # exactly the construction hjb_sl_interpolation uses
+                RegularGridInterpolator(coords, np.zeros((n, n)), method=method, bounds_error=False, fill_value=None)(
+                    np.array([[0.5, 0.5]])
+                )
+            except Exception:
+                return False
+            return True
+
+        assert rgi_works(need), f"table says {method} needs {need} points, scipy refuses that"
+        if need > 1:
+            assert not rgi_works(need - 1), f"table says {method} needs {need}, but scipy accepts {need - 1}"
+
+
+class TestTheRefusalNamesTheRightAxis:
+    """The axis number is what the message tells the user to act on, so pin it.
+
+    Every other refusal fixture is isotropic `(n, n)`, where reporting the first or the last
+    short axis is indistinguishable.
+    """
+
+    # The third case is the discriminating one. With a single short axis, reporting the first or
+    # the last short axis selects the same element, and a mutation swapping them survives. Two
+    # short axes of DIFFERENT lengths separate them: first is (axis 0, n=3), last is (axis 1, n=2).
+    @pytest.mark.parametrize(
+        ("shape", "expected_axis", "expected_n"),
+        [((3, 20), 0, 3), ((20, 3), 1, 3), ((3, 2), 0, 3)],
+        ids=["short-first", "short-last", "both-short-different-lengths"],
+    )
+    def test_the_short_axis_is_identified(self, shape, expected_axis, expected_n):
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0), (0.0, 1.0)],
+                Nx_points=list(shape),
+                boundary_conditions=no_flux_bc(dimension=2),
+            ),
+            T=0.5,
+            Nt=5,
+            sigma=0.3,
+            components=MFGComponents(
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0),
+                    coupling=lambda m: m,
+                    coupling_dm=lambda m: 1.0,
+                ),
+            ),
+        )
+        with pytest.raises(ValueError, match=rf"axis {expected_axis} has {expected_n}"):
+            HJBSemiLagrangianSolver(problem, interpolation_method="cubic")
+
+
+class TestOneDimensionalMinimaFollowTheTruePathNotRegularGridInterpolator:
+    """1D uses PCHIP/CubicSpline, which never touch RegularGridInterpolator.
+
+    Applying the nD table here refused `cubic` at n=3, where cubic is genuinely honoured --
+    measured on a non-linear profile, PCHIP 0.7477 against linear 0.9256. At n=2 the two agree
+    exactly, so refusing there is right. The 1D boundary is 3.
+    """
+
+    def test_cubic_is_accepted_at_three_points_in_1d(self):
+        assert min_points_per_axis("cubic", 1) == 3
+        HJBSemiLagrangianSolver(_problem(1, 3), interpolation_method="cubic")
+
+    def test_cubic_is_refused_at_two_points_in_1d_where_it_is_linear(self):
+        xg = np.linspace(0.0, 1.0, 2)
+        u = np.array([0.0, 7.0])
+        assert interpolate_value_1d(u, 0.3, xg, method="cubic") == pytest.approx(
+            interpolate_value_1d(u, 0.3, xg, method="linear")
+        ), "at 2 points cubic IS linear, which is why it is refused"
+        with pytest.raises(ValueError, match=r"needs at least 3 points per axis at dimension 1"):
+            HJBSemiLagrangianSolver(_problem(1, 2), interpolation_method="cubic")

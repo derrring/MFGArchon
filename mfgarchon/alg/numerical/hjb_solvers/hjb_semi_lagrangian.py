@@ -426,8 +426,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         different order is precisely what these two issues are about.
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_interpolation import (
-            MIN_POINTS_PER_AXIS,
+            MIN_POINTS_PER_AXIS_ND,
             honoured_methods,
+            min_points_per_axis,
         )
 
         method = self.interpolation_method
@@ -436,7 +437,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             extra = (
                 " It is honoured in higher dimensions but not at dimension 1, where this solver "
                 f"implements only {sorted(honoured_methods(1))}; it would have returned linear."
-                if method in MIN_POINTS_PER_AXIS
+                if method in MIN_POINTS_PER_AXIS_ND
                 else ""
             )
             raise ValueError(
@@ -445,17 +446,26 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "unhonoured method used to return a linear interpolant silently (Issue #1809)."
             )
 
-        need = MIN_POINTS_PER_AXIS.get(method, 1)
+        need = min_points_per_axis(method, self.dimension)
         shape = tuple(self._grid_shape) if self.dimension > 1 else (len(self.x_grid),)
         short = [(ax, n) for ax, n in enumerate(shape) if n < need]
         if short:
             ax, n = short[0]
+            # The two paths fail differently, and saying so is the actionable half: nD raises
+            # inside RegularGridInterpolator and falls through the RBF chain, while 1D does not
+            # raise at all -- PCHIP/CubicSpline quietly return the linear value.
+            consequence = (
+                "The interpolator raises on this, and the fallback chain would substitute an RBF "
+                "or a nearest-neighbour value for the method you asked for (Issue #1664)."
+                if self.dimension > 1
+                else "The 1D interpolator does not raise on this -- it returns the LINEAR value, "
+                "so the method would be silently ignored (Issue #1809)."
+            )
             raise ValueError(
                 f"HJBSemiLagrangianSolver: interpolation_method={method!r} needs at least {need} "
-                f"points per axis, but axis {ax} has {n} (grid shape {shape}). The interpolator "
-                "raises on this, and the fallback chain would substitute an RBF or a "
-                "nearest-neighbour value for the method you asked for (Issue #1664). Refine the "
-                f"grid on axis {ax}, or choose a method the grid supports."
+                f"points per axis at dimension {self.dimension}, but axis {ax} has {n} "
+                f"(grid shape {shape}). {consequence} Refine the grid on axis {ax}, or choose a "
+                "method the grid supports."
             )
 
     def _setup_jax_functions(self):
