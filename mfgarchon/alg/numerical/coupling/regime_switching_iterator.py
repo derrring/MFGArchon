@@ -281,7 +281,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 msg = (
                     f"RegimeSwitchingIterator[regime {k}]: total outflow rate q_k={q_k:.4g} over "
                     f"the solved horizon Nt*dt={p.Nt * p.dt:.4g} (problem.T reads {p.T:.4g}) gives "
-                    f"q_k*T={span:.4g}, above the limit "
+                    f"q_k*Nt*dt={span:.4g}, above the limit "
                     f"{_MAX_OUTFLOW_HORIZON:.0f} at which the diagonal integrating factor "
                     "(Issue #1681) stays accurate in float64. Shorten T, lower the transition "
                     "rates, or solve the horizon in segments and restart the iterator from the "

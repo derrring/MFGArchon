@@ -25,6 +25,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
+from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
 
 
 def _bc(*, segments=(), default_bc=None, default_value=None):
@@ -53,9 +54,14 @@ class TestNonZeroIsDescribed:
             (-3, [-3.0]),
             (np.array([0.0, 1e-12]), ["<array>"]),
             (lambda t: 5.0, ["<callable>"]),
+            # The provider branch: is_provider is True and callable is False, so without
+            # the branch this falls through to float() and reads as "<unrecognised ...>".
+            # Deleting the branch -- or returning None from it, the exact fail-silent --
+            # left all 21 tests green before this case existed.
+            (AdjointConsistentProvider(side="left", sigma=0.1), ["<provider>"]),
             ("g", ["<unrecognised str>"]),
         ],
-        ids=["float", "negative", "array-with-one-nonzero", "callable", "unrecognised"],
+        ids=["float", "negative", "array-with-one-nonzero", "callable", "provider", "unrecognised"],
     )
     def test_anything_not_provably_zero_is_described(self, value, expected):
         assert describe_inhomogeneous_bc_data(_bc(segments=[_seg(value)])) == expected

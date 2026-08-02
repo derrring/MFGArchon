@@ -15,8 +15,14 @@
   data is one: the factor is exact only for conditions homogeneous in the density, so with
   `g != 0` the solve would return `g*exp(-q_k t)` at the wall instead of `g` (measured 0.180967
   and 0.163746 against an intended 0.2, at two different rates). Carrying the factor into the
-  boundary data is Issue #1805. Both this and the horizon check run at `solve()` as well as at
-  construction, because `Q` and the solvers' BCs are mutable and re-read there.
-  Because the factor spans `exp(q_k T)`, construction now refuses `q_k * T > 50` rather
+  boundary data is Issue #1805. Those two checks and `RegimeSwitchingConfig.validate()` all run at
+  `solve()` as well as at construction, because `Q` and the solvers' BCs are mutable and
+  re-read there. Re-validating is stricter than before in one case worth knowing: an in-place
+  rate sweep that edits an off-diagonal without restoring the zero row sum now raises, even
+  though the solve reads only off-diagonals. A generator whose rows do not sum to zero is not
+  a generator, so the refusal is correct -- but a sweep must maintain the diagonal.
+  Because the factor spans `exp(q_k * Nt * dt)`, construction refuses `q_k * Nt * dt > 50`
+  (the grid the factor is evaluated on, not `problem.T` -- `dt` is fixed in `__init__` while
+  `T` stays assignable, #1797) rather
   than returning a density that has lost its leading digits. The strict `xfail` in
   `tests/integration/test_phase1_5_validation.py` that pointed at this issue is removed.

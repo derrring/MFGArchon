@@ -485,7 +485,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
         problems = [_make_problem(coupling_strength=c, sigma=0.1, T=10.0, Nt=10) for c in (1.0, 0.5)]
         assert problems[0].Nt * problems[0].dt == pytest.approx(problems[0].T), "fixture horizon is inconsistent"
         Q = np.array([[-8.0, 8.0], [1.0, -1.0]])  # q_0 * T = 80 > 50
-        with pytest.raises(ValueError, match=r"q_k\*T"):
+        with pytest.raises(ValueError, match=r"q_k\*Nt\*dt"):
             RegimeSwitchingIterator(
                 problems=problems,
                 regime_config=RegimeSwitchingConfig(transition_matrix=Q),
@@ -639,7 +639,7 @@ class TestGuardsAreRecheckedAtSolveTime:
             max_iterations=1,
         )
         Q[:] = [[-8.0, 8.0], [1.0, -1.0]]
-        with pytest.raises(ValueError, match=r"q_k\*T"):
+        with pytest.raises(ValueError, match=r"q_k\*Nt\*dt"):
             it.solve()
 
     def test_a_clean_system_still_solves(self):
@@ -649,3 +649,44 @@ class TestGuardsAreRecheckedAtSolveTime:
         assert len(result.densities) == 2
         for d in result.densities:
             assert np.asarray(d, dtype=float).min() >= 0.0
+
+
+class TestHorizonGuardMeasuresTheGridNotTheAttribute:
+    """The guard must read Nt*dt, the horizon the factor spans, not problem.T (#1797).
+
+    Every other horizon fixture in this file has ``T == Nt*dt`` -- one of them asserts it --
+    so reverting the guard to ``q_k * p.T`` left the whole suite green. These two cases are
+    the only ones where the quantities disagree, which is the only place the change is
+    observable.
+
+    ``_undo_integrating_factor`` builds ``np.arange(Nt+1) * dt``, and the FP time-steppers
+    top out at the same ``Nt*dt``; ``T`` is a plain attribute that stays assignable.
+    """
+
+    def _problems(self, *, built_T, Nt, assigned_T):
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=built_T, Nt=Nt) for c in (1.0, 0.5)]
+        for p in problems:
+            p.T = assigned_T  # dt does not follow; the time grid still spans built_T
+        return problems
+
+    def _build(self, problems, Q):
+        return RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=[FPFDMSolver(p) for p in problems],
+            max_iterations=1,
+        )
+
+    def test_a_stale_T_does_not_refuse_a_horizon_the_transform_never_spans(self):
+        """q_k*T = 100 would refuse; the grid only spans q_k*Nt*dt = 10, so this must build."""
+        problems = self._problems(built_T=10.0, Nt=10, assigned_T=100.0)
+        assert problems[0].Nt * problems[0].dt == pytest.approx(10.0)
+        assert pytest.approx(100.0) == problems[0].T, "the fixture must actually disagree"
+        self._build(problems, np.array([[-1.0, 1.0], [1.0, -1.0]]))  # q_k = 1.0
+
+    def test_the_real_grid_horizon_is_still_refused_past_the_limit(self):
+        """Same stale T, but q_k*Nt*dt = 80 > 50 -- the guard must fire on the grid quantity."""
+        problems = self._problems(built_T=10.0, Nt=10, assigned_T=100.0)
+        with pytest.raises(ValueError, match=r"q_k\*Nt\*dt"):
+            self._build(problems, np.array([[-8.0, 8.0], [1.0, -1.0]]))
