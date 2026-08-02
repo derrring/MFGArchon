@@ -258,7 +258,10 @@ jobs:
             labels: 'automated',
             per_page: 100,
           });
-          const open = existing.find(i => i.title === title);
+          // `issues.listForRepo` returns pull requests too -- GitHub's REST API treats every
+          // PR as an issue -- and this job CLOSES what it selects, unlike the notifier which
+          // only comments. Identify them by the `pull_request` key and skip them.
+          const open = existing.find(i => i.title === title && !i.pull_request);
           if (!open) {
             core.info('No open automated nightly-failure issue to resolve.');
             return;
