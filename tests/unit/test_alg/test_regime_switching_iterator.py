@@ -564,3 +564,88 @@ class TestDiagonalOutflowIsNotALaggedSource:
                 ),
                 f"{label} must construct",
             )
+
+
+class TestGuardsAreRecheckedAtSolveTime:
+    """#1802 round-3: the transform runs in solve(), so the guards must too.
+
+    Construction-time-only guards were reachable two ways, both returning
+    ``g*exp(-q_k t)`` at the boundary instead of ``g`` -- 0.180967 and 0.163746 against an
+    intended 0.2, where main returns 0.200000. Round 1 and 2 found object-and-channel
+    escapes; these are temporal, and they survived both fixes.
+
+    ``fp_semi_lagrangian_adjoint.py`` already declines to cache the geometry's BC for this
+    reason, and #1699 records the same bypass for ``_validate_bc_support``.
+    """
+
+    def _system(self, Q):
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
+        fps = [FPFDMSolver(p) for p in problems]
+        it = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=fps,
+            max_iterations=1,
+            tolerance=1e-4,
+            damping=1.0,
+        )
+        return it, problems, fps
+
+    def test_boundary_conditions_swapped_after_construction_are_refused(self):
+        from mfgarchon.geometry.boundary import dirichlet_bc
+
+        it, _problems, fps = self._system(np.array([[-0.1, 0.1], [0.2, -0.2]]))
+        for fp in fps:  # construction passed on clean no-flux; now dirty it
+            fp.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        with pytest.raises(ValueError, match=r"not verifiably zero"):
+            it.solve()
+
+    def test_transition_matrix_filled_in_place_after_construction_is_refused(self):
+        """No attribute assignment anywhere -- the shape of a rate sweep reusing an iterator.
+
+        ``validate()`` accepts Q = 0 (non-negative off-diagonals, zero row sums), and q_k = 0
+        makes the boundary check skip every regime, so construction passes. The generator is a
+        plain ndarray held by reference.
+        """
+        from mfgarchon.geometry.boundary import dirichlet_bc
+
+        Q = np.zeros((2, 2))
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
+        for p in problems:
+            p.geometry.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+        it = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=[FPFDMSolver(p) for p in problems],
+            max_iterations=1,
+            tolerance=1e-4,
+            damping=1.0,
+        )
+        Q[:] = [[-0.1, 0.1], [0.2, -0.2]]  # in place: the iterator holds this same array
+        with pytest.raises(ValueError, match=r"not verifiably zero"):
+            it.solve()
+
+    def test_horizon_guard_is_also_rechecked_when_Q_is_filled_in_place(self):
+        """Built at q_k*T = 0, solved at 200 against a limit of 50."""
+        Q = np.zeros((2, 2))
+        problems = [_make_problem(coupling_strength=c, sigma=0.1, T=10.0, Nt=10) for c in (1.0, 0.5)]
+        it = RegimeSwitchingIterator(
+            problems=problems,
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
+            hjb_solvers=[HJBFDMSolver(p) for p in problems],
+            fp_solvers=[FPFDMSolver(p) for p in problems],
+            max_iterations=1,
+        )
+        Q[:] = [[-8.0, 8.0], [1.0, -1.0]]
+        with pytest.raises(ValueError, match=r"q_k\*T"):
+            it.solve()
+
+    def test_a_clean_system_still_solves(self):
+        """Negative control: re-checking must not refuse what it accepted at construction."""
+        it, _problems, _fps = self._system(np.array([[-0.1, 0.1], [0.2, -0.2]]))
+        result = it.solve()
+        assert len(result.densities) == 2
+        for d in result.densities:
+            assert np.asarray(d, dtype=float).min() >= 0.0

@@ -214,11 +214,18 @@ def describe_inhomogeneous_bc_data(
     these gates exist to stop.
 
     Args:
-        boundary_conditions: a ``BoundaryConditions``-like object. Anything without
-            ``segments`` is not one (a string sentinel, ``None``) and yields ``[]``.
+        boundary_conditions: a ``BoundaryConditions``-like object. Anything carrying
+            neither ``segments`` nor ``default_bc`` is not one (a string sentinel,
+            ``None``) and yields ``[]``; carrying exactly one of the pair is malformed
+            and raises, matching ``geometric_operations`` (#1691) rather than degrading
+            to "nothing disagrees".
         bc_types: restrict to segments/defaults of these ``BCType``\\ s. ``None`` means
             every type, which is what a caller whose transform breaks on ANY inhomogeneous
-            condition wants; a caller that honours only one type passes that type.
+            condition wants. A caller that breaks on only ONE type passes that type --
+            note the sense: callers pass the types they CANNOT honour, not the ones they
+            can. ``base_solver`` passes ``{NEUMANN}`` precisely because
+            ``honors_inhomogeneous_neumann`` is False, while it does honour a Dirichlet
+            value. Reading this backwards inverts the gate.
 
     Returns:
         Descriptions of the offending values, e.g. ``[0.2]``, ``['<callable>']``.
@@ -247,19 +254,29 @@ def describe_inhomogeneous_bc_data(
         except (TypeError, ValueError):
             return f"<unrecognised {type(value).__name__}>"
 
-    segments = getattr(boundary_conditions, "segments", None)
-    if segments is None:
-        return []
+    missing = object()
+    segments = getattr(boundary_conditions, "segments", missing)
+    default_bc = getattr(boundary_conditions, "default_bc", missing)
+    if segments is missing and default_bc is missing:
+        return []  # not a BoundaryConditions at all (None, a string sentinel)
+    if segments is missing or default_bc is missing:
+        # Issue #1691, same rule as geometric_operations in this module: an object
+        # exposing one half of the pair is malformed, and answering "nothing disagrees"
+        # for it would be a capability gate degrading into a pass.
+        present, absent = ("default_bc", "segments") if segments is missing else ("segments", "default_bc")
+        raise AttributeError(
+            f"{type(boundary_conditions).__name__} has {present!r} but no {absent!r}. A segmented "
+            "boundary condition must expose both; refusing to report it as homogeneous."
+        )
 
     found: list[object] = []
-    for seg in segments:
+    for seg in segments or ():
         if bc_types is not None and seg.bc_type not in bc_types:
             continue
         described = _describe(getattr(seg, "value", None))
         if described is not None:
             found.append(described)
 
-    default_bc = getattr(boundary_conditions, "default_bc", None)
     if default_bc is not None and (bc_types is None or default_bc in bc_types):
         described = _describe(getattr(boundary_conditions, "default_value", None))
         if described is not None:

@@ -391,6 +391,20 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         """
         K = self._regime.n_regimes
         Q = self._regime.transition_matrix
+        # Re-check HERE, not only in __init__: the transform reads Q and the FP solvers'
+        # boundary conditions at solve time, and both are mutable objects held by reference.
+        # Construction-time-only versions of these guards were reachable two ways, each
+        # returning g*exp(-q_k t) at the boundary instead of g:
+        #   - assigning fp.boundary_conditions after the iterator was built;
+        #   - building at Q = 0 (which validate() accepts, and which makes q_k = 0 so the
+        #     boundary check skips every regime) and then filling the array in place --
+        #     the ordinary shape of a rate sweep that reuses one iterator. That also walked
+        #     past the horizon guard: built at q_k*T = 0, solved at 200 against a limit of 50.
+        # The repo already treats a construction-time BC snapshot as a defect class:
+        # fp_semi_lagrangian_adjoint.py declines to cache the geometry's BC for this reason,
+        # and #1699 records the same bypass for _validate_bc_support.
+        self._assert_outflow_horizon_representable(K, Q)
+        self._assert_fp_boundary_data_is_homogeneous(K, Q)
 
         # Initialize: terminal conditions and initial densities
         Us = [p.get_u_terminal() for p in self._problems]
