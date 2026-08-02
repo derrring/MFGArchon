@@ -186,3 +186,100 @@ def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternati
             f"which wall carries which condition. {alternative}"
         )
     return get_bc_type_string(boundary_conditions)
+
+
+def describe_inhomogeneous_bc_data(
+    boundary_conditions: Any,
+    *,
+    bc_types: set[Any] | None = None,
+) -> list[object]:
+    """Values attached to ``boundary_conditions`` that are not verifiably zero.
+
+    One owner for the question "is this boundary datum ``g = 0``?", asked by every guard
+    that honours only the homogeneous case. Returns a sorted, de-duplicated list of
+    descriptions, empty when every datum in scope is provably zero.
+
+    Two channels, and both are load-bearing:
+
+    - each entry in ``segments``;
+    - the **fall-through** ``default_bc`` / ``default_value``, which is a value too. Issue
+      #1686 recorded that checking only ``segments`` left the original silent discard
+      reachable through ``default_bc=NEUMANN, default_value=g``, and #1802's first guard
+      reproduced that hole 300 lines away, which is why this lives in one place now.
+
+    Anything that cannot be compared to zero here -- a provider, a callable, an
+    unrecognised type -- is **described rather than assumed homogeneous**, so the caller
+    refuses it. ``isinstance(value, (int, float))`` alone would accept
+    ``neumann_bc(value=lambda t: 5.0)`` and discard it silently, which is the behaviour
+    these gates exist to stop.
+
+    Args:
+        boundary_conditions: a ``BoundaryConditions``-like object. Anything carrying
+            neither ``segments`` nor ``default_bc`` is not one (a string sentinel,
+            ``None``) and yields ``[]``; carrying exactly one of the pair is malformed
+            and raises, matching ``geometric_operations`` (#1691) rather than degrading
+            to "nothing disagrees".
+        bc_types: restrict to segments/defaults of these ``BCType``\\ s. ``None`` means
+            every type, which is what a caller whose transform breaks on ANY inhomogeneous
+            condition wants. A caller that breaks on only ONE type passes that type --
+            note the sense: callers pass the types they CANNOT honour, not the ones they
+            can. ``base_solver`` passes ``{NEUMANN}`` precisely because
+            ``honors_inhomogeneous_neumann`` is False, while it does honour a Dirichlet
+            value. Reading this backwards inverts the gate.
+
+    Returns:
+        Descriptions of the offending values, e.g. ``[0.2]``, ``['<callable>']``.
+    """
+    import numpy as np
+
+    from mfgarchon.geometry.boundary.providers import is_provider
+
+    def _describe(value: Any) -> object | None:
+        """A description if this value is not verifiably zero, else None.
+
+        ``float()`` is reached only for things it accepts: an array or a provider would
+        otherwise raise TypeError out of a capability gate, and an all-zero array is a
+        legitimate ``g = 0`` that must not crash.
+        """
+        if value is None:
+            return None
+        if is_provider(value):
+            return "<provider>"
+        if callable(value):
+            return "<callable>"
+        if isinstance(value, np.ndarray):
+            return None if not value.any() else "<array>"
+        try:
+            return None if float(value) == 0.0 else float(value)
+        except (TypeError, ValueError):
+            return f"<unrecognised {type(value).__name__}>"
+
+    missing = object()
+    segments = getattr(boundary_conditions, "segments", missing)
+    default_bc = getattr(boundary_conditions, "default_bc", missing)
+    if segments is missing and default_bc is missing:
+        return []  # not a BoundaryConditions at all (None, a string sentinel)
+    if segments is missing or default_bc is missing:
+        # Issue #1691, same rule as geometric_operations in this module: an object
+        # exposing one half of the pair is malformed, and answering "nothing disagrees"
+        # for it would be a capability gate degrading into a pass.
+        present, absent = ("default_bc", "segments") if segments is missing else ("segments", "default_bc")
+        raise AttributeError(
+            f"{type(boundary_conditions).__name__} has {present!r} but no {absent!r}. A segmented "
+            "boundary condition must expose both; refusing to report it as homogeneous."
+        )
+
+    found: list[object] = []
+    for seg in segments or ():
+        if bc_types is not None and seg.bc_type not in bc_types:
+            continue
+        described = _describe(getattr(seg, "value", None))
+        if described is not None:
+            found.append(described)
+
+    if default_bc is not None and (bc_types is None or default_bc in bc_types):
+        described = _describe(getattr(boundary_conditions, "default_value", None))
+        if described is not None:
+            found.append(described)
+
+    return sorted(set(found), key=repr)
