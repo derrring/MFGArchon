@@ -86,7 +86,13 @@ probe_modules() {
 # The file, not a variable: `PY=$(resolved_python ...)` runs the function in a SUBSHELL, so any
 # variable it sets is discarded before the caller can read it. Writing to a path the parent knows
 # is what makes the interpreter's own stderr survive the capture.
-PROBE_ERR_FILE=$(mktemp) || PROBE_ERR_FILE=""
+# ONE scratch dir for the whole script, not one per probe. A per-probe `mktemp -d` cleaned up
+# inside the function leaks on signal: bash propagates the parent's traps into a command
+# substitution, so `PY=$(resolved_python ...)` runs `exit 130` in the subshell and the function's
+# own `rm -rf` never executes. Owning both paths at script level puts them under the one trap
+# that does run.
+PROBE_ERR_FILE=$(mktemp 2>/dev/null) || PROBE_ERR_FILE=""
+PROBE_DIR=$(mktemp -d 2>/dev/null) || PROBE_DIR=""
 # Two traps, not one. A handler installed for INT that only cleans up does NOT end the script:
 # bash runs it and RESUMES at the next command. Measured with that single trap in place, Ctrl-C
 # during --fast let the run continue and render `GATE RED -- do not push` over an interrupted
@@ -94,8 +100,8 @@ PROBE_ERR_FILE=$(mktemp) || PROBE_ERR_FILE=""
 # exists to remove. Worse, a SIGINT inside the 4.2 s pass-1 probe killed that probe and let the
 # search fall through to the next candidate, silently changing which interpreter the gate used.
 # `exit 130` is what restores the untrapped behaviour that `main` had for free.
-[[ -n "$PROBE_ERR_FILE" ]] && trap 'rm -f "$PROBE_ERR_FILE"' EXIT
-trap 'rm -f "$PROBE_ERR_FILE"; exit 130' INT TERM
+trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 # tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
 # source echo and the caret, dropping the `File ...` line that names the culprit.
 probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
@@ -107,10 +113,15 @@ resolved_python() {
   [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
   modules=$(probe_modules)
   [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
-  probe_dir=$(mktemp -d) || return 1
-  out=$(cd "$probe_dir" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
-  rm -rf "$probe_dir"
+  [[ -n "$PROBE_DIR" ]] || return 1
+  out=$(cd "$PROBE_DIR" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
+  # ruff is 2 of the 6 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
+  # Checked after resolution instead, the search committed to the first candidate satisfying an
+  # incomplete predicate and then refused outright -- while a working interpreter was still
+  # sitting further down CANDIDATES. Measured: `GATE CANNOT RUN` on a machine where forcing
+  # candidate 3 runs the whole gate.
+  "$candidate" -m ruff --version >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
   printf '%s' "$candidate"
   return 0
 }
@@ -127,7 +138,7 @@ CANDIDATES=(python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bi
 if [[ -n "${MFG_PYTHON+x}" ]]; then
   PY=$(resolved_python "$MFG_PYTHON") \
     || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
-$(probe_modules), probed from a scratch directory outside the source tree.
+$(probe_modules) plus ruff, probed from a scratch directory outside the source tree.
 $(probe_err)
 It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
 else
@@ -146,14 +157,14 @@ else
       PY=""
     done
   fi
-  [[ -n "$PY" ]] || cannot_run "no interpreter found that can import $(probe_modules).
+  [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff.
 $(probe_err)"
 fi
 
 # `-m ruff`, not a path next to $PY: `dirname` is wrong for any shimmed or symlinked interpreter
 # (pyenv/asdf/uv shims, /usr/local/bin/python), where `command -v` deliberately does not resolve
-# the link and the sibling `ruff` does not exist beside the shim.
-"$PY" -m ruff --version >/dev/null 2>&1 || cannot_run "ruff is not installed in $PY."
+# the link and the sibling `ruff` does not exist beside the shim. Presence is already part of the
+# selection predicate above; this only binds the invocation.
 RUFF=("$PY" -m ruff)
 
 # Print what was measured, at the head for a live run and again beside the verdict, because the
@@ -174,7 +185,11 @@ check() {
 # contributor who installs today gets a different formatter from the one CI and pre-commit use,
 # and goes red on files they never touched. Warn rather than fail: an unexpected version is a
 # real signal, but blocking the whole gate on it would be worse than running it.
-RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$(dirname "$0")/../.pre-commit-config.yaml" 2>/dev/null \
+# `$PWD`, not `$(dirname "$0")/..`: line 15 already put cwd at the repo root, so the old path
+# resolved to the repo's PARENT whenever the script was invoked as `./local_ci.sh` from scripts/.
+# RUFF_PIN came back empty and the version WARN silently never fired -- which matters now that
+# the ruff version is printed in the tail as merge evidence.
+RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$PWD/.pre-commit-config.yaml" 2>/dev/null \
   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
 RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
