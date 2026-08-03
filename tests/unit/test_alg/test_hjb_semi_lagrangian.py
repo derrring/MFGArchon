@@ -1032,7 +1032,10 @@ class TestStochasticSLUnificationPinning:
         if bc_op == "reflect":
             y_plus = reflect_into_domain(y_plus, xmin, xmax)
             y_minus = reflect_into_domain(y_minus, xmin, xmax)
-        elif bc_op == "wrap":
+        elif bc_op == "periodic":
+            # Issue #1739: this reference copy said "wrap", which the mapping never emits. The
+            # fixture below is no_flux (-> reflect), so the branch does not execute either way,
+            # but a byte-identity reference carrying the defect cannot witness its fix.
             L = xmax - xmin
             y_plus = xmin + (y_plus - xmin) % L
             y_minus = xmin + (y_minus - xmin) % L

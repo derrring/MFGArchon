@@ -217,9 +217,9 @@ def sl_backend(method: str, dimension: int, *, monotone_required: bool) -> str:
     Returns a backend key: ``"linear"``, ``"pchip"``, or a ``RegularGridInterpolator`` method
     name. It names the interpolant, NOT the out-of-bounds policy -- 1D callers realise ``"linear"``
     as extrapolating ``interp1d`` on the characteristic paths and as clamping ``np.interp`` in
-    ``_stochastic_sl_step``, which documents its own reason. Do not "align" those: swapping the
-    former for the latter moves a periodic solve by rel 3.6e-2 and is what
-    TestTheLinearPathIsUNCHANGEDByTheConsolidation exists to catch.
+    ``_stochastic_sl_step``, which documents its own reason. Do not "align" those without
+    measuring: they differ only for a foot outside the grid, and since #1739 the SL fold lands
+    every supported BC in bounds, so nothing currently in the suite would report the change.
     """
     if dimension == 1:
         return "pchip" if method == "cubic" else "linear"

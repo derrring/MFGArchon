@@ -45,7 +45,7 @@ from .hjb_sl_adi import (
 from .hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     apply_boundary_conditions_nd,
-    reflect_into_domain,
+    fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
 )
@@ -1260,14 +1260,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
-                if bc_op == "reflect":
-                    # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann),
-                    # not np.clip — clamping collapsed them onto the wall node.
-                    x_departures = reflect_into_domain(x_departures, xmin, xmax)
-                elif bc_op == "wrap":
-                    # Periodic: wrap around
-                    L = xmax - xmin
-                    x_departures = xmin + (x_departures - xmin) % L
+                # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann), not
+                # np.clip -- clamping collapses them onto the wall node.
+                x_departures = fold_into_domain(x_departures, xmin, xmax, bc_op)
 
                 # Step 1b: Batch interpolation, through the single owner.
                 # This site used to build CubicSpline(bc_type="not-a-knot") for "cubic" while the
@@ -1276,12 +1271,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator, interp1d
 
-                # Both interpolants must EXTRAPOLATE: only the backend is being unified here, and
-                # both of the ones this site used to build extrapolated. Clamping instead (whether
-                # via np.clip or np.interp's default) is a different out-of-bounds policy, and it
-                # is reachable -- periodic feet leave the domain at every step because that fold is
-                # dead (#1739), landing ~0.5 dx out, where clamping costs 2.04e-2 against 5.73e-3
-                # for extrapolation. Pinned by TestTheLinearPathIsUNCHANGEDByTheConsolidation.
+                # The fold above runs unconditionally and every branch of it lands inside
+                # [xmin, xmax] -- clamp included, since it is np.clip against the same bounds
+                # x_grid is built from. So no bc_op reaches this interpolant out of bounds, and
+                # extrapolate-vs-clamp is currently unobservable here. Kept as extrapolate
+                # because that is what this site has always done, not because a route to it is
+                # claimed: changing it needs its own measurement, on a configuration that can
+                # actually leave the domain.
                 backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
@@ -1699,14 +1695,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # --- Boundary fold for the Brownian feet ---
         # Issue #1048 (1D) / #1054 (nD): REFLECT feet for Neumann BC (not clamp),
-        # wrap for periodic. reflect_into_domain is the correct per-axis fold
+        # wrap for periodic. fold_into_domain is the correct per-axis fold
         # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
         bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
-        L_axis = x_max - x_min
 
         # --- Build the 2*d departures per node (one ± pair per axis) ---
         n_total = int(np.prod(grid_shape))
@@ -1727,10 +1722,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
 
-        if bc_op == "reflect":
-            all_departures = reflect_into_domain(all_departures, x_min, x_max)
-        elif bc_op == "wrap":
-            all_departures = x_min + (all_departures - x_min) % L_axis
+        all_departures = fold_into_domain(all_departures, x_min, x_max, bc_op)
 
         # --- Interpolate u^{n+1} at every foot (dim-dependent backend, see docstring) ---
         # Issue #1033/#1054: monotone dispatch — cubic/quintic → PCHIP (monotone
@@ -1878,14 +1870,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         x_max = np.asarray(bounds[1], dtype=float)
         span = x_max - x_min
 
-        def _fold(points: np.ndarray) -> np.ndarray:
-            """Fold departure coordinates (``(..., d)``) back into ``[x_min, x_max]``."""
-            if bc_op == "reflect":
-                return reflect_into_domain(points, x_min, x_max)
-            if bc_op == "wrap":
-                return x_min + (points - x_min) % span
-            return np.clip(points, x_min, x_max)
-
         # Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source; shared with stochastic SL).
         foot_offset = self._brownian_foot_offset(sqrt_dt)
 
@@ -1926,8 +1910,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             def phi_vec(alpha: np.ndarray) -> np.ndarray:
                 """phi over all nodes for a per-node control array (shape (Nx,))."""
                 y_drift = self.x_grid + alpha * dt
-                feet_plus = _fold((y_drift + diff_off).reshape(-1, 1)).ravel()
-                feet_minus = _fold((y_drift - diff_off).reshape(-1, 1)).ravel()
+                feet_plus = fold_into_domain((y_drift + diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
+                feet_minus = fold_into_domain((y_drift - diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
                 u_pm = 0.5 * (interp_fn(feet_plus) + interp_fn(feet_minus))
                 return 0.5 * lam * dt * alpha * alpha - dt * h + u_pm
 
@@ -1999,7 +1983,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             def phi_nd(alpha_vec: np.ndarray, _xi: np.ndarray = x_i, _hi: float = h_i) -> float:
                 drift = _xi + np.asarray(alpha_vec) * dt  # (d,)
-                feet = _fold(drift[None, :] + depart_offsets)  # (2d, d)
+                feet = fold_into_domain(drift[None, :] + depart_offsets, x_min, x_max, bc_op)  # (2d, d)
                 u_pm = interp_fn(feet)  # (2d,)
                 return 0.5 * lam * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
 

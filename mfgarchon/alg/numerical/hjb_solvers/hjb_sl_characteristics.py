@@ -250,6 +250,42 @@ def reflect_into_domain(
     return xmin + span - np.abs(((x - xmin) % (2.0 * span)) - span)
 
 
+#: The geometric operations :func:`bc_type_to_geometric_operation` can return. Named here so
+#: :func:`fold_into_domain` can refuse anything else instead of folding it silently.
+_FOLD_OPERATIONS = frozenset({"reflect", "periodic", "clamp"})
+
+
+def fold_into_domain(
+    x: np.ndarray,
+    xmin: float | np.ndarray,
+    xmax: float | np.ndarray,
+    bc_op: str,
+) -> np.ndarray:
+    r"""Fold departure points into ``[xmin, xmax]`` under the geometric operation ``bc_op``.
+
+    The one owner of the vectorized Semi-Lagrangian boundary fold. ``bc_op`` must come from
+    :func:`~mfgarchon.geometry.boundary.bc_utils.bc_type_to_geometric_operation`; this function
+    dispatches on that vocabulary and no other.
+
+    ``xmin`` / ``xmax`` are scalars (1D) or per-axis arrays broadcastable against ``x`` (nD).
+
+    Raises:
+        ValueError: for any other operation. Do not add a fall-through -- an unrecognised
+            spelling would then silently pick a boundary condition instead of stopping.
+    """
+    if bc_op == "reflect":
+        return reflect_into_domain(x, xmin, xmax)
+    if bc_op == "periodic":
+        return xmin + (x - xmin) % (xmax - xmin)
+    if bc_op == "clamp":
+        return np.clip(x, xmin, xmax)
+    raise ValueError(
+        f"unknown geometric boundary operation {bc_op!r}; expected one of "
+        f"{sorted(_FOLD_OPERATIONS)}. This fold dispatches on the vocabulary of "
+        "bc_type_to_geometric_operation (Issue #1739)."
+    )
+
+
 def apply_boundary_conditions_nd(
     x: np.ndarray,
     bounds: list[tuple[float, float]],
