@@ -132,6 +132,9 @@ def test_a_cubic_solve_commits_to_one_cubic_backend(backend_counter):
     cubic_backends = {
         name: n for name, n in backend_counter.items() if name in ("CubicSpline", "PchipInterpolator") and n
     }
+    # An empty count satisfies `<= 1` while measuring nothing -- the same two-causes shape this
+    # file fixed in the stochastic test. Assert the solve built a cubic at all before judging it.
+    assert cubic_backends, "no cubic interpolant was constructed; this assertion would pass vacuously"
     assert len(cubic_backends) <= 1, (
         f"one solve used more than one cubic backend: {cubic_backends}. Which one runs is decided "
         "per timestep by the CFL number rather than by configuration, and the two differ in "
@@ -178,6 +181,9 @@ def test_substepping_does_not_change_which_backend_runs(backend_counter):
     )
     with_sub = {k: v for k, v in backend_counter.items() if v}
 
+    # Two empty dicts are equal. Without this, a solve that built no interpolant at all passes.
+    assert without, f"substepping off built no interpolant: {without}"
+    assert with_sub, f"substepping on built no interpolant: {with_sub}"
     assert set(without) == set(with_sub), (
         f"substepping changed the interpolant backend: without={without}, with={with_sub}. "
         "The CFL number is selecting the numerical method."

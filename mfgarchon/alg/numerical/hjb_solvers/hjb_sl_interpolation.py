@@ -5,8 +5,8 @@ This module provides interpolation routines for evaluating the value function
 at departure points during characteristic tracing in the semi-Lagrangian scheme.
 
 Supported methods (see `sl_backend`, the single owner of method -> backend):
-- 1D: numpy.interp (linear) / PchipInterpolator (cubic -- monotone Hermite, NOT a C2 spline;
-  Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up)
+- 1D: scipy.interpolate.interp1d (linear, extrapolating) / PchipInterpolator (cubic -- monotone
+  Hermite, NOT a C2 spline; Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up)
 - nD: scipy.interpolate.RegularGridInterpolator (linear, cubic, quintic)
 - Fallback: RBF interpolation for boundary cases
 
@@ -84,7 +84,7 @@ def interpolate_value_1d(
             interpolator = PchipInterpolator(
                 x_grid,
                 U_values,
-                extrapolate=False,  # Return NaN outside bounds (handled by lines 72-75)
+                extrapolate=False,  # Return NaN outside bounds (the boundary guard above returns first)
             )
         else:
             # Default to linear
@@ -215,7 +215,11 @@ def sl_backend(method: str, dimension: int, *, monotone_required: bool) -> str:
     and the default path did not. There is no configuration in which this owner returns it.
 
     Returns a backend key: ``"linear"``, ``"pchip"``, or a ``RegularGridInterpolator`` method
-    name. 1D callers map ``"linear"`` to ``np.interp`` and ``"pchip"`` to ``PchipInterpolator``.
+    name. It names the interpolant, NOT the out-of-bounds policy -- 1D callers realise ``"linear"``
+    as extrapolating ``interp1d`` on the characteristic paths and as clamping ``np.interp`` in
+    ``_stochastic_sl_step``, which documents its own reason. Do not "align" those: swapping the
+    former for the latter moves a periodic solve by rel 3.6e-2 and is what
+    TestTheLinearPathIsUNCHANGEDByTheConsolidation exists to catch.
     """
     if dimension == 1:
         return "pchip" if method == "cubic" else "linear"
