@@ -76,7 +76,7 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
 # dependency -- it arrives transitively via omegaconf, so an environment can look complete and
 # still fail that step with a bare ModuleNotFoundError under a GATE RED.
 probe_modules() {
-  if [[ $FAST -eq 1 ]]; then printf 'yaml'; else printf 'yaml, pytest, xdist'; fi
+  if [[ $FAST -eq 1 ]]; then printf 'yaml'; else printf 'yaml, numpy, pytest, xdist'; fi
 }
 
 # Usage: resolved_python <candidate> [with_package]
@@ -113,18 +113,24 @@ resolved_python() {
   [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
   modules=$(probe_modules)
   [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
-  [[ -n "$PROBE_DIR" ]] || return 1
-  out=$(cd "$PROBE_DIR" && "$candidate" -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
+  out=$(cd "$PROBE_DIR" && "$candidate" -P -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
   # ruff is 2 of the 6 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
   # Checked after resolution instead, the search committed to the first candidate satisfying an
   # incomplete predicate and then refused outright -- while a working interpreter was still
   # sitting further down CANDIDATES. Measured: `GATE CANNOT RUN` on a machine where forcing
   # candidate 3 runs the whole gate.
-  "$candidate" -m ruff --version >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
+  (cd "$PROBE_DIR" && "$candidate" -P -m ruff --version) >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
   printf '%s' "$candidate"
   return 0
 }
+
+# Fail where the failure IS. Letting an unmade scratch dir make every candidate "fail" produced a
+# verdict composed entirely of false claims about the operator's interpreter -- that it could not
+# import the tooling, when it was never executed -- and told them to fix the thing they had
+# already done. The scratch directory is this script's own resource, not evidence about theirs.
+[[ -n "$PROBE_DIR" ]] || cannot_run "could not create a scratch directory (mktemp -d failed).
+No interpreter was probed, so this says nothing about any of them."
 
 # An explicitly set MFG_PYTHON is an operator statement, not a hint. `main` honoured it
 # unconditionally (`PY="${MFG_PYTHON:-python}"`), so a wrong value failed loudly and attributably.
@@ -165,13 +171,20 @@ fi
 # (pyenv/asdf/uv shims, /usr/local/bin/python), where `command -v` deliberately does not resolve
 # the link and the sibling `ruff` does not exist beside the shim. Presence is already part of the
 # selection predicate above; this only binds the invocation.
-RUFF=("$PY" -m ruff)
+#
+# `-P` is load-bearing, not hygiene. `-m` puts cwd at the FRONT of sys.path, and line 15 makes cwd
+# the repo root -- so a `ruff/` package committed to the root shadows the real linter, and the gate
+# reports GATE GREEN with 435 files unlinted while `gate ruff : ruff 0.16.0` sits in the pasted
+# tail as forged evidence. `main` invoked ruff as a PATH executable, which no file in the tree can
+# shadow; switching to `-m` is what opened this, so closing it belongs to that change. The probe
+# above uses `-P` for the same reason.
+RUFF=("$PY" -P -m ruff)
 
 # Print what was measured, at the head for a live run and again beside the verdict, because the
 # PR template asks a human to paste the LAST lines and a head-only line never reaches them.
 # This line is the only tell for a forged interpreter, so it has to be in the pasted evidence.
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
-printf 'gate ruff        : %s\n' "$("$PY" -m ruff --version 2>&1)"
+printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
@@ -278,7 +291,13 @@ else
 fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
-printf 'gate ruff        : %s\n' "$("$PY" -m ruff --version 2>&1)"
+printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
+# Reprinted here, not only at the head: a version-mismatched run and a matched run otherwise
+# produce byte-identical tails, so the comparison this WARN performs is not recoverable from the
+# pasted evidence. Same rule that put the interpreter line here.
+if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
+  printf '\033[33mWARN\033[0m ruff %s ran, but .pre-commit-config.yaml pins %s\n' "$RUFF_HAVE" "$RUFF_PIN"
+fi
 if [[ $fail -eq 0 ]]; then
   printf '\033[32mGATE GREEN\033[0m -- safe to push.\n'
 else
