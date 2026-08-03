@@ -107,7 +107,7 @@ trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
 
 resolved_python() {
-  local candidate=$1 want_package=${2:-} out probe_dir modules
+  local candidate=$1 want_package=${2:-} out modules
   candidate=$(command -v "$candidate" 2>/dev/null) || return 1
   [[ -n "$candidate" ]] || return 1
   [[ "$candidate" == /* ]] || candidate="$PWD/$candidate"
@@ -222,7 +222,7 @@ step "Workflow integrity"
 # a dangling `needs:` at load time and then NO job in that file runs on any event -- a
 # whole workflow silently switched off. Both failure modes were shipped during this
 # repo's CI cleanup, one after the other.
-"$PY" -c "
+"$PY" -P -c "
 import sys, yaml, pathlib
 bad = []
 for f in sorted(pathlib.Path('.github/workflows').glob('*.y*ml')):
@@ -282,7 +282,11 @@ if [[ $FAST -eq 0 ]]; then
   check $? "no capability change vs baseline"
 
   step "Test suite (CI marker set, xdist parallel, no coverage)"
-  "$PY" -m pytest tests/ -n auto \
+  # PYTHONSAFEPATH as well as -P: `-P` is per-process and xdist's execnet workers do not inherit
+  # it, so a repo-root `pytest/` package still reaches them. Measured on a probe that must fail:
+  # `-P` alone under `-n` crashes every worker (no tests ran); with PYTHONSAFEPATH=1 the real
+  # pytest runs and correctly reports it. Anything that forks needs the env var, not just the flag.
+  PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
     -m "not slow and not benchmark and not experimental and not optional_torch and not environment" \
     -q --durations=10
   check $? "full suite"
