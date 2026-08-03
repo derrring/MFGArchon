@@ -282,7 +282,11 @@ if [[ $FAST -eq 0 ]]; then
   check $? "no capability change vs baseline"
 
   step "Test suite (CI marker set, xdist parallel, no coverage)"
-  "$PY" -P -m pytest tests/ -n auto \
+  # PYTHONSAFEPATH as well as -P: `-P` is per-process and xdist's execnet workers do not inherit
+  # it, so a repo-root `pytest/` package still reaches them. Measured on a probe that must fail:
+  # `-P` alone under `-n` crashes every worker (no tests ran); with PYTHONSAFEPATH=1 the real
+  # pytest runs and correctly reports it. Anything that forks needs the env var, not just the flag.
+  PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
     -m "not slow and not benchmark and not experimental and not optional_torch and not environment" \
     -q --durations=10
   check $? "full suite"
