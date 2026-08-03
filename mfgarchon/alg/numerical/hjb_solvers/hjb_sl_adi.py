@@ -133,6 +133,21 @@ def _crank_nicolson_periodic_1d(
     if len(U_star) < 3:
         raise ValueError(f"periodic Crank-Nicolson needs at least 3 nodes, got {len(U_star)}")
 
+    # The last entry is dropped as a duplicate, so REFUSE to run when it is not one. Discarding it
+    # silently deletes whatever it carried: a splatting FP step deposits mass into both coincident
+    # nodes, and on such an input this function returned all zeros for a field whose nodal sum was
+    # 1.0 (Issue #1820). Which identification is right is the caller's to decide -- a density folds
+    # by the mean, deposited mass would fold by a sum -- and this shared owner must not guess.
+    gap = abs(float(U_star[0]) - float(U_star[-1]))
+    scale = max(1.0, float(np.max(np.abs(U_star))))
+    if gap > 1e-12 * scale:
+        raise ValueError(
+            f"periodic Crank-Nicolson received a field whose endpoints differ by {gap:.3e} "
+            f"(relative {gap / scale:.3e}). On an endpoint-inclusive grid those entries are the "
+            "same physical point; identify them before calling (enforce_periodic_value_nd folds "
+            "a density by the mean, which is what preserves its trapezoid mass)."
+        )
+
     interior = _crank_nicolson_periodic_distinct(U_star[:-1], alpha, theta)
     return np.append(interior, interior[0])
 

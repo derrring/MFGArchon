@@ -41,6 +41,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     checked_bc_type_string,
 )
+from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -424,6 +425,14 @@ class FPSLSolver(BaseFPSolver):
         # Sherman-Morrison circulant solve instead of the zero-flux stencil.
         diff_bc = self._get_diffusion_bc_type()
         if diff_bc == "periodic":
+            # Identify the two coincident endpoints before diffusing. `splat_1d` deposits into
+            # index 0 and index -1 independently, but on an endpoint-inclusive grid they are one
+            # physical point, so the array reaching the CN is not yet a periodic field -- measured,
+            # every step of a periodic solve arrived with the two differing, by up to 4.75e-01.
+            # The mean is the fold that preserves this density's trapezoid mass: both nodes already
+            # carry a half weight, so summing would double-count them (Issue #1820).
+            m_star = m_star.copy()
+            enforce_periodic_value_nd(m_star, axis=0)
             return solve_crank_nicolson_diffusion_1d(m_star, dt, sigma, self.x_grid, bc_type="periodic")
 
         # Neumann / zero-flux path (preserved from Issue #708: FV stencil for mass
