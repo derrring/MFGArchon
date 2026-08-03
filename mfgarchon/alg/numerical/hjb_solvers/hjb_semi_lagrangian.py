@@ -1282,7 +1282,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # is reachable -- periodic feet leave the domain at every step because that fold is
                 # dead (#1739), landing ~0.5 dx out, where clamping costs 2.04e-2 against 5.73e-3
                 # for extrapolation. Pinned by TestTheLinearPathIsUNCHANGEDByTheConsolidation.
-                backend = sl_backend(self.interpolation_method, 1, monotone_required=False)
+                backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
                 else:

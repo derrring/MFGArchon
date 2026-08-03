@@ -4,8 +4,9 @@ Interpolation Methods for Semi-Lagrangian HJB Solver.
 This module provides interpolation routines for evaluating the value function
 at departure points during characteristic tracing in the semi-Lagrangian scheme.
 
-Supported methods:
-- 1D: scipy.interpolate.interp1d (linear, cubic)
+Supported methods (see `sl_backend`, the single owner of method -> backend):
+- 1D: numpy.interp (linear) / PchipInterpolator (cubic -- monotone Hermite, NOT a C2 spline;
+  Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up)
 - nD: scipy.interpolate.RegularGridInterpolator (linear, cubic, quintic)
 - Fallback: RBF interpolation for boundary cases
 

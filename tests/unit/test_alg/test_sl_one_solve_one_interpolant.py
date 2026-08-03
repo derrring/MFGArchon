@@ -28,6 +28,7 @@ import pytest
 import numpy as np
 import scipy.interpolate as scipy_interpolate
 
+import mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian as solver_mod
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -397,26 +398,75 @@ class TestTheLinearPathIsUNCHANGEDByTheConsolidation:
         u[-1] = problem.get_u_terminal()
         return solver.solve_hjb_system(np.ones((9, 41)), u[-1], u)
 
-    def test_a_periodic_linear_solve_is_bit_identical_to_pre_consolidation(self):
+    # Relative, not bit-exact. Bit-exactness made this a scipy-internals pin wearing a policy
+    # pin's name: on scipy 1.13.1 -- which pyproject declares supported -- `interp1d`'s
+    # `_call_linear` differs by 1 ULP on 16 of 42 query points and the pin failed while claiming
+    # the boundary policy had changed. The margin is not close: M8, the mutation this exists for,
+    # moves these values by rel 3.6e-2; the scipy-version noise is rel 5.4e-16. Any tolerance in
+    # [1e-12, 1e-4] keeps ~10 orders of discrimination and drops the library coupling.
+    RTOL = 1e-9
+
+    def test_a_periodic_linear_solve_matches_pre_consolidation(self):
         result = self._periodic_linear_solve()
-        assert tuple(float(v) for v in result[0][:5]) == self.MAIN_U0_FIRST5, (
+        assert tuple(float(v) for v in result[0][:5]) == pytest.approx(self.MAIN_U0_FIRST5, rel=self.RTOL), (
             "the linear batch path moved. This change is supposed to alter only which CUBIC "
-            "backend runs; if the linear result moved, the out-of-bounds policy changed with it "
+            "backend runs; a moved linear result means the out-of-bounds policy moved with it "
             "(clamp vs extrapolate), which is the boundary policy #1739 owns and this PR defers."
         )
-        assert float(result.sum()) == self.MAIN_SUM
+        assert float(result.sum()) == pytest.approx(self.MAIN_SUM, rel=self.RTOL)
 
-    def test_the_fixture_actually_sends_feet_out_of_the_domain(self):
-        """Positive control. On a domain where no foot leaves, the pin above is vacuous.
+    def test_the_fixture_actually_sends_feet_out_of_the_domain(self, monkeypatch):
+        """Positive control: MEASURE the feet, do not infer them from a dispatch string.
 
-        `periodic` maps to `bc_op == "periodic"`, which no branch handles (#1739), so nothing
-        folds the feet back. If that is ever fixed, this test fails and the pin above must be
-        re-captured rather than quietly kept.
+        The first version asserted `bc_type_to_geometric_operation("periodic") != "wrap"`, which
+        is a claim about the producer. #1739 is a defect in the CONSUMER -- three HJB sites compare
+        `bc_op == "wrap"` against a function that returns `"reflect" | "clamp" | "periodic"`, and
+        the FP adjoint already compares against `"periodic"`, so the available fix is to change
+        those three comparisons, not the producer. Constructed, that fix takes out-of-domain feet
+        from 8/328 to 0/328 -- the fixture stops exercising the policy, which is exactly what this
+        control exists to catch -- and the string assertion still PASSED.
+
+        Counting the feet cannot go inert that way: it fails when they stop leaving, whatever the
+        reason. That matters because the pin above is relative, and on a wrapped fixture M8 moves
+        the values by only ~1 ULP, so the pin would be blind and this control is what says so.
         """
-        from mfgarchon.geometry.boundary import bc_utils, periodic_bc
+        import scipy.interpolate as scipy_interpolate
 
-        assert bc_utils.bc_type_to_geometric_operation("periodic") != "wrap", (
-            "#1739 is fixed: periodic feet now fold, so the pin above no longer measures the "
-            "out-of-bounds policy and must be re-captured on a fixture that still does"
+        # Counted through BOTH backends, so this measures where the feet are rather than which
+        # interpolant is built. Counting only interp1d made the control fail under a mutation that
+        # merely switched to np.interp -- a failure about the implementation, not the fixture.
+        outside = []
+
+        def _tally(x, q):
+            lo, hi = float(np.min(x)), float(np.max(x))
+            q_arr = np.atleast_1d(q)
+            outside.append(int(np.sum((q_arr < lo) | (q_arr > hi))))
+
+        original_interp1d = scipy_interpolate.interp1d
+
+        def counting_interp1d(x, y, **kwargs):
+            f = original_interp1d(x, y, **kwargs)
+
+            def wrapped(q):
+                _tally(x, q)
+                return f(q)
+
+            return wrapped
+
+        original_np_interp = np.interp
+
+        def counting_np_interp(q, xp, fp, **kwargs):
+            _tally(xp, q)
+            return original_np_interp(q, xp, fp, **kwargs)
+
+        monkeypatch.setattr(scipy_interpolate, "interp1d", counting_interp1d)
+        monkeypatch.setattr(solver_mod, "interp1d", counting_interp1d, raising=False)
+        monkeypatch.setattr(solver_mod.np, "interp", counting_np_interp)
+        self._periodic_linear_solve()
+
+        assert sum(outside) > 0, (
+            "no departure foot left the domain, so the pin above measures nothing about the "
+            "out-of-bounds policy. Most likely #1739 was fixed and the periodic fold now wraps: "
+            "re-capture the reference on a fixture that still exercises extrapolation, rather "
+            "than keeping a pin that has quietly stopped testing its subject."
         )
-        assert periodic_bc(dimension=1) is not None
