@@ -1276,20 +1276,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator, interp1d
 
-                # `extrapolate=True`, and `interp1d` rather than `np.interp`, because BOTH
-                # interpolants this site used to build extrapolated and the consolidation must not
-                # change that. It is only the backend that is being unified here.
-                #
-                # This started as a clamp, which was wrong twice over. `reflect_into_domain` rounds
-                # OUTWARD for endpoints that are not exactly representable -- reflect(-0.3) is
-                # 2.8e-17 below x_grid[0] -- and PCHIP with extrapolate=False returns NaN there,
-                # which solve_banded rejects. Clamping did stop the abort, but the only BC that
-                # reaches this site with genuinely out-of-domain feet is PERIODIC, whose fold is
-                # dead (#1739): measured, feet land 0.47 dx below xmin, 4.7e14 times the overshoot
-                # the clamp was written for. Against a fold-repaired reference the clamp cost
-                # 2.04e-2 where extrapolation costs 5.73e-3 -- linear extrapolation across the seam
-                # is a first-order stand-in for the wrapped value, clamping is a zeroth-order one.
-                # It also removed the loud failure that would have surfaced #1739.
+                # Both interpolants must EXTRAPOLATE: only the backend is being unified here, and
+                # both of the ones this site used to build extrapolated. Clamping instead (whether
+                # via np.clip or np.interp's default) is a different out-of-bounds policy, and it
+                # is reachable -- periodic feet leave the domain at every step because that fold is
+                # dead (#1739), landing ~0.5 dx out, where clamping costs 2.04e-2 against 5.73e-3
+                # for extrapolation. Pinned by TestTheLinearPathIsUNCHANGEDByTheConsolidation.
                 backend = sl_backend(self.interpolation_method, 1, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)

@@ -338,3 +338,85 @@ class TestTheOverrideIsDisclosedRatherThanApplied:
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             _solver_for(1, "cubic", diffusion_method="explicit_euler")
+
+
+class TestTheLinearPathIsUNCHANGEDByTheConsolidation:
+    """The other half of this change's stated invariant, and the half nothing was pinning.
+
+    The claim is "only the backend choice changes": both interpolants the batch path built
+    extrapolated out-of-domain feet, and it still does. The cubic half is pinned by
+    `test_a_solve_survives_a_non_representable_domain[cubic-(-0.3, 1.7)]`. The linear half was
+    pinned by nothing -- and during this change the batch site's
+    `interp1d(fill_value="extrapolate")` was silently swapped for `np.interp`, which CLAMPS.
+    Reapplying that one-line swap passes 613 SL/HJB tests while moving a periodic linear solve by
+    5.26e-3, eleven times the 4.77e-4 the intended cubic backend swap moves it. The `[linear-*]`
+    fold cases assert only finiteness, and a clamped value is finite.
+
+    Periodic BC is what makes this reachable: its fold is dead (#1739), so feet leave the domain
+    at every step and the out-of-bounds policy is what decides the answer.
+
+    The values below are captured from `main` BEFORE the consolidation. That is deliberate -- an
+    agreement test between the two paths goes tautological the moment they share an owner, which
+    is exactly when this change lands, so the only pin that survives is against the
+    pre-consolidation output. Update it only alongside a stated, measured intent to change the
+    linear path.
+    """
+
+    # Captured on main @ fecbfa1d, before sl_backend existed.
+    MAIN_U0_FIRST5 = (
+        -0.40983509012196784,
+        -0.404058809261078,
+        -0.3982725404248194,
+        -0.3923195952518894,
+        -0.3860645384176972,
+    )
+    MAIN_SUM = -75.51161537275942
+
+    def _periodic_linear_solve(self) -> np.ndarray:
+        from mfgarchon.geometry.boundary import periodic_bc
+
+        problem = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=periodic_bc(dimension=1)
+            ),
+            T=0.4,
+            Nt=8,
+            sigma=0.05,
+            components=MFGComponents(
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.05 * np.sin(2 * np.pi * np.asarray(x)),
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0),
+                    coupling=lambda m: m,
+                    coupling_dm=lambda m: 1.0,
+                ),
+            ),
+        )
+        solver = HJBSemiLagrangianSolver(problem, interpolation_method="linear", characteristic_solver="explicit_euler")
+        u = np.zeros((9, 41))
+        u[-1] = problem.get_u_terminal()
+        return solver.solve_hjb_system(np.ones((9, 41)), u[-1], u)
+
+    def test_a_periodic_linear_solve_is_bit_identical_to_pre_consolidation(self):
+        result = self._periodic_linear_solve()
+        assert tuple(float(v) for v in result[0][:5]) == self.MAIN_U0_FIRST5, (
+            "the linear batch path moved. This change is supposed to alter only which CUBIC "
+            "backend runs; if the linear result moved, the out-of-bounds policy changed with it "
+            "(clamp vs extrapolate), which is the boundary policy #1739 owns and this PR defers."
+        )
+        assert float(result.sum()) == self.MAIN_SUM
+
+    def test_the_fixture_actually_sends_feet_out_of_the_domain(self):
+        """Positive control. On a domain where no foot leaves, the pin above is vacuous.
+
+        `periodic` maps to `bc_op == "periodic"`, which no branch handles (#1739), so nothing
+        folds the feet back. If that is ever fixed, this test fails and the pin above must be
+        re-captured rather than quietly kept.
+        """
+        from mfgarchon.geometry.boundary import bc_utils, periodic_bc
+
+        assert bc_utils.bc_type_to_geometric_operation("periodic") != "wrap", (
+            "#1739 is fixed: periodic feet now fold, so the pin above no longer measures the "
+            "out-of-bounds policy and must be re-captured on a fixture that still does"
+        )
+        assert periodic_bc(dimension=1) is not None
