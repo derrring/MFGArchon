@@ -153,6 +153,7 @@ class Run:
     returncode: int = 0
     collected: int = 0
     seconds: float = 0.0
+    output: str = ""
 
 
 def _pytest(paths: list[str], timeout: int = 3600) -> Run:
@@ -188,7 +189,24 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
         returncode=proc.returncode,
         collected=_collected(proc.stdout),
         seconds=round(time.perf_counter() - t0, 1),
+        output=proc.stdout,
     )
+
+
+def _failure_excerpt(output: str, limit: int = 120) -> str:
+    """The part of a pytest run that says WHY it failed, bounded.
+
+    Both refusal paths below must print this. A weekly red often does not reproduce
+    locally, and then the runner's own output is the only evidence there is.
+    """
+    banner = re.search(r"^=+ FAILURES =+$", output, re.MULTILINE)
+    excerpt = output[banner.start() :] if banner else output
+    lines = excerpt.splitlines()
+    if len(lines) <= limit:
+        return "\n".join(lines)
+    # Keep the tail: with -q the short summary lands last, and it names every failure
+    # even when a single traceback is long enough to push the others out.
+    return "\n".join([f"... {len(lines) - limit} earlier lines omitted ...", *lines[-limit:]])
 
 
 _COLLECTED = re.compile(r"(\d+) (?:passed|failed|error)")
@@ -411,7 +429,9 @@ def main() -> None:
     if base.failed:
         sys.exit(
             f"Refusing to run: {len(base.failed)} tests already fail before any mutation, so a "
-            f"kill could not be attributed.\n  " + "\n  ".join(sorted(base.failed)[:10])
+            f"kill could not be attributed.\n  "
+            + "\n  ".join(sorted(base.failed)[:10])
+            + f"\n\n--- baseline pytest output ---\n{_failure_excerpt(base.output)}"
         )
     # pytest exits 5 on "no tests collected" and 2/3/4 on usage or internal errors, and in
     # every one of those the FAILED set is empty. Without this, a --paths typo produces a
@@ -422,6 +442,7 @@ def main() -> None:
         sys.exit(
             f"Refusing to run: the baseline pytest exited {base.returncode} having run "
             f"{base.collected} tests. Nothing below would be a measurement."
+            f"\n\n--- baseline pytest output ---\n{_failure_excerpt(base.output)}"
         )
     print(f"  clean, {base.collected} ran, {base.seconds}s\n", flush=True)
 
