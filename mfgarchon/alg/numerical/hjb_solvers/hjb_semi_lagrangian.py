@@ -45,7 +45,7 @@ from .hjb_sl_adi import (
 from .hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     apply_boundary_conditions_nd,
-    reflect_into_domain,
+    fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
 )
@@ -1260,14 +1260,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
-                if bc_op == "reflect":
-                    # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann),
-                    # not np.clip — clamping collapsed them onto the wall node.
-                    x_departures = reflect_into_domain(x_departures, xmin, xmax)
-                elif bc_op == "wrap":
-                    # Periodic: wrap around
-                    L = xmax - xmin
-                    x_departures = xmin + (x_departures - xmin) % L
+                # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann), not
+                # np.clip -- clamping collapsed them onto the wall node.
+                # Issue #1739: the fold has one owner, so the operation vocabulary cannot
+                # drift away from what bc_type_to_geometric_operation emits.
+                x_departures = fold_into_domain(x_departures, xmin, xmax, bc_op)
 
                 # Step 1b: Batch interpolation, through the single owner.
                 # This site used to build CubicSpline(bc_type="not-a-knot") for "cubic" while the
@@ -1276,12 +1273,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator, interp1d
 
-                # Both interpolants must EXTRAPOLATE: only the backend is being unified here, and
-                # both of the ones this site used to build extrapolated. Clamping instead (whether
-                # via np.clip or np.interp's default) is a different out-of-bounds policy, and it
-                # is reachable -- periodic feet leave the domain at every step because that fold is
-                # dead (#1739), landing ~0.5 dx out, where clamping costs 2.04e-2 against 5.73e-3
-                # for extrapolation. Pinned by TestTheLinearPathIsUNCHANGEDByTheConsolidation.
+                # Both interpolants EXTRAPOLATE, which was load-bearing while periodic feet left
+                # the domain every step: clamping instead cost 2.04e-2 against 5.73e-3 when that
+                # was measured. #1739 folds those feet, and the solver supports only
+                # {NO_FLUX, NEUMANN, PERIODIC} -> {reflect, periodic}, so no supported BC now
+                # reaches this interpolant out of bounds and the choice is unobservable here.
+                # Keep it: the fold above is what makes that true, and a future `clamp`-mapped BC
+                # (or a post-construction BC swap past _validate_bc_support, #1699) restores it.
                 backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
@@ -1699,14 +1697,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # --- Boundary fold for the Brownian feet ---
         # Issue #1048 (1D) / #1054 (nD): REFLECT feet for Neumann BC (not clamp),
-        # wrap for periodic. reflect_into_domain is the correct per-axis fold
+        # wrap for periodic. fold_into_domain is the correct per-axis fold
         # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
         bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
-        L_axis = x_max - x_min
 
         # --- Build the 2*d departures per node (one ± pair per axis) ---
         n_total = int(np.prod(grid_shape))
@@ -1727,10 +1724,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
 
-        if bc_op == "reflect":
-            all_departures = reflect_into_domain(all_departures, x_min, x_max)
-        elif bc_op == "wrap":
-            all_departures = x_min + (all_departures - x_min) % L_axis
+        # Issue #1739: one owner for the fold, so its vocabulary cannot drift from what
+        # bc_type_to_geometric_operation emits -- this branch tested "wrap" and was dead.
+        all_departures = fold_into_domain(all_departures, x_min, x_max, bc_op)
 
         # --- Interpolate u^{n+1} at every foot (dim-dependent backend, see docstring) ---
         # Issue #1033/#1054: monotone dispatch — cubic/quintic → PCHIP (monotone
@@ -1879,12 +1875,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         span = x_max - x_min
 
         def _fold(points: np.ndarray) -> np.ndarray:
-            """Fold departure coordinates (``(..., d)``) back into ``[x_min, x_max]``."""
-            if bc_op == "reflect":
-                return reflect_into_domain(points, x_min, x_max)
-            if bc_op == "wrap":
-                return x_min + (points - x_min) % span
-            return np.clip(points, x_min, x_max)
+            """Fold departure coordinates (``(..., d)``) back into ``[x_min, x_max]``.
+
+            Issue #1739: the periodic branch here tested ``"wrap"``, which the mapping never
+            emits, so every periodic foot fell through to the clamp below.
+            """
+            return fold_into_domain(points, x_min, x_max, bc_op)
 
         # Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source; shared with stochastic SL).
         foot_offset = self._brownian_foot_offset(sqrt_dt)
