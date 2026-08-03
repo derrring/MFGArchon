@@ -263,21 +263,15 @@ def fold_into_domain(
 ) -> np.ndarray:
     r"""Fold departure points into ``[xmin, xmax]`` under the geometric operation ``bc_op``.
 
-    One owner for the vectorized Semi-Lagrangian boundary fold. ``bc_op`` is what
-    :func:`~mfgarchon.geometry.boundary.bc_utils.bc_type_to_geometric_operation` returns, and
-    that is the whole point: the three call sites used to inline this dispatch and all three
-    tested ``bc_op == "wrap"``, a spelling that mapping has never produced. Every periodic
-    solve therefore fell past the branch to ``np.clip`` and ran clamped -- no exception, no
-    warning, a value function for boundary conditions the problem did not declare. Measured on
-    a unit domain, a foot at ``-0.15`` came back as ``0.0`` where the periodic image is
-    ``0.85`` (Issue #1739).
+    The one owner of the vectorized Semi-Lagrangian boundary fold. ``bc_op`` must come from
+    :func:`~mfgarchon.geometry.boundary.bc_utils.bc_type_to_geometric_operation`; this function
+    dispatches on that vocabulary and no other.
 
     ``xmin`` / ``xmax`` are scalars (1D) or per-axis arrays broadcastable against ``x`` (nD).
 
     Raises:
-        ValueError: for an operation this fold does not implement. The silent fall-through to
-            clamping is what let three dead branches sit unnoticed, so an unrecognised spelling
-            must stop the solve rather than quietly choose a boundary condition.
+        ValueError: for any other operation. Do not add a fall-through -- an unrecognised
+            spelling would then silently pick a boundary condition instead of stopping.
     """
     if bc_op == "reflect":
         return reflect_into_domain(x, xmin, xmax)

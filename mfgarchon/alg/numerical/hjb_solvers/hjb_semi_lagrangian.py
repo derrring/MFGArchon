@@ -1261,9 +1261,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
                 # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann), not
-                # np.clip -- clamping collapsed them onto the wall node.
-                # Issue #1739: the fold has one owner, so the operation vocabulary cannot
-                # drift away from what bc_type_to_geometric_operation emits.
+                # np.clip -- clamping collapses them onto the wall node.
                 x_departures = fold_into_domain(x_departures, xmin, xmax, bc_op)
 
                 # Step 1b: Batch interpolation, through the single owner.
@@ -1273,13 +1271,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator, interp1d
 
-                # Both interpolants EXTRAPOLATE, which was load-bearing while periodic feet left
-                # the domain every step: clamping instead cost 2.04e-2 against 5.73e-3 when that
-                # was measured. #1739 folds those feet, and the solver supports only
-                # {NO_FLUX, NEUMANN, PERIODIC} -> {reflect, periodic}, so no supported BC now
-                # reaches this interpolant out of bounds and the choice is unobservable here.
-                # Keep it: the fold above is what makes that true, and a future `clamp`-mapped BC
-                # (or a post-construction BC swap past _validate_bc_support, #1699) restores it.
+                # Both interpolants must EXTRAPOLATE. The fold above currently keeps every
+                # supported BC in bounds, so np.interp (which clamps) looks equivalent here and
+                # is not: a clamp-mapped BC, or a post-construction BC swap past
+                # _validate_bc_support (#1699), reaches this out of bounds.
                 backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
@@ -1724,8 +1719,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             all_departures[block_start : block_start + n_total] = x_drift_flat + offset[None, :]
             all_departures[block_start + n_total : block_start + 2 * n_total] = x_drift_flat - offset[None, :]
 
-        # Issue #1739: one owner for the fold, so its vocabulary cannot drift from what
-        # bc_type_to_geometric_operation emits -- this branch tested "wrap" and was dead.
         all_departures = fold_into_domain(all_departures, x_min, x_max, bc_op)
 
         # --- Interpolate u^{n+1} at every foot (dim-dependent backend, see docstring) ---
@@ -1874,14 +1867,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         x_max = np.asarray(bounds[1], dtype=float)
         span = x_max - x_min
 
-        def _fold(points: np.ndarray) -> np.ndarray:
-            """Fold departure coordinates (``(..., d)``) back into ``[x_min, x_max]``.
-
-            Issue #1739: the periodic branch here tested ``"wrap"``, which the mapping never
-            emits, so every periodic foot fell through to the clamp below.
-            """
-            return fold_into_domain(points, x_min, x_max, bc_op)
-
         # Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source; shared with stochastic SL).
         foot_offset = self._brownian_foot_offset(sqrt_dt)
 
@@ -1922,8 +1907,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             def phi_vec(alpha: np.ndarray) -> np.ndarray:
                 """phi over all nodes for a per-node control array (shape (Nx,))."""
                 y_drift = self.x_grid + alpha * dt
-                feet_plus = _fold((y_drift + diff_off).reshape(-1, 1)).ravel()
-                feet_minus = _fold((y_drift - diff_off).reshape(-1, 1)).ravel()
+                feet_plus = fold_into_domain((y_drift + diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
+                feet_minus = fold_into_domain((y_drift - diff_off).reshape(-1, 1), x_min, x_max, bc_op).ravel()
                 u_pm = 0.5 * (interp_fn(feet_plus) + interp_fn(feet_minus))
                 return 0.5 * lam * dt * alpha * alpha - dt * h + u_pm
 
@@ -1995,7 +1980,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             def phi_nd(alpha_vec: np.ndarray, _xi: np.ndarray = x_i, _hi: float = h_i) -> float:
                 drift = _xi + np.asarray(alpha_vec) * dt  # (d,)
-                feet = _fold(drift[None, :] + depart_offsets)  # (2d, d)
+                feet = fold_into_domain(drift[None, :] + depart_offsets, x_min, x_max, bc_op)  # (2d, d)
                 u_pm = interp_fn(feet)  # (2d,)
                 return 0.5 * lam * dt * float(np.dot(alpha_vec, alpha_vec)) - dt * _hi + float(u_pm.mean())
 

@@ -1,15 +1,11 @@
 """The SL boundary fold speaks the mapping's vocabulary, and periodic feet actually wrap.
 
-Issue #1739. Three sites in `hjb_semi_lagrangian.py` dispatched on `bc_op == "wrap"`, a
-spelling `bc_type_to_geometric_operation` has never produced -- its alphabet is
-`{'reflect', 'periodic', 'clamp'}`. All three branches were unreachable, so every periodic
-foot fell through to a clamp or an extrapolation. No exception and no warning: the solve
-returned a value function for boundary conditions the problem did not declare.
+Issue #1739.
 
-The oracle here is periodicity itself, not agreement between two of our own code paths: on a
-periodic domain `x = 0` and `x = 1` are the same physical point, so `u(t, 0) == u(t, 1)` is a
-property of the continuous problem that no discretisation may violate at O(1). Measured on
-`diffusion_method='canonical_cs'`, the seam went from 8.67e-01 to 2.45e-16.
+Oracle: periodicity itself, not agreement between two of our own code paths. On a periodic
+domain `x = 0` and `x = 1` are the same physical point, so `u(t, 0) == u(t, 1)` is a property
+of the continuous problem that no discretisation may violate at O(1). It therefore survives a
+later consolidation of the folds it exercises, which a path-A-vs-path-B test would not.
 """
 
 import pytest
@@ -42,9 +38,7 @@ def _periodic_solver(**kwargs):
             coupling_dm=lambda m: 1.0,
         ),
     )
-    geometry = TensorProductGrid(
-        bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=periodic_bc(dimension=1)
-    )
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=periodic_bc(dimension=1))
     problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, components=components, sigma=0.3)
     return HJBSemiLagrangianSolver(problem, interpolation_method="linear", **kwargs)
 
@@ -79,20 +73,15 @@ def test_the_fold_accepts_every_operation_the_mapping_can_emit():
 
 
 def test_an_unrecognised_operation_raises_instead_of_silently_clamping():
-    """`wrap` is the exact spelling that sat dead at three sites for the life of the bug.
-
-    A fall-through would make the next vocabulary drift as quiet as this one was.
-    """
+    """A fall-through here would make the next vocabulary drift silent. Do not add one."""
     with pytest.raises(ValueError, match="unknown geometric boundary operation"):
         fold_into_domain(np.array([1.2]), 0.0, 1.0, "wrap")
 
 
 def test_periodic_fold_wraps_and_matches_the_independent_scalar_implementation():
-    """`apply_boundary_conditions_1d` wrapped correctly all along; the vectorised sites did not.
-
-    It is a separate implementation with separate call sites, so this is a real cross-check
-    rather than a tautology -- and clamping is shown to be a different answer, so an
-    accidental revert to `np.clip` cannot pass.
+    """`apply_boundary_conditions_1d` is a separate implementation with separate call sites,
+    so this is a real cross-check rather than a tautology. Clamping is asserted to be a
+    different answer, so a revert to `np.clip` cannot pass.
     """
     points = np.array([-0.15, 1.2, 0.5])
     folded = fold_into_domain(points, 0.0, 1.0, "periodic")
@@ -111,9 +100,9 @@ def test_periodic_fold_wraps_and_matches_the_independent_scalar_implementation()
 @pytest.mark.parametrize(
     ("diffusion_method", "tolerance"),
     [
-        # canonical_cs folds every departure, so the seam closes to round-off (was 8.67e-01).
+        # canonical_cs folds every departure, so the seam closes to round-off.
         ("canonical_cs", 1e-12),
-        # stochastic leaves a discretisation-scale residual at sigma=0.3 (was 1.82e+00).
+        # stochastic leaves a discretisation-scale residual at sigma=0.3.
         ("stochastic", 1e-2),
     ],
 )
