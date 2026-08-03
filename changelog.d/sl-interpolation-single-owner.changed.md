@@ -14,8 +14,13 @@ out-of-domain feet, and it still does, so the out-of-bounds policy is untouched.
 the pre-consolidation output, since an agreement test between the two paths goes tautological once
 they share an owner.
 
-`interpolate_value_nd` now raises for an unrecognised method at nD instead of silently returning
-the linear value. Unreachable through the solver, which validates the method at construction.
+`interpolate_value_nd` now raises for an unrecognised method at **two or more axes**, instead of
+silently returning the linear value. At a one-axis grid it still returns the linear value, because
+`sl_backend`'s `dimension` argument selects which SL machinery applies and the 1D branch is total
+over method strings -- the same semantics `interpolate_value_1d` has always had, now reached
+through both names instead of the two disagreeing on four of five methods. Unreachable through the
+solver either way: `_grid_shape` is assigned only in the `dimension > 1` branch, so a one-axis
+`grid_shape` cannot arise there.
 
 A monotone scheme overriding the declared method is now disclosed rather than applied silently.
 `diffusion_method="stochastic"` warned only for `cubic`/`quintic`, via a hardcoded pair that was a
