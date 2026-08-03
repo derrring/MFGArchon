@@ -253,6 +253,18 @@ def test_the_stochastic_path_consults_the_owner(method, monkeypatch):
     """
     import mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian as solver_mod
 
+    # Construct BEFORE patching. The constructor's disclosure also consults the owner, and with
+    # `monotone_required=False` among its calls -- so recording construction too made an `all(...)`
+    # assertion here false, and the version of this test that passed did so only because
+    # `_disclose_monotone_override` re-imported `sl_backend` function-locally and thereby shadowed
+    # the patch. Deleting that redundant import, a pure no-op, turned 18 passed into 2 failed: the
+    # test was pinning an import style rather than a dispatch property. Patching after construction
+    # isolates the solve-time dispatch, which is the thing under test.
+    problem = _steep_1d_problem(nx=21, nt=4)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the cubic case warns by design
+        solver = HJBSemiLagrangianSolver(problem, interpolation_method=method, diffusion_method="stochastic")
+
     calls: list[tuple] = []
     original = solver_mod.sl_backend
 
@@ -262,9 +274,10 @@ def test_the_stochastic_path_consults_the_owner(method, monkeypatch):
 
     monkeypatch.setattr(solver_mod, "sl_backend", recording)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)  # the cubic case warns by design
-        _solve(_steep_1d_problem(nx=21, nt=4), interpolation_method=method, diffusion_method="stochastic")
+    nx = problem.geometry.get_grid_shape()[0]
+    u = np.zeros((problem.Nt + 1, nx))
+    u[-1] = problem.get_u_terminal()
+    solver.solve_hjb_system(np.ones((problem.Nt + 1, nx)), u[-1], u)
 
     assert calls, "the stochastic dispatch never consulted sl_backend -- this test cannot see a NameError there"
     assert all(kw.get("monotone_required") is True for _, kw in calls), (

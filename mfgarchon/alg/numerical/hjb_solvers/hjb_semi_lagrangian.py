@@ -478,8 +478,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if self.diffusion_method != "stochastic":
             return
 
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_interpolation import sl_backend
-
         runs = sl_backend(self.interpolation_method, self.dimension, monotone_required=True)
         would_run = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
         if runs == would_run == "linear":  # Q1: exactly what Carlini-Silva 2014 covers
@@ -1276,24 +1274,29 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # pointwise sibling built PchipInterpolator -- and _compute_cfl_and_substeps picks
                 # between the two PER TIMESTEP by CFL, so one solve mixed both (measured 7 and 81
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
-                from scipy.interpolate import PchipInterpolator
+                from scipy.interpolate import PchipInterpolator, interp1d
 
-                # Clamp to the grid range before interpolating. `reflect_into_domain` rounds
-                # OUTWARD for endpoints that are not exactly representable -- reflect(-0.3)
-                # is -0.30000000000000004, 2.8e-17 below x_grid[0] -- and PCHIP with
-                # extrapolate=False returns NaN there, which solve_banded then rejects with
-                # "array must not contain infs or NaNs". Both interpolants this site used to
-                # build extrapolated, so the overshoot was harmless; PCHIP does not, which
-                # turned a 1-ULP artefact into an aborted solve on any domain like [-0.3, 1.7].
-                # The pointwise sibling has always clamped (hjb_sl_interpolation.py:73-76);
-                # this is that same semantics, which is what makes the two paths agree.
-                x_departures = np.clip(x_departures, self.x_grid[0], self.x_grid[-1])
-
+                # `extrapolate=True`, and `interp1d` rather than `np.interp`, because BOTH
+                # interpolants this site used to build extrapolated and the consolidation must not
+                # change that. It is only the backend that is being unified here.
+                #
+                # This started as a clamp, which was wrong twice over. `reflect_into_domain` rounds
+                # OUTWARD for endpoints that are not exactly representable -- reflect(-0.3) is
+                # 2.8e-17 below x_grid[0] -- and PCHIP with extrapolate=False returns NaN there,
+                # which solve_banded rejects. Clamping did stop the abort, but the only BC that
+                # reaches this site with genuinely out-of-domain feet is PERIODIC, whose fold is
+                # dead (#1739): measured, feet land 0.47 dx below xmin, 4.7e14 times the overshoot
+                # the clamp was written for. Against a fold-repaired reference the clamp cost
+                # 2.04e-2 where extrapolation costs 5.73e-3 -- linear extrapolation across the seam
+                # is a first-order stand-in for the wrapped value, clamping is a zeroth-order one.
+                # It also removed the loud failure that would have surfaced #1739.
                 backend = sl_backend(self.interpolation_method, 1, monotone_required=False)
                 if backend == "pchip":
-                    u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=False)(x_departures)
+                    u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
                 else:
-                    u_departures = np.interp(x_departures, self.x_grid, U_next)
+                    u_departures = interp1d(
+                        self.x_grid, U_next, kind="linear", bounds_error=False, fill_value="extrapolate"
+                    )(x_departures)
 
                 # Step 1d: Lax-Oleinik value update (Issue #1413)
                 U_star = self._sl_value_update(u_departures, x_batch, M_next, p_batch, time_idx * self.dt, self.dt)

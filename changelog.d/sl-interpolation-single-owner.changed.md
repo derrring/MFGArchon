@@ -9,6 +9,8 @@ not a byte-identical refactor.
 
 `sl_backend()` in `hjb_sl_interpolation` is now the single owner of method-to-backend, taking the
 monotone requirement as an explicit policy argument, and the four private ladders are deleted.
+Only the backend choice changes: both interpolants the batch path previously built extrapolated
+out-of-domain feet, and it still does, so the out-of-bounds policy is untouched.
 
 A monotone scheme overriding the declared method is now disclosed rather than applied silently.
 `diffusion_method="stochastic"` warned only for `cubic`/`quintic`, via a hardcoded pair that was a
