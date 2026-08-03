@@ -4,8 +4,9 @@ Interpolation Methods for Semi-Lagrangian HJB Solver.
 This module provides interpolation routines for evaluating the value function
 at departure points during characteristic tracing in the semi-Lagrangian scheme.
 
-Supported methods:
-- 1D: scipy.interpolate.interp1d (linear, cubic)
+Supported methods (see `sl_backend`, the single owner of method -> backend):
+- 1D: scipy.interpolate.interp1d (linear, extrapolating) / PchipInterpolator (cubic -- monotone
+  Hermite, NOT a C2 spline; Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up)
 - nD: scipy.interpolate.RegularGridInterpolator (linear, cubic, quintic)
 - Fallback: RBF interpolation for boundary cases
 
@@ -76,13 +77,14 @@ def interpolate_value_1d(
         return float(U_values[-1])
 
     try:
-        if method == "cubic":
-            # Issue #583 fix: Use PCHIP (monotonicity-preserving cubic Hermite)
-            # instead of cubic splines to prevent Runge oscillations at discontinuities
+        # sl_backend is the one owner of "which interpolant does this method mean" (#1811).
+        # The Issue #583 rationale -- PCHIP rather than a cubic spline, to keep monotonicity and
+        # avoid Runge oscillations at discontinuities -- now lives there rather than here.
+        if sl_backend(method, 1, monotone_required=False) == "pchip":
             interpolator = PchipInterpolator(
                 x_grid,
                 U_values,
-                extrapolate=False,  # Return NaN outside bounds (handled by lines 72-75)
+                extrapolate=False,  # Return NaN outside bounds (the boundary guard above returns first)
             )
         else:
             # Default to linear
@@ -140,14 +142,9 @@ def interpolate_value_nd(
     else:
         U_values_reshaped = U_values
 
-    # Map method name to RegularGridInterpolator format
-    interp_method = "linear"
-    if method == "cubic":
-        interp_method = "cubic"
-    elif method == "quintic":
-        interp_method = "quintic"
-    elif method in ["linear", "nearest", "slinear"]:
-        interp_method = method
+    # One owner for method -> backend (#1811). This block used to be a fourth private copy,
+    # and its catch-all `else` is what silently turned an unrecognised method into linear.
+    interp_method = sl_backend(method, len(grid_shape), monotone_required=False)
 
     interpolator = RegularGridInterpolator(
         grid_coordinates,
@@ -195,6 +192,43 @@ HONOURED_METHODS_ND = frozenset({"linear", "slinear", "nearest", "cubic", "quint
 #       genuinely honoured -- the inverse of the defect this guard exists to fix.
 MIN_POINTS_PER_AXIS_ND = {"linear": 1, "slinear": 2, "nearest": 1, "cubic": 4, "quintic": 6}
 MIN_POINTS_PER_AXIS_1D = {"linear": 2, "cubic": 3}
+
+
+def sl_backend(method: str, dimension: int, *, monotone_required: bool) -> str:
+    """The single answer to "which interpolant does ``method`` mean here".
+
+    Four sites used to decide this independently and disagreed. Measured on
+    ``U = [0, 10, 0, 10, 0]`` at ``x = 0.30``, ``interpolation_method="cubic"`` produced
+    ``7.68`` through ``CubicSpline(bc_type="not-a-knot")`` and ``8.96`` through
+    ``PchipInterpolator`` -- and which one ran was decided **per timestep**, because
+    ``_compute_cfl_and_substeps`` sends a CFL<=1 step down the batch path and a CFL>1 step down
+    the pointwise path. One solve at Nx=41, Nt=8 built 7 of the first and 81 of the second.
+
+    ``monotone_required`` is a real distinction, not a fork, and is why this takes a policy
+    rather than hardcoding a ladder. The Carlini-Silva 2014 stability proof covers monotone
+    interpolation only, so ``diffusion_method='stochastic'`` asks for the monotone backend even
+    when the user said ``quintic`` (Issues #1033, #1049, #1054). What was wrong was that each
+    site re-derived that ladder; the policy is now stated by the caller and applied here.
+
+    In 1D ``cubic`` is ALWAYS PCHIP. ``CubicSpline`` is non-monotone and is precisely what
+    Issue #583 replaced to stop the Issue #1033 blow-up; three of the four sites took that fix
+    and the default path did not. There is no configuration in which this owner returns it.
+
+    Returns a backend key: ``"linear"``, ``"pchip"``, or a ``RegularGridInterpolator`` method
+    name. It names the interpolant, NOT the out-of-bounds policy -- 1D callers realise ``"linear"``
+    as extrapolating ``interp1d`` on the characteristic paths and as clamping ``np.interp`` in
+    ``_stochastic_sl_step``, which documents its own reason. Do not "align" those: swapping the
+    former for the latter moves a periodic solve by rel 3.6e-2 and is what
+    TestTheLinearPathIsUNCHANGEDByTheConsolidation exists to catch.
+    """
+    if dimension == 1:
+        return "pchip" if method == "cubic" else "linear"
+    if monotone_required:
+        # Monotone dispatch: anything higher order collapses to the monotone Hermite backend,
+        # anything else to Q1. Note `nearest` and `slinear` land on "linear" here, which is a
+        # genuine downgrade the caller is asking for -- it must be disclosed, not silent.
+        return "pchip" if method in ("cubic", "quintic") else "linear"
+    return method
 
 
 def honoured_methods(dimension: int) -> frozenset[str]:

@@ -222,3 +222,39 @@ class TestOneDimensionalMinimaFollowTheTruePathNotRegularGridInterpolator:
         ), "at 2 points cubic IS linear, which is why it is refused"
         with pytest.raises(ValueError, match=r"needs at least 3 points per axis at dimension 1"):
             HJBSemiLagrangianSolver(_problem(1, 2), interpolation_method="cubic")
+
+
+class TestAnUnrecognisedMethodRaisesAtND:
+    """The changelog ships this as a behaviour change, so it owes a test (#1814 review, N1).
+
+    `interpolate_value_nd` used to return the LINEAR value for any method it did not recognise --
+    the catch-all `else` that made a typo indistinguishable from a deliberate choice. It now
+    raises. Unreachable through the solver, which validates at construction, so this is the only
+    thing that exercises it.
+    """
+
+    def test_an_unknown_method_raises_rather_than_returning_linear(self):
+        xg = np.linspace(0.0, 1.0, 5)
+        u = np.repeat(np.array([0.0, 10.0, 0.0, 10.0, 0.0])[:, None], 5, axis=1)
+        with pytest.raises(ValueError, match="not defined"):
+            interpolate_value_nd(u, np.array([0.30, 0.5]), (xg, xg), (5, 5), method="bogus")
+
+    def test_at_one_axis_it_does_not_raise_and_the_changelog_says_so(self):
+        """The claim above is scoped to >=2 axes, and this is why -- so it cannot silently widen.
+
+        `sl_backend`'s `dimension` selects WHICH SL MACHINERY applies, and the 1D branch is total
+        over method strings, so a one-axis grid takes the characteristic-path pair and absorbs
+        everything RegularGridInterpolator would have refused. That is `interpolate_value_1d`'s
+        long-standing behaviour, now reached through both names rather than the two disagreeing.
+        Unreachable through the solver -- `_grid_shape` exists only when `dimension > 1`.
+        """
+        xg = np.linspace(0.0, 1.0, 5)
+        u = np.array([0.0, 10.0, 0.0, 10.0, 0.0])
+        assert interpolate_value_nd(u, np.array([0.30]), (xg,), (5,), method="bogus") == pytest.approx(8.0)
+        assert interpolate_value_nd(u, np.array([0.30]), (xg,), (5,), method="quintic") == pytest.approx(8.0)
+
+    def test_an_honoured_method_still_returns_a_value(self):
+        """Negative control: a guard that raises on everything passes the test above."""
+        xg = np.linspace(0.0, 1.0, 5)
+        u = np.repeat(np.array([0.0, 10.0, 0.0, 10.0, 0.0])[:, None], 5, axis=1)
+        assert interpolate_value_nd(u, np.array([0.30, 0.5]), (xg, xg), (5, 5), method="nearest") == pytest.approx(10.0)

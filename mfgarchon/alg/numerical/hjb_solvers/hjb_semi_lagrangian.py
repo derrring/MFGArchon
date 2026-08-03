@@ -54,6 +54,7 @@ from .hjb_sl_interpolation import (
     interpolate_value_1d,
     interpolate_value_nd,
     interpolate_value_rbf_fallback,
+    sl_backend,
 )
 
 if TYPE_CHECKING:
@@ -165,7 +166,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             problem: MFG problem instance
             interpolation_method: Method for interpolating values
                 - 'linear': Linear interpolation (fastest, C⁰ continuous)
-                - 'cubic': Cubic spline interpolation (slower, C² continuous)
+                - 'cubic': Monotone cubic Hermite (PCHIP) -- slower, C¹, and monotone. NOT a C² spline:
+              Issue #583 replaced CubicSpline to stop the Issue #1033 blow-up, so the accuracy
+              on smooth data is 2nd order here against the 4th order a not-a-knot spline gives.
                 - 'quintic': Quintic interpolation (slowest, highest accuracy, nD only)
                 - 'nearest': Nearest neighbor (for debugging)
             optimization_method: Method for Hamiltonian optimization ('brent', 'golden')
@@ -239,30 +242,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Gradient clipping configuration (Issue #583)
         self.gradient_clip_threshold = gradient_clip_threshold
         self.enable_gradient_monitoring = enable_gradient_monitoring
-
-        # Issue #1049: Carlini-Silva 2014 prove unconditional stability of the
-        # deterministic 2-direction averaging SL scheme (here: diffusion_method=
-        # "stochastic") **specifically for Q1 (linear, monotone) interpolation**.
-        # Cubic interpolation is not covered by the CS 2014 proof and is non-monotone
-        # (Issue #1033 documents the exponential blow-up on Towel-on-Beach).
-        # The previous validation actively rejected the proof-applicable combination.
-        # Now: warn (don't reject) when cubic+stochastic is selected, since that
-        # combination violates the monotone-scheme requirement of CS 2014.
-        if self.diffusion_method == "stochastic" and self.interpolation_method in ("cubic", "quintic"):
-            import warnings
-
-            warnings.warn(
-                f"diffusion_method='stochastic' with interpolation_method='{self.interpolation_method}' "
-                "is NOT covered by the Carlini-Silva 2014 stability proof, which "
-                "requires monotone (Q1/linear) interpolation. Cubic/quintic can "
-                "violate the monotone-scheme requirement of Barles-Souganidis and "
-                "produce exponential blow-up on stiff problems (see Issue #1033). "
-                "Recommended: interpolation_method='linear'. mfgarchon's cubic "
-                "path now uses `PchipInterpolator` (monotonic Hermite) which is "
-                "more stable than `CubicSpline` but still outside the formal proof.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         # Issue #1058: canonical Carlini-Silva SL with implicit-alpha* DPP fixed point.
         # CS 2014's stability proof requires monotone (Q1/linear) interpolation; cubic/quintic
@@ -368,6 +347,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # was accepted and silently downgraded. Runs after the dimension/grid branches because
         # the honoured set and the per-axis minimum both depend on them.
         self._validate_interpolation_method()
+        self._disclose_monotone_override()
 
         # Setup JAX functions if available
         if self.use_jax:
@@ -467,6 +447,66 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"(grid shape {shape}). {consequence} Refine the grid on axis {ax}, or choose a "
                 "method the grid supports."
             )
+
+    def _disclose_monotone_override(self) -> None:
+        """Say so when the monotone scheme will not run the interpolant that was asked for.
+
+        ``diffusion_method="stochastic"`` requires a monotone interpolant: Carlini-Silva 2014
+        prove unconditional stability of this two-direction averaging scheme **for Q1 (linear)
+        interpolation**, and Issue #1033 records the exponential Towel-on-Beach blow-up when a
+        non-monotone cubic runs instead. So the path overrides the declared method. The override
+        is correct; performing it silently is not.
+
+        The override was previously announced for ``cubic``/``quintic`` only, by a hardcoded pair
+        that restated the monotone policy a third time. It therefore missed the other half:
+        ``nearest`` and ``slinear`` are honoured at nD, are equally non-monotone, and were
+        remapped to linear with no warning at all -- measured on one 7x7 profile, ``nearest``
+        0.0688 against ``linear`` 0.2732. `sl_backend` is the single owner of which
+        methods get overridden, so this cannot drift from the dispatch again (#1810, #1811).
+
+        The two cases are disclosed differently because they are different: cubic/quintic are
+        replaced by a *different non-proof-covered* interpolant (PCHIP, monotone Hermite), while
+        nearest/slinear are replaced by linear, which IS proof-covered but is not what the caller
+        asked for.
+
+        Both questions are answered by `sl_backend`, and the discriminating question is "is what
+        RUNS the Q1 interpolant the proof covers" -- not "does the monotone flag change anything".
+        Those come apart at 1D cubic, which resolves to PCHIP with or without the flag: the flag
+        changes nothing there, yet PCHIP is still outside the proof and still owes the warning
+        the pre-consolidation code correctly gave it.
+        """
+        if self.diffusion_method != "stochastic":
+            return
+
+        runs = sl_backend(self.interpolation_method, self.dimension, monotone_required=True)
+        would_run = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
+        if runs == would_run == "linear":  # Q1: exactly what Carlini-Silva 2014 covers
+            return
+
+        import warnings
+
+        if runs != "linear":
+            detail = (
+                "Cubic/quintic can violate the monotone-scheme requirement of Barles-Souganidis "
+                "and produce exponential blow-up on stiff problems (see Issue #1033). This path "
+                "runs `PchipInterpolator` (monotonic Hermite), which is more stable than "
+                "`CubicSpline` but still outside the formal proof."
+            )
+        else:
+            detail = (
+                f"This path runs {runs!r} instead of {would_run!r}, which IS covered by the proof "
+                "but is not the interpolant you selected -- it used to be substituted with no "
+                "warning at all (Issue #1810)."
+            )
+
+        warnings.warn(
+            f"diffusion_method='stochastic' with interpolation_method="
+            f"'{self.interpolation_method}' is NOT covered by the Carlini-Silva 2014 stability "
+            f"proof, which requires monotone (Q1/linear) interpolation. {detail} "
+            "Recommended: interpolation_method='linear'.",
+            UserWarning,
+            stacklevel=3,
+        )
 
     def _setup_jax_functions(self):
         """Setup JAX-accelerated functions for performance."""
@@ -1229,15 +1269,26 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     L = xmax - xmin
                     x_departures = xmin + (x_departures - xmin) % L
 
-                # Step 1b: Batch interpolation
-                from scipy.interpolate import CubicSpline, interp1d
+                # Step 1b: Batch interpolation, through the single owner.
+                # This site used to build CubicSpline(bc_type="not-a-knot") for "cubic" while the
+                # pointwise sibling built PchipInterpolator -- and _compute_cfl_and_substeps picks
+                # between the two PER TIMESTEP by CFL, so one solve mixed both (measured 7 and 81
+                # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
+                from scipy.interpolate import PchipInterpolator, interp1d
 
-                if self.interpolation_method == "cubic":
-                    interp_fn = CubicSpline(self.x_grid, U_next, bc_type="not-a-knot")
-                    u_departures = interp_fn(x_departures)
+                # Both interpolants must EXTRAPOLATE: only the backend is being unified here, and
+                # both of the ones this site used to build extrapolated. Clamping instead (whether
+                # via np.clip or np.interp's default) is a different out-of-bounds policy, and it
+                # is reachable -- periodic feet leave the domain at every step because that fold is
+                # dead (#1739), landing ~0.5 dx out, where clamping costs 2.04e-2 against 5.73e-3
+                # for extrapolation. Pinned by TestTheLinearPathIsUNCHANGEDByTheConsolidation.
+                backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
+                if backend == "pchip":
+                    u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)
                 else:
-                    interp_fn = interp1d(self.x_grid, U_next, kind="linear", fill_value="extrapolate")
-                    u_departures = interp_fn(x_departures)
+                    u_departures = interp1d(
+                        self.x_grid, U_next, kind="linear", bounds_error=False, fill_value="extrapolate"
+                    )(x_departures)
 
                 # Step 1d: Lax-Oleinik value update (Issue #1413)
                 U_star = self._sl_value_update(u_departures, x_batch, M_next, p_batch, time_idx * self.dt, self.dt)
@@ -1587,9 +1638,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         algorithm differs, but because collapsing them changes the numerics
         (verified non-byte-identical):
 
-        - **Interpolation backend**: 1D uses ``numpy.interp`` (linear) /
-          ``PchipInterpolator`` (cubic), which *clamp* out-of-bounds feet to
-          the endpoint value; nD uses ``RegularGridInterpolator``, which
+        - **Interpolation backend**: 1D uses ``numpy.interp`` (linear), which *clamps*
+          out-of-bounds feet to the endpoint value, or ``PchipInterpolator`` (cubic), which
+          with ``extrapolate=False`` returns **NaN** -- these are NOT the same policy, and
+          this sentence claimed they were until #1811 traced an aborted solve back to it.
+          nD uses ``RegularGridInterpolator``, which
           *extrapolates* (``fill_value=None``). Under reflect/wrap BC every
           foot is in-bounds and the two agree to ~1 ULP; they diverge only for
           ``clamp`` BC (Dirichlet/none), where clamp vs. extrapolation are
@@ -1683,12 +1736,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Issue #1033/#1054: monotone dispatch — cubic/quintic → PCHIP (monotone
         # Hermite) to avoid the non-monotone CubicSpline blow-up; linear is the
         # canonical Carlini-Silva interpolant (Issue #1049).
-        if self.interpolation_method == "linear":
-            interp_method = "linear"
-        elif self.interpolation_method in ("cubic", "quintic"):
-            interp_method = "pchip"
-        else:
-            interp_method = "linear"
+        interp_method = sl_backend(self.interpolation_method, d, monotone_required=True)
 
         if d == 1:
             # numpy.interp / PchipInterpolator preserve the 1D clamp-at-boundary
