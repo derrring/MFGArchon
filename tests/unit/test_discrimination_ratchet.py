@@ -153,6 +153,64 @@ def test_the_sweep_passes_its_self_exclusion_to_pytest(td, monkeypatch):
     )
 
 
+_RED_BASELINE = """\
+............F...........                                                 [100%]
+=================================== FAILURES ===================================
+____________ TestBackendCreationEdgeCases.test_auto_selection_logging ____________
+>       assert len(captured.out) > 0
+E       assert 0 > 0
+=========================== short test summary info ============================
+FAILED tests/unit/test_backends/test_backend_factory.py::TestBackendCreationEdgeCases::test_auto_selection_logging
+1 failed, 23 passed
+"""
+
+
+def test_the_refusal_reports_why_the_baseline_was_red(td, monkeypatch):
+    """The node id alone costs a full CI round-trip, and sometimes buys nothing.
+
+    On 2026-08-03 the weekly job refused on one pre-existing failure and printed only
+    its name. The same argv on the same commit locally gave 5833 passed, so the
+    runner's own output was the only evidence that existed -- and the script had
+    discarded it. Wiring, not the helper: `_failure_excerpt` can be correct while
+    nothing calls it, which is the M1 shape above.
+    """
+
+    class _Proc:
+        stdout = _RED_BASELINE
+        returncode = 1
+
+    # The two startup guards shell out to git, and this test replaces subprocess
+    # wholesale; they have their own pins above and are not what is under test here.
+    monkeypatch.setattr(td, "_assert_clean_tree", lambda: None)
+    monkeypatch.setattr(td, "_assert_import_is_the_mutated_tree", lambda: None)
+    monkeypatch.setattr(td.subprocess, "run", lambda cmd, **kw: _Proc())
+    monkeypatch.setattr(td.sys, "argv", ["test_discrimination.py"])
+    with pytest.raises(SystemExit) as exc:
+        td.main()
+    message = str(exc.value)
+    assert "assert 0 > 0" in message, (
+        f"the refusal named the test but not the assertion; it said:\n{message}"
+    )
+
+
+def test_the_excerpt_starts_at_the_failures_banner(td):
+    """Everything before the banner is progress dots, which crowd out the reason."""
+    assert td._failure_excerpt(_RED_BASELINE).startswith("=")
+    assert "[100%]" not in td._failure_excerpt(_RED_BASELINE)
+
+
+def test_a_long_excerpt_keeps_the_tail_and_says_what_it_dropped(td):
+    """With -q the short summary lands last, so truncating the head is the safe end.
+
+    Silent truncation would read as "that was the whole failure" -- the shape this
+    repo files under a silent instrument.
+    """
+    long_output = "=" * 3 + " FAILURES " + "=" * 3 + "\n" + "\n".join(f"line {i}" for i in range(500))
+    excerpt = td._failure_excerpt(long_output, limit=10)
+    assert excerpt.splitlines()[-1] == "line 499", "the tail, where the summary is, was dropped"
+    assert "omitted" in excerpt, "truncation was silent"
+
+
 # ---------------------------------------------------------------------------
 # The mutation anchors -- literal source text, so they rot when the source moves
 # ---------------------------------------------------------------------------
