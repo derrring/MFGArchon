@@ -166,13 +166,10 @@ FAILED tests/unit/test_backends/test_backend_factory.py::TestBackendCreationEdge
 
 
 def test_the_refusal_reports_why_the_baseline_was_red(td, monkeypatch):
-    """The node id alone costs a full CI round-trip, and sometimes buys nothing.
+    """Wiring, not the helper: `_failure_excerpt` can be correct while nothing calls it.
 
-    On 2026-08-03 the weekly job refused on one pre-existing failure and printed only
-    its name. The same argv on the same commit locally gave 5833 passed, so the
-    runner's own output was the only evidence that existed -- and the script had
-    discarded it. Wiring, not the helper: `_failure_excerpt` can be correct while
-    nothing calls it, which is the M1 shape above.
+    Same shape as M1 above. A refusal naming the node id but not the assertion costs a
+    full CI round-trip, and buys nothing when the red does not reproduce locally.
     """
 
     class _Proc:
@@ -188,9 +185,7 @@ def test_the_refusal_reports_why_the_baseline_was_red(td, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         td.main()
     message = str(exc.value)
-    assert "assert 0 > 0" in message, (
-        f"the refusal named the test but not the assertion; it said:\n{message}"
-    )
+    assert "assert 0 > 0" in message, f"the refusal named the test but not the assertion; it said:\n{message}"
 
 
 def test_the_excerpt_starts_at_the_failures_banner(td):

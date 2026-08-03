@@ -196,11 +196,8 @@ def _pytest(paths: list[str], timeout: int = 3600) -> Run:
 def _failure_excerpt(output: str, limit: int = 120) -> str:
     """The part of a pytest run that says WHY it failed, bounded.
 
-    The two refusal paths below abort on a run whose stdout was then discarded, so the
-    weekly job reported a node id and nothing else. That is one full CI round-trip per
-    red before anyone learns what the assertion said -- and on 2026-08-03 the failure
-    did not reproduce locally at all (5833 passed under the same argv), which is
-    exactly the case where the runner's own output is the only evidence there is.
+    Both refusal paths below must print this. A weekly red often does not reproduce
+    locally, and then the runner's own output is the only evidence there is.
     """
     banner = re.search(r"^=+ FAILURES =+$", output, re.MULTILINE)
     excerpt = output[banner.start() :] if banner else output
