@@ -5,5 +5,9 @@
   nothing: the same argv on the same commit gave `5833 passed` locally, which makes the runner's
   own output the only evidence that the failure existed. `Run` now carries the output and both
   `sys.exit` paths append a `_failure_excerpt`, anchored at the `FAILURES` banner so the progress
-  dots do not crowd out the reason, tail-truncated at 120 lines because `-q` puts the short summary
-  last, and explicit about how many lines it dropped.
+  dots do not crowd out the reason, truncated from the **head** to the last 120 lines because `-q`
+  puts the short summary last, and explicit about how many lines it dropped. Both exits are pinned:
+  the `base.failed` branch fires first whenever stdout carries a `FAILED` line, so the collection
+  failure that reaches the second one -- a `--paths` typo -- needs its own test to be covered at all.
+  Note the excerpt carries `proc.stdout` only; pytest writes some usage errors to stderr, which this
+  still discards.
