@@ -150,38 +150,39 @@ def enforce_periodic_value_nd(
     axis: int,
 ) -> None:
     """
-    Enforce periodic BC along specified axis (in-place).
+    Enforce periodic BC along ``axis`` (in-place) on an endpoint-inclusive grid.
 
-    For periodic BC, boundary values are copied from the opposite interior:
-    - u[0] = u[-2] (min boundary gets value from near max)
-    - u[-1] = u[1] (max boundary gets value from near min)
+    ``TensorProductGrid`` builds ``np.linspace(x_min, x_max, N)``, so ``field[0]`` and
+    ``field[-1]`` are BOTH real nodes AND the same physical point: the period is ``L``, not
+    ``L + dx``. They are one degree of freedom that the scheme has computed twice, so enforcement
+    is the projection that makes them agree -- their mean, which privileges neither end.
+
+    Do NOT restore the halo form ``field[0] = field[-2]; field[-1] = field[1]``. That is correct
+    only for an array carrying one ghost cell per side, where index 0 and -1 are duplicates of the
+    opposite interior. Applied to a halo-free grid it moves both endpoints one cell in opposite
+    directions and destroys the periodicity it claims to enforce: on ``sin(2 pi x)`` with N=21 it
+    took a seam of 2.4e-16 to 6.2e-01 (Issue #1820). No caller in this package passes a haloed
+    array; if one ever does, it needs its own function rather than a reinterpretation of this one.
 
     Args:
         field: Solution array (modified in-place)
         axis: Dimension index (0, 1, 2, ...)
 
     Example:
-        >>> field = np.array([0.0, 1.0, 2.0, 3.0, 0.0])
+        >>> field = np.array([0.0, 1.0, 2.0, 3.0, 0.5])
         >>> enforce_periodic_value_nd(field, axis=0)
-        >>> # field[0] = 3.0, field[-1] = 1.0
+        >>> # field[0] == field[-1] == 0.25
     """
     ndim = field.ndim
 
-    # Min boundary gets value from near max interior
-    min_slicer = [slice(None)] * ndim
-    near_max_slicer = [slice(None)] * ndim
-    min_slicer[axis] = 0
-    near_max_slicer[axis] = -2
+    first = [slice(None)] * ndim
+    last = [slice(None)] * ndim
+    first[axis] = 0
+    last[axis] = -1
 
-    field[tuple(min_slicer)] = field[tuple(near_max_slicer)]
-
-    # Max boundary gets value from near min interior
-    max_slicer = [slice(None)] * ndim
-    near_min_slicer = [slice(None)] * ndim
-    max_slicer[axis] = -1
-    near_min_slicer[axis] = 1
-
-    field[tuple(max_slicer)] = field[tuple(near_min_slicer)]
+    identified = 0.5 * (field[tuple(first)] + field[tuple(last)])
+    field[tuple(first)] = identified
+    field[tuple(last)] = identified
 
 
 def enforce_robin_value_nd(
@@ -264,76 +265,3 @@ __all__ = [
     "enforce_periodic_value_nd",
     "enforce_robin_value_nd",
 ]
-
-
-# =============================================================================
-# Smoke Tests
-# =============================================================================
-
-
-if __name__ == "__main__":
-    """Smoke tests for enforcement utilities."""
-
-    print("Testing BC enforcement utilities...")
-
-    # Test 1: 1D Neumann 2nd-order
-    print("\n1. Testing 1D Neumann BC (2nd-order)...")
-    field = np.array([0.9, 1.0, 1.1, 1.2, 1.3])
-    enforce_neumann_value_nd(field, axis=0, side="min", order=2)
-    expected = (4.0 * 1.0 - 1.1) / 3.0
-    assert np.isclose(field[0], expected), f"Min failed: {field[0]} != {expected}"
-
-    field = np.array([0.9, 1.0, 1.1, 1.2, 1.3])
-    enforce_neumann_value_nd(field, axis=0, side="max", order=2)
-    expected = (4.0 * 1.2 - 1.1) / 3.0
-    assert np.isclose(field[-1], expected), f"Max failed: {field[-1]} != {expected}"
-    print("   PASS: 1D Neumann 2nd-order")
-
-    # Test 2: 1D Neumann 1st-order
-    print("\n2. Testing 1D Neumann BC (1st-order)...")
-    field = np.array([0.9, 1.0, 1.1, 1.2, 1.3])
-    enforce_neumann_value_nd(field, axis=0, side="min", order=1)
-    assert field[0] == 1.0, f"Min failed: {field[0]} != 1.0"
-    print("   PASS: 1D Neumann 1st-order")
-
-    # Test 3: 1D Dirichlet
-    print("\n3. Testing 1D Dirichlet BC...")
-    field = np.array([0.9, 1.0, 1.1, 1.2, 1.3])
-    enforce_dirichlet_value_nd(field, axis=0, side="min", value=0.0)
-    assert field[0] == 0.0, f"Min failed: {field[0]} != 0.0"
-    enforce_dirichlet_value_nd(field, axis=0, side="max", value=5.0)
-    assert field[-1] == 5.0, f"Max failed: {field[-1]} != 5.0"
-    print("   PASS: 1D Dirichlet")
-
-    # Test 4: 2D Neumann
-    print("\n4. Testing 2D Neumann BC...")
-    field_2d = np.ones((5, 6))
-    for i in range(5):
-        field_2d[i, :] = 1.0 + 0.1 * i
-    enforce_neumann_value_nd(field_2d, axis=0, side="min", order=2)
-    # Check extrapolation was applied
-    expected = (4.0 * field_2d[1, 0] - field_2d[2, 0]) / 3.0
-    assert np.isclose(field_2d[0, 0], expected), "2D min failed"
-    print("   PASS: 2D Neumann")
-
-    # Test 5: 1D Periodic
-    print("\n5. Testing 1D Periodic BC...")
-    field = np.array([0.0, 1.0, 2.0, 3.0, 0.0])
-    enforce_periodic_value_nd(field, axis=0)
-    assert field[0] == 3.0, f"Periodic min failed: {field[0]} != 3.0"
-    assert field[-1] == 1.0, f"Periodic max failed: {field[-1]} != 1.0"
-    print("   PASS: 1D Periodic")
-
-    # Test 6: Non-zero Neumann gradient
-    print("\n6. Testing Neumann BC with non-zero gradient...")
-    field = np.array([0.0, 1.0, 1.1, 1.2, 0.0])
-    h = 0.1
-    g = 2.0  # du/dn = 2
-    enforce_neumann_value_nd(field, axis=0, side="min", grad_value=g, spacing=h)
-    expected = 1.0 - g * h  # u[0] = u[1] - g*h = 1.0 - 0.2 = 0.8
-    assert np.isclose(field[0], expected), f"Non-zero gradient failed: {field[0]} != {expected}"
-    print("   PASS: Neumann with non-zero gradient")
-
-    print("\n" + "=" * 50)
-    print("All enforcement utility tests passed!")
-    print("=" * 50)

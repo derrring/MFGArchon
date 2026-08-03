@@ -119,6 +119,33 @@ def _crank_nicolson_periodic_1d(
     The periodic Laplacian makes the system nearly tridiagonal plus rank-1
     corner entries (A[0, N-1] and A[N-1, 0]). Sherman-Morrison converts
     this to two tridiagonal solves.
+
+    ``U_star`` lives on an endpoint-inclusive grid (``np.linspace(x_min, x_max, N)``), so its
+    first and last entries are the SAME physical point and it carries ``N - 1`` distinct degrees
+    of freedom. The solve therefore runs on ``U_star[:-1]`` and the duplicate is restored after.
+
+    Wrapping the full ``N`` instead -- taking ``U_star[N-1]`` as node 0's left neighbour -- makes
+    the stencil reach a neighbour at distance 0 rather than ``dx``, which is a different operator,
+    not a rounding difference. Measured against the analytic periodic heat kernel
+    ``exp(-D k^2 t) sin(k x)`` at ``N=21, sigma=0.3, dt=0.05``: max error `1.19e-01` wrapping N,
+    `6.14e-04` on ``N - 1`` DOFs, and the seam goes from `2.38e-01` to exactly zero (Issue #1820).
+    """
+    if len(U_star) < 3:
+        raise ValueError(f"periodic Crank-Nicolson needs at least 3 nodes, got {len(U_star)}")
+
+    interior = _crank_nicolson_periodic_distinct(U_star[:-1], alpha, theta)
+    return np.append(interior, interior[0])
+
+
+def _crank_nicolson_periodic_distinct(
+    U_star: np.ndarray,
+    alpha: float,
+    theta: float,
+) -> np.ndarray:
+    """The Sherman-Morrison solve itself, on ``N`` genuinely distinct periodic DOFs.
+
+    Split out from :func:`_crank_nicolson_periodic_1d` so the grid convention (which node
+    duplicates which) lives in exactly one place, above, rather than inside the linear algebra.
     """
     N = len(U_star)
     off_rhs = (1.0 - theta) * alpha

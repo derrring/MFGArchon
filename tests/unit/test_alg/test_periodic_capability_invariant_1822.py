@@ -5,9 +5,16 @@ boundary condition `x[0]` and `x[-1]` are the same physical point and any field 
 must agree there. This is a property of the continuous problem; no discretisation may violate it
 at O(1).
 
-This file is a **ratchet, not a bug report**. Nine of the eleven declaring solvers fail it today;
-`FPFVMSolver` (2.2e-16) and `FPGFDMSolver` (2.2e-11) are the two that honour it. Each failure is
-marked `xfail(strict=True)` with the issue that owns it, so:
+Two invariants, deliberately separate, because each certifies what the other misses:
+
+- **the seam** -- `field[0] == field[-1]`, since they are the same physical point;
+- **mass** -- a periodic domain has no boundary, so a periodic FP solve conserves it exactly.
+
+`FPFVMSolver` is the case that forced the split: it satisfies the seam at 2.2e-16 and creates 6.5%
+of its own mass. The seam alone would certify it.
+
+This file is a **ratchet, not a bug report**. Six solvers fail the seam and six fail mass today.
+Each failure is marked `xfail(strict=True)` with the issue that owns it, so:
 
 - fixing a solver turns its XFAIL into an XPASS, which `strict=True` reports as a failure, forcing
   the marker to be removed in the same change -- the count can only go down;
@@ -63,15 +70,35 @@ _SEARCHED = (
 #   FPFDMSolver             1.11e-01
 # HJBGFDMSolver is separate: it declares PERIODIC and raises NotImplementedError for it.
 KNOWN_NOT_HONOURED = {
-    "HJBSemiLagrangianSolver": "#1820",
     "HJBWENOSolver": "#1822",
     "HJBFDMSolver": "#1822",
     "HJBGFDMSolver": "#1822 (declares PERIODIC, raises NotImplementedError for it)",
     "FPFDMSolver": "#1822",
     "FPParticleSolver": "#1822",
-    "FPSLAdjointSolver": "#1822",
-    "FPSLSolver": "#1822",
     "FPSLJacobianSolver": "#1822 (deprecated, retirement tracked in #1756)",
+}
+
+# Mass is the second invariant, and it is INDEPENDENT of the seam. Periodic BC has no boundary
+# through which mass can leave, so a periodic FP solve conserves it exactly. Measured drift over
+# the same solve:
+#
+#   FPSLSolver / FPSLAdjointSolver  10.77%    FPFVMSolver   6.55%
+#   FPParticleSolver                 7.45%    FPGFDMSolver  0.99%
+#   FPFDMSolver                      6.35%
+#
+# `FPFVMSolver` is why this exists: it satisfies the seam invariant to 2.2e-16 and creates 6.5% of
+# its own mass, so the seam alone would certify it as honouring PERIODIC.
+#
+# `FPSLJacobianSolver` conserves to 0.0000% and is NOT listed -- but that is renormalisation by
+# fiat, not conservation (RFC #1456 class (b), #1429 S0-11). A passing row here means the number
+# is right, not that the mechanism is.
+MASS_NOT_CONSERVED = {
+    "FPFDMSolver": "#1822",
+    "FPFVMSolver": "#1822",
+    "FPGFDMSolver": "#1822",
+    "FPParticleSolver": "#1822",
+    "FPSLSolver": "#1822",
+    "FPSLAdjointSolver": "#1822",
 }
 
 
@@ -155,6 +182,41 @@ def test_a_periodic_solve_returns_a_periodic_field(name, cls):
     assert seam < SEAM_TOL, (
         f"{name} declares BCType.PERIODIC but returned a field with a seam of {seam:.4e} between "
         f"x_min and x_max, which are the same physical point on a periodic domain"
+    )
+
+
+def _fp_parametrised():
+    """The FP half, which is where mass conservation is a question at all."""
+    for name, cls in sorted(_declaring_solvers().items()):
+        if not hasattr(cls, "solve_fp_system"):
+            continue
+        marks = []
+        if name in MASS_NOT_CONSERVED:
+            marks.append(
+                pytest.mark.xfail(
+                    strict=True,
+                    reason=f"{name} creates or destroys mass on a periodic domain ({MASS_NOT_CONSERVED[name]})",
+                )
+            )
+        yield pytest.param(name, cls, marks=marks, id=name)
+
+
+@pytest.mark.parametrize(("name", "cls"), list(_fp_parametrised()))
+def test_a_periodic_fp_solve_conserves_mass(name, cls):
+    """A periodic domain has no boundary, so there is nowhere for mass to go.
+
+    Independent of the seam: `FPFVMSolver` satisfies that one at 2.2e-16 while creating 6.5% of
+    its own mass. Certifying PERIODIC support on the seam alone would pass it.
+    """
+    field = _solve_periodic(cls)
+    x = np.linspace(0.0, 1.0, NX)
+    initial = float(np.trapezoid(field[0], x))
+    final = float(np.trapezoid(field[-1], x))
+    assert initial > 0, f"{name} produced zero initial mass; the ratio below would be meaningless"
+    drift = abs(final / initial - 1.0)
+    assert drift < 1e-9, (
+        f"{name} changed total mass by {drift:.4%} over a periodic solve ({initial:.6f} -> "
+        f"{final:.6f}), and a periodic domain has no boundary for it to cross"
     )
 
 
