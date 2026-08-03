@@ -1271,10 +1271,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 # at Nx=41, Nt=8). CubicSpline is also the non-monotone object Issue #583 replaced.
                 from scipy.interpolate import PchipInterpolator, interp1d
 
-                # Both interpolants must EXTRAPOLATE. The fold above currently keeps every
-                # supported BC in bounds, so np.interp (which clamps) looks equivalent here and
-                # is not: a clamp-mapped BC, or a post-construction BC swap past
-                # _validate_bc_support (#1699), reaches this out of bounds.
+                # The fold above runs unconditionally and every branch of it lands inside
+                # [xmin, xmax] -- clamp included, since it is np.clip against the same bounds
+                # x_grid is built from. So no bc_op reaches this interpolant out of bounds, and
+                # extrapolate-vs-clamp is currently unobservable here. Kept as extrapolate
+                # because that is what this site has always done, not because a route to it is
+                # claimed: changing it needs its own measurement, on a configuration that can
+                # actually leave the domain.
                 backend = sl_backend(self.interpolation_method, self.dimension, monotone_required=False)
                 if backend == "pchip":
                     u_departures = PchipInterpolator(self.x_grid, U_next, extrapolate=True)(x_departures)

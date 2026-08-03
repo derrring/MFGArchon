@@ -69,10 +69,11 @@ class TestGeometricOperationMapping:
     def test_only_three_operations_are_ever_returned(self):
         """The function's return alphabet. NOT a claim about what consumers dispatch on.
 
-        Review of #1738 grepped the consumers and found HJB-SL testing `bc_op == "wrap"`
-        at three sites against a value this function never returns, so periodic BCs are
-        never wrapped there. Filed separately. This test pins the alphabet only; the
-        consumer side is a different quantity and is not verified here.
+        The two are separate quantities and this test sees only one of them: HJB-SL once
+        dispatched on a fourth spelling for three sites' worth of periodic solves, and every
+        mutation of this mapping left that unreachable branch unreachable (#1739, fixed, with
+        its own producer/consumer pin in test_sl_periodic_fold_1739.py). Keep them separate --
+        widening this test to cover consumers is what would make the next such drift invisible.
         """
         produced = {
             bc_type_to_geometric_operation(t)

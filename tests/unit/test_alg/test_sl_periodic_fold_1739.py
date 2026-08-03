@@ -43,11 +43,39 @@ def _periodic_solver(**kwargs):
     return HJBSemiLagrangianSolver(problem, interpolation_method="linear", **kwargs)
 
 
-def _seam(solver) -> float:
-    """max |u(t, x_min) - u(t, x_max)| over the solve -- zero for a true periodic solution."""
+def _seam(solver, monkeypatch) -> float:
+    """max |u(t, x_min) - u(t, x_max)| over the solve -- zero for a true periodic solution.
+
+    Carries its own positive control, because a seam of zero has two causes: the fold wraps,
+    or the solve never went anywhere. A solver that returns its terminal data untouched has a
+    seam of exactly zero and would satisfy the assertion while measuring nothing. So this
+    counts the feet that actually left the domain, and refuses to report a seam unless the
+    fold was exercised and the value function moved.
+    """
+    import mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian as solver_mod
+
+    real_fold = solver_mod.fold_into_domain
+    outside = 0
+
+    def counting_fold(x, lo, hi, bc_op):
+        nonlocal outside
+        outside += int(np.sum((x < np.min(lo)) | (x > np.max(hi))))
+        return real_fold(x, lo, hi, bc_op)
+
+    monkeypatch.setattr(solver_mod, "fold_into_domain", counting_fold)
+
     u_terminal = np.sin(2 * np.pi * np.linspace(0.0, 1.0, NX))
     U = solver.solve_hjb_system(np.ones((11, NX)), u_terminal, np.zeros((11, NX)))
+
     assert np.isfinite(U).all(), "solve produced non-finite values; the seam number would be meaningless"
+    assert outside > 0, (
+        "no departure foot left the domain, so the fold was never asked to wrap anything and "
+        "a zero seam would say nothing about it"
+    )
+    assert not np.allclose(U[0], u_terminal), (
+        "u at t=0 equals the terminal data: the solve did not evolve, and its seam is inherited "
+        "from the input rather than produced by the scheme"
+    )
     return float(np.abs(U[:, 0] - U[:, -1]).max())
 
 
@@ -106,13 +134,13 @@ def test_periodic_fold_wraps_and_matches_the_independent_scalar_implementation()
         ("stochastic", 1e-2),
     ],
 )
-def test_a_periodic_solve_has_no_seam(diffusion_method, tolerance):
+def test_a_periodic_solve_has_no_seam(diffusion_method, tolerance, monkeypatch):
     """x_min and x_max are the same physical point, so u must agree there.
 
     Independent of the scheme: this is a property of the continuous problem, which is what
     makes it survive a later consolidation of the folds it exercises.
     """
-    seam = _seam(_periodic_solver(diffusion_method=diffusion_method))
+    seam = _seam(_periodic_solver(diffusion_method=diffusion_method), monkeypatch)
     assert seam < tolerance, (
         f"periodic solve under diffusion_method={diffusion_method!r} left a seam of {seam:.3e} "
         f"between u(t, x_min) and u(t, x_max); the departure fold is not wrapping"
