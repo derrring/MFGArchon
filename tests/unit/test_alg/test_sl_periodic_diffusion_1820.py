@@ -7,8 +7,10 @@ discriminating no matter how the SL family is later consolidated.
 This is here because the **seam alone was not enough**. `_crank_nicolson_periodic_1d` wrapped all
 `N` nodes -- taking `U[N-1]` as node 0's left neighbour -- while `TensorProductGrid` is
 endpoint-inclusive, so those two entries are the same physical point and the stencil reached a
-neighbour at distance 0 instead of `dx`. That is a different operator, not a rounding difference:
-max error against the kernel was `1.19e-01`, and it did not shrink under refinement.
+neighbour at distance 0 instead of `dx`. The symptom is a lost order, not divergence: max error against the kernel was `1.19e-01` at
+N=21 and the wrapped form converges at **O(h) rather than O(h^2)** (measured ratio 1.98 over
+N=21..1281). An earlier version of this file said it "did not shrink under refinement", which is
+false -- and that wrong claim is why the refinement test below was written too weak to fire.
 
 `InterpolationApplicator.enforce_values` runs after the diffusion step and now identifies the two
 endpoints correctly, which drove the end-to-end seam to `2.4e-16` **while the interior stayed wrong
@@ -43,15 +45,25 @@ def test_the_periodic_step_matches_the_analytic_heat_kernel():
     )
 
 
-def test_the_error_falls_under_refinement():
-    """The property the wrapped-N form did not have: its 1.19e-01 was a fixed operator error.
+def test_the_spatial_order_is_second_not_first():
+    """The discriminating property. Both forms converge; they differ in ORDER.
 
-    Asserted as a decrease rather than a rate -- at these step sizes the temporal error is not
-    negligible, so a clean O(dx^2) claim would be over-reading the numbers.
+    A bare "error decreases" assertion passes for the defective operator too -- that is what the
+    first version of this test did, and it is why reverting the fix did not fire it. The observed
+    rate separates them: wrapped-N measures ~1.0, the correct DOF count ~2.0.
     """
-    errors = [float(np.abs(o - e).max()) for o, e in (_run(n) for n in (21, 41, 81))]
-    assert errors[1] < errors[0], f"refinement did not help: {errors}"
-    assert errors[2] < errors[1], f"refinement did not help: {errors}"
+    dt_small = 1e-4  # push temporal error below the spatial one so the rate is the spatial rate
+    rates = []
+    prev = None
+    for n in (41, 81, 161):
+        x = np.linspace(0.0, 1.0, n)
+        u0 = np.sin(K * x)
+        out = solve_crank_nicolson_diffusion_1d(u0.copy(), dt_small, SIGMA, x, bc_type="periodic")
+        err = float(np.abs(out - np.exp(-D * K * K * dt_small) * u0).max())
+        if prev is not None:
+            rates.append(np.log2(prev / err))
+        prev = err
+    assert min(rates) > 1.5, f"spatial order looks first-order, not second: measured {rates}"
 
 
 def test_the_step_leaves_no_seam():

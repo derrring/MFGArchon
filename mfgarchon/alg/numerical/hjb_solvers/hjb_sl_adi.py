@@ -125,10 +125,12 @@ def _crank_nicolson_periodic_1d(
     of freedom. The solve therefore runs on ``U_star[:-1]`` and the duplicate is restored after.
 
     Wrapping the full ``N`` instead -- taking ``U_star[N-1]`` as node 0's left neighbour -- makes
-    the stencil reach a neighbour at distance 0 rather than ``dx``, which is a different operator,
-    not a rounding difference. Measured against the analytic periodic heat kernel
-    ``exp(-D k^2 t) sin(k x)`` at ``N=21, sigma=0.3, dt=0.05``: max error `1.19e-01` wrapping N,
-    `6.14e-04` on ``N - 1`` DOFs, and the seam goes from `2.38e-01` to exactly zero (Issue #1820).
+    the stencil reach a neighbour at distance 0 rather than ``dx``. Measured against the analytic
+    periodic heat kernel ``exp(-D k^2 t) sin(k x)`` at ``N=21, sigma=0.3, dt=0.05``: max error
+    `1.19e-01` wrapping N against `6.14e-04` on ``N - 1`` DOFs, and the seam goes from `2.38e-01`
+    to exactly zero. The wrapped form still converges -- at **O(h) instead of O(h^2)**, measured
+    ratio 1.98 over N=21..1281 -- so the symptom is a lost order and a 200x constant, not
+    divergence (Issue #1820).
     """
     if len(U_star) < 3:
         raise ValueError(f"periodic Crank-Nicolson needs at least 3 nodes, got {len(U_star)}")
@@ -480,15 +482,38 @@ def solve_1d_diffusion_along_axis(
     Returns:
         Updated solution array (in-place modification avoided)
     """
-    N_axis = U.shape[axis]
-
     # Move target axis to last position for easier vectorization
     U_transposed = np.moveaxis(U, axis, -1)
     original_shape = U_transposed.shape
     n_lines = int(np.prod(original_shape[:-1]))
 
     # Reshape to (n_lines, N_axis) for batched solve
-    U_2d = U_transposed.reshape(n_lines, N_axis)
+    U_2d = U_transposed.reshape(n_lines, U.shape[axis])
+
+    if bc_type == "periodic":
+        # Same grid convention as the 1D path (Issue #1820): the grid is endpoint-inclusive, so
+        # the first and last entry along this axis are one physical point and the axis carries
+        # N - 1 distinct degrees of freedom. Solving over all N wraps node 0 onto a neighbour at
+        # distance 0 instead of dx -- a different operator. Measured on the 2D analytic kernel
+        # exp(-D(kx^2+ky^2)t): max error 1.09e-01 at N=21 wrapping N, with seams of 2.18e-01.
+        #
+        # As in 1D, the duplicate is dropped, so refuse an input where it is not one rather than
+        # deleting whatever it carried. The caller identifies the endpoints per its own semantics.
+        if U_2d.shape[1] < 3:
+            raise ValueError(f"periodic diffusion needs at least 3 nodes on axis {axis}, got {U_2d.shape[1]}")
+        gap = float(np.max(np.abs(U_2d[:, 0] - U_2d[:, -1])))
+        scale = max(1.0, float(np.max(np.abs(U_2d))))
+        if gap > 1e-12 * scale:
+            raise ValueError(
+                f"periodic diffusion on axis {axis} received a field whose endpoints differ by "
+                f"{gap:.3e} (relative {gap / scale:.3e}). Those entries are the same physical "
+                "point on an endpoint-inclusive grid; identify them before calling."
+            )
+        solved = _solve_periodic_lines(U_2d[:, :-1], theta, alpha)
+        U_new_2d = np.concatenate([solved, solved[:, :1]], axis=1)
+        return np.moveaxis(U_new_2d.reshape(original_shape), -1, axis)
+
+    N_axis = U.shape[axis]
 
     # Tridiagonal coefficients (same for all lines)
     main_coef = 1.0 + 2.0 * theta * alpha
@@ -505,15 +530,9 @@ def solve_1d_diffusion_along_axis(
     # Interior points (vectorized over all lines)
     b[:, 1:-1] = main_rhs * U_2d[:, 1:-1] + off_rhs * (U_2d[:, :-2] + U_2d[:, 2:])
 
-    # Boundary conditions
-    if bc_type == "periodic":
-        # Periodic: wrap-around Laplacian
-        b[:, 0] = main_rhs * U_2d[:, 0] + off_rhs * (U_2d[:, -1] + U_2d[:, 1])
-        b[:, -1] = main_rhs * U_2d[:, -1] + off_rhs * (U_2d[:, -2] + U_2d[:, 0])
-    else:
-        # Neumann: du/dx = 0 (ghost point reflection)
-        b[:, 0] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, 0] + off_rhs * U_2d[:, 1]
-        b[:, -1] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, -1] + off_rhs * U_2d[:, -2]
+    # Neumann: du/dx = 0 (ghost point reflection). The periodic branch returned above.
+    b[:, 0] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, 0] + off_rhs * U_2d[:, 1]
+    b[:, -1] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, -1] + off_rhs * U_2d[:, -2]
 
     # Solve tridiagonal systems using vectorized Thomas algorithm
     U_new_2d = thomas_solve_batched(main_coef, off_coef, b, theta, alpha, N_axis, bc_type)
@@ -595,6 +614,30 @@ def thomas_solve_batched(
         x[:, i] = d_prime[:, i] - c_prime[i] * x[:, i + 1]
 
     return x
+
+
+def _solve_periodic_lines(
+    U_lines: np.ndarray,
+    theta: float,
+    alpha: float,
+) -> np.ndarray:
+    """Crank-Nicolson along the last axis of ``U_lines``, over genuinely distinct periodic DOFs.
+
+    The nD twin of :func:`_crank_nicolson_periodic_distinct`: every entry here is its own degree
+    of freedom and the wrap between the first and last is real, because the caller has already
+    removed the duplicated endpoint (Issue #1820).
+    """
+    main_coef = 1.0 + 2.0 * theta * alpha
+    off_coef = -theta * alpha
+    main_rhs = 1.0 - 2.0 * (1.0 - theta) * alpha
+    off_rhs = (1.0 - theta) * alpha
+
+    b = np.empty_like(U_lines)
+    b[:, 1:-1] = main_rhs * U_lines[:, 1:-1] + off_rhs * (U_lines[:, :-2] + U_lines[:, 2:])
+    b[:, 0] = main_rhs * U_lines[:, 0] + off_rhs * (U_lines[:, -1] + U_lines[:, 1])
+    b[:, -1] = main_rhs * U_lines[:, -1] + off_rhs * (U_lines[:, -2] + U_lines[:, 0])
+
+    return _thomas_solve_batched_periodic(main_coef, off_coef, b, U_lines.shape[1])
 
 
 def _thomas_solve_batched_periodic(

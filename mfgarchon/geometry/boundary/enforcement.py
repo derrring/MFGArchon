@@ -12,7 +12,8 @@ The key distinction from ghost cell methods:
 Supported BC Types:
 - Neumann (du/dn = g): Extrapolation-based enforcement
 - Dirichlet (u = g): Direct value assignment
-- Periodic: Copy from opposite boundary
+- Periodic: Identify the two coincident endpoints (endpoint-inclusive grid; see
+  enforce_periodic_value_nd for why this is not a copy from the opposite interior)
 
 Usage:
     >>> from mfgarchon.geometry.boundary.enforcement import (

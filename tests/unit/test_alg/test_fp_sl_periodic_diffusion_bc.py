@@ -92,11 +92,15 @@ def test_periodic_diffusion_seam_symmetry_1d():
         "Expected ratio ~1 (periodic CN); got >> 1 means Neumann zero-flux stencil "
         "is still in use (Issue #1257)."
     )
-    # The two entries that are one physical point must agree, or the "seam" the rest of
-    # this test reasons about is not one (Issue #1820).
-    assert abs(m_new[0] - m_new[-1]) < 1e-12, (
-        f"x_min and x_max hold different values ({m_new[0]:.6f} vs {m_new[-1]:.6f}) on an "
-        "endpoint-inclusive periodic grid, where they are the same point"
+    # Mass, which this step must conserve exactly: zero drift means diffusion alone, and a
+    # periodic domain has no boundary for mass to cross. NOT an endpoint-equality assertion --
+    # that one cannot fail while the implementation ends in `np.append(interior, interior[0])`,
+    # so it pins the last line rather than the scheme (Issue #1820).
+    mass_before = float(np.trapezoid(m, x))
+    mass_after = float(np.trapezoid(m_new, x))
+    assert abs(mass_after / mass_before - 1.0) < 1e-12, (
+        f"periodic diffusion changed total mass by {abs(mass_after / mass_before - 1.0):.3e} "
+        f"({mass_before:.6f} -> {mass_after:.6f}) with zero drift"
     )
 
 

@@ -46,6 +46,28 @@ NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
 
+
+# The datum, and why it is phase-shifted rather than the obvious sin/cos.
+#
+# `cos(2 pi x)` on linspace(0, 1, N) is mirror-symmetric about x = 0.5, and under a mirror-symmetric
+# input a NO_FLUX solve and a PERIODIC solve produce the same field -- so the seam invariant cannot
+# tell them apart and any solver passes it for free. Measured: with the symmetric datum
+# `FPFVMSolver` scored 2.2e-16 and `FPGFDMSolver` 2.2e-11, and those were this file's only two
+# non-xfail rows, i.e. its only positive controls. With the phase shifts below they score 1.79e-01
+# and an outright raise. The certification was an artefact of the test data.
+#
+# Requirements on the datum: exactly periodic (seam 0), strictly positive for the density, and
+# neither symmetric nor antisymmetric about the midpoint.
+def _U(z):
+    z = np.asarray(z)
+    return np.sin(2 * np.pi * z + 0.7) + 0.4 * np.cos(4 * np.pi * z)
+
+
+def _M(z):
+    z = np.asarray(z)
+    return 1.0 + 0.5 * np.cos(2 * np.pi * z + 1.1)
+
+
 # The modules searched for PERIODIC-declaring solvers. Listed rather than walked, because a walk
 # imports optional-backend modules as a side effect; `test_the_matrix_covers_every_declaring_solver`
 # is what stops this list going stale.
@@ -62,43 +84,51 @@ _SEARCHED = (
     "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint",
 )
 
-# name -> (kind, owning issue) for the solvers measured as NOT honouring PERIODIC on ebfc5c96.
-# Measured seams, 1D, Nx=21, sigma=0.3, T=0.5, Nt=10, exactly periodic input:
-#   HJBSemiLagrangianSolver 7.68e-01   FPParticleSolver   5.78e-01
-#   HJBWENOSolver           1.77e-01   FPSLAdjointSolver  1.25e-01
-#   HJBFDMSolver            1.53e-01   FPSLSolver         1.25e-01
-#   FPFDMSolver             1.11e-01
-# HJBGFDMSolver is separate: it declares PERIODIC and raises NotImplementedError for it.
+# Measured on the datum above, 1D, Nx=21, sigma=0.3, T=0.5, Nt=10. Each entry pins the FAILURE
+# MODE as well as the failure: `raises=` means a solver that starts crashing, or crashing
+# differently, is caught rather than xfailing identically to one that merely returns a bad seam.
+#
+#   HJBFDMSolver    7.42e-01     FPParticleSolver    ~5e-01 (UNSEEDED: varies ~25% per run)
+#   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00
+#   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
+#   HJBGFDMSolver   raises NotImplementedError for PERIODIC
+#   FPGFDMSolver    raises ValueError (density goes invalid mid-solve)
+#
+# Passing: HJBSemiLagrangianSolver (0.0) and FPSLSolver / FPSLAdjointSolver (4.4e-16) -- the three
+# repaired in #1824, and the only genuine positive controls this file has ever had.
 KNOWN_NOT_HONOURED = {
-    "HJBWENOSolver": "#1822",
-    "HJBFDMSolver": "#1822",
-    "HJBGFDMSolver": "#1822 (declares PERIODIC, raises NotImplementedError for it)",
-    "FPFDMSolver": "#1822",
-    "FPParticleSolver": "#1822",
-    "FPSLJacobianSolver": "#1822 (deprecated, retirement tracked in #1756)",
+    "HJBWENOSolver": ("#1822", AssertionError),
+    "HJBFDMSolver": ("#1822", AssertionError),
+    "HJBGFDMSolver": ("#1822 declares PERIODIC and raises for it", NotImplementedError),
+    "FPFDMSolver": ("#1822", AssertionError),
+    "FPFVMSolver": ("#1822", AssertionError),
+    "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
+    "FPParticleSolver": ("#1822", AssertionError),
+    "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 
-# Mass is the second invariant, and it is INDEPENDENT of the seam. Periodic BC has no boundary
-# through which mass can leave, so a periodic FP solve conserves it exactly. Measured drift over
-# the same solve:
+# Mass is the second invariant and it is INDEPENDENT of the seam: a periodic domain has no
+# boundary, so a periodic FP solve conserves mass exactly. Measured drift on the datum above:
 #
-#   FPSLSolver / FPSLAdjointSolver  10.77%    FPFVMSolver   6.55%
-#   FPParticleSolver                 7.45%    FPGFDMSolver  0.99%
-#   FPFDMSolver                      6.35%
+#   FPSLSolver / FPSLAdjointSolver  13.42%    FPFVMSolver      5.76%
+#   FPFDMSolver                      5.56%    FPParticleSolver ~5% (UNSEEDED)
+#   FPGFDMSolver                     raises
 #
-# `FPFVMSolver` is why this exists: it satisfies the seam invariant to 2.2e-16 and creates 6.5% of
-# its own mass, so the seam alone would certify it as honouring PERIODIC.
+# FPSLSolver is the case that forces the split: it satisfies the seam at 4.4e-16 and creates 13%
+# of its own mass. Traced in #1820 -- advection conserves exactly at zero drift and the
+# Crank-Nicolson step conserves exactly on an identified field, while one splat step creates 1.14%
+# at drift 0.3 and 3.81% at drift 1.0. The defect is in splat under drift.
 #
-# `FPSLJacobianSolver` conserves to 0.0000% and is NOT listed -- but that is renormalisation by
-# fiat, not conservation (RFC #1456 class (b), #1429 S0-11). A passing row here means the number
-# is right, not that the mechanism is.
+# `FPSLJacobianSolver` conserves to 0.0000% and is NOT listed -- that is renormalisation by fiat,
+# not conservation (RFC #1456 class (b), #1429 S0-11). A passing row means the number is right,
+# not that the mechanism is.
 MASS_NOT_CONSERVED = {
-    "FPFDMSolver": "#1822",
-    "FPFVMSolver": "#1822",
-    "FPGFDMSolver": "#1822",
-    "FPParticleSolver": "#1822",
-    "FPSLSolver": "#1822",
-    "FPSLAdjointSolver": "#1822",
+    "FPFDMSolver": ("#1822", AssertionError),
+    "FPFVMSolver": ("#1822", AssertionError),
+    "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
+    "FPParticleSolver": ("#1822", AssertionError),
+    "FPSLSolver": ("#1820 splat under drift", AssertionError),
+    "FPSLAdjointSolver": ("#1820 splat under drift", AssertionError),
 }
 
 
@@ -111,6 +141,11 @@ def _declaring_solvers() -> dict[str, type]:
             if cls.__module__ != module_name:
                 continue
             declared = getattr(cls, "_SUPPORTED_BC_TYPES", None)
+            if declared is None:
+                # The public name is what BaseMFGSolver._validate_bc_support actually reads.
+                declared = getattr(cls, "supported_bc_types", None)
+                if isinstance(declared, property):
+                    declared = None
             if declared and BCType.PERIODIC in declared:
                 found[name] = cls
     return found
@@ -123,8 +158,8 @@ def _periodic_problem() -> MFGProblem:
         Nt=NT,
         sigma=0.3,
         components=MFGComponents(
-            m_initial=lambda z: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(z)),
-            u_terminal=lambda z: np.sin(2 * np.pi * np.asarray(z)),
+            m_initial=_M,
+            u_terminal=_U,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,
@@ -144,8 +179,8 @@ def _seam(field: np.ndarray) -> float:
 def _solve_periodic(cls: type) -> np.ndarray:
     """Run one solve from exactly periodic data and return the field it produced."""
     x = np.linspace(0.0, 1.0, NX)
-    u_periodic = np.sin(2 * np.pi * x)
-    m_periodic = 1.0 + 0.5 * np.cos(2 * np.pi * x)
+    u_periodic = _U(x)
+    m_periodic = _M(x)
     assert _seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
     assert _seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
 
@@ -164,10 +199,12 @@ def _parametrised():
     for name, cls in sorted(_declaring_solvers().items()):
         marks = []
         if name in KNOWN_NOT_HONOURED:
+            issue, exc = KNOWN_NOT_HONOURED[name]
             marks.append(
                 pytest.mark.xfail(
                     strict=True,
-                    reason=f"{name} declares PERIODIC and does not honour it ({KNOWN_NOT_HONOURED[name]})",
+                    raises=exc,
+                    reason=f"{name} declares PERIODIC and does not honour it ({issue})",
                 )
             )
         yield pytest.param(name, cls, marks=marks, id=name)
@@ -192,10 +229,12 @@ def _fp_parametrised():
             continue
         marks = []
         if name in MASS_NOT_CONSERVED:
+            issue, exc = MASS_NOT_CONSERVED[name]
             marks.append(
                 pytest.mark.xfail(
                     strict=True,
-                    reason=f"{name} creates or destroys mass on a periodic domain ({MASS_NOT_CONSERVED[name]})",
+                    raises=exc,
+                    reason=f"{name} does not conserve mass on a periodic domain ({issue})",
                 )
             )
         yield pytest.param(name, cls, marks=marks, id=name)
@@ -237,14 +276,19 @@ def _declaring_solvers_from_source() -> set[str]:
     names: set[str] = set()
     for path in sorted(root.rglob("*.py")):
         source = path.read_text()
-        if "_SUPPORTED_BC_TYPES" not in source:
+        if "_SUPPORTED_BC_TYPES" not in source and "supported_bc_types" not in source:
             continue
         for node in ast.walk(ast.parse(source)):
             if not isinstance(node, ast.ClassDef):
                 continue
             for stmt in node.body:
                 targets = [stmt.target] if isinstance(stmt, ast.AnnAssign) else getattr(stmt, "targets", [])
-                if not any(isinstance(t, ast.Name) and t.id == "_SUPPORTED_BC_TYPES" for t in targets):
+                # BOTH names. `_validate_bc_support` (base_solver.py) reads the PUBLIC
+                # `supported_bc_types`, so a class declaring only that one advertises PERIODIC
+                # through the real gate while being invisible to a private-name-only scan.
+                if not any(
+                    isinstance(t, ast.Name) and t.id in ("_SUPPORTED_BC_TYPES", "supported_bc_types") for t in targets
+                ):
                     continue
                 if stmt.value is not None and "PERIODIC" in ast.get_source_segment(source, stmt.value):
                     names.add(node.name)
