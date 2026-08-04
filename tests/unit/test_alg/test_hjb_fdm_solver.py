@@ -1119,20 +1119,50 @@ class TestBoundaryGradientBCAware1384:
         assert abs(bc_aware[0] - legacy[0]) > 1.0
         assert abs(bc_aware[-1] - legacy[-1]) > 1.0
 
-    def test_periodic_gradient_byte_identical_to_legacy(self):
-        """Mechanism: for PERIODIC BC the BC-aware gradient equals the legacy %Nx stencil
-        (Δ <= 1 ULP everywhere) — the discrimination the fix relies on, so periodic
-        baselines do not move."""
+    def test_periodic_gradient_matches_the_analytic_derivative_at_the_seam(self):
+        """The periodic endpoint gradient is measured against calculus, not against the legacy stencil.
+
+        This test used to assert byte-identity with ``_legacy_periodic_grad`` on the grounds that
+        "periodic baselines do not move". They had to move: on an endpoint-inclusive grid the
+        legacy ``%Nx`` wrap takes the left neighbour of ``x[0]`` to be ``x[-1]``, which IS ``x[0]``,
+        so it reads across a separation of ``dx`` while dividing by ``2*dx`` -- a factor-of-two
+        error at both endpoints and nowhere else. Measured on ``sin(2 pi x)``, ``Nx=21``, where the
+        analytic derivative at ``x=0`` is ``2 pi = 6.2832``:
+
+            legacy %Nx wrap   3.0902   error 3.19
+            inclusive wrap    6.1803   error 0.10   (O(h^2), as a central difference should be)
+
+        So the old assertion pinned the defect, and #1822 is what moved the baseline. Comparing to
+        the analytic derivative instead cannot go stale that way: it is external to both stencils.
+        """
         from mfgarchon.alg.numerical.hjb_solvers import base_hjb
         from mfgarchon.geometry.boundary import periodic_bc as _pb
+        from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 
         Nx = 21
         x = np.linspace(0.0, 1.0, Nx)
         dx = x[1] - x[0]
         U = np.sin(2 * np.pi * x)
-        legacy = self._legacy_periodic_grad(U, dx)
-        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=_pb(dimension=1), upwind=False)
-        assert np.max(np.abs(bc_aware - legacy)) <= 1e-12
+        analytic = 2 * np.pi * np.cos(2 * np.pi * x)
+
+        # The field lives on np.linspace(0, 1, Nx) -- endpoint-inclusive -- and this BC is built
+        # bare, so it says which layout it is for; a grid would otherwise bind that (Issue #1822).
+        bc = _pb(dimension=1, convention=PeriodicGridConvention.ENDPOINT_INCLUSIVE)
+        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=bc, upwind=False)
+
+        # A central difference on this grid is O(h^2); at Nx=21 that is ~0.10 for this field, and
+        # the tolerance is set from the INTERIOR error so the endpoints cannot hide behind a
+        # tolerance sized for them.
+        interior_error = np.max(np.abs(bc_aware[1:-1] - analytic[1:-1]))
+        assert np.abs(bc_aware[0] - analytic[0]) <= 1.5 * interior_error, (
+            f"the periodic seam gradient is {bc_aware[0]:.4f} against an analytic {analytic[0]:.4f}; "
+            f"the interior of the same field is accurate to {interior_error:.4f}, so the endpoint is "
+            f"using a different stencil width -- the %Nx wrap reads x[-1], which is x[0] itself"
+        )
+        assert np.abs(bc_aware[-1] - analytic[-1]) <= 1.5 * interior_error
+
+        # And the two coincident nodes must agree with each other, which is what periodicity means.
+        assert np.abs(bc_aware[0] - bc_aware[-1]) < 1e-12
 
     def test_dirichlet_steep_terminal_converges(self):
         """Dirichlet with a steep terminal: making only the residual BC-aware while the FD

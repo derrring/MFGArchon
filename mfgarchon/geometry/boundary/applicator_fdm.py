@@ -93,7 +93,7 @@ from .conditions import BoundaryConditions
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 from .ghost_cells import GhostCellConfig
-from .types import BCSegment, BCType, BoundaryFace, parse_boundary_face
+from .types import BCSegment, BCType, BoundaryFace, PeriodicGridConvention, parse_boundary_face
 
 logger = get_logger(__name__)
 
@@ -789,6 +789,45 @@ if TYPE_CHECKING:
     from .applicator_base import BoundaryCalculator, Topology
 
 
+def _periodic_ghost_slices(
+    axis: int, side: str, d: int, g: int, convention: PeriodicGridConvention
+) -> tuple[tuple[slice, ...], tuple[slice, ...]]:
+    """Where a periodic ghost cell reads from. Issue #1822.
+
+    The two conventions differ by exactly one node, and which one applies is a property of the
+    grid that nothing here can see -- see ``PeriodicGridConvention`` for the measurements. Hence
+    the required argument: there is no reading of ``buf`` that distinguishes them.
+
+    Both ghost paths in this module previously carried their own copy of the exclusive arithmetic,
+    so an inclusive grid got every periodic stencil shifted one cell. #1829 fixed the same
+    confusion in ``enforce_periodic_value_nd`` and called itself one owner for the convention;
+    this module was a second owner, twice over. Both copies now route here.
+
+    Args:
+        axis: Axis being filled.
+        side: ``"min"`` fills the low ghosts, ``"max"`` the high ones.
+        d: Number of dimensions of the padded buffer.
+        g: Ghost depth.
+        convention: Which grid this is. No default -- see the class docstring.
+
+    Returns:
+        ``(ghost, source)``, both indexable into the PADDED buffer, whose layout along ``axis`` is
+        ``[ghost_lo (g) | interior (N) | ghost_hi (g)]``.
+    """
+    ghost: list[slice] = [slice(None)] * d
+    source: list[slice] = [slice(None)] * d
+    # On an inclusive grid the shared endpoint is a duplicate and must be stepped over; on an
+    # exclusive one every node is distinct and the wrap starts at the last one.
+    skip = 1 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 0
+    if side == "min":
+        ghost[axis] = slice(0, g)
+        source[axis] = slice(-2 * g - skip, -g - skip)
+    else:
+        ghost[axis] = slice(-g, None)
+        source[axis] = slice(g + skip, 2 * g + skip)
+    return tuple(ghost), tuple(source)
+
+
 # =============================================================================
 # Pre-allocated Ghost Cell Buffer (Legacy Interface - Zero-Copy Design)
 # =============================================================================
@@ -840,6 +879,7 @@ class PreallocatedGhostBuffer:
         order: int = 2,
         config: GhostCellConfig | None = None,
         geometry: object | None = None,
+        periodic_convention: PeriodicGridConvention | None = None,
     ):
         """
         Initialize pre-allocated ghost buffer.
@@ -872,6 +912,10 @@ class PreallocatedGhostBuffer:
         self._domain_bounds = domain_bounds
         self._config = config if config is not None else GhostCellConfig()
         self._geometry = geometry  # For region_name resolution (Issue #577 Phase 3)
+        # Issue #1822. An override for a buffer built from a bare BoundaryConditions; normally
+        # the convention arrives ON the BC, bound there by the grid. Consulted only where PERIODIC
+        # is actually filled, so callers using any other BC never meet it.
+        self._periodic_convention = periodic_convention
 
         # Compute padded shape
         self._padded_shape = tuple(s + 2 * ghost_depth for s in interior_shape)
@@ -917,6 +961,30 @@ class PreallocatedGhostBuffer:
     def ghost_depth(self) -> int:
         """Number of ghost cells per side."""
         return self._ghost_depth
+
+    def _periodic_convention_in_force(self) -> PeriodicGridConvention:
+        """Which grid this buffer wraps under. Issue #1822.
+
+        Read off the BOUNDARY CONDITION, because a periodic fill happens only because the BC says
+        PERIODIC -- so the BC is the one carrier that reaches every wrapping site without a new
+        argument threaded through the 31 that construct or pad. An earlier revision of this change
+        required each caller to pass it and reddened 74 tests, most in paths with no periodic
+        content, which is what a grid property looks like when it is put on the call sites.
+
+        An explicit ``periodic_convention=`` still wins, for a buffer built directly from a bare
+        ``BoundaryConditions`` in a test.
+
+        Unstated means ENDPOINT_EXCLUSIVE, which is how this package wrapped before #1822, so a
+        caller that says nothing gets exactly the numbers it got before. The other choice was
+        measured and reverted: defaulting to INCLUSIVE reinterprets every BC that already meant
+        exclusive, and took the operator layer's own Laplacian from 1.3e-02 to 6.3e+02 error with
+        no test going red. A grid binds the right one in on attachment, so solver paths do not
+        rely on this fallback.
+        """
+        if self._periodic_convention is not None:
+            return self._periodic_convention
+        declared = getattr(self._boundary_conditions, "periodic_convention", None)
+        return declared if declared is not None else PeriodicGridConvention.ENDPOINT_EXCLUSIVE
 
     def update_ghosts(self, time: float = 0.0) -> None:
         """
@@ -1008,21 +1076,11 @@ class PreallocatedGhostBuffer:
             v = value if value is not None else 0.0
 
         if bc_type == BCType.PERIODIC:
-            # Periodic: ghost = opposite interior
+            convention = self._periodic_convention_in_force()
             for axis in range(d):
-                # Low ghost = high interior
-                lo_ghost = [slice(None)] * d
-                lo_ghost[axis] = slice(0, g)
-                hi_interior = [slice(None)] * d
-                hi_interior[axis] = slice(-2 * g, -g)
-                buf[tuple(lo_ghost)] = buf[tuple(hi_interior)]
-
-                # High ghost = low interior
-                hi_ghost = [slice(None)] * d
-                hi_ghost[axis] = slice(-g, None)
-                lo_interior = [slice(None)] * d
-                lo_interior[axis] = slice(g, 2 * g)
-                buf[tuple(hi_ghost)] = buf[tuple(lo_interior)]
+                for side in ("min", "max"):
+                    ghost, source = _periodic_ghost_slices(axis, side, d, g, convention)
+                    buf[ghost] = buf[source]
 
         elif bc_type == BCType.DIRICHLET:
             # Dirichlet: u_ghost = 2*g - u_interior
@@ -1536,14 +1594,8 @@ class PreallocatedGhostBuffer:
 
         # Apply ghost cell formula based on BC type
         if bc_type == BCType.PERIODIC:
-            # Periodic: ghost = opposite interior
-            if side == "min":
-                opposite_interior = [slice(None)] * d
-                opposite_interior[axis] = slice(-2 * g, -g)
-            else:
-                opposite_interior = [slice(None)] * d
-                opposite_interior[axis] = slice(g, 2 * g)
-            buf[tuple(ghost_slices)] = buf[tuple(opposite_interior)]
+            ghost, source = _periodic_ghost_slices(axis, side, d, g, self._periodic_convention_in_force())
+            buf[ghost] = buf[source]
 
         elif bc_type == BCType.DIRICHLET:
             # Dirichlet: u_ghost = 2*g - u_interior
@@ -1701,6 +1753,7 @@ def pad_array_with_ghosts(
     ghost_depth: int = 1,
     time: float = 0.0,
     geometry: object | None = None,
+    periodic_convention: PeriodicGridConvention | None = None,
 ) -> NDArray[np.floating]:
     """
     Pad array with ghost cells based on boundary conditions.
@@ -1715,6 +1768,9 @@ def pad_array_with_ghosts(
         time: Current time for time-dependent BC values
         geometry: Geometry object for region_name resolution (Issue #577 Phase 3).
                  Required if BC segments use region_name.
+        periodic_convention: Overrides the convention carried on ``bc`` (see
+                 ``PeriodicGridConvention``). Normally unnecessary: a grid binds the right one onto
+                 the BC, and unstated means the historical layout.
 
     Returns:
         New array with ghost cells added on all boundaries
@@ -1737,6 +1793,7 @@ def pad_array_with_ghosts(
         domain_bounds=domain_bounds,
         ghost_depth=ghost_depth,
         geometry=geometry,
+        periodic_convention=periodic_convention,
     )
     # Copy array into interior view and update ghosts
     buffer.interior[:] = array

@@ -16,6 +16,7 @@ BC Integration (Issue #527):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -196,7 +197,7 @@ class BaseMFGSolver(ABC):
         # Priority 1: Check for instance attribute (solvers may cache BCs)
         try:
             if self._boundary_conditions is not None:
-                return self._boundary_conditions
+                return self._with_geometry_periodic_convention(self._boundary_conditions)
         except AttributeError:
             pass
 
@@ -204,7 +205,7 @@ class BaseMFGSolver(ABC):
         try:
             bc = self.problem.geometry.boundary_conditions
             if bc is not None:
-                return bc
+                return self._with_geometry_periodic_convention(bc)
         except AttributeError:
             pass
 
@@ -212,7 +213,7 @@ class BaseMFGSolver(ABC):
         try:
             bc = self.problem.geometry.get_boundary_conditions()
             if bc is not None:
-                return bc
+                return self._with_geometry_periodic_convention(bc)
         except AttributeError:
             pass
 
@@ -220,7 +221,7 @@ class BaseMFGSolver(ABC):
         try:
             bc = self.problem.boundary_conditions
             if bc is not None:
-                return bc
+                return self._with_geometry_periodic_convention(bc)
         except AttributeError:
             pass
 
@@ -228,12 +229,37 @@ class BaseMFGSolver(ABC):
         try:
             bc = self.problem.get_boundary_conditions()
             if bc is not None:
-                return bc
+                return self._with_geometry_periodic_convention(bc)
         except AttributeError:
             pass
 
         # No BC found
         return None
+
+    def _with_geometry_periodic_convention(self, bc):
+        """Complete a periodic BC with the node layout of the geometry actually being solved on.
+
+        Issue #1822. A grid binds this when a BC is attached to it, but Priority 1 above is a BC
+        the CALLER handed the solver -- it never met the grid, so its convention is unstated and
+        would wrap the historical way (all N nodes distinct) on a grid where the two endpoints are
+        one point. Measured on that path: the periodic gradient at the seam came out -1.5 where the
+        grid's own layout gives -1.0.
+
+        Only fills a gap; a stated convention is left alone, and the grid refuses one that
+        contradicts it at attachment time.
+        """
+        # Local import: this module is imported from mfgarchon.alg.__init__, and reaching
+        # geometry.boundary at module scope closes an import cycle.
+        from mfgarchon.geometry.boundary.types import BCType
+
+        if getattr(bc, "periodic_convention", None) is not None:
+            return bc
+        if not any(getattr(seg, "bc_type", None) is BCType.PERIODIC for seg in getattr(bc, "segments", [])):
+            return bc
+        measured = getattr(getattr(self.problem, "geometry", None), "periodic_convention", None)
+        if measured is None:
+            return bc
+        return replace(bc, periodic_convention=measured)
 
     #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
     #: its type? Every FP family currently reads the type and drops the value, so they override

@@ -37,7 +37,7 @@ from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.utils.deprecation import deprecated
 
 from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
-from .types import BCSegment, BCType, BoundaryFace, _compute_sdf_gradient
+from .types import BCSegment, BCType, BoundaryFace, PeriodicGridConvention, _compute_sdf_gradient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,6 +110,18 @@ class BoundaryConditions:
     # Corner handling (important for Lipschitz domains with re-entrant corners)
     corner_strategy: Literal["priority", "average", "mollify"] = "priority"
     corner_mollification_radius: float = 0.1
+    # Issue #1822. Rides on the BC because a periodic wrap happens ONLY because this object says
+    # PERIODIC, so this is the one carrier that reaches every wrapping site without threading a
+    # new argument through the 31 that pad or construct.
+    #
+    # ``None`` means UNSTATED, and unstated wraps the way this package always wrapped -- N
+    # distinct nodes -- so attaching this field changes no existing caller's numbers. Defaulting
+    # it to the other convention instead was measured and reverted: it silently reinterprets every
+    # BC that already meant exclusive, and took the operator layer's own Laplacian from 1.3e-02 to
+    # 6.3e+02 with nothing red. A grid does not leave it unstated for long -- ``TensorProductGrid``
+    # BINDS the convention it measures from its own coordinates when a periodic BC is attached, the
+    # same way it binds ``dimension``, and refuses one that contradicts them.
+    periodic_convention: PeriodicGridConvention | None = None
 
     def __post_init__(self):
         """Sort segments by priority (highest first)."""
@@ -911,7 +923,11 @@ def uniform_bc(
     )
 
 
-def periodic_bc(dimension: int | None = None, domain_bounds: np.ndarray | None = None) -> BoundaryConditions:
+def periodic_bc(
+    dimension: int | None = None,
+    domain_bounds: np.ndarray | None = None,
+    convention: PeriodicGridConvention | None = None,
+) -> BoundaryConditions:
     """
     Create periodic boundary conditions.
 
@@ -919,11 +935,22 @@ def periodic_bc(dimension: int | None = None, domain_bounds: np.ndarray | None =
         dimension: Spatial dimension. If None, dimension will be inferred when
             BC is attached to a Geometry (lazy binding).
         domain_bounds: Optional domain bounds
+        convention: Where the last node sits (Issue #1822). ``None`` leaves it unstated, which
+            wraps as this package always has -- ``np.linspace(lo, hi, N, endpoint=False)``, all N
+            nodes distinct. Attaching this BC to a ``TensorProductGrid`` binds the convention that
+            grid measures from its own coordinates (``ENDPOINT_INCLUSIVE``: ``x[0]`` and ``x[-1]``
+            are one physical point), so solver paths need not state it. State it here for a grid
+            the BC never meets -- the operator layer holds no grid object. The two differ by
+            exactly one node, and a wrap under the wrong one returns a finite, plausible field
+            with every stencil shifted a cell; a stated convention that contradicts the grid it is
+            attached to is refused rather than silently overridden.
 
     Returns:
         Uniform periodic BC
     """
-    return uniform_bc(BCType.PERIODIC, value=0.0, dimension=dimension, domain_bounds=domain_bounds)
+    bc = uniform_bc(BCType.PERIODIC, value=0.0, dimension=dimension, domain_bounds=domain_bounds)
+    bc.periodic_convention = convention
+    return bc
 
 
 def dirichlet_bc(

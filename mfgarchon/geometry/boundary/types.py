@@ -80,6 +80,43 @@ def _compute_sdf_gradient(
     return grad
 
 
+class PeriodicGridConvention(Enum):
+    """Which periodic grid a wrap-around operation is acting on. Issue #1822.
+
+    ``BCType.PERIODIC`` says the domain wraps. It does NOT say where the last node sits, and the
+    two answers give different neighbours for the same index:
+
+    ``ENDPOINT_INCLUSIVE``
+        ``np.linspace(x_min, x_max, N)`` -- what ``TensorProductGrid`` builds. ``x[0]`` and
+        ``x[-1]`` are the same physical point counted twice, so the period is ``L``, the spacing
+        is ``L / (N - 1)``, and the node one step left of ``x[0]`` is ``x[-2]``.
+
+    ``ENDPOINT_EXCLUSIVE``
+        ``np.linspace(x_min, x_max, N, endpoint=False)`` -- what the operator layer
+        (``LaplacianOperator``, ``IsotropicDiffusion``) builds. ``N`` distinct nodes, spacing
+        ``L / N``, and the node one step left of ``x[0]`` is ``x[-1]``.
+
+    Both are live in this package, they differ by exactly one node, and a wrap that assumes the
+    wrong one shifts every periodic stencil by a cell while still returning a finite, plausible
+    field. Measured both ways on ``Nx=21``: wrapping an inclusive grid as exclusive gave
+    ``HJBWENOSolver`` a periodic seam of 2.63e-01 from exactly periodic input and stalled
+    ``ImplicitHeatSolver``'s seam at 1.5e-02 under refinement (#1825); wrapping an exclusive grid
+    as inclusive took the operator layer's Laplacian from 1.3e-02 to 6.3e+02 of error. Neither
+    raises, which is why this is carried rather than guessed at each site.
+
+    **How it gets decided.** The choice rides on the periodic ``BoundaryConditions``, since a wrap
+    happens only because that object says PERIODIC. Left unstated (``None``) it means
+    ``ENDPOINT_EXCLUSIVE`` -- how this package wrapped before #1822 -- so adding it changed no
+    existing caller's numbers. ``TensorProductGrid`` binds the convention it measures from its own
+    coordinates onto any periodic BC attached to it, the way it binds ``dimension``, and refuses
+    one that contradicts them. So solver paths are correct without declaring anything, and a
+    caller with no grid (the operator layer) states it or keeps the historical layout.
+    """
+
+    ENDPOINT_INCLUSIVE = "endpoint_inclusive"
+    ENDPOINT_EXCLUSIVE = "endpoint_exclusive"
+
+
 class BCType(Enum):
     """
     Boundary condition types (dimension-agnostic).

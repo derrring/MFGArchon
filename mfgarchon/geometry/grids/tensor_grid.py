@@ -19,12 +19,14 @@ References:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
+from mfgarchon.geometry.boundary.types import BCType, PeriodicGridConvention
 from mfgarchon.geometry.protocol import GeometryType
 from mfgarchon.geometry.protocols import (
     SupportsAdvection,
@@ -274,7 +276,12 @@ class TensorProductGrid(
         self.bounds = list(bounds)
         self.spacing_type = spacing_type
 
-        # Create coordinate arrays
+        # Create coordinate arrays.
+        #
+        # Issue #1822: `np.linspace(lo, hi, N)` INCLUDES both endpoints, which is what makes
+        # `periodic_convention` below ENDPOINT_INCLUSIVE. The two facts must move together --
+        # switching to `endpoint=False` here without changing that property would leave every
+        # periodic ghost stencil one cell off, silently.
         if spacing_type == "uniform":
             self.coordinates = [
                 np.linspace(bounds[i][0], bounds[i][1], self._Nx_points[i]) for i in range(self._dimension)
@@ -314,6 +321,7 @@ class TensorProductGrid(
             )
         # bind_dimension returns a new BC with dimension set, or validates if already set
         boundary_conditions = boundary_conditions.bind_dimension(dimension)
+        boundary_conditions = self._bind_periodic_convention(boundary_conditions)
         self._boundary_conditions = boundary_conditions
 
         # Cache for flattened grid (computed lazily, perf optimization)
@@ -332,6 +340,80 @@ class TensorProductGrid(
     def geometry_type(self) -> GeometryType:
         """Type of geometry (always CARTESIAN_GRID for tensor product grids)."""
         return GeometryType.CARTESIAN_GRID
+
+    def _bind_periodic_convention(self, bc):
+        """Complete a periodic BC with the node layout this grid measures. Issue #1822.
+
+        The convention travels on the BC, because that is what reaches solvers and operators. An
+        unstated one wraps as the package always did (all N nodes distinct), which is wrong for
+        THIS grid -- so binding it here is what makes solver paths correct without any of them
+        declaring anything, exactly as ``bind_dimension`` completes the BC's dimension.
+
+        A BC that states a convention is not overridden: it is checked, and a contradiction raises.
+        Silently replacing a caller's explicit statement would be the same silence this whole
+        change removes, one level up.
+
+        Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
+        """
+        if not any(seg.bc_type is BCType.PERIODIC for seg in getattr(bc, "segments", [])):
+            return bc
+        measured = self.periodic_convention
+        declared = getattr(bc, "periodic_convention", None)
+        if declared is None:
+            return replace(bc, periodic_convention=measured)
+        if declared is not measured:
+            axis = self._first_axis_with_convention(measured)
+            raise ValueError(
+                f"This grid's coordinates are {measured.name} on axis {axis} "
+                f"(x[-1] = {self.coordinates[axis][-1]!r} against an upper bound of "
+                f"{self.bounds[axis][1]!r}), but the periodic boundary condition declares "
+                f"{declared.name}. They differ by exactly one node, so wrapping under the declared "
+                f"one would shift every periodic stencil by a cell and still return a finite field. "
+                f"Build the BC with periodic_bc(..., convention=PeriodicGridConvention."
+                f"{measured.name}), or build the grid to match (Issue #1822)."
+            )
+        return bc
+
+    def _first_axis_with_convention(self, convention: PeriodicGridConvention) -> int:
+        """The axis the verdict came from, so the evidence in the message is that axis's.
+
+        Reporting axis 0's coordinates for a verdict reached on axis 1 prints a parenthetical that
+        contradicts its own conclusion.
+        """
+        for axis, coords in enumerate(self.coordinates):
+            if len(coords) >= 2 and self._axis_convention(axis) is convention:
+                return axis
+        return 0
+
+    def _axis_convention(self, axis: int) -> PeriodicGridConvention:
+        """Where the last node sits on one axis, measured."""
+        coords = self.coordinates[axis]
+        hi = self.bounds[axis][1]
+        if abs(coords[-1] - hi) > 0.5 * abs(coords[-1] - coords[-2]):
+            return PeriodicGridConvention.ENDPOINT_EXCLUSIVE
+        return PeriodicGridConvention.ENDPOINT_INCLUSIVE
+
+    @property
+    def periodic_convention(self) -> PeriodicGridConvention:
+        """Where the last node sits, MEASURED from the coordinates this grid actually built.
+
+        Issue #1822. Derived rather than asserted, so that changing how ``coordinates`` is
+        constructed cannot leave a stale claim behind: the whole defect class here is a wrap that
+        believes something about the node layout which stopped being true.
+
+        A periodic ``BoundaryConditions`` carries this too -- that is what reaches solvers and
+        operators, which hold no grid -- and ``__init__`` refuses a BC that contradicts what is
+        measured here.
+        """
+        # Inclusive iff the last node sits ON the upper bound, on every axis. The tolerance is
+        # relative to the spacing because the alternative sits exactly one dx below it -- the two
+        # are never close by accident.
+        for axis, coords in enumerate(self.coordinates):
+            if len(coords) < 2:
+                continue
+            if self._axis_convention(axis) is PeriodicGridConvention.ENDPOINT_EXCLUSIVE:
+                return PeriodicGridConvention.ENDPOINT_EXCLUSIVE
+        return PeriodicGridConvention.ENDPOINT_INCLUSIVE
 
     @property
     def num_spatial_points(self) -> int:
@@ -698,6 +780,7 @@ class TensorProductGrid(
         if bc is not None:
             # Validate dimension if BC has one set
             bc = bc.bind_dimension(self._dimension)
+            bc = self._bind_periodic_convention(bc)
         self._boundary_conditions = bc
 
     @property
@@ -1520,9 +1603,11 @@ class TensorProductGrid(
         """
         from mfgarchon.operators import LaplacianOperator
 
-        # Use grid's BC if not provided
-        if bc is None:
-            bc = self.get_boundary_conditions()
+        # Use grid's BC if not provided. A supplied one never went through attachment, so its
+        # periodic node layout is unstated and would wrap the historical way on a grid whose two
+        # endpoints are one point -- the operator returned here must use THIS grid's layout,
+        # whoever supplied the boundary condition (Issue #1822, and #1825's stalled seam).
+        bc = self.get_boundary_conditions() if bc is None else self._bind_periodic_convention(bc)
 
         return LaplacianOperator(
             spacings=self.spacing,
@@ -1572,7 +1657,11 @@ class TensorProductGrid(
         # Use caller-supplied BC if provided, otherwise fall back to grid's own BC.
         # Matches the pattern of get_laplacian_operator (tensor_grid.py:1474).
         # Issue #1255 (A), 2026-06-10 audit.
-        bc = bc if bc is not None else self.get_boundary_conditions()
+        # A caller-supplied BC never met this grid, so its periodic convention is unstated and
+        # would wrap the historical way on a grid whose two endpoints are one point. Complete it
+        # the same way attachment does (Issue #1822): the operator this returns must use THIS
+        # grid's node layout, whoever supplied the boundary condition.
+        bc = self._bind_periodic_convention(bc) if bc is not None else self.get_boundary_conditions()
 
         # Create operator(s)
         if direction is not None:

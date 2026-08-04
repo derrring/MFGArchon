@@ -353,6 +353,9 @@ class HJBWENOSolver(BaseHJBSolver):
             domain_bounds=domain_bounds,
             ghost_depth=self.ghost_depth,
             order=self.ghost_order,  # High-order ghost cells for WENO5
+            # No periodic_convention= here on purpose (Issue #1822): the BC carries it, and a
+            # second declaration beside the one that already arrives is exactly the duplicated
+            # convention this change removed from the applicator.
         )
 
     def _get_boundary_conditions(self):

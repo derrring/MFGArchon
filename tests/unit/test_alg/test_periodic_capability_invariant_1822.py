@@ -105,7 +105,11 @@ _SEARCHED = (
 # Passing: HJBSemiLagrangianSolver (0.0) and FPSLSolver / FPSLAdjointSolver (4.4e-16) -- the three
 # repaired in #1824, and the only genuine positive controls this file has ever had.
 KNOWN_NOT_HONOURED = {
-    "HJBWENOSolver": ("#1822", AssertionError),
+    # HJBWENOSolver is GONE from this roster, not silenced: its ghost buffer read the last g
+    # interior entries, which on an endpoint-inclusive grid includes the node that IS x[0], so
+    # every periodic stencil sat one cell off. Fixed in applicator_fdm._periodic_ghost_slices;
+    # seam 2.63e-01 -> exactly 0. The ghost fill itself is pinned against the analytic continuation
+    # in tests/unit/test_geometry/test_periodic_ghost_fill_1822.py.
     "HJBFDMSolver": ("#1822", AssertionError),
     "HJBGFDMSolver": ("#1822 declares PERIODIC and raises for it", NotImplementedError),
     "FPFDMSolver": ("#1822", AssertionError),

@@ -217,6 +217,35 @@ class TestLaplacianSparse:
         np.testing.assert_allclose(Lu_sparse, Lu_matvec, atol=1e-10)
 
     @pytest.mark.unit
+    def test_sparse_matches_matvec_on_an_endpoint_inclusive_periodic_grid(self):
+        """The matrix and the matvec must describe ONE operator under either node layout.
+
+        The case above uses an `endpoint=False` grid, which is the layout `as_scipy_sparse`'s wrap
+        was hard-coded for, so it passed either way. `__call__` pads through the ghost applicator
+        and reads the convention off the BC, while the sparse assembly wrapped with a fixed
+        `% n`; on a `TensorProductGrid` — where `x[0]` and `x[-1]` are one physical point — the two
+        described different operators and disagreed by **1.9e+02** (Issue #1822).
+
+        Independent review found that divergence, and then found that fixing it pinned nothing:
+        reverting the sparse wrap left 1243 tests green. This is that pin. The BC is bound by the
+        grid rather than stated here, so it also covers the binding that makes solver paths correct.
+        """
+        from mfgarchon.geometry import TensorProductGrid
+
+        n = 31
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=periodic_bc(dimension=1))
+        bc = grid.boundary_conditions
+        assert bc.periodic_convention is not None, "the grid must bind the convention, or this proves nothing"
+
+        x = np.asarray(grid.coordinates[0])
+        dx = x[1] - x[0]
+        u = np.sin(2 * np.pi * x)
+        assert abs(u[0] - u[-1]) < 1e-15, "seam-consistent input: the only legitimate field on this grid"
+
+        L = LaplacianOperator(spacings=[dx], field_shape=(n,), bc=bc)
+        np.testing.assert_allclose(L.as_scipy_sparse() @ u.ravel(), L @ u.ravel(), atol=1e-10)
+
+    @pytest.mark.unit
     def test_sparse_2d_neumann(self):
         """2D sparse export should match matvec at interior for Neumann BC."""
         X, Y, dx, dy = _2d_grid(20, 20)

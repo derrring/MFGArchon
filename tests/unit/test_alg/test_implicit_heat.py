@@ -159,12 +159,12 @@ class TestImplicitHeatSolver1D:
         relative_diff = np.linalg.norm(T_cn - T_be) / np.linalg.norm(T_cn)
         assert relative_diff < 0.05, f"CN and BE solutions too different: {relative_diff:.2%}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="ImplicitHeatSolver does not honour periodic BC: seam stalls at ~1.5e-02 under "
-        "refinement rather than vanishing (Issue #1825)",
-    )
+    # The #1825 xfail is GONE, not silenced. That seam stalled at ~1.5e-02 under refinement
+    # because the periodic ghost fill read the last g interior entries -- which on this
+    # endpoint-inclusive grid includes the node that IS x[0] -- so every periodic stencil sat one
+    # cell off and no amount of refinement could close it. Fixed in
+    # applicator_fdm._periodic_ghost_slices, which now takes the convention from the BC
+    # (Issue #1822). Closes #1825.
     def test_periodic_bc(self):
         """Test periodic boundary conditions."""
         grid = TensorProductGrid(bounds=[(0, 1)], Nx=[100], boundary_conditions=neumann_bc(dimension=1))

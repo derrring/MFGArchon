@@ -184,6 +184,18 @@ class LaplacianOperator(LinearOperator):
         # Return flattened
         return Lu.ravel()
 
+    def _periodic_convention_is_inclusive(self) -> bool:
+        """Whether this operator's periodic wrap identifies the two endpoints. Issue #1822.
+
+        Read off the same BC that `__call__`'s ghost padding reads, so the matrix and the matvec
+        cannot describe different operators. Unstated means the layout this package always used --
+        all N nodes distinct -- which is what the operator layer's own grids are.
+        """
+        from mfgarchon.geometry.boundary.types import PeriodicGridConvention
+
+        declared = getattr(self.bc, "periodic_convention", None)
+        return declared is PeriodicGridConvention.ENDPOINT_INCLUSIVE
+
     def __call__(self, u: NDArray) -> NDArray:
         """
         Apply Laplacian to field (preserves shape).
@@ -388,9 +400,20 @@ class LaplacianOperator(LinearOperator):
                 cols_list.append(all_idx)
                 vals_list.append(np.full(N, -2.0 / h2))
 
+                # The wrap has to use the SAME node layout as `__call__`, which pads through the
+                # ghost applicator and reads the convention off the BC (Issue #1822). A hard-coded
+                # `% n_d` here is the exclusive layout; against an inclusive grid that made the
+                # dense and sparse paths of one operator disagree by 1.9e+02 -- a cross-path
+                # divergence in a quantity computed twice, which is the class this convention was
+                # named to close.
+                #
+                # On an inclusive grid node n-1 IS node 0, so the wrap skips it: the left neighbour
+                # of node 0 is n-2 and the right neighbour of node n-1 is 1.
+                span = n_d - 1 if self._periodic_convention_is_inclusive() else n_d
+
                 # Left neighbor (wrapped for periodic)
                 left_idx = multi_indices.copy()
-                left_idx[:, d] = (i_d - 1 + n_d) % n_d
+                left_idx[:, d] = (i_d - 1 + span) % span if span > 0 else i_d
                 left_flat = np.ravel_multi_index(left_idx.T, self.field_shape)
                 rows_list.append(all_idx)
                 cols_list.append(left_flat)
@@ -398,7 +421,7 @@ class LaplacianOperator(LinearOperator):
 
                 # Right neighbor (wrapped for periodic)
                 right_idx = multi_indices.copy()
-                right_idx[:, d] = (i_d + 1) % n_d
+                right_idx[:, d] = (i_d + 1) % span if span > 0 else i_d
                 right_flat = np.ravel_multi_index(right_idx.T, self.field_shape)
                 rows_list.append(all_idx)
                 cols_list.append(right_flat)
