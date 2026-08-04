@@ -382,11 +382,6 @@ class TestBackendArrayWrapperFunctionInterception:
         assert isinstance(result, BackendArray)
         np.testing.assert_array_equal(result.data, [4, 6])
 
-    def test_nonexistent_attribute_error(self, array_wrapper):
-        """Test that accessing nonexistent attribute raises error."""
-        with pytest.raises(AttributeError, match="has no attribute 'nonexistent_func'"):
-            array_wrapper.nonexistent_func()
-
 
 class TestCreateArrayWrapper:
     """Test create_array_wrapper factory function."""

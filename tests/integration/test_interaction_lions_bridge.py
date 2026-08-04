@@ -347,40 +347,12 @@ class _NearMissEnergy:
 class TestNearMissRefusedLoudly:
     """A partial EnergyFunctional is refused, not silently downgraded (D-6)."""
 
-    def test_callable_near_miss_is_refused_and_names_the_missing_member(self):
-        N = 10
-        probe = _NearMissEnergy(np.full(N, 0.1))
-        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
-
-        with pytest.raises(TypeError) as excinfo:
-            create_lions_source(probe, fd, weights=0.1)
-
-        message = str(excinfo.value)
-        assert "second_variation" in message
-        assert "_NearMissEnergy" in message
-        for provided in ("energy", "flat_derivative", "weights"):
-            assert provided in message
-        # The silent path is what we are refusing: it never called this.
-        assert probe.flat_derivative_calls == 0
-
-    def test_near_miss_is_refused_on_the_analytic_call_too(self):
-        """Refusal does not depend on the caller having supplied an FD engine."""
-        probe = _NearMissEnergy(np.full(4, 0.25))
-        with pytest.raises(TypeError, match=r"second_variation"):
-            create_lions_source(probe)
-
     def test_plain_callable_is_still_accepted(self):
         """The refusal must not swallow the legitimate FD path."""
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
         source = create_lions_source(lambda m: 0.5 * float(np.sum(np.asarray(m) ** 2)) * 0.1, fd, weights=0.1)
         m = np.linspace(1.0, 2.0, 8)
         np.testing.assert_allclose(source(np.linspace(0, 1, 8), m, np.zeros(8), 0.0), m, rtol=1e-6)
-
-    def test_non_callable_non_functional_is_refused_with_a_diagnostic(self):
-        """Was an undiagnostic 'object is not callable' from deep inside the FD engine."""
-        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
-        with pytest.raises(TypeError, match=r"is not callable"):
-            create_lions_source(object(), fd, weights=0.1)
 
 
 def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):

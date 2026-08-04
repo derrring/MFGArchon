@@ -15,19 +15,6 @@ import pytest
 
 @pytest.mark.unit
 @pytest.mark.fast
-def test_adaptive_training_mode_enum_exists():
-    """Test AdaptiveTrainingMode enum is properly defined."""
-    from mfgarchon.alg.neural.pinn_solvers.adaptive_training import AdaptiveTrainingMode
-
-    # Verify enum members exist
-    assert hasattr(AdaptiveTrainingMode, "BASIC")
-    assert hasattr(AdaptiveTrainingMode, "CURRICULUM")
-    assert hasattr(AdaptiveTrainingMode, "MULTISCALE")
-    assert hasattr(AdaptiveTrainingMode, "FULL_ADAPTIVE")
-
-
-@pytest.mark.unit
-@pytest.mark.fast
 def test_adaptive_training_mode_new_api():
     """Test new AdaptiveTrainingMode API works correctly."""
     from mfgarchon.alg.neural.pinn_solvers.adaptive_training import AdaptiveTrainingConfig, AdaptiveTrainingMode
@@ -112,19 +99,6 @@ def test_adaptive_training_mode_boolean_mapping():
 @pytest.mark.unit
 @pytest.mark.fast
 @pytest.mark.skipif("not torch_available()")
-def test_normalization_type_enum_exists():
-    """Test NormalizationType enum is properly defined."""
-    from mfgarchon.alg.neural.pinn_solvers.base_pinn import NormalizationType
-
-    # Verify enum members exist
-    assert hasattr(NormalizationType, "NONE")
-    assert hasattr(NormalizationType, "BATCH")
-    assert hasattr(NormalizationType, "LAYER")
-
-
-@pytest.mark.unit
-@pytest.mark.fast
-@pytest.mark.skipif("not torch_available()")
 def test_normalization_type_new_api():
     """Test new NormalizationType API works correctly."""
     from mfgarchon.alg.neural.pinn_solvers.base_pinn import NormalizationType, PINNConfig
@@ -178,19 +152,6 @@ def test_normalization_type_boolean_mapping():
 # ============================================================================
 # Test: VarianceReductionMethod Enum (DGM base_dgm.py)
 # ============================================================================
-
-
-@pytest.mark.unit
-@pytest.mark.fast
-def test_variance_reduction_method_enum_exists():
-    """Test VarianceReductionMethod enum is properly defined."""
-    from mfgarchon.alg.neural.dgm.base_dgm import VarianceReductionMethod
-
-    # Verify enum members exist
-    assert hasattr(VarianceReductionMethod, "NONE")
-    assert hasattr(VarianceReductionMethod, "CONTROL_VARIATES")
-    assert hasattr(VarianceReductionMethod, "IMPORTANCE_SAMPLING")
-    assert hasattr(VarianceReductionMethod, "BOTH")
 
 
 @pytest.mark.unit

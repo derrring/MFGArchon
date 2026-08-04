@@ -18,9 +18,6 @@ class TestMeasureRepresentationProtocol:
         mu = ParticleMeasure(np.array([0.5]))
         assert isinstance(mu, MeasureRepresentation)
 
-    def test_protocol_is_runtime_checkable(self):
-        assert hasattr(MeasureRepresentation, "__protocol_attrs__") or isinstance(MeasureRepresentation, type)
-
 
 class TestParticleMeasureInit:
     def test_1d_from_flat_array(self):

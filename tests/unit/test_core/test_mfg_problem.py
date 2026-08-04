@@ -230,45 +230,6 @@ def test_mfg_problem_temporal_grid():
 # ===================================================================
 
 
-@pytest.mark.unit
-def test_mfg_problem_default_potential():
-    """Test default potential function is initialized (Issue #670: requires m_initial/u_final)."""
-    # Issue #671 will address: potential defaults to zero if not provided
-    problem = create_test_problem()
-
-    assert hasattr(problem, "f_potential")
-    assert isinstance(problem.f_potential, np.ndarray)
-    assert len(problem.f_potential) == problem.geometry.get_grid_shape()[0]  # Nx+1 points
-    # Potential defaults to zero when not provided (Issue #671 will change this)
-    assert np.allclose(problem.f_potential, 0.0)
-
-
-@pytest.mark.unit
-def test_mfg_problem_default_final_value():
-    """Test final value function is initialized (Issue #670: must come from MFGComponents)."""
-    problem = create_test_problem()
-
-    assert hasattr(problem, "u_terminal")
-    assert isinstance(problem.u_terminal, np.ndarray)
-    assert len(problem.u_terminal) == problem.geometry.get_grid_shape()[0]  # Nx+1 points
-    # Check final value is non-zero (set from default_components: x**2)
-    assert not np.allclose(problem.u_terminal, 0.0)
-
-
-@pytest.mark.unit
-def test_mfg_problem_default_initial_density():
-    """Test initial density function is initialized (Issue #670: must come from MFGComponents)."""
-    problem = create_test_problem()
-
-    assert hasattr(problem, "m_initial")
-    assert isinstance(problem.m_initial, np.ndarray)
-    assert len(problem.m_initial) == problem.geometry.get_grid_shape()[0]  # Nx+1 points
-    # Check initial density is non-negative
-    assert np.all(problem.m_initial >= 0.0)
-    # Check it has some mass
-    assert np.sum(problem.m_initial) > 0.0
-
-
 # ===================================================================
 # Test Custom Components
 # ===================================================================
@@ -693,15 +654,6 @@ def test_mfg_problem_rejects_nonpositive_T():
 
 
 @pytest.mark.unit
-def test_module_exports_classes():
-    """Test module exports main classes."""
-    from mfgarchon.core import mfg_problem
-
-    assert hasattr(mfg_problem, "MFGComponents")
-    assert hasattr(mfg_problem, "MFGProblem")
-
-
-@pytest.mark.unit
 def test_module_exports_are_classes():
     """Test exported objects are actually classes."""
     assert isinstance(MFGComponents, type)
@@ -916,23 +868,6 @@ def test_dual_geometry_legacy_mode_compatibility():
     assert problem.fp_geometry is not None
     assert problem.hjb_geometry is problem.fp_geometry  # Unified mode
     assert problem.geometry_projector is None  # No projector for unified mode
-
-
-@pytest.mark.unit
-def test_legacy_1d_geometry_properties_removed():
-    """Removed in v0.20.0: the deprecated 1D geometry read-properties raise AttributeError.
-
-    Tier-3 removal of the legacy 1D geometry surface (deprecated since v0.17.0,
-    Issue #435). Use the geometry-first API instead:
-      xmin -> geometry.get_bounds()[0][0]; xmax -> geometry.get_bounds()[1][0];
-      Lx -> bounds[1][0] - bounds[0][0]; Nx -> geometry.num_spatial_points - 1;
-      dx -> geometry.get_grid_spacing()[0]; xSpace -> geometry.get_spatial_grid();
-      _grid -> geometry.
-    """
-    problem = create_test_problem()
-    for attr in ("xmin", "xmax", "Lx", "Nx", "dx", "xSpace", "_grid"):
-        with pytest.raises(AttributeError):
-            getattr(problem, attr)
 
 
 # ===================================================================

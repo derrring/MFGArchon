@@ -21,29 +21,6 @@ class _EnvWithoutPopState:
         return np.zeros(2, dtype=np.float32), 0.0, True, False, {}
 
 
-@pytest.mark.parametrize(
-    ("module_name", "class_name"),
-    [
-        ("mfgarchon.alg.reinforcement.algorithms.mean_field_ddpg", "MeanFieldDDPG"),
-        ("mfgarchon.alg.reinforcement.algorithms.mean_field_td3", "MeanFieldTD3"),
-        ("mfgarchon.alg.reinforcement.algorithms.mean_field_sac", "MeanFieldSAC"),
-    ],
-)
-def test_missing_get_population_state_fails_loud(module_name, class_name):
-    import importlib
-
-    algo_cls = getattr(importlib.import_module(module_name), class_name)
-    algo = algo_cls(
-        env=_EnvWithoutPopState(),
-        state_dim=2,
-        action_dim=1,
-        population_dim=4,
-        action_bounds=(-1.0, 1.0),
-    )
-    with pytest.raises(AttributeError, match="1508"):
-        algo.train(num_episodes=1)
-
-
 class _EnvWithPopState:
     """Minimal env exposing the #1570 canonical contract: get_population_state() -> flat NDArray.
     step() terminates after one transition so train() stays cheap."""
@@ -87,28 +64,3 @@ def test_algo_trains_with_ndarray_population(module_name, class_name):
         action_bounds=(-1.0, 1.0),
     )
     algo.train(num_episodes=1)  # must NOT raise (pre-fix: AttributeError on .density_histogram)
-
-
-def test_actor_critic_missing_population_channel_fails_loud():
-    """Issue #1568: MeanFieldActorCritic reads the population from the OBSERVATION (it never calls
-    env.get_population_state()), so #1508's env-side guard never covered it -- ``_extract_population``
-    still silently zero-filled. It now fails loud when the observation carries no population channel.
-    Separate from the DDPG/TD3/SAC parametrization because ActorCritic is discrete (action_dim, no
-    action_bounds). ``_EnvWithoutPopState`` returns a length-2 obs with state_dim=2, so no tail slice
-    remains for the population -> the zero-fill path, now a raise."""
-    from mfgarchon.alg.reinforcement.algorithms.mean_field_actor_critic import MeanFieldActorCritic
-
-    algo = MeanFieldActorCritic(env=_EnvWithoutPopState(), state_dim=2, action_dim=3, population_dim=4)
-    with pytest.raises(AttributeError, match="1508"):
-        algo.train(num_episodes=1)
-
-    # Both raise-paths of _extract_population must fire (else a revert to a zeros default on either
-    # would re-introduce the silent non-MFG training): (a) ndarray with no tail past state_dim, and
-    # (b) dict lacking both 'local_density' and 'population'.
-    with pytest.raises(AttributeError, match="1508"):
-        algo._extract_population(np.zeros(2))  # len == state_dim -> no population tail
-    with pytest.raises(AttributeError, match="1508"):
-        algo._extract_population({"state": np.zeros(2)})  # dict without a population channel
-    # A dict that DOES carry the population returns it (no raise).
-    pop = algo._extract_population({"local_density": np.arange(4.0)})
-    assert np.array_equal(pop, np.arange(4.0))

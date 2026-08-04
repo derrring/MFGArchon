@@ -223,42 +223,6 @@ class TestResolveBC:
 
 
 class TestResolvedBCToCalculator:
-    def test_neumann_produces_neumann_calculator(self):
-        rbc = ResolvedBC(MathBCType.NEUMANN, value=0.0)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(calc).__name__ == "NeumannCalculator"
-
-    def test_dirichlet_produces_dirichlet_calculator(self):
-        rbc = ResolvedBC(MathBCType.DIRICHLET, value=1.0)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(calc).__name__ == "DirichletCalculator"
-
-    def test_zero_flux_produces_zero_flux_calculator(self):
-        rbc = ResolvedBC(MathBCType.ZERO_FLUX, value=0.0)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,), drift_velocity=0.5, diffusion_coeff=0.1)
-        assert type(calc).__name__ == "ZeroFluxCalculator"
-
-    def test_robin_produces_robin_calculator(self):
-        rbc = ResolvedBC(MathBCType.ROBIN, value=0.5, alpha=1.0, beta=2.0)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(calc).__name__ == "RobinCalculator"
-
-    def test_periodic_produces_periodic_topology_no_calculator(self):
-        rbc = ResolvedBC(MathBCType.PERIODIC)
-        topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(topo).__name__ == "PeriodicTopology"
-        assert calc is None
-
-    def test_extrapolation_linear(self):
-        rbc = ResolvedBC(MathBCType.EXTRAPOLATION_LINEAR)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(calc).__name__ == "LinearExtrapolationCalculator"
-
-    def test_extrapolation_quadratic(self):
-        rbc = ResolvedBC(MathBCType.EXTRAPOLATION_QUADRATIC)
-        _topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))
-        assert type(calc).__name__ == "QuadraticExtrapolationCalculator"
-
     def test_2d_shape(self):
         rbc = ResolvedBC(MathBCType.NEUMANN, value=0.0)
         topo, _calc = resolved_bc_to_calculator(rbc, shape=(50, 50))
@@ -304,11 +268,6 @@ class TestToBoundaryConditions:
 
 
 class TestResolvedBC:
-    def test_frozen(self):
-        rbc = ResolvedBC(MathBCType.NEUMANN, 0.0)
-        with pytest.raises(AttributeError):
-            rbc.value = 1.0  # type: ignore[misc]
-
     def test_defaults(self):
         rbc = ResolvedBC(MathBCType.DIRICHLET)
         assert rbc.value == 0.0

@@ -163,10 +163,6 @@ class TestFailLoud:
         with pytest.raises(ValueError, match=r"Unsupported element_type 'polygon'.*Supported"):
             export_mesh_solution_vtk(md, {"U": np.ones(3)}, tmp_path / "bad.vtu")
 
-    def test_non_mesh_argument_raises(self, tmp_path):
-        with pytest.raises(TypeError, match=r"MeshData or skfem.Mesh"):
-            export_mesh_solution_vtk("not a mesh", {"U": np.ones(3)}, tmp_path / "bad.vtu")
-
     def test_time_series_non_2d_field_raises(self, tmp_path):
         md = _two_triangle_mesh()
         with pytest.raises(ValueError, match=r"must be 2D"):

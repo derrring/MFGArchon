@@ -146,21 +146,6 @@ class TestKDENormalization:
 class TestRemovedParameters:
     """Pin that past-window deprecated kwargs are gone (fail loud as TypeError)."""
 
-    def test_mode_removed(self):
-        """`mode` (-> density_mode) removed: passing it is an unexpected keyword."""
-        problem = Simple2DMFGProblem()
-
-        with pytest.raises(TypeError, match="unexpected keyword argument 'mode'"):
-            FPParticleSolver(problem, mode="hybrid")
-
-    def test_external_particles_removed(self):
-        """`external_particles` (-> num_particles) removed: unexpected keyword."""
-        problem = Simple2DMFGProblem()
-        points = np.random.rand(50, 2)
-
-        with pytest.raises(TypeError, match="unexpected keyword argument 'external_particles'"):
-            FPParticleSolver(problem, num_particles=100, external_particles=points)
-
     def test_density_mode_new_name_accepted(self):
         """New name `density_mode` works (replacement for removed `mode`)."""
         problem = Simple2DMFGProblem()

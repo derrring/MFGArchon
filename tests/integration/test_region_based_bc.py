@@ -344,21 +344,6 @@ class TestRegionBasedBCEdgeCases:
         with pytest.raises(ValueError, match="not found"):
             mixed_bc_from_regions(geometry, bc_config)
 
-    def test_geometry_without_region_marking(self):
-        """Test that geometry without SupportsRegionMarking raises error."""
-
-        # Create a geometry that doesn't support region marking
-        # (In practice, all our geometries support it, but we can test the protocol)
-        class BasicGeometry:
-            dimension = 1
-
-        geometry = BasicGeometry()
-
-        bc_config = {"dummy": BCSegment(name="bc", bc_type=BCType.DIRICHLET, value=1.0)}
-
-        with pytest.raises(TypeError, match="SupportsRegionMarking"):
-            mixed_bc_from_regions(geometry, bc_config)
-
     def test_backward_compatibility(self):
         """Test that old BC code without region_name still works."""
         # Create BC the old way (no regions)

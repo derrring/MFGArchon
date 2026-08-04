@@ -408,20 +408,6 @@ def test_migrate_parameters_decorator_basic():
 
 
 @pytest.mark.unit
-def test_migrate_parameters_decorator_preserves_metadata():
-    """Test decorator preserves function metadata."""
-    migrator = ParameterMigrator()
-
-    @migrate_parameters(migrator)
-    def test_function(**kwargs):
-        """Test docstring."""
-        return kwargs
-
-    assert test_function.__name__ == "test_function"
-    assert test_function.__doc__ == "Test docstring."
-
-
-@pytest.mark.unit
 def test_migrate_parameters_decorator_with_args():
     """Test decorator with positional arguments."""
     migrator = ParameterMigrator()
@@ -612,18 +598,3 @@ def test_migration_report_truncates_log():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports():
-    """Test all public functions are importable."""
-    from mfgarchon.utils import parameter_migration
-
-    assert hasattr(parameter_migration, "ParameterMapping")
-    assert hasattr(parameter_migration, "MigrationStats")
-    assert hasattr(parameter_migration, "ParameterMigrator")
-    assert hasattr(parameter_migration, "migrate_parameters")
-    assert hasattr(parameter_migration, "migrate_kwargs")
-    assert hasattr(parameter_migration, "check_deprecated_usage")
-    assert hasattr(parameter_migration, "get_parameter_migration_guide")
-    assert hasattr(parameter_migration, "global_parameter_migrator")

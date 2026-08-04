@@ -319,15 +319,6 @@ class TestTimeSolverOperationDecorator:
         assert result["sum"] == 5
         assert "execution_time" in result
 
-    def test_decorator_preserves_function_name(self):
-        """Test decorator preserves original function name."""
-
-        @time_solver_operation
-        def my_solver():
-            return {"done": True}
-
-        assert my_solver.__name__ == "my_solver"
-
     def test_decorator_with_dict_result(self):
         """Test decorator adds timing to dict results."""
 

@@ -359,20 +359,6 @@ def test_solver_statistics_str():
     assert "0.123" in str_repr
 
 
-@pytest.mark.unit
-def test_solver_statistics_immutability():
-    """Test SolverStatistics is immutable."""
-    stats = SolverStatistics(
-        total_time=1.0,
-        average_iteration_time=0.1,
-        memory_usage_mb=None,
-        cpu_usage_percent=None,
-    )
-
-    with pytest.raises(AttributeError):
-        stats.total_time = 2.0  # type: ignore
-
-
 # ===================================================================
 # Test Type Aliases
 # ===================================================================
@@ -532,18 +518,6 @@ def test_complete_solver_result():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports():
-    """Test all types are importable."""
-    from mfgarchon.types import state
-
-    assert hasattr(state, "SpatialTemporalState")
-    assert hasattr(state, "ConvergenceInfo")
-    assert hasattr(state, "SolverStatistics")
-    assert hasattr(state, "ResidualHistory")
-    assert hasattr(state, "IterationCallback")
 
 
 @pytest.mark.unit

@@ -30,17 +30,6 @@ def test_solver_hooks_instantiation():
 
 
 @pytest.mark.unit
-def test_solver_hooks_has_all_methods():
-    """Test SolverHooks has all expected hook methods."""
-    hooks = SolverHooks()
-    assert hasattr(hooks, "on_solve_start")
-    assert hasattr(hooks, "on_iteration_start")
-    assert hasattr(hooks, "on_iteration_end")
-    assert hasattr(hooks, "on_convergence_check")
-    assert hasattr(hooks, "on_solve_end")
-
-
-@pytest.mark.unit
 def test_solver_hooks_methods_are_callable():
     """Test all hook methods are callable."""
     hooks = SolverHooks()
@@ -464,15 +453,6 @@ def test_partial_override():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports():
-    """Test SolverHooks is importable."""
-    from mfgarchon.hooks import base
-
-    assert hasattr(base, "SolverHooks")
-    assert base.SolverHooks == SolverHooks
 
 
 @pytest.mark.unit

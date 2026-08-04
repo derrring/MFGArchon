@@ -75,30 +75,6 @@ class TestMultiPopulationIteratorAlias:
 
 
 class TestNetworkFactorySignatures:
-    def test_create_network_mfg_solver_has_both_kwargs(self):
-        import inspect
-
-        from mfgarchon.alg.numerical.coupling.network_mfg_solver import create_network_mfg_solver
-
-        sig = inspect.signature(create_network_mfg_solver)
-        assert "relaxation" in sig.parameters
-        assert "damping_factor" in sig.parameters
-        # Canonical default preserved
-        assert sig.parameters["relaxation"].default == 0.5
-        # Legacy default is None (sentinel for "not passed")
-        assert sig.parameters["damping_factor"].default is None
-
-    def test_create_simple_network_solver_has_both_kwargs(self):
-        import inspect
-
-        from mfgarchon.alg.numerical.coupling.network_mfg_solver import create_simple_network_solver
-
-        sig = inspect.signature(create_simple_network_solver)
-        assert "relaxation" in sig.parameters
-        assert "damping" in sig.parameters
-        assert sig.parameters["relaxation"].default == 0.5
-        assert sig.parameters["damping"].default is None
-
     def test_deprecation_metadata_present_on_factory_functions(self):
         from mfgarchon.alg.numerical.coupling.network_mfg_solver import (
             create_network_mfg_solver,

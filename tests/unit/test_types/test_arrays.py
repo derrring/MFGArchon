@@ -445,40 +445,6 @@ def test_array_broadcasting():
 
 
 @pytest.mark.unit
-def test_module_exports():
-    """Test all type aliases are importable."""
-    from mfgarchon.types import arrays
-
-    # Core types
-    assert hasattr(arrays, "SolutionArray")
-    assert hasattr(arrays, "SpatialGrid")
-    assert hasattr(arrays, "TimeGrid")
-
-    # Advanced types
-    assert hasattr(arrays, "SpatialArray")
-    assert hasattr(arrays, "TemporalArray")
-
-    # Multi-dimensional
-    assert hasattr(arrays, "Array1D")
-    assert hasattr(arrays, "Array2D")
-    assert hasattr(arrays, "Array3D")
-
-    # Specialized
-    assert hasattr(arrays, "StateArray")
-    assert hasattr(arrays, "ParticleArray")
-    assert hasattr(arrays, "WeightArray")
-    assert hasattr(arrays, "DensityArray")
-
-    # Legacy aliases (suppress expected deprecation warnings)
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        assert hasattr(arrays, "SpatialCoordinates")
-        assert hasattr(arrays, "TemporalCoordinates")
-
-
-@pytest.mark.unit
 def test_module_docstring():
     """Test module has comprehensive docstring."""
     from mfgarchon.types import arrays

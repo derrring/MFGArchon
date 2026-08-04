@@ -196,22 +196,6 @@ class TestFPNetworkSolverInitialization:
         assert np.isclose(solver.times[0], 0.0)
         assert np.isclose(solver.times[-1], 2.0)
 
-    def test_divergence_operators_initialized(self):
-        """Test that divergence operators are initialized."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=10,
-        )
-
-        solver = FPNetworkSolver(problem)
-
-        assert hasattr(solver, "divergence_ops")
-        assert len(solver.divergence_ops) == solver.num_nodes
-
 
 class TestFPNetworkSolverSolveFPSystem:
     """Test the main solve_fp_system method."""

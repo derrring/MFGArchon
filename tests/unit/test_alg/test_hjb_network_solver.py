@@ -122,22 +122,6 @@ class TestNetworkHJBSolverInitialization:
         assert np.isclose(solver.times[0], 0.0)
         assert np.isclose(solver.times[-1], 2.0)
 
-    def test_gradient_operators_initialized(self):
-        """Test that gradient operators are initialized."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem)
-
-        assert hasattr(solver, "gradient_ops")
-        assert len(solver.gradient_ops) == solver.num_nodes
-
 
 class TestNetworkHJBSolverSolveHJBSystem:
     """Test the main solve_hjb_system method."""

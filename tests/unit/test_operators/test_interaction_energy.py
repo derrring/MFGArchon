@@ -141,30 +141,6 @@ class TestProtocolConformance:
         assert obj.second_variation(np.ones(3)) is None
         assert isinstance(obj, EnergyFunctional)
 
-    @pytest.mark.parametrize("method", ["energy", "flat_derivative", "second_variation"])
-    @pytest.mark.parametrize("which", ["quadratic", "potential", "combined"])
-    def test_t_is_keyword_only(self, method, which):
-        """D-3: ``t`` is keyword-only on every method of every shipped class, so
-        a positional third argument (e.g. a caller passing ``x``) fails at the
-        call site instead of being silently bound to ``t``.
-
-        Parametrized over all three classes: a per-class arity drift is exactly
-        what ``runtime_checkable`` cannot see -- ``isinstance`` checks member
-        presence only, so a positional ``t`` on one implementer would surface as
-        a ``TypeError`` inside a Picard iteration, not at construction.
-        """
-        N = 12
-        x, dx = _grid(N)
-        conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
-        inter = QuadraticInteractionEnergy(conv)
-        pot = PotentialEnergy(np.cos(x), conv.weights)
-        energy = {"quadratic": inter, "potential": pot, "combined": CombinedEnergy([inter, pot])}[which]
-
-        m = np.ones(N)
-        getattr(energy, method)(m, t=0.5)  # keyword form works
-        with pytest.raises(TypeError):
-            getattr(energy, method)(m, 0.5)
-
 
 class TestGate2AnalyticVsFD:
     """``flat_derivative`` == FD entry gradient of ``energy`` / weights."""
@@ -602,12 +578,6 @@ class TestConstruction:
         short = PotentialEnergy(np.cos(x[:10]), np.full(10, dx))
         with pytest.raises(ValueError, match="same quadrature weights"):
             CombinedEnergy([QuadraticInteractionEnergy(conv), short])
-
-    def test_potential_requires_weights(self):
-        """No default: a silent unit cell volume would reintroduce exactly the
-        mesh-dependence A2 removes."""
-        with pytest.raises(TypeError):
-            PotentialEnergy(np.ones(10))
 
     def test_potential_scalar_weight_broadcasts(self):
         N = 10

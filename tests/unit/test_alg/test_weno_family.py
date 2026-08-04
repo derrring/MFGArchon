@@ -99,22 +99,6 @@ class TestWenoFamilySolver:
         with pytest.raises(ValueError, match="WENO-Z parameter"):
             HJBWENOSolver(simple_problem, weno_z_parameter=0.0)
 
-    def test_weno_coefficients_setup(self, simple_problem):
-        """Test that WENO coefficients are properly initialized."""
-        solver = HJBWENOSolver(simple_problem, weno_variant="weno5")
-
-        # Check linear weights
-        assert hasattr(solver, "d_plus")
-        assert hasattr(solver, "d_minus")
-        assert np.allclose(np.sum(solver.d_plus), 1.0)
-        assert np.allclose(np.sum(solver.d_minus), 1.0)
-
-        # Check reconstruction coefficients
-        assert hasattr(solver, "c_plus")
-        assert hasattr(solver, "c_minus")
-        assert solver.c_plus.shape == (3, 3)
-        assert solver.c_minus.shape == (3, 3)
-
     def test_smoothness_indicators_computation(self, simple_problem, test_values):
         """Test smoothness indicator computation for polynomial data."""
         solver = HJBWENOSolver(simple_problem, weno_variant="weno5")

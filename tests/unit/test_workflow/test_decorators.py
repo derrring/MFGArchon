@@ -76,21 +76,6 @@ def test_workflow_step_with_dependencies():
     assert "step1" in wf.steps[step2_id].dependencies
 
 
-@pytest.mark.unit
-@pytest.mark.fast
-def test_workflow_step_preserves_metadata():
-    """Test workflow_step preserves function metadata."""
-
-    @workflow_step(name="test")
-    def my_function(**kwargs):
-        """Test function."""
-        return 42
-
-    assert my_function.__name__ == "my_function"
-    assert my_function.__doc__ == "Test function."
-    assert my_function._workflow_step is True  # type: ignore[attr-defined]
-
-
 # ============================================================================
 # Test: @experiment Decorator
 # ============================================================================

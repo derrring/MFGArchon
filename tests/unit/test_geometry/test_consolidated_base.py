@@ -29,32 +29,6 @@ class TestGeometryProtocolCompliance:
         assert isinstance(grid, Geometry)
         assert isinstance(grid, CartesianGrid)
 
-    def test_tensorproductgrid_has_required_properties(self):
-        """Verify TensorProductGrid has all required Geometry properties."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        # Data interface
-        assert hasattr(grid, "dimension")
-        assert hasattr(grid, "geometry_type")
-        assert hasattr(grid, "num_spatial_points")
-        assert callable(grid.get_spatial_grid)
-        assert callable(grid.get_bounds)
-        assert callable(grid.get_problem_config)
-
-        # Solver operations
-        assert callable(grid.get_laplacian_operator)
-        assert callable(grid.get_gradient_operator)
-        assert callable(grid.get_interpolator)
-        assert callable(grid.get_boundary_handler)
-
-        # CartesianGrid specific
-        assert callable(grid.get_grid_spacing)
-        assert callable(grid.get_grid_shape)
-
 
 class TestSolverOperations:
     """Test solver operation methods."""

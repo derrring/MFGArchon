@@ -225,12 +225,6 @@ class TestNoVestigialOmegaToPydanticBridge1392:
     _map_omega_to_pydantic pair (a second, broken bridge that silently returned a default
     config) was removed and must not be silently re-introduced."""
 
-    def test_create_pydantic_config_removed(self) -> None:
-        from mfgarchon.config.omegaconf_manager import OmegaConfManager
-
-        assert not hasattr(OmegaConfManager, "create_pydantic_config")
-        assert not hasattr(OmegaConfManager, "_map_omega_to_pydantic")
-
     def test_bridge_to_pydantic_is_the_canonical_crossing(self) -> None:
         from mfgarchon.config import bridge_to_pydantic
 

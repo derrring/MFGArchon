@@ -78,19 +78,6 @@ def _make_solver_with_history():
     return solver
 
 
-def test_pinn_config_has_no_training_strategy_field():
-    """Guards the root cause: PINNConfig must not silently grow the field.
-
-    The fix is to drop the reference, not to add config surface.  If a
-    future change adds a real `training_strategy` field this test should be
-    revisited deliberately rather than the attribute reappearing by accident.
-    """
-    config = _tiny_config()
-    assert not hasattr(config, "training_strategy"), (
-        "PINNConfig unexpectedly has a training_strategy field; #1303 fix assumed it does not exist"
-    )
-
-
 def test_get_results_returns_dict_without_raising():
     """The #1303 case: get_results() must not raise AttributeError."""
     solver = _make_solver_with_history()

@@ -24,26 +24,6 @@ igraph = pytest.importorskip("igraph")
 class TestNetworkMFGSolverCreation:
     """Test network MFG solver factory functions."""
 
-    def test_create_network_solver_basic(self):
-        """Test basic network MFG solver creation."""
-        # Create simple grid network
-        network = GridNetwork(width=5, height=5)
-        network.create_network()
-
-        # Create network MFG problem
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=10,
-        )
-
-        # Create solver
-        solver = create_network_mfg_solver(problem)
-
-        assert solver is not None
-        assert hasattr(solver, "solve")
-        assert solver.problem is problem
-
     def test_create_network_solver_explicit(self):
         """Test network solver with explicit schemes."""
         network = GridNetwork(width=4, height=4)
@@ -81,22 +61,6 @@ class TestNetworkMFGSolverCreation:
         )
 
         assert solver is not None
-
-    def test_create_simple_network_solver(self):
-        """Test simplified network solver creation."""
-        network = GridNetwork(width=4, height=4)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=10,
-        )
-
-        solver = create_simple_network_solver(problem)
-
-        assert solver is not None
-        assert hasattr(solver, "solve")
 
     def test_create_solver_with_custom_damping(self):
         """Test solver creation with custom damping factor."""

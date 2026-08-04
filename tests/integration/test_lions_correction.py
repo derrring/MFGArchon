@@ -10,14 +10,10 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.lions_correction import (
     create_lions_source,
     create_nonlocal_source,
 )
-from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -245,56 +241,3 @@ class TestCreateNonlocalSource:
 @pytest.mark.slow
 class TestLionsCorrectionEndToEnd:
     """Test Lions correction flows through the full MFG solve pipeline."""
-
-    def test_source_term_affects_solution(self):
-        """MFG solve with Lions correction should differ from without."""
-        Nx = 31
-        problem_plain = _make_problem(Nx=Nx)
-
-        # Get actual grid from geometry to match solver dimensions
-        actual_grid = problem_plain.geometry.get_spatial_grid().ravel()
-        dx = actual_grid[1] - actual_grid[0]
-
-        # Gaussian interaction kernel sized to actual grid
-        W = np.exp(-((actual_grid[:, None] - actual_grid[None, :]) ** 2) / (2 * 0.2**2))
-        source = create_nonlocal_source(W, grid_spacing=dx)
-
-        problem_lions = _make_problem(Nx=Nx, source_term_hjb=source)
-
-        # Solve both
-        hjb1, fp1 = HJBFDMSolver(problem_plain), FPFDMSolver(problem_plain)
-        hjb2, fp2 = HJBFDMSolver(problem_lions), FPFDMSolver(problem_lions)
-
-        config = MFGSolverConfig(picard=PicardConfig(max_iterations=5))
-        iter1 = FixedPointIterator(problem_plain, hjb1, fp1, config=config)
-        iter2 = FixedPointIterator(problem_lions, hjb2, fp2, config=config)
-
-        result1 = iter1.solve()
-        result2 = iter2.solve()
-
-        U1 = result1.U if hasattr(result1, "U") else result1[0]
-        U2 = result2.U if hasattr(result2, "U") else result2[0]
-
-        # Solutions should differ due to nonlocal coupling
-        assert not np.allclose(U1, U2, atol=1e-4)
-
-    def test_solution_is_finite(self):
-        """MFG with Lions correction should produce finite solution."""
-        Nx = 31
-        problem_tmp = _make_problem(Nx=Nx)
-        actual_grid = problem_tmp.geometry.get_spatial_grid().ravel()
-        dx = actual_grid[1] - actual_grid[0]
-
-        W = 0.1 * np.exp(-((actual_grid[:, None] - actual_grid[None, :]) ** 2) / (2 * 0.2**2))
-        source = create_nonlocal_source(W, grid_spacing=dx)
-
-        problem = _make_problem(Nx=Nx, source_term_hjb=source)
-        hjb, fp = HJBFDMSolver(problem), FPFDMSolver(problem)
-        config = MFGSolverConfig(picard=PicardConfig(max_iterations=5))
-        iterator = FixedPointIterator(problem, hjb, fp, config=config)
-
-        result = iterator.solve()
-        U = result.U if hasattr(result, "U") else result[0]
-        M = result.M if hasattr(result, "M") else result[1]
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))

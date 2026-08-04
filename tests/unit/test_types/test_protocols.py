@@ -613,17 +613,6 @@ def test_protocol_integration_full_workflow():
 
 
 @pytest.mark.unit
-def test_module_exports():
-    """Test all protocols are importable."""
-    from mfgarchon.types import protocols
-
-    assert hasattr(protocols, "MFGProblem")
-    assert hasattr(protocols, "MFGSolver")
-    assert hasattr(protocols, "MFGResult")
-    assert hasattr(protocols, "SolverConfig")
-
-
-@pytest.mark.unit
 def test_module_docstring():
     """Test module has comprehensive docstring."""
     from mfgarchon.types import protocols

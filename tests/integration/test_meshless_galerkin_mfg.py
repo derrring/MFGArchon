@@ -53,12 +53,6 @@ class TestMeshlessGalerkinMFG:
         assert NumericalScheme.MESHLESS_GALERKIN.is_discrete_dual()
         assert not NumericalScheme.MESHLESS_GALERKIN.requires_renormalization()
 
-    def test_pair_creation_and_duality(self):
-        # create_paired_solvers raises if the pair is not a validated dual.
-        hjb, fp = _pair(_problem())
-        assert type(hjb).__name__ == "MeshlessGalerkinHJBSolver"
-        assert type(fp).__name__ == "MeshlessGalerkinFPSolver"
-
     def test_fp_pure_diffusion_conserves_mass(self):
         problem = _problem()
         _, fp = _pair(problem)

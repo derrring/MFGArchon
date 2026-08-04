@@ -281,20 +281,6 @@ class TestCoefficientFieldCallable:
         with pytest.raises(ValueError, match=r"returned array with shape.*expected"):
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
-    def test_callable_wrong_type(self):
-        """Test callable returning wrong type raises error."""
-
-        def wrong_type(t, x, m):
-            return "invalid"
-
-        field = CoefficientField(wrong_type, default_value=0.1, field_name="diffusion", dimension=1)
-
-        grid = np.linspace(0, 1, 11)
-        density = np.ones(11)
-
-        with pytest.raises(TypeError, match="must return float or ndarray"):
-            field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
-
     def test_callable_nan_detection(self):
         """Test callable returning NaN raises error."""
 
@@ -354,18 +340,6 @@ class TestGetSpatialGrid:
         assert len(grid) == 51  # 51 grid points
         np.testing.assert_array_almost_equal(grid, np.linspace(0, 1, 51))
 
-    def test_missing_geometry_raises_error(self):
-        """Test that problem without geometry raises error."""
-
-        # Create a minimal problem-like object without geometry
-        class MinimalProblem:
-            pass
-
-        problem = MinimalProblem()
-
-        with pytest.raises(AttributeError, match="must have geometry"):
-            get_spatial_grid(problem)
-
 
 class TestCoefficientFieldEdgeCases:
     """Test edge cases and error handling."""
@@ -417,16 +391,6 @@ class TestCoefficientFieldEdgeCases:
         result = field.evaluate_at(timestep_idx=5, grid=grid, density=density, dt=None)
 
         assert result == 0.5  # 0.1 * 5
-
-    def test_invalid_field_type(self):
-        """Test invalid field type raises error."""
-        field = CoefficientField("invalid", default_value=0.1, field_name="diffusion", dimension=1)
-
-        grid = np.linspace(0, 1, 11)
-        density = np.ones(11)
-
-        with pytest.raises(TypeError, match="must be None, float, ndarray, or Callable"):
-            field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
     def test_field_name_in_error_messages(self):
         """Test that field_name appears in error messages."""

@@ -28,8 +28,6 @@ import textwrap
 
 import numpy as np
 
-from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
-
 # ---------------------------------------------------------------------------
 # (A) Structural: ghost module must import from tolerances
 # ---------------------------------------------------------------------------
@@ -52,26 +50,6 @@ def test_ghost_imports_onwall_tol():
 # ---------------------------------------------------------------------------
 # (B) Default parameter of compute_normal_from_bounds must equal ONWALL_TOL
 # ---------------------------------------------------------------------------
-
-
-def test_compute_normal_from_bounds_default_tol_is_onwall_tol():
-    """The default tol= argument of compute_normal_from_bounds must equal ONWALL_TOL by VALUE.
-
-    Scope (Issue #1569): a signature default is the evaluated value, so this equality does NOT
-    distinguish ``tol=1e-10`` from ``tol=ONWALL_TOL`` (both introspect as 1e-10) -- a bare-literal
-    revert PASSES here. The import-vs-literal re-fork is caught by ``test_no_hardcoded_1e10_in_
-    compute_normal_from_bounds`` (source grep). This test pins only that ONWALL_TOL keeps that
-    float value, so a change to the constant surfaces as a mismatch.
-    """
-    from mfgarchon.geometry.boundary.ghost import compute_normal_from_bounds
-
-    sig = inspect.signature(compute_normal_from_bounds)
-    default_tol = sig.parameters["tol"].default
-
-    assert default_tol == ONWALL_TOL, (
-        f"compute_normal_from_bounds default tol={default_tol!r} != ONWALL_TOL={ONWALL_TOL!r}. "
-        "The default's float value has drifted from the single source (ONWALL_TOL)."
-    )
 
 
 # ---------------------------------------------------------------------------

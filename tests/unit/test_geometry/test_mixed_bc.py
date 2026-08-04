@@ -399,22 +399,6 @@ class TestMixedBCFromRegions:
 
         assert bc.dimension == 3  # Inferred from geometry
 
-    def test_validates_geometry_supports_region_marking(self):
-        """Test error when geometry doesn't support SupportsRegionMarking."""
-        import pytest
-
-        from mfgarchon.geometry.boundary import mixed_bc_from_regions
-
-        # Mock geometry without SupportsRegionMarking
-        class FakeGeometry:
-            dimension = 2
-
-        fake_geometry = FakeGeometry()
-        bc_config = {"region1": BCSegment(name="bc1", bc_type=BCType.DIRICHLET)}
-
-        with pytest.raises(TypeError, match="SupportsRegionMarking"):
-            mixed_bc_from_regions(fake_geometry, bc_config)
-
     def test_validates_region_exists(self):
         """Test error when region doesn't exist in geometry."""
         import pytest

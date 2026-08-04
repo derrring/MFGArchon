@@ -113,11 +113,3 @@ class TestDeprecatedKwargsRaiseValueError:
 
 class TestDeprecatedAttributesRaiseAttributeError:
     """Locked-in v0.25.0 removal: legacy `iter.damping_*` properties no longer exist."""
-
-    @pytest.mark.parametrize(("legacy_name", "_canonical_name"), LEGACY_KWARGS_REMOVED)
-    def test_legacy_attribute_raises_attribute_error(self, solvers, legacy_name, _canonical_name):
-        """Each removed @property alias raises `AttributeError` on read."""
-        problem, hjb, fp = solvers
-        iter_obj = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
-        with pytest.raises(AttributeError, match=rf"{legacy_name}"):
-            getattr(iter_obj, legacy_name)

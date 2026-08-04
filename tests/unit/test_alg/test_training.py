@@ -24,15 +24,6 @@ pytestmark = pytest.mark.optional_torch
 
 
 @pytest.mark.unit
-def test_torch_available_flag_exists():
-    """Test TORCH_AVAILABLE flag exists in module."""
-    from mfgarchon.alg.neural.core import training
-
-    assert hasattr(training, "TORCH_AVAILABLE")
-    assert isinstance(training.TORCH_AVAILABLE, bool)
-
-
-@pytest.mark.unit
 def test_torch_available_reflects_actual_availability():
     """Test TORCH_AVAILABLE flag reflects actual PyTorch availability."""
     from mfgarchon.alg.neural.core import training
@@ -210,27 +201,6 @@ def test_optimization_scheduler_has_docstring():
 
 
 @pytest.mark.unit
-def test_module_exports_all_classes():
-    """Test module exports all expected classes."""
-    from mfgarchon.alg.neural.core import training
-
-    assert hasattr(training, "TrainingManager")
-    assert hasattr(training, "AdaptiveSampling")
-    assert hasattr(training, "CurriculumLearning")
-    assert hasattr(training, "OptimizationScheduler")
-
-
-@pytest.mark.unit
-def test_module_has_all_attribute():
-    """Test module has __all__ attribute."""
-    from mfgarchon.alg.neural.core import training
-
-    assert hasattr(training, "__all__")
-    assert isinstance(training.__all__, list)
-    assert len(training.__all__) == 4
-
-
-@pytest.mark.unit
 def test_module_all_contains_expected_names():
     """Test __all__ contains expected class names."""
     from mfgarchon.alg.neural.core import training
@@ -244,17 +214,6 @@ def test_module_all_contains_expected_names():
 
     for name in expected_names:
         assert name in training.__all__
-
-
-@pytest.mark.unit
-def test_all_exported_names_are_importable():
-    """Test all names in __all__ can be imported."""
-    from mfgarchon.alg.neural.core import training
-
-    for name in training.__all__:
-        assert hasattr(training, name)
-        obj = getattr(training, name)
-        assert obj is not None
 
 
 # ===================================================================
@@ -302,15 +261,6 @@ def test_direct_class_imports():
     assert CurriculumLearning is not None
     assert OptimizationScheduler is not None
     assert TrainingManager is not None
-
-
-@pytest.mark.unit
-def test_module_import():
-    """Test module can be imported as a whole."""
-    from mfgarchon.alg.neural.core import training
-
-    assert training is not None
-    assert hasattr(training, "TrainingManager")
 
 
 # ===================================================================

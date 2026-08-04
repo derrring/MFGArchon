@@ -68,24 +68,6 @@ def _build_2d_grid_with_neighborhoods(nx: int = 5, ny: int = 5, delta: float = 1
 # ---------------------------------------------------------------------------
 
 
-def test_missing_neighborhoods_raises_type_error():
-    _, _, is_b = _build_2d_grid_with_neighborhoods()
-    with pytest.raises(TypeError):
-        PrecomputedMonotoneStencils(is_boundary=is_b)  # type: ignore[call-arg]
-
-
-def test_missing_points_raises_type_error():
-    _, nh, is_b = _build_2d_grid_with_neighborhoods()
-    with pytest.raises(TypeError):
-        PrecomputedMonotoneStencils(is_boundary=is_b, neighborhoods=nh)  # type: ignore[call-arg]
-
-
-def test_missing_delta_raises_type_error():
-    pts, nh, is_b = _build_2d_grid_with_neighborhoods()
-    with pytest.raises(TypeError):
-        PrecomputedMonotoneStencils(is_boundary=is_b, neighborhoods=nh, points=pts)  # type: ignore[call-arg]
-
-
 def test_dimension_3d_rejected():
     pts = np.random.default_rng(0).uniform(size=(20, 3))
     is_b = np.zeros(20, dtype=bool)

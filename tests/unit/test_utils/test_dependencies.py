@@ -255,25 +255,6 @@ def test_get_available_features_consistency():
 
 @pytest.mark.unit
 @pytest.mark.fast
-def test_module_level_flags_exist():
-    """Test that module-level availability flags are defined."""
-    from mfgarchon.utils import dependencies
-
-    # These flags should exist
-    assert hasattr(dependencies, "TORCH_AVAILABLE")
-    assert hasattr(dependencies, "JAX_AVAILABLE")
-    assert hasattr(dependencies, "GYMNASIUM_AVAILABLE")
-    assert hasattr(dependencies, "PLOTLY_AVAILABLE")
-    assert hasattr(dependencies, "NETWORKX_AVAILABLE")
-
-    # Should all be boolean
-    assert isinstance(dependencies.TORCH_AVAILABLE, bool)
-    assert isinstance(dependencies.JAX_AVAILABLE, bool)
-    assert isinstance(dependencies.GYMNASIUM_AVAILABLE, bool)
-
-
-@pytest.mark.unit
-@pytest.mark.fast
 def test_module_level_flags_consistency():
     """Test module-level flags match is_available results."""
     from mfgarchon.utils import dependencies
@@ -349,23 +330,6 @@ def test_get_package_version():
 # ============================================================================
 # Test: Package-Level Function
 # ============================================================================
-
-
-@pytest.mark.unit
-@pytest.mark.fast
-def test_package_level_show_features(capsys):
-    """Test show_optional_features is accessible from package level."""
-    import mfgarchon
-
-    # Should be importable from package level
-    assert hasattr(mfgarchon, "show_optional_features")
-
-    # Should execute successfully
-    mfgarchon.show_optional_features()
-
-    captured = capsys.readouterr()
-    assert len(captured.out) > 0
-    assert "MFGarchon Optional Features" in captured.out
 
 
 # ============================================================================

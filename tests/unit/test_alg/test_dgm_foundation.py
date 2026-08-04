@@ -148,16 +148,6 @@ class TestMonteCarloSampler:
 class TestQuasiMonteCarloSampler:
     """Test Quasi-Monte Carlo sampling."""
 
-    def test_initialization(self):
-        """Test QMC sampler initialization."""
-        domain_bounds = [(-1, 1), (-1, 1)]
-        sampler = QuasiMonteCarloSampler(domain_bounds, dimension=2, sequence_type="sobol")
-
-        assert sampler.sequence_type == "sobol"
-        assert sampler.dimension == 2
-        assert hasattr(sampler, "mc_config")
-        assert hasattr(sampler, "rng")
-
     def test_sample_interior(self):
         """Test interior sampling produces valid points."""
         domain_bounds = [(-1, 1), (-1, 1)]

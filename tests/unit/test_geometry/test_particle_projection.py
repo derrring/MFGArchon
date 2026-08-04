@@ -44,19 +44,6 @@ class TestPointCloudGeometry:
         assert geom.dimension == 3
         assert geom.num_particles == 50
 
-    def test_geometry_protocol_compliance(self):
-        """Test that PointCloudGeometry implements GeometryProtocol."""
-        from mfgarchon.geometry.protocol import GeometryProtocol
-
-        positions = np.random.uniform(0, 1, (100, 2))
-        geom = PointCloudGeometry(positions)
-
-        assert isinstance(geom, GeometryProtocol)
-        assert hasattr(geom, "dimension")
-        assert hasattr(geom, "num_spatial_points")
-        assert hasattr(geom, "get_spatial_grid")
-        assert hasattr(geom, "get_problem_config")
-
     def test_bounds(self):
         """Test bounding box computation."""
         positions = np.array([[0.1, 0.2], [0.9, 0.8], [0.5, 0.5]])

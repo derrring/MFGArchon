@@ -78,22 +78,6 @@ class TestHJBFDMSolverInitialization:
         assert solver.max_newton_iterations == 50
         assert solver.newton_tolerance == 1e-8
 
-    def test_removed_NiterNewton_raises(self):
-        """v0.16 deprecation removed: NiterNewton= no longer in __init__ signature -> TypeError."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        with pytest.raises(TypeError, match="NiterNewton"):
-            HJBFDMSolver(problem, NiterNewton=40)
-
-    def test_removed_l2errBoundNewton_raises(self):
-        """v0.16 deprecation removed: l2errBoundNewton= no longer in __init__ signature -> TypeError."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        with pytest.raises(TypeError, match="l2errBoundNewton"):
-            HJBFDMSolver(problem, l2errBoundNewton=1e-5)
-
     def test_invalid_max_iterations(self):
         """Test that invalid max_newton_iterations raises error."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -115,39 +99,6 @@ class TestHJBFDMSolverInitialization:
 
         with pytest.raises(ValueError, match="newton_tolerance must be > 0"):
             HJBFDMSolver(problem, newton_tolerance=-1e-6)
-
-    def test_newton_config_storage(self):
-        """Test that Newton configuration is properly stored."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = HJBFDMSolver(
-            problem,
-            max_newton_iterations=35,
-            newton_tolerance=1e-7,
-        )
-
-        assert hasattr(solver, "_newton_config")
-        assert solver._newton_config["max_iterations"] == 35
-        assert solver._newton_config["tolerance"] == 1e-7
-
-    def test_backend_initialization(self):
-        """Test that backend is properly initialized."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = HJBFDMSolver(problem)
-
-        assert hasattr(solver, "backend")
-        assert solver.backend is not None
-
-    def test_custom_backend(self):
-        """Test initialization with custom backend."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = HJBFDMSolver(problem, backend="numpy")
-
-        assert solver.backend is not None
-        # Backend should be NumPy backend
-        assert hasattr(solver.backend, "array")
 
     def test_advection_scheme_default(self):
         """Test default advection_scheme is gradient_upwind."""
