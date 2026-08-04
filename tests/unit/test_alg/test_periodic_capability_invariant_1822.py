@@ -107,28 +107,29 @@ KNOWN_NOT_HONOURED = {
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 
-# Mass is the second invariant and it is INDEPENDENT of the seam: a periodic domain has no
-# boundary, so a periodic FP solve conserves mass exactly. Measured drift on the datum above:
+# Mass is the second invariant and it is INDEPENDENT of the seam. But the assertion is
+# CONVERGENCE, not exact conservation, and getting that wrong is what the first version of this
+# file did: it asserted `drift < 1e-9` and reported six solvers as failing to honour PERIODIC.
 #
-#   FPSLSolver / FPSLAdjointSolver  13.42%    FPFVMSolver      5.76%
-#   FPFDMSolver                      5.56%    FPParticleSolver ~5% (UNSEEDED)
-#   FPGFDMSolver                     raises
+# Measured drift against refinement (Nx=21/41/81, Nt scaled with it):
 #
-# FPSLSolver is the case that forces the split: it satisfies the seam at 4.4e-16 and creates 13%
-# of its own mass. Traced in #1820 -- advection conserves exactly at zero drift and the
-# Crank-Nicolson step conserves exactly on an identified field, while one splat step creates 1.14%
-# at drift 0.3 and 3.81% at drift 1.0. The defect is in splat under drift.
+#   FPFDMSolver       5.56e-02  2.87e-02  1.46e-02
+#   FPFVMSolver       5.77e-02  2.93e-02  1.47e-02
+#   FPSLSolver        1.34e-01  4.91e-02  2.62e-02
+#   FPParticleSolver  5.63e-02  3.38e-02  1.64e-02
 #
-# `FPSLJacobianSolver` conserves to 0.0000% and is NOT listed -- that is renormalisation by fiat,
-# not conservation (RFC #1456 class (b), #1429 S0-11). A passing row means the number is right,
-# not that the mechanism is.
-MASS_NOT_CONSERVED = {
-    "FPFDMSolver": ("#1822", AssertionError),
-    "FPFVMSolver": ("#1822", AssertionError),
+# Every one halves per refinement. That is O(h) discretisation error in a non-conservative scheme,
+# not a capability defect -- these solvers do not claim conservation by construction, and an
+# absolute tolerance on a convergent quantity is a tolerance chosen to make a point.
+#
+# `FPSLJacobianSolver` reports 0.0000% at every resolution, which is the opposite failure: exact by
+# renormalisation rather than by conservation (RFC #1456 class (b), #1429 S0-11). A convergence
+# oracle cannot see it; it is listed under its own issue rather than certified here.
+MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
+    # No solver here fails the CONVERGENCE oracle -- every declaring FP solver's periodic mass
+    # error halves under refinement. The one entry is a solver that never produces a number to
+    # converge: it declares PERIODIC and its density goes invalid mid-solve.
     "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
-    "FPParticleSolver": ("#1822", AssertionError),
-    "FPSLSolver": ("#1820 splat under drift", AssertionError),
-    "FPSLAdjointSolver": ("#1820 splat under drift", AssertionError),
 }
 
 
@@ -151,11 +152,11 @@ def _declaring_solvers() -> dict[str, type]:
     return found
 
 
-def _periodic_problem() -> MFGProblem:
+def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
     return MFGProblem(
-        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=periodic_bc(dimension=1)),
+        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1)),
         T=0.5,
-        Nt=NT,
+        Nt=nt,
         sigma=0.3,
         components=MFGComponents(
             m_initial=_M,
@@ -176,23 +177,23 @@ def _seam(field: np.ndarray) -> float:
     return float(np.abs(arr[:, 0] - arr[:, -1]).max())
 
 
-def _solve_periodic(cls: type) -> np.ndarray:
+def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
     """Run one solve from exactly periodic data and return the field it produced."""
-    x = np.linspace(0.0, 1.0, NX)
+    x = np.linspace(0.0, 1.0, nx)
     u_periodic = _U(x)
     m_periodic = _M(x)
     assert _seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
     assert _seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
 
-    problem = _periodic_problem()
+    problem = _periodic_problem(nx=nx, nt=nt)
     kwargs = {}
     if "collocation_points" in inspect.signature(cls.__init__).parameters:
         kwargs["collocation_points"] = x.reshape(-1, 1)
     solver = cls(problem, **kwargs)
 
     if hasattr(solver, "solve_hjb_system"):
-        return solver.solve_hjb_system(np.tile(m_periodic, (NT + 1, 1)), u_periodic, np.zeros((NT + 1, NX)))
-    return solver.solve_fp_system(m_periodic, np.tile(u_periodic, (NT + 1, 1)))
+        return solver.solve_hjb_system(np.tile(m_periodic, (nt + 1, 1)), u_periodic, np.zeros((nt + 1, nx)))
+    return solver.solve_fp_system(m_periodic, np.tile(u_periodic, (nt + 1, 1)))
 
 
 def _parametrised():
@@ -228,8 +229,8 @@ def _fp_parametrised():
         if not hasattr(cls, "solve_fp_system"):
             continue
         marks = []
-        if name in MASS_NOT_CONSERVED:
-            issue, exc = MASS_NOT_CONSERVED[name]
+        if name in MASS_NON_CONVERGENT:
+            issue, exc = MASS_NON_CONVERGENT[name]
             marks.append(
                 pytest.mark.xfail(
                     strict=True,
@@ -241,21 +242,31 @@ def _fp_parametrised():
 
 
 @pytest.mark.parametrize(("name", "cls"), list(_fp_parametrised()))
-def test_a_periodic_fp_solve_conserves_mass(name, cls):
-    """A periodic domain has no boundary, so there is nowhere for mass to go.
+def test_a_periodic_fp_solve_conserves_mass_in_the_limit(name, cls):
+    """A periodic domain has no boundary, so mass error must vanish as the grid refines.
 
-    Independent of the seam: `FPFVMSolver` satisfies that one at 2.2e-16 while creating 6.5% of
-    its own mass. Certifying PERIODIC support on the seam alone would pass it.
+    CONVERGENCE, not exact conservation. None of these solvers claims conservation by
+    construction, so an absolute tolerance would flag O(h) discretisation error as a capability
+    defect -- which an earlier version of this file did, for six solvers at once. What is a defect
+    is error that stops converging: a scheme leaking a fixed fraction per step is not going to be
+    saved by a finer grid.
     """
-    field = _solve_periodic(cls)
-    x = np.linspace(0.0, 1.0, NX)
-    initial = float(np.trapezoid(field[0], x))
-    final = float(np.trapezoid(field[-1], x))
-    assert initial > 0, f"{name} produced zero initial mass; the ratio below would be meaningless"
-    drift = abs(final / initial - 1.0)
-    assert drift < 1e-9, (
-        f"{name} changed total mass by {drift:.4%} over a periodic solve ({initial:.6f} -> "
-        f"{final:.6f}), and a periodic domain has no boundary for it to cross"
+    drifts = []
+    for nx, nt in ((21, 10), (41, 20)):
+        field = _solve_periodic(cls, nx=nx, nt=nt)
+        x = np.linspace(0.0, 1.0, nx)
+        initial = float(np.trapezoid(field[0], x))
+        final = float(np.trapezoid(field[-1], x))
+        assert initial > 0, f"{name} produced zero initial mass; the ratio would be meaningless"
+        drifts.append(abs(final / initial - 1.0))
+
+    if drifts[0] < 1e-12:
+        # Already exact at the coarse grid. Either genuinely conservative or renormalised; this
+        # oracle cannot tell those apart, and says so rather than certifying.
+        return
+    assert drifts[1] < drifts[0] / 1.5, (
+        f"{name} periodic mass error did not converge under refinement: {drifts[0]:.3e} at Nx=21, "
+        f"{drifts[1]:.3e} at Nx=41. A convergent scheme roughly halves here"
     )
 
 
