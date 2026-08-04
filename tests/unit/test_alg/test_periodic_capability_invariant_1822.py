@@ -39,7 +39,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import periodic_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 NX = 21
@@ -155,6 +155,25 @@ def _declaring_solvers() -> dict[str, type]:
 def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1)),
+        T=0.5,
+        Nt=nt,
+        sigma=0.3,
+        components=MFGComponents(
+            m_initial=_M,
+            u_terminal=_U,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+
+
+def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
+    """The same fixture as `_periodic_problem`, with the boundary condition as a parameter."""
+    return MFGProblem(
+        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=bc),
         T=0.5,
         Nt=nt,
         sigma=0.3,
@@ -330,3 +349,159 @@ def test_the_known_broken_list_names_only_solvers_that_exist():
     declaring = set(_declaring_solvers())
     stale = set(KNOWN_NOT_HONOURED) - declaring
     assert not stale, f"KNOWN_NOT_HONOURED names solvers that no longer declare PERIODIC: {sorted(stale)}"
+
+
+# ---------------------------------------------------------------------------
+# The rest of the declared surface (#1574). PERIODIC above is one column of it.
+# ---------------------------------------------------------------------------
+
+# Every BC type each solver declares, driven through one solve, against the invariant that type
+# means. Measured surface: 39 (solver, BC) pairs -- NEUMANN 11, PERIODIC 11, NO_FLUX 11,
+# DIRICHLET 4, ROBIN 1, REFLECTING 1.
+#
+# The verdict grid, which is what makes this a capability check rather than an accuracy check:
+#
+#   declared + invariant holds      honest
+#   declared + invariant violated   advertises and returns wrong numbers   <- the #1574 class
+#   declared + path refuses         contradiction: declares, then raises   <- also the class
+#
+# Oracles, and why each is absolute or convergent:
+#
+#   DIRICHLET   u (or m) at the wall equals g. Zero in exact arithmetic, so exactness is the
+#               strong form -- but a particle method approximates the wall rather than pinning it
+#               (FPParticleSolver: 4.94e-01 at Nx=21, 3.27e-06 at Nx=41), so convergence to zero
+#               is accepted and exactness is recorded rather than required.
+#   NEUMANN /   HJB: the one-sided du/dn at each wall goes to zero. HJBFDMSolver is exact; SL,
+#   NO_FLUX     WENO and GFDM converge at ratio ~1.55 over 21->41.
+#               FP: mass is conserved. Convergent, NOT exact -- see the periodic mass note above
+#               for why an absolute tolerance here measures the grid instead of the solver.
+#
+# ROBIN and REFLECTING are declared once each and have no constructor in `mfgarchon.geometry.
+# boundary` reachable from this fixture, so they are reported as uncovered rather than passed.
+BC_FACTORIES = {
+    BCType.NO_FLUX: lambda: no_flux_bc(dimension=1),
+    BCType.NEUMANN: lambda: neumann_bc(dimension=1),
+    BCType.DIRICHLET: lambda: dirichlet_bc(dimension=1, value=0.0),
+    BCType.PERIODIC: lambda: periodic_bc(dimension=1),
+}
+
+# (solver, BC) pairs that do not honour what they declare, measured on this fixture.
+# Measured seam under refinement (Nx=21/41/81) for the PERIODIC column, which is why this list is
+# shorter than the seam column's: a residual that CONVERGES is a scheme consistent with the BC
+# without identifying the coincident nodes, and that is a weaker claim than the seam test above
+# makes, not a violated one.
+#
+#   converge:   FPFVMSolver 1.79e-01 9.00e-02 4.25e-02   HJBWENOSolver 2.63e-01 2.08e-01 1.34e-01
+#               HJBFDMSolver 7.42e-01 6.51e-01 4.72e-01  FPFDMSolver (same shape)
+#   exact:      HJBSemiLagrangianSolver 0, FPSLSolver / FPSLAdjointSolver 4.4e-16
+#   NOT:        FPParticleSolver 5.64e-01 2.08e-01 2.63e-01 (up at 81)
+#               FPSLJacobianSolver 1.58e+00 7.64e-03 1.16e-02 (up at 81)
+# Unseeded solvers cannot be classified here at all: measured over three trials, FPParticleSolver
+# returned monotone=False, False, True on the identical configuration. Marking it xfail asserts a
+# failure it does not reliably have; marking it pass asserts the opposite. It is skipped, named,
+# and the seeding is the fix.
+STOCHASTIC_UNSEEDED = {
+    "FPParticleSolver": "no seed parameter; seam varies ~25% run to run",
+}
+
+SURFACE_NOT_HONOURED = {
+    ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
+    ("HJBGFDMSolver", "PERIODIC"): ("#1822 declares PERIODIC and raises for it", NotImplementedError),
+    ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
+    ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
+    ("FPGFDMSolver", "PERIODIC"): ("#1822 density goes invalid mid-solve", ValueError),
+    # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
+    # that would settle the trend does not exist. Listed under the raise, not under the trend.
+    ("FPSLSolver", "NEUMANN"): ("#1822 Nx=81 solve raises", ValueError),
+    ("FPSLSolver", "NO_FLUX"): ("#1822 Nx=81 solve raises", ValueError),
+    ("FPSLAdjointSolver", "NEUMANN"): ("#1822 Nx=81 solve raises", ValueError),
+    ("FPSLAdjointSolver", "NO_FLUX"): ("#1822 Nx=81 solve raises", ValueError),
+    ("FPSLJacobianSolver", "PERIODIC"): ("#1822 deprecated, retirement in #1756", AssertionError),
+}
+
+
+def _solve_with_bc(cls, bc_type, nx, nt):
+    x = np.linspace(0.0, 1.0, nx)
+    problem = _problem_with_bc(BC_FACTORIES[bc_type](), nx, nt)
+    kwargs = {}
+    if "collocation_points" in inspect.signature(cls.__init__).parameters:
+        kwargs["collocation_points"] = x.reshape(-1, 1)
+    solver = cls(problem, **kwargs)
+    if hasattr(solver, "solve_hjb_system"):
+        return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x
+    return solver.solve_fp_system(_M(x), np.tile(_U(x), (nt + 1, 1))), "FP", x
+
+
+def _bc_residual(field, kind, x, bc_type) -> float:
+    """How far this field is from what `bc_type` asserts. Zero in exact arithmetic."""
+    a = np.asarray(field)
+    a = a[None, :] if a.ndim == 1 else a
+    if bc_type is BCType.PERIODIC:
+        return float(np.abs(a[:, 0] - a[:, -1]).max())
+    if bc_type is BCType.DIRICHLET:
+        row = a[0] if kind == "HJB" else a[-1]
+        return float(max(abs(row[0]), abs(row[-1])))
+    if kind == "FP":  # NEUMANN / NO_FLUX: no boundary flux, so mass is conserved
+        return float(abs(np.trapezoid(a[-1], x) / np.trapezoid(a[0], x) - 1.0))
+    dx = float(x[1] - x[0])  # HJB: the one-sided normal derivative vanishes
+    return float(max(abs(a[0, 1] - a[0, 0]), abs(a[0, -1] - a[0, -2])) / dx)
+
+
+def _surface_params():
+    for name, cls in sorted(_declaring_solvers().items()):
+        declared = getattr(cls, "_SUPPORTED_BC_TYPES", None) or getattr(cls, "supported_bc_types", None) or ()
+        for bc_type in sorted(declared, key=lambda t: t.name):
+            if bc_type not in BC_FACTORIES:
+                continue  # ROBIN / REFLECTING: reported by the coverage test below, not passed
+            marks = []
+            key = (name, bc_type.name)
+            if key in SURFACE_NOT_HONOURED:
+                issue, exc = SURFACE_NOT_HONOURED[key]
+                marks.append(
+                    pytest.mark.xfail(strict=True, raises=exc, reason=f"{name} declares {bc_type.name}: {issue}")
+                )
+            yield pytest.param(name, cls, bc_type, marks=marks, id=f"{name}-{bc_type.name}")
+
+
+@pytest.mark.parametrize(("name", "cls", "bc_type"), list(_surface_params()))
+def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
+    """Declaring a BC type is a claim. This is the measurement that makes it cost something."""
+    if name in STOCHASTIC_UNSEEDED:
+        pytest.skip(f"{name} is unseeded ({STOCHASTIC_UNSEEDED[name]}); any verdict here is a draw")
+
+    residuals = []
+    for nx, nt in ((21, 10), (41, 20), (81, 40)):
+        r = _bc_residual(*_solve_with_bc(cls, bc_type, nx, nt), bc_type)
+        assert np.isfinite(r), f"{name} declares {bc_type.name} and the solve produced non-finite values"
+        residuals.append(r)
+        if len(residuals) == 1 and r < 1e-12:
+            return  # exact at the coarse grid: the strong form, no refinement needed
+
+    # THREE points, monotone. Two are not a trend: on 21->41 alone FPSLJacobianSolver improves
+    # 1.58e+00 -> 7.64e-03 and then gets WORSE at 81 (1.16e-02), and a two-point check certifies
+    # it. HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
+    # convergence that a ratio threshold tuned for the fast cases would have failed.
+    trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
+    assert residuals[1] < residuals[0], (
+        f"{name} declares {bc_type.name} but its boundary residual grew from Nx=21 to 41: {trend}"
+    )
+    assert residuals[2] < residuals[1], (
+        f"{name} declares {bc_type.name} but its boundary residual grew from Nx=41 to 81: {trend}"
+    )
+
+
+def test_every_declared_pair_is_either_measured_or_named_uncovered():
+    """A declared BC with no oracle must be visible as uncovered, not absent.
+
+    ROBIN and REFLECTING are each declared once and have no fixture here. Absent, they would read
+    as covered; named, they are a gap someone can close.
+    """
+    uncovered = {
+        (name, t.name)
+        for name, cls in _declaring_solvers().items()
+        for t in (getattr(cls, "_SUPPORTED_BC_TYPES", None) or ())
+        if t not in BC_FACTORIES
+    }
+    assert uncovered == {("HJBGFDMSolver", "ROBIN"), ("FPParticleSolver", "REFLECTING")}, (
+        f"the set of declared-but-unmeasured (solver, BC) pairs changed: {sorted(uncovered)}"
+    )
