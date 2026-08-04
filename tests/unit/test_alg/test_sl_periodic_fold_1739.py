@@ -23,6 +23,7 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import periodic_bc
 from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
+from mfgarchon.geometry.boundary.invariants import seam
 from mfgarchon.geometry.boundary.types import BCType
 
 NX = 21
@@ -76,7 +77,7 @@ def _seam(solver, monkeypatch) -> float:
         "u at t=0 equals the terminal data: the solve did not evolve, and its seam is inherited "
         "from the input rather than produced by the scheme"
     )
-    return float(np.abs(U[:, 0] - U[:, -1]).max())
+    return seam(U)
 
 
 # ---------------------------------------------------------------------------

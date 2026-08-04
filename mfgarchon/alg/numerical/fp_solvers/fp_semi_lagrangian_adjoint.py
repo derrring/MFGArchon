@@ -557,6 +557,14 @@ class FPSLSolver(BaseFPSolver):
         # 'neumann', which would impose a zero-flux seam mis-matched to the
         # periodic advection step above.  Mirrors HJB-SL _adi_diffusion_step
         # (hjb_semi_lagrangian.py:2263).
+        if self._get_diffusion_bc_type() == "periodic":
+            # splat deposits into both coincident nodes on every axis, so the field is not yet
+            # periodic when it reaches the sweep, which refuses that (Issue #1820). The mean is
+            # the fold that preserves this density's trapezoid mass -- both nodes already carry a
+            # half weight, so summing would double-count them.
+            m_star = m_star.copy()
+            for axis in range(m_star.ndim):
+                enforce_periodic_value_nd(m_star, axis=axis)
         m_new = adi_diffusion_step(
             U_star=m_star,
             dt=dt,

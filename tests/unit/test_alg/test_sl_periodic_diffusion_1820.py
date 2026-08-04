@@ -22,6 +22,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import solve_crank_nicolson_diffusion_1d
+from mfgarchon.geometry.boundary.invariants import seam
 
 SIGMA = 0.3
 DT = 0.05
@@ -69,7 +70,7 @@ def test_the_spatial_order_is_second_not_first():
 def test_the_step_leaves_no_seam():
     """x_min and x_max are one point, so the step must not separate them."""
     out, _ = _run(21)
-    assert abs(out[0] - out[-1]) < 1e-14
+    assert seam(out) < 1e-14
 
 
 def test_a_constant_is_unchanged():
