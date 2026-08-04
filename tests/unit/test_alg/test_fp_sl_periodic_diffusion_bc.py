@@ -12,11 +12,14 @@ for periodic; _adjoint_sl_step_nd passes bc_type=self._get_diffusion_bc_type().
 Pinning test logic (1D):
   * Place a unit spike at x=0 (the periodic seam), zero drift.
   * After one diffusion sub-step the spike MUST spread symmetrically:
-    m_new[1]  (right neighbour) == m_new[-1] (left neighbour, wrap).
+    m_new[1] (right neighbour) == m_new[-2] (left neighbour, wrap).
   * With the buggy zero-flux stencil at i=0, L[0] = (m[1]-m[0])/dx^2 only
-    diffuses rightward, so m_new[1] >> m_new[-1].
-  * With the periodic CN (Sherman-Morrison), L[0] wraps m[-1], so
-    m_new[1] == m_new[-1] exactly (by symmetry of the tridiagonal system).
+    diffuses rightward, so m_new[1] >> m_new[-2].
+
+The mirror is index -2, not index -1: `np.linspace(x_min, x_max, n)` is endpoint-inclusive,
+so index -1 is the same physical point as index 0 and holds a copy of the spike. This file
+said -1 until Issue #1820, which corrected the convention in the solver -- the assertion had
+been comparing the spike's neighbour against the spike itself.
 """
 
 from __future__ import annotations
@@ -49,11 +52,18 @@ def _periodic_problem(n: int = 41, nt: int = 10, sigma: float = 0.3) -> MFGProbl
 
 
 def test_periodic_diffusion_seam_symmetry_1d():
-    """After one diffusion sub-step with spike at seam, m_new[1] == m_new[-1].
+    """After one diffusion sub-step with a spike at the seam, mass spreads symmetrically.
 
-    This is the direct numerical witness of Issue #1257: the periodic CN must
-    spread mass symmetrically across the seam.  Fails on buggy (Neumann) code
-    because m_new[1] >> m_new[-1]; passes on fixed code.
+    Still the direct numerical witness of Issue #1257 -- a Neumann stencil gives
+    m_new[1] >> its mirror -- but the mirror is index -2, not index -1.
+
+    Issue #1820 corrected the grid convention: `np.linspace(x_min, x_max, n)` is
+    endpoint-inclusive, so index 0 and index -1 are the SAME physical point and index
+    -1 holds a copy of the spike rather than a neighbour of it. The symmetric partner
+    of index 1 (x = dx) is index -2 (x = 1 - dx). Measured after the correction:
+    m_new[1]/m_new[-2] = 1.000000 exactly, m_new[2] == m_new[-3], m_new[0] == m_new[-1],
+    and total mass 1.000000. The previous assertion compared the spike's neighbour
+    against the spike, which held only under the endpoint-exclusive reading.
     """
     n = 41
     prob = _periodic_problem(n=n, sigma=0.3)
@@ -73,15 +83,24 @@ def test_periodic_diffusion_seam_symmetry_1d():
     # Run ONE step.
     m_new = fp._adjoint_sl_step_1d(m, alpha, dt, sigma)
 
-    # The right neighbour (index 1) and the left-wrap neighbour (index -1) must
-    # receive equal mass — periodic CN wraps through x=-1 == x[N-1].
-    # Tolerance: they must agree to within 1% relative error.
-    ratio = m_new[1] / (m_new[-1] + 1e-300)
+    # The right neighbour (index 1) and its mirror across the seam (index -2) must
+    # receive equal mass. Tolerance: they must agree to within 1% relative error.
+    ratio = m_new[1] / (m_new[-2] + 1e-300)
     assert abs(ratio - 1.0) < 0.01, (
         f"Periodic diffusion seam asymmetry: m_new[1]={m_new[1]:.6f}, "
-        f"m_new[-1]={m_new[-1]:.6f}, ratio={ratio:.4f}.  "
+        f"m_new[-2]={m_new[-2]:.6f}, ratio={ratio:.4f}.  "
         "Expected ratio ~1 (periodic CN); got >> 1 means Neumann zero-flux stencil "
         "is still in use (Issue #1257)."
+    )
+    # Mass, which this step must conserve exactly: zero drift means diffusion alone, and a
+    # periodic domain has no boundary for mass to cross. NOT an endpoint-equality assertion --
+    # that one cannot fail while the implementation ends in `np.append(interior, interior[0])`,
+    # so it pins the last line rather than the scheme (Issue #1820).
+    mass_before = float(np.trapezoid(m, x))
+    mass_after = float(np.trapezoid(m_new, x))
+    assert abs(mass_after / mass_before - 1.0) < 1e-12, (
+        f"periodic diffusion changed total mass by {abs(mass_after / mass_before - 1.0):.3e} "
+        f"({mass_before:.6f} -> {mass_after:.6f}) with zero drift"
     )
 
 

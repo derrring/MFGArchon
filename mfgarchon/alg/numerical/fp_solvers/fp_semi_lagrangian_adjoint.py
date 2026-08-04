@@ -41,6 +41,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     checked_bc_type_string,
 )
+from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -424,6 +425,14 @@ class FPSLSolver(BaseFPSolver):
         # Sherman-Morrison circulant solve instead of the zero-flux stencil.
         diff_bc = self._get_diffusion_bc_type()
         if diff_bc == "periodic":
+            # Identify the two coincident endpoints before diffusing. `splat_1d` deposits into
+            # index 0 and index -1 independently, but on an endpoint-inclusive grid they are one
+            # physical point, so the array reaching the CN is not yet a periodic field -- measured,
+            # every step of a periodic solve arrived with the two differing, by up to 4.75e-01.
+            # The mean is the fold that preserves this density's trapezoid mass: both nodes already
+            # carry a half weight, so summing would double-count them (Issue #1820).
+            m_star = m_star.copy()
+            enforce_periodic_value_nd(m_star, axis=0)
             return solve_crank_nicolson_diffusion_1d(m_star, dt, sigma, self.x_grid, bc_type="periodic")
 
         # Neumann / zero-flux path (preserved from Issue #708: FV stencil for mass
@@ -548,6 +557,14 @@ class FPSLSolver(BaseFPSolver):
         # 'neumann', which would impose a zero-flux seam mis-matched to the
         # periodic advection step above.  Mirrors HJB-SL _adi_diffusion_step
         # (hjb_semi_lagrangian.py:2263).
+        if self._get_diffusion_bc_type() == "periodic":
+            # splat deposits into both coincident nodes on every axis, so the field is not yet
+            # periodic when it reaches the sweep, which refuses that (Issue #1820). The mean is
+            # the fold that preserves this density's trapezoid mass -- both nodes already carry a
+            # half weight, so summing would double-count them.
+            m_star = m_star.copy()
+            for axis in range(m_star.ndim):
+                enforce_periodic_value_nd(m_star, axis=axis)
         m_new = adi_diffusion_step(
             U_star=m_star,
             dt=dt,

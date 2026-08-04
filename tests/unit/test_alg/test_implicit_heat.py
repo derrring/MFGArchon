@@ -14,6 +14,7 @@ import numpy as np
 from mfgarchon.alg.numerical.pde_solvers import ImplicitHeatSolver
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc, periodic_bc
+from mfgarchon.geometry.boundary.invariants import seam
 
 
 class TestImplicitHeatSolver1D:
@@ -158,6 +159,12 @@ class TestImplicitHeatSolver1D:
         relative_diff = np.linalg.norm(T_cn - T_be) / np.linalg.norm(T_cn)
         assert relative_diff < 0.05, f"CN and BE solutions too different: {relative_diff:.2%}"
 
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="ImplicitHeatSolver does not honour periodic BC: seam stalls at ~1.5e-02 under "
+        "refinement rather than vanishing (Issue #1825)",
+    )
     def test_periodic_bc(self):
         """Test periodic boundary conditions."""
         grid = TensorProductGrid(bounds=[(0, 1)], Nx=[100], boundary_conditions=neumann_bc(dimension=1))
@@ -175,10 +182,15 @@ class TestImplicitHeatSolver1D:
         # With periodic BC, pulse should diffuse and wrap
         assert np.all(np.isfinite(T_final)), "Solution finite"
 
-        # Check periodicity: T(0) ≈ T(1)
-        # (After diffusion, the wrapped pulse makes boundaries similar)
-        # This is a weak test since pulse has diffused significantly
-        assert abs(T_final[0] - T_final[-1]) / T_final.max() < 0.3, "Periodicity violated"
+        # Check periodicity: x=0 and x=1 are the same physical point on an endpoint-inclusive
+        # grid, so the seam is zero in exact arithmetic at EVERY resolution (Issue #1574).
+        #
+        # This assertion used to read `< 0.3` relative -- a 30% tolerance on a quantity that is
+        # exactly zero, with the message "Periodicity violated" attached to a check that could not
+        # detect a periodicity violation. Its own comment called it "a weak test". Measured, the
+        # seam does not converge: 3.33e-02 at N=100, 1.66e-02 at N=200, 1.57e-02 at N=400 -- it
+        # stalls rather than vanishing, so this solver does not honour the BC it was handed.
+        assert seam(T_final) < 1e-10, f"periodic seam {seam(T_final):.3e}: x=0 and x=1 are one point and must agree"
 
 
 class TestImplicitHeatSolver2D:

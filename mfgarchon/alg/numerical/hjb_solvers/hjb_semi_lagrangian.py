@@ -33,6 +33,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
     checked_bc_type_string,
 )
+from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
@@ -2704,6 +2705,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Solution after implicit diffusion step
         """
         bc_op = self._get_diffusion_bc_type()
+        if bc_op == "periodic":
+            # The advection step leaves the two coincident endpoints holding independently
+            # interpolated values, so the field is not yet periodic when it reaches the CN, which
+            # refuses that (Issue #1820). u is a value function: the two entries are one quantity
+            # computed twice, so the mean is the identification.
+            U_star = U_star.copy()
+            enforce_periodic_value_nd(U_star, axis=0)
         return solve_crank_nicolson_diffusion_1d(U_star, dt, sigma, self.x_grid, bc_type=bc_op)
 
     def _get_diffusion_bc_type(self) -> str:
@@ -2732,6 +2740,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return self._solve_crank_nicolson_diffusion(U_star, dt, self.problem.sigma)
 
         bc_op = self._get_diffusion_bc_type()
+        if bc_op == "periodic":
+            # Same identification the 1D path does, on EVERY axis. The periodic sweep drops the
+            # duplicated endpoint along each axis and refuses a field where it is not one, so an
+            # nD field arriving unfolded raises rather than solving (Issue #1820).
+            U_star = U_star.copy()
+            for axis in range(U_star.ndim):
+                enforce_periodic_value_nd(U_star, axis=axis)
         return adi_diffusion_step(
             U_star,
             dt,
