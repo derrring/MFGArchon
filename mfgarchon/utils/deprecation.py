@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 import warnings
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from mfgarchon.utils.mfg_logging import get_logger
@@ -633,36 +635,60 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
             )
 
 
-def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, Any]]:
+class IncompleteScanError(RuntimeError):
+    """Part of the tree could not be imported, so the scan is not a census of it.
+
+    Carries ``unimportable``: module name -> the exception that stopped it, so a caller with a
+    scope policy (a ratchet that excludes the frozen paradigms, say) can judge whether the holes
+    are inside the scope it cares about.
     """
-    Scan a module tree for all decorated deprecated items.
 
-    Returns a list of metadata dicts for every `@deprecated`, `@deprecated_parameter`,
-    `@deprecated_value`, and `deprecated_alias` found in the module and its submodules.
+    def __init__(self, unimportable: dict[str, str]) -> None:
+        self.unimportable = dict(unimportable)
+        shown = ", ".join(sorted(self.unimportable)[:3])
+        more = f" (+{len(self.unimportable) - 3} more)" if len(self.unimportable) > 3 else ""
+        super().__init__(
+            f"{len(self.unimportable)} module(s) could not be imported, so this is not a census "
+            f"of the tree: {shown}{more}. Install the optional dependencies they need, or pass "
+            "allow_incomplete=True to accept a partial result."
+        )
 
-    Args:
-        module: Top-level module to scan (e.g., `import mfgarchon; scan_deprecated(mfgarchon)`)
-        recursive: If True, scan submodules recursively
 
-    NOTE: this walks the package by IMPORTING it, so an unimportable submodule -- one needing an
-    optional extra -- is skipped along with everything below it, and the caller cannot tell.
-    Measured on mfgarchon: 72 deduplicated items with torch present, 41 without. Do not compare
-    this result against a committed artifact without solving that first (Issue #1774).
+@dataclass(frozen=True)
+class _TreeScan:
+    """What a walk of the package found, and what it could not see."""
 
-    Returns:
-        List of dicts with keys: type, name, module, since, replacement, removal
+    entries: list[dict[str, Any]]
+    unimportable: dict[str, str]
 
-    Example:
-        >>> import mfgarchon
-        >>> items = scan_deprecated(mfgarchon)
-        >>> for item in items:
-        ...     print(f"{item['type']:10s} {item['name']:30s} since={item['since']}")
+
+def _scan_tree(module: Any, *, recursive: bool = True) -> _TreeScan:
+    """Walk a module tree for decorated deprecations, reporting the holes rather than hiding them.
+
+    The walk IMPORTS the tree, so its completeness is a property of the environment. Two distinct
+    ways that used to go wrong silently, both measured on mfgarchon:
+
+    - ``pkgutil.walk_packages`` re-raises anything that is not ``ImportError``, and the whole walk
+      then ends. Without torch, ``alg/reinforcement/multi_population`` raises ``AttributeError``
+      (``nn = None`` used as a base class, Issue #1773), which stopped the walk at **160 of 428**
+      modules: ``geometry/``, ``utils/`` and ``operators/`` were never reached, and the count came
+      back 41 instead of 72. ``onerror`` below is what keeps the walk going.
+    - Surviving is not the same as seeing. A package whose ``__init__`` raised is not descended
+      into at all, so 18 modules stay invisible even with ``onerror`` set (count 70, not 72).
+
+    Hence: both kinds of failure are recorded in ``unimportable``, and ``IncompleteScanError``
+    carries them out to a caller with a scope policy -- a ratchet that excludes the frozen
+    paradigms, say -- so it can decide whether the holes are inside the scope it cares about.
     """
     import importlib
     import pkgutil
 
     results: list[dict[str, Any]] = []
     visited: set[str] = set()
+    unimportable: dict[str, str] = {}
+
+    def _note(name: str, exc: BaseException | None) -> None:
+        unimportable.setdefault(name, f"{type(exc).__name__}: {exc}" if exc is not None else "import failed")
 
     def _scan_module(mod: Any) -> None:
         mod_name = getattr(mod, "__name__", str(mod))
@@ -693,17 +719,25 @@ def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, An
                     _scan_object(method, f"{attr_name}.{method_name}", mod_name, results)
 
         # Recurse into submodules
-        if recursive and hasattr(mod, "__path__"):
-            try:
-                for _importer, submod_name, _ispkg in pkgutil.walk_packages(mod.__path__, prefix=mod.__name__ + "."):
-                    try:
-                        submod = importlib.import_module(submod_name)
-                        _scan_module(submod)
-                    except Exception:
-                        logger.debug("Cannot import submodule %s", submod_name, exc_info=True)
-                        continue
-            except Exception:
-                logger.debug("Cannot walk submodules of %s", mod_name, exc_info=True)
+        if recursive and getattr(mod, "__path__", None) is not None:
+            # PASSING a handler is the load-bearing part, not what it does: with onerror=None,
+            # walk_packages re-raises anything that is not an ImportError and the walk ends there.
+            # The recording is a second one -- the consumer loop below imports every yielded name
+            # first, so it has already noted this module -- and is kept so the handler cannot be
+            # mistaken for a discard. sys.exc_info() is valid here because walk_packages only
+            # calls onerror from inside its except blocks.
+            def _walk_error(name: str) -> None:
+                _note(name, sys.exc_info()[1])
+
+            for _importer, submod_name, _ispkg in pkgutil.walk_packages(
+                mod.__path__, prefix=mod.__name__ + ".", onerror=_walk_error
+            ):
+                try:
+                    submod = importlib.import_module(submod_name)
+                except Exception as exc:
+                    _note(submod_name, exc)
+                    continue
+                _scan_module(submod)
 
     _scan_module(module)
 
@@ -716,16 +750,64 @@ def scan_deprecated(module: Any, *, recursive: bool = True) -> list[dict[str, An
             seen.add(key)
             unique.append(r)
 
-    return unique
+    return _TreeScan(entries=unique, unimportable=unimportable)
+
+
+def scan_deprecated(module: Any, *, recursive: bool = True, allow_incomplete: bool = False) -> list[dict[str, Any]]:
+    """
+    Scan a module tree for all decorated deprecated items.
+
+    Returns a list of metadata dicts for every `@deprecated`, `@deprecated_parameter`,
+    `@deprecated_value`, and `deprecated_alias` found in the module and its submodules.
+
+    Args:
+        module: Top-level module to scan (e.g., `import mfgarchon; scan_deprecated(mfgarchon)`)
+        recursive: If True, scan submodules recursively
+        allow_incomplete: Accept a partial result when part of the tree cannot be imported.
+            The default refuses, because the caller cannot otherwise tell a tree with fewer
+            deprecations from a tree it could not read: without torch this returned 41 against a
+            true 72 while looking exactly like an answer (Issue #1713).
+
+    Raises:
+        IncompleteScanError: part of the tree could not be imported and `allow_incomplete` is
+            False. `.unimportable` names the modules and why each failed.
+
+    Returns:
+        List of dicts with keys: type, name, module, since, replacement, removal
+
+    Example:
+        >>> import mfgarchon
+        >>> items = scan_deprecated(mfgarchon)
+        >>> for item in items:
+        ...     print(f"{item['type']:10s} {item['name']:30s} since={item['since']}")
+    """
+    scan = _scan_tree(module, recursive=recursive)
+    if scan.unimportable:
+        if not allow_incomplete:
+            raise IncompleteScanError(scan.unimportable)
+        shown = sorted(scan.unimportable)
+        logger.warning(
+            "scan_deprecated: %d module(s) could not be imported; this result is not a census: %s%s",
+            len(shown),
+            ", ".join(shown[:3]),
+            f" (+{len(shown) - 3} more)" if len(shown) > 3 else "",
+        )
+    return scan.entries
 
 
 def audit_all_deprecations(
     module: Any,
     current_version: str | None = None,
     completed_blockers: list[str] | None = None,
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Audit every decorated deprecation in a module against the removal policy.
+
+    Each item carries ``modules``: every module the symbol was found in, not just the one that
+    survived the dedup. A caller with a scope policy must judge on all of them -- see the comment
+    at the dedup below.
 
     The age judgment delegates to the same policy as ``check_removal_readiness``
     (3 minor versions OR 6 months; CLAUDE.md), so the two never disagree. Each *unique*
@@ -739,6 +821,11 @@ def audit_all_deprecations(
         current_version: Version to judge age against (e.g. "v0.19.8"). Defaults to the
             installed ``mfgarchon`` version.
         completed_blockers: Removal blockers cleared globally (e.g. ``["internal_usage"]``).
+        allow_incomplete: Forwarded to ``scan_deprecated``. The default refuses to report an
+            audit of a tree it could not read in full.
+
+    Raises:
+        IncompleteScanError: see ``scan_deprecated``.
 
     Example:
         >>> import mfgarchon
@@ -757,17 +844,22 @@ def audit_all_deprecations(
     ready: list[dict[str, Any]] = []
     not_ready: list[dict[str, Any]] = []
     active: list[dict[str, Any]] = []
-    seen: set[tuple[Any, ...]] = set()
+    seen: dict[tuple[Any, ...], dict[str, Any]] = {}
 
-    for raw in scan_deprecated(module):
+    for raw in scan_deprecated(module, allow_incomplete=allow_incomplete):
         # Dedup the identical deprecation surfaced on many inherited subclasses.
         key = (raw.get("name"), raw.get("type"), raw.get("since"))
         if key in seen:
+            # `module` is where the symbol was FOUND, and the survivor of this dedup is whichever
+            # copy the walk reached first. A caller filtering by module -- the ratchet's live-vs-
+            # frozen scope -- would then judge an accident of walk order, so every site is kept:
+            # one re-export from a frozen package was enough to make a live deprecation invisible.
+            seen[key]["modules"].append(raw["module"])
             continue
-        seen.add(key)
 
         eligible, reason = _removable_by_policy(raw.get("since", ""), raw.get("deprecated_on"), current_version)
-        item = {**raw, "age_reason": reason, "current_version": current_version}
+        item = {**raw, "age_reason": reason, "current_version": current_version, "modules": [raw["module"]]}
+        seen[key] = item
         if not eligible:
             active.append(item)
             continue
@@ -789,4 +881,5 @@ __all__ = [
     "validate_kwargs",
     "scan_deprecated",
     "audit_all_deprecations",
+    "IncompleteScanError",
 ]

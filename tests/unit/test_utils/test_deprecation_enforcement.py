@@ -374,7 +374,10 @@ def test_audit_all_default_version_and_dedup():
     """Default current_version resolves; output keys are unique (dedup works)."""
     import mfgarchon
 
-    report = audit_all_deprecations(mfgarchon)  # no current_version -> installed
+    # allow_incomplete: this asserts the dedup and version invariants, not that the walk saw the
+    # whole tree, and without torch eighteen frozen-paradigm modules do not import. The census
+    # completeness question belongs to scripts/check_internal_deprecation.py, which refuses.
+    report = audit_all_deprecations(mfgarchon, allow_incomplete=True)  # no current_version -> installed
     all_items = report["ready"] + report["not_ready"] + report["active"]
     assert all_items, "expected at least one live deprecation in mfgarchon"
     # Every item carries the resolved version, identical across the run.
@@ -383,6 +386,164 @@ def test_audit_all_default_version_and_dedup():
     # Dedup invariant: each (name, type, since) appears at most once across all buckets.
     keys = [(it.get("name"), it.get("type"), it.get("since")) for it in all_items]
     assert len(keys) == len(set(keys))
+
+
+# ---------------------------------------------------------------------------
+# The package walk: one broken subpackage must not decide what the count is.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def broken_tree(tmp_path):
+    """A package whose middle subpackage raises AttributeError at import.
+
+    The three subpackages are named so the walk reaches them in this order, because the defect is
+    positional: `pkgutil.walk_packages` re-raises anything that is not `ImportError`, so with no
+    `onerror` the walk ENDS at `b_broken` and `c_last` is never yielded. That is not a hypothetical
+    shape -- it is `alg/reinforcement/multi_population` without torch, where `nn = None` is used as
+    a base class (#1773), and it cost 268 of 428 modules and 31 of 72 deprecations (#1713).
+    """
+    import importlib
+    import sys
+
+    root = tmp_path / "broken_pkg"
+    (root / "a_first").mkdir(parents=True)
+    (root / "b_broken").mkdir()
+    (root / "c_last").mkdir()
+
+    decorated = (
+        "from mfgarchon.utils.deprecation import deprecated\n"
+        "@deprecated(since='v0.10.0', replacement='use new_{n}()', removal_blockers=[])\n"
+        "def old_{n}():\n"
+        "    return '{n}'\n"
+    )
+    (root / "__init__.py").write_text("")
+    (root / "a_first" / "__init__.py").write_text(decorated.format(n="a"))
+    (root / "b_broken" / "__init__.py").write_text("nn = None\n\n\nclass Boom(nn.Module):\n    pass\n")
+    (root / "b_broken" / "child.py").write_text(decorated.format(n="b"))
+    (root / "c_last" / "__init__.py").write_text(decorated.format(n="c"))
+
+    sys.path.insert(0, str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        yield importlib.import_module("broken_pkg")
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in [m for m in sys.modules if m == "broken_pkg" or m.startswith("broken_pkg.")]:
+            del sys.modules[name]
+
+
+def test_walk_survives_a_subpackage_that_raises(broken_tree):
+    """Everything AFTER the broken subpackage is still scanned.
+
+    Revert the `onerror` argument in `scan_deprecated` and this fails on `old_c`: that symbol is
+    the mutation detector, not `old_a`, which the truncating version also finds.
+    """
+    from mfgarchon.utils.deprecation import scan_deprecated
+
+    found = {item["name"] for item in scan_deprecated(broken_tree, allow_incomplete=True)}
+
+    assert "old_a" in found, "the subpackage before the break should always have been found"
+    assert "old_c" in found, "the walk stopped at the broken subpackage instead of continuing past it"
+    assert "old_b" not in found, "b_broken/child.py is genuinely unreachable -- do not claim otherwise"
+
+
+def test_scan_refuses_an_incomplete_tree_by_default(broken_tree):
+    """The default is a refusal that names the module, not a smaller number."""
+    from mfgarchon.utils.deprecation import IncompleteScanError, scan_deprecated
+
+    with pytest.raises(IncompleteScanError) as excinfo:
+        scan_deprecated(broken_tree)
+
+    assert "broken_pkg.b_broken" in excinfo.value.unimportable
+    assert "AttributeError" in excinfo.value.unimportable["broken_pkg.b_broken"]
+    # The message has to carry the module name too: `.unimportable` is only read by a caller that
+    # already knows to look, and a bare traceback is what sends someone to the baseline instead.
+    assert "b_broken" in str(excinfo.value)
+
+
+def test_audit_refuses_an_incomplete_tree_by_default(broken_tree):
+    """The refusal is not bypassed by going through the audit wrapper."""
+    from mfgarchon.utils.deprecation import IncompleteScanError
+
+    with pytest.raises(IncompleteScanError):
+        audit_all_deprecations(broken_tree, current_version="v0.20.0")
+
+    report = audit_all_deprecations(broken_tree, current_version="v0.20.0", allow_incomplete=True)
+    assert {"old_a", "old_c"} <= {it["name"] for bucket in report.values() for it in bucket}
+
+
+def test_audit_keeps_every_module_a_symbol_was_found_in(tmp_path):
+    """The dedup must not let one discovery site stand for all of them.
+
+    `audit_all_deprecations` dedups on (name, type, since) and the survivor is whichever copy the
+    walk reached first. A caller filtering by module -- the ratchet's live-vs-frozen scope -- would
+    then be judging walk order: measured on the real package, one re-export of a live deprecation
+    from `alg/neural/__init__.py` moved the count from 64 back to 63 and the ratchet went green
+    over a symbol that had just been added.
+    """
+    import importlib
+    import sys
+
+    root = tmp_path / "reexport_pkg"
+    (root / "home").mkdir(parents=True)
+    (root / "elsewhere").mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "home" / "__init__.py").write_text(
+        "from mfgarchon.utils.deprecation import deprecated\n"
+        "@deprecated(since='v0.10.0', replacement='use new()', removal_blockers=[])\n"
+        "def shared():\n"
+        "    return 1\n"
+    )
+    (root / "elsewhere" / "__init__.py").write_text("from reexport_pkg.home import shared  # noqa: F401\n")
+
+    sys.path.insert(0, str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        report = audit_all_deprecations(
+            importlib.import_module("reexport_pkg"), current_version="v0.20.0", completed_blockers=[]
+        )
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in [m for m in sys.modules if m == "reexport_pkg" or m.startswith("reexport_pkg.")]:
+            del sys.modules[name]
+
+    entries = [it for bucket in report.values() for it in bucket if it["name"] == "shared"]
+    assert len(entries) == 1, "the dedup should still collapse the re-export into one entry"
+    assert set(entries[0]["modules"]) == {"reexport_pkg.home", "reexport_pkg.elsewhere"}, (
+        "both discovery sites must survive the dedup, or a scope filter judges whichever came first"
+    )
+
+
+def test_scan_of_a_complete_tree_reports_no_holes(tmp_path):
+    """Positive control: `unimportable` is empty when nothing is broken.
+
+    Without this, every assertion above is satisfied by a scan that flags everything.
+    """
+    import importlib
+    import sys
+
+    from mfgarchon.utils.deprecation import scan_deprecated
+
+    root = tmp_path / "sound_pkg"
+    (root / "sub").mkdir(parents=True)
+    (root / "__init__.py").write_text("")
+    (root / "sub" / "__init__.py").write_text(
+        "from mfgarchon.utils.deprecation import deprecated\n"
+        "@deprecated(since='v0.10.0', replacement='use new()', removal_blockers=[])\n"
+        "def old_sound():\n"
+        "    return 1\n"
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        # No allow_incomplete: a sound tree must not need the escape hatch.
+        assert "old_sound" in {item["name"] for item in scan_deprecated(importlib.import_module("sound_pkg"))}
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in [m for m in sys.modules if m == "sound_pkg" or m.startswith("sound_pkg.")]:
+            del sys.modules[name]
 
 
 if __name__ == "__main__":
