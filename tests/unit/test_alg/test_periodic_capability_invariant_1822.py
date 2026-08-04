@@ -40,7 +40,15 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary.invariants import bc_residual, mass_drift, seam
 from mfgarchon.geometry.boundary.types import BCType
+
+
+def _residual_of(solved, bc_type) -> float:
+    """Adapter: `_solve_with_bc` returns (field, kind, x); the owner takes them separately."""
+    field, kind, x = solved
+    return bc_residual(field, bc_type, x, kind)
+
 
 NX = 21
 NT = 10
@@ -189,20 +197,13 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
     )
 
 
-def _seam(field: np.ndarray) -> float:
-    arr = np.asarray(field)
-    if arr.ndim == 1:
-        arr = arr[None, :]
-    return float(np.abs(arr[:, 0] - arr[:, -1]).max())
-
-
 def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
     """Run one solve from exactly periodic data and return the field it produced."""
     x = np.linspace(0.0, 1.0, nx)
     u_periodic = _U(x)
     m_periodic = _M(x)
-    assert _seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
-    assert _seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
+    assert seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
+    assert seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
 
     problem = _periodic_problem(nx=nx, nt=nt)
     kwargs = {}
@@ -235,9 +236,9 @@ def test_a_periodic_solve_returns_a_periodic_field(name, cls):
     """x_min and x_max are the same point, so the solver's own output must agree there."""
     field = _solve_periodic(cls)
     assert np.isfinite(np.asarray(field)).all(), f"{name} produced non-finite values"
-    seam = _seam(field)
-    assert seam < SEAM_TOL, (
-        f"{name} declares BCType.PERIODIC but returned a field with a seam of {seam:.4e} between "
+    measured = seam(field)
+    assert measured < SEAM_TOL, (
+        f"{name} declares BCType.PERIODIC but returned a field with a seam of {measured:.4e} between "
         f"x_min and x_max, which are the same physical point on a periodic domain"
     )
 
@@ -273,11 +274,7 @@ def test_a_periodic_fp_solve_conserves_mass_in_the_limit(name, cls):
     drifts = []
     for nx, nt in ((21, 10), (41, 20)):
         field = _solve_periodic(cls, nx=nx, nt=nt)
-        x = np.linspace(0.0, 1.0, nx)
-        initial = float(np.trapezoid(field[0], x))
-        final = float(np.trapezoid(field[-1], x))
-        assert initial > 0, f"{name} produced zero initial mass; the ratio would be meaningless"
-        drifts.append(abs(final / initial - 1.0))
+        drifts.append(mass_drift(field, np.linspace(0.0, 1.0, nx)))
 
     if drifts[0] < 1e-12:
         # Already exact at the coarse grid. Either genuinely conservative or renormalised; this
@@ -432,21 +429,6 @@ def _solve_with_bc(cls, bc_type, nx, nt):
     return solver.solve_fp_system(_M(x), np.tile(_U(x), (nt + 1, 1))), "FP", x
 
 
-def _bc_residual(field, kind, x, bc_type) -> float:
-    """How far this field is from what `bc_type` asserts. Zero in exact arithmetic."""
-    a = np.asarray(field)
-    a = a[None, :] if a.ndim == 1 else a
-    if bc_type is BCType.PERIODIC:
-        return float(np.abs(a[:, 0] - a[:, -1]).max())
-    if bc_type is BCType.DIRICHLET:
-        row = a[0] if kind == "HJB" else a[-1]
-        return float(max(abs(row[0]), abs(row[-1])))
-    if kind == "FP":  # NEUMANN / NO_FLUX: no boundary flux, so mass is conserved
-        return float(abs(np.trapezoid(a[-1], x) / np.trapezoid(a[0], x) - 1.0))
-    dx = float(x[1] - x[0])  # HJB: the one-sided normal derivative vanishes
-    return float(max(abs(a[0, 1] - a[0, 0]), abs(a[0, -1] - a[0, -2])) / dx)
-
-
 def _surface_params():
     for name, cls in sorted(_declaring_solvers().items()):
         declared = getattr(cls, "_SUPPORTED_BC_TYPES", None) or getattr(cls, "supported_bc_types", None) or ()
@@ -471,7 +453,7 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
 
     residuals = []
     for nx, nt in ((21, 10), (41, 20), (81, 40)):
-        r = _bc_residual(*_solve_with_bc(cls, bc_type, nx, nt), bc_type)
+        r = _residual_of(_solve_with_bc(cls, bc_type, nx, nt), bc_type)
         assert np.isfinite(r), f"{name} declares {bc_type.name} and the solve produced non-finite values"
         residuals.append(r)
         if len(residuals) == 1 and r < 1e-12:
