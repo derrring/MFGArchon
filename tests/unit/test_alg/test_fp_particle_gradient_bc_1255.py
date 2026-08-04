@@ -120,10 +120,16 @@ class TestGradientBCOverrideThreaded:
         grads = solver._compute_gradient_nd(u, spacings, use_backend=False)
 
         grad_x = grads[0]
-        # Periodic: at x=0, du/dx = (u[1] - u[4])/(2*1) = (1-4)/2 = -1.5
-        # No-flux: at x=0, du/dx = (u[1] - u[0])/(2*1) = (1-0)/2 = 0.5
-        assert abs(grad_x[0] - (-1.5)) < 1e-9, (
-            f"Expected -1.5 (periodic override), got {grad_x[0]:.4f}. "
+        # The grid is np.linspace(0, 4, 5), so x[0] and x[4] are the SAME physical point under a
+        # periodic BC and the node left of x[0] is x[3] (Issue #1822):
+        #   Periodic: at x=0, du/dx = (u[1] - u[3])/(2*1) = (1-3)/2 = -1.0
+        #   No-flux:  at x=0, du/dx = (u[1] - u[0])/(2*1) = (1-0)/2 = 0.5
+        # This expected -1.5 = (u[1] - u[4])/2 until #1822, which is the wrap that treats the two
+        # coincident endpoints as distinct nodes -- it reads across a separation of dx while
+        # dividing by 2*dx. The discrimination this test exists for is untouched: no-flux still
+        # gives 0.5, and the two remain far apart.
+        assert abs(grad_x[0] - (-1.0)) < 1e-9, (
+            f"Expected -1.0 (periodic override), got {grad_x[0]:.4f}. "
             "Bug: geometry's no-flux BC was used instead of solver's periodic override."
         )
 

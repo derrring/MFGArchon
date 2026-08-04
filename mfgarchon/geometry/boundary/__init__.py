@@ -88,6 +88,7 @@ from .types import (
     BCType,
     BoundaryEntity,
     BoundaryFace,
+    PeriodicGridConvention,
     create_standard_boundary_names,
     parse_boundary_face,
 )
@@ -107,6 +108,7 @@ from .types import (
 __all__ = [
     # Layer 1: Specification
     "BCType",
+    "PeriodicGridConvention",
     "BCSegment",
     "BoundaryConditions",
     "BoundaryEntity",
