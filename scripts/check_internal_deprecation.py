@@ -15,13 +15,40 @@ actually registered, so it cannot under-count the way a syntax guess can -- the 
 that made ``check_fail_fast``'s ``broad_except`` read 11 against a true 115 for 32 days, because
 ``except\\s+Exception\\s*:`` cannot match ``except Exception as e:`` (#1706).
 
-**Boundary, and it is real:** this covers deprecations *declared through the decorators*. Something
-retired without one is invisible here too. Asking the registry removes the under-counting that came
-from guessing syntax; it does not make the count a census of everything ever deprecated.
+**Boundaries, and they are real.** Three, each measured rather than supposed:
+
+- This covers deprecations *declared through the decorators*. Something retired without one is
+  invisible here too. Asking the registry removes the under-counting that came from guessing
+  syntax; it does not make the count a census of everything ever deprecated.
+- A new deprecation whose ``(name, type, since)`` collides with an existing one does not move the
+  count, because that triple is `audit_all_deprecations`' dedup key. Constructed: a second
+  ``@deprecated(since="v0.17.0") def create_solver()`` reads 63 and passes. Predates this ratchet.
+- Scope is decided from the modules a symbol was *found* in. A deprecated method on a class that
+  has no module-level binding anywhere in scope -- built by a factory and bound only inside
+  ``alg/neural/__init__.py`` -- records only the frozen site and is excluded. No module-based
+  policy can see it; the registry holds no evidence of an in-scope site.
+
+**Why the count is a property of the tree and not of the runner.** The registry is populated by
+importing, so the first version of this check compared a number that moved with the environment
+against a committed baseline: 72 locally, **41** on the GitHub runner, and the run was red for a
+reason that said nothing about the tree. Two things fixed that, and both are needed:
+
+- ``scan_deprecated`` no longer lets one unimportable subpackage end the walk. Without torch,
+  ``alg/reinforcement/multi_population`` raises ``AttributeError``, which ``pkgutil.walk_packages``
+  re-raises, and the walk stopped at **160 of 428** modules -- so 29 of the 31 missing deprecations
+  were not torch's, they were in ``geometry/``, ``utils/`` and ``operators/``, never reached.
+- The census is scoped to the **live** library. ``alg/neural`` and ``alg/reinforcement`` are frozen
+  prototypes and out of scope for repo-wide campaigns (CLAUDE.md), and measured, they are also
+  exactly where every torch-dependent module lives. Scoped that way the count is **63 with torch
+  and 63 without**, which is what makes a committed baseline meaningful.
+
+That is a claim about this environment, so it is checked rather than assumed: any module *in scope*
+that cannot be imported makes this exit 2 and name it, because a smaller number and a number
+measured over less tree are indistinguishable from the outside.
 
 **The usage check.** The original purpose: production code must not call a deprecated symbol whose
 ``internal_usage`` blocker has been cleared. It is kept, and now runs over a real symbol list. Note
-it is vacuous today by construction -- 0 of 72 have that blocker cleared -- so it starts doing work
+it is vacuous today by construction -- 0 of 63 have that blocker cleared -- so it starts doing work
 the day someone clears one, and not before. Reporting the count is what carries information now.
 
 The baseline fails in BOTH directions, like ``fail_fast_baseline.json`` and
@@ -46,17 +73,71 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"
 
+# The two frozen prototype paradigms (CLAUDE.md): out of scope for repo-wide campaigns, and the
+# only place in the package where a module needs torch to import. Excluding them is what makes the
+# count identical with and without it.
+FROZEN = ("mfgarchon.alg.neural", "mfgarchon.alg.reinforcement")
 
-def live_deprecations() -> list[dict[str, Any]]:
-    """Every deprecation the decorators registered, flattened across the audit's buckets."""
+
+def is_frozen(module: str) -> bool:
+    """Exact package containment, not a string prefix.
+
+    `startswith(FROZEN)` would also swallow a future `mfgarchon.alg.neural_ops`, and swallow it
+    silently, which is the whole failure mode this check exists to stop.
+    """
+    return any(module == prefix or module.startswith(prefix + ".") for prefix in FROZEN)
+
+
+class EnvironmentIncompleteError(RuntimeError):
+    """The tree could not be read in full HERE, so nothing was measured about it."""
+
+    def __init__(self, unimportable: dict[str, str]) -> None:
+        self.unimportable = unimportable
+        super().__init__(f"{len(unimportable)} in-scope module(s) could not be imported")
+
+
+def in_scope(audited: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Split the census by scope, judging each symbol by EVERY module it was found in.
+
+    A symbol is out of scope only when the frozen paradigms are the *only* place it appears.
+    Judging `entry["module"]` alone judges an accident of walk order instead: that field holds
+    whichever copy the dedup happened to keep, and `mfgarchon.alg.neural` sorts before every other
+    top-level subpackage. Measured -- adding a deprecation under `mfgarchon/utils/` took the count
+    63 -> 64 and went red correctly, and one `from mfgarchon.utils.<mod> import <symbol>` appended
+    to `alg/neural/__init__.py` put it back to 63 and green over a symbol that had just been added.
+    """
+    live = [entry for entry in audited if not all(is_frozen(mod) for mod in entry["modules"])]
+    return live, len(audited) - len(live)
+
+
+def live_deprecations() -> tuple[list[dict[str, Any]], int]:
+    """The live library's deprecations, and how many the frozen-paradigm scope dropped.
+
+    The second number is returned rather than swallowed so the scope is visible in the output: a
+    census that silently covers less than its name suggests is the failure this check exists for.
+
+    Raises:
+        EnvironmentIncompleteError: an in-scope module could not be imported. Distinct from a count
+            that moved: one is a verdict about the tree, the other about the runner, and reporting
+            the second as the first is what made this check red on a tree nobody had changed.
+    """
     import logging
 
     logging.disable(logging.INFO)  # importing the package emits workflow setup chatter
     import mfgarchon
-    from mfgarchon.utils.deprecation import audit_all_deprecations
+    from mfgarchon.utils.deprecation import IncompleteScanError, audit_all_deprecations
 
-    buckets = audit_all_deprecations(mfgarchon)
-    return [entry for bucket in buckets.values() for entry in bucket]
+    try:
+        buckets = audit_all_deprecations(mfgarchon)
+    except IncompleteScanError as exc:
+        blocking = {mod: why for mod, why in exc.unimportable.items() if not is_frozen(mod)}
+        if blocking:
+            raise EnvironmentIncompleteError(blocking) from exc
+        # Only the frozen paradigms are unreadable, which the census excludes anyway. The second
+        # walk is warm (measured 0.07 s against 0.62 s cold) because sys.modules is populated.
+        buckets = audit_all_deprecations(mfgarchon, allow_incomplete=True)
+
+    return in_scope([entry for bucket in buckets.values() for entry in bucket])
 
 
 def counts(entries: list[dict[str, Any]]) -> dict[str, int]:
@@ -109,7 +190,21 @@ def main() -> int:
     parser.add_argument("--show", action="store_true", help="list every live deprecation")
     args = parser.parse_args()
 
-    entries = live_deprecations()
+    try:
+        entries, out_of_scope = live_deprecations()
+    except EnvironmentIncompleteError as exc:
+        print("This environment cannot read the whole in-scope tree, so NOTHING was measured:", file=sys.stderr)
+        for module, why in sorted(exc.unimportable.items()):
+            print(f"  {module}: {why}", file=sys.stderr)
+        print(
+            "\nThat is an environment failure, not a verdict on the code: install what those "
+            "modules need and re-run. Do NOT regenerate the baseline here -- a count taken over "
+            "less tree than the baseline covers is a different quantity wearing the same name, "
+            "and recording it is how the smaller number becomes the official one.",
+            file=sys.stderr,
+        )
+        return 2
+
     current = counts(entries)
 
     if args.show:
@@ -121,10 +216,11 @@ def main() -> int:
             )
         print()
 
-    print(f"Live deprecations (from the runtime registry): {current['total']}")
+    print(f"Live deprecations (runtime registry, excluding the frozen paradigms): {current['total']}")
     for key, value in current.items():
         if key != "total":
             print(f"  {key}: {value}")
+    print(f"  (out of scope, in alg/neural + alg/reinforcement: {out_of_scope})")
 
     if args.write_baseline:
         BASELINE.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")

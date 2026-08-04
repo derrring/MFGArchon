@@ -22,10 +22,14 @@ from pathlib import Path
 def scan_all_deprecations() -> list[dict]:
     """Scan mfgarchon for all deprecated items.
 
-    NOTE: this walks the package by IMPORTING it, so the result depends on which optional extras
-    are installed -- `scan_deprecated` skips an unimportable submodule and everything below it.
-    Measured: 72 deduplicated items with torch present, 41 without. That is why this is not wired
-    to a gate; see Issue #1774.
+    This walks the package by IMPORTING it, so what it can see depends on which optional extras
+    are installed, and a guide generated from a partial walk teaches a partial API as if it were
+    the whole one. `scan_deprecated` now refuses rather than returning the smaller number
+    (Issue #1713), so this raises here instead of writing a wrong document.
+
+    Unlike the ratchet, this is NOT scoped to the live library: the guide is user-facing, and a
+    user who installs `[nn]` meets the frozen paradigms' deprecations too. So generating it needs
+    a complete environment, torch included. See Issue #1774.
     """
     import mfgarchon
     from mfgarchon.utils.deprecation import scan_deprecated
@@ -271,7 +275,16 @@ def main():
     )
     args = parser.parse_args()
 
-    items = scan_all_deprecations()
+    from mfgarchon.utils.deprecation import IncompleteScanError
+
+    try:
+        items = scan_all_deprecations()
+    except IncompleteScanError as exc:
+        print(f"FAIL: cannot read the whole package here, so the guide would be wrong: {exc}", file=sys.stderr)
+        for module, why in sorted(exc.unimportable.items()):
+            print(f"  {module}: {why}", file=sys.stderr)
+        return 2
+
     guide = generate_guide(items)
 
     output_path = Path(args.output)

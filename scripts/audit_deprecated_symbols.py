@@ -58,9 +58,23 @@ def main() -> int:
     args = parser.parse_args()
 
     import mfgarchon
-    from mfgarchon.utils.deprecation import audit_all_deprecations
+    from mfgarchon.utils.deprecation import IncompleteScanError, audit_all_deprecations
 
-    report = audit_all_deprecations(mfgarchon, current_version=args.current_version, completed_blockers=args.cleared)
+    # This lists symbols a human is about to DELETE, so a short list read as a complete one is the
+    # expensive mistake here -- worse than in the ratchet, which at least compares against a
+    # baseline. Refuse, and name what could not be read (Issue #1713).
+    try:
+        report = audit_all_deprecations(
+            mfgarchon, current_version=args.current_version, completed_blockers=args.cleared
+        )
+    except IncompleteScanError as exc:
+        print(
+            f"FAIL: this environment cannot read the whole package, so the audit would be short: {exc}", file=sys.stderr
+        )
+        for module, why in sorted(exc.unimportable.items()):
+            print(f"  {module}: {why}", file=sys.stderr)
+        return 2
+
     all_items = report["ready"] + report["not_ready"] + report["active"]
     cur_ver = all_items[0]["current_version"] if all_items else "(unknown)"
 

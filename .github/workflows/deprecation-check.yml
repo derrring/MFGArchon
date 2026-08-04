@@ -22,23 +22,25 @@ jobs:
 
       # The check reads the RUNTIME registry (Issue #1713), so the package has to be importable.
       # The previous AST-only version did not need this, which is why the step never existed.
+      #
+      # `numba` is here and torch is NOT, and both halves are measured rather than guessed. The
+      # check refuses when a module IN SCOPE cannot be imported, so the question is which optional
+      # distributions the live library needs to be readable end to end. Blocking each in turn:
+      # numba is the only one -- `backends/numba_backend.py` raises a deliberate ImportError
+      # without it. gymnasium costs one module and torch eighteen, but every one of those lives
+      # under alg/neural or alg/reinforcement, which the census excludes as frozen (CLAUDE.md).
+      # Hence 63 with torch and 63 without, and no 2 GB wheel on the critical path of a PR.
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,numerical]"
+          pip install -e ".[dev,numerical]" numba
 
+      # The check prints its own reason and its own remedy, and there are now three of each: a
+      # count that moved (regenerate the baseline), a production call site (stop calling it), and
+      # a tree this runner cannot read in full (install the extra -- and specifically do NOT
+      # regenerate). A trailing step echoing one fixed remedy was wrong for the other two, and the
+      # one it named is the one that would bake a wrong count into the baseline (Issue #1713).
       - name: Run deprecation check
         run: |
           echo "Checking declared deprecations against the recorded baseline..."
           python scripts/check_internal_deprecation.py
-
-      # No message here about WHY it failed. The check prints its own reason -- a count that moved,
-      # or a production call site -- and a fixed string asserting one of them was wrong for the
-      # other, and wrong again for an ImportError (Issue #1713).
-      - name: Report status
-        if: failure()
-        run: |
-          echo "Deprecation check failed. Its output above names the reason."
-          echo "If the counts moved deliberately, regenerate with:"
-          echo "  python scripts/check_internal_deprecation.py --write-baseline"
-          exit 1
