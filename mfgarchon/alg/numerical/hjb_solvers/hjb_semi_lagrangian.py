@@ -2740,6 +2740,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return self._solve_crank_nicolson_diffusion(U_star, dt, self.problem.sigma)
 
         bc_op = self._get_diffusion_bc_type()
+        if bc_op == "periodic":
+            # Same identification the 1D path does, on EVERY axis. The periodic sweep drops the
+            # duplicated endpoint along each axis and refuses a field where it is not one, so an
+            # nD field arriving unfolded raises rather than solving (Issue #1820).
+            U_star = U_star.copy()
+            for axis in range(U_star.ndim):
+                enforce_periodic_value_nd(U_star, axis=axis)
         return adi_diffusion_step(
             U_star,
             dt,
