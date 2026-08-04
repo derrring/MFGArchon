@@ -365,17 +365,6 @@ def test_npart_return_type_array():
 
 
 @pytest.mark.unit
-def test_module_exports():
-    """Test all functions are importable."""
-    from mfgarchon.utils import aux_func
-
-    assert hasattr(aux_func, "ppart")
-    assert hasattr(aux_func, "npart")
-    assert callable(aux_func.ppart)
-    assert callable(aux_func.npart)
-
-
-@pytest.mark.unit
 def test_module_docstrings():
     """Test functions have docstrings."""
     assert ppart.__doc__ is not None

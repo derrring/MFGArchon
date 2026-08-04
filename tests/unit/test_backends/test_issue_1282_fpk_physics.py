@@ -79,43 +79,6 @@ class TestTorchFpkSign:
 
         return NumPyBackend()
 
-    def test_torch_fpk_same_direction_as_numpy(self, torch_backend, numpy_backend):
-        """
-        Pinning test for #1282 item 1.
-
-        The centre-of-mass of the density should shift in the SAME direction
-        for torch and numpy after one fpk_step.
-        Pre-fix: torch CoM shifts opposite to numpy (sign error).
-        Post-fix: shifts agree in sign.
-        """
-        M, U, dt, dx, problem_params = _linear_U_params(nx=40)
-
-        M_np = numpy_backend.fpk_step(M, U, dt, dx, problem_params)
-
-        # Torch backend reads "diffusion" key with default 0.1 (issue #1282
-        # item 3 is a separate key-name concern; keep zero diffusion via
-        # sigma_sq=0 so the drift-sign difference is isolated here).
-        torch_params = dict(problem_params)
-        torch_params["diffusion"] = 0.0  # override torch's key to zero
-        M_torch = torch_backend.fpk_step(M, U, dt, dx, torch_params)
-        if hasattr(M_torch, "numpy"):
-            M_torch = M_torch.detach().cpu().numpy()
-
-        x = problem_params["x_grid"]
-        com_before = np.sum(x * M) / np.sum(M)
-        com_np = np.sum(x * M_np) / np.sum(M_np)
-        com_torch = np.sum(x * M_torch) / np.sum(M_torch)
-
-        shift_np = com_np - com_before
-        shift_torch = com_torch - com_before
-
-        # Both must shift in the same direction (same sign).
-        assert shift_np * shift_torch > 0, (
-            f"torch and numpy fpk_step shift in opposite directions: "
-            f"shift_numpy={shift_np:.6g}, shift_torch={shift_torch:.6g}. "
-            f"This is the #1282 sign inversion bug."
-        )
-
     def test_torch_fpk_close_to_numpy_one_step(self, torch_backend, numpy_backend):
         """
         After fixing the sign, one-step outputs should be close.

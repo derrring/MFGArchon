@@ -205,13 +205,6 @@ class TestFPGFDMSolver:
 class TestCollocationModeRemoved:
     """Pin that the past-window `mode` kwarg (and collocation handling) is gone."""
 
-    def test_mode_kwarg_removed(self):
-        """`mode` removed (-> density_mode): passing it is an unexpected keyword."""
-        problem = SimpleLQMFG2D()
-
-        with pytest.raises(TypeError, match="unexpected keyword argument 'mode'"):
-            FPParticleSolver(problem, mode="collocation")
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

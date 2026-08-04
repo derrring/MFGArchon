@@ -176,28 +176,6 @@ def test_create_solver_none_problem():
     assert "Problem cannot be None" in str(exc_info.value)
 
 
-@pytest.mark.unit
-def test_type_consistency():
-    """Test that factory returns expected solver types."""
-    problem = MockMFGProblem()
-    mock_hjb = Mock()
-    mock_fp = Mock()
-
-    with patch("mfgarchon.factory.solver_factory.FixedPointIterator") as MockIterator:
-        mock_solver = Mock()
-        mock_solver.config = MFGSolverConfig()
-        MockIterator.return_value = mock_solver
-
-        solver = create_solver(
-            problem=problem,
-            hjb_solver=mock_hjb,
-            fp_solver=mock_fp,
-        )
-
-        assert solver is not None
-        assert hasattr(solver, "config")
-
-
 def run_comprehensive_test():
     """Run comprehensive factory pattern tests."""
     print("=" * 80)

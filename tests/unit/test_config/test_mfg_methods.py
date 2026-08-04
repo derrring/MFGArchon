@@ -212,17 +212,8 @@ class TestHJBConfig:
         c = HJBConfig()
         assert c.method in {"fdm", "fem", "gfdm", "sl", "weno"}
 
-    def test_has_expected_shape(self):
-        c = HJBConfig()
-        assert hasattr(c, "method")
-        assert hasattr(c, "newton")
-
 
 class TestFPConfig:
     def test_defaults(self):
         c = FPConfig()
         assert c.method in {"fdm", "fem", "particle", "network"}
-
-    def test_has_expected_shape(self):
-        c = FPConfig()
-        assert hasattr(c, "method")

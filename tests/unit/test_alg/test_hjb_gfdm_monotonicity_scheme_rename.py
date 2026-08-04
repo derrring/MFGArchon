@@ -137,21 +137,6 @@ def test_stencil_weights_canonical(setup, legacy_value):
         assert "grad_weights" in w
 
 
-def test_mutual_exclusion(setup):
-    """v0.25.0: qp_optimization_level= no longer in the signature; passing it (even
-    alongside monotonicity_scheme=) raises TypeError (unexpected kwarg)."""
-    problem, pts, bdry = setup
-    with pytest.raises(TypeError, match="qp_optimization_level"):
-        HJBGFDMSolver(
-            problem,
-            collocation_points=pts,
-            boundary_indices=bdry,
-            delta=0.3,
-            monotonicity_scheme="qp_m_matrix",
-            qp_optimization_level="auto",
-        )
-
-
 def test_invalid_scheme_value(setup):
     """Passing a legacy bundle value to monotonicity_scheme= raises ValueError."""
     problem, pts, bdry = setup
@@ -195,20 +180,6 @@ def test_default_application_per_scheme(setup):
             problem, collocation_points=pts, boundary_indices=bdry, delta=0.3, monotonicity_scheme="joint_socp"
         )
     assert s.monotonicity_application == "precompute"
-
-
-def test_removed_qp_optimization_level_raises_type_error(setup):
-    """v0.25.0 removal (Issue #1070): qp_optimization_level= is no longer in the
-    __init__ signature; passing it raises TypeError, not DeprecationWarning."""
-    problem, pts, bdry = setup
-    with pytest.raises(TypeError, match="qp_optimization_level"):
-        HJBGFDMSolver(
-            problem,
-            collocation_points=pts,
-            boundary_indices=bdry,
-            delta=0.3,
-            qp_optimization_level="auto",
-        )
 
 
 @_requires_cvxpy

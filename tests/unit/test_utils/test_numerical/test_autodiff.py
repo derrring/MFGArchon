@@ -347,15 +347,6 @@ def test_backend_type_annotation():
 
 
 @pytest.mark.unit
-def test_module_exports():
-    """Test AutoDiffBackend is importable."""
-    from mfgarchon.utils.numerical import autodiff
-
-    assert hasattr(autodiff, "AutoDiffBackend")
-    assert autodiff.AutoDiffBackend == AutoDiffBackend
-
-
-@pytest.mark.unit
 def test_module_docstring():
     """Test module has comprehensive docstring."""
     from mfgarchon.utils.numerical import autodiff

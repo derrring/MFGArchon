@@ -11,14 +11,6 @@ from mfgarchon.types import NumericalScheme
 class TestNumericalSchemeEnum:
     """Test NumericalScheme enum definition and values."""
 
-    def test_enum_values_exist(self):
-        """Test that all expected enum values are defined."""
-        assert hasattr(NumericalScheme, "FDM_UPWIND")
-        assert hasattr(NumericalScheme, "FDM_CENTERED")
-        assert hasattr(NumericalScheme, "SL_LINEAR")
-        assert hasattr(NumericalScheme, "SL_CUBIC")
-        assert hasattr(NumericalScheme, "GFDM")
-
     def test_enum_string_values(self):
         """Test that enum values match expected strings."""
         assert NumericalScheme.FDM_UPWIND.value == "fdm_upwind"

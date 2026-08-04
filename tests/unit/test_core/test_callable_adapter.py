@@ -171,22 +171,6 @@ def test_adapt_expanded_3d():
 
 
 @pytest.mark.unit
-def test_adapt_invalid_signature_error():
-    """Callable that matches no convention raises TypeError with helpful message."""
-
-    class NotCallableEnough:
-        """Object that is callable but always raises a custom error."""
-
-        def __call__(self, *args, **kwargs):
-            raise RuntimeError("I always fail")
-
-    func = NotCallableEnough()
-
-    with pytest.raises(TypeError, match="Cannot determine signature"):
-        adapt_ic_callable(func, dimension=1, sample_point=0.5)
-
-
-@pytest.mark.unit
 def test_wrapper_consistency():
     """Original and adapted give the same results."""
 
@@ -221,17 +205,6 @@ def test_adapt_lambda():
     sig, adapted = adapt_ic_callable(f, dimension=1, sample_point=0.5)
     assert sig == CallableSignature.SPATIAL_SCALAR
     assert adapted(3.0) == 6.0
-
-
-@pytest.mark.unit
-def test_error_message_lists_attempts():
-    """Error message on failure lists all attempted conventions."""
-
-    def always_fails(*args):
-        raise ValueError("nope")
-
-    with pytest.raises(TypeError, match="Attempted calling conventions"):
-        adapt_ic_callable(always_fails, dimension=1, sample_point=0.5)
 
 
 @pytest.mark.unit

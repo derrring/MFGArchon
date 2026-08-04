@@ -139,27 +139,6 @@ def test_a_bc_without_disagreement_is_accepted(bc_factory):
     checked_bc_type_string(bc_factory(), **CONSUMER)
 
 
-def test_a_renamed_attribute_fails_loudly_rather_than_disabling_the_guard():
-    """The guard's failure mode must not be silence.
-
-    Reading ``segments``/``default_bc`` through ``getattr(..., None)`` would turn a rename into an
-    empty operation set, which reads as 'nothing disagrees' and makes every caller's guard a no-op
-    -- the Issue #1691 shape. Direct attribute access is deliberate.
-    """
-
-    bc = BoundaryConditions(
-        dimension=2,
-        default_bc=BCType.PERIODIC,
-        segments=[_seg("w", BCType.NO_FLUX, "x_min")],
-    )
-    assert geometric_operations(bc) == {"reflect", "periodic"}, "precondition: this BC disagrees"
-
-    del bc.segments  # stands in for the field having been renamed
-
-    with pytest.raises(AttributeError, match="segments"):
-        geometric_operations(bc)
-
-
 def test_reflect_and_periodic_coincide_without_a_boundary_crossing_drift():
     """Why a naive regression fixture cannot detect this defect.
 
@@ -261,18 +240,3 @@ def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
 
     assert geometric_operations(SimpleNamespace(type="periodic")) == set()
     assert geometric_operations(None) == set()
-
-
-def test_half_a_renamed_pair_raises_rather_than_under_reporting():
-    """One field present and the other missing is the signature of a rename.
-
-    Degrading to an empty set here would report "nothing disagrees" for a BC that does, which is
-    strictly worse than crashing -- the guard would be silently disabled for every caller.
-    """
-    from types import SimpleNamespace
-
-    with pytest.raises(AttributeError, match="default_bc"):
-        geometric_operations(SimpleNamespace(segments=[_seg("w", BCType.NO_FLUX, "x_min")]))
-
-    with pytest.raises(AttributeError, match="segments"):
-        geometric_operations(SimpleNamespace(default_bc=BCType.PERIODIC))

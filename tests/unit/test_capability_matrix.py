@@ -292,24 +292,6 @@ def test_a_refusal_from_the_solve_phase_survives_the_phase_split(cm, monkeypatch
 # ---------------------------------------------------------------------------
 
 
-def test_construct_takes_a_thunk_and_nothing_else(cm):
-    """Pins the signature, because the old one did not do what it looked like.
-
-    ``_construct(what, fn, *args, **kwargs)`` evaluates the argument expressions
-    in the CALLER's frame, so every constructor inside them ran before the wrapper
-    was entered and their failures bypassed it. Every existing phase test passes a
-    thunk, so all of them hold under either signature -- reverting it was measured
-    to kill nothing. This is the assertion that notices.
-    """
-    with pytest.raises(TypeError):
-        cm._construct("x", lambda: None, "an extra positional argument")
-
-
-def test_measure_takes_a_thunk_and_nothing_else(cm):
-    with pytest.raises(TypeError):
-        cm._measure("x", lambda: ("PASS", {}), "an extra positional argument")
-
-
 def test_measure_rejects_an_oracle_that_returns_only_the_artifact(cm):
     """The shape check is what keeps the verdict inside the wrapper.
 

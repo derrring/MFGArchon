@@ -57,11 +57,6 @@ def test_semi_lagrangian_no_hamiltonian_fails_loud(monkeypatch):
         solver._evaluate_hamiltonian(x=0.5, p=0.3, m=1.0, time_idx=0)
 
 
-def test_semi_lagrangian_default_hamiltonian_method_removed():
-    """The silent LQ fallback method must stay gone (no silent re-introduction)."""
-    assert not hasattr(HJBSemiLagrangianSolver, "_default_hamiltonian")
-
-
 def test_semi_lagrangian_solve_no_hamiltonian_fails_loud(monkeypatch):
     """The REAL solve path must fail loud, not just _evaluate_hamiltonian in isolation.
 

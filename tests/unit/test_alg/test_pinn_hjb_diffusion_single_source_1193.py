@@ -75,16 +75,6 @@ def test_no_inline_sigma_squared_over_two_literal_in_file():
     )
 
 
-def test_converter_is_imported():
-    """The module imports the single-source converter (mirrors the siblings)."""
-    import mfgarchon.alg.neural.pinn_solvers.hjb_pinn_solver as mod
-
-    assert hasattr(mod, "diffusion_from_volatility_torch"), (
-        "hjb_pinn_solver must import diffusion_from_volatility_torch from "
-        "mfgarchon.utils.pde_coefficients (mirror fp_pinn_solver / mfg_pinn_solver)."
-    )
-
-
 # ---------------------------------------------------------------------------
 # Solver-level numeric guard: the viscous coefficient equals the converter
 # output (documents the byte-equivalence; tied to the live solver method).

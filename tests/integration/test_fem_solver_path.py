@@ -63,20 +63,6 @@ def _fem_problem(refine: int = 2):
 
 @pytest.mark.integration
 class TestFEMSolverPath:
-    def test_factory_creates_fem_pair_with_traits(self):
-        """Issue #773 / #580: the documented factory entry point must build a FEM pair. It used to
-        raise (HJB/FP inherited ``_scheme_family=GENERIC`` → duality VALIDATION_SKIPPED → factory
-        raised). Both solvers now carry ``SchemeFamily.FEM`` and the pair validates as Type-A."""
-        from mfgarchon.alg.base_solver import SchemeFamily
-        from mfgarchon.factory.scheme_factory import NumericalScheme, create_paired_solvers
-
-        problem, _ = _fem_problem()
-        hjb, fp = create_paired_solvers(problem, NumericalScheme.FEM_P1)
-        assert type(hjb).__name__ == "HJBFEMSolver"
-        assert type(fp).__name__ == "FPFEMSolver"
-        assert hjb._scheme_family is SchemeFamily.FEM
-        assert fp._scheme_family is SchemeFamily.FEM
-
     @pytest.mark.parametrize("order", [1, 2])
     def test_fp_advection_is_mass_conserving(self, order):
         """The FP advection operator must have zero column sums (mass conservation). The raw

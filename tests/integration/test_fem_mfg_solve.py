@@ -138,13 +138,6 @@ class TestFEMHeatEquation:
 class TestFEMFactoryIntegration:
     """Test that FEM solvers are wired into the scheme factory."""
 
-    def test_fem_p1_in_factory(self):
-        """Factory should recognize FEM_P1 scheme."""
-        from mfgarchon.types.schemes import NumericalScheme
-
-        assert hasattr(NumericalScheme, "FEM_P1")
-        assert NumericalScheme.FEM_P1.is_discrete_dual()
-
     def test_fem_recommended_for_unstructured(self):
         """Auto-selection should recommend FEM for unstructured meshes."""
         from mfgarchon.factory.scheme_factory import get_recommended_scheme

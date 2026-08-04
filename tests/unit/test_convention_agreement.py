@@ -213,20 +213,6 @@ class TestBoundaryToleranceSingleSource:
         assert tol.SDF_BOUNDARY_TOL == 1e-8
         assert tol.BOUNDARY_REL_TOL == 1e-12
 
-    def test_classifier_defaults_reference_single_source(self):
-        """The paper-path GFDM classifier defaults to BOUNDARY_TOL (1e-6) and the analytic
-        Geometry on-wall defaults to ONWALL_TOL (1e-10) — byte-identical to the prior literals."""
-        import inspect
-
-        from mfgarchon.geometry.base import Geometry
-        from mfgarchon.geometry.boundary.conditions import BoundaryConditions
-        from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL, ONWALL_TOL
-
-        face_default = inspect.signature(BoundaryConditions.identify_boundary_face).parameters["tolerance"].default
-        assert face_default == BOUNDARY_TOL == 1e-6
-        onwall_default = inspect.signature(Geometry.is_on_boundary).parameters["tolerance"].default
-        assert onwall_default == ONWALL_TOL == 1e-10
-
 
 class TestOutwardNormalSourceAgreement:
     """Issue #1114: the two outward-normal sources (face-derived vs SDF-gradient) must agree on

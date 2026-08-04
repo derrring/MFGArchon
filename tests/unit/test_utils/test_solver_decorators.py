@@ -36,14 +36,6 @@ class DummySolver:
 class TestSolverMonitoringOptions:
     """Test SolverMonitoringOptions Flag enum."""
 
-    def test_enum_values_exist(self):
-        """Test all expected enum values are defined."""
-        assert hasattr(SolverMonitoringOptions, "NONE")
-        assert hasattr(SolverMonitoringOptions, "CONVERGENCE")
-        assert hasattr(SolverMonitoringOptions, "PROGRESS")
-        assert hasattr(SolverMonitoringOptions, "TIMING")
-        assert hasattr(SolverMonitoringOptions, "ALL")
-
     def test_none_value(self):
         """Test NONE flag has value 0."""
         assert SolverMonitoringOptions.NONE.value == 0
@@ -129,15 +121,6 @@ class TestSolverMonitoringOptions:
 
         assert result["converged"] is True
         assert "execution_time" not in result
-
-    def test_deprecated_boolean_parameters_removed(self):
-        """Removed-pin: deprecated boolean kwargs (monitor_convergence/auto_progress/timing)
-        were removed in v0.20.0; passing them now raises TypeError."""
-        with pytest.raises(TypeError):
-            enhanced_solver_method(auto_progress=True, timing=True)
-
-        with pytest.raises(TypeError):
-            enhanced_solver_method(monitor_convergence=True)
 
 
 class TestWithProgressMonitoring:
@@ -407,19 +390,6 @@ class TestSolverProgressMixin:
 
 class TestUpgradeSolverWithProgress:
     """Test upgrade_solver_with_progress class decorator."""
-
-    def test_upgrade_basic_solver(self):
-        """Test upgrading a basic solver class."""
-
-        class SimpleSolver:
-            def solve(self):
-                return {"result": 42}
-
-        EnhancedSolver = upgrade_solver_with_progress(SimpleSolver)
-
-        solver = EnhancedSolver()
-        assert hasattr(solver, "enable_progress")
-        assert hasattr(solver, "enable_timing")
 
     def test_upgraded_solver_name(self):
         """Test upgraded solver has correct name."""

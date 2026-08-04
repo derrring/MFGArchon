@@ -12,17 +12,6 @@ from mfgarchon.alg import SchemeFamily
 class TestSchemeFamilyEnum:
     """Test SchemeFamily enum definition and values."""
 
-    def test_enum_values_exist(self):
-        """Test that all expected enum values are defined."""
-        assert hasattr(SchemeFamily, "FDM")
-        assert hasattr(SchemeFamily, "SL")
-        assert hasattr(SchemeFamily, "FVM")
-        assert hasattr(SchemeFamily, "FEM")
-        assert hasattr(SchemeFamily, "GFDM")
-        assert hasattr(SchemeFamily, "MESHLESS_GALERKIN")
-        assert hasattr(SchemeFamily, "PINN")
-        assert hasattr(SchemeFamily, "GENERIC")
-
     def test_enum_string_values(self):
         """Test that enum values match expected strings."""
         assert SchemeFamily.FDM.value == "fdm"

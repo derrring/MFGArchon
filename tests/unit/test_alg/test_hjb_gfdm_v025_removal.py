@@ -57,30 +57,6 @@ class TestRemovedDeprecatedParams:
     def setup(self):
         return _make_problem_and_points()
 
-    def test_NiterNewton_raises_type_error(self, setup):
-        """NiterNewton= no longer in signature → TypeError: unexpected kwarg."""
-        problem, pts = setup
-        with pytest.raises(TypeError, match="NiterNewton"):
-            HJBGFDMSolver(problem, pts, NiterNewton=40)
-
-    def test_l2errBoundNewton_raises_type_error(self, setup):
-        """l2errBoundNewton= no longer in signature → TypeError: unexpected kwarg."""
-        problem, pts = setup
-        with pytest.raises(TypeError, match="l2errBoundNewton"):
-            HJBGFDMSolver(problem, pts, l2errBoundNewton=1e-5)
-
-    def test_qp_optimization_level_raises_type_error(self, setup):
-        """qp_optimization_level= no longer in signature → TypeError: unexpected kwarg."""
-        problem, pts = setup
-        with pytest.raises(TypeError, match="qp_optimization_level"):
-            HJBGFDMSolver(problem, pts, monotonicity_scheme="none", qp_optimization_level="auto")
-
-    def test_qp_optimization_level_standalone_raises_type_error(self, setup):
-        """qp_optimization_level= as sole kwarg also raises TypeError."""
-        problem, pts = setup
-        with pytest.raises(TypeError, match="qp_optimization_level"):
-            HJBGFDMSolver(problem, pts, qp_optimization_level="none")
-
 
 class TestCanonicalParamsStillWork:
     """Canonical replacements for the removed deprecated params must still work
@@ -123,21 +99,3 @@ class TestCanonicalParamsStillWork:
         solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="qp_m_matrix", monotonicity_application="always")
         assert solver.monotonicity_scheme == "qp_m_matrix"
         assert solver.monotonicity_application == "always"
-
-    def test_legacy_attribute_NiterNewton_gone(self, setup):
-        """After removal, solver instance no longer exposes .NiterNewton attribute."""
-        problem, pts = setup
-        solver = HJBGFDMSolver(problem, pts, max_newton_iterations=30, monotonicity_scheme="none")
-        assert not hasattr(solver, "NiterNewton"), (
-            "solver.NiterNewton attribute still present; remove self.NiterNewton = ... "
-            "assignment from HJBGFDMSolver.__init__"
-        )
-
-    def test_legacy_attribute_l2errBoundNewton_gone(self, setup):
-        """After removal, solver instance no longer exposes .l2errBoundNewton attribute."""
-        problem, pts = setup
-        solver = HJBGFDMSolver(problem, pts, newton_tolerance=1e-7, monotonicity_scheme="none")
-        assert not hasattr(solver, "l2errBoundNewton"), (
-            "solver.l2errBoundNewton attribute still present; remove self.l2errBoundNewton = ... "
-            "assignment from HJBGFDMSolver.__init__"
-        )

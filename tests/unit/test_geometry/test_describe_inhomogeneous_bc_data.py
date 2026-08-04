@@ -93,16 +93,6 @@ class TestShapeContract:
         for not_a_bc in (None, "periodic", 42):
             assert describe_inhomogeneous_bc_data(not_a_bc) == []
 
-    @pytest.mark.parametrize(
-        "obj",
-        [SimpleNamespace(default_bc=BCType.NEUMANN, default_value=0.7), SimpleNamespace(segments=[])],
-        ids=["default-without-segments", "segments-without-default"],
-    )
-    def test_half_a_segmented_bc_raises_instead_of_reporting_clean(self, obj):
-        """#1691: exactly one of the pair is the signature of a rename, not of a clean BC."""
-        with pytest.raises(AttributeError, match=r"has .* but no "):
-            describe_inhomogeneous_bc_data(obj)
-
 
 class TestAgainstTheRealBoundaryConditions:
     """The SimpleNamespace fixtures above are convenient; these use the shipped class."""

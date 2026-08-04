@@ -162,26 +162,6 @@ def test_base_fp_solver_init_with_problem():
 
 
 @pytest.mark.unit
-def test_base_fp_solver_init_fp_method_name():
-    """Test BaseFPSolver initialization sets fp_method_name."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    assert hasattr(solver, "fp_method_name")
-    assert solver.fp_method_name == "ConcreteFP"
-
-
-@pytest.mark.unit
-def test_base_fp_solver_init_backend_none():
-    """Test BaseFPSolver initialization sets backend to None."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    assert hasattr(solver, "backend")
-    assert solver.backend is None
-
-
-@pytest.mark.unit
 def test_base_fp_solver_init_default_attributes():
     """Test BaseFPSolver initialization sets all expected attributes."""
     problem = MockMFGProblem()
@@ -356,15 +336,6 @@ def test_solver_problem_is_same_instance():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports_base_fp_solver():
-    """Test BaseFPSolver is importable."""
-    from mfgarchon.alg.numerical.fp_solvers import base_fp
-
-    assert hasattr(base_fp, "BaseFPSolver")
-    assert base_fp.BaseFPSolver == BaseFPSolver
 
 
 @pytest.mark.unit

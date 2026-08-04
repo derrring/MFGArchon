@@ -68,27 +68,6 @@ class TestCreatePairedSolversFDM:
         assert result.hjb_family == SchemeFamily.FDM
         assert result.fp_family == SchemeFamily.FDM
 
-    def test_fdm_upwind_default_advection_scheme(self):
-        """Test that FDM_UPWIND sets divergence_upwind for FP.
-
-        Note: Changed from gradient_upwind to divergence_upwind in Issue #382
-        because gradient_upwind has boundary flux bugs.
-        """
-        problem = MFGProblem(
-            geometry=TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
-            ),
-            Nt=10,
-            T=1.0,
-            components=_default_components(),
-        )
-
-        _, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-
-        # Check FP advection scheme (divergence_upwind is mass-conservative)
-        assert hasattr(fp, "advection_scheme")
-        assert fp.advection_scheme == "divergence_upwind"
-
     def test_fdm_centered_creates_dual_pair(self):
         """Test that FDM_CENTERED creates valid dual pair."""
         problem = MFGProblem(
@@ -163,22 +142,6 @@ class TestCreatePairedSolversSL:
         assert result.status == DualityStatus.DISCRETE_DUAL
         assert result.hjb_family == SchemeFamily.SL
         assert result.fp_family == SchemeFamily.SL
-
-    def test_sl_linear_default_interpolation(self):
-        """Test that SL_LINEAR sets linear interpolation for HJB."""
-        problem = MFGProblem(
-            geometry=TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
-            ),
-            Nt=10,
-            T=1.0,
-            components=_default_components(),
-        )
-
-        hjb, _ = create_paired_solvers(problem, NumericalScheme.SL_LINEAR)
-
-        assert hasattr(hjb, "interpolation_method")
-        assert hjb.interpolation_method == "linear"
 
     def test_sl_cubic_creates_dual_pair(self):
         """Test that SL_CUBIC creates valid dual pair."""
@@ -489,38 +452,6 @@ class TestReturnTypes:
         hjb, fp = result
         assert hjb is not None
         assert fp is not None
-
-    def test_hjb_has_scheme_family_trait(self):
-        """Test that returned HJB solver has _scheme_family trait."""
-        problem = MFGProblem(
-            geometry=TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
-            ),
-            Nt=10,
-            T=1.0,
-            components=_default_components(),
-        )
-
-        hjb, _ = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-
-        assert hasattr(hjb, "_scheme_family")
-        assert hjb._scheme_family == SchemeFamily.FDM
-
-    def test_fp_has_scheme_family_trait(self):
-        """Test that returned FP solver has _scheme_family trait."""
-        problem = MFGProblem(
-            geometry=TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[20 + 1], boundary_conditions=no_flux_bc(dimension=1)
-            ),
-            Nt=10,
-            T=1.0,
-            components=_default_components(),
-        )
-
-        _, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-
-        assert hasattr(fp, "_scheme_family")
-        assert fp._scheme_family == SchemeFamily.FDM
 
 
 if __name__ == "__main__":

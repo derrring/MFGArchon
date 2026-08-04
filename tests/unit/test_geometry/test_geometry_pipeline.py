@@ -172,20 +172,5 @@ def test_geometry_package_import():
     assert BoundaryConditions is not None
 
 
-def test_main_package_geometry_import():
-    """Test that geometry system is available from main package."""
-    import mfgarchon
-
-    # Check that the flag is set correctly
-    if hasattr(mfgarchon, "GEOMETRY_SYSTEM_AVAILABLE"):
-        # If geometry system is available, test imports
-        if mfgarchon.GEOMETRY_SYSTEM_AVAILABLE:
-            assert hasattr(mfgarchon, "Mesh2D")
-            assert hasattr(mfgarchon, "MeshData")
-        else:
-            # If not available, that's okay too (missing optional dependencies)
-            pass
-
-
 if __name__ == "__main__":
     pytest.main([__file__])

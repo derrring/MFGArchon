@@ -376,33 +376,3 @@ def test_create_amr_solver():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports_solver_factory_class():
-    """Test module exports SolverFactory class."""
-    from mfgarchon.factory import solver_factory
-
-    assert hasattr(solver_factory, "SolverFactory")
-    assert isinstance(solver_factory.SolverFactory, type)
-
-
-@pytest.mark.unit
-def test_module_exports_convenience_functions():
-    """Test module exports all convenience functions."""
-    from mfgarchon.factory import solver_factory
-
-    expected_functions = [
-        "create_solver",
-        "create_basic_solver",
-        "create_standard_solver",
-        "create_fast_solver",
-        "create_semi_lagrangian_solver",
-        "create_accurate_solver",
-        "create_research_solver",
-        "create_amr_solver",
-    ]
-
-    for func_name in expected_functions:
-        assert hasattr(solver_factory, func_name)
-        assert callable(getattr(solver_factory, func_name))

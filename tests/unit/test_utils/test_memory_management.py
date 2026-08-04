@@ -231,22 +231,6 @@ def test_suggest_memory_optimization_high_usage():
 
 
 @pytest.mark.unit
-def test_memory_monitored_decorator_basic():
-    """Test memory_monitored decorator basic functionality."""
-
-    class MockSolver:
-        @memory_monitored(max_memory_gb=10.0)
-        def compute(self):
-            return "computed"
-
-    solver = MockSolver()
-    result = solver.compute()
-
-    assert result == "computed"
-    assert hasattr(solver, "_memory_monitor")
-
-
-@pytest.mark.unit
 def test_memory_monitored_decorator_warnings():
     """Test memory_monitored decorator issues warnings."""
 

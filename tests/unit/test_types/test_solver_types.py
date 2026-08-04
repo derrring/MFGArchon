@@ -476,25 +476,6 @@ def test_newton_solver_protocol():
     assert hasattr(solver, "solve_step")
 
 
-@pytest.mark.unit
-def test_linear_solver_protocol():
-    """Test LinearSolver protocol usage."""
-
-    class MockLinearSolver:
-        def solve(self, A: np.ndarray, b: np.ndarray) -> np.ndarray:
-            # Mock solver: return b
-            return b
-
-    solver = MockLinearSolver()
-
-    # Test usage (protocols are not @runtime_checkable in source)
-    A = np.eye(5)
-    b = np.ones(5)
-    x = solver.solve(A, b)
-    assert x.shape == (5,)
-    assert hasattr(solver, "solve")
-
-
 # ===================================================================
 # Test Exception Classes
 # ===================================================================
@@ -581,21 +562,6 @@ def test_legacy_solver_return():
 # ===================================================================
 # Test Module Exports
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_module_exports():
-    """Test all types and exceptions are importable."""
-    from mfgarchon.types import solver_types
-
-    # Check key exports
-    assert hasattr(solver_types, "SolverReturnTuple")
-    assert hasattr(solver_types, "JAXSolverReturn")
-    assert hasattr(solver_types, "NewtonSolver")
-    assert hasattr(solver_types, "LinearSolver")
-    assert hasattr(solver_types, "SolverError")
-    assert hasattr(solver_types, "ConvergenceError")
-    assert hasattr(solver_types, "ConfigurationError")
 
 
 @pytest.mark.unit

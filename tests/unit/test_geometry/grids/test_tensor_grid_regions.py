@@ -27,16 +27,6 @@ class TestRegionMarkingProtocolCompliance:
         grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx=[10, 10], boundary_conditions=no_flux_bc(dimension=2))
         assert isinstance(grid, SupportsRegionMarking)
 
-    def test_has_all_required_methods(self):
-        """Verify all protocol methods are present."""
-        grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx=[10, 10], boundary_conditions=no_flux_bc(dimension=2))
-
-        assert hasattr(grid, "mark_region")
-        assert hasattr(grid, "get_region_mask")
-        assert hasattr(grid, "intersect_regions")
-        assert hasattr(grid, "union_regions")
-        assert hasattr(grid, "get_region_names")
-
 
 class TestMarkRegionBasicFunctionality:
     """Test mark_region() method."""

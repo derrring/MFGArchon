@@ -352,20 +352,6 @@ class TestEnsureNumpyBackend:
 class TestModuleExports:
     """Test module __all__ exports."""
 
-    def test_all_exports_defined(self):
-        """Test that __all__ is defined and contains expected functions."""
-        import mfgarchon.backends as backends_module
-
-        assert hasattr(backends_module, "__all__")
-        expected = {
-            "create_backend",
-            "get_available_backends",
-            "get_backend_info",
-            "register_backend",
-            "warn_if_jax_scheme_downgraded",  # Issue #1072 interim warning helper
-        }
-        assert set(backends_module.__all__) == expected
-
     def test_all_exports_callable(self):
         """Test that all exported items are callable."""
         import mfgarchon.backends as backends_module

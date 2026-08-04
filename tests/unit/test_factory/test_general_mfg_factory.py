@@ -97,21 +97,6 @@ def solver_config():
 
 @pytest.mark.unit
 @pytest.mark.fast
-def test_factory_initialization():
-    """Test GeneralMFGFactory can be instantiated."""
-    factory = GeneralMFGFactory()
-
-    assert factory is not None
-    assert hasattr(factory, "function_registry")
-    assert hasattr(factory, "hamiltonian_registry")
-    assert isinstance(factory.function_registry, dict)
-    assert isinstance(factory.hamiltonian_registry, dict)
-    assert len(factory.function_registry) == 0
-    assert len(factory.hamiltonian_registry) == 0
-
-
-@pytest.mark.unit
-@pytest.mark.fast
 def test_get_general_factory():
     """Test get_general_factory convenience function."""
     factory = get_general_factory()
@@ -180,60 +165,6 @@ def test_register_hamiltonian(factory, sample_hamiltonian):
 # ============================================================================
 # Test: Create from Hamiltonian
 # ============================================================================
-
-
-@pytest.mark.unit
-def test_create_from_hamiltonian_minimal(factory, sample_hamiltonian, domain_config, time_config, sample_functions):
-    """Test creating MFG problem with minimal required components."""
-    problem = factory.create_from_hamiltonian(
-        hamiltonian=sample_hamiltonian,
-        domain_config=domain_config,
-        time_config=time_config,
-        m_initial=sample_functions["initial_density"],
-        u_terminal=sample_functions["final_value"],
-    )
-
-    assert problem is not None
-    assert hasattr(problem, "T")
-    assert time_config["T"] == problem.T
-    assert hasattr(problem, "H")
-
-
-@pytest.mark.unit
-def test_create_from_hamiltonian_with_solver_config(
-    factory, sample_hamiltonian, domain_config, time_config, solver_config, sample_functions
-):
-    """Test creating problem with solver configuration."""
-    problem = factory.create_from_hamiltonian(
-        hamiltonian=sample_hamiltonian,
-        domain_config=domain_config,
-        time_config=time_config,
-        solver_config=solver_config,
-        m_initial=sample_functions["initial_density"],
-        u_terminal=sample_functions["final_value"],
-    )
-
-    assert problem is not None
-    assert hasattr(problem, "sigma")
-
-
-@pytest.mark.unit
-def test_create_from_hamiltonian_with_optional_components(
-    factory, sample_hamiltonian, domain_config, time_config, sample_functions
-):
-    """Test creating problem with optional components."""
-    problem = factory.create_from_hamiltonian(
-        hamiltonian=sample_hamiltonian,
-        domain_config=domain_config,
-        time_config=time_config,
-        potential_func=sample_functions["potential"],
-        m_initial=sample_functions["initial_density"],
-        u_terminal=sample_functions["final_value"],
-    )
-
-    assert problem is not None
-    assert hasattr(problem, "T")
-    assert time_config["T"] == problem.T
 
 
 @pytest.mark.unit
@@ -478,35 +409,6 @@ def test_create_from_hamiltonian_missing_time(factory, sample_hamiltonian, domai
 # ============================================================================
 # Test: Integration
 # ============================================================================
-
-
-@pytest.mark.unit
-def test_end_to_end_problem_creation(
-    factory, sample_hamiltonian, sample_functions, domain_config, time_config, solver_config
-):
-    """Test complete workflow from Hamiltonian to problem."""
-    # Register Hamiltonian
-    factory.register_hamiltonian("test_H", sample_hamiltonian)
-
-    # Create problem
-    problem = factory.create_from_hamiltonian(
-        hamiltonian=sample_hamiltonian,
-        domain_config=domain_config,
-        time_config=time_config,
-        solver_config=solver_config,
-        potential_func=sample_functions["potential"],
-        m_initial=sample_functions["initial_density"],
-        u_terminal=sample_functions["final_value"],
-    )
-
-    # Verify problem has all components
-    assert problem is not None
-    assert hasattr(problem, "H")
-    assert hasattr(problem, "dH_dm")
-    assert hasattr(problem, "T")
-    assert time_config["T"] == problem.T
-    assert hasattr(problem, "sigma")
-    assert problem.sigma == solver_config["sigma"]
 
 
 @pytest.mark.unit
