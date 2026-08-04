@@ -414,14 +414,53 @@ class TestBackendCreationEdgeCases:
         assert backend.config["arg2"] == 42
         assert backend.config["arg3"] is True
 
-    def test_auto_selection_logging(self, capfd):
-        """Test that auto-selection produces log messages."""
-        backend = create_backend("auto")
-        captured = capfd.readouterr()
-        # Should have at least one log message about backend selection
-        assert len(captured.out) > 0
-        # Log message should mention the backend type (torch, jax, or numpy)
-        log_text = captured.out.lower()
-        # Extract backend type from name (e.g., "torch_mps" -> "torch")
-        backend_type = backend.name.split("_")[0]
-        assert backend_type in log_text
+    def test_auto_selection_picks_the_best_available_backend(self):
+        """The claim that matters: auto-selection returns what the priority order says it should.
+
+        This half was never checked. It lived behind an assertion about `capfd` stdout, which
+        fails first on CI, so the selection itself has never been exercised there (Issue #1821).
+        """
+        available = get_available_backends()
+        expected = "torch" if available.get("torch") else "jax" if available.get("jax") else "numpy"
+        assert create_backend("auto").name.split("_")[0] == expected, (
+            f"auto-selection ignored the documented priority torch > jax > numpy; available={available}"
+        )
+
+    def test_auto_selection_logs_which_backend_it_chose(self):
+        """Asserted on the logger's own records, not on file descriptor 1.
+
+        The previous version read `capfd.readouterr().out`, which is a claim about global logging
+        configuration rather than about auto-selection: `mfgarchon/utils/mfg_logging/logger.py`
+        attaches a `StreamHandler(sys.stdout)` ONCE, at the first `get_logger` for a name, binding
+        whatever `sys.stdout` was at that moment, caches the logger, and sets `propagate = False`.
+        So whether the record reaches fd 1 depends on which module imported first. On CI both
+        streams came back empty (`CaptureResult(out='', err='')`) and the test was red there while
+        green locally, blocking the weekly discrimination sweep for #1817.
+
+        `propagate = False` is also why `caplog` cannot see it; the handler has to go on the
+        logger itself.
+        """
+        import logging
+
+        from mfgarchon.backends import logger as backends_logger
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture(level=logging.INFO)
+        backends_logger.addHandler(handler)
+        previous_level = backends_logger.level
+        backends_logger.setLevel(logging.INFO)
+        try:
+            backend = create_backend("auto")
+        finally:
+            backends_logger.removeHandler(handler)
+            backends_logger.setLevel(previous_level)
+
+        assert records, "auto-selection logged nothing about which backend it chose"
+        assert backend.name.split("_")[0] in " ".join(records).lower(), (
+            f"the selection log does not name the backend that was selected: {records}"
+        )
