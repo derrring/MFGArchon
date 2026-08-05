@@ -53,6 +53,7 @@ def _residual_of(solved, bc_type) -> float:
 NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
+SEED = 1822  # any solver that accepts one gets it, so every row below is a repeatable number
 
 
 # The datum, and why it is phase-shifted rather than the obvious sin/cos.
@@ -96,7 +97,7 @@ _SEARCHED = (
 # MODE as well as the failure: `raises=` means a solver that starts crashing, or crashing
 # differently, is caught rather than xfailing identically to one that merely returns a bad seam.
 #
-#   HJBFDMSolver    7.42e-01     FPParticleSolver    ~5e-01 (UNSEEDED: varies ~25% per run)
+#   HJBFDMSolver    7.42e-01     FPParticleSolver    4.95e-01 (seed=1822, and now repeatable)
 #   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00
 #   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
 #   HJBGFDMSolver   raises NotImplementedError for PERIODIC
@@ -125,13 +126,19 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
-    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam exactly 0 at
-    # Nx=11/21/41/81, via the Issue #711 wrap. The default cloud this file uses puts points ON
-    # the faces, and boundary detection marks those as boundary even on a periodic axis, so the
-    # row builder (which has no periodic row) raises. The defect is the detection, not the
-    # capability, which is why the type stays declared. Tracked in #1841.
+    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam at most 3.3e-11 at
+    # Nx=11/21/41/81 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16), via the Issue #711 wrap. The default
+    # cloud this file uses puts points ON the faces, and boundary detection marks those as boundary
+    # even on a periodic axis, so the row builder (which has no periodic row) raises. The defect is
+    # the detection, not the capability, which is why the type stays declared. Tracked in #1841.
     "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
-    "FPParticleSolver": ("#1822", AssertionError),
+    # FPParticleSolver is now a MEASURED row rather than a coin flip (#1838 gave it a seed).
+    # Seam 4.95e-01 at Nx=21. It is not sampling noise: holding the grid and raising the particle
+    # count, the seam converges to a NONZERO limit while the seed-to-seed spread collapses --
+    # 5.4e-01 (N=2e3), 3.9e-01 (N=2e4), 3.33e-01 (N=2e5), spread 4e-02 -> 1.5e-03. A Monte Carlo
+    # error would vanish; a boundary-treatment bias is what stays. The mechanism is visible in the
+    # output: f[0] - f[1] and f[-1] - f[-2] are EXACTLY 0, i.e. the KDE duplicates its edge bins.
+    "FPParticleSolver": ("#1822 KDE duplicates its edge bins; seam -> 3.3e-01 as N -> inf", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 
@@ -258,8 +265,14 @@ def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
 
     problem = _periodic_problem(nx=nx, nt=nt)
     kwargs = {}
-    if "collocation_points" in inspect.signature(cls.__init__).parameters:
+    params = inspect.signature(cls.__init__).parameters
+    if "collocation_points" in params:
         kwargs["collocation_points"] = x.reshape(-1, 1)
+    if "seed" in params:
+        # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
+        # trials of one configuration previously returned monotone=False, False, True, so xfail
+        # asserted a failure it did not reliably have and pass asserted the opposite.
+        kwargs["seed"] = SEED
     solver = cls(problem, **kwargs)
 
     if hasattr(solver, "solve_hjb_system"):
@@ -450,11 +463,20 @@ BC_FACTORIES = {
 # returned monotone=False, False, True on the identical configuration. Marking it xfail asserts a
 # failure it does not reliably have; marking it pass asserts the opposite. It is skipped, named,
 # and the seeding is the fix.
-STOCHASTIC_UNSEEDED = {
-    "FPParticleSolver": "no seed parameter; seam varies ~25% run to run",
-}
+# Emptied by #1838. `FPParticleSolver` took no seed and drew from the global numpy state, so this
+# matrix could not classify it in EITHER direction and skipped it by name. It now takes `seed=`,
+# the fixtures above pass one, and its rows are measured like everyone else's. Kept as an empty
+# dict rather than deleted: the next unseeded solver to arrive needs somewhere honest to go, and
+# "skipped and named" is the correct verdict for one, not "passed".
+STOCHASTIC_UNSEEDED: dict[str, str] = {}
 
 SURFACE_NOT_HONOURED = {
+    # Measured with seed=1822 at the fixture's default 5000 particles: 4.95e-01, 2.66e-01,
+    # 2.79e-01 over Nx=21/41/81 -- it improves once and then gets WORSE, so it fails the
+    # three-point monotonicity the oracle requires. Its other three declared types converge and
+    # are NOT listed here: NO_FLUX and NEUMANN at 5.40e-02 -> 3.24e-02 -> 1.54e-02, DIRICHLET at
+    # 4.67e-01 -> 1.05e-04 -> 7.9e-169. So this is one broken column, not a broken solver.
+    ("FPParticleSolver", "PERIODIC"): ("#1822 seam does not converge; KDE edge bins", AssertionError),
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
     ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
@@ -473,8 +495,14 @@ def _solve_with_bc(cls, bc_type, nx, nt):
     x = np.linspace(0.0, 1.0, nx)
     problem = _problem_with_bc(BC_FACTORIES[bc_type](), nx, nt)
     kwargs = {}
-    if "collocation_points" in inspect.signature(cls.__init__).parameters:
+    params = inspect.signature(cls.__init__).parameters
+    if "collocation_points" in params:
         kwargs["collocation_points"] = x.reshape(-1, 1)
+    if "seed" in params:
+        # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
+        # trials of one configuration previously returned monotone=False, False, True, so xfail
+        # asserted a failure it did not reliably have and pass asserted the opposite.
+        kwargs["seed"] = SEED
     solver = cls(problem, **kwargs)
     if hasattr(solver, "solve_hjb_system"):
         return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x

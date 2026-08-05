@@ -153,11 +153,29 @@ class FPParticleSolver(BaseFPSolver):
         implicit_domain: ImplicitDomain | None = None,
         backend: str | None = None,
         preserve_indices: bool = False,
+        seed: int | None = None,
     ) -> None:
         super().__init__(problem)
 
         self.num_particles = num_particles
         self.fp_method_name = "Particle"
+
+        # Issue #1838. Every draw this solver makes goes through `self._rng`, which is either the
+        # global numpy state or a private Generator:
+        #
+        #   seed=None  -> `np.random`, the global stream. Unchanged behaviour, and deliberately so:
+        #                 twelve files in this repository set `np.random.seed(...)` and then build
+        #                 this solver to compare two runs (test_issue_1248_volatility_forwarding,
+        #                 test_issue_1412_fp_particle_sigma_override, test_cross_backend_consistency,
+        #                 ...). A private Generator would silently stop honouring those seeds and
+        #                 turn those comparisons non-deterministic rather than failing.
+        #   seed=<int> -> a private Generator, independent of anything else touching np.random.
+        #
+        # One code path serves both: `choice`, `uniform`, `normal` and `standard_normal` exist on
+        # the module and on Generator with the same keywords. `randn` does NOT exist on Generator,
+        # which is why the GPU path below calls `standard_normal`.
+        self.seed = seed
+        self._rng = np.random.default_rng(seed) if seed is not None else np.random
 
         self.kde_bandwidth = kde_bandwidth
         self.kde_boundary_smoothing = kde_boundary_smoothing
@@ -847,7 +865,10 @@ class FPParticleSolver(BaseFPSolver):
             coordinates=coordinates,
             num_samples=num_particles,
             jitter=True,
-            seed=None,  # Use global numpy random state for reproducibility with solver
+            # Derived from this solver's stream so the sampler follows `seed` too (Issue #1838).
+            # The old comment here claimed the global state gave "reproducibility with solver";
+            # it gives the opposite -- any unrelated np.random call shifts what this returns.
+            seed=None if self.seed is None else int(self._rng.integers(0, 2**63 - 1)),
         )
 
     def _generate_brownian_increment_nd(
@@ -1618,7 +1639,7 @@ class FPParticleSolver(BaseFPSolver):
             m0_probs_unnormalized = m_initial_condition * Dx
             m0_probs = m0_probs_unnormalized / np.sum(m0_probs_unnormalized)
             try:
-                initial_particle_positions = np.random.choice(x_grid, size=self.num_particles, p=m0_probs, replace=True)
+                initial_particle_positions = self._rng.choice(x_grid, size=self.num_particles, p=m0_probs, replace=True)
             except ValueError as e:
                 # m0_probs is non-normalizable (e.g. negative entries) — the density is invalid.
                 raise ValueError(
@@ -1628,7 +1649,7 @@ class FPParticleSolver(BaseFPSolver):
                 ) from e
         else:
             initial_particle_positions = (
-                np.random.uniform(xmin, xmin + Lx, self.num_particles)
+                self._rng.uniform(xmin, xmin + Lx, self.num_particles)
                 if Lx > 1e-14
                 else np.full(self.num_particles, xmin)
             )
@@ -1698,7 +1719,7 @@ class FPParticleSolver(BaseFPSolver):
             )
 
             # Generate Brownian motion for current particle count
-            dW = np.random.normal(0.0, np.sqrt(Dt), n_particles_t) if Dt > 1e-14 else np.zeros(n_particles_t)
+            dW = self._rng.normal(0.0, np.sqrt(Dt), n_particles_t) if Dt > 1e-14 else np.zeros(n_particles_t)
 
             # Euler-Maruyama update
             new_particles = particles_t + alpha_optimal_at_particles * Dt + sigma_sde * dW
@@ -2043,7 +2064,8 @@ class FPParticleSolver(BaseFPSolver):
             if Dt > 1e-14:
                 # Generate on CPU and transfer (safest approach for now)
                 noise_scale = sigma_sde * np.sqrt(Dt)
-                noise_np = np.random.randn(self.num_particles) * noise_scale
+                # standard_normal, not randn: Generator has no `randn` (Issue #1838).
+                noise_np = self._rng.standard_normal(self.num_particles) * noise_scale
                 noise_gpu = self.backend.from_numpy(noise_np)
             else:
                 noise_gpu = self.backend.zeros((self.num_particles,))
@@ -2411,7 +2433,7 @@ class FPParticleSolver(BaseFPSolver):
                 # Issue #717 fix: sigma_at_particles IS the SDE volatility σ
                 # SDE: dX = v dt + σ dW, so dW_i = σ_i * N(0, sqrt(dt))
                 sigma_sde_particles = sigma_at_particles  # Direct use
-                dW = sigma_sde_particles[:, np.newaxis] * np.random.normal(0, np.sqrt(Dt), (n_particles_t, dimension))
+                dW = sigma_sde_particles[:, np.newaxis] * self._rng.normal(0, np.sqrt(Dt), (n_particles_t, dimension))
 
             # Euler-Maruyama step
             new_particles = particles_t + drift * Dt + dW
