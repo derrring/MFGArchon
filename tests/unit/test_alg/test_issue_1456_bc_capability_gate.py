@@ -53,15 +53,14 @@ def _pts():
 
 
 # ---------------------------------------------------------------------------
-# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin; Reflecting/Extrapolation (which no other
-# test constructs, and the audit confirms it cannot honor) fail loud at construction.
+# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin/periodic; Reflecting/Extrapolation (which no
+# other test constructs, and the audit confirms it cannot honor) fail loud at construction.
 #
-# PERIODIC used to be on that list, "enforced by the row builder at solve time" -- which is the
-# #1574 anti-pattern stated as a design: declare the type, then raise from deep inside the solve.
-# It was measured in #1822 and there is no working path at any grid size; the row builder's own
-# message says "Use TensorProductGrid + FDM for periodic geometries". It is now undeclared, so the
-# refusal happens here, at construction, where the caller can act on it.
-# General-Robin sub-cases genuinely do pass the type-level gate and remain row-builder enforced.
+# PERIODIC stays declared because it is real: on a cloud with no detected boundary points the
+# Issue #711 wrap gives a seam of exactly 0 at Nx=11/21/41/81. The default endpoint-inclusive
+# cloud cannot reach it -- boundary detection ignores periodic_dims and routes those points to
+# the row builder, which raises. That is #1841. General-Robin sub-cases likewise pass the
+# type-level gate and are enforced by the row builder.
 # ---------------------------------------------------------------------------
 
 
@@ -70,19 +69,23 @@ def test_hjb_gfdm_fails_loud_on_reflecting():
         HJBGFDMSolver(_problem(uniform_bc(BCType.REFLECTING, dimension=1)), collocation_points=_pts(), delta=0.25)
 
 
-@pytest.mark.parametrize("solver_cls", [HJBGFDMSolver, FPGFDMSolver])
-def test_gfdm_pair_fails_loud_on_periodic(solver_cls):
-    """Undeclared in #1822, so the refusal must land here rather than mid-solve.
+def test_fp_gfdm_fails_loud_on_periodic():
+    """FPGFDMSolver undeclared PERIODIC in #1822, so the refusal lands here rather than mid-solve.
 
-    Before: HJBGFDMSolver raised NotImplementedError from the boundary row builder at point 0, and
-    FPGFDMSolver ran until its density went negative -- t=6 at Nx=11, t=4 at Nx=21, t=3 at Nx=41,
-    i.e. sooner on finer grids, so not a resolution problem. Neither honoured the type it declared.
+    It ran until its density went negative -- t=6 at Nx=11, t=4 at Nx=21, t=3 at Nx=41, i.e.
+    sooner on finer grids, so not a resolution problem. Structurally it never had a periodic
+    path: it builds its TaylorOperator with no geometry=, so no wrap is constructed, and the
+    resolved "periodic" type is never read.
+
+    HJBGFDMSolver is NOT included. It genuinely honours PERIODIC on a cloud with no detected
+    boundary points (seam exactly 0 at Nx=11/21/41/81); the default cloud cannot reach that path
+    because boundary detection ignores periodic_dims, which is #1841 and not a capability lie.
     """
     with pytest.raises(NotImplementedError, match="does not support"):
-        solver_cls(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
+        FPGFDMSolver(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
 
 
-@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, robin_bc])
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, periodic_bc, robin_bc])
 def test_hjb_gfdm_accepts_supported(bc_factory):
     HJBGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=_pts(), delta=0.25)  # must not raise
 
@@ -193,7 +196,8 @@ def test_fp_particle_accepts_supported(bc_factory):
 
 
 # ---------------------------------------------------------------------------
-# HJB-SL / FP-SL-Jacobian / FP-GFDM — zero-flux/periodic; Dirichlet/Robin (silently collapsed to
+# HJB-SL / FP-SL-Jacobian — zero-flux/periodic; FP-GFDM — zero-flux only since #1822;
+# Dirichlet/Robin (silently collapsed to
 # Neumann / returned None — the audit's silent-mishandling cases) now fail loud at construction.
 # ---------------------------------------------------------------------------
 

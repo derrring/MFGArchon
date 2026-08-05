@@ -80,9 +80,11 @@ class FPGFDMSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.GFDM
 
-    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type handles no-flux / Neumann /
-    # periodic and returns None (silently) for everything else; declare exactly those so
-    # Dirichlet / Robin / Reflecting / Extrapolation fail loud instead.
+    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type resolves no-flux / Neumann /
+    # periodic and returns None (silently) for everything else. Declare only the two this
+    # solver can honour, so Dirichlet / Robin / Reflecting / Extrapolation fail loud -- and,
+    # since #1822, periodic too: resolving a type is not the same as implementing it, and the
+    # resolved "periodic" is never read by anything downstream.
     # PERIODIC is NOT declared (#1822). It was, and it never worked: the density went
     # negative mid-solve at every grid size tried -- -3.83e-01 at t=6 (Nx=11), -1.03e+00 at
     # t=4 (Nx=21), -1.88e-01 at t=3 (Nx=41). It fails EARLIER as the grid refines, so this is

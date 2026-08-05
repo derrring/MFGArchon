@@ -125,6 +125,12 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
+    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam exactly 0 at
+    # Nx=11/21/41/81, via the Issue #711 wrap. The default cloud this file uses puts points ON
+    # the faces, and boundary detection marks those as boundary even on a periodic axis, so the
+    # row builder (which has no periodic row) raises. The defect is the detection, not the
+    # capability, which is why the type stays declared. Tracked in #1841.
+    "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     "FPParticleSolver": ("#1822", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
@@ -447,6 +453,7 @@ STOCHASTIC_UNSEEDED = {
 
 SURFACE_NOT_HONOURED = {
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
+    ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
     # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
@@ -542,7 +549,7 @@ def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
     recording live defects (FPGFDMSolver-NEUMANN, FPGFDMSolver-NO_FLUX, HJBGFDMSolver-DIRICHLET).
 
     Measured, with the matrix keyed back the old way: 0 GFDM rows collected and the file still
-    **green** at 34 passed / 10 xfailed, versus 5 rows and 36 / 13 now. A suite that stays green
+    **green** at 34 passed / 10 xfailed, versus 5 rows and 37 / 13 now. A suite that stays green
     while it quietly stops measuring things is the thing this ratchet exists to prevent, so the
     coverage is asserted rather than assumed.
     """

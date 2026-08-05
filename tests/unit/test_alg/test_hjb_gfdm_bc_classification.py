@@ -443,17 +443,13 @@ def test_dispatch_neumann_row_uses_normal_grad():
 
 
 def test_dispatch_periodic_raises():
-    """A mixed BC containing PERIODIC is refused, now at CONSTRUCTION rather than mid-solve.
+    """PERIODIC at a DETECTED boundary point raises NotImplementedError from the row builder.
 
-    The refusal moved in #1822. HJBGFDMSolver used to declare PERIODIC and raise for it from the
-    boundary row builder, so a caller learned about it partway through a solve; there was no
-    working path at any grid size, and the row builder's own message said to use FDM instead. With
-    the type undeclared, the capability gate (#1456) refuses at construction, which is where a
-    caller can still do something about it.
-
-    Asserted on the earliest raising call rather than on the row builder, because that is now the
-    boundary of the contract: a solver that started ACCEPTING this mixed BC again would fail here,
-    which is the regression worth catching.
+    Still the row builder, not construction: HJBGFDMSolver keeps declaring PERIODIC, because on a
+    cloud with no detected boundary points it honours it (seam exactly 0 at Nx=11/21/41/81, via
+    the Issue #711 wrap). What fails is this configuration -- points ON a face, which boundary
+    detection marks as boundary even on a periodic axis, sending them to a row builder that has
+    no periodic row. Tracked as #1841.
     """
     LX, LY = 10.0, 10.0
     geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
@@ -468,10 +464,17 @@ def test_dispatch_periodic_raises():
         dimension=2,
     )
 
+    solver = _build_solver(points, boundary_idx, bc, geom)
+    n = len(points)
+    fake_jac = sp.eye(n, format="csr") * 0.5
+    fake_res = np.ones(n)
+
     with pytest.raises(NotImplementedError) as exc_info:
-        _build_solver(points, boundary_idx, bc, geom)
+        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
     assert "PERIODIC" in str(exc_info.value)
-    assert "TensorProductGrid" in str(exc_info.value) or "FDM" in str(exc_info.value)
+    # Not `or "FDM" in ...`: "FDM" is a substring of "HJBGFDMSolver", so that clause passes for
+    # any message this class raises and asserts nothing.
+    assert "TensorProductGrid" in str(exc_info.value)
 
 
 def test_dispatch_robin_nonzero_alpha_raises():

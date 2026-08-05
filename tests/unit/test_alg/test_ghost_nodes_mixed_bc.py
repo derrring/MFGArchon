@@ -269,28 +269,23 @@ def test_apply_ghost_nodes_fires_on_mixed_bc_neumann_points():
             assert not has_ghost, f"Exit point pt {i} has ghost augmentation — should be skipped for Dirichlet"
 
 
-def test_apply_ghost_nodes_skips_when_no_wall_segments_exist():
+def test_apply_ghost_nodes_skips_when_periodic_default():
     """With no NEUMANN/NO_FLUX segments at all, no ghost augmentation fires.
 
     A UNIFORM BC, which the mixed case above does not cover: there, Dirichlet points are checked
     for ghosts only alongside wall points, so `n_ghosted == n_wall` could hold with a stray ghost
     somewhere else. Here the whole boundary is non-wall and the expected count is exactly zero.
-
-    Was written with `periodic_bc`, which HJBGFDMSolver declared and never honoured; since #1822 it
-    does not declare PERIODIC and the capability gate refuses it at construction (asserted in
-    tests/unit/test_alg/test_issue_1456_bc_capability_gate.py). Dirichlet is the uniform non-wall
-    BC this solver genuinely supports, and it makes the same point.
     """
     LX, LY = 10.0, 10.0
     pts, bdry_idx = _eps_cloud(LX, LY, eps=1e-6, n_per_side=4)
-    from mfgarchon.geometry.boundary import dirichlet_bc
+    from mfgarchon.geometry.boundary import periodic_bc
 
-    bc = dirichlet_bc(dimension=2, value=0.0)
+    bc = periodic_bc(dimension=2)
     geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
     problem = _MockProblem(geom)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        # Uniform non-wall BC — joint_socp doesn't matter, ghost should skip
+        # Periodic uniform — joint_socp doesn't matter, ghost should skip
         s = HJBGFDMSolver(
             problem,
             collocation_points=pts,
