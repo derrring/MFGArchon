@@ -37,7 +37,14 @@ from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.utils.deprecation import deprecated
 
 from .tolerances import BOUNDARY_REL_TOL, BOUNDARY_TOL, SDF_BOUNDARY_TOL
-from .types import BCSegment, BCType, BoundaryFace, PeriodicGridConvention, _compute_sdf_gradient
+from .types import (
+    BCSegment,
+    BCType,
+    BoundaryFace,
+    PeriodicGridConvention,
+    _compute_sdf_gradient,
+    repeated_endpoint_count,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -951,6 +958,50 @@ def periodic_bc(
     bc = uniform_bc(BCType.PERIODIC, value=0.0, dimension=dimension, domain_bounds=domain_bounds)
     bc.periodic_convention = convention
     return bc
+
+
+def periodic_axis_span(bc: Any, n: int) -> int | None:
+    """How many DISTINCT cells an axis of ``n`` nodes has, or ``None`` if it does not wrap.
+
+    Issue #1822. A wrap needs two facts, and reading only the first is what every periodic
+    stencil in this package got wrong: ``bc`` says the axis wraps, and ``bc.periodic_convention``
+    says whether the last node is a *new* cell or the first one under another index. Under
+    ``ENDPOINT_INCLUSIVE`` -- what ``TensorProductGrid`` builds -- it is the latter, so ``i-1``
+    from node 0 is node ``n-2`` and the modular arithmetic must divide by ``n-1``.
+
+    Dividing by ``n`` there solves the problem on a torus one cell too long. Measured on the
+    FP-FDM family at ``Nx=21``: 8.7e-02 of relative error against the analytic heat kernel, where
+    the same scheme on the equivalent ``n-1``-cell torus gives 9.3e-03. Nothing raises either way.
+
+    Returns ``None`` -- not ``n`` -- for a non-periodic axis, so a caller cannot use the number
+    without having decided what to do about the wrap.
+    """
+    try:
+        wraps = bool(bc.is_uniform) and bc.type == "periodic"
+    except AttributeError:
+        # Legacy fdm_bc_1d BoundaryConditions1D: has .type but no .is_uniform, and this assembly
+        # does not honour its 'periodic' anyway (see the Issue #1559 note in fp_fdm_time_stepping).
+        return None
+    if not wraps:
+        return None
+    return n - repeated_endpoint_count(getattr(bc, "periodic_convention", None))
+
+
+def repeated_endpoint_mirror(bc: Any, multi_idx: tuple[int, ...], shape: tuple[int, ...]) -> tuple[int, ...] | None:
+    """The node ``multi_idx`` duplicates under an inclusive wrap, or ``None`` if it duplicates none.
+
+    Issue #1822. On an inclusive periodic axis the last node is not an unknown: it is node 0 under
+    another index. An assembly that gives it a stencil row of its own is solving for one cell too
+    many, and the duplicated pair then drifts apart because their neighbourhoods differ.
+    """
+    mirrored = list(multi_idx)
+    duplicated = False
+    for d in range(len(shape)):
+        span = periodic_axis_span(bc, shape[d])
+        if span is not None and span < shape[d] and multi_idx[d] >= span:
+            mirrored[d] = multi_idx[d] - span
+            duplicated = True
+    return tuple(mirrored) if duplicated else None
 
 
 def dirichlet_bc(

@@ -62,6 +62,7 @@ from scipy.sparse.linalg import splu
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
+from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
@@ -161,7 +162,19 @@ class FPFVMSolver(BaseFPSolver):
     # Setup helpers
     # ------------------------------------------------------------------
     def _resolve_boundary_conditions(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
-        """Resolve BC using the same hierarchy as FPFDMSolver (explicit > components > geometry)."""
+        """Resolve BC using the same hierarchy as FPFDMSolver (explicit > components > geometry).
+
+        Every return goes through ``_with_geometry_periodic_convention``: this method shadows
+        ``BaseMFGSolver.boundary_conditions``, which is where a periodic BC normally picks up the
+        node layout of the grid being solved on (#1822). Without it, a BC supplied by the caller
+        keeps an unstated convention and wraps the historical way while the geometry channel gets
+        the grid's -- 8.7e-02 against 9.3e-03 of heat-kernel error on one problem, decided only by
+        which channel supplied the BC.
+        """
+        return self._with_geometry_periodic_convention(self._boundary_conditions_source(boundary_conditions))
+
+    def _boundary_conditions_source(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
+        """Which object supplies the BC, before the grid's periodic layout is bound onto it."""
         if boundary_conditions is not None:
             return boundary_conditions
 
@@ -230,11 +243,13 @@ class FPFVMSolver(BaseFPSolver):
         if diffusion == 0.0:
             return None
         spacing = list(self.problem.geometry.get_grid_spacing())
-        # Periodic Laplacian closure is requested via bc=None (wrap); otherwise pass the BC so
-        # the conservative finite-volume no-flux/Neumann closure (1^T L = 0) is used.
-        lap_bc = None if all(t == "periodic" for t in self._bc_types) else self.boundary_conditions
+        # Always pass the BC. `bc=None` also selects the wrap closure, but it discards which
+        # periodic grid this is: the operator then reads no convention and wraps the exclusive way
+        # (Issue #1822), which on the endpoint-inclusive grid TensorProductGrid builds puts the
+        # diffusion half of this solver on a torus one cell too long. The periodic branch of
+        # as_scipy_sparse is the same either way; `mass_conservative` gates only no-flux/Neumann.
         laplacian = LaplacianOperator(
-            spacings=spacing, field_shape=shape, bc=lap_bc, mass_conservative=True
+            spacings=spacing, field_shape=shape, bc=self.boundary_conditions, mass_conservative=True
         ).as_scipy_sparse()
         n_total = int(np.prod(shape))
         system = sparse.eye(n_total, format="csc") - dt * diffusion * laplacian
@@ -400,7 +415,15 @@ class FPFVMSolver(BaseFPSolver):
         n_sub = max(1, math.ceil(dt_adv * amax / (cfl * dx_min)))
         dt_sub = dt_adv / n_sub
         for _ in range(n_sub):
-            div = advective_divergence(m, alpha_faces, alpha_wrap, spacing, self.reconstruction, self._bc_types)
+            div = advective_divergence(
+                m,
+                alpha_faces,
+                alpha_wrap,
+                spacing,
+                self.reconstruction,
+                self._bc_types,
+                spans=[periodic_axis_span(self.boundary_conditions, n) for n in m.shape],
+            )
             m = m - dt_sub * div
         return m
 

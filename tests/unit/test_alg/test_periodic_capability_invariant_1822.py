@@ -110,10 +110,22 @@ KNOWN_NOT_HONOURED = {
     # every periodic stencil sat one cell off. Fixed in applicator_fdm._periodic_ghost_slices;
     # seam 2.63e-01 -> exactly 0. The ghost fill itself is pinned against the analytic continuation
     # in tests/unit/test_geometry/test_periodic_ghost_fill_1822.py.
-    "HJBFDMSolver": ("#1822", AssertionError),
+    # FPFDMSolver and FPFVMSolver are GONE from this roster for one shared reason, the same one
+    # that removed HJBWENOSolver: both wrapped cell N-1 to cell 0, which on an endpoint-inclusive
+    # grid treats the repeated endpoint as its own cell and solves on a torus one cell too long.
+    # The seam was the visible half; the invisible half was worse. Against the analytic heat
+    # kernel at Nx=21 they were 8.7e-02 of relative error and are now 9.3e-03, converging
+    # 9.3e-03 -> 3.8e-03 -> 2.4e-03 over 21/41/81 -- and under the SYMMETRIC datum that error sat
+    # behind a seam of 2e-15, so this file's own invariant could not have found it. Fixed in
+    # conditions.periodic_axis_span (one owner, four scheme modules and the FVM wrap face route
+    # through it) plus the repeated-endpoint constraint row in fp_fdm_time_stepping. Pinned
+    # against the heat kernel and a rigid translation, not against the seam, in
+    # tests/unit/test_alg/test_periodic_torus_oracle_1822.py.
+    # Reason is a pointer, not a diagnosis: the evidence for what produces this seam (the seam
+    # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
+    # in #1834, and nothing in THIS change tests it.
+    "HJBFDMSolver": ("#1834", AssertionError),
     "HJBGFDMSolver": ("#1822 declares PERIODIC and raises for it", NotImplementedError),
-    "FPFDMSolver": ("#1822", AssertionError),
-    "FPFVMSolver": ("#1822", AssertionError),
     "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
     "FPParticleSolver": ("#1822", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
@@ -392,9 +404,11 @@ BC_FACTORIES = {
 # without identifying the coincident nodes, and that is a weaker claim than the seam test above
 # makes, not a violated one.
 #
-#   converge:   FPFVMSolver 1.79e-01 9.00e-02 4.25e-02   HJBWENOSolver 2.63e-01 2.08e-01 1.34e-01
-#               HJBFDMSolver 7.42e-01 6.51e-01 4.72e-01  FPFDMSolver (same shape)
-#   exact:      HJBSemiLagrangianSolver 0, FPSLSolver / FPSLAdjointSolver 4.4e-16
+#   converge:   HJBFDMSolver 7.42e-01 6.51e-01 4.72e-01
+#   exact:      HJBSemiLagrangianSolver 0, FPSLSolver / FPSLAdjointSolver 4.4e-16,
+#               HJBWENOSolver (was 2.63e-01 2.08e-01 1.34e-01 before its ghost fill was fixed),
+#               FPFVMSolver and FPFDMSolver (were 1.79e-01 9.00e-02 4.25e-02 and the same shape,
+#               before the wrap was put on the right torus -- #1822)
 #   NOT:        FPParticleSolver 5.64e-01 2.08e-01 2.63e-01 (up at 81)
 #               FPSLJacobianSolver 1.58e+00 7.64e-03 1.16e-02 (up at 81)
 # Unseeded solvers cannot be classified here at all: measured over three trials, FPParticleSolver

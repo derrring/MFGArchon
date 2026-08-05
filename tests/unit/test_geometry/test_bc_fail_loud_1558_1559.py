@@ -109,9 +109,11 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
     Coercing periodic to no-flux does not perturb the answer, it replaces it: mass that should
     wrap to the far side is held against the near wall instead. The mutation that reddens THIS
     test is a change to the `divergence_upwind` periodic wrap in assembly, not the deletion of a
-    guard. Scope: the wrap is copy-pasted into all four advection-scheme interior handlers and
-    only the default one is covered here -- disabling it in the gradient_upwind,
-    gradient_centered or divergence_centered handlers leaves this green.
+    guard. Scope: the wrap used to be copy-pasted into all four advection-scheme interior handlers,
+    so only the default one was covered here; since #1822 all four call
+    `conditions.periodic_axis_span` and a change to that owner reddens this. What the owner cannot
+    catch is a handler that stops calling it, which is covered per-scheme in
+    tests/unit/test_alg/test_periodic_torus_oracle_1822.py.
     """
     import numpy as np
 
@@ -157,15 +159,24 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
         f"the two boundary conditions must differ by O(1) over the field, not at the margin; got {relative_l1:.1%}"
     )
 
+    # The conserved functional is not the same for the two BCs, and using one rule for both is
+    # what this pair of lines used to do (#1822). Under no-flux all 61 nodes are distinct cells
+    # and the rectangle rule is what the scheme telescopes. Under periodic on this
+    # endpoint-inclusive grid x[0] and x[-1] are one physical point, so the rectangle rule counts
+    # it twice -- it reports 1.0257 for a density whose mass is 1, and would read a correct solve
+    # as a 2.6% leak. Trapezoid is the rule there: the shared node's two half-weights sum to one.
+    quadrature = {"no-flux": np.sum, "periodic": lambda d: float(np.trapezoid(d, xs)) / (xs[1] - xs[0])}
+
     for name, density in (("no-flux", reflecting), ("periodic", wrapping)):
         assert np.all(np.isfinite(density)), f"{name} produced a non-finite density"
         assert density.min() >= -1e-12, f"{name} produced a negative density: {density.min():.3e}"
         # Two-sided. Without this the assertions above are one-sided -- ANY corruption that makes
         # the two BCs differ MORE passes. Measured: routing the no-flux wall to the interior
-        # handler leaks 54% of its mass (sum 0.461 instead of 1.0) and makes the test greener,
+        # handler leaks 54% of its mass (0.461 instead of 1.0) and makes the test greener,
         # ratio 340 -> 617. Residuals here are 3.9e-15 and 4.4e-16, so this has five orders of
         # margin over the tolerance.
-        assert abs(density.sum() - 1.0) < 1e-10, (
-            f"{name} did not conserve mass: sum {density.sum():.6f}. A leak makes the two BCs "
+        mass = quadrature[name](density)
+        assert abs(mass - 1.0) < 1e-10, (
+            f"{name} did not conserve mass: {mass:.6f}. A leak makes the two BCs "
             f"differ more, so the comparison above would read it as success."
         )

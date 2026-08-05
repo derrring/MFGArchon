@@ -126,14 +126,16 @@ def test_gate1_mass_conservation_periodic():
     N, T, Nt, sigma = 80, 0.3, 60, 0.25
     prob, geom = make_problem_1d(N, T, Nt, sigma, bounds=(0.0, 1.0), bc="periodic")
     x = geom.coordinates[0]
-    dx = x[1] - x[0]
     m0 = normalized_gaussian_1d(x, 0.5, 0.1)
     drift = 0.8 * np.ones((Nt + 1, N))
 
     solver = FPFVMSolver(prob, reconstruction="muscl")
     M = solver.solve_fp_system(m0, drift_field=drift)
 
-    mass = M.sum(axis=1) * dx
+    # Trapezoid, not `sum`: this grid is endpoint-inclusive, so x[0] and x[-1] are one physical
+    # point and the rectangle rule counts it twice (#1822). The half-weights sum to one full
+    # weight, which is the rule the wrap-face telescoping actually conserves.
+    mass = np.trapezoid(M, x, axis=1)
     mass_drift = float(np.max(np.abs(mass - mass[0])))
     assert mass_drift < 1e-12, f"periodic mass drift {mass_drift:.2e}"
 

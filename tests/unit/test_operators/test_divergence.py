@@ -354,5 +354,104 @@ class TestAdvectionInterface:
             adv(np.zeros((30, 30)))
 
 
+class TestAdvectionPeriodicGridConvention:
+    """The conservative wrap face must sit on the torus the grid describes. Issue #1822.
+
+    ``bc=None`` selects the wrap closure but states no convention, so it means the layout this
+    package always used: all N cells distinct. A periodic ``BoundaryConditions`` carrying
+    ``ENDPOINT_INCLUSIVE`` says the last cell IS the first, and then the wrap face is one cell
+    earlier and the repeated cell is not its own control volume.
+
+    Pinned here rather than through a solver because nothing downstream can see it: reverting the
+    operator's convention handling left 3096 tests green across `test_operators`, `test_alg`,
+    `test_geometry`, `test_fp_fvm` and `test_fdm_centered_conservation`. The route that reaches it
+    -- FP-FDM with a callable ``drift_field`` -- had no periodic test at all.
+    """
+
+    @staticmethod
+    def _stamped_periodic(dimension):
+        from mfgarchon.geometry.boundary import periodic_bc
+        from mfgarchon.geometry.boundary.types import PeriodicGridConvention
+
+        return periodic_bc(dimension=dimension, convention=PeriodicGridConvention.ENDPOINT_INCLUSIVE)
+
+    @pytest.mark.unit
+    def test_inclusive_periodic_conserves_mass_over_the_distinct_cells(self):
+        """Telescoping must close over the N-1 real cells, not over N with one counted twice.
+
+        Summing the divergence over the distinct cells is the discrete statement that no mass
+        enters or leaves a domain with no boundary. Wrapping all N cells telescopes over a torus
+        one cell too long and leaves a residue: measured -1.1e-01 in 1D and -4.4e-01 in 2D.
+        """
+        rng = np.random.default_rng(1822)
+        for shape, spacings in (((13,), [1 / 12]), ((13, 9), [1 / 12, 2 / 8])):
+            m = 1.0 + 0.3 * rng.random(shape)
+            m[-1] = m[0]  # the repeated cell IS cell 0, on every axis
+            if len(shape) == 2:
+                m[:, -1] = m[:, 0]
+            v = rng.standard_normal((len(shape), *shape))
+            adv = AdvectionOperator(
+                velocity_field=v,
+                spacings=spacings,
+                field_shape=shape,
+                scheme="upwind",
+                form="divergence",
+                bc=self._stamped_periodic(len(shape)),
+                mass_conservative=True,
+            )
+            div = adv(m)
+            distinct = div[tuple(slice(0, n - 1) for n in shape)]
+            cell = float(np.prod(spacings))
+            assert float(np.sum(distinct)) * cell == pytest.approx(0.0, abs=1e-12), (
+                f"advective flux did not telescope over the {shape} inclusive torus"
+            )
+
+    @pytest.mark.unit
+    def test_the_repeated_cell_carries_the_first_cells_divergence(self):
+        """It is the same control volume, so it must not be given a divergence of its own."""
+        m = np.array([1.0, 2.0, 3.0, 4.0, 1.0])
+        v = np.array([[0.5, 0.7, 0.2, 0.9, 0.5]])
+        adv = AdvectionOperator(
+            velocity_field=v,
+            spacings=[0.25],
+            field_shape=(5,),
+            scheme="upwind",
+            form="divergence",
+            bc=self._stamped_periodic(1),
+            mass_conservative=True,
+        )
+        div = adv(m)
+        assert div[-1] == pytest.approx(div[0])
+
+    @pytest.mark.unit
+    def test_bc_none_still_means_the_exclusive_layout(self):
+        """The historical caller stated nothing and must keep its numbers (#1822).
+
+        `bc=None` and an unstated periodic BC are the same request, and neither may pick up the
+        inclusive layout by accident -- that is what makes this change safe for callers that never
+        met a grid.
+        """
+        from mfgarchon.geometry.boundary import periodic_bc
+
+        m = np.array([1.0, 2.0, 3.0, 4.0, 1.0])
+        v = np.array([[0.5, 0.7, 0.2, 0.9, 0.5]])
+        kw = {
+            "velocity_field": v,
+            "spacings": [0.25],
+            "field_shape": (5,),
+            "scheme": "upwind",
+            "form": "divergence",
+            "mass_conservative": True,
+        }
+        unstated = AdvectionOperator(bc=periodic_bc(dimension=1), **kw)(m)
+        no_bc = AdvectionOperator(bc=None, **kw)(m)
+        inclusive = AdvectionOperator(bc=self._stamped_periodic(1), **kw)(m)
+
+        np.testing.assert_allclose(unstated, no_bc, atol=0, rtol=0)
+        assert not np.allclose(unstated, inclusive), (
+            "the two conventions must give different operators, or this pins nothing"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

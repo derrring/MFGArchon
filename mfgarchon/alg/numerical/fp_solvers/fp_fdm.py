@@ -252,6 +252,15 @@ class FPFDMSolver(BaseFPSolver):
 
                 self.boundary_conditions = no_flux_bc(dimension=self.dimension)
 
+        # This resolution shadows BaseMFGSolver.boundary_conditions, which is where a periodic BC
+        # normally picks up the node layout of the grid being solved on (#1822). Without this line
+        # a BC handed to the constructor -- or reached through components -- keeps an unstated
+        # convention and wraps the historical way, while the same solve through the geometry gets
+        # the grid's layout: measured 8.7e-02 against 9.3e-03 of heat-kernel error on one problem,
+        # from one library, depending only on which channel supplied the BC. Applied once, after
+        # both branches, so no channel can be added below it and miss it.
+        self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
+
         # Issue #1456: fail loud now if the resolved BC requests a type FP-FDM cannot honor
         # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
         # silently assembling a default (no-flux) wall.

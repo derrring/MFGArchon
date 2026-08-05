@@ -65,6 +65,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
+from mfgarchon.geometry.boundary.conditions import repeated_endpoint_mirror
 from mfgarchon.geometry.boundary.types import BoundaryFace
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
@@ -1247,10 +1248,27 @@ def solve_timestep_full_nd(
                 "Use 'no_flux' or 'neumann' for zero-flux (reflecting) walls. (Issue #1250)"
             )
 
+    # Nodes that an inclusive periodic wrap makes duplicates of another node (Issue #1822).
+    # They get a constraint row instead of a stencil row: they are not unknowns.
+    repeated_rows: list[int] = []
+
     # Build matrix by iterating over all grid points
     for flat_idx in range(N_total):
         # Convert flat index to multi-index (i, j, k, ...)
         multi_idx = grid.get_multi_index(flat_idx)
+
+        # On an endpoint-inclusive periodic grid the last node along a wrapping axis IS the first
+        # one. Assembling a stencil row for it solves for one cell too many on a torus one cell too
+        # long, and the duplicated pair drifts apart because their neighbourhoods differ -- the
+        # #1822 seam. Constrain it to the node it repeats and move on.
+        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape)
+        if mirror is not None:
+            mirror_flat = grid.get_index(tuple(mirror))
+            row_indices.extend((flat_idx, flat_idx))
+            col_indices.extend((flat_idx, mirror_flat))
+            data_values.extend((1.0, -1.0))
+            repeated_rows.append(flat_idx)
+            continue
 
         # Extract local diffusion coefficient (scalar or from spatially varying array)
         if isinstance(sigma, np.ndarray):
@@ -1370,6 +1388,12 @@ def solve_timestep_full_nd(
     # Add source term to RHS (MMS verification)
     if source_term is not None:
         b_rhs = b_rhs + source_term
+
+    # The repeated-endpoint rows assembled above read `m[i] - m[mirror] = 0`. Zeroed last so a
+    # source term cannot re-enter a row that carries a constraint rather than a balance.
+    if repeated_rows:
+        b_rhs = b_rhs.copy()
+        b_rhs[repeated_rows] = 0.0
 
     # Solve linear system
     m_next_flat = sparse.linalg.spsolve(A_matrix, b_rhs)

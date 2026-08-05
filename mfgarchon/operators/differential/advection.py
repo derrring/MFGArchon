@@ -313,6 +313,7 @@ class AdvectionOperator(LinearOperator):
         FP use case); other BCs would need an inflow flux and should not opt in.
         """
         from mfgarchon.geometry.boundary import BCType, BoundaryConditions
+        from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 
         # Issue #1428: an explicit periodic BoundaryConditions object must be treated like
         # bc=None (wrap-face telescoping), not rejected — previously only bc=None counted as
@@ -334,6 +335,18 @@ class AdvectionOperator(LinearOperator):
             h = self.spacings[d]
             md = np.moveaxis(m, d, -1)
             vd = np.moveaxis(self.velocity_field[d], d, -1)
+            # On an endpoint-inclusive periodic axis the last cell IS the first one, so it is not
+            # its own control volume and the wrap face sits one cell earlier (#1822). Wrapping all
+            # N cells there telescopes over a torus of length L + h: measured on the callable-drift
+            # FP path, a seam of 3.9e-02 from exactly periodic data and 0.54% of the mass lost.
+            # `bc=None` means periodic with no convention stated, i.e. the exclusive layout, and
+            # `periodic_axis_span` returns None for it -- so that path is untouched.
+            n_full = md.shape[-1]
+            span = periodic_axis_span(self.bc, n_full) if periodic else None
+            repeats = span is not None and span < n_full
+            if repeats:
+                md = md[..., :span]
+                vd = vd[..., :span]
             # Upwind flux on interior faces i+1/2 (i = 0 .. N-2), velocity averaged to the face.
             v_face = 0.5 * (vd[..., :-1] + vd[..., 1:])
             flux = np.where(v_face >= 0.0, v_face * md[..., :-1], v_face * md[..., 1:])
@@ -344,6 +357,9 @@ class AdvectionOperator(LinearOperator):
                 dvar[..., 0] = (flux[..., 0] - flux_wrap) / h
                 dvar[..., 1:-1] = (flux[..., 1:] - flux[..., :-1]) / h
                 dvar[..., -1] = (flux_wrap - flux[..., -1]) / h
+                if repeats:
+                    # The repeated cell carries cell 0's divergence, because it IS cell 0.
+                    dvar = np.concatenate([dvar, dvar[..., : n_full - span]], axis=-1)
             else:
                 # No-flux walls: zero flux through both boundary faces.
                 dvar[..., 0] = flux[..., 0] / h

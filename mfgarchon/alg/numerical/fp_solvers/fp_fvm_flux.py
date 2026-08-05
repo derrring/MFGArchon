@@ -89,6 +89,7 @@ def axis_flux_divergence(
     scheme: str,
     bc_type: str,
     alpha_wrap: np.ndarray | None = None,
+    span: int | None = None,
 ) -> np.ndarray:
     r"""Advective flux divergence ``(F_{i+1/2} - F_{i-1/2})/dx`` along one axis.
 
@@ -111,7 +112,16 @@ def axis_flux_divergence(
         ``reflecting``) or ``periodic``.
     alpha_wrap : np.ndarray | None
         Interface velocity at the periodic wrap face (between cell ``N-1`` and cell ``0``);
-        required iff ``bc_type == "periodic"``. Shape = ``m`` with ``axis`` removed.
+        required iff ``bc_type == "periodic"`` on an endpoint-exclusive axis. Ignored when
+        ``span < N``: see below. Shape = ``m`` with ``axis`` removed.
+    span : int | None
+        Number of DISTINCT cells along ``axis`` (Issue #1822). ``None`` or ``N`` is the
+        endpoint-exclusive layout this module was written for. On an endpoint-inclusive axis
+        ``span = N - 1``, because cell ``N-1`` is cell ``0`` under another index -- and then the
+        wrap face is already one of the supplied interior faces (``alpha_int[..., span-1]`` sits
+        between cell ``span-1`` and cell ``N-1``, which IS cell 0), so ``alpha_wrap`` is degenerate
+        and is not read. Treating the repeat as its own cell puts the solve on a torus one cell
+        too long and the duplicated pair drifts apart.
 
     Returns
     -------
@@ -121,6 +131,13 @@ def axis_flux_divergence(
     mm = np.moveaxis(m, axis, -1)
     ai = np.moveaxis(alpha_int, axis, -1)
     periodic = bc_type == "periodic"
+    n_full = mm.shape[-1]
+    repeats = periodic and span is not None and span < n_full
+    if repeats:
+        # Drop the repeated cell and take the wrap velocity from the face that already spans it.
+        alpha_wrap = ai[..., span - 1]
+        mm = mm[..., :span]
+        ai = ai[..., : span - 1]
     n = mm.shape[-1]
 
     if scheme == "muscl":
@@ -159,6 +176,11 @@ def axis_flux_divergence(
         )
 
     div = (f_full[..., 1:] - f_full[..., :-1]) / dx
+    if repeats:
+        # Restore the caller's shape: the repeated cell carries cell 0's divergence, because it
+        # IS cell 0. Written back rather than left stale so the field stays periodic by
+        # construction instead of by a later copy nobody can see from here.
+        div = np.concatenate([div, div[..., : n_full - n]], axis=-1)
     return np.moveaxis(div, -1, axis)
 
 
@@ -169,6 +191,7 @@ def advective_divergence(
     spacing: list[float],
     scheme: str,
     bc_types: list[str],
+    spans: list[int | None] | None = None,
 ) -> np.ndarray:
     """Total advective flux divergence ``sum_d (F^d_{+} - F^d_{-})/dx_d`` over all axes.
 
@@ -179,5 +202,14 @@ def advective_divergence(
     ndim = m.ndim
     div = np.zeros_like(m, dtype=float)
     for d in range(ndim):
-        div += axis_flux_divergence(m, alpha_faces[d], d, spacing[d], scheme, bc_types[d], alpha_wrap[d])
+        div += axis_flux_divergence(
+            m,
+            alpha_faces[d],
+            d,
+            spacing[d],
+            scheme,
+            bc_types[d],
+            alpha_wrap[d],
+            span=None if spans is None else spans[d],
+        )
     return div

@@ -184,17 +184,16 @@ class LaplacianOperator(LinearOperator):
         # Return flattened
         return Lu.ravel()
 
-    def _periodic_convention_is_inclusive(self) -> bool:
-        """Whether this operator's periodic wrap identifies the two endpoints. Issue #1822.
+    def _repeated_endpoints(self) -> int:
+        """How many nodes this operator's periodic wrap must step over. Issue #1822.
 
         Read off the same BC that `__call__`'s ghost padding reads, so the matrix and the matvec
         cannot describe different operators. Unstated means the layout this package always used --
         all N nodes distinct -- which is what the operator layer's own grids are.
         """
-        from mfgarchon.geometry.boundary.types import PeriodicGridConvention
+        from mfgarchon.geometry.boundary.types import repeated_endpoint_count
 
-        declared = getattr(self.bc, "periodic_convention", None)
-        return declared is PeriodicGridConvention.ENDPOINT_INCLUSIVE
+        return repeated_endpoint_count(getattr(self.bc, "periodic_convention", None))
 
     def __call__(self, u: NDArray) -> NDArray:
         """
@@ -409,7 +408,7 @@ class LaplacianOperator(LinearOperator):
                 #
                 # On an inclusive grid node n-1 IS node 0, so the wrap skips it: the left neighbour
                 # of node 0 is n-2 and the right neighbour of node n-1 is 1.
-                span = n_d - 1 if self._periodic_convention_is_inclusive() else n_d
+                span = n_d - self._repeated_endpoints()
 
                 # Left neighbor (wrapped for periodic)
                 left_idx = multi_indices.copy()
