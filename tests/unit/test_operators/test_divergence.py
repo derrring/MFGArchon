@@ -424,6 +424,44 @@ class TestAdvectionPeriodicGridConvention:
         assert div[-1] == pytest.approx(div[0])
 
     @pytest.mark.unit
+    def test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat(self):
+        """Pinned on the value, because conservation and the seam are both blind to it.
+
+        The wrap face joins cell ``span-1`` to cell 0, so its velocity is
+        ``0.5*(v[span-1] + v[0])``. Reading ``v[N-1]`` there instead -- the repeated node -- is
+        still a *consistent* face velocity: each face is shared by the two cells touching it, so
+        the flux still telescopes to 0 and ``div[-1] == div[0]`` still holds. Every other test in
+        this class passes under that substitution while the divergence moves by 3.2.
+
+        Same shape as the FVM case in
+        ``tests/unit/test_alg/test_periodic_torus_oracle_1822.py``: when two candidate expressions
+        are both conservative, only the arithmetic separates them.
+        """
+        span, h = 4, 0.25
+        m = np.array([1.0, 2.0, 3.0, 4.0, 1.0])  # cell 4 repeats cell 0
+        v = np.array([[0.5, 0.7, 0.2, 0.9, 0.5]])
+        adv = AdvectionOperator(
+            velocity_field=v,
+            spacings=[h],
+            field_shape=(5,),
+            scheme="upwind",
+            form="divergence",
+            bc=self._stamped_periodic(1),
+            mass_conservative=True,
+        )
+        div = adv(m)
+
+        # Every velocity is positive, so upwind takes the left cell at each face.
+        v_wrap = 0.5 * (v[0, span - 1] + v[0, 0])
+        flux_wrap = v_wrap * m[span - 1]
+        flux_first = 0.5 * (v[0, 0] + v[0, 1]) * m[0]
+        assert div[0] == pytest.approx((flux_first - flux_wrap) / h), (
+            "cell 0's inflow must cross a face whose velocity averages the LAST REAL cell with "
+            "cell 0; taking it from the repeated node is conservative and still wrong"
+        )
+        assert div[span - 1] == pytest.approx((flux_wrap - 0.5 * (v[0, span - 2] + v[0, span - 1]) * m[span - 2]) / h)
+
+    @pytest.mark.unit
     def test_bc_none_still_means_the_exclusive_layout(self):
         """The historical caller stated nothing and must keep its numbers (#1822).
 
