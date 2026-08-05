@@ -105,7 +105,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             BCType.NEUMANN,
             BCType.NO_FLUX,  # Same as Neumann with g=0
             BCType.ROBIN,  # adjoint-consistent Robin(0,1); general-Robin sub-cases fail loud in the row builder
-            BCType.PERIODIC,  # uniform periodic (ghost-skip); mixed-periodic-at-a-boundary fails loud in the row builder
         }
     )
 

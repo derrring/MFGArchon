@@ -443,11 +443,21 @@ def test_dispatch_neumann_row_uses_normal_grad():
 
 
 def test_dispatch_periodic_raises():
-    """PERIODIC BC type at a boundary point raises NotImplementedError with hint."""
+    """A mixed BC containing PERIODIC is refused, now at CONSTRUCTION rather than mid-solve.
+
+    The refusal moved in #1822. HJBGFDMSolver used to declare PERIODIC and raise for it from the
+    boundary row builder, so a caller learned about it partway through a solve; there was no
+    working path at any grid size, and the row builder's own message said to use FDM instead. With
+    the type undeclared, the capability gate (#1456) refuses at construction, which is where a
+    caller can still do something about it.
+
+    Asserted on the earliest raising call rather than on the row builder, because that is now the
+    boundary of the contract: a solver that started ACCEPTING this mixed BC again would fail here,
+    which is the regression worth catching.
+    """
     LX, LY = 10.0, 10.0
     geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
     points, boundary_idx = _grid_with_boundary(LX, LY, n_in=4, eps=1e-7)
-    # Three walls NO_FLUX + one PERIODIC (legitimate setup for some 2D problems)
     bc = BoundaryConditions(
         segments=[
             BCSegment(name="left", bc_type=BCType.NO_FLUX, boundary="x_min"),
@@ -457,13 +467,9 @@ def test_dispatch_periodic_raises():
         ],
         dimension=2,
     )
-    solver = _build_solver(points, boundary_idx, bc, geom)
-    n = len(points)
-    fake_jac = sp.eye(n, format="csr") * 0.5
-    fake_res = np.ones(n)
 
     with pytest.raises(NotImplementedError) as exc_info:
-        solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
+        _build_solver(points, boundary_idx, bc, geom)
     assert "PERIODIC" in str(exc_info.value)
     assert "TensorProductGrid" in str(exc_info.value) or "FDM" in str(exc_info.value)
 

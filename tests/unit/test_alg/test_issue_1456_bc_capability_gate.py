@@ -53,10 +53,15 @@ def _pts():
 
 
 # ---------------------------------------------------------------------------
-# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin/periodic; Reflecting/Extrapolation
-# (which no other test constructs, and the audit confirms it cannot honor) fail loud at
-# construction. Periodic and general-Robin sub-cases pass the type-level gate and remain
-# enforced by the row builder at solve time.
+# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin; Reflecting/Extrapolation (which no other
+# test constructs, and the audit confirms it cannot honor) fail loud at construction.
+#
+# PERIODIC used to be on that list, "enforced by the row builder at solve time" -- which is the
+# #1574 anti-pattern stated as a design: declare the type, then raise from deep inside the solve.
+# It was measured in #1822 and there is no working path at any grid size; the row builder's own
+# message says "Use TensorProductGrid + FDM for periodic geometries". It is now undeclared, so the
+# refusal happens here, at construction, where the caller can act on it.
+# General-Robin sub-cases genuinely do pass the type-level gate and remain row-builder enforced.
 # ---------------------------------------------------------------------------
 
 
@@ -65,7 +70,19 @@ def test_hjb_gfdm_fails_loud_on_reflecting():
         HJBGFDMSolver(_problem(uniform_bc(BCType.REFLECTING, dimension=1)), collocation_points=_pts(), delta=0.25)
 
 
-@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, periodic_bc, robin_bc])
+@pytest.mark.parametrize("solver_cls", [HJBGFDMSolver, FPGFDMSolver])
+def test_gfdm_pair_fails_loud_on_periodic(solver_cls):
+    """Undeclared in #1822, so the refusal must land here rather than mid-solve.
+
+    Before: HJBGFDMSolver raised NotImplementedError from the boundary row builder at point 0, and
+    FPGFDMSolver ran until its density went negative -- t=6 at Nx=11, t=4 at Nx=21, t=3 at Nx=41,
+    i.e. sooner on finer grids, so not a resolution problem. Neither honoured the type it declared.
+    """
+    with pytest.raises(NotImplementedError, match="does not support"):
+        solver_cls(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
+
+
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, robin_bc])
 def test_hjb_gfdm_accepts_supported(bc_factory):
     HJBGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=_pts(), delta=0.25)  # must not raise
 
@@ -210,7 +227,7 @@ def test_fp_gfdm_fails_loud_on_unsupported(bc):
         FPGFDMSolver(_problem(bc), collocation_points=pts, delta=0.25)
 
 
-@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc])  # PERIODIC undeclared, #1822
 def test_fp_gfdm_accepts_supported(bc_factory):
     pts = np.linspace(0.0, 1.0, N).reshape(-1, 1)
     FPGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=pts, delta=0.25)

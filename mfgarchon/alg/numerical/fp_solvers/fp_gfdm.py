@@ -83,7 +83,12 @@ class FPGFDMSolver(BaseFPSolver):
     # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type handles no-flux / Neumann /
     # periodic and returns None (silently) for everything else; declare exactly those so
     # Dirichlet / Robin / Reflecting / Extrapolation fail loud instead.
-    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+    # PERIODIC is NOT declared (#1822). It was, and it never worked: the density went
+    # negative mid-solve at every grid size tried -- -3.83e-01 at t=6 (Nx=11), -1.03e+00 at
+    # t=4 (Nx=21), -1.88e-01 at t=3 (Nx=41). It fails EARLIER as the grid refines, so this is
+    # not a resolution problem. Declaring it bought a mid-solve ValueError instead of a
+    # refusal at construction; use TensorProductGrid + FDM/FVM for periodic geometries.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN})
 
     #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
     #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver

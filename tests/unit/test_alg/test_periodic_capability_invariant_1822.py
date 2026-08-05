@@ -125,8 +125,6 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
-    "HJBGFDMSolver": ("#1822 declares PERIODIC and raises for it", NotImplementedError),
-    "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
     "FPParticleSolver": ("#1822", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
@@ -150,30 +148,58 @@ KNOWN_NOT_HONOURED = {
 # renormalisation rather than by conservation (RFC #1456 class (b), #1429 S0-11). A convergence
 # oracle cannot see it; it is listed under its own issue rather than certified here.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # No solver here fails the CONVERGENCE oracle -- every declaring FP solver's periodic mass
-    # error halves under refinement. The one entry is a solver that never produces a number to
-    # converge: it declares PERIODIC and its density goes invalid mid-solve.
-    "FPGFDMSolver": ("#1822 density goes invalid mid-solve", ValueError),
+    # Empty, and that is the honest state: every FP solver still declaring PERIODIC has a periodic
+    # mass error that halves under refinement. The one entry that used to sit here, FPGFDMSolver,
+    # never produced a number to converge -- it has since stopped declaring PERIODIC (#1822), so
+    # this file no longer asks it a question about periodicity.
 }
 
 
-def _declaring_solvers() -> dict[str, type]:
-    """Every class in the searched modules whose `_SUPPORTED_BC_TYPES` contains PERIODIC."""
+def _declared_bc_types(cls) -> frozenset | None:
+    """What a class advertises, by the name the real gate reads.
+
+    `BaseMFGSolver._validate_bc_support` reads the PUBLIC `supported_bc_types`, so a class
+    declaring only that one advertises through the real gate while being invisible to a
+    private-name-only scan.
+    """
+    declared = getattr(cls, "_SUPPORTED_BC_TYPES", None)
+    if declared is None:
+        declared = getattr(cls, "supported_bc_types", None)
+        if isinstance(declared, property):
+            declared = None
+    return declared or None
+
+
+def _solvers_declaring_any_bc() -> dict[str, type]:
+    """Every class in the searched modules that advertises ANY boundary condition.
+
+    This is what the declared-surface half of the file (#1574) must iterate. Keying it on
+    PERIODIC instead was a filter that looked like no filter: every class in `_SEARCHED`
+    declared PERIODIC, so the two sets were identical and the narrowing was invisible. The
+    first solver to stop declaring it fell out of the surface matrix entirely, taking its
+    DIRICHLET and NEUMANN rows with it -- measured when the GFDM pair undeclared PERIODIC in
+    #1822: five rows vanished silently, three of them recording live defects
+    (FPGFDMSolver-NEUMANN, FPGFDMSolver-NO_FLUX, HJBGFDMSolver-DIRICHLET).
+    """
     found: dict[str, type] = {}
     for module_name in _SEARCHED:
         module = importlib.import_module(module_name)
         for name, cls in inspect.getmembers(module, inspect.isclass):
             if cls.__module__ != module_name:
                 continue
-            declared = getattr(cls, "_SUPPORTED_BC_TYPES", None)
-            if declared is None:
-                # The public name is what BaseMFGSolver._validate_bc_support actually reads.
-                declared = getattr(cls, "supported_bc_types", None)
-                if isinstance(declared, property):
-                    declared = None
-            if declared and BCType.PERIODIC in declared:
+            if _declared_bc_types(cls):
                 found[name] = cls
     return found
+
+
+def _declaring_solvers() -> dict[str, type]:
+    """Every searched class whose declaration contains PERIODIC.
+
+    Narrower than `_solvers_declaring_any_bc` on purpose: the seam and mass invariants are
+    statements ABOUT periodicity, so a solver that does not claim it has nothing to answer for
+    there. The surface matrix below is the one that must not be scoped this way.
+    """
+    return {n: c for n, c in _solvers_declaring_any_bc().items() if BCType.PERIODIC in _declared_bc_types(c)}
 
 
 def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
@@ -421,10 +447,8 @@ STOCHASTIC_UNSEEDED = {
 
 SURFACE_NOT_HONOURED = {
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
-    ("HJBGFDMSolver", "PERIODIC"): ("#1822 declares PERIODIC and raises for it", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
-    ("FPGFDMSolver", "PERIODIC"): ("#1822 density goes invalid mid-solve", ValueError),
     # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
     # that would settle the trend does not exist. Listed under the raise, not under the trend.
     ("FPSLSolver", "NEUMANN"): ("#1822 Nx=81 solve raises", ValueError),
@@ -448,7 +472,8 @@ def _solve_with_bc(cls, bc_type, nx, nt):
 
 
 def _surface_params():
-    for name, cls in sorted(_declaring_solvers().items()):
+    # The WIDER set: a declared BC must be measured whether or not the solver also claims PERIODIC.
+    for name, cls in sorted(_solvers_declaring_any_bc().items()):
         declared = getattr(cls, "_SUPPORTED_BC_TYPES", None) or getattr(cls, "supported_bc_types", None) or ()
         for bc_type in sorted(declared, key=lambda t: t.name):
             if bc_type not in BC_FACTORIES:
@@ -498,10 +523,38 @@ def test_every_declared_pair_is_either_measured_or_named_uncovered():
     """
     uncovered = {
         (name, t.name)
-        for name, cls in _declaring_solvers().items()
+        for name, cls in _solvers_declaring_any_bc().items()
         for t in (getattr(cls, "_SUPPORTED_BC_TYPES", None) or ())
         if t not in BC_FACTORIES
     }
     assert uncovered == {("HJBGFDMSolver", "ROBIN"), ("FPParticleSolver", "REFLECTING")}, (
         f"the set of declared-but-unmeasured (solver, BC) pairs changed: {sorted(uncovered)}"
+    )
+
+
+def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
+    """A solver cannot fall out of the surface matrix by narrowing what it declares.
+
+    This is the guard for a failure this file actually had. `_surface_params` used to iterate
+    `_declaring_solvers()` -- the PERIODIC-declaring set -- which looked like no filter at all,
+    because every class in `_SEARCHED` declared PERIODIC. The moment the GFDM pair stopped
+    declaring it (#1822, since neither ever honoured it), five rows vanished: three of them
+    recording live defects (FPGFDMSolver-NEUMANN, FPGFDMSolver-NO_FLUX, HJBGFDMSolver-DIRICHLET).
+
+    Measured, with the matrix keyed back the old way: 0 GFDM rows collected and the file still
+    **green** at 34 passed / 10 xfailed, versus 5 rows and 36 / 13 now. A suite that stays green
+    while it quietly stops measuring things is the thing this ratchet exists to prevent, so the
+    coverage is asserted rather than assumed.
+    """
+    expected = {
+        (name, t.name)
+        for name, cls in _solvers_declaring_any_bc().items()
+        for t in (_declared_bc_types(cls) or ())
+        if t in BC_FACTORIES
+    }
+    parametrised = {tuple(p.id.split("-", 1)) for p in _surface_params()}
+    missing = expected - parametrised
+    assert not missing, (
+        f"these declared (solver, BC) pairs have a fixture and are NOT measured: {sorted(missing)}. "
+        f"A pair that is absent reads exactly like a pair that passed."
     )
