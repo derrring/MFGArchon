@@ -162,6 +162,7 @@ def generate_brownian_increment(
     dimension: int,
     dt: float,
     sigma: float,
+    rng: Any = np.random,
 ) -> np.ndarray:
     """
     Generate Brownian increment for SDE evolution (dimension-agnostic).
@@ -198,9 +199,9 @@ def generate_brownian_increment(
 
     # Independent Brownian motion in each dimension
     if dimension == 1:
-        return sigma * np.random.normal(0, np.sqrt(dt), num_particles)
+        return sigma * rng.normal(0, np.sqrt(dt), num_particles)
 
-    return sigma * np.random.normal(0, np.sqrt(dt), (num_particles, dimension))
+    return sigma * rng.normal(0, np.sqrt(dt), (num_particles, dimension))
 
 
 # =============================================================================

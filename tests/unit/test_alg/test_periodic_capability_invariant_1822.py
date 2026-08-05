@@ -54,6 +54,7 @@ NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
 SEED = 1822  # any solver that accepts one gets it, so every row below is a repeatable number
+PARTICLES_AT_COARSEST = 5000  # scaled as Nx^2 under refinement; see the fixtures below
 
 
 # The datum, and why it is phase-shifted rather than the obvious sin/cos.
@@ -97,7 +98,7 @@ _SEARCHED = (
 # MODE as well as the failure: `raises=` means a solver that starts crashing, or crashing
 # differently, is caught rather than xfailing identically to one that merely returns a bad seam.
 #
-#   HJBFDMSolver    7.42e-01     FPParticleSolver    4.95e-01 (seed=1822, and now repeatable)
+#   HJBFDMSolver    7.42e-01     FPParticleSolver    4.95e-01 (seed=1822, repeatable; floor ~2.7e-01)
 #   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00
 #   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
 #   HJBGFDMSolver   raises NotImplementedError for PERIODIC
@@ -132,13 +133,19 @@ KNOWN_NOT_HONOURED = {
     # even on a periodic axis, so the row builder (which has no periodic row) raises. The defect is
     # the detection, not the capability, which is why the type stays declared. Tracked in #1841.
     "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
-    # FPParticleSolver is now a MEASURED row rather than a coin flip (#1838 gave it a seed).
-    # Seam 4.95e-01 at Nx=21. It is not sampling noise: holding the grid and raising the particle
-    # count, the seam converges to a NONZERO limit while the seed-to-seed spread collapses --
-    # 5.4e-01 (N=2e3), 3.9e-01 (N=2e4), 3.33e-01 (N=2e5), spread 4e-02 -> 1.5e-03. A Monte Carlo
-    # error would vanish; a boundary-treatment bias is what stays. The mechanism is visible in the
-    # output: f[0] - f[1] and f[-1] - f[-2] are EXACTLY 0, i.e. the KDE duplicates its edge bins.
-    "FPParticleSolver": ("#1822 KDE duplicates its edge bins; seam -> 3.3e-01 as N -> inf", AssertionError),
+    # FPParticleSolver fails the ABSOLUTE seam tolerance at this one grid, and that is the whole
+    # claim -- it is not a statement that the solver fails to honour PERIODIC. Under joint
+    # refinement (h -> 0 with N ~ Nx^2) its periodic residual converges, 20/20 seeds, which is why
+    # it is absent from SURFACE_NOT_HONOURED below.
+    #
+    # At Nx=21 the seam has a floor no particle count removes: 5.22e-01 (N=2e3), 3.95e-01 (2e4),
+    # 3.32e-01 (2e5), 3.05e-01 (2e6) -- still moving, so the floor is BELOW 3e-01 and the earlier
+    # "-> 3.3e-01" was a way-point read off a sequence that had not converged. Driving the KDE
+    # bandwidth to zero instead isolates it at ~2.7e-01, and it is bandwidth- and N-independent
+    # there, so it is a boundary-treatment bias rather than sampling error or smoothing width.
+    # About half of it is the Issue #709 boundary smoothing, which is applied unconditionally:
+    # with kde_boundary_smoothing=False the seam drops 3.29e-01 -> 1.48e-01 at N=2e5.
+    "FPParticleSolver": ("#1822 fixed-grid KDE seam floor ~2.7e-01; SEAM_TOL=1e-9 is unreachable", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 
@@ -273,6 +280,14 @@ def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
         # trials of one configuration previously returned monotone=False, False, True, so xfail
         # asserted a failure it did not reliably have and pass asserted the opposite.
         kwargs["seed"] = SEED
+    if "num_particles" in params:
+        # Refine the SAMPLE with the grid, not just the grid. A particle method converges as
+        # N -> inf AND h -> 0; holding N fixed leaves a Monte Carlo floor set by N, so at the fine
+        # end the convergence oracle below compares noise and the verdict becomes a coin flip.
+        # Measured on the PERIODIC row at a fixed 5000 particles: monotone in 6 of 12 seeds. With
+        # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
+        # every type this solver declares converges in 20 of 20 seeds.
+        kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
     solver = cls(problem, **kwargs)
 
     if hasattr(solver, "solve_hjb_system"):
@@ -471,12 +486,11 @@ BC_FACTORIES = {
 STOCHASTIC_UNSEEDED: dict[str, str] = {}
 
 SURFACE_NOT_HONOURED = {
-    # Measured with seed=1822 at the fixture's default 5000 particles: 4.95e-01, 2.66e-01,
-    # 2.79e-01 over Nx=21/41/81 -- it improves once and then gets WORSE, so it fails the
-    # three-point monotonicity the oracle requires. Its other three declared types converge and
-    # are NOT listed here: NO_FLUX and NEUMANN at 5.40e-02 -> 3.24e-02 -> 1.54e-02, DIRICHLET at
-    # 4.67e-01 -> 1.05e-04 -> 7.9e-169. So this is one broken column, not a broken solver.
-    ("FPParticleSolver", "PERIODIC"): ("#1822 seam does not converge; KDE edge bins", AssertionError),
+    # FPParticleSolver-PERIODIC is deliberately NOT listed, and the first version of this file had
+    # it wrong. At a fixed 5000 particles it read 4.95e-01, 2.66e-01, 2.79e-01 -- worse at the
+    # finest grid, so "not honoured". That was an artefact of refining h while holding N: the Monte
+    # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
+    # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
     ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
@@ -503,6 +517,14 @@ def _solve_with_bc(cls, bc_type, nx, nt):
         # trials of one configuration previously returned monotone=False, False, True, so xfail
         # asserted a failure it did not reliably have and pass asserted the opposite.
         kwargs["seed"] = SEED
+    if "num_particles" in params:
+        # Refine the SAMPLE with the grid, not just the grid. A particle method converges as
+        # N -> inf AND h -> 0; holding N fixed leaves a Monte Carlo floor set by N, so at the fine
+        # end the convergence oracle below compares noise and the verdict becomes a coin flip.
+        # Measured on the PERIODIC row at a fixed 5000 particles: monotone in 6 of 12 seeds. With
+        # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
+        # every type this solver declares converges in 20 of 20 seeds.
+        kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
     solver = cls(problem, **kwargs)
     if hasattr(solver, "solve_hjb_system"):
         return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x

@@ -163,12 +163,13 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1838. Every draw this solver makes goes through `self._rng`, which is either the
         # global numpy state or a private Generator:
         #
-        #   seed=None  -> `np.random`, the global stream. Unchanged behaviour, and deliberately so:
-        #                 twelve files in this repository set `np.random.seed(...)` and then build
-        #                 this solver to compare two runs (test_issue_1248_volatility_forwarding,
-        #                 test_issue_1412_fp_particle_sigma_override, test_cross_backend_consistency,
-        #                 ...). A private Generator would silently stop honouring those seeds and
-        #                 turn those comparisons non-deterministic rather than failing.
+        #   seed=None  -> `np.random`, the global stream. Unchanged behaviour for existing callers,
+        #                 which is the only claim made for it: nine files here seed the global
+        #                 stream and then build this solver. Switching the default was measured
+        #                 rather than assumed -- an entropy-seeded private Generator gives
+        #                 1 failed / 65 passed across them, and that one
+        #                 (test_issue_1412_fp_particle_sigma_override) fails LOUDLY. So this is
+        #                 plain backward compatibility, not protection against a silent failure.
         #   seed=<int> -> a private Generator, independent of anything else touching np.random.
         #
         # One code path serves both: `choice`, `uniform`, `normal` and `standard_normal` exist on
@@ -868,7 +869,9 @@ class FPParticleSolver(BaseFPSolver):
             # Derived from this solver's stream so the sampler follows `seed` too (Issue #1838).
             # The old comment here claimed the global state gave "reproducibility with solver";
             # it gives the opposite -- any unrelated np.random call shifts what this returns.
-            seed=None if self.seed is None else int(self._rng.integers(0, 2**63 - 1)),
+            # 2**32 - 1, not 2**63: sample_from_density builds a legacy np.random.RandomState,
+            # which refuses anything larger. A 2**63 draw raised for all but 2**-31 of seeds.
+            seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
         )
 
     def _generate_brownian_increment_nd(
@@ -899,7 +902,9 @@ class FPParticleSolver(BaseFPSolver):
         dW : np.ndarray
             Brownian increments, shape (num_particles, dimension)
         """
-        result = _gen_brownian(num_particles, dimension, Dt, sigma)
+        # rng=, or this branch keeps drawing from the global stream while the varying-sigma
+        # branch below uses self._rng -- two parallel physics paths, one owner between them.
+        result = _gen_brownian(num_particles, dimension, Dt, sigma, rng=self._rng)
         # Ensure 2D output for backward compatibility (this method always returns 2D)
         if result.ndim == 1:
             return result[:, np.newaxis]
@@ -2002,7 +2007,11 @@ class FPParticleSolver(BaseFPSolver):
         # Sample initial particles on GPU
         m_initial_gpu = self.backend.from_numpy(m_initial_condition)
         X_particles_gpu[0, :] = sample_from_density_gpu(
-            m_initial_gpu, x_grid_gpu, self.num_particles, self.backend, seed=None
+            m_initial_gpu,
+            x_grid_gpu,
+            self.num_particles,
+            self.backend,
+            seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
         )
 
         # Compute bandwidth for KDE (do this once on CPU)

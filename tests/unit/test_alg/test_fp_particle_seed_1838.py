@@ -18,6 +18,8 @@ Two contracts, and the second is the one that constrains the design:
 
 from __future__ import annotations
 
+import pytest
+
 import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
@@ -113,3 +115,59 @@ def test_seed_none_is_not_secretly_deterministic():
     assert not np.array_equal(first, second), (
         "two consecutive unseeded solves agreed bit for bit; the draws are not reaching the stream"
     )
+
+
+# ---------------------------------------------------------------------------
+# The other solve paths. Everything above drives ONE of them -- 1D with an ndarray drift -- and
+# that gap is what let two defects ship: a derived seed of 2**63 that legacy `RandomState` refuses
+# (so a seeded solve RAISED on three of four paths), and two draws that never reached `self._rng`
+# at all (`generate_brownian_increment`, and the GPU initial sampler), so a "seeded" solve on those
+# paths was still reading the global stream. Neither was visible from the 1D ndarray path.
+# ---------------------------------------------------------------------------
+
+
+def _solve_path(dim, callable_drift, seed, nt=4, n_part=400):
+    """One solve on a chosen (dimension, drift-kind) path, returning the density history."""
+    shape = tuple([9] * dim)
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dim, Nx_points=[9] * dim, boundary_conditions=no_flux_bc(dimension=dim)
+    )
+    components = MFGComponents(
+        m_initial=(lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2))))
+        if dim > 1
+        else (lambda z: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(z) + 1.1)),
+        u_terminal=(lambda x: 0.0) if dim > 1 else (lambda z: np.zeros_like(np.asarray(z))),
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        ),
+    )
+    problem = MFGProblem(geometry=grid, T=0.2, Nt=nt, sigma=0.25, components=components)
+    solver = FPParticleSolver(problem, num_particles=n_part, seed=seed)
+    m0 = np.ones(shape) / float(np.prod(shape))
+    if callable_drift:
+        drift = (lambda t, xc, m: np.zeros((n_part, dim))) if dim > 1 else (lambda t, xc, m: np.zeros(n_part))
+    else:
+        drift = np.zeros((nt + 1, *shape))
+    return np.asarray(solver.solve_fp_system(m0, drift_field=drift))
+
+
+@pytest.mark.parametrize(("dim", "callable_drift"), [(1, False), (1, True), (2, False), (2, True)])
+def test_every_solve_path_is_reproducible_and_owns_its_stream(dim, callable_drift):
+    """Each path must (a) run at all with a seed, (b) repeat, (c) ignore the global stream.
+
+    (a) is not redundant: with the seed derived as a 2**63 draw, three of these four RAISED
+    `ValueError: Seed must be between 0 and 2**32 - 1` for all but 2**-31 of seeds, because
+    `sample_from_density` builds a legacy `np.random.RandomState`.
+    """
+    first = _solve_path(dim, callable_drift, seed=99)
+    np.random.random(777)  # perturb the GLOBAL stream between the two solves
+    second = _solve_path(dim, callable_drift, seed=99)
+    np.testing.assert_array_equal(first, second)
+
+
+@pytest.mark.parametrize(("dim", "callable_drift"), [(1, True), (2, False), (2, True)])
+def test_the_other_solve_paths_still_respond_to_the_seed(dim, callable_drift):
+    """Control for the test above: a path that ignored `seed` entirely would satisfy it trivially."""
+    assert not np.array_equal(_solve_path(dim, callable_drift, seed=99), _solve_path(dim, callable_drift, seed=1234))
