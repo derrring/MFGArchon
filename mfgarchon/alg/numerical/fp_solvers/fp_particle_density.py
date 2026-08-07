@@ -24,9 +24,12 @@ Usage:
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 # Optional scipy for KDE
 try:  # pragma: no cover - optional SciPy dependency
@@ -162,6 +165,7 @@ def generate_brownian_increment(
     dimension: int,
     dt: float,
     sigma: float,
+    rng: ModuleType | np.random.Generator = np.random,
 ) -> np.ndarray:
     """
     Generate Brownian increment for SDE evolution (dimension-agnostic).
@@ -178,6 +182,9 @@ def generate_brownian_increment(
         Time step size
     sigma : float
         Diffusion coefficient
+    rng : module or np.random.Generator, optional
+        Source of the normal draws. Defaults to the global `np.random` module, which is what an
+        unseeded `FPParticleSolver` passes; a seeded one passes its private Generator (Issue #1838).
 
     Returns
     -------
@@ -198,9 +205,9 @@ def generate_brownian_increment(
 
     # Independent Brownian motion in each dimension
     if dimension == 1:
-        return sigma * np.random.normal(0, np.sqrt(dt), num_particles)
+        return sigma * rng.normal(0, np.sqrt(dt), num_particles)
 
-    return sigma * np.random.normal(0, np.sqrt(dt), (num_particles, dimension))
+    return sigma * rng.normal(0, np.sqrt(dt), (num_particles, dimension))
 
 
 # =============================================================================

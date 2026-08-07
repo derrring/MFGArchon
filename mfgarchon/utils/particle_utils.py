@@ -267,7 +267,10 @@ def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed:
     backend : BaseBackend
         Backend providing tensor operations
     seed : int, optional
-        Random seed for reproducibility
+        Random seed. Drives a LOCAL generator, so a seeded call is reproducible without touching
+        any global stream. `seed=None` draws from -- and therefore advances -- the caller's global
+        stream, which is the compatibility contract for callers that seed `torch` or `np.random`
+        themselves.
 
     Returns
     -------
@@ -309,15 +312,27 @@ def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed:
         zeros = xp.zeros(1)
     cdf_with_zero = xp.concatenate([zeros, cdf])
 
-    # Sample uniform random numbers
-    if seed is not None and is_torch_backend:
-        xp.manual_seed(seed)
-
-    # Create U on same device as cdf for PyTorch compatibility
+    # Sample uniform random numbers.
+    #
+    # The seed drives a LOCAL generator on both paths. `torch.manual_seed` reseeds the
+    # process-global stream, so one seeded solve moved every unrelated torch draw in the same
+    # interpreter -- the defect #1838 removed on the numpy side, reintroduced on this one the
+    # moment a seed reached here. `seed=None` keeps drawing from each library's global stream,
+    # which is the compatibility contract a caller that seeds `np.random` or `torch` relies on.
     if is_torch_backend:
-        U = xp.rand(N, device=cdf.device, dtype=cdf.dtype)
+        generator = None
+        if seed is not None:
+            generator = xp.Generator(device=cdf.device)
+            generator.manual_seed(int(seed))
+        U = xp.rand(N, device=cdf.device, dtype=cdf.dtype, generator=generator)
     else:
-        U = backend.from_numpy(np.random.rand(N))
+        # Unreachable today, and by construction rather than by configuration: the only caller,
+        # `_solve_fp_system_gpu`, assigns into a preallocated array (`X_particles_gpu[0, :] = ...`),
+        # and a JAX array raises `TypeError: JAX arrays are immutable` on that. So the GPU solve
+        # path is torch-only. Seeded anyway -- a `seed` argument that is silently ignored is a lie
+        # whether or not anyone reaches it.
+        draw = np.random if seed is None else np.random.default_rng(seed)
+        U = backend.from_numpy(draw.random(N))
 
     # Inverse transform: find x such that CDF(x) = U
     indices = xp.searchsorted(cdf_with_zero, U)

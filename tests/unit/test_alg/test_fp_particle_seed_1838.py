@@ -1,0 +1,243 @@
+"""`FPParticleSolver` must be able to repeat itself on demand. Issue #1838.
+
+Without a seed no invariant can return a verdict on this solver. Measured on the #1822 periodic
+capability matrix, three trials of one identical configuration gave `monotone = False, False, True`
+-- so marking it `xfail` asserts a failure it does not reliably have, and marking it `pass` asserts
+the opposite. It is skipped there and named in `STOCHASTIC_UNSEEDED`, whose comment already states
+the conclusion: "the seeding is the fix."
+
+Two contracts, and the second is the one that constrains the design:
+
+- `seed=<int>` -- a private `Generator`, so two runs agree bit for bit and nothing else touching
+  `np.random` can perturb them;
+- `seed=None` -- the **global** stream, unchanged. Nine files in this repository call
+  `np.random.seed(...)` and then build this solver to compare two runs. A private Generator by
+  default would stop honouring those seeds and make those comparisons non-deterministic rather
+  than failing, which is the worse outcome: the tests would still pass, just meaninglessly.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+
+from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
+
+NX, NT = 25, 8
+
+
+def _problem():
+    return MFGProblem(
+        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)),
+        T=0.3,
+        Nt=NT,
+        sigma=0.25,
+        components=MFGComponents(
+            m_initial=lambda z: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(z) + 1.1),
+            u_terminal=lambda z: np.zeros_like(np.asarray(z)),
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+
+
+def _solve(seed, num_particles=2000):
+    x = np.linspace(0.0, 1.0, NX)
+    solver = FPParticleSolver(_problem(), num_particles=num_particles, seed=seed)
+    m0 = 1.0 + 0.5 * np.cos(2 * np.pi * x + 1.1)
+    return np.asarray(solver.solve_fp_system(m0, np.tile(np.sin(2 * np.pi * x), (NT + 1, 1))))
+
+
+def test_the_same_seed_gives_the_same_density():
+    """Bit-identical, not close: a seeded stochastic solver is a deterministic function."""
+    first, second = _solve(20260805), _solve(20260805)
+    assert first.shape == second.shape
+    np.testing.assert_array_equal(first, second)
+
+
+def test_different_seeds_give_different_densities():
+    """The discriminating half. Without it, a solver that ignored `seed` would pass the test above.
+
+    A stochastic solver that returned the same field for every seed would satisfy reproducibility
+    perfectly and be broken -- so equality alone certifies nothing.
+    """
+    first, second = _solve(20260805), _solve(11111)
+    assert first.shape == second.shape
+    assert not np.array_equal(first, second), (
+        "two different seeds produced bit-identical densities; the seed is not reaching the draws"
+    )
+
+
+def test_an_unrelated_draw_cannot_perturb_a_seeded_solve():
+    """The private stream must be private -- this is what the global state could never give.
+
+    Interleaving an unrelated `np.random` call between two constructions is exactly what made the
+    old behaviour irreproducible in practice, and it is not hypothetical: any library, fixture or
+    plugin drawing from the global stream shifts every subsequent particle solve.
+    """
+    first = _solve(4242)
+    np.random.random(12345)  # deliberately perturbing the GLOBAL stream
+    second = _solve(4242)
+    np.testing.assert_array_equal(first, second)
+
+
+def test_seed_none_still_follows_the_global_seed():
+    """The compatibility contract. Nine files in this repo depend on exactly this.
+
+    `np.random.seed(42)` before construction must still make an unseeded solver repeat itself, or
+    every existing two-run comparison silently stops comparing anything.
+
+    Scope, because the general form of this sentence is false: it holds on the 1D ndarray-drift
+    path, which is the one those nine files use. On the other three, `sample_from_density` builds
+    `np.random.RandomState(None)` (sampling.py), which seeds from OS entropy rather than from the
+    global stream, so an unseeded solve there does not repeat under `np.random.seed`. That is not a
+    regression -- `main` passes `seed=None` there unconditionally and behaviour is byte-identical --
+    but it is why this test pins one path rather than parametrising over four.
+    """
+    np.random.seed(42)  # the legacy contract under test
+    first = _solve(None)
+    np.random.seed(42)
+    second = _solve(None)
+    np.testing.assert_array_equal(first, second)
+
+
+def test_seed_none_is_not_secretly_deterministic():
+    """Control for the test above: without the global seed being reset, the runs must differ.
+
+    Otherwise `test_seed_none_still_follows_the_global_seed` would pass on a solver that ignored
+    randomness altogether, and would be measuring nothing.
+    """
+    np.random.seed(7)
+    first = _solve(None)
+    second = _solve(None)  # no reset: the global stream has moved on
+    assert not np.array_equal(first, second), (
+        "two consecutive unseeded solves agreed bit for bit; the draws are not reaching the stream"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The other solve paths. Everything above drives ONE of them -- 1D with an ndarray drift -- and
+# that gap is what let two defects ship: a derived seed of 2**63 that legacy `RandomState` refuses
+# (so a seeded solve RAISED on three of four paths), and two draws that never reached `self._rng`
+# at all (`generate_brownian_increment`, and the GPU initial sampler), so a "seeded" solve on those
+# paths was still reading the global stream. Neither was visible from the 1D ndarray path.
+# ---------------------------------------------------------------------------
+
+
+def _solve_path(dim, callable_drift, seed, nt=4, n_part=400):
+    """One solve on a chosen (dimension, drift-kind) path, returning the density history."""
+    shape = tuple([9] * dim)
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dim, Nx_points=[9] * dim, boundary_conditions=no_flux_bc(dimension=dim)
+    )
+    components = MFGComponents(
+        m_initial=(lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2))))
+        if dim > 1
+        else (lambda z: 1.0 + 0.5 * np.cos(2 * np.pi * np.asarray(z) + 1.1)),
+        u_terminal=(lambda x: 0.0) if dim > 1 else (lambda z: np.zeros_like(np.asarray(z))),
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        ),
+    )
+    problem = MFGProblem(geometry=grid, T=0.2, Nt=nt, sigma=0.25, components=components)
+    solver = FPParticleSolver(problem, num_particles=n_part, seed=seed)
+    m0 = np.ones(shape) / float(np.prod(shape))
+    if callable_drift:
+        drift = (lambda t, xc, m: np.zeros((n_part, dim))) if dim > 1 else (lambda t, xc, m: np.zeros(n_part))
+    else:
+        drift = np.zeros((nt + 1, *shape))
+    return np.asarray(solver.solve_fp_system(m0, drift_field=drift))
+
+
+@pytest.mark.parametrize(("dim", "callable_drift"), [(1, False), (1, True), (2, False), (2, True)])
+def test_every_solve_path_is_reproducible_and_owns_its_stream(dim, callable_drift):
+    """Each path must (a) run at all with a seed, (b) repeat, (c) ignore the global stream.
+
+    (a) is not redundant: with the seed derived as a 2**63 draw, three of these four RAISED
+    `ValueError: Seed must be between 0 and 2**32 - 1` for all but 2**-31 of seeds, because
+    `sample_from_density` builds a legacy `np.random.RandomState`.
+    """
+    first = _solve_path(dim, callable_drift, seed=99)
+    np.random.random(777)  # perturb the GLOBAL stream between the two solves
+    second = _solve_path(dim, callable_drift, seed=99)
+    np.testing.assert_array_equal(first, second)
+
+
+@pytest.mark.parametrize(("dim", "callable_drift"), [(1, True), (2, False), (2, True)])
+def test_the_other_solve_paths_still_respond_to_the_seed(dim, callable_drift):
+    """Control for the test above: a path that ignored `seed` entirely would satisfy it trivially."""
+    assert not np.array_equal(_solve_path(dim, callable_drift, seed=99), _solve_path(dim, callable_drift, seed=1234))
+
+
+# ---------------------------------------------------------------------------
+# The torch path. It reaches a different sampler with a different global stream, and the seed only
+# started reaching it in this change -- so everything above says nothing about it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["cpu", "mps"])
+def device(request):
+    """Both devices this machine can reach, because `device=cdf.device` is new and untested.
+
+    Hardcoding the generator to "cpu" passes every CPU assertion and then raises on MPS --
+    "Expected a 'mps' device type for generator but found 'cpu'" -- so a CPU-only test would
+    accept a fix that breaks the production default (`device='auto'` resolves to MPS here).
+    """
+    torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
+    if request.param == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("no MPS device on this machine")
+    return request.param
+
+
+def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone(device):
+    """The seed must drive a LOCAL torch generator, not `torch.manual_seed`.
+
+    Three assertions, and the third is the one that failed: reseeding the process-global stream
+    reproduces and differentiates exactly as a local generator does, so (a) and (b) cannot tell
+    them apart. Measured before the fix -- `torch.manual_seed(1234); torch.randn(3)` gave
+    [0.0461, 0.4024, -1.0115], and the same sequence with one seeded solve interposed gave
+    [0.2818, 1.3052, -1.3480]. That is this solver reaching out and moving an unrelated caller's
+    draws, which is the defect #1838 removed on the numpy side.
+    """
+    # Skipped INSIDE the test, not at module scope: `pytest.importorskip` at module level raises
+    # at collection and takes the whole file with it -- measured, in a venv without torch, as
+    # "collected 0 items / 1 skipped", losing the twelve tests above. The nightly runs without
+    # torch, so that placement would have silently stopped measuring the thing this file is for.
+    torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
+
+    from mfgarchon.backends.torch_backend import TorchBackend
+    from mfgarchon.utils.particle_utils import sample_from_density_gpu
+
+    backend = TorchBackend(device=device)
+    grid = backend.from_numpy(np.linspace(0.0, 1.0, 64))
+    density = backend.from_numpy(np.exp(-10 * (np.linspace(0.0, 1.0, 64) - 0.5) ** 2))
+
+    def _sample(seed):
+        return backend.to_numpy(sample_from_density_gpu(density, grid, N=500, backend=backend, seed=seed))
+
+    np.testing.assert_array_equal(_sample(7), _sample(7))
+    assert not np.array_equal(_sample(7), _sample(8)), "a sampler ignoring the seed would pass the line above"
+
+    # fork_rng, because a test that dirties the global stream to prove the library must not is
+    # the same defect wearing a different hat -- and within one xdist worker every later torch
+    # test would inherit it.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1234)
+        expected = torch.randn(3).tolist()
+        torch.manual_seed(1234)
+        _sample(99)
+        assert torch.randn(3).tolist() == expected, (
+            "a seeded solve moved the process-global torch stream, so it perturbs every unrelated "
+            "torch draw in the same interpreter"
+        )

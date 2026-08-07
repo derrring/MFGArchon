@@ -53,6 +53,8 @@ def _residual_of(solved, bc_type) -> float:
 NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
+SEED = 1822  # any solver that accepts one gets it, so every row below is a repeatable number
+PARTICLES_AT_COARSEST = 5000  # scaled as Nx^2 under refinement; see the fixtures below
 
 
 # The datum, and why it is phase-shifted rather than the obvious sin/cos.
@@ -96,7 +98,7 @@ _SEARCHED = (
 # MODE as well as the failure: `raises=` means a solver that starts crashing, or crashing
 # differently, is caught rather than xfailing identically to one that merely returns a bad seam.
 #
-#   HJBFDMSolver    7.42e-01     FPParticleSolver    ~5e-01 (UNSEEDED: varies ~25% per run)
+#   HJBFDMSolver    7.42e-01     FPParticleSolver    4.95e-01 (seed=1822, repeatable; floor ~2.7e-01)
 #   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00
 #   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
 #   HJBGFDMSolver   raises NotImplementedError for PERIODIC
@@ -125,13 +127,25 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
-    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam exactly 0 at
-    # Nx=11/21/41/81, via the Issue #711 wrap. The default cloud this file uses puts points ON
-    # the faces, and boundary detection marks those as boundary even on a periodic axis, so the
-    # row builder (which has no periodic row) raises. The defect is the detection, not the
-    # capability, which is why the type stays declared. Tracked in #1841.
+    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam at most 3.3e-11 at
+    # Nx=11/21/41/81 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16), via the Issue #711 wrap. The default
+    # cloud this file uses puts points ON the faces, and boundary detection marks those as boundary
+    # even on a periodic axis, so the row builder (which has no periodic row) raises. The defect is
+    # the detection, not the capability, which is why the type stays declared. Tracked in #1841.
     "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
-    "FPParticleSolver": ("#1822", AssertionError),
+    # FPParticleSolver fails the ABSOLUTE seam tolerance at this one grid, and that is the whole
+    # claim -- it is not a statement that the solver fails to honour PERIODIC. Under joint
+    # refinement (h -> 0 with N ~ Nx^2) its periodic residual converges, 20/20 seeds, which is why
+    # it is absent from SURFACE_NOT_HONOURED below.
+    #
+    # At Nx=21 the seam has a floor no particle count removes: 5.22e-01 (N=2e3), 3.95e-01 (2e4),
+    # 3.32e-01 (2e5), 3.05e-01 (2e6) -- still moving, so the floor is BELOW 3e-01 and the earlier
+    # "-> 3.3e-01" was a way-point read off a sequence that had not converged. Driving the KDE
+    # bandwidth to zero instead isolates it at ~2.7e-01, and it is bandwidth- and N-independent
+    # there, so it is a boundary-treatment bias rather than sampling error or smoothing width.
+    # About half of it is the Issue #709 boundary smoothing, which is applied unconditionally:
+    # with kde_boundary_smoothing=False the seam drops 3.29e-01 -> 1.48e-01 at N=2e5.
+    "FPParticleSolver": ("#1822 fixed-grid KDE seam floor ~2.7e-01; SEAM_TOL=1e-9 is unreachable", AssertionError),
     "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 
@@ -139,29 +153,33 @@ KNOWN_NOT_HONOURED = {
 # CONVERGENCE, not exact conservation, and getting that wrong is what the first version of this
 # file did: it asserted `drift < 1e-9` and reported six solvers as failing to honour PERIODIC.
 #
-# Measured drift against refinement (Nx=21/41/81, Nt scaled with it):
+# Measured drift against refinement (Nx=21/41/81, Nt scaled with it), on THIS commit -- seeded,
+# and with the particle count scaled as Nx^2:
 #
-#   FPFDMSolver       5.56e-02  2.87e-02  1.46e-02
-#   FPFVMSolver       5.77e-02  2.93e-02  1.47e-02
-#   FPSLSolver        1.34e-01  4.91e-02  2.62e-02
-#   FPParticleSolver  5.63e-02  3.38e-02  1.64e-02
+#   FPSLSolver         1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
+#   FPSLAdjointSolver  1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
+#   FPParticleSolver   5.480e-02  3.429e-02  1.707e-02     converges, ratio 0.626
+#   FPFDMSolver        2.220e-16  9.992e-16  4.885e-15     at round-off: EARLY RETURN
+#   FPFVMSolver        2.665e-15  7.772e-15  3.841e-14     at round-off: EARLY RETURN
+#   FPSLJacobianSolver 8.882e-16  2.776e-15  1.332e-15     at round-off: EARLY RETURN
 #
-# Every one halves per refinement. That is O(h) discretisation error in a non-conservative scheme,
-# not a capability defect -- these solvers do not claim conservation by construction, and an
-# absolute tolerance on a convergent quantity is a tolerance chosen to make a point.
+# Where it converges, that is O(h) discretisation error in a non-conservative scheme, not a
+# capability defect -- these solvers do not claim conservation by construction, and an absolute
+# tolerance on a convergent quantity is a tolerance chosen to make a point.
 #
-# `FPSLJacobianSolver` reports 0.0000% at every resolution, which is the opposite failure: exact by
-# renormalisation rather than by conservation (RFC #1456 class (b), #1429 S0-11). A convergence
-# oracle cannot see it; it is listed under its own issue rather than certified here.
+# READ THE SECOND COLUMN OF THAT LIST. Half these rows no longer reach the assertion at all: the
+# `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence. For
+# FPSLJacobianSolver that is the long-standing case (exact by renormalisation rather than by
+# conservation -- RFC #1456 class (b), #1429 S0-11). FPFDMSolver and FPFVMSolver joined it in
+# #1837, which put their periodic wrap on the right torus and took their drift from ~5.6e-02 to
+# round-off. That is a real improvement and it makes this oracle vacuous for them, which is worth
+# saying out loud: three green rows here now assert nothing, and a green row that measured nothing
+# reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # Empty, and that is the honest state for every row this dict could hold. Five of the six FP
-    # solvers still declaring PERIODIC have a periodic mass error that halves under refinement, so
-    # the convergence oracle evaluates and passes. The sixth is FPSLJacobianSolver, which is not
-    # certified here either: its drift is already at round-off, so it takes the early return above
-    # and the convergence assertion never runs -- exact by renormalisation, and listed under #1756
-    # rather than under a trend it cannot have. The one entry that used to sit here, FPGFDMSolver,
-    # never produced a number to converge; it has since stopped declaring PERIODIC (#1822), so this
-    # file no longer asks it a question about periodicity.
+    # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
+    # converge. Three converge and three are already at round-off (see above). The one entry that
+    # used to sit here, FPGFDMSolver, never produced a number to converge at all; it has since
+    # stopped declaring PERIODIC (#1822), so this file no longer asks it about periodicity.
 }
 
 
@@ -248,6 +266,33 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
     )
 
 
+def _solver_kwargs(cls: type, x: np.ndarray, nx: int) -> dict:
+    """The constructor arguments a solver needs, resolved from its own signature.
+
+    One owner, because both fixtures in this file need it and a copy that drifts splits the matrix
+    silently: the seam half and the surface half would then be measuring two different solvers under
+    one name, which is the failure mode this file exists to catch.
+    """
+    params = inspect.signature(cls.__init__).parameters
+    kwargs = {}
+    if "collocation_points" in params:
+        kwargs["collocation_points"] = x.reshape(-1, 1)
+    if "seed" in params:
+        # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
+        # trials of one configuration previously returned monotone=False, False, True, so xfail
+        # asserted a failure it did not reliably have and pass asserted the opposite.
+        kwargs["seed"] = SEED
+    if "num_particles" in params:
+        # Refine the SAMPLE with the grid, not just the grid. A particle method converges as
+        # N -> inf AND h -> 0; holding N fixed leaves a Monte Carlo floor set by N, so at the fine
+        # end the convergence oracle below compares noise and the verdict becomes a coin flip.
+        # Measured on the PERIODIC row at a fixed 5000 particles: monotone in 6 of 12 seeds. With
+        # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
+        # every type this solver declares converges in 20 of 20 seeds.
+        kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
+    return kwargs
+
+
 def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
     """Run one solve from exactly periodic data and return the field it produced."""
     x = np.linspace(0.0, 1.0, nx)
@@ -257,9 +302,7 @@ def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
     assert seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
 
     problem = _periodic_problem(nx=nx, nt=nt)
-    kwargs = {}
-    if "collocation_points" in inspect.signature(cls.__init__).parameters:
-        kwargs["collocation_points"] = x.reshape(-1, 1)
+    kwargs = _solver_kwargs(cls, x, nx)
     solver = cls(problem, **kwargs)
 
     if hasattr(solver, "solve_hjb_system"):
@@ -450,11 +493,19 @@ BC_FACTORIES = {
 # returned monotone=False, False, True on the identical configuration. Marking it xfail asserts a
 # failure it does not reliably have; marking it pass asserts the opposite. It is skipped, named,
 # and the seeding is the fix.
-STOCHASTIC_UNSEEDED = {
-    "FPParticleSolver": "no seed parameter; seam varies ~25% run to run",
-}
+# Emptied by #1838. `FPParticleSolver` took no seed and drew from the global numpy state, so this
+# matrix could not classify it in EITHER direction and skipped it by name. It now takes `seed=`,
+# the fixtures above pass one, and its rows are measured like everyone else's. Kept as an empty
+# dict rather than deleted: the next unseeded solver to arrive needs somewhere honest to go, and
+# "skipped and named" is the correct verdict for one, not "passed".
+STOCHASTIC_UNSEEDED: dict[str, str] = {}
 
 SURFACE_NOT_HONOURED = {
+    # FPParticleSolver-PERIODIC is deliberately NOT listed, and the first version of this file had
+    # it wrong. At a fixed 5000 particles it read 4.95e-01, 2.66e-01, 2.79e-01 -- worse at the
+    # finest grid, so "not honoured". That was an artefact of refining h while holding N: the Monte
+    # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
+    # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
     ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
@@ -472,9 +523,7 @@ SURFACE_NOT_HONOURED = {
 def _solve_with_bc(cls, bc_type, nx, nt):
     x = np.linspace(0.0, 1.0, nx)
     problem = _problem_with_bc(BC_FACTORIES[bc_type](), nx, nt)
-    kwargs = {}
-    if "collocation_points" in inspect.signature(cls.__init__).parameters:
-        kwargs["collocation_points"] = x.reshape(-1, 1)
+    kwargs = _solver_kwargs(cls, x, nx)
     solver = cls(problem, **kwargs)
     if hasattr(solver, "solve_hjb_system"):
         return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x
