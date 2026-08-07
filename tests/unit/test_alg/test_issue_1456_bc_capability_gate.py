@@ -53,16 +53,38 @@ def _pts():
 
 
 # ---------------------------------------------------------------------------
-# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin/periodic; Reflecting/Extrapolation
-# (which no other test constructs, and the audit confirms it cannot honor) fail loud at
-# construction. Periodic and general-Robin sub-cases pass the type-level gate and remain
-# enforced by the row builder at solve time.
+# HJBGFDM — declares Dirichlet/Neumann/no-flux/Robin/periodic; Reflecting/Extrapolation (which no
+# other test constructs, and the audit confirms it cannot honor) fail loud at construction.
+#
+# PERIODIC stays declared because it is real: on a cloud with no detected boundary points the
+# Issue #711 wrap gives a seam of at most 3.3e-11 at Nx=11/21/41/81, three orders under #1822's
+# own SEAM_TOL = 1e-9 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16). The default endpoint-inclusive
+# cloud cannot reach it -- boundary detection ignores periodic_dims and routes those points to
+# the row builder, which raises. That is #1841. General-Robin sub-cases likewise pass the
+# type-level gate and are enforced by the row builder.
 # ---------------------------------------------------------------------------
 
 
 def test_hjb_gfdm_fails_loud_on_reflecting():
     with pytest.raises(NotImplementedError, match="does not support"):
         HJBGFDMSolver(_problem(uniform_bc(BCType.REFLECTING, dimension=1)), collocation_points=_pts(), delta=0.25)
+
+
+def test_fp_gfdm_fails_loud_on_periodic():
+    """FPGFDMSolver undeclared PERIODIC in #1822, so the refusal lands here rather than mid-solve.
+
+    It ran until its density went negative -- t=6 at Nx=11, t=4 at Nx=21, t=3 at Nx=41, i.e.
+    sooner on finer grids, so not a resolution problem. Structurally it never had a periodic
+    path: it builds its TaylorOperator with no geometry=, so no wrap is constructed, and the
+    resolved "periodic" type is never read.
+
+    HJBGFDMSolver is NOT included. It genuinely honours PERIODIC on a cloud with no detected
+    boundary points (seam at most 3.3e-11 at Nx=11/21/41/81, against SEAM_TOL = 1e-9); the default
+    cloud cannot reach that path because boundary detection ignores periodic_dims, which is #1841
+    and not a capability lie.
+    """
+    with pytest.raises(NotImplementedError, match="does not support"):
+        FPGFDMSolver(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
 
 
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, periodic_bc, robin_bc])
@@ -176,7 +198,8 @@ def test_fp_particle_accepts_supported(bc_factory):
 
 
 # ---------------------------------------------------------------------------
-# HJB-SL / FP-SL-Jacobian / FP-GFDM — zero-flux/periodic; Dirichlet/Robin (silently collapsed to
+# HJB-SL / FP-SL-Jacobian — zero-flux/periodic; FP-GFDM — zero-flux only since #1822;
+# Dirichlet/Robin (silently collapsed to
 # Neumann / returned None — the audit's silent-mishandling cases) now fail loud at construction.
 # ---------------------------------------------------------------------------
 
@@ -210,7 +233,7 @@ def test_fp_gfdm_fails_loud_on_unsupported(bc):
         FPGFDMSolver(_problem(bc), collocation_points=pts, delta=0.25)
 
 
-@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc, periodic_bc])
+@pytest.mark.parametrize("bc_factory", [no_flux_bc, neumann_bc])  # PERIODIC undeclared, #1822
 def test_fp_gfdm_accepts_supported(bc_factory):
     pts = np.linspace(0.0, 1.0, N).reshape(-1, 1)
     FPGFDMSolver(_problem(bc_factory(dimension=1)), collocation_points=pts, delta=0.25)

@@ -1,10 +1,10 @@
 - **The full declared BC surface is measured, not trusted** (Issue #1574, phase 1a). Every
   `(solver, BC-type)` pair a solver declares is driven through one solve and checked against the
-  invariant that type means: **39 pairs across 11 solvers** (NEUMANN 11, PERIODIC 11, NO_FLUX 11,
+  invariant that type means: **38 pairs across 11 solvers** (NEUMANN 11, NO_FLUX 11, PERIODIC 10,
   DIRICHLET 4, ROBIN 1, REFLECTING 1). A declaration that the code does not honour, and a
   declaration the code then refuses, are both failures and both now have a number.
   Found: `HJBGFDMSolver` declares `DIRICHLET` and the solve returns **NaN**; `FPGFDMSolver` raises
-  for all three types it declares; `FPSLSolver` / `FPSLAdjointSolver` raise at `Nx=81` under
+  for both types it declares; `FPSLSolver` / `FPSLAdjointSolver` raise at `Nx=81` under
   `NEUMANN` / `NO_FLUX`.
 - The oracle is **absolute where the quantity is zero in exact arithmetic** (a Dirichlet wall value,
   a periodic seam) and **monotone convergence over three refinements otherwise** (mass, a normal

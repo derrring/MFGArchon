@@ -80,10 +80,17 @@ class FPGFDMSolver(BaseFPSolver):
 
     _scheme_family = SchemeFamily.GFDM
 
-    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type handles no-flux / Neumann /
-    # periodic and returns None (silently) for everything else; declare exactly those so
-    # Dirichlet / Robin / Reflecting / Extrapolation fail loud instead.
-    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
+    # BoundaryCapable protocol (Issue #1456): _resolve_boundary_type resolves no-flux / Neumann /
+    # periodic and returns None (silently) for everything else, so Dirichlet / Robin / Reflecting /
+    # Extrapolation fail loud at construction.
+    #
+    # PERIODIC is NOT declared (#1822), and the reason is structural rather than behavioural:
+    # this solver builds its TaylorOperator with no geometry=, so no periodic wrap is ever
+    # constructed and the "periodic" its resolver returns is read by nothing downstream. There is
+    # no path to honour, at any grid size. Declaring it bought a mid-solve ValueError -- the
+    # density goes negative, sooner on finer grids -- instead of a refusal a caller can act on.
+    # Use TensorProductGrid + FDM/FVM for periodic geometries.
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN})
 
     #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
     #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver

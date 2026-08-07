@@ -443,11 +443,17 @@ def test_dispatch_neumann_row_uses_normal_grad():
 
 
 def test_dispatch_periodic_raises():
-    """PERIODIC BC type at a boundary point raises NotImplementedError with hint."""
+    """PERIODIC at a DETECTED boundary point raises NotImplementedError from the row builder.
+
+    Still the row builder, not construction: HJBGFDMSolver keeps declaring PERIODIC, because on a
+    cloud with no detected boundary points it honours it (seam at most 3.3e-11 at Nx=11/21/41/81,
+    via the Issue #711 wrap). What fails is this configuration -- points ON a face, which boundary
+    detection marks as boundary even on a periodic axis, sending them to a row builder that has
+    no periodic row. Tracked as #1841.
+    """
     LX, LY = 10.0, 10.0
     geom = Hyperrectangle(np.array([[0.0, LX], [0.0, LY]]))
     points, boundary_idx = _grid_with_boundary(LX, LY, n_in=4, eps=1e-7)
-    # Three walls NO_FLUX + one PERIODIC (legitimate setup for some 2D problems)
     bc = BoundaryConditions(
         segments=[
             BCSegment(name="left", bc_type=BCType.NO_FLUX, boundary="x_min"),
@@ -457,6 +463,7 @@ def test_dispatch_periodic_raises():
         ],
         dimension=2,
     )
+
     solver = _build_solver(points, boundary_idx, bc, geom)
     n = len(points)
     fake_jac = sp.eye(n, format="csr") * 0.5
@@ -465,7 +472,9 @@ def test_dispatch_periodic_raises():
     with pytest.raises(NotImplementedError) as exc_info:
         solver._apply_boundary_conditions_to_sparse_system(fake_jac, fake_res, time_idx=0, u_current=np.zeros(n))
     assert "PERIODIC" in str(exc_info.value)
-    assert "TensorProductGrid" in str(exc_info.value) or "FDM" in str(exc_info.value)
+    # Not `or "FDM" in ...`: "FDM" is a substring of "HJBGFDMSolver", so that clause passes for
+    # any message this class raises and asserts nothing.
+    assert "TensorProductGrid" in str(exc_info.value)
 
 
 def test_dispatch_robin_nonzero_alpha_raises():
