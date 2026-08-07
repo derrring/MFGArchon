@@ -35,6 +35,8 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -623,4 +625,38 @@ def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
     assert not missing, (
         f"these declared (solver, BC) pairs have a fixture and are NOT measured: {sorted(missing)}. "
         f"A pair that is absent reads exactly like a pair that passed."
+    )
+
+
+def test_the_gfdm_periodic_solve_is_a_solution_and_not_a_periodic_looking_artefact():
+    """A positive control for the two HJBGFDMSolver rows this file un-xfailed in #1841.
+
+    Both of those rows measure a seam -- `bc_residual(field, PERIODIC, ...)` IS `seam` -- so between
+    them they certify one scalar, and this file's own preamble records what that is worth: under a
+    symmetric datum two FP solvers scored 2e-15 while their mode amplitude was 8.7% wrong. Here the
+    doubt is sharper than symmetry. The GFDM periodic path augments the cloud with ghost points, and
+    on an endpoint-inclusive grid that augmentation contains a COINCIDENT pair at each end (x=0
+    appears twice). A duplicate node softly ties u[0] to u[-1], which is a mechanism for making the
+    seam small without solving anything -- exactly the self-fulfilling case a seam cannot detect.
+
+    So this asserts against an independent solver instead. `HJBSemiLagrangianSolver` is the one this
+    file records as exact for PERIODIC (4.4e-16, repaired in #1824), and the GFDM solve agrees with
+    it to 1.21e-02 relative Linf at Nx=41 -- CLOSER than `HJBFDMSolver`, which is 5.39e-02 on the
+    same comparison and is itself an accepted periodic solver here. The field is also non-constant
+    (peak-to-peak 0.40), which rules out the degenerate way to satisfy a seam.
+    """
+    nx, nt = 41, 20
+    reference = np.asarray(_solve_periodic(HJBSemiLagrangianSolver, nx=nx, nt=nt))[0]
+    gfdm = np.asarray(_solve_periodic(HJBGFDMSolver, nx=nx, nt=nt))[0]
+
+    scale = np.max(np.abs(reference))
+    assert np.ptp(gfdm) > 0.1 * scale, (
+        f"the GFDM periodic solve is nearly constant (peak-to-peak {np.ptp(gfdm):.4f}); a constant "
+        f"field satisfies the seam invariant while solving nothing"
+    )
+    relative = np.max(np.abs(gfdm - reference)) / scale
+    assert relative < 5.0e-02, (
+        f"the GFDM periodic solve is {relative:.4e} from HJBSemiLagrangianSolver, which this file "
+        f"records as exact under PERIODIC. The seam can be satisfied by the ghost cloud's coincident "
+        f"endpoint pair without the interior being solved; this is what rules that out"
     )

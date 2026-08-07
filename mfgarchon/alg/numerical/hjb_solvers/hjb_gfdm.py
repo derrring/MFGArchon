@@ -647,6 +647,19 @@ class HJBGFDMSolver(BaseHJBSolver):
             raise ValueError(f"inner_solver must be 'newton' or 'howard', got {inner_solver!r}")
         self.inner_solver = inner_solver
 
+        # ONE source for "which domain is this", resolved before anything reads it (#1841).
+        # Boundary detection and the operator's periodic wrap both need to know which axes are
+        # periodic, and answering that question from two different objects is how a caller who
+        # passes a NON-periodic collocation_geometry for a periodic problem got a seam of 1.36e+00
+        # in silence: detection saw the problem's periodic axes and skipped them, the operator saw
+        # a non-periodic domain and built no wrap. Before #1841 that configuration raised. Reading
+        # both from the same object restores the refusal.
+        #
+        # The fallback: when the caller gives no separate collocation domain, the problem's own
+        # geometry describes the same region. Inert for non-periodic problems, whose
+        # `periodic_dimensions` is empty, so `_is_periodic` stays False exactly as before.
+        self._collocation_geometry = collocation_geometry if collocation_geometry is not None else problem.geometry
+
         # Boundary condition parameters
         # Auto-detect boundary indices if not provided (Issue #542 fix)
         if boundary_indices is not None:
@@ -739,9 +752,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"congestion_mode={congestion_mode!r} is not implemented (Issue #1426): it is stored but "
                 f"never applied, so it would silently behave as 'additive'. Only 'additive' is supported."
             )
-
-        # Collocation geometry for periodic domains (Issue #711)
-        self._collocation_geometry = collocation_geometry
 
         # Initialize QP components (will be fully initialized after neighborhoods are built)
         # Map qp_solver parameter to QPSolver backend
@@ -861,13 +871,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                     weight_function=weight_function,
                     k_neighbors=k_neighbors,
                     neighborhood_mode=neighborhood_mode,
-                    # Issue #711 periodic support, Issue #1841: fall back to the problem's own
-                    # geometry when the caller gave no separate collocation domain. They describe
-                    # the same region, and without it a periodic problem built the operator with
-                    # no wrap at all -- so the seam stayed open even once boundary detection
-                    # stopped mis-classifying the faces. Inert for non-periodic problems, whose
-                    # `periodic_dimensions` is empty, leaving `_is_periodic` False as before.
-                    geometry=collocation_geometry if collocation_geometry is not None else problem.geometry,
+                    # Issue #711 periodic support. The resolved geometry, so this and boundary
+                    # detection cannot disagree about which axes are periodic (#1841).
+                    geometry=self._collocation_geometry,
                     # Issue #1124: visibility filter at operator level so
                     # D_lap / D_grad respect obstacle connectivity (not just
                     # NeighborhoodBuilder's post-filter view).
@@ -1483,10 +1489,14 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         `SupportsPeriodic.periodic_dimensions` is the declared source; a geometry that does not
         implement it reports nothing periodic, which is the pre-#1841 behaviour.
+
+        Read from `self._collocation_geometry` -- the SAME object the operator's periodic wrap is
+        built from -- so the two cannot disagree. `len(...)`, not truthiness: `np.array([0])` is
+        falsy on its single element and would silently demote a geometry whose only periodic axis
+        is 0, and a multi-element array raises on `if dims` outright.
         """
-        geom = getattr(self.problem, "geometry", None)
-        dims = getattr(geom, "periodic_dimensions", None)
-        return tuple(dims) if dims else ()
+        dims = getattr(self._collocation_geometry, "periodic_dimensions", None)
+        return tuple(dims) if dims is not None and len(dims) > 0 else ()
 
     def _get_domain_bounds_for_detection(self) -> list[tuple[float, float]] | None:
         """Get domain bounds for boundary detection (before full initialization)."""

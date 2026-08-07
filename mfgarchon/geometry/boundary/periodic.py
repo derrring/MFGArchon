@@ -308,6 +308,7 @@ def create_reflection_ghost_points(
 
 __all__ = [
     "wrap_positions",
+    "wrap_displacement",
     "create_periodic_ghost_points",
     "create_reflection_ghost_points",
 ]
