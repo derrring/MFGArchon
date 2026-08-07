@@ -124,3 +124,57 @@ jobs:
               labels: ['automated', 'area: testing', 'priority: medium', 'type: bug'],
             });
           }
+
+  # The closing edge. notify-on-failure had only an opening one: it filed or commented when a run
+  # was not green and did nothing when one was, so an issue it created outlived its own cause until
+  # a human swept it. #1806 recorded that for nightly.yml -- #1703 sat open at `priority: high`
+  # through eight consecutive green nightlies -- and this workflow was left with the same shape.
+  # Measured here: #1817 was filed 2026-08-03 for a red baseline that #1828 fixed on 2026-08-04, and
+  # it was still open four days later because nothing closes it and the sweep is weekly.
+  resolve-on-success:
+    needs: discrimination
+    # Literally 'success', not `success()` and not "did not fail": this job's whole timeout is 300
+    # minutes and a sweep that blows it reports `cancelled`, which is exactly the run that most
+    # needs the issue left open.
+    if: ${{ needs.discrimination.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/github-script@v9
+      with:
+        script: |
+          const date = new Date().toISOString().split('T')[0];
+          const title = 'Weekly test-discrimination sweep is failing';
+          const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          // Title AND the `automated` label, the pair notify-on-failure creates with. A
+          // human-filed issue sharing the title carries no `automated` label and must survive:
+          // a robot closing a person's issue is worse than a stale one.
+          const existing = await github.paginate(github.rest.issues.listForRepo, {
+            owner: context.repo.owner, repo: context.repo.repo, state: 'open',
+            labels: 'automated', per_page: 100,
+          });
+          // `issues.listForRepo` returns pull requests too, and this job CLOSES what it selects
+          // rather than only commenting. Identify them by the `pull_request` key and skip them.
+          const open = existing.find(i => i.title === title && !i.pull_request);
+          if (!open) {
+            core.info('No open automated discrimination-failure issue to resolve.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner, repo: context.repo.repo, issue_number: open.number,
+            body: [
+              `The sweep is green as of ${date}; closing.`,
+              '',
+              `Run: ${url}`,
+              '',
+              'Filed and closed by `discrimination.yml`. If discrimination drops again a new issue',
+              'is opened rather than this one reopened, so each report carries the run that',
+              'produced it.',
+            ].join('\n'),
+          });
+          await github.rest.issues.update({
+            owner: context.repo.owner, repo: context.repo.repo, issue_number: open.number,
+            state: 'closed', state_reason: 'completed',
+          });
+          core.info(`Closed #${open.number}.`);

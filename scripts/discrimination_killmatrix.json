@@ -1,860 +1,940 @@
 {
- "_measured_at": {
-  "collected": 5683,
-  "commit": "bec28ce5",
-  "excluded": "tests/unit/test_discrimination_ratchet.py",
+  "_measured_at": {
+    "collected": 5872,
+    "commit": "db3496f9",
+    "excluded": "tests/unit/test_discrimination_ratchet.py",
+    "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
+    "paths": [
+      "tests"
+    ]
+  },
+  "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
+  "baseline_seconds": 347.3,
+  "killed_by": {
+    "tests/integration/test_coupling_mesh_geometry.py::TestFixedPointIteratorMeshGeometry::test_fem_couples_through_fixed_point_iterator": [
+      "optimal_control_sign"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[3]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[explicit]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[implicit]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_diffusion_magnitude_gate.py::test_weak_form_fem_fp_diffusion_magnitude": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_fem_robin_bc.py::TestRobinSolveLoopWiring::test_hjb_linear_loop_fixed_point": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass": [
+      "optimal_control_sign"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[dirichlet]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[no_flux]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[periodic]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_pure_diffusion_gaussian": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/integration/test_particle_collocation_mfg.py::TestFPGFDMSolver::test_fp_gfdm_mass_conservation": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x"
+    ],
+    "tests/regression/test_solver_golden_baseline.py::test_gfdm_hjb_matches_golden_baseline": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_adjoint_bc_coupling.py::TestCreateAdjointConsistentBC1D::test_values_with_exponential_density": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]": [
+      "drift_coefficient_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]": [
+      "drift_coefficient_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]": [
+      "drift_coefficient_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[0.5]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[1.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[2.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[0.7]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[2.5]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[0.5]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[1.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[2.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[0.7]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent": [
+      "drift_coefficient_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling": [
+      "drift_coefficient_2x",
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_clip_far_below_one_percent_still_stops_the_solve": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_configuration_with_no_negatives_at_all_still_runs": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_drift_is_reported_at_warning_level": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_scheme_does_not_conserve_mass_and_now_says_so": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_network_solver.py::TestFPNetworkSolverSolveFPSystem::test_volatility_field_is_sigma_not_diffusion": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_equivalence_quadratic_explicit": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-2.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-5.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[2-21-20000-5.0]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-1.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-2.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_per_node_l_H": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[None-<lambda>-1.0-f(m)-only]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m),": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-1.0-V+f(m)]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m),": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_3d_diffusion_matches_analytic": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticSLUnificationPinning::test_1d_step_byte_identical_to_legacy[cubic]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_diffusion_from_volatility_torch_numpy_parity": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.2]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-2.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-DIRICHLET]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-PERIODIC]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLJacobianSolver-PERIODIC]": [
+      "diffusion_scalar_2x",
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_fp_solve_conserves_mass_in_the_limit[FPParticleSolver]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_a_periodic_solve_reproduces_the_heat_kernel[FPFDMSolver]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_a_periodic_solve_reproduces_the_heat_kernel[FPFVMSolver]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFDMSolver]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py::test_sl_diffusion_agrees_with_adi_2d": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_periodic_step_matches_the_analytic_heat_kernel": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_spatial_order_is_second_not_first": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_weak_form_volatility.py::test_diffusion_coefficient_converts_sigma_to_D": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.7]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.4142135623730951]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[2.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[3.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.7]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.4142135623730951]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[2.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[3.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.1]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.7]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.4142135623730951]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[2.5]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[3.0]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_maximize": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_hamiltonian_classes.py::TestHamiltonianBase::test_hamiltonian_optimal_control": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_hamiltonian_classes.py::TestSeparableLagrangian::test_quadratic_optimal_control": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MAXIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]": [
+      "optimal_control_sign"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]": [
+      "drift_coefficient_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp": [
+      "bc_default_reads_as_reflect"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect": [
+      "bc_default_reads_as_reflect"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available": [
+      "bc_noflux_reads_as_clamp"
+    ],
+    "tests/unit/test_operators/test_diffusion.py::TestIsotropicDiffusion::test_from_volatility_scalar_matches_half_sigma_sq": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_byte_identical_to_literal": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_is_half_sigma_squared": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind": [
+      "diffusion_scalar_2x"
+    ]
+  },
   "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
+  "mutations": {
+    "bc_default_reads_as_reflect": {
+      "kill_count": 2,
+      "killed": [
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
+      ],
+      "owner": "absent BC defaults to clamp/absorbing (#1698)",
+      "seconds": 344.5,
+      "status": "ok",
+      "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
+    },
+    "bc_noflux_reads_as_clamp": {
+      "kill_count": 9,
+      "killed": [
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticSLUnificationPinning::test_1d_step_byte_identical_to_legacy[cubic]",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned",
+        "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive",
+        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through",
+        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available"
+      ],
+      "owner": "no_flux/neumann/robin -> reflect (#1698)",
+      "seconds": 348.0,
+      "status": "ok",
+      "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
+    },
+    "diffusion_field_2x": {
+      "kill_count": 5,
+      "killed": [
+        "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion",
+        "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree",
+        "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise",
+        "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
+      ],
+      "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
+      "seconds": 336.2,
+      "status": "ok",
+      "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
+    },
+    "diffusion_scalar_2x": {
+      "kill_count": 145,
+      "killed": [
+        "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
+        "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
+        "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[3]",
+        "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[explicit]",
+        "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[implicit]",
+        "tests/integration/test_diffusion_magnitude_gate.py::test_weak_form_fem_fp_diffusion_magnitude",
+        "tests/integration/test_fem_robin_bc.py::TestRobinSolveLoopWiring::test_hjb_linear_loop_fixed_point",
+        "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[dirichlet]",
+        "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[no_flux]",
+        "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[periodic]",
+        "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_pure_diffusion_gaussian",
+        "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence",
+        "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence",
+        "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
+        "tests/integration/test_particle_collocation_mfg.py::TestFPGFDMSolver::test_fp_gfdm_mass_conservation",
+        "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
+        "tests/regression/test_solver_golden_baseline.py::test_gfdm_hjb_matches_golden_baseline",
+        "tests/unit/test_alg/test_adjoint_bc_coupling.py::TestCreateAdjointConsistentBC1D::test_values_with_exponential_density",
+        "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d",
+        "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion",
+        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_clip_far_below_one_percent_still_stops_the_solve",
+        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_configuration_with_no_negatives_at_all_still_runs",
+        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_drift_is_reported_at_warning_level",
+        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_scheme_does_not_conserve_mass_and_now_says_so",
+        "tests/unit/test_alg/test_fp_network_solver.py::TestFPNetworkSolverSolveFPSystem::test_volatility_field_is_sigma_not_diffusion",
+        "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_per_node_l_H",
+        "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[None-<lambda>-1.0-f(m)-only]",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m),",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-1.0-V+f(m)]",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m),",
+        "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]",
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic",
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_3d_diffusion_matches_analytic",
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_diffusion_from_volatility_torch_numpy_parity",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-2.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.1]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.2]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.5]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-1.0]",
+        "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-2.0]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLJacobianSolver-PERIODIC]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_a_periodic_solve_reproduces_the_heat_kernel[FPFDMSolver]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_a_periodic_solve_reproduces_the_heat_kernel[FPFVMSolver]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFDMSolver]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
+        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
+        "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D",
+        "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared",
+        "tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py::test_sl_diffusion_agrees_with_adi_2d",
+        "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_periodic_step_matches_the_analytic_heat_kernel",
+        "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_spatial_order_is_second_not_first",
+        "tests/unit/test_alg/test_weak_form_volatility.py::test_diffusion_coefficient_converts_sigma_to_D",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.1]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.7]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.4142135623730951]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[2.5]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[3.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.1]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.7]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.4142135623730951]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[2.5]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[3.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.1]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.7]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.4142135623730951]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[2.5]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[3.0]",
+        "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree",
+        "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter",
+        "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility",
+        "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma",
+        "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar",
+        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning",
+        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma",
+        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted",
+        "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma",
+        "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order",
+        "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order",
+        "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless",
+        "tests/unit/test_operators/test_diffusion.py::TestIsotropicDiffusion::test_from_volatility_scalar_matches_half_sigma_sq",
+        "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_byte_identical_to_literal",
+        "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_is_half_sigma_squared",
+        "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind"
+      ],
+      "owner": "D = sigma^2/2 for scalar sigma (#811)",
+      "seconds": 662.3,
+      "status": "ok",
+      "verify": "diffusion_from_volatility(2.0) == 4.0"
+    },
+    "drift_coefficient_2x": {
+      "kill_count": 19,
+      "killed": [
+        "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
+        "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_equivalence_quadratic_explicit",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-1.0]",
+        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-2.0]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLJacobianSolver-PERIODIC]",
+        "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling",
+        "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]",
+        "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]",
+        "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
+      ],
+      "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
+      "seconds": 344.9,
+      "status": "ok",
+      "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
+    },
+    "optimal_control_sign": {
+      "kill_count": 40,
+      "killed": [
+        "tests/integration/test_coupling_mesh_geometry.py::TestFixedPointIteratorMeshGeometry::test_fem_couples_through_fixed_point_iterator",
+        "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]",
+        "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[0.5]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[1.0]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[2.0]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[0.7]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[2.5]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[0.5]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[1.0]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[2.0]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[0.7]",
+        "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
+        "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
+        "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-2.0]",
+        "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-5.0]",
+        "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[2-21-20000-5.0]",
+        "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-DIRICHLET]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-PERIODIC]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_fp_solve_conserves_mass_in_the_limit[FPParticleSolver]",
+        "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_maximize",
+        "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize",
+        "tests/unit/test_core/test_hamiltonian_classes.py::TestHamiltonianBase::test_hamiltonian_optimal_control",
+        "tests/unit/test_core/test_hamiltonian_classes.py::TestSeparableLagrangian::test_quadratic_optimal_control",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MINIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MINIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MINIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MINIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MINIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MAXIMIZE]",
+        "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]"
+      ],
+      "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
+      "seconds": 348.0,
+      "status": "ok",
+      "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
+    }
+  },
   "paths": [
-   "tests"
-  ]
- },
- "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
- "baseline_seconds": 181.4,
- "killed_by": {
-  "tests/integration/test_coupling_mesh_geometry.py::TestFixedPointIteratorMeshGeometry::test_fem_couples_through_fixed_point_iterator": [
-   "optimal_control_sign"
+    "tests"
   ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[3]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[explicit]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[implicit]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_diffusion_magnitude_gate.py::test_weak_form_fem_fp_diffusion_magnitude": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_fem_robin_bc.py::TestRobinSolveLoopWiring::test_hjb_linear_loop_fixed_point": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass": [
-   "optimal_control_sign"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[dirichlet]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[no_flux]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[periodic]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_pure_diffusion_gaussian": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/integration/test_newton_mfg_solver.py::test_one_newton_step_reduces_the_mfg_residual": [
-   "drift_coefficient_2x"
-  ],
-  "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline": [
-   "diffusion_scalar_2x",
-   "drift_coefficient_2x"
-  ],
-  "tests/regression/test_solver_golden_baseline.py::test_gfdm_hjb_matches_golden_baseline": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_adjoint_bc_coupling.py::TestCreateAdjointConsistentBC1D::test_values_with_exponential_density": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]": [
-   "drift_coefficient_2x",
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]": [
-   "drift_coefficient_2x",
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]": [
-   "drift_coefficient_2x",
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[0.5]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[1.0]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[2.0]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[0.7]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[2.5]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[0.5]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[1.0]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[2.0]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[0.7]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent": [
-   "drift_coefficient_2x",
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling": [
-   "drift_coefficient_2x",
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_fp_network_solver.py::TestFPNetworkSolverSolveFPSystem::test_volatility_field_is_sigma_not_diffusion": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_equivalence_quadratic_explicit": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-1.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-2.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion": [
-   "diffusion_field_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_per_node_l_H": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[None-<lambda>-1.0-f(m)-only]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m),": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-1.0-V+f(m)]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m),": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_3d_diffusion_matches_analytic": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi": [
-   "diffusion_scalar_2x",
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_constant_terminal_preserved": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_diffusion_from_volatility_torch_numpy_parity": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.2]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-2.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq": [
-   "diffusion_field_2x"
-  ],
-  "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py::test_sl_diffusion_agrees_with_adi_2d": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py::test_dpp_error_converges_under_refinement": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_weak_form_volatility.py::test_diffusion_coefficient_converts_sigma_to_D": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.7]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.4142135623730951]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[2.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[3.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.7]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.4142135623730951]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[2.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[3.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.1]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.7]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.4142135623730951]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[2.5]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[3.0]": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree": [
-   "diffusion_scalar_2x",
-   "diffusion_field_2x"
-  ],
-  "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_maximize": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_hamiltonian_classes.py::TestHamiltonianBase::test_hamiltonian_optimal_control": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_hamiltonian_classes.py::TestSeparableLagrangian::test_quadratic_optimal_control": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MAXIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]": [
-   "optimal_control_sign"
-  ],
-  "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]": [
-   "drift_coefficient_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp": [
-   "bc_default_reads_as_reflect"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect": [
-   "bc_default_reads_as_reflect"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_renamed_attribute_fails_loudly_rather_than_disabling_the_guard": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available": [
-   "bc_noflux_reads_as_clamp"
-  ],
-  "tests/unit/test_operators/test_diffusion.py::TestIsotropicDiffusion::test_from_volatility_scalar_matches_half_sigma_sq": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise": [
-   "diffusion_field_2x"
-  ],
-  "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise": [
-   "diffusion_field_2x"
-  ],
-  "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_byte_identical_to_literal": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_is_half_sigma_squared": [
-   "diffusion_scalar_2x"
-  ],
-  "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind": [
-   "diffusion_scalar_2x"
-  ]
- },
- "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
- "mutations": {
-  "bc_default_reads_as_reflect": {
-   "kill_count": 2,
-   "killed": [
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_conditions_that_yield_no_string_still_clamp",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
-   ],
-   "owner": "absent BC defaults to clamp/absorbing (#1698)",
-   "seconds": 167.0,
-   "status": "ok",
-   "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
-  },
-  "bc_noflux_reads_as_clamp": {
-   "kill_count": 11,
-   "killed": [
-    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi",
-    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_constant_terminal_preserved",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestBCTypeStringFromConditions::test_the_two_halves_compose[<lambda>-reflect]",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[neumann-reflect]",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[no_flux-reflect]",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_each_declared_type_maps_to_its_operation[robin-reflect]",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_only_three_operations_are_ever_returned",
-    "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive",
-    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through",
-    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_renamed_attribute_fails_loudly_rather_than_disabling_the_guard",
-    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available"
-   ],
-   "owner": "no_flux/neumann/robin -> reflect (#1698)",
-   "seconds": 159.6,
-   "status": "ok",
-   "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
-  },
-  "diffusion_field_2x": {
-   "kill_count": 5,
-   "killed": [
-    "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion",
-    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree",
-    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise",
-    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
-   ],
-   "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-   "seconds": 175.6,
-   "status": "ok",
-   "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
-  },
-  "diffusion_scalar_2x": {
-   "kill_count": 129,
-   "killed": [
-    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
-    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
-    "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[3]",
-    "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[explicit]",
-    "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[implicit]",
-    "tests/integration/test_diffusion_magnitude_gate.py::test_weak_form_fem_fp_diffusion_magnitude",
-    "tests/integration/test_fem_robin_bc.py::TestRobinSolveLoopWiring::test_hjb_linear_loop_fixed_point",
-    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[dirichlet]",
-    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[no_flux]",
-    "tests/integration/test_mms_validation.py::TestMMSConvergenceRates::test_fp_convergence_rate[periodic]",
-    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_pure_diffusion_gaussian",
-    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence",
-    "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence",
-    "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
-    "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
-    "tests/regression/test_solver_golden_baseline.py::test_gfdm_hjb_matches_golden_baseline",
-    "tests/unit/test_alg/test_adjoint_bc_coupling.py::TestCreateAdjointConsistentBC1D::test_values_with_exponential_density",
-    "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d",
-    "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion",
-    "tests/unit/test_alg/test_fp_network_solver.py::TestFPNetworkSolverSolveFPSystem::test_volatility_field_is_sigma_not_diffusion",
-    "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_per_node_l_H",
-    "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_sigma_eff_formula_scalar_l_H",
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[None-<lambda>-1.0-f(m)-only]",
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m),",
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-1.0-V+f(m)]",
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m),",
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]",
-    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic",
-    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_3d_diffusion_matches_analytic",
-    "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_diffusion_from_volatility_torch_numpy_parity",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.01-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.05-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.1-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_half_sigma_sq_over_dxsq_equals_D_over_dxsq[0.5-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.01-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.05-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.1-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_2D_over_dxsq[0.5-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.01-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.05-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.1-2.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.1]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.2]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-0.5]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-1.0]",
-    "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py::test_sigma_sq_over_dxsq_equals_negative_2D_boundary[0.5-2.0]",
-    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D",
-    "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared",
-    "tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py::test_sl_diffusion_agrees_with_adi_2d",
-    "tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py::test_dpp_error_converges_under_refinement",
-    "tests/unit/test_alg/test_weak_form_volatility.py::test_diffusion_coefficient_converts_sigma_to_D",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.1]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.7]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[1.4142135623730951]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[2.5]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[3.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.1]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[0.7]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[1.4142135623730951]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[2.5]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_converter_and_problem_property_agree[3.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.1]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[0.7]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[1.4142135623730951]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[2.5]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_gfdm_sigma_resolution_agrees[3.0]",
-    "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree",
-    "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter",
-    "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility",
-    "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma",
-    "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar",
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning",
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma",
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted",
-    "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma",
-    "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order",
-    "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order",
-    "tests/unit/test_operators/test_diffusion.py::TestIsotropicDiffusion::test_from_volatility_scalar_matches_half_sigma_sq",
-    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_byte_identical_to_literal",
-    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_is_half_sigma_squared",
-    "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind"
-   ],
-   "owner": "D = sigma^2/2 for scalar sigma (#811)",
-   "seconds": 326.4,
-   "status": "ok",
-   "verify": "diffusion_from_volatility(2.0) == 4.0"
-  },
-  "drift_coefficient_2x": {
-   "kill_count": 19,
-   "killed": [
-    "tests/integration/test_newton_mfg_solver.py::test_one_newton_step_reduces_the_mfg_residual",
-    "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]",
-    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
-    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
-    "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_equivalence_quadratic_explicit",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-1.0]",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-2.0]",
-    "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb",
-    "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling",
-    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]",
-    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[1.0]",
-    "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
-   ],
-   "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-   "seconds": 171.1,
-   "status": "ok",
-   "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
-  },
-  "optimal_control_sign": {
-   "kill_count": 34,
-   "killed": [
-    "tests/integration/test_coupling_mesh_geometry.py::TestFixedPointIteratorMeshGeometry::test_fem_couples_through_fixed_point_iterator",
-    "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[1.0]",
-    "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[2.5]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[0.5]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[1.0]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_byte_identical_dyadic[2.0]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[0.7]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic[2.5]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[0.5]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[1.0]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_byte_identical_to_divide_form_dyadic[2.0]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[0.7]",
-    "tests/unit/test_alg/test_fp_drift_owner_optimal_control.py::test_owner_within_one_ulp_of_divide_form_nondyadic[2.5]",
-    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_byte_identical_when_consistent",
-    "tests/unit/test_alg/test_fp_fdm_potential_field_g017.py::TestFPFDMPotentialFieldDriftSource::test_potential_path_uses_control_cost_not_coupling",
-    "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d",
-    "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_maximize",
-    "tests/unit/test_core/test_hamiltonian_classes.py::TestControlCostBase::test_quadratic_control_cost_minimize",
-    "tests/unit/test_core/test_hamiltonian_classes.py::TestHamiltonianBase::test_hamiltonian_optimal_control",
-    "tests/unit/test_core/test_hamiltonian_classes.py::TestSeparableLagrangian::test_quadratic_optimal_control",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p0-OptimizationSense.MINIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p1-OptimizationSense.MINIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_base_agrees_with_analytic_separable_override[p2-OptimizationSense.MINIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p0-OptimizationSense.MINIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p1-OptimizationSense.MINIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MAXIMIZE]",
-    "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]"
-   ],
-   "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
-   "seconds": 159.3,
-   "status": "ok",
-   "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
-  }
- },
- "paths": [
-  "tests"
- ],
- "uncovered": []
+  "uncovered": []
 }
