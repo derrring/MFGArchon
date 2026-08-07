@@ -270,9 +270,17 @@ layer's state — if a line can be recomputed from the Plans, it is a view, not 
   from the time you are willing to spend and design something that fits; when it does not fit,
   **cut scope, do not extend**. Fixed time, variable scope. Status prefix is mandatory and is the
   single owner of state: `[ACTIVE]` / `[COMPLETED]` / `[SUPERSEDED by …]`.
-- **WIP limit 3.** Measured 2026-08-08: three notes carried `[ACTIVE]` (agent_axiom v4, Route B,
-  Route audit), so 3 is the observed sustainable concurrency, not a target. At the limit, start
-  nothing new — finish, or explicitly demote one to `Later`.
+- **`[ACTIVE]` means a Plan is being worked on. Nothing else may use it.** A document that is
+  merely still correct carries **no status tag at all** — absence is currency, and tags are for
+  what has left it (`[SUPERSEDED by …]`, `[ARCHIVED]`). Measured 2026-08-08: fifteen notes declared
+  ACTIVE, and eleven were architecture overviews, capability matrices and notation standards
+  saying "this doc still holds". A word meaning two things makes the monthly read return noise,
+  and a marker on almost everything discriminates nothing — the same way this repo's 5 tags and
+  84 `[UNREVIEWED]` stamps died.
+- **WIP limit 4**, observed not chosen — and got there by being wrong twice. ~~3~~ counted notes
+  *carrying* the prefix and missed a live Plan with no prefix; the recount then caught eleven
+  non-Plans using the same word. **Counting labels is not counting states.** At the limit, start
+  nothing new: finish one, or demote one to `Later` and say so.
 - **Ageing prompts, it never decides.** A Plan past its appetite shows as `[ACTIVE · 逾期]`. That
   is a fact, not a verdict: retirement stays a judgement someone makes. Same footing as
   *never judge guidance by a counter or a clock* — a Plan is a mechanism with a self-declared
