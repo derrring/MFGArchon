@@ -309,15 +309,22 @@ def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed:
         zeros = xp.zeros(1)
     cdf_with_zero = xp.concatenate([zeros, cdf])
 
-    # Sample uniform random numbers
-    if seed is not None and is_torch_backend:
-        xp.manual_seed(seed)
-
-    # Create U on same device as cdf for PyTorch compatibility
+    # Sample uniform random numbers.
+    #
+    # The seed drives a LOCAL generator on both paths. `torch.manual_seed` reseeds the
+    # process-global stream, so one seeded solve moved every unrelated torch draw in the same
+    # interpreter -- the defect #1838 removed on the numpy side, reintroduced on this one the
+    # moment a seed reached here. `seed=None` keeps drawing from each library's global stream,
+    # which is the compatibility contract a caller that seeds `np.random` or `torch` relies on.
     if is_torch_backend:
-        U = xp.rand(N, device=cdf.device, dtype=cdf.dtype)
+        generator = None
+        if seed is not None:
+            generator = xp.Generator(device=cdf.device)
+            generator.manual_seed(int(seed))
+        U = xp.rand(N, device=cdf.device, dtype=cdf.dtype, generator=generator)
     else:
-        U = backend.from_numpy(np.random.rand(N))
+        draw = np.random if seed is None else np.random.default_rng(seed)
+        U = backend.from_numpy(draw.random(N))
 
     # Inverse transform: find x such that CDF(x) = U
     indices = xp.searchsorted(cdf_with_zero, U)

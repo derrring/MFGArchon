@@ -10,7 +10,7 @@ Two contracts, and the second is the one that constrains the design:
 
 - `seed=<int>` -- a private `Generator`, so two runs agree bit for bit and nothing else touching
   `np.random` can perturb them;
-- `seed=None` -- the **global** stream, unchanged. Twelve files in this repository call
+- `seed=None` -- the **global** stream, unchanged. Nine files in this repository call
   `np.random.seed(...)` and then build this solver to compare two runs. A private Generator by
   default would stop honouring those seeds and make those comparisons non-deterministic rather
   than failing, which is the worse outcome: the tests would still pass, just meaninglessly.
@@ -91,10 +91,17 @@ def test_an_unrelated_draw_cannot_perturb_a_seeded_solve():
 
 
 def test_seed_none_still_follows_the_global_seed():
-    """The compatibility contract. Twelve files in this repo depend on exactly this.
+    """The compatibility contract. Nine files in this repo depend on exactly this.
 
     `np.random.seed(42)` before construction must still make an unseeded solver repeat itself, or
     every existing two-run comparison silently stops comparing anything.
+
+    Scope, because the general form of this sentence is false: it holds on the 1D ndarray-drift
+    path, which is the one those nine files use. On the other three, `sample_from_density` builds
+    `np.random.RandomState(None)` (sampling.py), which seeds from OS entropy rather than from the
+    global stream, so an unseeded solve there does not repeat under `np.random.seed`. That is not a
+    regression -- `main` passes `seed=None` there unconditionally and behaviour is byte-identical --
+    but it is why this test pins one path rather than parametrising over four.
     """
     np.random.seed(42)  # the legacy contract under test
     first = _solve(None)
@@ -171,3 +178,45 @@ def test_every_solve_path_is_reproducible_and_owns_its_stream(dim, callable_drif
 def test_the_other_solve_paths_still_respond_to_the_seed(dim, callable_drift):
     """Control for the test above: a path that ignored `seed` entirely would satisfy it trivially."""
     assert not np.array_equal(_solve_path(dim, callable_drift, seed=99), _solve_path(dim, callable_drift, seed=1234))
+
+
+# ---------------------------------------------------------------------------
+# The torch path. It reaches a different sampler with a different global stream, and the seed only
+# started reaching it in this change -- so everything above says nothing about it.
+# ---------------------------------------------------------------------------
+
+torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
+
+
+@pytest.mark.optional_torch
+def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
+    """The seed must drive a LOCAL torch generator, not `torch.manual_seed`.
+
+    Three assertions, and the third is the one that failed: reseeding the process-global stream
+    reproduces and differentiates exactly as a local generator does, so (a) and (b) cannot tell
+    them apart. Measured before the fix -- `torch.manual_seed(1234); torch.randn(3)` gave
+    [0.0461, 0.4024, -1.0115], and the same sequence with one seeded solve interposed gave
+    [0.2818, 1.3052, -1.3480]. That is this solver reaching out and moving an unrelated caller's
+    draws, which is the defect #1838 removed on the numpy side.
+    """
+    from mfgarchon.backends.torch_backend import TorchBackend
+    from mfgarchon.utils.particle_utils import sample_from_density_gpu
+
+    backend = TorchBackend(device="cpu")
+    grid = backend.from_numpy(np.linspace(0.0, 1.0, 64))
+    density = backend.from_numpy(np.exp(-10 * (np.linspace(0.0, 1.0, 64) - 0.5) ** 2))
+
+    def _sample(seed):
+        return backend.to_numpy(sample_from_density_gpu(density, grid, N=500, backend=backend, seed=seed))
+
+    np.testing.assert_array_equal(_sample(7), _sample(7))
+    assert not np.array_equal(_sample(7), _sample(8)), "a sampler ignoring the seed would pass the line above"
+
+    torch.manual_seed(1234)
+    expected = torch.randn(3).tolist()
+    torch.manual_seed(1234)
+    _sample(99)
+    assert torch.randn(3).tolist() == expected, (
+        "a seeded solve moved the process-global torch stream, so it perturbs every unrelated "
+        "torch draw in the same interpreter"
+    )

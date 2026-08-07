@@ -1,6 +1,15 @@
-`FPParticleSolver` accepts `seed=`, so a stochastic solve can be repeated. Every draw it makes goes
-through one owner, `self._rng` — a private `np.random.Generator` when `seed` is given, the global
-`np.random` module when it is not.
+`FPParticleSolver` accepts `seed=`, so a stochastic solve can be repeated. Every numpy draw it makes
+goes through one owner, `self._rng` — a private `np.random.Generator` when `seed` is given, the
+global `np.random` module when it is not.
+
+The torch sampling path is the exception and needed its own fix. It takes a seed derived from
+`self._rng` and, until independent review, honoured it with `torch.manual_seed` — the
+**process-global** torch generator, so one seeded solve silently moved every unrelated torch draw in
+the same interpreter. That is the defect this change removes on the numpy side, reintroduced on the
+other. It now drives a local `torch.Generator`, and the seam of that fix is pinned: reverting it
+reddens `test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone` and nothing else.
+Reproducibility and seed-sensitivity alone cannot catch it — a global reseed satisfies both — so the
+test asserts on an unrelated `torch.randn` sequence taken across a seeded solve.
 
 `seed=None` keeping the global stream is plain backward compatibility, and that is the only claim
 made for it: nine files here seed the global stream and then build this solver. The alternative was
@@ -8,6 +17,12 @@ measured rather than assumed — an entropy-seeded private default gives **1 fai
 across them, and that one failure (`test_issue_1412_fp_particle_sigma_override`) is **loud**. One
 code path serves both, because `choice`, `uniform`, `normal` and `standard_normal` exist on the
 module and on `Generator` with the same keywords.
+
+The scope of that compatibility claim is one solve path, the 1D ndarray-drift one those nine files
+use. On the other three `sample_from_density` builds `np.random.RandomState(None)`, which seeds from
+OS entropy rather than from the global stream, so an unseeded solve there does not follow
+`np.random.seed`. Unchanged by this PR — `main` passes `seed=None` there unconditionally — and now
+stated where it was previously implied.
 
 **What this unblocks.** The #1822 capability matrix could not classify this solver in *either*
 direction — three trials of one identical configuration returned `monotone = False, False, True`.

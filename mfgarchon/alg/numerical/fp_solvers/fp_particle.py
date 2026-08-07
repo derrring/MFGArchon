@@ -160,16 +160,13 @@ class FPParticleSolver(BaseFPSolver):
         self.num_particles = num_particles
         self.fp_method_name = "Particle"
 
-        # Issue #1838. Every draw this solver makes goes through `self._rng`, which is either the
-        # global numpy state or a private Generator:
+        # Issue #1838. Every numpy draw this solver makes goes through `self._rng`, which is either
+        # the global numpy state or a private Generator. The torch sampling path does not use it at
+        # all -- it takes a seed derived from `self._rng` and drives a local `torch.Generator`, for
+        # the same reason: see sample_from_density_gpu.
         #
-        #   seed=None  -> `np.random`, the global stream. Unchanged behaviour for existing callers,
-        #                 which is the only claim made for it: nine files here seed the global
-        #                 stream and then build this solver. Switching the default was measured
-        #                 rather than assumed -- an entropy-seeded private Generator gives
-        #                 1 failed / 65 passed across them, and that one
-        #                 (test_issue_1412_fp_particle_sigma_override) fails LOUDLY. So this is
-        #                 plain backward compatibility, not protection against a silent failure.
+        #   seed=None  -> `np.random`, the global stream. Nine files here seed it and then build
+        #                 this solver, so the default is backward compatibility and nothing more.
         #   seed=<int> -> a private Generator, independent of anything else touching np.random.
         #
         # One code path serves both: `choice`, `uniform`, `normal` and `standard_normal` exist on
