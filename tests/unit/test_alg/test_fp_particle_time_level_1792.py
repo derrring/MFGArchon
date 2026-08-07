@@ -1,12 +1,14 @@
-"""`FPParticleSolver` must read the value function at the time level it is stepping. Issue #1792.
+"""`FPParticleSolver` must read the value function forward in time. Issue #1792.
 
 The FP sweep runs FORWARD while the HJB sweep runs backward, and the pairing of the two is what
 makes the MFG fixed point mean anything. Reading `U[T - t_n]` instead of `U[t_n]` keeps every index
 in range for any `Nt` -- negative indexing wraps -- so nothing raises and nothing warns, while the
 density tracks the control's journey backwards.
 
-That mutation survived a 25-axis sweep against the entire marker-filtered suite: 5770 passed, 0
-failed. The reason is structural rather than a missing assertion. Every `U_solution` the particle
+That mutation survived a 25-axis sweep against the entire marker-filtered suite -- 5770 passed, 0
+failed, reported in #1792 and not re-measured here. What IS re-measured: with both index sites
+mirrored, all 23 test files that mention `FPParticleSolver` return 322 passed / 13 xfailed, byte for
+byte the unmutated result. The reason is structural rather than a missing assertion. Every `U_solution` the particle
 tests build is `np.zeros((Nt, Nx))` or `np.tile(f(x), (Nt, 1))` -- time-CONSTANT, so `U[n]` and
 `U[-1-n]` are literally the same array and the mutation is a no-op by construction. A fixture where
 time does not vary cannot test a coupling to time, and no assertion added to one would help.
@@ -23,7 +25,18 @@ available to each: `fp_particle.py` reads `U_solution_for_drift[n_time_idx]` on 
 `U_solution_for_drift[t_idx]` on the nD one.
 
 The seed comes from #1838. Without it this is a coin flip on the Monte Carlo draw rather than a
-statement about the solver.
+statement about the solver. Measured across 12 seeds the correlation moves in the fourth decimal
+(+0.9916 to +0.9917 correct, -0.0159 to -0.0141 mirrored), so the verdict is the solver's and not
+the draw's.
+
+SCOPE, because the stronger claim would be false. This measures the DIRECTION of the time coupling,
+not the exact level. A pure shift `U[i + s]` survives for every s from -8 to +20, and the lag is
+SMALLER at s = +10 (0.0054) than at the correct s = 0 (0.1139): with finite drift the mass
+physically trails a moving well, so reading ahead compensates that lag rather than exposing it. An
+off-by-one is therefore not caught here. The white-box form used on the FDM side
+(`test_hjb_fdm_nd_coupling_time_level.py`) spies the index sequence and would catch it, but that
+seam does not exist on this path -- the coupling runs through the drift computation. So this closes
+the defect #1792 names, a reversed read that no fixture in the suite could see, and claims no more.
 """
 
 from __future__ import annotations
@@ -50,6 +63,10 @@ MASS_START = 0.2
 TRACKS = 0.9
 # ...and the control: correlation alone is satisfied by a mass that follows the well loosely from
 # far away, so the run also has to get NEAR it. Correct is 0.114 (k=2) and 0.054 (k=5).
+#
+# This one is a genuine threshold, unlike TRACKS. The mirrored read gives 0.168 at k=2 -- which
+# PASSES it -- and 0.246 at k=5. So the control is carried by the correlation on the k=2 row and by
+# both on k=5; it is not a second independent detector, and calling it untuned would be wrong.
 MAX_LAG = 0.2
 
 
@@ -142,12 +159,15 @@ def test_the_density_follows_the_well_forward_in_time(dim, nx, particles, k):
     assert correlation > TRACKS, (
         f"the density does not follow the moving well through time (corr {correlation:+.4f}, "
         f"mean|centroid - well| {lag:.4f}). The FP sweep steps FORWARD, so it must read the value "
-        f"function at t_n, not at T - t_n; a mirrored read gives corr -0.01 to -0.62 here. "
-        f"(If the correlation is near zero rather than negative, check the fixture drives at all "
-        f"before concluding the time level is wrong.)"
+        f"function at t_n, not at T - t_n; a mirrored read gives corr -0.01 (k=2) to -0.62 (k=5) "
+        f"here, so a value near zero is the k=2 signature of exactly that defect and not a reason "
+        f"to suspect the fixture."
     )
     assert lag < MAX_LAG, (
         f"the density correlates with the well but never gets near it (mean|centroid - well| "
-        f"{lag:.4f}, corr {correlation:+.4f}): the fixture is under-driven, so the assertion above "
-        f"is passing on a drift that follows the well only in the loosest sense"
+        f"{lag:.4f}, corr {correlation:+.4f}). Two causes reach here and this assertion cannot "
+        f"separate them: an under-driven fixture, where nothing tracks and the correlation above "
+        f"is passing on a drift that follows the well only in the loosest sense; or a solver "
+        f"reading U at a COMPRESSED time level (U[n//2] lands here at 0.2098, correlating +0.99 "
+        f"while lagging the well). Check that the correct run tracks before blaming the fixture."
     )
