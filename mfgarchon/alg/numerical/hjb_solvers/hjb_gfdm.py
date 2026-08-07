@@ -861,7 +861,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                     weight_function=weight_function,
                     k_neighbors=k_neighbors,
                     neighborhood_mode=neighborhood_mode,
-                    geometry=collocation_geometry,  # Issue #711: periodic support
+                    # Issue #711 periodic support, Issue #1841: fall back to the problem's own
+                    # geometry when the caller gave no separate collocation domain. They describe
+                    # the same region, and without it a periodic problem built the operator with
+                    # no wrap at all -- so the seam stayed open even once boundary detection
+                    # stopped mis-classifying the faces. Inert for non-periodic problems, whose
+                    # `periodic_dimensions` is empty, leaving `_is_periodic` False as before.
+                    geometry=collocation_geometry if collocation_geometry is not None else problem.geometry,
                     # Issue #1124: visibility filter at operator level so
                     # D_lap / D_grad respect obstacle connectivity (not just
                     # NeighborhoodBuilder's post-filter view).
@@ -1451,10 +1457,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         if bounds is None or len(bounds) == 0:
             return np.array([], dtype=int)
 
+        # A periodic axis has no boundary: its two faces are the same physical place, so a point
+        # lying on one is an interior point of the torus. Classifying it as boundary sent it to a
+        # row builder with no periodic row, which raised -- so the capability was reachable only by
+        # hand-passing an empty `boundary_indices`, i.e. lying to the solver about its own
+        # geometry (Issue #1841). Read from the same geometry the bounds came from.
+        periodic_dims = self._periodic_dims_for_detection()
+
         tol = BOUNDARY_TOL
         boundary_mask = np.zeros(len(collocation_points), dtype=bool)
 
         for d, (d_min, d_max) in enumerate(bounds):
+            if d in periodic_dims:
+                continue
             if d < collocation_points.shape[1]:
                 # Points at min or max boundary in this dimension
                 at_min = np.abs(collocation_points[:, d] - d_min) < tol
@@ -1462,6 +1477,16 @@ class HJBGFDMSolver(BaseHJBSolver):
                 boundary_mask |= at_min | at_max
 
         return np.where(boundary_mask)[0]
+
+    def _periodic_dims_for_detection(self) -> tuple[int, ...]:
+        """Which axes are periodic, per the geometry that supplied the bounds.
+
+        `SupportsPeriodic.periodic_dimensions` is the declared source; a geometry that does not
+        implement it reports nothing periodic, which is the pre-#1841 behaviour.
+        """
+        geom = getattr(self.problem, "geometry", None)
+        dims = getattr(geom, "periodic_dimensions", None)
+        return tuple(dims) if dims else ()
 
     def _get_domain_bounds_for_detection(self) -> list[tuple[float, float]] | None:
         """Get domain bounds for boundary detection (before full initialization)."""

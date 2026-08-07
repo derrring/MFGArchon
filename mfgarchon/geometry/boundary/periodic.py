@@ -14,6 +14,7 @@ ghost cell VALUES like other BC types.
 
 Functions:
     wrap_positions: Wrap particle positions to fundamental domain
+    wrap_displacement: Wrap a displacement vector to the minimum image
     create_periodic_ghost_points: Augment point cloud for KD-tree search
 
 Reference:
@@ -91,6 +92,53 @@ def wrap_positions(
     if was_1d:
         return result[0]
     return result
+
+
+def wrap_displacement(
+    delta: NDArray[np.floating],
+    periods: dict[int, float],
+) -> NDArray[np.floating]:
+    """
+    Wrap a displacement vector to the minimum image, for periodic dimensions only.
+
+    For periodic dimension i with period L_i:
+        delta_wrapped[i] = delta[i] - L_i * round(delta[i] / L_i)
+
+    which maps the displacement into [-L_i/2, L_i/2] -- the shortest way round the torus.
+
+    Takes `periods` rather than a geometry, because that dict is exactly what the
+    :class:`~mfgarchon.geometry.protocols.topology.SupportsPeriodic` protocol promises
+    (``get_periods()``). Consumers can therefore work with ANY geometry satisfying the protocol.
+    The previous arrangement -- an identical loop living as ``Hyperrectangle.wrap_displacement`` --
+    tied the one caller to the one class that happened to implement it, and `TensorProductGrid`
+    satisfies the protocol without it, so a periodic grid passed the `isinstance` guard and then
+    raised `AttributeError` (Issue #1841).
+
+    Args:
+        delta: Displacement vectors, shape (N, d) or (d,) for a single vector
+        periods: Dimension index -> period length, for periodic dimensions only. An empty
+            dict means nothing is periodic and the input is returned unchanged.
+
+    Returns:
+        Wrapped displacement, same shape as the input.
+
+    Example:
+        >>> import numpy as np
+        >>> wrap_displacement(np.array([0.9]), {0: 1.0})   # shorter to go backwards
+        array([-0.1])
+    """
+    if not periods:
+        return delta
+
+    single_vector = delta.ndim == 1
+    if single_vector:
+        delta = delta.reshape(1, -1)
+
+    wrapped = delta.copy()
+    for dim_idx, length in periods.items():
+        wrapped[:, dim_idx] = wrapped[:, dim_idx] - length * np.round(wrapped[:, dim_idx] / length)
+
+    return wrapped[0] if single_vector else wrapped
 
 
 def create_periodic_ghost_points(

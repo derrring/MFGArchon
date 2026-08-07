@@ -53,6 +53,7 @@ def _residual_of(solved, bc_type) -> float:
 NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
+EXACT = 1e-12  # at or below this a residual has reached round-off and cannot converge further
 SEED = 1822  # any solver that accepts one gets it, so every row below is a repeatable number
 PARTICLES_AT_COARSEST = 5000  # scaled as Nx^2 under refinement; see the fixtures below
 
@@ -127,12 +128,12 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
-    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam at most 3.3e-11 at
-    # Nx=11/21/41/81 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16), via the Issue #711 wrap. The default
-    # cloud this file uses puts points ON the faces, and boundary detection marks those as boundary
-    # even on a periodic axis, so the row builder (which has no periodic row) raises. The defect is
-    # the detection, not the capability, which is why the type stays declared. Tracked in #1841.
-    "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
+    # HJBGFDMSolver is GONE from this roster (#1841). It always honoured PERIODIC -- seam 2.2e-15,
+    # 3.3e-11, 6.7e-16, 6.7e-16 at Nx=11/21/41/81 via the Issue #711 wrap -- but only on a cloud
+    # with no DETECTED boundary points, which callers could reach only by hand-passing an empty
+    # `boundary_indices`. Boundary detection classified a point on a periodic face as a boundary
+    # point, and no wrap was built at all unless a separate periodic collocation geometry was
+    # supplied. Both are fixed, and the numbers above are now what the DEFAULT cloud produces.
     # FPParticleSolver fails the ABSOLUTE seam tolerance at this one grid, and that is the whole
     # claim -- it is not a statement that the solver fails to honour PERIODIC. Under joint
     # refinement (h -> 0 with N ~ Nx^2) its periodic residual converges, 20/20 seeds, which is why
@@ -507,7 +508,6 @@ SURFACE_NOT_HONOURED = {
     # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
     # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
-    ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
     # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
@@ -558,7 +558,7 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
         r = _residual_of(_solve_with_bc(cls, bc_type, nx, nt), bc_type)
         assert np.isfinite(r), f"{name} declares {bc_type.name} and the solve produced non-finite values"
         residuals.append(r)
-        if len(residuals) == 1 and r < 1e-12:
+        if len(residuals) == 1 and r < EXACT:
             return  # exact at the coarse grid: the strong form, no refinement needed
 
     # THREE points, monotone. Two are not a trend: on 21->41 alone FPSLJacobianSolver improves
@@ -566,10 +566,16 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     # it. HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
     # convergence that a ratio threshold tuned for the fast cases would have failed.
     trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
-    assert residuals[1] < residuals[0], (
+    # `or < EXACT`: a residual that has REACHED round-off has converged, and cannot keep halving
+    # below machine epsilon -- demanding it would fail a solver for being exact. The early return
+    # above already makes this judgement for a solver exact at the COARSE grid; this is the same
+    # judgement for one that gets there under refinement, which #1841 produced (HJBGFDMSolver:
+    # 3.268e-11, 6.661e-16, 6.661e-16, where the last two are the identical float). Above
+    # EXACT the requirement is unchanged, so nothing that is merely converging slowly is excused.
+    assert residuals[1] < residuals[0] or residuals[1] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=21 to 41: {trend}"
     )
-    assert residuals[2] < residuals[1], (
+    assert residuals[2] < residuals[1] or residuals[2] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=41 to 81: {trend}"
     )
 
