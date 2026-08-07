@@ -28,6 +28,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc, robin_bc
+from mfgarchon.geometry.boundary.invariants import mass_drift
 
 
 def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5):
@@ -60,9 +61,18 @@ class TestFPProductionConservation:
     """Mass + positivity of the real FPFDMSolver implicit step (not a shadow matrix)."""
 
     def test_mass_conserved_periodic_zero_drift(self):
-        M, dx = _zero_drift_density_evolution(periodic_bc(dimension=1))
-        mass = M.sum(axis=1) * dx
-        relerr = abs(mass[-1] - mass[0]) / mass[0]
+        """Quadrature is `trapezoid`, not `sum`, because the grid is endpoint-inclusive (#1822).
+
+        `M.sum(axis=1) * dx` counts the shared node twice -- it read 1.035 for a datum of mass 1
+        even at t=0. That was consistent while the solver treated the repeat as its own cell on a
+        torus of length 1 + dx; now that it does not, the rectangle rule is measuring a quantity
+        the solve does not conserve, and the drift it reports is one cell's worth of density
+        (verified: the gap equals `m[0]*dx` to ten digits). Under the owner's quadrature the same
+        solve conserves mass to 1.2e-14.
+        """
+        M, _dx = _zero_drift_density_evolution(periodic_bc(dimension=1))
+        x = np.linspace(0.0, 1.0, M.shape[1])
+        relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"periodic zero-drift mass not conserved: relerr {relerr:.2e}"
 
     def test_mass_conserved_no_flux_zero_drift(self):

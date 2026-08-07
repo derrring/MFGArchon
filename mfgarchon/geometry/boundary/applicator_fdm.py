@@ -93,7 +93,14 @@ from .conditions import BoundaryConditions
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 from .ghost_cells import GhostCellConfig
-from .types import BCSegment, BCType, BoundaryFace, PeriodicGridConvention, parse_boundary_face
+from .types import (
+    BCSegment,
+    BCType,
+    BoundaryFace,
+    PeriodicGridConvention,
+    parse_boundary_face,
+    repeated_endpoint_count,
+)
 
 logger = get_logger(__name__)
 
@@ -818,7 +825,7 @@ def _periodic_ghost_slices(
     source: list[slice] = [slice(None)] * d
     # On an inclusive grid the shared endpoint is a duplicate and must be stepped over; on an
     # exclusive one every node is distinct and the wrap starts at the last one.
-    skip = 1 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 0
+    skip = repeated_endpoint_count(convention)
     if side == "min":
         ghost[axis] = slice(0, g)
         source[axis] = slice(-2 * g - skip, -g - skip)

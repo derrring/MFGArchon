@@ -117,6 +117,21 @@ class PeriodicGridConvention(Enum):
     ENDPOINT_EXCLUSIVE = "endpoint_exclusive"
 
 
+def repeated_endpoint_count(convention: PeriodicGridConvention | None) -> int:
+    """How many trailing nodes of a periodic axis repeat a node the array already holds.
+
+    One under ``ENDPOINT_INCLUSIVE`` (``x[-1]`` *is* ``x[0]``), zero otherwise; unstated means the
+    exclusive layout this package wrapped with before #1822.
+
+    Every periodic wrap in the package is one of two expressions of this single number, which is
+    why it is a function and not two constants: a ghost fill steps over the repeat
+    (``skip``), and a modular neighbour index divides by the count of distinct cells
+    (``span = N - repeated_endpoint_count(...)``). Written out separately at each site they drift,
+    and the drift is silent -- both readings return a finite, plausible field.
+    """
+    return 1 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 0
+
+
 class BCType(Enum):
     """
     Boundary condition types (dimension-agnostic).

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -107,13 +108,6 @@ def add_interior_entries_divergence_centered(
     # Diffusion coefficient D = sigma^2/2
     D = diffusion_from_volatility(sigma)
 
-    # Check for periodic BC
-    # Issue #543 Phase 2: Replace hasattr with try/except
-    try:
-        is_periodic = boundary_conditions.is_uniform and boundary_conditions.type == "periodic"
-    except AttributeError:
-        is_periodic = False
-
     # For each dimension, add flux-based advection + diffusion contributions
     for d in range(ndim):
         dx = spacing[d]
@@ -126,10 +120,13 @@ def add_interior_entries_divergence_centered(
         multi_idx_plus[d] = multi_idx[d] + 1
         multi_idx_minus[d] = multi_idx[d] - 1
 
-        # Handle periodic wrapping
+        # Handle periodic wrapping. `span` is shape[d] only on an endpoint-exclusive grid;
+        # see periodic_axis_span for why (Issue #1822).
+        span = periodic_axis_span(boundary_conditions, shape[d])
+        is_periodic = span is not None
         if is_periodic:
-            multi_idx_plus[d] = multi_idx_plus[d] % shape[d]
-            multi_idx_minus[d] = multi_idx_minus[d] % shape[d]
+            multi_idx_plus[d] = multi_idx_plus[d] % span
+            multi_idx_minus[d] = multi_idx_minus[d] % span
 
         # Check if neighbors exist (non-periodic case)
         has_plus = multi_idx_plus[d] < shape[d]
@@ -172,7 +169,7 @@ def add_interior_entries_divergence_centered(
             multi_idx_plus2 = list(multi_idx)
             multi_idx_plus2[d] = multi_idx[d] + 2
             if is_periodic:
-                multi_idx_plus2[d] = multi_idx_plus2[d] % shape[d]
+                multi_idx_plus2[d] = multi_idx_plus2[d] % span
 
             if multi_idx_plus2[d] < shape[d] or is_periodic:
                 flat_idx_plus2 = grid.get_index(tuple(multi_idx_plus2))
@@ -190,7 +187,7 @@ def add_interior_entries_divergence_centered(
             multi_idx_minus2 = list(multi_idx)
             multi_idx_minus2[d] = multi_idx[d] - 2
             if is_periodic:
-                multi_idx_minus2[d] = multi_idx_minus2[d] % shape[d]
+                multi_idx_minus2[d] = multi_idx_minus2[d] % span
 
             if multi_idx_minus2[d] >= 0 or is_periodic:
                 flat_idx_minus2 = grid.get_index(tuple(multi_idx_minus2))

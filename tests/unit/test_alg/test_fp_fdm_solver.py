@@ -926,14 +926,27 @@ class TestFPFDMSolverTensorDiffusion:
         assert np.all(M >= 0)
 
     def test_tensor_with_drift(self):
-        """Test tensor diffusion combined with drift field."""
+        """Test tensor diffusion combined with drift field.
+
+        The BC matches the geometry (#1822). It was `periodic_bc(dimension=1)` on this 2D grid --
+        a dimension mismatch, and one this test asserts nothing about: its subject is tensor
+        diffusion plus drift. It was also not doing what its name said. Measured on the code before
+        #1822, that BC left a seam of 4.63e-02, i.e. the periodicity it requested was never
+        honoured; the solve passed because the wrap was loose, not because it was right.
+
+        Making that path genuinely periodic -- the BC now carries the grid's layout and the
+        advection operator honours it -- trips the positivity guard here. That IS a narrowing: this
+        configuration completed before at Nt=40 and Nt=160. It is still the right direction, because
+        what completed before created 6.3% of its own mass and did not converge away, where the new
+        path conserves to 1e-15 and closes both seams. Both states are wrong; #1835 holds the work
+        of making 2D periodic actually solve, and this test is not the place to carry it.
+        """
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
 
-        boundary_conditions = periodic_bc(dimension=1)
-        solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
+        solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=2))
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
         Nt = problem.Nt + 1

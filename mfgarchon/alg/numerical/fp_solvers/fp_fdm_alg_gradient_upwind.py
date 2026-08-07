@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.utils.aux_func import npart, ppart
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -125,17 +126,13 @@ def add_interior_entries_gradient_upwind(
         multi_idx_plus[d] = multi_idx[d] + 1
         multi_idx_minus[d] = multi_idx[d] - 1
 
-        # Handle boundary wrapping for periodic BC
-        # Issue #543 Phase 2: Replace hasattr with try/except
-        try:
-            is_periodic = boundary_conditions.is_uniform and boundary_conditions.type == "periodic"
-        except AttributeError:
-            # For BoundaryConditionManager2D or unknown types, default to non-periodic
-            is_periodic = False
-
+        # Handle boundary wrapping for periodic BC. `span` is shape[d] only on an
+        # endpoint-exclusive grid; see periodic_axis_span for why (Issue #1822).
+        span = periodic_axis_span(boundary_conditions, shape[d])
+        is_periodic = span is not None
         if is_periodic:
-            multi_idx_plus[d] = multi_idx_plus[d] % shape[d]
-            multi_idx_minus[d] = multi_idx_minus[d] % shape[d]
+            multi_idx_plus[d] = multi_idx_plus[d] % span
+            multi_idx_minus[d] = multi_idx_minus[d] % span
 
         # Check if neighbors exist (non-periodic case)
         has_plus = multi_idx_plus[d] < shape[d]
