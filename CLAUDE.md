@@ -270,6 +270,11 @@ layer's state — if a line can be recomputed from the Plans, it is a view, not 
   from the time you are willing to spend and design something that fits; when it does not fit,
   **cut scope, do not extend**. Fixed time, variable scope. Status prefix is mandatory and is the
   single owner of state: `[ACTIVE]` / `[COMPLETED]` / `[SUPERSEDED by …]`.
+- **`[PITCH]` — shaped, not started, does not count against WIP.** A Plan that exists but has not
+  been bet on. It carries an appetite and a scope; its unresolved rabbit holes must be closed
+  *before* it becomes `[ACTIVE]`, not during. Betting on it = changing the prefix. Missing from the
+  first draft of this clause, which had no state between "does not exist" and "in progress"
+  [ADDED 2026-08-08].
 - **`[ACTIVE]` means a Plan is being worked on. Nothing else may use it.** A document that is
   merely still correct carries **no status tag at all** — absence is currency, and tags are for
   what has left it (`[SUPERSEDED by …]`, `[ARCHIVED]`). Measured 2026-08-08: fifteen notes declared
