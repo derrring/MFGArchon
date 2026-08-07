@@ -267,7 +267,10 @@ def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed:
     backend : BaseBackend
         Backend providing tensor operations
     seed : int, optional
-        Random seed for reproducibility
+        Random seed. Drives a LOCAL generator, so a seeded call is reproducible without touching
+        any global stream. `seed=None` draws from -- and therefore advances -- the caller's global
+        stream, which is the compatibility contract for callers that seed `torch` or `np.random`
+        themselves.
 
     Returns
     -------
@@ -323,6 +326,11 @@ def sample_from_density_gpu(density, grid, N: int, backend: "BaseBackend", seed:
             generator.manual_seed(int(seed))
         U = xp.rand(N, device=cdf.device, dtype=cdf.dtype, generator=generator)
     else:
+        # Unreachable today, and by construction rather than by configuration: the only caller,
+        # `_solve_fp_system_gpu`, assigns into a preallocated array (`X_particles_gpu[0, :] = ...`),
+        # and a JAX array raises `TypeError: JAX arrays are immutable` on that. So the GPU solve
+        # path is torch-only. Seeded anyway -- a `seed` argument that is silently ignored is a lie
+        # whether or not anyone reaches it.
         draw = np.random if seed is None else np.random.default_rng(seed)
         U = backend.from_numpy(draw.random(N))
 

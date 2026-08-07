@@ -185,8 +185,22 @@ def test_the_other_solve_paths_still_respond_to_the_seed(dim, callable_drift):
 # started reaching it in this change -- so everything above says nothing about it.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.optional_torch
-def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
+
+@pytest.fixture(params=["cpu", "mps"])
+def device(request):
+    """Both devices this machine can reach, because `device=cdf.device` is new and untested.
+
+    Hardcoding the generator to "cpu" passes every CPU assertion and then raises on MPS --
+    "Expected a 'mps' device type for generator but found 'cpu'" -- so a CPU-only test would
+    accept a fix that breaks the production default (`device='auto'` resolves to MPS here).
+    """
+    torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
+    if request.param == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("no MPS device on this machine")
+    return request.param
+
+
+def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone(device):
     """The seed must drive a LOCAL torch generator, not `torch.manual_seed`.
 
     Three assertions, and the third is the one that failed: reseeding the process-global stream
@@ -205,7 +219,7 @@ def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
     from mfgarchon.backends.torch_backend import TorchBackend
     from mfgarchon.utils.particle_utils import sample_from_density_gpu
 
-    backend = TorchBackend(device="cpu")
+    backend = TorchBackend(device=device)
     grid = backend.from_numpy(np.linspace(0.0, 1.0, 64))
     density = backend.from_numpy(np.exp(-10 * (np.linspace(0.0, 1.0, 64) - 0.5) ** 2))
 
@@ -215,11 +229,15 @@ def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
     np.testing.assert_array_equal(_sample(7), _sample(7))
     assert not np.array_equal(_sample(7), _sample(8)), "a sampler ignoring the seed would pass the line above"
 
-    torch.manual_seed(1234)
-    expected = torch.randn(3).tolist()
-    torch.manual_seed(1234)
-    _sample(99)
-    assert torch.randn(3).tolist() == expected, (
-        "a seeded solve moved the process-global torch stream, so it perturbs every unrelated "
-        "torch draw in the same interpreter"
-    )
+    # fork_rng, because a test that dirties the global stream to prove the library must not is
+    # the same defect wearing a different hat -- and within one xdist worker every later torch
+    # test would inherit it.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1234)
+        expected = torch.randn(3).tolist()
+        torch.manual_seed(1234)
+        _sample(99)
+        assert torch.randn(3).tolist() == expected, (
+            "a seeded solve moved the process-global torch stream, so it perturbs every unrelated "
+            "torch draw in the same interpreter"
+        )
