@@ -256,8 +256,35 @@ Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** o
 
 **Joplin ↔ archon-notes split**: see the Joplin Dev `[Principle]` note "Joplin MFG vs archon-notes — doc division of labor" (Joplin = evergreen knowledge-graph; archon-notes = git-versioned chronicle + dev handbook). Rules: never create `docs/theory|development|architecture/` in mfgarchon; never put internal planning/theory in the public repo; never create markdown design docs in repos — use Joplin. Cross-repo: design in Joplin → GitHub issue → implement with issue ref → update user docs if user-facing → bidirectional-link Joplin + issue.
 
-### Development Plan Management ⚠️ CRITICAL
-Plans live in Joplin **Dev** folder. Naming `{焦点} Plan — {日期范围}`. Scope 2–4 months (longer → split). **Only 1 active Plan** at a time. On completion → `[COMPLETED]` + move to Archive; on replacement → `[SUPERSEDED by …]` + Archive. Plan explains *why this order*; issues define *what to do*. `[Principle]` prefix = permanent design-philosophy doc (never archived).
+### Development Plan Management ⚠️ CRITICAL — **[试行 2026-08-08 → 复审 2026-09-19]**
+
+Three objects, one owner each. **Roadmap** says *should this be worked on now*; **Plan** says
+*why this order, and where it stands*; **issue** says *what to do*. Nothing restates another
+layer's state — if a line can be recomputed from the Plans, it is a view, not roadmap content.
+
+- **Roadmap** — one note, Joplin `Dev`. Three buckets, **Now / Next / Later**, no dates: the
+  argument is whether an item moves between buckets, not whether it ships in Q2 or Q3. Also holds
+  what no single Plan can: cross-Plan ordering and dependency, and **what is deliberately not
+  being done, with the reason**. Carries no per-Plan progress.
+- **Plan** — Joplin `Dev`, named `{焦点} Plan — {appetite}`. **Appetite, not estimate**: start
+  from the time you are willing to spend and design something that fits; when it does not fit,
+  **cut scope, do not extend**. Fixed time, variable scope. Status prefix is mandatory and is the
+  single owner of state: `[ACTIVE]` / `[COMPLETED]` / `[SUPERSEDED by …]`.
+- **WIP limit 3.** Measured 2026-08-08: three notes carried `[ACTIVE]` (agent_axiom v4, Route B,
+  Route audit), so 3 is the observed sustainable concurrency, not a target. At the limit, start
+  nothing new — finish, or explicitly demote one to `Later`.
+- **Ageing prompts, it never decides.** A Plan past its appetite shows as `[ACTIVE · 逾期]`. That
+  is a fact, not a verdict: retirement stays a judgement someone makes. Same footing as
+  *never judge guidance by a counter or a clock* — a Plan is a mechanism with a self-declared
+  scope, so its own deadline may prompt a look; it may not archive anything by itself.
+- **No backlog.** `Later` may be deleted freely. An idea worth doing will be re-proposed; an idea
+  that is never re-proposed was not worth carrying. This is what stops the notebook thickening.
+- **Cadence — the only real forcing function, and the weakest part.** **First working session of
+  each month: read `Now` and every `[ACTIVE]` Plan, and decide.** Nothing above works without it.
+
+`[Principle]` prefix = permanent design-philosophy doc, never archived, outside all of the above.
+~~Scope 2–4 months; **only 1 active Plan**~~ replaced 2026-08-08 — why, and the sources it came
+from: Joplin `Dev` `[Principle] Joplin MFG vs archon-notes` § Plan management.
 
 ### Progressive logging ⚠️
 Log incrementally, summarize at milestones only. During work: technical notes + TodoWrite, no frequent summaries. Bugs → GitHub issues (`gh issue create`), not `docs/bugs/*.md`. Create a summary only at phase completion / milestone / investigation conclusion — and **ask first**.
