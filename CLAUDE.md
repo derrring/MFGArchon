@@ -251,7 +251,7 @@ Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** o
 | User docs (tutorials, guides, API) | `mfgarchon/docs/user/` (public, future book) |
 | Theory & design, architecture | **Joplin MFG notebook** (private) |
 | **The** roadmap — cross-Plan ordering, and what is deliberately not being done | Joplin `Dev`, see § Development Plan Management |
-| **A** roadmap — one subsystem's implementation sequence (BC, FEEC, …) | with its topic: Joplin, or `archon-notes/` per `docs/README.md` |
+| **A** roadmap — one subsystem's implementation sequence (BC, FEEC, …) | Joplin, with its subsystem |
 | Development guides (coding style, CI/CD, tooling) | `mfg-research/docs/archon-notes/development/` |
 | Research notes (experiments, analysis) | `mfg-research/docs/`, `experiments/*/docs/` |
 | Completed/historical | `mfg-research/docs/archon-notes/archive/` |
@@ -259,29 +259,24 @@ Why: the full suite is ~141 s locally and **exceeded a 25-minute step budget** o
 **Joplin ↔ archon-notes split**: see the Joplin Dev `[Principle]` note "Joplin MFG vs archon-notes — doc division of labor" (Joplin = evergreen knowledge-graph; archon-notes = git-versioned chronicle + dev handbook). Rules: never create `docs/theory|development|architecture/` in mfgarchon; never put internal planning/theory in the public repo; never create markdown design docs in repos — use Joplin. Cross-repo: design in Joplin → GitHub issue → implement with issue ref → update user docs if user-facing → bidirectional-link Joplin + issue.
 
 ### Development Plan Management — agent-facing contract
-**[PROVISIONAL 2026-08-08 — examine 2026-09-19.** Not an expiry: absent an examination this
-section stays in force unchanged, and the examination is what may change it.**]**
+On trial; #1857 owns the examination. The process itself is the maintainer's and lives in Joplin
+`Dev Principles` `[Principle] Joplin MFG vs archon-notes — doc division of labor` § Plan
+management. Below is what an agent must know.
 
-The process this serves — Now/Next/Later, appetite, WIP, the monthly read — is **the maintainer's**,
-and lives in Joplin `Dev` `[Principle] Joplin MFG vs archon-notes` § Plan management. Below is only
-what an agent working in this repo must know, because an agent executes none of it.
-
-- **Plans live in Joplin `Dev`**, named `{焦点} Plan — {appetite} (started YYYY-MM-DD)`. Appetite is
-  one of **2 weeks / 6 weeks / 3 months**, and it is what gets cut to, never extended. The start
-  date is there because "past its appetite" is otherwise not computable from the name.
-- **Status prefix is mandatory and is the single owner of state**: `[PITCH]` shaped but not bet on,
-  does not count toward WIP · `[ACTIVE]` being worked on · `[COMPLETED]` · `[SUPERSEDED by …]`.
-  A Plan that stops being worked on returns to `[PITCH]`; it does not lose its prefix.
-- **`[ACTIVE]` is a Plan status and nothing else may use it.** A document that is merely still
-  correct carries **no status tag at all** — absence is currency, tags are for what has left it.
-  Eleven notes in `Dev` currently violate this, using `Status: Active` to mean "this doc still
-  holds"; until they are cleaned, searching `[ACTIVE]` returns noise.
-- **Do not create a second roadmap, and do not write plan markdown into this repo.** There is one
-  cross-Plan roadmap (Joplin `Dev`); a per-subsystem implementation sequence is a different object
-  and belongs with its topic.
-
-~~Scope 2–4 months; **only 1 active Plan**~~ replaced 2026-08-08 — why, and the sources:
-Joplin `Dev` `[Principle] Joplin MFG vs archon-notes` § Plan management.
+- **Plans live in Joplin, with their topic** (`Dev`, `Variational MFG`, `agent_axiom`, …). The one
+  cross-Plan roadmap lives in Joplin `Dev`. A per-subsystem implementation sequence is a different
+  object and stays with its subsystem.
+- **Naming, for Plans created from 2026-08-08**: `{焦点} Plan — {appetite} (started YYYY-MM-DD)`,
+  appetite one of 2 weeks / 6 weeks / 3 months. Earlier Plans are grandfathered until next touched,
+  so "past its appetite" is not computable for them.
+- **Status prefix is mandatory and is the single owner of state**: `[PITCH]` shaped, not started ·
+  `[ACTIVE]` being worked on · `[COMPLETED]` · `[SUPERSEDED <date>]` with `SUPERSEDED-BY: <ref>`.
+  A Plan that stops returns to `[PITCH]` and must re-clear its open questions before going
+  `[ACTIVE]` again.
+- **`[ACTIVE]` is a Plan status; nothing else may use it.** A document that is merely still correct
+  carries no status tag — absence is currency, tags are for what has left it. Legacy
+  `**Status**: Active` headers in `Dev` make an `[ACTIVE]` search noisy until cleaned.
+- **Do not create a second roadmap, and do not write plan markdown into this repo.**
 
 ### Progressive logging ⚠️
 Log incrementally, summarize at milestones only. During work: technical notes + TodoWrite, no frequent summaries. Bugs → GitHub issues (`gh issue create`), not `docs/bugs/*.md`. Create a summary only at phase completion / milestone / investigation conclusion — and **ask first**.
