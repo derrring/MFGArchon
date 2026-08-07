@@ -659,6 +659,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # geometry describes the same region. Inert for non-periodic problems, whose
         # `periodic_dimensions` is empty, so `_is_periodic` stays False exactly as before.
         self._collocation_geometry = collocation_geometry if collocation_geometry is not None else problem.geometry
+        self._refuse_topology_disagreeing_with_bc()
 
         # Boundary condition parameters
         # Auto-detect boundary indices if not provided (Issue #542 fix)
@@ -1491,18 +1492,61 @@ class HJBGFDMSolver(BaseHJBSolver):
         implement it reports nothing periodic, which is the pre-#1841 behaviour.
 
         Read from `self._collocation_geometry` -- the SAME object the operator's periodic wrap is
-        built from -- so the two cannot disagree. `len(...)`, not truthiness: `np.array([0])` is
+        built from, and the same one `_get_domain_bounds_for_detection` takes bounds from -- so no
+        two of the three can disagree. `len(...)`, not truthiness: `np.array([0])` is
         falsy on its single element and would silently demote a geometry whose only periodic axis
         is 0, and a multi-element array raises on `if dims` outright.
         """
         dims = getattr(self._collocation_geometry, "periodic_dimensions", None)
         return tuple(dims) if dims is not None and len(dims) > 0 else ()
 
+    def _refuse_topology_disagreeing_with_bc(self) -> None:
+        """A periodic axis and a wall on that same axis are different problems; say so.
+
+        The geometry decides topology (a torus has no boundary) and the boundary conditions decide
+        what happens at a wall, so the two can contradict each other. They did, silently, in both
+        directions (#1841 review):
+
+        - a PERIODIC problem with a non-periodic `collocation_geometry` built no wrap, and returned
+          a seam of 1.36e+00 against a tolerance of 1e-9;
+        - a NO_FLUX problem with a periodic `collocation_geometry` had both faces skipped by
+          detection and was solved with no boundary row anywhere -- the declared wall silently gone.
+
+        Neither is a configuration anyone means, and each answers a different problem than the
+        caller posed, which is the failure this whole campaign is about (#1822). Refused at
+        construction, where the caller can still act, rather than deep in a row builder or not at
+        all.
+        """
+        if self._collocation_geometry is self.problem.geometry:
+            return  # one object cannot disagree with itself
+
+        collocation_periodic = self._periodic_dims_for_detection()
+        problem_dims = getattr(self.problem.geometry, "periodic_dimensions", None)
+        if problem_dims is None:
+            return  # the problem's geometry states no topology, so there is nothing to contradict
+        bc_periodic = tuple(problem_dims)
+        if set(collocation_periodic) != set(bc_periodic):
+            raise ValueError(
+                f"collocation_geometry declares periodic axes {collocation_periodic or '()'} while the "
+                f"problem's boundary conditions imply {bc_periodic or '()'}. A periodic axis has no "
+                f"boundary and a wall is a boundary, so these describe different problems and the "
+                f"solver cannot honour both. Pass a collocation_geometry whose periodic_dims match "
+                f"the boundary conditions, or omit it and the problem's own geometry is used."
+            )
+
     def _get_domain_bounds_for_detection(self) -> list[tuple[float, float]] | None:
-        """Get domain bounds for boundary detection (before full initialization)."""
+        """Get domain bounds for boundary detection (before full initialization).
+
+        From `self._collocation_geometry`, the SAME object `_periodic_dims_for_detection` reads.
+        Detection classifies collocation points, and those live in the collocation domain, so this
+        is also the correct source rather than merely the consistent one. Reading bounds from the
+        problem while reading periodicity from the collocation geometry left the two disagreeing one
+        call frame apart: a no-flux problem given a periodic collocation geometry had every face
+        skipped and was solved with no boundary row at all, silently (#1841 review).
+        """
         # Try geometry interface first
         try:
-            geom = self.problem.geometry
+            geom = self._collocation_geometry
             if geom is not None:
                 try:
                     bounds_result = geom.get_bounds()

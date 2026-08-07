@@ -17,8 +17,11 @@
   protocol-declared data. `Hyperrectangle.wrap_displacement` is deleted: implementations of the DISPLACEMENT
   form go 2 → 1 and calls to the method go 1 → 0. The same minimum-image rule still has two
   further implementations as `compute_periodic_distance`, one per geometry, and independent
-  review measured both to be wrong for `|delta| > 1.5L` — 0.9 where the answer is 0.1. Out of
+  review measured both to be wrong for `|delta| > 1.5L` — 0.9 at |delta|=1.9 where the answer is 0.1. Out of
   scope here and filed as #1853, so the honest count of implementations in the tree is three. Behaviour is pinned byte-for-byte against output
-  captured **before** the change (5 cases, including the no-periodic-dims identity path and the 1-D
-  input branch), because after consolidation an A-vs-B comparison would be tautological.
+  captured **before** the change — 11 reference cases / 13 tests, covering round-half-to-even ties,
+  displacements many periods long, an offset domain, axes in descending order, 3-D, the no-copy
+  identity path and the 1-D input branch — because after consolidation an A-vs-B comparison would be
+  tautological. The first version of this change claimed that pin without committing it; review
+  disproved the claim by mutating `np.round` to `np.floor` and watching the whole suite stay green.
   The two #1822 rows come off `xfail`: 43 passed / 13 xfailed → 45 / 11.

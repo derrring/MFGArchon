@@ -660,3 +660,48 @@ def test_the_gfdm_periodic_solve_is_a_solution_and_not_a_periodic_looking_artefa
         f"records as exact under PERIODIC. The seam can be satisfied by the ghost cloud's coincident "
         f"endpoint pair without the interior being solved; this is what rules that out"
     )
+
+
+@pytest.mark.parametrize(
+    ("bc_factory", "geometry_periodic_dims", "declares"),
+    [(periodic_bc, (), "()"), (no_flux_bc, (0,), "(0,)")],
+    ids=["periodic-problem-nonperiodic-cloud", "walled-problem-periodic-cloud"],
+)
+def test_a_collocation_geometry_that_contradicts_the_bc_is_refused(bc_factory, geometry_periodic_dims, declares):
+    """Topology and boundary conditions must agree, and both directions used to fail silently.
+
+    The geometry decides topology -- a torus has no boundary -- while the BC decides what happens at
+    a wall, so the two can contradict. Before #1841 the first case raised from deep in a row builder;
+    the first fix for it made the SECOND case silent, skipping both faces so a declared no-flux wall
+    vanished and the solve ran with no boundary row at all. Neither is a configuration anyone means.
+
+    This is the pin the fix itself needed. Independent review reverted that fix and measured 202
+    passed either way -- a behaviour claim nothing in the repository would notice being undone, which
+    is the same defect the review before it blocked on.
+    """
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    geometry = Hyperrectangle(bounds=np.array([[0.0, 1.0]]), periodic_dims=geometry_periodic_dims)
+    with pytest.raises(ValueError, match="declares periodic axes"):
+        HJBGFDMSolver(
+            _problem_with_bc(bc_factory(dimension=1), NX, NT),
+            collocation_points=np.linspace(0.0, 1.0, NX).reshape(-1, 1),
+            collocation_geometry=geometry,
+        )
+
+
+def test_a_collocation_geometry_that_agrees_with_the_bc_is_accepted():
+    """Control: the refusal above must not fire on the configurations that are coherent.
+
+    Without this, a guard that rejected every `collocation_geometry` would satisfy the test above
+    while breaking a public kwarg used at a dozen call sites in this suite.
+    """
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    x = np.linspace(0.0, 1.0, NX).reshape(-1, 1)
+    for bc_factory, dims in ((periodic_bc, (0,)), (no_flux_bc, ())):
+        HJBGFDMSolver(
+            _problem_with_bc(bc_factory(dimension=1), NX, NT),
+            collocation_points=x,
+            collocation_geometry=Hyperrectangle(bounds=np.array([[0.0, 1.0]]), periodic_dims=dims),
+        )  # must not raise
