@@ -14,7 +14,8 @@
   shows two more: `diffusion_scalar_2x` lost `test_dpp_error_converges_under_refinement` behind its
   +17, and **`drift_coefficient_2x` is 19 → 19 with a 1-for-1 swap underneath** —
   `test_one_newton_step_reduces_the_mfg_residual` stopped noticing and a periodic-capability test
-  took its place. All four tests still exist; they stopped discriminating. A count-based ratchet
+  took its place. Both of those tests still exist, as do the two semi-Lagrangian ones in the next
+  bullet; none was deleted, they stopped discriminating. A count-based ratchet
   cannot see an equal-size swap, by construction, so the matrix is the only place that record exists
   — which is why it is committed beside the baseline rather than merely produced.
 - **`bc_noflux_reads_as_clamp` 11 → 9 traced, and the conclusion is narrower than the count suggests**
