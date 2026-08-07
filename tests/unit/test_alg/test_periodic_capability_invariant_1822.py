@@ -35,6 +35,8 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -53,6 +55,7 @@ def _residual_of(solved, bc_type) -> float:
 NX = 21
 NT = 10
 SEAM_TOL = 1e-9  # exact zero in exact arithmetic; this admits round-off and meshless quadrature
+EXACT = 1e-12  # at or below this a residual has reached round-off and cannot converge further
 SEED = 1822  # any solver that accepts one gets it, so every row below is a repeatable number
 PARTICLES_AT_COARSEST = 5000  # scaled as Nx^2 under refinement; see the fixtures below
 
@@ -127,12 +130,12 @@ KNOWN_NOT_HONOURED = {
     # enters at the stalled timestep and decays backward, and the stall is periodic-specific) is
     # in #1834, and nothing in THIS change tests it.
     "HJBFDMSolver": ("#1834", AssertionError),
-    # Honours PERIODIC on a cloud with no DETECTED boundary points -- seam at most 3.3e-11 at
-    # Nx=11/21/41/81 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16), via the Issue #711 wrap. The default
-    # cloud this file uses puts points ON the faces, and boundary detection marks those as boundary
-    # even on a periodic axis, so the row builder (which has no periodic row) raises. The defect is
-    # the detection, not the capability, which is why the type stays declared. Tracked in #1841.
-    "HJBGFDMSolver": ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
+    # HJBGFDMSolver is GONE from this roster (#1841). It always honoured PERIODIC -- seam 2.2e-15,
+    # 3.3e-11, 6.7e-16, 6.7e-16 at Nx=11/21/41/81 via the Issue #711 wrap -- but only on a cloud
+    # with no DETECTED boundary points, which callers could reach only by hand-passing an empty
+    # `boundary_indices`. Boundary detection classified a point on a periodic face as a boundary
+    # point, and no wrap was built at all unless a separate periodic collocation geometry was
+    # supplied. Both are fixed, and the numbers above are now what the DEFAULT cloud produces.
     # FPParticleSolver fails the ABSOLUTE seam tolerance at this one grid, and that is the whole
     # claim -- it is not a statement that the solver fails to honour PERIODIC. Under joint
     # refinement (h -> 0 with N ~ Nx^2) its periodic residual converges, 20/20 seeds, which is why
@@ -507,7 +510,6 @@ SURFACE_NOT_HONOURED = {
     # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
     # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
-    ("HJBGFDMSolver", "PERIODIC"): ("#1841 boundary detection ignores periodic_dims", NotImplementedError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
     # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
@@ -558,7 +560,7 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
         r = _residual_of(_solve_with_bc(cls, bc_type, nx, nt), bc_type)
         assert np.isfinite(r), f"{name} declares {bc_type.name} and the solve produced non-finite values"
         residuals.append(r)
-        if len(residuals) == 1 and r < 1e-12:
+        if len(residuals) == 1 and r < EXACT:
             return  # exact at the coarse grid: the strong form, no refinement needed
 
     # THREE points, monotone. Two are not a trend: on 21->41 alone FPSLJacobianSolver improves
@@ -566,10 +568,16 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     # it. HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
     # convergence that a ratio threshold tuned for the fast cases would have failed.
     trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
-    assert residuals[1] < residuals[0], (
+    # `or < EXACT`: a residual that has REACHED round-off has converged, and cannot keep halving
+    # below machine epsilon -- demanding it would fail a solver for being exact. The early return
+    # above already makes this judgement for a solver exact at the COARSE grid; this is the same
+    # judgement for one that gets there under refinement, which #1841 produced (HJBGFDMSolver:
+    # 3.268e-11, 6.661e-16, 6.661e-16, where the last two are the identical float). Above
+    # EXACT the requirement is unchanged, so nothing that is merely converging slowly is excused.
+    assert residuals[1] < residuals[0] or residuals[1] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=21 to 41: {trend}"
     )
-    assert residuals[2] < residuals[1], (
+    assert residuals[2] < residuals[1] or residuals[2] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=41 to 81: {trend}"
     )
 
@@ -618,3 +626,82 @@ def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
         f"these declared (solver, BC) pairs have a fixture and are NOT measured: {sorted(missing)}. "
         f"A pair that is absent reads exactly like a pair that passed."
     )
+
+
+def test_the_gfdm_periodic_solve_is_a_solution_and_not_a_periodic_looking_artefact():
+    """A positive control for the two HJBGFDMSolver rows this file un-xfailed in #1841.
+
+    Both of those rows measure a seam -- `bc_residual(field, PERIODIC, ...)` IS `seam` -- so between
+    them they certify one scalar, and this file's own preamble records what that is worth: under a
+    symmetric datum two FP solvers scored 2e-15 while their mode amplitude was 8.7% wrong. Here the
+    doubt is sharper than symmetry. The GFDM periodic path augments the cloud with ghost points, and
+    on an endpoint-inclusive grid that augmentation contains a COINCIDENT pair at each end (x=0
+    appears twice). A duplicate node softly ties u[0] to u[-1], which is a mechanism for making the
+    seam small without solving anything -- exactly the self-fulfilling case a seam cannot detect.
+
+    So this asserts against an independent solver instead. `HJBSemiLagrangianSolver` is the one this
+    file records as exact for PERIODIC (4.4e-16, repaired in #1824), and the GFDM solve agrees with
+    it to 1.21e-02 relative Linf at Nx=41 -- CLOSER than `HJBFDMSolver`, which is 5.39e-02 on the
+    same comparison and is itself an accepted periodic solver here. The field is also non-constant
+    (peak-to-peak 0.40), which rules out the degenerate way to satisfy a seam.
+    """
+    nx, nt = 41, 20
+    reference = np.asarray(_solve_periodic(HJBSemiLagrangianSolver, nx=nx, nt=nt))[0]
+    gfdm = np.asarray(_solve_periodic(HJBGFDMSolver, nx=nx, nt=nt))[0]
+
+    scale = np.max(np.abs(reference))
+    assert np.ptp(gfdm) > 0.1 * scale, (
+        f"the GFDM periodic solve is nearly constant (peak-to-peak {np.ptp(gfdm):.4f}); a constant "
+        f"field satisfies the seam invariant while solving nothing"
+    )
+    relative = np.max(np.abs(gfdm - reference)) / scale
+    assert relative < 5.0e-02, (
+        f"the GFDM periodic solve is {relative:.4e} from HJBSemiLagrangianSolver, which this file "
+        f"records as exact under PERIODIC. The seam can be satisfied by the ghost cloud's coincident "
+        f"endpoint pair without the interior being solved; this is what rules that out"
+    )
+
+
+@pytest.mark.parametrize(
+    ("bc_factory", "geometry_periodic_dims", "declares"),
+    [(periodic_bc, (), "()"), (no_flux_bc, (0,), "(0,)")],
+    ids=["periodic-problem-nonperiodic-cloud", "walled-problem-periodic-cloud"],
+)
+def test_a_collocation_geometry_that_contradicts_the_bc_is_refused(bc_factory, geometry_periodic_dims, declares):
+    """Topology and boundary conditions must agree, and both directions used to fail silently.
+
+    The geometry decides topology -- a torus has no boundary -- while the BC decides what happens at
+    a wall, so the two can contradict. Before #1841 the first case raised from deep in a row builder;
+    the first fix for it made the SECOND case silent, skipping both faces so a declared no-flux wall
+    vanished and the solve ran with no boundary row at all. Neither is a configuration anyone means.
+
+    This is the pin the fix itself needed. Independent review reverted that fix and measured 202
+    passed either way -- a behaviour claim nothing in the repository would notice being undone, which
+    is the same defect the review before it blocked on.
+    """
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    geometry = Hyperrectangle(bounds=np.array([[0.0, 1.0]]), periodic_dims=geometry_periodic_dims)
+    with pytest.raises(ValueError, match="declares periodic axes"):
+        HJBGFDMSolver(
+            _problem_with_bc(bc_factory(dimension=1), NX, NT),
+            collocation_points=np.linspace(0.0, 1.0, NX).reshape(-1, 1),
+            collocation_geometry=geometry,
+        )
+
+
+def test_a_collocation_geometry_that_agrees_with_the_bc_is_accepted():
+    """Control: the refusal above must not fire on the configurations that are coherent.
+
+    Without this, a guard that rejected every `collocation_geometry` would satisfy the test above
+    while breaking a public kwarg used at a dozen call sites in this suite.
+    """
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    x = np.linspace(0.0, 1.0, NX).reshape(-1, 1)
+    for bc_factory, dims in ((periodic_bc, (0,)), (no_flux_bc, ())):
+        HJBGFDMSolver(
+            _problem_with_bc(bc_factory(dimension=1), NX, NT),
+            collocation_points=x,
+            collocation_geometry=Hyperrectangle(bounds=np.array([[0.0, 1.0]]), periodic_dims=dims),
+        )  # must not raise

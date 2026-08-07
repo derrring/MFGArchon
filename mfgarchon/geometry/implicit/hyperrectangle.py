@@ -174,33 +174,6 @@ class Hyperrectangle(ImplicitDomain):
         distances = np.sqrt(np.sum(diff_squared, axis=1))
         return distances[0] if single_point else distances
 
-    def wrap_displacement(self, delta: NDArray) -> NDArray:
-        """
-        Wrap displacement vector to [-L/2, L/2] for periodic dimensions.
-
-        For periodic dimension i:
-            delta_wrapped[i] = delta[i] - L[i] * round(delta[i] / L[i])
-
-        Args:
-            delta: Displacement vectors, shape (num_points, dimension) or (dimension,)
-
-        Returns:
-            Wrapped displacement in [-L/2, L/2], same shape as input
-        """
-        if not self._periodic_dims:
-            return delta
-
-        single_point = delta.ndim == 1
-        if single_point:
-            delta = delta.reshape(1, -1)
-
-        wrapped = delta.copy()
-        for dim_idx in self._periodic_dims:
-            L = self.bounds[dim_idx, 1] - self.bounds[dim_idx, 0]
-            wrapped[:, dim_idx] = wrapped[:, dim_idx] - L * np.round(wrapped[:, dim_idx] / L)
-
-        return wrapped[0] if single_point else wrapped
-
     def signed_distance(self, x: NDArray[np.float64]) -> float | NDArray[np.float64]:
         """
         Compute the signed distance to the hyperrectangle.

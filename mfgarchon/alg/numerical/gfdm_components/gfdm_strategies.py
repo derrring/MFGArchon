@@ -500,10 +500,18 @@ class TaylorOperator(DifferentialOperator):
     # =========================================================================
 
     def _wrap_displacement(self, delta_x: np.ndarray) -> np.ndarray:
-        """Wrap displacement vector using geometry's wrap_displacement method."""
+        """Wrap a displacement to the minimum image, from what the protocol declares.
+
+        `get_periods()` rather than a `wrap_displacement` method: the former is promised by
+        `SupportsPeriodic`, which is what `_is_periodic` above tests for, while the latter was
+        implemented by exactly one geometry. `TensorProductGrid` satisfies the protocol and has no
+        such method, so a periodic grid passed the guard and then raised AttributeError (#1841).
+        """
         if not self._is_periodic:
             return delta_x
-        return self._geometry.wrap_displacement(delta_x)
+        from mfgarchon.geometry.boundary.periodic import wrap_displacement
+
+        return wrap_displacement(delta_x, self._geometry.get_periods())
 
     def _get_augmented_points_for_tree(self) -> tuple[np.ndarray, np.ndarray]:
         """Get augmented point cloud with ghost copies for periodic tree search."""
