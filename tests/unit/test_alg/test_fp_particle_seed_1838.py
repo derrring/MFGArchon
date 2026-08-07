@@ -185,9 +185,6 @@ def test_the_other_solve_paths_still_respond_to_the_seed(dim, callable_drift):
 # started reaching it in this change -- so everything above says nothing about it.
 # ---------------------------------------------------------------------------
 
-torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
-
-
 @pytest.mark.optional_torch
 def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
     """The seed must drive a LOCAL torch generator, not `torch.manual_seed`.
@@ -199,6 +196,12 @@ def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone():
     [0.2818, 1.3052, -1.3480]. That is this solver reaching out and moving an unrelated caller's
     draws, which is the defect #1838 removed on the numpy side.
     """
+    # Skipped INSIDE the test, not at module scope: `pytest.importorskip` at module level raises
+    # at collection and takes the whole file with it -- measured, in a venv without torch, as
+    # "collected 0 items / 1 skipped", losing the twelve tests above. The nightly runs without
+    # torch, so that placement would have silently stopped measuring the thing this file is for.
+    torch = pytest.importorskip("torch", reason="the torch sampling path needs torch installed")
+
     from mfgarchon.backends.torch_backend import TorchBackend
     from mfgarchon.utils.particle_utils import sample_from_density_gpu
 
