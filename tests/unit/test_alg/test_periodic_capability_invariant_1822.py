@@ -153,29 +153,33 @@ KNOWN_NOT_HONOURED = {
 # CONVERGENCE, not exact conservation, and getting that wrong is what the first version of this
 # file did: it asserted `drift < 1e-9` and reported six solvers as failing to honour PERIODIC.
 #
-# Measured drift against refinement (Nx=21/41/81, Nt scaled with it):
+# Measured drift against refinement (Nx=21/41/81, Nt scaled with it), on THIS commit -- seeded,
+# and with the particle count scaled as Nx^2:
 #
-#   FPFDMSolver       5.56e-02  2.87e-02  1.46e-02
-#   FPFVMSolver       5.77e-02  2.93e-02  1.47e-02
-#   FPSLSolver        1.34e-01  4.91e-02  2.62e-02
-#   FPParticleSolver  5.63e-02  3.38e-02  1.64e-02
+#   FPSLSolver         1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
+#   FPSLAdjointSolver  1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
+#   FPParticleSolver   5.480e-02  3.429e-02  1.707e-02     converges, ratio 0.626
+#   FPFDMSolver        2.220e-16  9.992e-16  4.885e-15     at round-off: EARLY RETURN
+#   FPFVMSolver        2.665e-15  7.772e-15  3.841e-14     at round-off: EARLY RETURN
+#   FPSLJacobianSolver 8.882e-16  2.776e-15  1.332e-15     at round-off: EARLY RETURN
 #
-# Every one halves per refinement. That is O(h) discretisation error in a non-conservative scheme,
-# not a capability defect -- these solvers do not claim conservation by construction, and an
-# absolute tolerance on a convergent quantity is a tolerance chosen to make a point.
+# Where it converges, that is O(h) discretisation error in a non-conservative scheme, not a
+# capability defect -- these solvers do not claim conservation by construction, and an absolute
+# tolerance on a convergent quantity is a tolerance chosen to make a point.
 #
-# `FPSLJacobianSolver` reports 0.0000% at every resolution, which is the opposite failure: exact by
-# renormalisation rather than by conservation (RFC #1456 class (b), #1429 S0-11). A convergence
-# oracle cannot see it; it is listed under its own issue rather than certified here.
+# READ THE SECOND COLUMN OF THAT LIST. Half these rows no longer reach the assertion at all: the
+# `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence. For
+# FPSLJacobianSolver that is the long-standing case (exact by renormalisation rather than by
+# conservation -- RFC #1456 class (b), #1429 S0-11). FPFDMSolver and FPFVMSolver joined it in
+# #1837, which put their periodic wrap on the right torus and took their drift from ~5.6e-02 to
+# round-off. That is a real improvement and it makes this oracle vacuous for them, which is worth
+# saying out loud: three green rows here now assert nothing, and a green row that measured nothing
+# reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # Empty, and that is the honest state for every row this dict could hold. Five of the six FP
-    # solvers still declaring PERIODIC have a periodic mass error that halves under refinement, so
-    # the convergence oracle evaluates and passes. The sixth is FPSLJacobianSolver, which is not
-    # certified here either: its drift is already at round-off, so it takes the early return above
-    # and the convergence assertion never runs -- exact by renormalisation, and listed under #1756
-    # rather than under a trend it cannot have. The one entry that used to sit here, FPGFDMSolver,
-    # never produced a number to converge; it has since stopped declaring PERIODIC (#1822), so this
-    # file no longer asks it a question about periodicity.
+    # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
+    # converge. Three converge and three are already at round-off (see above). The one entry that
+    # used to sit here, FPGFDMSolver, never produced a number to converge at all; it has since
+    # stopped declaring PERIODIC (#1822), so this file no longer asks it about periodicity.
 }
 
 
@@ -262,17 +266,15 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
     )
 
 
-def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
-    """Run one solve from exactly periodic data and return the field it produced."""
-    x = np.linspace(0.0, 1.0, nx)
-    u_periodic = _U(x)
-    m_periodic = _M(x)
-    assert seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
-    assert seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
+def _solver_kwargs(cls: type, x: np.ndarray, nx: int) -> dict:
+    """The constructor arguments a solver needs, resolved from its own signature.
 
-    problem = _periodic_problem(nx=nx, nt=nt)
-    kwargs = {}
+    One owner, because both fixtures in this file need it and a copy that drifts splits the matrix
+    silently: the seam half and the surface half would then be measuring two different solvers under
+    one name, which is the failure mode this file exists to catch.
+    """
     params = inspect.signature(cls.__init__).parameters
+    kwargs = {}
     if "collocation_points" in params:
         kwargs["collocation_points"] = x.reshape(-1, 1)
     if "seed" in params:
@@ -288,6 +290,19 @@ def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
         # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
         # every type this solver declares converges in 20 of 20 seeds.
         kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
+    return kwargs
+
+
+def _solve_periodic(cls: type, nx: int = NX, nt: int = NT) -> np.ndarray:
+    """Run one solve from exactly periodic data and return the field it produced."""
+    x = np.linspace(0.0, 1.0, nx)
+    u_periodic = _U(x)
+    m_periodic = _M(x)
+    assert seam(u_periodic) < 1e-15, "the u input itself must be periodic, or the output tells us nothing"
+    assert seam(m_periodic) < 1e-15, "the m input itself must be periodic, or the output tells us nothing"
+
+    problem = _periodic_problem(nx=nx, nt=nt)
+    kwargs = _solver_kwargs(cls, x, nx)
     solver = cls(problem, **kwargs)
 
     if hasattr(solver, "solve_hjb_system"):
@@ -508,23 +523,7 @@ SURFACE_NOT_HONOURED = {
 def _solve_with_bc(cls, bc_type, nx, nt):
     x = np.linspace(0.0, 1.0, nx)
     problem = _problem_with_bc(BC_FACTORIES[bc_type](), nx, nt)
-    kwargs = {}
-    params = inspect.signature(cls.__init__).parameters
-    if "collocation_points" in params:
-        kwargs["collocation_points"] = x.reshape(-1, 1)
-    if "seed" in params:
-        # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
-        # trials of one configuration previously returned monotone=False, False, True, so xfail
-        # asserted a failure it did not reliably have and pass asserted the opposite.
-        kwargs["seed"] = SEED
-    if "num_particles" in params:
-        # Refine the SAMPLE with the grid, not just the grid. A particle method converges as
-        # N -> inf AND h -> 0; holding N fixed leaves a Monte Carlo floor set by N, so at the fine
-        # end the convergence oracle below compares noise and the verdict becomes a coin flip.
-        # Measured on the PERIODIC row at a fixed 5000 particles: monotone in 6 of 12 seeds. With
-        # N ~ Nx^2 -- the standard pairing, since the O(N^-1/2) sampling error has to track O(h) --
-        # every type this solver declares converges in 20 of 20 seeds.
-        kwargs["num_particles"] = int(PARTICLES_AT_COARSEST * (nx / NX) ** 2)
+    kwargs = _solver_kwargs(cls, x, nx)
     solver = cls(problem, **kwargs)
     if hasattr(solver, "solve_hjb_system"):
         return solver.solve_hjb_system(np.tile(_M(x), (nt + 1, 1)), _U(x), np.zeros((nt + 1, nx))), "HJB", x
