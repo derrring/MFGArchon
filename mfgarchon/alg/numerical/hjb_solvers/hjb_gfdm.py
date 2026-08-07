@@ -106,10 +106,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             BCType.NO_FLUX,  # Same as Neumann with g=0
             BCType.ROBIN,  # adjoint-consistent Robin(0,1); general-Robin sub-cases fail loud in the row builder
             # PERIODIC is honoured, but only on a cloud whose points are not detected as
-            # boundary -- seam exactly 0 at Nx=11/21/81 on a torus cloud, where the Issue #711
-            # wrap does the work. `_detect_boundary_indices` ignores `periodic_dims`, so the
-            # default endpoint-inclusive cloud reaches the row builder instead and raises.
-            # That is the defect (#1841); the capability is real, so the declaration stays.
+            # boundary -- seam 2.2e-15 / 3.3e-11 / 6.7e-16 / 6.7e-16 at Nx=11/21/41/81 on a torus
+            # cloud, where the Issue #711 wrap does the work. `_detect_boundary_indices` ignores
+            # `periodic_dims`, so the default endpoint-inclusive cloud reaches the row builder
+            # instead and raises. That is the defect (#1841); the capability is real, so the
+            # declaration stays.
             BCType.PERIODIC,
         }
     )

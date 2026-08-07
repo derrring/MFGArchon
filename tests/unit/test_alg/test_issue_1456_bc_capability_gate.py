@@ -57,7 +57,8 @@ def _pts():
 # other test constructs, and the audit confirms it cannot honor) fail loud at construction.
 #
 # PERIODIC stays declared because it is real: on a cloud with no detected boundary points the
-# Issue #711 wrap gives a seam of exactly 0 at Nx=11/21/41/81. The default endpoint-inclusive
+# Issue #711 wrap gives a seam of at most 3.3e-11 at Nx=11/21/41/81, three orders under #1822's
+# own SEAM_TOL = 1e-9 (2.2e-15, 3.3e-11, 6.7e-16, 6.7e-16). The default endpoint-inclusive
 # cloud cannot reach it -- boundary detection ignores periodic_dims and routes those points to
 # the row builder, which raises. That is #1841. General-Robin sub-cases likewise pass the
 # type-level gate and are enforced by the row builder.
@@ -78,8 +79,9 @@ def test_fp_gfdm_fails_loud_on_periodic():
     resolved "periodic" type is never read.
 
     HJBGFDMSolver is NOT included. It genuinely honours PERIODIC on a cloud with no detected
-    boundary points (seam exactly 0 at Nx=11/21/41/81); the default cloud cannot reach that path
-    because boundary detection ignores periodic_dims, which is #1841 and not a capability lie.
+    boundary points (seam at most 3.3e-11 at Nx=11/21/41/81, against SEAM_TOL = 1e-9); the default
+    cloud cannot reach that path because boundary detection ignores periodic_dims, which is #1841
+    and not a capability lie.
     """
     with pytest.raises(NotImplementedError, match="does not support"):
         FPGFDMSolver(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)

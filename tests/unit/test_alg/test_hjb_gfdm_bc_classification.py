@@ -446,8 +446,8 @@ def test_dispatch_periodic_raises():
     """PERIODIC at a DETECTED boundary point raises NotImplementedError from the row builder.
 
     Still the row builder, not construction: HJBGFDMSolver keeps declaring PERIODIC, because on a
-    cloud with no detected boundary points it honours it (seam exactly 0 at Nx=11/21/41/81, via
-    the Issue #711 wrap). What fails is this configuration -- points ON a face, which boundary
+    cloud with no detected boundary points it honours it (seam at most 3.3e-11 at Nx=11/21/41/81,
+    via the Issue #711 wrap). What fails is this configuration -- points ON a face, which boundary
     detection marks as boundary even on a periodic axis, sending them to a row builder that has
     no periodic row. Tracked as #1841.
     """

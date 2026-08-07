@@ -272,9 +272,7 @@ def test_apply_ghost_nodes_fires_on_mixed_bc_neumann_points():
 def test_apply_ghost_nodes_skips_when_periodic_default():
     """With no NEUMANN/NO_FLUX segments at all, no ghost augmentation fires.
 
-    A UNIFORM BC, which the mixed case above does not cover: there, Dirichlet points are checked
-    for ghosts only alongside wall points, so `n_ghosted == n_wall` could hold with a stray ghost
-    somewhere else. Here the whole boundary is non-wall and the expected count is exactly zero.
+    Specifically: a uniformly periodic BC should not produce ghosts.
     """
     LX, LY = 10.0, 10.0
     pts, bdry_idx = _eps_cloud(LX, LY, eps=1e-6, n_per_side=4)
@@ -303,7 +301,7 @@ def test_apply_ghost_nodes_skips_when_periodic_default():
         )
     handler = s._boundary_handler
     n_ghosted = sum(1 for i in bdry_idx if handler.neighborhoods.get(int(i), {}).get("has_ghost", False))
-    assert n_ghosted == 0, f"a BC with no wall segments must not trigger ghost augmentation, got {n_ghosted}"
+    assert n_ghosted == 0, f"Periodic BC should not trigger ghost augmentation, got {n_ghosted}"
 
 
 def test_apply_ghost_nodes_legacy_uniform_neumann_still_works():

@@ -154,10 +154,14 @@ KNOWN_NOT_HONOURED = {
 # renormalisation rather than by conservation (RFC #1456 class (b), #1429 S0-11). A convergence
 # oracle cannot see it; it is listed under its own issue rather than certified here.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # Empty, and that is the honest state: every FP solver still declaring PERIODIC has a periodic
-    # mass error that halves under refinement. The one entry that used to sit here, FPGFDMSolver,
-    # never produced a number to converge -- it has since stopped declaring PERIODIC (#1822), so
-    # this file no longer asks it a question about periodicity.
+    # Empty, and that is the honest state for every row this dict could hold. Five of the six FP
+    # solvers still declaring PERIODIC have a periodic mass error that halves under refinement, so
+    # the convergence oracle evaluates and passes. The sixth is FPSLJacobianSolver, which is not
+    # certified here either: its drift is already at round-off, so it takes the early return above
+    # and the convergence assertion never runs -- exact by renormalisation, and listed under #1756
+    # rather than under a trend it cannot have. The one entry that used to sit here, FPGFDMSolver,
+    # never produced a number to converge; it has since stopped declaring PERIODIC (#1822), so this
+    # file no longer asks it a question about periodicity.
 }
 
 
@@ -182,10 +186,9 @@ def _solvers_declaring_any_bc() -> dict[str, type]:
     This is what the declared-surface half of the file (#1574) must iterate. Keying it on
     PERIODIC instead was a filter that looked like no filter: every class in `_SEARCHED`
     declared PERIODIC, so the two sets were identical and the narrowing was invisible. The
-    first solver to stop declaring it fell out of the surface matrix entirely, taking its
-    DIRICHLET and NEUMANN rows with it -- measured when the GFDM pair undeclared PERIODIC in
-    #1822: five rows vanished silently, three of them recording live defects
-    (FPGFDMSolver-NEUMANN, FPGFDMSolver-NO_FLUX, HJBGFDMSolver-DIRICHLET).
+    first solver to stop declaring it falls out of the surface matrix entirely, taking its
+    other rows with it -- measured when `FPGFDMSolver` undeclared PERIODIC in #1822: its
+    NEUMANN and NO_FLUX rows vanish, and both record live defects.
     """
     found: dict[str, type] = {}
     for module_name in _SEARCHED:
@@ -544,14 +547,15 @@ def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
 
     This is the guard for a failure this file actually had. `_surface_params` used to iterate
     `_declaring_solvers()` -- the PERIODIC-declaring set -- which looked like no filter at all,
-    because every class in `_SEARCHED` declared PERIODIC. The moment the GFDM pair stopped
-    declaring it (#1822, since neither ever honoured it), five rows vanished: three of them
-    recording live defects (FPGFDMSolver-NEUMANN, FPGFDMSolver-NO_FLUX, HJBGFDMSolver-DIRICHLET).
+    because every class in `_SEARCHED` declared PERIODIC. The moment `FPGFDMSolver` stopped
+    declaring it (#1822, since it never honoured it), its rows vanished from the matrix.
 
-    Measured, with the matrix keyed back the old way: 0 GFDM rows collected and the file still
-    **green** at 34 passed / 10 xfailed, versus 5 rows and 37 / 13 now. A suite that stays green
-    while it quietly stops measuring things is the thing this ratchet exists to prevent, so the
-    coverage is asserted rather than assumed.
+    Measured at this commit, with the matrix keyed back the old way: 4 GFDM rows collected, all of
+    them HJBGFDM, against 6 now -- `FPGFDMSolver-NEUMANN` and `FPGFDMSolver-NO_FLUX` are the two
+    that disappear, and both record a live defect. What stops that being silent is this test: the
+    old keying now reports 1 failed / 38 passed / 11 xfailed, where before this test existed it
+    was green. A suite that stays green while it quietly stops measuring things is what this
+    ratchet exists to prevent, so the coverage is asserted rather than assumed.
     """
     expected = {
         (name, t.name)
