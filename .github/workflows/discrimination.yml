@@ -45,10 +45,14 @@ jobs:
         python-version: ${{ env.PYTHON_VERSION }}
         cache: 'pip'
 
+    # numba for the same measured reason nightly.yml and deprecation-check.yml carry it: without
+    # it `mfgarchon.backends.numba_backend` -- LIVE library, not a frozen paradigm -- cannot be
+    # imported, and the deprecation-guide tests refuse a tree whose live half they cannot read
+    # (#1836). This tier runs `pytest tests` in full, so it hits exactly the same three errors.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev,numerical]"
+        pip install -e ".[dev,numerical]" numba
 
     # NOTE: --paths defaults to `tests`, which includes tests/unit/test_backends and
     # tests/unit/test_visualization. nightly.yml deliberately --ignores both (see its
