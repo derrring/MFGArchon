@@ -9,9 +9,16 @@
   paradigms, and `mfgarchon.backends.numba_backend`, which raises a deliberate `ImportError`
   without numba. The twentieth is live library, so the only automatic full-suite tier could not read
   the package end to end — the nightly now installs `numba`, for the same measured reason
-  `deprecation-check.yml` already carried it, and still not torch. The fixture skips with the reason
+  `deprecation-check.yml` already carried it, and still not torch. `discrimination.yml` — the weekly
+  sweep, and a second automatic tier that runs `pytest tests` in full — had the identical hole and
+  gets the same one-word fix. The fixture skips with the reason
   and the remedy, and only when every unreadable module is inside a frozen paradigm: a live module
   that will not import still raises, since turning a real breakage into a skip is how a suite goes
   quiet about what it was built to catch. The scope rule is read from the ratchet that owns it
   (`check_internal_deprecation.FROZEN`) rather than restated, and both branches of the guard are
   pinned against the nightly's own 20-module failure.
+  Installing numba is not inert: `USE_NUMBA` flips to True and three `@njit` kernels become
+  compiled. Measured rather than assumed — collection is identical in all four shards with and
+  without it, and no test in the nightly's marker selection branches on numba availability, so
+  the change moves that tier toward the local gate, whose environment already has it.
+

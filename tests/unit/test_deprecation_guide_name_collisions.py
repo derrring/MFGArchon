@@ -23,6 +23,7 @@ import importlib.util
 import pathlib
 
 import pytest
+from _pytest.outcomes import Skipped
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 
@@ -47,6 +48,30 @@ def _live_holes(unimportable: dict[str, str]) -> list[str]:
     return sorted(module for module in unimportable if not _RATCHET.is_frozen(module))
 
 
+def _scan_or_skip(scan):
+    """Run `scan`, and turn an incomplete-but-frozen-only tree into a skip rather than an error.
+
+    A free function rather than an inline `try` in the fixture, so a test can drive it with a
+    fabricated `IncompleteScanError` and check BOTH branches. Inline, the two ways this can rot --
+    skipping unconditionally, or refusing unconditionally -- are invisible: independent review
+    mutated each of them and every environment stayed green, including the authoritative gate.
+    That is the failure this guard exists to prevent, one level up from where it prevents it.
+    """
+    from mfgarchon.utils.deprecation import IncompleteScanError
+
+    try:
+        return scan()
+    except IncompleteScanError as exc:
+        if _live_holes(exc.unimportable):
+            raise
+        pytest.skip(
+            f"the package cannot be read in full here, so the shipped guide cannot be generated: "
+            f"{len(exc.unimportable)} frozen-paradigm module(s) need optional extras. "
+            f"Install `.[nn]` to run this, or rely on ./scripts/local_ci.sh, the authoritative "
+            f"gate, which runs in a complete environment."
+        )
+
+
 @pytest.fixture(scope="module")
 def gen():
     return _load("generate_deprecation_guide")
@@ -69,21 +94,9 @@ def registry(gen):
 
     The hole has to be entirely inside the frozen paradigms. A LIVE module that will not import is
     a real breakage, and turning that into a skip is how a suite goes quiet about the thing it was
-    built to catch.
+    built to catch. That decision lives in `_scan_or_skip`, where a test can reach it.
     """
-    from mfgarchon.utils.deprecation import IncompleteScanError
-
-    try:
-        return gen.deduplicate(gen.scan_all_deprecations())
-    except IncompleteScanError as exc:
-        if _live_holes(exc.unimportable):
-            raise
-        pytest.skip(
-            f"the package cannot be read in full here, so the shipped guide cannot be generated: "
-            f"{len(exc.unimportable)} frozen-paradigm module(s) need optional extras. "
-            f"Install `.[nn]` to run this, or rely on ./scripts/local_ci.sh, the authoritative "
-            f"gate, which runs in a complete environment."
-        )
+    return gen.deduplicate(_scan_or_skip(gen.scan_all_deprecations))
 
 
 def test_the_live_collision_is_detected(gen, registry):
@@ -120,25 +133,68 @@ def test_an_unambiguous_registry_produces_no_section(gen):
     assert "Do not migrate these across solvers" not in gen.generate_guide(clean)
 
 
-def test_the_scan_guard_skips_for_the_frozen_paradigms_and_not_for_a_live_module():
-    """A guard that turns every unreadable tree into a skip reports nothing when it matters.
+def _raising(unimportable):
+    """A stand-in for `scan_all_deprecations` that fails the way the real one does."""
+    from mfgarchon.utils.deprecation import IncompleteScanError
 
-    Both halves are the instance that motivated it: the nightly's `IncompleteScanError` named 20
-    modules and every one of them sat under a frozen paradigm (`.core.networks`, `.core.utils`,
-    `.nn.feedforward`, ...), which is the environment `registry` is entitled to skip on. Add one
-    live module to the same dict and the skip must not fire -- that tree is broken, not merely
-    partially installed.
+    def scan():
+        raise IncompleteScanError(unimportable)
+
+    return scan
+
+
+# The nightly's own failure, minus the module that made it interesting. `.[dev,numerical]` cannot
+# import 20 modules; nineteen are frozen and the twentieth, `backends/numba_backend`, is LIVE -- it
+# is why this branch installs numba rather than only guarding the test. These three are from the
+# traceback's own "(+17 more)" prefix, built from FROZEN because check_frozen_areas.py counts
+# literals naming a frozen package.
+_FROZEN_ONLY = {
+    f"{_RATCHET.FROZEN[0]}.core.networks": "ModuleNotFoundError: No module named 'torch'",
+    f"{_RATCHET.FROZEN[0]}.core.utils": "ModuleNotFoundError: No module named 'torch'",
+    f"{_RATCHET.FROZEN[0]}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
+}
+_LIVE_HOLE = "mfgarchon.backends.numba_backend"
+
+
+def test_the_scan_guard_classifies_the_holes():
+    """The classifier alone: frozen holes are not live ones, and a live hole is reported."""
+    assert _live_holes(_FROZEN_ONLY) == []
+    assert _live_holes({**_FROZEN_ONLY, _LIVE_HOLE: "ImportError: Numba required"}) == [_LIVE_HOLE]
+
+
+def test_the_scan_guard_skips_on_a_frozen_only_tree():
+    """Driving the guard, not the classifier under it.
+
+    Asserting on `_live_holes` alone leaves the `try/except` untested, and independent review
+    measured what that costs: mutating the guard to skip unconditionally -- the exact degradation
+    this file's docstrings warn about -- left every environment green, the authoritative gate
+    included.
     """
-    frozen = _RATCHET.FROZEN[0]
-    nightly = {
-        f"{frozen}.core.networks": "ModuleNotFoundError: No module named 'torch'",
-        f"{frozen}.core.utils": "ModuleNotFoundError: No module named 'torch'",
-        f"{frozen}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
-    }
-    assert _live_holes(nightly) == []
+    with pytest.raises(Skipped):
+        _scan_or_skip(_raising(_FROZEN_ONLY))
 
-    live = "mfgarchon.utils.numerical"
-    assert _live_holes({**nightly, live: "ImportError: cannot import name 'solve'"}) == [live]
+
+def test_the_scan_guard_refuses_a_tree_with_a_live_hole():
+    """The half that must NOT be a skip, asserted so that a skip fails rather than passes.
+
+    `pytest.raises(IncompleteScanError)` is the obvious spelling and it is not enough: under a
+    guard that skips unconditionally, `Skipped` propagates out of this call and pytest records the
+    test as SKIPPED -- exit 0, invisible in the summary, which is what the mutation would exploit.
+    So the skip is caught explicitly and turned into a failure.
+    """
+    from mfgarchon.utils.deprecation import IncompleteScanError
+
+    scan = _raising({**_FROZEN_ONLY, _LIVE_HOLE: "ImportError: Numba required for Numba backend"})
+    try:
+        _scan_or_skip(scan)
+    except Skipped:
+        pytest.fail(
+            f"the guard skipped a tree whose live library it could not read ({_LIVE_HOLE}); a real "
+            f"breakage is now reported as 'not installed', which is how a suite goes quiet"
+        )
+    except IncompleteScanError:
+        return
+    pytest.fail("the guard neither raised nor skipped on an unreadable tree")
 
 
 def test_a_name_deprecated_only_at_a_different_owner_still_collides(gen):
