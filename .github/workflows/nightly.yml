@@ -63,10 +63,16 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    # `numba` is here for the same measured reason deprecation-check.yml carries it, and torch is
+    # still NOT: of the 20 modules this environment cannot import, 19 live under the frozen
+    # paradigms (CLAUDE.md) and the twentieth is `backends/numba_backend.py`, which raises a
+    # deliberate ImportError without numba. That one is LIVE library, so the backstop tier could
+    # not read the library end to end -- measured on b88b4781. torch stays out: it is a 2 GB wheel
+    # on a tier that already deselects `optional_torch` and ignores tests/unit/test_backends/.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev,numerical]"
+        pip install -e ".[dev,numerical]" numba
 
     - name: Assert the shard matrix covers every tests/ subdirectory
       # tests/regression was silently dropped from an earlier three-shard matrix -- it holds the
