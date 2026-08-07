@@ -24,4 +24,4 @@ jupyter-book build .     # Static HTML build
 
 ## Internal development notes
 
-Internal development notes — architecture, roadmaps, issue analysis — are split between the private `mfg-research` repo (`docs/archon-notes/`) and Joplin. Which goes where: `CLAUDE.md` § Development Plan Management.
+Architecture design, roadmaps, and issue analysis are in the private `mfg-research` repository under `docs/archon-notes/`.
