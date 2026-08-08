@@ -351,6 +351,102 @@ class TestGKSSparseBranchReadsTheRightEndOfTheSpectrum:
         assert sparse.max_real_part == pytest.approx(dense.max_real_part, abs=1e-6)
 
 
+class TestCriteriaCanActuallySayNo:
+    """Issue #1859: every criterion must be observed REJECTING something.
+
+    Before this, no test anywhere fed ``check_gks_stability`` a known-bad operator and asserted
+    it said bad -- every case supplied a valid input and asserted ``stable is True``. A criterion
+    that cannot fail passes such a suite indistinguishably from a correct one, which is exactly
+    what happened: ``pde_type="hyperbolic"`` compared ``max|Im(lambda)|`` against
+    ``10*max|lambda|``, both reduced from the same array, and ``|Im z| <= |z|`` holds for every
+    complex number. It returned stable=True for every input ever constructed, including operators
+    amplifying by 7.8e42. ``"hyperbolic"`` and ``"elliptic"`` appeared zero times in tests/.
+
+    These are the positive controls. A criterion with no case it rejects is not validated.
+    """
+
+    @staticmethod
+    def _laplacian(N: int, delta: float = 0.0) -> csr_matrix:
+        h = 1.0 / (N - 1)
+        L = (diags([1.0, -2.0, 1.0], [-1, 0, 1], shape=(N, N)) / h**2).tolil()
+        L[0, 1] = 2 / h**2
+        L[-1, -2] = 2 / h**2
+        if delta:
+            L = L + delta * eye(N)
+        return L.tocsr()
+
+    @pytest.mark.parametrize("N", [40, 150])
+    def test_parabolic_rejects_a_growing_operator(self, N):
+        """The must-reject control for parabolic, on both sides of the dense/sparse dispatch."""
+        result = check_gks_stability(self._laplacian(N, delta=0.5), pde_type="parabolic")
+        assert not result.stable
+        assert result.max_real_part == pytest.approx(0.5, abs=1e-6)
+
+    def test_hyperbolic_refuses_instead_of_returning_a_verdict(self):
+        """It reported stable=True for A = 1e6*I, so it must now refuse rather than answer."""
+        with pytest.raises(NotImplementedError, match="tautology"):
+            check_gks_stability(csr_matrix(1e6 * np.eye(20)), pde_type="hyperbolic")
+
+    def test_hyperbolic_refuses_even_for_a_benign_operator(self):
+        """The refusal is unconditional -- a criterion that cannot decide must not decide."""
+        with pytest.raises(NotImplementedError):
+            check_gks_stability(self._laplacian(30), pde_type="hyperbolic")
+
+    @pytest.mark.parametrize("N", [40, 150, 250])
+    def test_elliptic_rejects_an_indefinite_operator_at_every_size(self, N):
+        """The must-reject control for elliptic, and the dispatch-independence check.
+
+        A negative-definite Laplacian shifted so exactly one eigenvalue crosses zero. Under the
+        previous truncated sparse solve this was reported definite for N > 100, because the 50
+        largest-MAGNITUDE eigenvalues sit far from the sign flip -- the same object gave the
+        correct answer at N=50 and the wrong one at N=101.
+        """
+        operator = self._laplacian(N)
+        shift = -float(np.linalg.eigvals(operator.toarray()).real.min()) * 0.5
+        indefinite = (operator + shift * eye(N)).tocsr()
+
+        spectrum = np.linalg.eigvals(indefinite.toarray()).real
+        assert spectrum.max() > 0, "control has no positive eigenvalue"
+        assert spectrum.min() < 0, "control has no negative eigenvalue"
+
+        result = check_gks_stability(indefinite, pde_type="elliptic")
+        assert not result.stable, f"N={N}: indefinite operator reported definite"
+
+    def test_elliptic_accepts_a_definite_operator(self):
+        """The converse: refusing everything would be a tautology of the opposite sign.
+
+        Uses a DIRICHLET Laplacian, not the Neumann one above. The Neumann operator has a
+        constant null vector -- measured, its smallest eigenvalue is 3.46e-12 at N=150, one
+        eigenvalue inside the +/-tol band -- so it is singular and correctly NOT definite. Writing
+        this control with the Neumann operator is the same mistake that refuted a proposed sparse
+        definiteness test during review, where an inertia count called the periodic Laplacian
+        definite despite its exact null vector.
+        """
+        N = 150
+        h = 1.0 / (N - 1)
+        dirichlet = (diags([1.0, -2.0, 1.0], [-1, 0, 1], shape=(N, N)) / h**2).tocsr()
+
+        spectrum = np.linalg.eigvals(dirichlet.toarray()).real
+        assert spectrum.max() < 0, "control is not actually negative definite"
+
+        result = check_gks_stability(dirichlet, pde_type="elliptic")
+        assert result.stable
+
+    def test_elliptic_verdict_does_not_depend_on_the_size_dispatch(self):
+        """Same mathematics either side of an internal threshold must give the same verdict."""
+        verdicts = []
+        for N in (60, 101, 200):
+            operator = self._laplacian(N)
+            shift = -float(np.linalg.eigvals(operator.toarray()).real.min()) * 0.5
+            verdicts.append(check_gks_stability((operator + shift * eye(N)).tocsr(), pde_type="elliptic").stable)
+        assert verdicts == [False, False, False], f"verdict flips across the dispatch: {verdicts}"
+
+    def test_elliptic_refuses_rather_than_truncating_when_too_large(self):
+        """Above the cap it must refuse, not fall back to a one-ended sample."""
+        with pytest.raises(ValueError, match="full spectrum"):
+            check_gks_stability(self._laplacian(300), pde_type="elliptic", max_dense_size=200)
+
+
 if __name__ == "__main__":
     """Run tests with pytest."""
     pytest.main([__file__, "-v", "-s"])
