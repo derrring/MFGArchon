@@ -152,15 +152,31 @@ def check_gks_stability(
     if num_eigenvalues is None:
         num_eigenvalues = min(50, N - 2)  # Leave margin for eigs() safety
 
-    # Compute eigenvalues
-    # Note: eigs() computes largest magnitude by default, use which='LM'
+    # Which end of the spectrum to sample is decided by the criterion, not by convention:
+    # `eigs` returns only `num_eigenvalues` of N, so asking for the wrong end silently omits
+    # exactly the eigenvalues the test is about (Issue #1859).
+    #
+    # parabolic tests max Re(lambda), so it needs the largest REAL part ('LR'). Under the
+    # previous 'LM' the returned values were the most negative ones (~ -4/dx^2 for a
+    # discretized Laplacian), so max_real_part came back large and negative and `stable` was
+    # True for every operator once N > 100 -- including one with Re(lambda) = +0.1.
+    #
+    # hyperbolic consumes max|lambda| as `operator_norm`, which is what 'LM' returns, so it
+    # keeps 'LM'. (Its criterion has a separate problem, reported on #1859: |Im z| <= |z|
+    # holds for every complex number, so the comparison can never fail. Not fixed here.)
+    #
+    # elliptic asks whether all eigenvalues share a sign, which needs BOTH ends and is
+    # therefore not answerable from one truncated call at all -- also reported, not fixed,
+    # because it needs a second solve rather than a different `which`.
+    which = "LR" if pde_type == "parabolic" else "LM"
+
     try:
         if N <= 100:
             # For small problems, use dense eigenvalue solver (more reliable)
             eigenvalues = np.linalg.eigvals(operator.toarray())
         else:
             # For large problems, use sparse solver
-            eigenvalues, _ = eigs(operator, k=num_eigenvalues, which="LM", tol=1e-6)
+            eigenvalues, _ = eigs(operator, k=num_eigenvalues, which=which, tol=1e-6)
     except Exception:
         # If sparse solver fails (common for small N or ill-conditioned), use dense
         logger.warning("Sparse eigensolver failed for N=%d, falling back to dense solver", N)
