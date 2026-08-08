@@ -93,6 +93,7 @@ def check_gks_stability(
     bc_description: str = "unknown",
     tol: float = 1e-8,
     num_eigenvalues: int | None = None,
+    max_dense_size: int = 2000,
 ) -> GKSResult:
     """
     Check GKS stability condition for a discretized PDE with BCs.
@@ -107,11 +108,24 @@ def check_gks_stability(
             of DOFs.
         pde_type: Type of PDE being analyzed
             - "parabolic": Heat equation, diffusion (requires Re(λ) ≤ 0)
-            - "hyperbolic": Wave equation, advection (requires bounded Im(λ))
-            - "elliptic": Poisson, steady-state (requires consistent sign)
+            - "hyperbolic": NOT IMPLEMENTED -- raises. See Raises below (Issue #1859).
+            - "elliptic": Poisson, steady-state (requires consistent sign). Always uses the
+              full spectrum, so it is bounded by ``max_dense_size``.
         bc_description: Human-readable description of the BC (for reporting)
         tol: Tolerance for numerical errors in eigenvalue real parts
-        num_eigenvalues: Number of eigenvalues to compute (default: min(50, N-2))
+        num_eigenvalues: Number of eigenvalues to compute (default: min(50, N-2)).
+            Applies to the sparse path only, i.e. parabolic with N > 100.
+        max_dense_size: Largest N for which ``pde_type="elliptic"`` will run. Definiteness is a
+            statement about every eigenvalue, so that branch refuses rather than sampling one
+            end of the spectrum. N=2000 costs about 2s and 32MB.
+
+    Raises:
+        NotImplementedError: for ``pde_type="hyperbolic"``. The previous criterion was a
+            tautology that reported every operator stable, and it is not repairable per-operator:
+            boundedness of exp(t·A) is invariant under A → c·A, so no single-operator predicate
+            can reference dx. Use :func:`check_gks_convergence` for cross-grid behaviour.
+        ValueError: for ``pde_type="elliptic"`` when ``N > max_dense_size``, or for an unknown
+            ``pde_type``.
 
     Returns:
         GKSResult containing stability verdict and eigenvalue data
@@ -152,6 +166,59 @@ def check_gks_stability(
     if num_eigenvalues is None:
         num_eigenvalues = min(50, N - 2)  # Leave margin for eigs() safety
 
+    if pde_type == "hyperbolic":
+        # Refusing, rather than returning a reassuring True (Issue #1859).
+        #
+        # The previous criterion was `max|Im(lambda)| <= 10 * max|lambda|`, both reduced from the
+        # same array. Since |Im z| <= |z| for every complex z, that is implied by the definitions:
+        # it returned stable=True for EVERY input, on the dense path as well as the sparse one.
+        # Measured before removal: exponentially unstable transport operators amplifying by 7.8e42,
+        # and A = 1e6 * I, all reported stable; over 200000 random matrices the worst observed
+        # ratio was 0.9999999996 against a threshold of 10. The one escape hatch is closed too --
+        # non-finite input raises in the eigensolver before the comparison is reached.
+        #
+        # It is not repaired to a weaker form because the intended check is not answerable from a
+        # single operator at all. Two independent reasons:
+        #   1. Boundedness of exp(t*A) is invariant under A -> c*A (a time reparametrization),
+        #      so no per-operator predicate can legitimately reference dx.
+        #   2. ||A|| = O(1/dx) already holds by CONSISTENCY, so the intended inequality is
+        #      satisfied by every consistent scheme whether or not it is stable.
+        # Cross-grid scaling belongs in `check_gks_convergence`, which is where a sequence of
+        # operators at different dx is available.
+        #
+        # A three-valued replacement (energy-norm certificate + Kreiss-constant refutation) was
+        # derived and rejected under adversarial review: at default settings it reports "unstable"
+        # for a textbook 1-D acoustic system, and its two tiers answer in different norms, so an
+        # operator can be certified non-expansive and refuted as amplifying at the same time.
+        raise NotImplementedError(
+            "No single-operator hyperbolic stability criterion is implemented. The previous check "
+            "(|Im(lambda)| <= 10*||A||) was a tautology -- |Im z| <= |z| for every complex z -- so "
+            "it reported stable=True for every input including exponentially unstable operators. "
+            "Growth for non-normal A is a pseudospectral question, not a spectral one, and "
+            "dx-scaling requires a sequence of operators: see check_gks_convergence. (Issue #1859)"
+        )
+
+    if pde_type == "elliptic" and max_dense_size < N:
+        # `elliptic` asks whether the WHOLE spectrum shares a sign. A truncated solve samples one
+        # end, and the opposite end is exactly where an indefiniteness would sit -- measured, an
+        # operator with one negative eigenvalue among 201 was reported definite, because the 50
+        # largest-magnitude eigenvalues lie in [1.40e5, 1.63e5] while the sign flip is at -14.80.
+        #
+        # So this branch uses the full spectrum below, and refuses above the size where that is
+        # affordable rather than returning a verdict it cannot support. Two sparse methods were
+        # derived and both were rejected under adversarial review: an LDL inertia count returns
+        # `definite` for the periodic Laplacian, which has an exact null vector, and returns
+        # `indefinite` for 18 of 27 upwind advection-diffusion operators whose spectra are
+        # entirely positive; shift-invert misses interior-magnitude sign flips, which is precisely
+        # the case a BC validator exists to catch.
+        raise ValueError(
+            f"pde_type='elliptic' needs the full spectrum (definiteness is a statement about ALL "
+            f"eigenvalues), but N={N} exceeds max_dense_size={max_dense_size}. A truncated sparse "
+            f"solve samples one end and cannot see a sign flip at the other. Raise max_dense_size "
+            f"to accept the O(N^3) cost (N=2000 takes about 2s and 32MB), or reduce the problem. "
+            f"(Issue #1859)"
+        )
+
     # Which end of the spectrum to sample is decided by the criterion, not by convention:
     # `eigs` returns only `num_eigenvalues` of N, so asking for the wrong end silently omits
     # exactly the eigenvalues the test is about (Issue #1859).
@@ -161,18 +228,19 @@ def check_gks_stability(
     # discretized Laplacian), so max_real_part came back large and negative and `stable` was
     # True for every operator once N > 100 -- including one with Re(lambda) = +0.1.
     #
-    # hyperbolic consumes max|lambda| as `operator_norm`, which is what 'LM' returns, so it
-    # keeps 'LM'. (Its criterion has a separate problem, reported on #1859: |Im z| <= |z|
-    # holds for every complex number, so the comparison can never fail. Not fixed here.)
-    #
-    # elliptic asks whether all eigenvalues share a sign, which needs BOTH ends and is
-    # therefore not answerable from one truncated call at all -- also reported, not fixed,
-    # because it needs a second solve rather than a different `which`.
-    which = "LR" if pde_type == "parabolic" else "LM"
+    # elliptic never reaches the sparse path -- it is refused above `max_dense_size` and takes
+    # the full spectrum below it -- so 'LR' is the only choice left to make here.
+    which = "LR"
+
+    # `elliptic` is forced dense at any N: a one-ended sample cannot answer a whole-spectrum
+    # question, and its verdict must not depend on which side of an internal size threshold the
+    # input lands on. Measured before this change: the SAME mathematical object returned
+    # definite=False (correct) at N=50 and N=100, and definite=True (wrong) at N=101/200/400.
+    use_dense = N <= 100 or pde_type == "elliptic"
 
     try:
-        if N <= 100:
-            # For small problems, use dense eigenvalue solver (more reliable)
+        if use_dense:
+            # Dense solver: exact, and the only one that sees every eigenvalue
             eigenvalues = np.linalg.eigvals(operator.toarray())
         else:
             # For large problems, use sparse solver
@@ -194,13 +262,6 @@ def check_gks_stability(
         # Parabolic: All eigenvalues must have non-positive real part (dissipative)
         criterion = f"Re(λ) ≤ {tol:.0e}"
         stable = max_real_part <= tol
-
-    elif pde_type == "hyperbolic":
-        # Hyperbolic: Imaginary parts should be bounded (no exponential growth)
-        # Criterion: |Im(λ)| should scale with O(1/Δx) not O(exp(·))
-        operator_norm = float(np.abs(eigenvalues).max())
-        criterion = "|Im(λ)| ≤ 10·||A|| (bounded growth)"
-        stable = max_imag_part <= 10 * operator_norm
 
     elif pde_type == "elliptic":
         # Elliptic: Eigenvalues should have consistent sign (definite operator)
