@@ -127,6 +127,16 @@ def wrap_displacement(
         >>> wrap_displacement(np.array([0.9]), {0: 1.0})   # shorter to go backwards
         array([-0.1])
     """
+    if delta.ndim > 2:
+        # `wrapped[:, dim_idx]` below indexes axis 1, which is the coordinate axis only for
+        # rank 1 and 2. Silently wrapping one slab of a rank-3 stack returns a correctly
+        # SHAPED array of wrong distances -- the failure mode this function was made the
+        # single owner to prevent -- so refuse instead of guessing (Issue #1853).
+        raise ValueError(
+            f"wrap_displacement expects shape (N, d) or (d,), got ndim={delta.ndim} "
+            f"with shape {delta.shape}. Reshape to (N, d) and restore the leading axes afterwards."
+        )
+
     if not periods:
         return delta
 
@@ -134,11 +144,47 @@ def wrap_displacement(
     if single_vector:
         delta = delta.reshape(1, -1)
 
-    wrapped = delta.copy()
+    # float, not delta.dtype: an integer displacement array would truncate the wrapped value on
+    # write-back, so two points half a non-integral period apart report distance 0 (Issue #1853).
+    wrapped = np.asarray(delta, dtype=float)
+    wrapped = wrapped.copy() if wrapped is delta else wrapped
     for dim_idx, length in periods.items():
         wrapped[:, dim_idx] = wrapped[:, dim_idx] - length * np.round(wrapped[:, dim_idx] / length)
 
     return wrapped[0] if single_vector else wrapped
+
+
+def periodic_distance(
+    points1: NDArray[np.floating],
+    points2: NDArray[np.floating],
+    periods: dict[int, float],
+) -> NDArray[np.floating]:
+    """
+    Euclidean distance with periodic axes reduced to the minimum image.
+
+    Single owner of the *distance* form, as :func:`wrap_displacement` is of the displacement
+    form. Both ``Hyperrectangle`` and ``TensorProductGrid`` delegate here; keeping a copy of
+    this body in each class is what let one rule become three in the first place (Issue #1853).
+
+    Args:
+        points1: Shape (N, d) or (d,).
+        points2: Same shape as points1, or broadcastable to it.
+        periods: Dimension index -> period length, for periodic dimensions only. Empty means
+            nothing is periodic and the plain Euclidean distance is returned.
+
+    Returns:
+        Distances of shape (N,), or a scalar when ``points1`` is a single (d,) vector.
+    """
+    diff = np.asarray(points1, dtype=float) - np.asarray(points2, dtype=float)
+
+    # Keyed on points1, not on diff: a (d,) query against a (1, d) reference broadcasts to a
+    # rank-2 diff, and the documented contract is that a single query point returns a scalar.
+    single_point = np.ndim(points1) == 1
+    if diff.ndim == 1:
+        diff = diff.reshape(1, -1)
+
+    distances = np.linalg.norm(wrap_displacement(diff, periods), axis=1)
+    return distances[0] if single_point and distances.shape == (1,) else distances
 
 
 def create_periodic_ghost_points(

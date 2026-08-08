@@ -473,13 +473,22 @@ class SupportsPeriodic(Protocol):
             >>> x1 = np.array([0.1])
             >>> x2 = np.array([0.9])
             >>> # Standard distance: |0.9 - 0.1| = 0.8
-            >>> # Periodic distance: min(0.8, 1 - 0.8) = 0.2
+            >>> # Periodic distance (minimum image): |−0.8 − 1·round(−0.8/1)| = 0.2
             >>> dist = grid.compute_periodic_distance(x1, x2)
             >>> assert np.isclose(dist, 0.2)
 
         Note:
-            - For periodic dim i: d_i = min(|x1_i - x2_i|, L_i - |x1_i - x2_i|)
+            - For periodic dim i, take the minimum image:
+              d_i = |δ_i - L_i * round(δ_i / L_i)| where δ_i = x1_i - x2_i
             - Total distance: d = sqrt(∑_i d_i²)
             - Critical for nearest-neighbor queries on periodic domains
+
+        Implementers: do not restate the rule -- call
+        ``mfgarchon.geometry.boundary.periodic.wrap_displacement``, its single owner.
+        ~~d_i = min(|δ_i|, L_i - |δ_i|)~~ stood here as the normative form until 2026-08-08
+        and is wrong for |δ_i| > L_i: on a unit torus it gives 0.9 for a separation of 1.9
+        (true answer 0.1) and 6.7 for 7.7, a distance larger than the domain. Both shipped
+        implementers had transcribed it from this Note, which is how one rule became three
+        (Issue #1853; owner established in #1841, #1847).
         """
         ...

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
+from mfgarchon.geometry.boundary.periodic import periodic_distance
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.boundary.types import BCType, PeriodicGridConvention
 from mfgarchon.geometry.protocol import GeometryType
@@ -1535,8 +1536,9 @@ class TensorProductGrid(
         """
         Compute distance accounting for periodic topology.
 
-        For periodic dim i: d_i = min(|x1_i - x2_i|, L_i - |x1_i - x2_i|)
-        Total distance: d = sqrt(∑ d_i²)
+        For periodic dim i, the minimum image
+        d_i = |δ_i - L_i * round(δ_i / L_i)|, δ_i = x1_i - x2_i, delegated to
+        ``wrap_displacement``. Total distance: d = sqrt(∑ d_i²).
 
         Args:
             points1: First set of points, shape (num_points, dimension) or (dimension,)
@@ -1551,26 +1553,10 @@ class TensorProductGrid(
             >>> # Wrapped distance: 0.2 under periodic BC, 0.8 under no-flux.
             >>> float(grid.compute_periodic_distance(np.array([0.1]), np.array([0.9])))  # 0.2
         """
-        # Handle single point
-        single_point = points1.ndim == 1
-        if single_point:
-            points1 = points1.reshape(1, -1)
-            points2 = points2.reshape(1, -1)
-
-        diff = points1 - points2
-        periodic_dims = self.periodic_dimensions
-
-        for dim_idx in periodic_dims:
-            period = self.bounds[dim_idx][1] - self.bounds[dim_idx][0]
-            # Shortest distance on circle: min(|d|, L - |d|)
-            abs_diff = np.abs(diff[:, dim_idx])
-            diff[:, dim_idx] = np.minimum(abs_diff, period - abs_diff)
-
-        distances = np.linalg.norm(diff, axis=1)
-
-        if single_point:
-            return distances[0]
-        return distances
+        # Minimum image delegated to its single owner (Issue #1853).  The former inline
+        # min(|d|, L - |d|) is correct only for |d| <= L -- on a unit torus it answered
+        # 0.9 for a separation of 1.9 (true answer 0.1), and 6.7 for 7.7.
+        return periodic_distance(points1, points2, self.get_periods())
 
     # =========================================================================
     # Operator Trait Implementations (Issue #590 Phase 1.2, Issue #595)
