@@ -12,7 +12,7 @@ Created: 2026-01-18 (Issue #593 Phase 4.2)
 import pytest
 
 import numpy as np
-from scipy.sparse import csr_matrix, diags
+from scipy.sparse import csr_matrix, diags, eye
 
 from mfgarchon.geometry.boundary.validation.gks import (
     GKSResult,
@@ -273,6 +273,82 @@ class TestGKSEdgeCases:
 
         # Should convert to sparse internally
         assert isinstance(result.eigenvalues, np.ndarray)
+
+
+class TestGKSSparseBranchReadsTheRightEndOfTheSpectrum:
+    """Issue #1859: the N > 100 branch had zero coverage, and was unconditionally stable.
+
+    ``check_gks_stability`` dispatches on size: dense ``eigvals`` for N <= 100, sparse ``eigs``
+    above it. Every pre-existing test in this file uses N = 50 or N = 5, so the sparse branch
+    was never executed. It asked ``eigs`` for ``which="LM"`` -- largest MAGNITUDE -- while the
+    parabolic criterion is on the largest REAL part. For a discretized Laplacian the
+    largest-magnitude eigenvalues are the most negative ones (about -4/dx^2), so the near-zero
+    eigenvalues that decide stability were never returned and ``stable`` was True for every
+    operator once N > 100.
+    """
+
+    @staticmethod
+    def _laplacian_with_growth(N: int, delta: float) -> csr_matrix:
+        """1D Neumann Laplacian plus delta*I.
+
+        ``d_t u = Laplacian(u) + delta*u`` grows exponentially for delta > 0, so max Re(lambda)
+        is exactly delta and a correct parabolic check must report unstable.
+        """
+        h = 1.0 / (N - 1)
+        L = (diags([1.0, -2.0, 1.0], [-1, 0, 1], shape=(N, N)) / h**2).tolil()
+        L[0, 1] = 2 / h**2
+        L[-1, -2] = 2 / h**2
+        if delta:
+            L = L + delta * eye(N)
+        return L.tocsr()
+
+    @pytest.mark.parametrize("N", [101, 201, 401])
+    def test_growing_operator_is_reported_unstable_on_the_sparse_branch(self, N):
+        """The regression. Under ``which="LM"`` this returned stable=True at every N."""
+        operator = self._laplacian_with_growth(N, delta=0.1)
+        result = check_gks_stability(operator, pde_type="parabolic", bc_description=f"N={N}")
+
+        # This test is ABOUT the sparse branch, so assert it was actually taken: the sparse call
+        # returns min(50, N-2) eigenvalues where the dense path returns all N. Without this, a
+        # change to the size threshold would silently redirect these cases to the dense solver
+        # and they would keep passing while covering nothing (measured: raising the threshold
+        # leaves all 16 tests green).
+        assert len(result.eigenvalues) == min(50, N - 2), (
+            f"N={N}: expected the sparse branch (min(50, N-2) eigenvalues), "
+            f"got {len(result.eigenvalues)} -- dense path taken, so this test no longer covers "
+            f"what it names"
+        )
+        assert not result.stable, (
+            f"N={N}: operator with max Re(lambda) = +0.1 reported stable; max_real_part={result.max_real_part:.3e}"
+        )
+        assert result.max_real_part == pytest.approx(0.1, abs=1e-6), (
+            f"N={N}: expected the near-zero end of the spectrum, got {result.max_real_part:.3e}"
+        )
+
+    @pytest.mark.parametrize("N", [101, 401])
+    def test_dissipative_operator_is_still_reported_stable(self, N):
+        """The other half: sampling a different end must not manufacture false alarms."""
+        operator = self._laplacian_with_growth(N, delta=0.0)
+        result = check_gks_stability(operator, pde_type="parabolic", bc_description=f"N={N}")
+
+        assert result.stable, f"N={N}: pure Laplacian reported unstable ({result.max_real_part:.3e})"
+        assert result.max_real_part <= 1e-8
+
+    def test_dense_and_sparse_branches_agree_across_the_dispatch_boundary(self):
+        """N=100 and N=101 take different code paths and must not disagree about stability.
+
+        This is the check that would have caught the defect without knowing its mechanism: the
+        answer must not depend on which side of an internal size threshold the input lands on.
+        """
+        dense = check_gks_stability(self._laplacian_with_growth(100, 0.1), pde_type="parabolic")
+        sparse = check_gks_stability(self._laplacian_with_growth(101, 0.1), pde_type="parabolic")
+
+        assert dense.stable == sparse.stable is False, (
+            f"dispatch boundary disagrees: N=100 stable={dense.stable} "
+            f"(Re={dense.max_real_part:.3e}), N=101 stable={sparse.stable} "
+            f"(Re={sparse.max_real_part:.3e})"
+        )
+        assert sparse.max_real_part == pytest.approx(dense.max_real_part, abs=1e-6)
 
 
 if __name__ == "__main__":
