@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
+from mfgarchon.geometry.boundary.periodic import periodic_distance
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
 from mfgarchon.geometry.boundary.types import BCType, PeriodicGridConvention
 from mfgarchon.geometry.protocol import GeometryType
@@ -1555,22 +1556,7 @@ class TensorProductGrid(
         # Minimum image delegated to its single owner (Issue #1853).  The former inline
         # min(|d|, L - |d|) is correct only for |d| <= L -- on a unit torus it answered
         # 0.9 for a separation of 1.9 (true answer 0.1), and 6.7 for 7.7.
-        from mfgarchon.geometry.boundary.periodic import wrap_displacement
-
-        # Difference first, then reshape only a 1-D *result*: this keeps the reduction on
-        # the last axis, so shapes outside the documented (N, d) / (d,) contract -- higher-rank
-        # stacks, and (d,) broadcast against (N, d) -- behave as they did before #1853.
-        diff = points1 - points2
-        single_point = diff.ndim == 1
-        if single_point:
-            diff = diff.reshape(1, -1)
-
-        diff = wrap_displacement(diff, self.get_periods())
-        distances = np.linalg.norm(diff, axis=-1)
-
-        if single_point:
-            return distances[0]
-        return distances
+        return periodic_distance(points1, points2, self.get_periods())
 
     # =========================================================================
     # Operator Trait Implementations (Issue #590 Phase 1.2, Issue #595)

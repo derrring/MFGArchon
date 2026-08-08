@@ -473,7 +473,7 @@ class SupportsPeriodic(Protocol):
             >>> x1 = np.array([0.1])
             >>> x2 = np.array([0.9])
             >>> # Standard distance: |0.9 - 0.1| = 0.8
-            >>> # Periodic distance: min(0.8, 1 - 0.8) = 0.2
+            >>> # Periodic distance (minimum image): |−0.8 − 1·round(−0.8/1)| = 0.2
             >>> dist = grid.compute_periodic_distance(x1, x2)
             >>> assert np.isclose(dist, 0.2)
 

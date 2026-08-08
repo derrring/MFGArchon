@@ -4,7 +4,8 @@ Both ``Hyperrectangle`` and ``TensorProductGrid`` implemented the rule inline as
 ``min(|d|, L - |d|)``, which is correct only for ``|d| <= L``. On a unit torus they
 agreed with each other and disagreed with the truth: 0.9 for a separation of 1.9
 (true 0.1), and 6.7 for 7.7 -- larger than the domain. Both now delegate to
-``wrap_displacement``, the single owner of the rule (#1841, #1847).
+``periodic_distance``, which owns the shape and dtype handling and calls
+``wrap_displacement``, the owner of the rule itself (#1841, #1847).
 
 What pins what, deliberately:
 
@@ -15,6 +16,11 @@ What pins what, deliberately:
   closed form ``|d - L*round(d/L)|``.
 - Agreement *between* the two classes is NOT used as a pin. Both now route through one
   owner, so agreement is tautological and would pass over a broken owner.
+- Every case below fixes ONE degree of freedom that the rest hold constant: the period
+  (all others use L = 1), the lower bound (all others are zero-based), the number of
+  periodic axes (all others declare one), and the column count (every grid case is 1-D).
+  Each of those was measured surviving mutation while the whole geometry suite stayed
+  green, so a pin that varies none of them pins less than it appears to.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import numpy as np
 
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary.periodic import wrap_displacement
 from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
 
 L = 1.0
@@ -181,24 +188,111 @@ def test_batch_shape_and_values(factory):
     np.testing.assert_allclose(got, [0.1, 0.4, 0.1, 0.3], atol=1e-12)
 
 
-def test_out_of_contract_shapes_behave_as_before_1853():
-    """Shapes outside the documented (N, d) / (d,) contract are unchanged by #1853.
+@pytest.mark.parametrize("periodic_dims", [(), (0,), (0, 1)])
+def test_rank_three_input_raises_rather_than_wrapping_one_slab(periodic_dims):
+    """Rank >= 3 must fail loudly, on every periodicity setting.
 
-    Before #1853 the no-periodic-dims case returned early via ``norm(..., axis=-1)`` without
-    reshaping, so a higher-rank stack and a ``(d,)``-against-``(N, d)`` broadcast both worked.
-    The consolidation removed that early return; reducing on the last axis and reshaping only a
-    1-D *result* keeps both. Nothing in the library calls these shapes -- this exists so the
-    source comment asserting it is pinned rather than merely asserted.
+    The owner indexes ``wrapped[:, dim_idx]`` -- axis 1, the coordinate axis only for rank 1
+    and 2. Accepting a rank-3 stack wrapped one slab and returned a correctly *shaped* array of
+    wrong distances (measured: 1.94 on a domain of length 1, violating the d <= L/2 invariant
+    asserted above). A silent wrong number is worse than the shape error it replaced, so the
+    owner refuses.
+
+    Parametrised over `periodic_dims` deliberately: with `()` the owner used to early-return
+    before ever reaching the indexing, so a non-periodic-only version of this test passes while
+    the behaviour it names is false for every periodic geometry.
     """
-    geom = Hyperrectangle(bounds=np.array([[0.0, L], [0.0, L]]), periodic_dims=())
+    geom = Hyperrectangle(bounds=np.array([[0.0, L], [0.0, L]]), periodic_dims=periodic_dims)
     rng = np.random.default_rng(0)
-
     stacked1, stacked2 = rng.random((3, 5, 2)), rng.random((3, 5, 2))
-    got = geom.compute_periodic_distance(stacked1, stacked2)
-    assert got.shape == (3, 5)
-    np.testing.assert_allclose(got, np.linalg.norm(stacked1 - stacked2, axis=-1), atol=0)
+    with pytest.raises(ValueError, match=r"ndim=3"):
+        geom.compute_periodic_distance(stacked1, stacked2)
 
-    one, many = rng.random(2), rng.random((5, 2))
-    broadcast = geom.compute_periodic_distance(one, many)
-    assert broadcast.shape == (5,)
-    np.testing.assert_allclose(broadcast, np.linalg.norm(one - many, axis=-1), atol=0)
+
+def test_single_query_point_returns_a_scalar_against_a_one_row_reference():
+    """A (d,) query against a (1, d) reference keeps the documented scalar return.
+
+    Keying `single_point` off the *difference* instead of `points1` silently promoted this to a
+    length-1 array, on which the class docstring's own ``float(...)`` idiom raises TypeError.
+    The natural way to hit it is slicing one row out of an (N, d) cloud as ``pts[i:i+1]``.
+    """
+    geom = Hyperrectangle(bounds=np.array([[0.0, L]]), periodic_dims=(0,))
+    got = geom.compute_periodic_distance(np.array([0.9]), np.array([[0.1]]))
+    assert np.ndim(got) == 0, f"expected a scalar, got shape {np.shape(got)}"
+    assert float(got) == pytest.approx(0.2, abs=1e-12)
+
+
+@pytest.mark.parametrize("cls", ["hyperrectangle", "tensor_grid"])
+def test_integer_input_does_not_truncate(cls):
+    """Integer coordinates on a non-integral period must not collapse to distance 0.
+
+    The owner wrote a float minimum image back into an int array, so points half a period
+    apart reported 0 -- a duplicate-detection query over integer lattice coordinates would call
+    them coincident.
+    """
+    if cls == "hyperrectangle":
+        geom = Hyperrectangle(bounds=np.array([[0.0, 2.5]]), periodic_dims=(0,))
+    else:
+        geom = TensorProductGrid(bounds=[(0.0, 2.5)], Nx_points=[11], boundary_conditions=periodic_bc(dimension=1))
+    for delta in (2, 3):
+        got = geom.compute_periodic_distance(np.array([delta]), np.array([0]))
+        assert float(got) == pytest.approx(0.5, abs=1e-12), f"delta={delta} truncated to {float(got)}"
+
+
+def test_two_periodic_axes_are_both_wrapped():
+    """The 2-torus, the canonical periodic MFG domain, had zero coverage on either class.
+
+    Wrapping only the first axis of `get_periods()` and leaving the rest left the whole
+    geometry suite green, so the dict forwarding was unpinned.
+    """
+    geom = Hyperrectangle(bounds=np.array([[0.0, L], [0.0, L]]), periodic_dims=(0, 1))
+    got = float(geom.compute_periodic_distance(np.array([0.05, 0.05]), np.array([0.95, 0.95])))
+    assert got == pytest.approx(np.hypot(0.1, 0.1), abs=1e-12), "second periodic axis not wrapped"
+
+
+def test_multi_column_grid_uses_the_euclidean_reduction():
+    """Every other grid case is single-column, where a norm is indistinguishable from a sum.
+
+    Measured: replacing the grid's reduction with `sum(|diff|)` left 956 tests green, because
+    no multi-column TensorProductGrid existed anywhere in the file.
+    """
+    grid = TensorProductGrid(
+        bounds=[(0.0, L), (0.0, L)], Nx_points=[11, 11], boundary_conditions=periodic_bc(dimension=2)
+    )
+    got = float(grid.compute_periodic_distance(np.array([0.3, 0.4]), np.array([0.0, 0.0])))
+    assert got == pytest.approx(0.5, abs=1e-12), "not the Euclidean norm (L1 would give 0.7)"
+
+
+@pytest.mark.parametrize("cls", ["hyperrectangle", "tensor_grid"])
+def test_period_comes_from_the_span_not_the_upper_bound(cls):
+    """Non-zero lower bound: every other geometry here is zero-based, where they coincide.
+
+    Sourcing the period as `bounds[i][1]` instead of `bounds[i][1] - bounds[i][0]` is invisible
+    on [0, L] and wrong everywhere else.
+    """
+    lo, hi = -2.0, 3.5  # period 5.5; the upper bound alone would be 3.5
+    if cls == "hyperrectangle":
+        geom = Hyperrectangle(bounds=np.array([[lo, hi]]), periodic_dims=(0,))
+    else:
+        geom = TensorProductGrid(bounds=[(lo, hi)], Nx_points=[11], boundary_conditions=periodic_bc(dimension=1))
+    # separation 4.0 on a period-5.5 torus -> 1.5; using period 3.5 would give 0.5
+    got = float(geom.compute_periodic_distance(np.array([lo + 4.0]), np.array([lo])))
+    assert got == pytest.approx(1.5, abs=1e-12), f"period looks wrong: got {got}"
+
+
+def test_owner_promotes_integer_input_directly():
+    """`wrap_displacement` is public, so its int handling needs a pin of its own.
+
+    `periodic_distance` promotes before calling it, which makes the owner's promotion
+    unreachable from the distance path -- measured: removing it left all 60 tests green. A
+    direct caller passing an integer displacement array is the case that still truncates.
+    """
+    got = wrap_displacement(np.array([2, 3, 1]).reshape(3, 1), {0: 2.5})
+    np.testing.assert_allclose(got.ravel(), [-0.5, 0.5, 1.0], rtol=0, atol=1e-12)
+    assert got.dtype.kind == "f", f"expected float output, got {got.dtype}"
+
+
+def test_owner_refuses_rank_three_directly():
+    """Same reasoning: the guard lives in the owner, so pin it at the owner."""
+    with pytest.raises(ValueError, match=r"ndim=3"):
+        wrap_displacement(np.zeros((2, 3, 2)), {0: 1.0})

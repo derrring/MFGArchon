@@ -4,7 +4,13 @@
 for 7.7 — larger than the domain. Both now delegate to `wrap_displacement`, taking the count of
 minimum-image implementations in the tree from 3 to 1 (#1841, #1847), and the rule stated
 normatively in the `SupportsPeriodic` protocol — from which both had been transcribed — is
-corrected with it. For **floating-point** input, distances with `|d| <= L` are unchanged
-bit-for-bit (0 ULP over ~82k samples per period, across eight periods, both classes). Integer
-input with a non-integral period shifts, because both the old and new formulations truncate on
-write-back into an integer array; that path was, and remains, wrong in both. (#1853)
+corrected with it. Both methods now delegate to a new `periodic_distance` owner beside
+`wrap_displacement`, so the shape and dtype handling has one home too.
+
+Distances for `|d| <= L` are unchanged on the eight values pinned in
+`test_periodic_distance_minimum_image_1853.py`, captured by executing the pre-change
+implementations and asserted with `==`. Two paths that were previously wrong are now fixed
+rather than carried: integer input no longer truncates on write-back (it promoted to float, so
+points half a non-integral period apart no longer report distance 0), and rank-3 or higher
+input now raises instead of wrapping a single slab and returning a correctly-shaped array of
+wrong distances. (#1853)

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.periodic import periodic_distance
 from mfgarchon.utils.deprecation import deprecated
 
 from .implicit_domain import ImplicitDomain
@@ -152,25 +153,19 @@ class Hyperrectangle(ImplicitDomain):
 
         Total distance: d = sqrt(∑ d_i²), with periodic axes reduced to the minimum image.
 
-        The minimum image is delegated to ``wrap_displacement``, the single owner of that
-        rule. The former inline ``min(|Δx_i|, L_i - |Δx_i|)`` is only correct for
-        |Δx_i| <= L_i: on a unit torus it answered 0.9 for a separation of 1.9 (true
-        answer 0.1) and 6.7 for 7.7, larger than the domain itself (Issue #1853).
+        Delegates to ``periodic_distance``, the single owner. The former inline
+        ``min(|Δx_i|, L_i - |Δx_i|)`` is only correct for |Δx_i| <= L_i: on a unit torus it
+        answered 0.9 for a separation of 1.9 (true answer 0.1) and 6.7 for 7.7, larger than
+        the domain itself (Issue #1853).
+
+        Args:
+            points1: Shape (num_points, dimension) or (dimension,).
+            points2: Same shape as points1, or broadcastable to it.
+
+        Returns:
+            Distances of shape (num_points,), or a scalar for a single query point.
         """
-        from mfgarchon.geometry.boundary.periodic import wrap_displacement
-
-        # Difference first, then reshape only a 1-D *result*: this keeps the reduction on
-        # the last axis, so shapes outside the documented (N, d) / (d,) contract -- higher-rank
-        # stacks, and (d,) broadcast against (N, d) -- behave as they did before #1853, when
-        # the no-periodic-dims branch returned early with ``norm(..., axis=-1)`` and no reshape.
-        diff = points1 - points2
-        single_point = diff.ndim == 1
-        if single_point:
-            diff = diff.reshape(1, -1)
-
-        diff = wrap_displacement(diff, self.get_periods())
-        distances = np.linalg.norm(diff, axis=-1)
-        return distances[0] if single_point else distances
+        return periodic_distance(points1, points2, self.get_periods())
 
     def signed_distance(self, x: NDArray[np.float64]) -> float | NDArray[np.float64]:
         """
