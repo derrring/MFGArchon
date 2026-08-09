@@ -16,6 +16,7 @@ These tests exercise the comparison and mutation logic directly. They do not sol
 anything: the cells themselves are exercised by running the script.
 """
 
+import ast
 import importlib.util
 import json
 import sys
@@ -688,3 +689,42 @@ def test_the_unexplained_count_is_derived_not_asserted(cm, monkeypatch, tmp_path
     assert "1 non-PASS cell(s) with no recorded reason" in report, report
     assert "b/bare" in report
     assert "a/annotated" not in report.split("no recorded reason")[-1]
+
+
+def test_every_cell_that_solves_records_the_picard_verdict():
+    """A cell that solves must say whether the solve converged (#1871).
+
+    The field exists because the mass oracles cannot see convergence -- mass is conserved on
+    whatever drift field the FP step is handed. It is recorded, not gated: nothing in
+    `--check-baseline` reacts to it, and a `_picard_verdict` returning constants leaves the
+    full gate green (verified by mutation). This test is the only oracle over the field.
+
+    It reads the SOURCE, not the baseline. The first version of this test compared recorded
+    artifacts, and deleting a `_picard_verdict` call left it green -- the baseline still
+    carried the field from the last regeneration, so the test pinned a record rather than
+    the code that writes it. That is the same defect class the field itself exists to
+    expose, one level up.
+
+    The rule is structural, so there is no exemption list to keep in sync: a cell function
+    that binds the result of a `.solve(...)` call must mention `_picard_verdict`. Cells that
+    only construct a solver -- `_gfdm_rbf_cell` -- bind no result and are exempt by shape,
+    which matters because it is why "no exception implies a verdict" cannot be the rule.
+    """
+    tree = ast.parse(_SCRIPT.read_text())
+
+    def solves(node: ast.FunctionDef) -> bool:
+        return any(
+            isinstance(n, ast.Assign)
+            and isinstance(n.value, ast.Call)
+            and isinstance(n.value.func, ast.Attribute)
+            and n.value.func.attr == "solve"
+            for n in ast.walk(node)
+        )
+
+    solving = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and solves(n)]
+    assert solving, "no cell binds a solve result -- the rule below would be vacuous"
+
+    missing = sorted(
+        n.name for n in solving if "_picard_verdict" not in ast.dump(n) and "_picard_verdict" not in ast.unparse(n)
+    )
+    assert not missing, f"these solve a problem and never record whether it converged: {missing}"
