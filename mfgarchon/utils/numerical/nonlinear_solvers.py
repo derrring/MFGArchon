@@ -435,11 +435,11 @@ class NewtonSolver(NonlinearSolver):
                         RuntimeWarning,
                         stacklevel=2,
                     )
-                    J = self._finite_difference_jacobian(F, x_current, F_current)
+                    J = self._finite_difference_jacobian(F, x_current)
                     jacobian_evals += 1
             else:
                 # Fallback: finite difference Jacobian (O(N) complexity)
-                J = self._finite_difference_jacobian(F, x_current, F_current)
+                J = self._finite_difference_jacobian(F, x_current)
                 jacobian_evals += 1
 
             # Solve linear system: J δx = -F
@@ -509,15 +509,33 @@ class NewtonSolver(NonlinearSolver):
         self,
         F: Callable[[NDArray], NDArray],
         x: NDArray,
-        F_x: NDArray,
     ) -> NDArray | sparse.spmatrix:
         """
-        Compute Jacobian via forward finite differences.
+        Compute Jacobian via central finite differences.
 
-        J[i,j] ≈ (F(x + ε·e_j)[i] - F(x)[i]) / ε
+        J[i,j] ≈ (F(x + ε·e_j)[i] - F(x - ε·e_j)[i]) / (2ε)
+
+        Central, not one-sided, because the residuals this solver is handed are only
+        piecewise smooth, and the iterate can sit exactly on a kink (Issue #1745). An
+        upwind HJB residual selects between two one-sided differences, so it is
+        non-differentiable wherever they tie -- and symmetric initial data puts nodes
+        exactly there rather than near there. Measured on the 2-D smoke problem at the
+        stalled iterate: at the grid centre the two neighbours agree to 9e-11 (both
+        -1.32946871 to eight decimals), and dF[60]/dU[59] is +13.395 approached from
+        one side and -7.9998 from the other -- both read at eps 1e-5; at this solver's own
+        default of 1e-7 the second side reads -7.98. A one-sided quotient reports whichever
+        branch lies on the +eps side; that branch governs half a neighbourhood, and the
+        step built from it is one the line search then has to cut to ~0.03. The symmetric
+        quotient reports the mean of the two branch slopes. Same inner solve, same x0:
+        forward reaches 1.17e-05 in 30 iterations and needs 67 to reach tolerance,
+        central reaches 3.14e-09 in 5.
+
+        The cost is 2n evaluations of F per Jacobian rather than n. That is the wrong
+        thing to economise on: a solver spending O(n) residual evaluations per iteration
+        is already the expensive path, and on the case that motivated this the cheaper
+        quotient bought 13.4x the iterations -- 6.7x the residual evaluations net.
         """
         x_flat = x.flatten()
-        F_flat = F_x.flatten()
         n = len(x_flat)
 
         if self.use_sparse:
@@ -527,15 +545,16 @@ class NewtonSolver(NonlinearSolver):
             J = np.zeros((n, n), dtype=np.float64)
 
         for j in range(n):
-            # Perturb j-th component
-            x_pert = x_flat.copy()
-            x_pert[j] += self.epsilon
+            # Perturb j-th component either side
+            x_plus = x_flat.copy()
+            x_minus = x_flat.copy()
+            x_plus[j] += self.epsilon
+            x_minus[j] -= self.epsilon
 
-            # Evaluate F at perturbed point
-            F_pert = F(x_pert.reshape(x.shape)).flatten()
+            F_plus = F(x_plus.reshape(x.shape)).flatten()
+            F_minus = F(x_minus.reshape(x.shape)).flatten()
 
-            # Finite difference
-            J[:, j] = (F_pert - F_flat) / self.epsilon
+            J[:, j] = (F_plus - F_minus) / (2.0 * self.epsilon)
 
         return J.tocsr() if self.use_sparse else J
 
