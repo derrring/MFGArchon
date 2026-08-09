@@ -11,10 +11,10 @@
     },
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
-        "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
+        "exception": "ValueError",
+        "message": "FP solver: at timestep 2/6, advection_scheme='divergence_centered': density went to -6.618e-01. Clipping it to zero would fabricate 2.329% of the total mass, so the solve is stopped rather than report"
       },
-      "intended": "DEFECT \u2014 #1745. One bug, three cells: FDM_CENTERED, FDM_UPWIND and FVM_MUSCL fail with an identical residual 1.17e-05 because they share HJBFDMSolver; SL_LINEAR does not and passes. The inner Newton's tolerance is 1e-6 and its budget is 30 iterations, so this is 11.7x the tolerance -- it is not diverging, it fails to close the last order of magnitude in the budget. Start with the convergence rate and the iteration budget rather than the Jacobian: at max_iterations=400 the recorded solve does converge, at iteration 67 (9.685e-07). But it is not settled -- the NEXT Newton in the same cell then stops after 2 iterations at 4.568e+01 with reason='line_search_failed' and the solver's own detail 'the direction may be wrong (check the Jacobian)'. The Jacobian on this path is finite-difference (hjb_fdm.py:312 passes jacobian=None) and the observed rate is q-linear ~0.87, not quadratic. #1763's own body disclosed that raising the budget 'exposes a different failure further into the solve that I have not characterised'; that is still true. (Before #1763 this cell recorded 2.42e-01. That WAS a residual, not a step norm: `git show 005a10f5~1` has `residual_norm = np.linalg.norm(F_current.flatten())`, and #1763's own body records the residual converging to 1.57e-03 in five iterations and then diverging geometrically to 2.42e-01 because the full step increased it where a half step would have quartered it. #1763 fixed that by defaulting line_search=True. #1764 changed the convergence test in base_hjb.py, which is NOT on this cell's path -- it reaches NewtonSolver via hjb_fdm.py. Do not read the old number as a bad criterion; it recorded a real divergence that is now fixed.)",
+      "intended": "DEFECT \u2014 #1865, and this cell now fails EARLIER than the other two. With the inner Newton closing (PR #1864), the solve reaches the FP step, where divergence_centered drives the density to -6.618e-01 at timestep 2/6 and the mass-fabrication gate (#1683) refuses it -- the same refusal its 1-D sibling records, and INTENDED there. Whether this cell is a #1865 instance or a well-posedness problem of its own is unsettled. See also #1866: NumericalScheme.FDM_CENTERED leaves the HJB on upwind gradients, so this cell's HJB solve is identical to fdm_upwind_2d's and only the FP half is centered.",
       "status": "UNSUPPORTED"
     },
     "fdm_upwind/mass_conservation": {
@@ -31,9 +31,9 @@
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 2.95e+01)"
       },
-      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
+      "intended": "DEFECT \u2014 #1865. The inner-solver half of #1745 is fixed (PR #1864: the finite-difference Jacobian straddled the upwind kink). Twelve of the thirteen inner Newton solves in this cell now converge in 4-7 iterations, final residuals 4.881e-12 to 7.433e-07. The thirteenth -- the first backward step of the third Picard sweep -- has no root within reach: scipy.optimize.least_squares(method='trf') on the same residual from the same x0 also fails, ending at 3.58 after 12100 evaluations with the iterate 2.4e+04 away. What remains is the COUPLED iteration diverging: measured at the FP call site -- max|U| of the value function handed to the FP solve, and the peak of the density it returns -- 1.86 -> 37.35 and 34.9 -> 101 over the two available sweeps. Name the instrument, because the iterator's own iteration_callback reports the DAMPED iterate and gives half of these (0.93 -> 19.14 at damping 0.5); both are correct and they are not the same quantity. 3, 5 or 10 outer iterations end identically. Not dimension-specific -- the same parameters in 1-D give max|U| 0.489 -> 0.507, and 2-D converges at coupling x0.1, or at high enough sigma -- but that bound moves with the outer budget and is not a property of sigma alone. At this cell's own max_iterations=3: 0.40 and 0.45 fail, 0.50 / 0.55 / 0.60 / 1.00 pass. At max_iterations=5, 0.50 fails too (residual 9.88e+00) and the bound is 0.55. More sweeps is more opportunity to diverge, which is the shape of the defect rather than a surprise. Read the residual as a coupled-iteration number, not an inner-solver one.",
       "status": "UNSUPPORTED"
     },
     "fvm_muscl/mass_conservation": {
@@ -49,9 +49,9 @@
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 1.17e-05)"
+        "message": "newton solver failed to converge after 30 iterations (residual: 1.15e+02)"
       },
-      "intended": "DEFECT \u2014 #1745, same defect as fdm_centered_2d: identical residual 1.17e-05, shared HJBFDMSolver.",
+      "intended": "DEFECT \u2014 #1865, the same coupled divergence as fdm_upwind_2d: this cell shares HJBFDMSolver, and SL_LINEAR, which does not, passes.",
       "status": "UNSUPPORTED"
     },
     "fvm_vs_fdm/agreement": {
@@ -94,7 +94,7 @@
         ],
         "tolerance": 1e-06
       },
-      "intended": "DEFECT — #1798, and NOT the defect this cell recorded before. The solve now RUNS: #1681 is fixed and both regime densities are strictly positive (min 8.4e-04), where this cell previously raised at the mass-fabrication gate every run. What fails is the cell's own oracle, which gates PER-REGIME mass drift at 1e-6. A regime's mass is not conserved in a Markov-switching model -- the generator transfers it. For this cell's Q the stationary distribution is [2/3, 1/3] against equal initial masses, so the measured 8.9%/8.6% is approximately RIGHT, not approximately wrong; integrating the FP system over the no-flux domain leaves M(t) = M(0) expm(Qt), and the run tracks it to 2.2e-03. The conserved quantity is the sum over regimes: 1.4e-03 here, 8.0e-04 by 30 Picard iterations, 6.7e-04 at Nt=80. Do NOT turn this PASS by relaxing 1e-6 to fit the measurement -- #1767 named that route as one the matrix exists to catch; #1798 records the three honest replacements. Note for the next regeneration: this is the first FAIL cell, so _note_still_applies drops this annotation as soon as any of these floats move, exactly as that function's docstring predicts. That is the safe direction, but it means the note is not durable here the way an exception-shaped one is.",
+      "intended": "DEFECT \u2014 #1798, and NOT the defect this cell recorded before. The solve now RUNS: #1681 is fixed and both regime densities are strictly positive (min 8.4e-04), where this cell previously raised at the mass-fabrication gate every run. What fails is the cell's own oracle, which gates PER-REGIME mass drift at 1e-6. A regime's mass is not conserved in a Markov-switching model -- the generator transfers it. For this cell's Q the stationary distribution is [2/3, 1/3] against equal initial masses, so the measured 8.9%/8.6% is approximately RIGHT, not approximately wrong; integrating the FP system over the no-flux domain leaves M(t) = M(0) expm(Qt), and the run tracks it to 2.2e-03. The conserved quantity is the sum over regimes: 1.4e-03 here, 8.0e-04 by 30 Picard iterations, 6.7e-04 at Nt=80. Do NOT turn this PASS by relaxing 1e-6 to fit the measurement -- #1767 named that route as one the matrix exists to catch; #1798 records the three honest replacements. Note for the next regeneration: this is the first FAIL cell, so _note_still_applies drops this annotation as soon as any of these floats move, exactly as that function's docstring predicts. That is the safe direction, but it means the note is not durable here the way an exception-shaped one is.",
       "status": "FAIL"
     },
     "sl_linear/mass_conservation": {
