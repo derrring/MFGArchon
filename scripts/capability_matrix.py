@@ -200,6 +200,44 @@ def _mass_drift(result, problem) -> dict:
     }
 
 
+def _picard_verdict(result, prefix: str = "") -> dict:
+    """What the coupled iteration said about itself, recorded beside the oracle (#1871).
+
+    Deliberately NOT part of any cell's ``ok``. Measured when this was added: three of the
+    five PASS cells run exactly to their iteration budget without converging --
+    ``fdm_upwind`` and ``sl_linear`` at 5, ``sl_linear_2d`` at 3 -- so gating on it today
+    turns three long-standing greens red. Two of those still do not converge at 100 sweeps,
+    and for different reasons, which is why the gate is not a one-line follow-up:
+
+    - ``fdm_upwind``: the value function's Picard error rises from 0.496 to 287, oscillates
+      (13.5 at sweep 10, back to 235 at sweep 19) and ends at 2.3e-04. The density gets to
+      9.5e-10 by sweep 85 but rises on 35 of 99 steps and ends 40x higher, at 3.9e-08.
+    - ``sl_linear``: BOTH are above tolerance, so neither fix alone would turn it green.
+      The density is the worse of the two and is not descending -- never below 0.357,
+      ending at 8.2e-01, O(1) after 100 sweeps -- while the value function ends at 5.9e-02
+      and is still coming down.
+
+    ``sl_linear_2d`` is the one a budget fixes -- it converges at 35 sweeps in ~3s.
+
+    A mass oracle cannot see any of this, and not because its tolerance is loose: mass
+    conservation is a property of the FP time-stepping, which holds on whatever drift it is
+    handed, converged or not. So this field is what makes the difference visible in the
+    baseline and diffable across changes, before anyone argues about the gate. The
+    non-convergence itself is #1873.
+
+    ``picard_iterations`` is the count of sweeps performed, in both result types -- but the
+    two reach it differently, and the asymmetry runs opposite to the one you would guess.
+    ``RegimeSwitchingIterator`` exits early only on convergence, so a non-converged run has
+    always executed the full budget and its count equals it by construction.
+    ``FixedPointIterator`` has three non-converged breaks besides, so its count is the one
+    that can fall short of the budget without having converged.
+    """
+    return {
+        f"{prefix}picard_converged": bool(result.converged),
+        f"{prefix}picard_iterations": int(result.iterations),
+    }
+
+
 def _rel_l2(a: np.ndarray, b: np.ndarray, dx: float) -> float:
     return float(np.sqrt(dx * np.sum((a - b) ** 2)) / np.sqrt(dx * np.sum(b**2)))
 
@@ -288,6 +326,7 @@ def _mass_conservation_cell(scheme_name: str):
 
         def verdict():
             art = _mass_drift(result, problem)
+            art |= _picard_verdict(result)
             art["tolerance"] = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
             ok = art["all_finite"] and art["max_drift"] <= art["tolerance"]
             return ("PASS" if ok else "FAIL"), art
@@ -325,6 +364,7 @@ def _mass_conservation_2d_cell(scheme_name: str):
                 "all_finite": bool(np.isfinite(M).all()),
                 "tolerance": 1e-9,
             }
+            art |= _picard_verdict(result)
             ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9
             return ("PASS" if ok else "FAIL"), art
 
@@ -405,6 +445,7 @@ def _fvm_fdm_agreement_cell():
                 ),
                 "tolerance": AGREEMENT_RTOL,
             }
+            art |= _picard_verdict(r_fvm, "fvm_") | _picard_verdict(r_fdm, "fdm_")
             if not art["all_finite"]:
                 art["worst"] = None
                 return "FAIL", art
@@ -437,6 +478,7 @@ def _fvm_mass_cell():
                 "all_finite": bool(np.isfinite(M).all()),
                 "tolerance": 1e-6,
             }
+            art |= _picard_verdict(result)
             ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
             return ("PASS" if ok else "FAIL"), art
 
@@ -540,6 +582,7 @@ def _regime_switching_cell():
                 "all_finite": all(r["all_finite"] for r in per_regime),
                 "tolerance": 1e-6,
             }
+            art |= _picard_verdict(result)
             ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
             return ("PASS" if ok else "FAIL"), art
 

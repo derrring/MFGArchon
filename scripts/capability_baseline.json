@@ -24,6 +24,8 @@
         "mass_t0": 1.0000000000000002,
         "max_drift": 1.2212453270876722e-15,
         "min_density": 0.007498923710795448,
+        "picard_converged": false,
+        "picard_iterations": 5,
         "tolerance": 1.0000000000000003e-09
       },
       "status": "PASS"
@@ -42,6 +44,8 @@
         "mass_t0": 0.9999999999999998,
         "max_rel_drift": 2.2204460492503136e-16,
         "min_density": 7.271016423279045e-05,
+        "picard_converged": true,
+        "picard_iterations": 18,
         "tolerance": 1e-06
       },
       "status": "PASS"
@@ -57,6 +61,10 @@
     "fvm_vs_fdm/agreement": {
       "artifact": {
         "all_finite": true,
+        "fdm_picard_converged": true,
+        "fdm_picard_iterations": 17,
+        "fvm_picard_converged": true,
+        "fvm_picard_iterations": 18,
         "rel_l2_M": 0.04890580973631817,
         "rel_l2_M_terminal": 0.04285356047380676,
         "rel_l2_U": 0.027229780657619235,
@@ -78,6 +86,8 @@
         "all_finite": true,
         "max_rel_drift": 0.0888200989332657,
         "min_density": 0.0008425476627731638,
+        "picard_converged": false,
+        "picard_iterations": 3,
         "regimes": [
           {
             "all_finite": true,
@@ -104,6 +114,8 @@
         "mass_t0": 1.0000000000000002,
         "max_drift": 4.440892098500626e-16,
         "min_density": 0.00466345594426523,
+        "picard_converged": false,
+        "picard_iterations": 5,
         "tolerance": 1.0000000000000003e-09
       },
       "status": "PASS"
@@ -114,6 +126,8 @@
         "mass_t0": 1.2100000000000002,
         "max_rel_drift": 3.670158759091426e-16,
         "min_density": 3.5346848535299638e-06,
+        "picard_converged": false,
+        "picard_iterations": 3,
         "tolerance": 1e-09
       },
       "status": "PASS"
