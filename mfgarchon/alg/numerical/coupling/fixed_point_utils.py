@@ -197,11 +197,21 @@ def check_convergence_criteria(
     tol_picard: float,
 ) -> tuple[bool, str]:
     """
-    Check if fixed-point iteration has converged.
+    Check if the fixed-point iteration has converged.
 
-    Convergence criteria (both must be satisfied):
-    1. Relative errors: max(l2distu_rel, l2distm_rel) < tol_picard
-    2. Absolute errors: max(l2distu_abs, l2distm_abs) < tol_picard
+    Both the relative and the absolute error must be below `tol_picard`, for both variables.
+
+    Known and NOT fixed here (#1873): one number serves as both a relative and an absolute
+    tolerance, so which arm binds is decided by the size of the solution rather than by the
+    caller. For a value function of norm 1.5e+03 in the grid-scaled norm the absolute arm
+    demands 6.6e-10 relative; for a solution of norm 1e-03 the relative arm would demand
+    1e-09 absolute. Separating rtol from atol is the standard fix and is what this repo
+    already did one layer down for the inner Newton (#1745). It is deliberately not done in
+    the same change as the gauge fix in `calculate_l2_convergence_metrics`, because making
+    the arms alternatives while the U error still measured an additive gauge mode reported
+    convergence on a sweep where the drift field was still moving at 9.7x the requested
+    tolerance -- the looser criterion and the honest measurement have to arrive in that
+    order.
 
     Args:
         l2distu_rel: Relative L2 error for U
@@ -211,22 +221,22 @@ def check_convergence_criteria(
         tol_picard: Convergence tolerance
 
     Returns:
-        Tuple of (converged: bool, reason: str)
-
-    Example:
-        >>> converged, reason = check_convergence_criteria(1e-7, 1e-8, 1e-6, 1e-7, 1e-6)
-        >>> print(converged)  # True
-        >>> print(reason)  # "Converged: Rel err 1.0e-07, Abs err 1.0e-06 < tol 1.0e-06"
+        Tuple of (converged: bool, reason: str). The reason is non-empty on failure too,
+        naming the arm that blocked and both variables' errors; it was the empty string
+        before, so a caller could not tell which criterion refused, or by how much.
     """
     max_rel_err = max(l2distu_rel, l2distm_rel)
     max_abs_err = max(l2distu_abs, l2distm_abs)
 
-    # Both relative and absolute errors must be below tolerance
     if max_rel_err < tol_picard and max_abs_err < tol_picard:
-        reason = f"Converged: Rel err {max_rel_err:.1e}, Abs err {max_abs_err:.1e} < tol {tol_picard:.1e}"
-        return True, reason
-    else:
-        return False, ""
+        return True, f"Converged: rel {max_rel_err:.1e}, abs {max_abs_err:.1e} < tol {tol_picard:.1e}"
+
+    blocked = "relative" if max_rel_err >= tol_picard else "absolute"
+    return False, (
+        f"Not converged on the {blocked} criterion: "
+        f"U (rel {l2distu_rel:.1e}, abs {l2distu_abs:.1e}), "
+        f"M (rel {l2distm_rel:.1e}, abs {l2distm_abs:.1e}) vs tol {tol_picard:.1e}"
+    )
 
 
 def preserve_initial_condition(

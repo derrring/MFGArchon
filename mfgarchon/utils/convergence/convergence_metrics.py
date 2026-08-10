@@ -342,6 +342,27 @@ def calculate_error(
     }
 
 
+def _without_additive_gauge(U: np.ndarray) -> np.ndarray:
+    """Strip the additive function of time from a value function before measuring it.
+
+    `u` reaches the density only through `grad(u)` -- the drift is `-grad(u)/c` -- so adding
+    a constant to a whole time slice changes nothing the coupled system can observe. It does
+    change `||u||` and `||du||`, and on a real problem it dominates both: measured on the 1-D
+    smoke fixture (#1873), 99.77% of `||U||`'s energy is that mode, and 99.71% of the
+    per-sweep change. Measuring `u` raw therefore reports a convergence error that is mostly
+    a quantity nothing in the game depends on -- in both directions, since the inflated
+    denominator also makes a RELATIVE error look small for a reason unrelated to the solve:
+    at the sweep where the raw relative error first passes 1e-6, the gauge-free part is
+    still moving at 8e-6 and the drift field at 9.7e-6.
+
+    M is deliberately left alone. Its absolute level is mass, which is observable and
+    conserved; there is no additive freedom to remove.
+    """
+    U = np.asarray(U, dtype=float)
+    axes = tuple(range(1, U.ndim)) if U.ndim > 1 else (0,)
+    return U - U.mean(axis=axes, keepdims=True)
+
+
 def calculate_l2_convergence_metrics(
     U_new: np.ndarray,
     U_old: np.ndarray,
@@ -380,7 +401,7 @@ def calculate_l2_convergence_metrics(
         The normalization factor sqrt(Dx * Dt) accounts for grid discretization,
         making errors comparable across different grid resolutions.
     """
-    u_error = calculate_error(U_new, U_old, dx=Dx, dt=Dt, norm="l2")
+    u_error = calculate_error(_without_additive_gauge(U_new), _without_additive_gauge(U_old), dx=Dx, dt=Dt, norm="l2")
     m_error = calculate_error(M_new, M_old, dx=Dx, dt=Dt, norm="l2")
 
     return {

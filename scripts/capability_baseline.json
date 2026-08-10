@@ -45,7 +45,7 @@
         "max_rel_drift": 2.2204460492503136e-16,
         "min_density": 7.271016423279045e-05,
         "picard_converged": true,
-        "picard_iterations": 18,
+        "picard_iterations": 19,
         "tolerance": 1e-06
       },
       "status": "PASS"
@@ -62,14 +62,14 @@
       "artifact": {
         "all_finite": true,
         "fdm_picard_converged": true,
-        "fdm_picard_iterations": 17,
+        "fdm_picard_iterations": 19,
         "fvm_picard_converged": true,
-        "fvm_picard_iterations": 18,
-        "rel_l2_M": 0.04890580973631817,
-        "rel_l2_M_terminal": 0.04285356047380676,
-        "rel_l2_U": 0.027229780657619235,
+        "fvm_picard_iterations": 19,
+        "rel_l2_M": 0.048917185838740516,
+        "rel_l2_M_terminal": 0.04287252636861601,
+        "rel_l2_U": 0.027278425431498336,
         "tolerance": 0.07,
-        "worst": 0.04890580973631817
+        "worst": 0.048917185838740516
       },
       "status": "PASS"
     },
