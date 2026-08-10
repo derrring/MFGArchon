@@ -37,6 +37,16 @@ What ``--check-baseline`` compares is STATUS, not the recorded artifacts. The ar
 blocks in the baseline are a record for a human diffing a PR; a cell can degrade well
 within its own tolerance and the gate stays green.
 
+An artifact may carry ``library_said``: what the library warned about while that cell ran,
+folded by category and message with numbers collapsed, and absent entirely from a cell that
+warned about nothing. It records capability the oracles cannot see -- `fdm_upwind` passes its
+mass oracle while saying 39 times that the value function it returned is not a root of the
+discrete HJB. Warnings that describe the machine rather than the solve are excluded: import
+and deprecation by category, the JAX-autodiff fallback by message. That exclusion is not
+tidiness. An entry that appears only where an optional package is installed makes this
+committed baseline machine-dependent, and a regeneration elsewhere both fakes a diff and
+drops the ``intended`` note of every cell whose artifact moved.
+
 Every cell but one drives the public API. ``regime_switching/non_negativity`` reaches
 through the deep module path because ``RegimeSwitchingIterator`` is exported from no
 package ``__init__`` -- recorded in that cell rather than treated as a reason to leave
@@ -69,8 +79,9 @@ import numpy as np
 # returned "is not a root of the discrete HJB, and the outer iteration will consume it as
 # if it were". That is a statement about capability, made by the code under test, to the
 # instrument that exists to record capability, and it went to /dev/null for the life of
-# this file. What replaces it is `_recorded`: each cell runs under `catch_warnings`, and
-# what the library said lands in the artifact where a baseline diff can show it.
+# this file. What replaces it is `_warning_summary`: each cell runs under `catch_warnings`,
+# and what the library said lands in the artifact as `library_said`, where a baseline diff
+# can show it.
 
 # Set by --self-test. Applied to every density this module measures, so a mass oracle
 # that does not read the density it claims to read stays green and the self-test
@@ -632,26 +643,44 @@ MASS_ORACLE_CELLS = {
 }
 
 
+# Substrings that identify a warning as a report about the machine rather than about whether
+# the configuration solves. Category alone does not separate these: the JAX-autodiff fallback
+# is a RuntimeWarning, and it fires only where JAX is importable.
+_ENVIRONMENT_MARKERS = (
+    "JAX autodiff failed",
+    "Falling back to finite-difference Jacobian",
+)
+
+
 def _warning_summary(caught) -> dict:
     """Fold a cell's warnings into something a baseline can carry and a diff can show.
 
     Keyed by category and a normalised prefix -- digits collapsed -- because the useful
     signal is "this cell emitted 39 non-convergence warnings", not 39 near-identical
-    strings differing in a time index and a residual. Counts are stable: the solvers are
-    deterministic (verified for HJB and FP separately), and `simplefilter("always")` means
-    the count does not depend on Python's once-per-location registry.
+    strings differing in a time index and a residual. Counts are stable against Python's
+    once-per-location registry, because `simplefilter("always")` defeats it; a library that
+    keeps its own warn-once set (`backends/__init__.py` has one) is not covered by that
+    argument, and no cell here selects a configuration that reaches it.
     """
     seen: dict[str, int] = {}
     for w in caught:
-        # ImportWarning and DeprecationWarning are about the environment and the API, not
-        # about whether this configuration solves, and they differ between machines --
-        # recording "requires POT" would make a regeneration elsewhere produce a false diff.
-        # What survives can still be environment-sensitive (the JAX-autodiff fallback fires
-        # only where JAX is installed), and that is capability information rather than noise.
+        # Environment, not capability. These say what is installed on the machine that ran
+        # the harness, so recording them makes the committed baseline machine-dependent:
+        # a regeneration elsewhere produces a false diff, and -- worse -- `_note_still_applies`
+        # drops the `intended` note attached to every cell whose artifact moved. Measured on
+        # the JAX-autodiff fallback: forcing `_JAX_AVAILABLE = False` changes no number in
+        # three 2-D cells (the numeric half is byte-identical) yet destroys three notes,
+        # including the ~1500-character #1865 investigation record. A statement that holds
+        # with and without a package installed is not a statement about the package.
         if issubclass(w.category, (ImportWarning, DeprecationWarning, PendingDeprecationWarning)):
             continue
         text = " ".join(str(w.message).split())
-        norm = re.sub(r"[-+0-9][0-9.eE+-]*", "N", text)[:110]
+        if any(marker in text for marker in _ENVIRONMENT_MARKERS):
+            continue
+        # Collapse numbers so near-identical warnings fold, but only tokens that START with a
+        # digit or a signed digit: `[-+0-9][0-9.eE+-]*` also ate the hyphen in ordinary words
+        # ("non-negativity" -> "nonNnegativity"), which is not what "digits collapsed" means.
+        norm = re.sub(r"(?<![\w.])[-+]?\d[\d.eE]*(?:[-+]\d+)?", "N", text)[:110]
         seen[f"{w.category.__name__}: {norm}"] = seen.get(f"{w.category.__name__}: {norm}", 0) + 1
     return dict(sorted(seen.items()))
 

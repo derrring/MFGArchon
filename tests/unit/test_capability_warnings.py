@@ -50,8 +50,23 @@ def test_importing_the_harness_does_not_silence_the_process():
 
     # And structurally, since the behavioural check above depends on this process not having
     # been silenced by something else first: no blanket entry may sit in the filter list.
-    blanket = [f for f in warnings.filters if f[0] == "ignore" and f[1] is None and f[2] is Warning and f[3] is None]
-    assert not blanket, f"a blanket ignore is installed: {blanket}"
+    #
+    # The test is whether a filter would swallow a category this harness has to hear, not what
+    # shape it has. Two earlier forms were wrong in opposite directions. `f[2] is Warning and
+    # f[3] is None` missed `simplefilter("ignore")` (whose `module` is `""`, not `None`) and
+    # `filterwarnings("ignore", category=UserWarning)`, which reopens this file's trap for one
+    # category and left every test green. Widening it to any `Warning` subclass then flagged
+    # CPython's own defaults -- Deprecation, PendingDeprecation, Import, Resource -- which are
+    # always installed and are exactly the categories `_warning_summary` discards anyway.
+    silences = [
+        f
+        for f in warnings.filters
+        if f[0] == "ignore"
+        and f[1] is None
+        and f[3] in (None, "")
+        and (issubclass(RuntimeWarning, f[2]) or issubclass(UserWarning, f[2]))
+    ]
+    assert not silences, f"a filter is installed that would swallow what the harness records: {silences}"
 
 
 def test_a_cell_records_what_the_library_said():
@@ -100,6 +115,94 @@ def test_environment_noise_is_not_recorded():
     said = out["stub/mixed"]["artifact"]["library_said"]
     assert sum(said.values()) == 1, f"only the solve-time warning should be recorded: {said}"
     assert next(iter(said)).startswith("RuntimeWarning: ")
+
+
+def test_each_cell_carries_only_its_own_warnings():
+    """Attribution is the whole claim, and a single-cell fixture cannot test it.
+
+    "This cell said 39 things" is what the field asserts. Every other test here monkeypatches
+    `CELLS` to ONE stub, so hoisting `catch_warnings` out of the per-cell loop -- which makes
+    `caught` accumulate and credits every cell with its predecessors' output -- is invisible to
+    all of them by construction. Measured: that mutation leaves all five green, and on a real
+    two-cell run it credited `gfdm_rbf/construction` with two non-convergence warnings emitted
+    by `fdm_centered/mass_conservation`.
+
+    Two cells, each with a distinguishable message, and each must carry its own and nothing else.
+    """
+    cm = _load()
+
+    def first():
+        warnings.warn("alpha said something at t_idx=1", RuntimeWarning, stacklevel=1)
+        return "PASS", {"all_finite": True}
+
+    def second():
+        warnings.warn("beta said something at t_idx=2", RuntimeWarning, stacklevel=1)
+        warnings.warn("beta said something at t_idx=3", RuntimeWarning, stacklevel=1)
+        return "PASS", {"all_finite": True}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cm, "CELLS", {"stub/alpha": first, "stub/beta": second})
+        out = cm.evaluate()
+
+    alpha = out["stub/alpha"]["artifact"]["library_said"]
+    beta = out["stub/beta"]["artifact"]["library_said"]
+
+    assert sum(alpha.values()) == 1, f"alpha must carry exactly its own one warning: {alpha}"
+    assert sum(beta.values()) == 2, f"beta must carry exactly its own two warnings: {beta}"
+    assert all("alpha" in k for k in alpha), alpha
+    assert all("beta" in k for k in beta), beta
+    # The direction the hoist breaks: beta running second must not inherit alpha's.
+    assert not any("alpha" in k for k in beta), f"beta was credited with alpha's warnings: {beta}"
+
+
+def test_an_environment_report_is_not_recorded_even_as_a_runtime_warning():
+    """The category filter is not enough: the JAX-autodiff fallback is a `RuntimeWarning`.
+
+    It fires only where JAX is importable, and forcing `_JAX_AVAILABLE = False` leaves every
+    number in the affected cells byte-identical -- so it describes the machine, not whether the
+    configuration solves. Recorded, it makes the committed baseline machine-dependent and, via
+    `_note_still_applies`, drops the `intended` note of every cell whose artifact moved.
+    """
+    cm = _load()
+
+    def noisy():
+        warnings.warn(
+            "JAX autodiff failed: TracerArrayConversionError(...). Falling back to "
+            "finite-difference Jacobian (O(N) complexity).",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+        warnings.warn("HJB inner Newton did not converge at t_idx=3", RuntimeWarning, stacklevel=1)
+        return "PASS", {"all_finite": True}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cm, "CELLS", {"stub/jax": noisy})
+        out = cm.evaluate()
+
+    said = out["stub/jax"]["artifact"]["library_said"]
+    assert sum(said.values()) == 1, f"only the solve-time warning should survive: {said}"
+    assert "did not converge" in next(iter(said)), said
+
+
+def test_number_collapsing_does_not_eat_hyphens_in_words():
+    """`[-+0-9][0-9.eE+-]*` matched the hyphen inside ordinary words.
+
+    "non-negativity" folded to "nonNnegativity" and "stable-baselines3" to "stableNbaselinesN",
+    which silently merges warnings that differ in their text, not in their numbers.
+    """
+    cm = _load()
+
+    def noisy():
+        warnings.warn("mass non-negativity violated at t_idx=7", RuntimeWarning, stacklevel=1)
+        return "PASS", {"all_finite": True}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cm, "CELLS", {"stub/hyphen": noisy})
+        out = cm.evaluate()
+
+    key = next(iter(out["stub/hyphen"]["artifact"]["library_said"]))
+    assert "non-negativity" in key, f"the hyphen was consumed as a sign: {key}"
+    assert "t_idx=N" in key, f"the digit should still collapse: {key}"
 
 
 def test_a_quiet_cell_carries_no_field_at_all():
