@@ -2002,14 +2002,28 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             dx = self._get_spacing() or 1.0
             integral_m_initial = np.sum(self.m_initial) * dx
         elif self.spatial_bounds is not None and self.spatial_discretization is not None:
-            # n-D normalization (integrate over all dimensions)
-            # For tensor product grid: integral = sum(m) * prod(dx_i)
-            dx_prod = np.prod(
-                [
-                    (bounds[1] - bounds[0]) / n
-                    for bounds, n in zip(self.spatial_bounds, self.spatial_discretization, strict=False)
-                ]
-            )
+            # n-D normalization: sum(m) * prod(dx_i), with dx_i from the geometry.
+            #
+            # This used to recompute the cell volume as prod((b - a) / n), which is the spacing of
+            # n intervals, not of n NODES spanning [a, b] inclusive -- that is (b - a) / (n - 1),
+            # and it is what `geometry.get_grid_spacing()` returns and what every mass measurement
+            # in this library uses. The normaliser therefore divided by a too-small integral and
+            # every n-D problem started at mass (n/(n-1))^d instead of 1: measured 1.210000 at 2-D
+            # n=11, 1.147959 at n=15, 1.102500 at n=21, 1.423828 at 3-D n=9, matching that formula
+            # to six digits, with 1-D exact because it takes the branch above. Mass is conserved
+            # from there, so the drift oracles stayed green over an initial condition that was 21%
+            # too heavy, and `coupling=lambda m: m` was correspondingly stronger than written.
+            #
+            # Recomputing it here at all was the defect. The geometry owns the spacing.
+            spacing = self.geometry.get_grid_spacing() if self.geometry is not None else None
+            if spacing is None:
+                raise ValueError(
+                    "n-D initial-density normalization needs the grid spacing, and this geometry "
+                    f"({type(self.geometry).__name__}) does not provide one, although it declared "
+                    "spatial_bounds and spatial_discretization. Normalizing against a spacing this "
+                    "code invents is what produced the (n/(n-1))^d mass error it replaces."
+                )
+            dx_prod = float(np.prod(spacing))
             integral_m_initial = np.sum(self.m_initial) * dx_prod
         else:
             # For unstructured/implicit geometries: use uniform normalization
