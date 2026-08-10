@@ -1,8 +1,12 @@
 - **`hjb_residual_norm` names the grid-scaled HJB residual norm** — `||F||_2 * sqrt(dx)`, previously
   an inline expression in `newton_hjb_step` (Issue #1878). Behaviour is unchanged, pinned on a
-  configuration chosen because it is *not* quiet: `Nx=1601`, `FDM_UPWIND`, 2 sweeps, where 95 of
-  627592 finite-difference Jacobian probes exceed the `1e6` p-value clip limit, so the clip is
-  actively firing while the comparison runs. `U` and `M` are bit-identical across the change
+  configuration chosen because it is *not* quiet: `Nx=1601`, `FDM_UPWIND`, 2 sweeps, where **570 of
+  537936** finite-difference Jacobian probes exceed the `1e6` p-value clip limit, so the clip is
+  actively firing while the comparison runs. (An earlier version of this entry said "95 of 627592",
+  which paired a numerator from one population with a denominator from another: 627592 is *every*
+  `_calculate_derivatives` call, and 95 is the over-limit count among the 89656 of them that pass
+  `clip=False`, where the clip by definition does not fire. Both numbers were real and neither
+  described the quantity the sentence names.) `U` and `M` are bit-identical across the change
   (`np.array_equal` True, max difference `0.0`), with each run printing whether the module under it
   defines the new function — a before/after in which both sides are the same build is the failure
   mode this control exists to catch, and it caught one.
