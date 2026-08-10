@@ -39,3 +39,18 @@
   would this filter swallow a category the harness records.
   Five mutations, each asserted to apply before it ran and each killed by exactly the test written
   for it; both files restored and SHA-256-verified afterwards.
+- **The baseline is now a fixed point of its own generator, and a test says so.** The `_comment`
+  paragraph documenting `library_said` and the environment exclusion was appended to
+  `capability_baseline.json` by hand, but that field is emitted from a literal in
+  `capability_matrix.py` — so the next `--write-baseline` deleted it, taking with it the only place a
+  future regenerator learns why `_ENVIRONMENT_MARKERS` exists, which makes that list read as
+  arbitrary and the obvious thing to remove. Nothing caught it: `--check-baseline` compares status
+  only, and the gate is green either way. The paragraph now lives in the generator; the file was
+  regenerated in place and verified **SHA-256 identical across a second regeneration**, which is the
+  property that was missing. A hand-restored key order (`artifact, status, intended` against the
+  generator's `sort_keys=True`) went with it, so the next regeneration no longer produces a cosmetic
+  diff in exactly the four cells whose notes had been restored by hand.
+  Guarded by `test_the_baseline_comment_is_what_the_generator_writes`, an AST comparison that needs
+  no solve. Mutation-verified in both directions and calibrated: appending to the JSON alone (the
+  defect as it actually happened) fails it; editing the generator's literal without regenerating
+  fails it; editing a cell's `intended` note, which is legitimately hand-maintained, does not.

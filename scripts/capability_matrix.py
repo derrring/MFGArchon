@@ -977,6 +977,13 @@ def main() -> None:
                 "Regenerate with --write-baseline. A non-PASS cell may carry an `intended` "
                 "note saying WHY it is not PASS; cells without one are unexplained and are the "
                 "actual backlog."
+                " A cell's artifact may also carry `library_said`: the warnings the library"
+                " emitted while that cell ran, folded by category and message with numbers"
+                " collapsed. Warnings about the machine rather than about whether the"
+                " configuration solves (import, deprecation, and the JAX-autodiff fallback) are"
+                " excluded by design -- recording them makes this file machine-dependent and"
+                " silently drops the `intended` notes of every cell whose artifact moves. A cell"
+                " that emitted nothing carries no field at all."
             ),
             "cells": {
                 k: (
