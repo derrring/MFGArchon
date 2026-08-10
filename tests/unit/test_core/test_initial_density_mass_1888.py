@@ -1,21 +1,26 @@
-"""The initial density must carry mass 1, in every dimension.
+"""`m(0, .)` must integrate to 1 under the geometry's own volume element.
 
-Nothing pinned this. `MFGProblem` normalises `m_initial` so that its discrete integral is 1, but in
-n-D it divided by a cell volume it computed itself as `prod(L/n)` -- the spacing of n *intervals*,
-where a grid of n *nodes* spanning `[a, b]` inclusive has spacing `L/(n-1)`, which is what
-`geometry.get_grid_spacing()` returns and what every mass measurement in the library uses. So every
-n-D problem started at mass `(n/(n-1))^d`: 21% heavy on an 11-point 2-D grid, 42% on a 9-point 3-D
-one, converging to 1 under refinement so that it reads as a first-order-convergent error rather than
-a bug.
+`MFGProblem` normalises `m_initial` by dividing by its discrete integral. It used to compute that
+integral's cell volume itself, as `prod((b - a) / n)` from `self.spatial_discretization` -- an
+attribute that means the INTERVAL count when passed to the constructor and the NODE count when it
+comes from a geometry. Under the first reading the expression is exactly the spacing; under the
+second it is one interval too many. So the same 11x11 grid gave mass 1.0 through
+`spatial_discretization=[10, 10]` and 1.21 through `geometry=TensorProductGrid(Nx_points=[11, 11])`.
+The normaliser now asks the geometry, so both agree.
 
-Why 5943 tests did not notice. Mass conservation is measured as *drift* from the initial mass, not
-as deviation from 1 -- deliberately, and correctly, since drift is the physical property. A ratio is
-invariant to the cell measure, so the entire mass-oracle family is structurally blind to the initial
-value being wrong. See `test_mass_conservation_error_1672.py`, whose docstring recorded this exact
-fork on 2026-07-21 and set it out of scope.
+**What this file is, and is not.** It is a consistency pin between the normaliser and
+`geometry.get_grid_spacing()`, which is the fork that produced the defect. It is **not** an external
+oracle on the cell volume: the normaliser divides by `sum(m) * V` and this file multiplies by the
+same `V` from the same accessor, so `V` cancels and the assertion holds for any spacing the accessor
+returns. Verified -- monkeypatching `get_grid_spacing` to `L/n` leaves this file at 7 passed. That
+the convention itself is `L/(n-1)` is pinned elsewhere, by tests carrying literal spacing values,
+which do go red under that mutation.
 
-This file is the missing half: an external oracle on the absolute value, computed from the geometry's
-own spacing rather than from the normaliser's.
+Why 5943 tests did not catch the fork. Mass conservation is measured as *drift from the initial
+mass*, deliberately and correctly, since drift is the physical property -- and a ratio is invariant
+to the cell measure, so the whole mass-oracle family is blind to the initial value. See
+`tests/unit/test_utils/test_mass_conservation_error_1672.py`, whose docstring recorded this exact
+fork on 2026-07-21 and set it out of scope without filing an issue.
 """
 
 from __future__ import annotations
@@ -73,15 +78,26 @@ def test_the_initial_density_integrates_to_one(dimension: int, n: int):
     assert _mass(_problem(dimension, n)) == pytest.approx(1.0, rel=1e-12)
 
 
-def test_the_error_this_replaces_had_a_closed_form_and_this_would_have_caught_it():
-    """Pin the discrimination, not just the value.
+def test_both_construction_paths_agree():
+    """The fork was between two ways of building the same grid, so the pin has to compare them.
 
-    The pre-fix mass was exactly `(n/(n-1))^d`, verified against measurement on all six
-    configurations above. Asserting that the current mass is NOT that number, on the configurations
-    where the two differ most, states what this file would catch rather than leaving it to be
-    inferred from a passing assertion.
+    `== 1.0` on one path cannot see a disagreement between paths, and the previous version of this
+    test asserted only that the mass is *not* the old value -- which is implied by the rows above
+    and so could never be the sole failure. This builds the identical 11x11 and 9x9x9 grids through
+    both public constructors and requires them to agree, which is the property that was violated:
+    1.0 against 1.21 in 2-D and 1.0 against 1.4238 in 3-D, measured on the revision before the fix.
     """
-    for dimension, n in ((2, 11), (3, 9)):
-        old_prediction = (n / (n - 1)) ** dimension
-        assert old_prediction > 1.2, f"chose a configuration where the two verdicts barely differ: {old_prediction}"
-        assert _mass(_problem(dimension, n)) != pytest.approx(old_prediction, rel=1e-6)
+    for dimension, intervals in ((2, 10), (3, 8)):
+        via_geometry = _problem(dimension, intervals + 1)
+        via_bounds = MFGProblem(
+            spatial_bounds=[(0.0, 1.0)] * dimension,
+            spatial_discretization=[intervals] * dimension,
+            Nt=4,
+            T=0.2,
+            sigma=0.4,
+            components=via_geometry.components,
+        )
+        assert np.allclose(via_geometry.geometry.get_grid_spacing(), via_bounds.geometry.get_grid_spacing()), (
+            "the two constructors were meant to describe the same grid"
+        )
+        assert _mass(via_geometry) == pytest.approx(_mass(via_bounds), rel=1e-12)

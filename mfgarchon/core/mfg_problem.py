@@ -2004,15 +2004,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         elif self.spatial_bounds is not None and self.spatial_discretization is not None:
             # n-D normalization: sum(m) * prod(dx_i), with dx_i from the geometry.
             #
-            # This used to recompute the cell volume as prod((b - a) / n), which is the spacing of
-            # n intervals, not of n NODES spanning [a, b] inclusive -- that is (b - a) / (n - 1),
-            # and it is what `geometry.get_grid_spacing()` returns and what every mass measurement
-            # in this library uses. The normaliser therefore divided by a too-small integral and
-            # every n-D problem started at mass (n/(n-1))^d instead of 1: measured 1.210000 at 2-D
-            # n=11, 1.147959 at n=15, 1.102500 at n=21, 1.423828 at 3-D n=9, matching that formula
-            # to six digits, with 1-D exact because it takes the branch above. Mass is conserved
-            # from there, so the drift oracles stayed green over an initial condition that was 21%
-            # too heavy, and `coupling=lambda m: m` was correspondingly stronger than written.
+            # This used to recompute the cell volume as prod((b - a) / n) from
+            # `self.spatial_discretization`, and that attribute does not mean one thing.
+            # Constructed with `spatial_discretization=`, it holds the INTERVAL count (:834 builds
+            # `Nx_points = [n + 1 for n in spatial_discretization]`), and `(b - a) / n` is then
+            # exactly the spacing -- that path was always correct. Constructed with `geometry=`,
+            # `tensor_grid.py:474` puts the NODE count there instead, and `(b - a) / n` is then the
+            # spacing of one interval too many. Measured on main, same 11x11 grid and the same
+            # `[0.1, 0.1]` spacing both ways: mass 1.0 through `spatial_discretization=[10, 10]`
+            # and 1.21 through `Nx_points=[11, 11]`, and 1.0 vs 1.4238 in 3-D at n=9. The offset on
+            # the geometry path is (n/(n-1))^d, so it shrinks like d/n and reads as a
+            # first-order-convergent error rather than as a bug; mass is conserved from there, so
+            # every drift oracle stayed green over an initial condition 21% too heavy, and
+            # `coupling=lambda m: m` was correspondingly stronger than the source says.
+            #
+            # The dual meaning is the actual defect and this does not close it -- it stops reading
+            # the attribute, which makes this site immune and leaves every other reader exposed.
             #
             # Recomputing it here at all was the defect. The geometry owns the spacing.
             spacing = self.geometry.get_grid_spacing() if self.geometry is not None else None

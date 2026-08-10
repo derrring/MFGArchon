@@ -1,19 +1,29 @@
-- **Every n-D problem started with the wrong amount of mass** — `(n/(n-1))^d` instead of 1.
-  `MFGProblem` normalises `m_initial` by dividing by its discrete integral, and in n-D it computed
-  that integral's cell volume itself, as `prod(L/n)`. That is the spacing of n *intervals*; a grid of
-  n *nodes* spanning `[a, b]` inclusive has spacing `L/(n-1)`, which is what
-  `geometry.get_grid_spacing()` returns and what every mass measurement in this library uses. The
-  normaliser and the measurement were reading different rulers, each self-consistent, so nothing
-  could raise. Measured against the closed form on six configurations before the fix — 2-D `n=11`
-  `1.210000`, `n=15` `1.147959`, `n=21` `1.102500`, 3-D `n=9` `1.423828`, 1-D exact at 1 because it
-  takes a different branch — and all six are `1.000000` after. The normaliser no longer computes a
-  spacing at all; it asks the geometry, and raises if the geometry cannot supply one rather than
-  inventing the number that caused this.
-  **Consequences while it was live**: an 11-point 2-D problem carried 21% more mass than written and
-  a 9-point 3-D one 42% more, so `coupling=lambda m: m` was correspondingly stronger than the source
-  says. The error shrinks like `d/n`, so under refinement it looks like a first-order-convergent
-  discretisation error rather than a bug. It does **not** explain #1865: the 2-D smoke fixture still
-  fails to converge with the mass corrected, at a peak `m(0,.)` of 9.550 rather than 11.555.
+- **An n-D problem built through `geometry=` started with the wrong amount of mass** —
+  `(n/(n-1))^d` instead of 1. `MFGProblem` normalises `m_initial` by dividing by its discrete
+  integral, and it computed that integral's cell volume itself, as `prod((b - a) / n)` from
+  `self.spatial_discretization`. **That attribute does not mean one thing.** Passed to the
+  constructor it is the *interval* count — `mfg_problem.py:834` builds `Nx_points = [n + 1 for n in
+  spatial_discretization]` — and `(b - a) / n` is then exactly the spacing. Taken from a geometry,
+  `tensor_grid.py:474` puts the *node* count there instead, and the same expression is one interval
+  too wide. Measured on the same 11x11 grid with the same `[0.1, 0.1]` spacing both ways:
+  `spatial_discretization=[10, 10]` gave mass `1.0`, `Nx_points=[11, 11]` gave `1.21`; in 3-D at
+  `n=9`, `1.0` against `1.4238`.
+  The normaliser now asks the geometry for the spacing and raises if it cannot supply one, rather
+  than inventing the number. After the fix both paths give `1.000000` at 2-D `n=11/15/21` and 3-D
+  `n=9`, with 1-D untouched throughout — it takes a different branch and was always right, which is
+  what makes it the control.
+  **The dual meaning is the real defect and this does not close it.** The fix stops reading the
+  attribute, which makes this one site immune; every other reader of `spatial_discretization`,
+  including user code, still has to guess which count it holds. Filed as #1889.
+  **Consequences while it was live**: on the `geometry=` path an 11-point 2-D problem carried 21%
+  more mass than its source says and a 9-point 3-D one 42%, so `coupling=lambda m: m` applied a
+  correspondingly stronger interaction. The offset shrinks like `d/n`, so under refinement it reads
+  as a first-order-convergent discretisation error rather than as a bug. It does **not** explain
+  #1865: the 2-D smoke fixture still fails to converge with the mass corrected, at a peak `m(0,.)`
+  of 9.550 rather than 11.555.
+  *An earlier version of this entry said "every n-D problem". That was false — the
+  `spatial_bounds=` path was already exact, and 29 multi-dimensional sites across `tests/`,
+  `examples/`, `benchmarks/` and `scripts/` use it.*
 - **Why 5943 tests did not notice, and the pin that now does.** Mass conservation is measured as
   *drift from the initial mass*, deliberately and correctly — drift is the physical property, and a
   ratio is invariant to the cell measure. That makes the entire mass-oracle family structurally blind
