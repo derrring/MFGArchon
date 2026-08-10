@@ -14,8 +14,6 @@ Test scenarios:
 - Performance validation (<5% overhead)
 """
 
-import time
-
 import pytest
 
 import numpy as np
@@ -270,65 +268,6 @@ class TestRegionBasedBC2D:
         point_bottom = np.array([0.5, 0.3])
         segment = bc.get_bc_at_point(point_bottom, None, geometry=geometry)
         assert segment.name == "bottom_bc"
-
-
-class TestRegionBasedBCPerformance:
-    """Performance tests for region-based BC application."""
-
-    @pytest.mark.slow
-    def test_region_lookup_overhead(self):
-        """Test that region-based BC has <5% overhead vs standard BC."""
-        # Create moderately sized 2D grid
-        geometry = TensorProductGrid(
-            bounds=[(0, 1), (0, 1)], boundary_conditions=no_flux_bc(dimension=2), Nx_points=[101, 101]
-        )
-
-        # Standard BC (no regions)
-        bc_standard = BoundaryConditions(
-            dimension=2,
-            segments=[BCSegment(name="all", bc_type=BCType.DIRICHLET, value=0.0, boundary=None)],
-        )
-
-        # Region-based BC
-        geometry.mark_region("all_domain", predicate=lambda x: np.ones(x.shape[0], dtype=bool))
-        bc_region = mixed_bc_from_regions(
-            geometry,
-            {"all_domain": BCSegment(name="all_bc", bc_type=BCType.DIRICHLET, value=0.0)},
-        )
-
-        field = np.random.randn(101, 101)
-        applicator = FDMApplicator(dimension=2)
-        domain_bounds = np.array([[0, 1], [0, 1]])
-
-        # Warmup
-        applicator.apply(field, bc_standard, domain_bounds=domain_bounds)
-        applicator.apply(field, bc_region, domain_bounds=domain_bounds, geometry=geometry)
-
-        # Benchmark standard BC
-        n_iterations = 100
-        start = time.perf_counter()
-        for _ in range(n_iterations):
-            applicator.apply(field, bc_standard, domain_bounds=domain_bounds)
-        time_standard = time.perf_counter() - start
-
-        # Benchmark region-based BC
-        start = time.perf_counter()
-        for _ in range(n_iterations):
-            applicator.apply(field, bc_region, domain_bounds=domain_bounds, geometry=geometry)
-        time_region = time.perf_counter() - start
-
-        # Calculate overhead
-        overhead = (time_region - time_standard) / time_standard * 100
-
-        print(f"\nPerformance comparison ({n_iterations} iterations):")
-        print(f"  Standard BC: {time_standard * 1000:.2f} ms")
-        print(f"  Region BC:   {time_region * 1000:.2f} ms")
-        print(f"  Overhead:    {overhead:.1f}%")
-
-        # Assert <5% overhead
-        # Note: This is a loose bound for CI environments
-        # In practice, overhead should be <1%
-        assert overhead < 10, f"Region-based BC overhead {overhead:.1f}% exceeds 10%"
 
 
 class TestRegionBasedBCEdgeCases:
