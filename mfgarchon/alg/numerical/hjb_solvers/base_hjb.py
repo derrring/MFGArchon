@@ -1054,6 +1054,26 @@ def compute_hjb_jacobian(
     return Jac.tocsr()
 
 
+def hjb_residual_norm(residual: np.ndarray, dx: float) -> float:
+    """The one owner of "how large is this HJB residual".
+
+    The grid-scaled discrete L2 norm, ``||F||_2 * sqrt(dx)``, so the number does not change
+    meaning under refinement. It is a function rather than an inline expression because the
+    ``sqrt(dx)`` is load-bearing and silently omissible: a second caller that drops it compares
+    its own residual against this one on a scale 4.5x apart at Nx=21, and on the wrong side of
+    that comparison an iteration rejects every step, returns its input unchanged, and reports
+    the residual at the starting iterate -- which reads as a five-order-of-magnitude
+    improvement. Measured, during #1878.
+
+    NOT yet the only site. ``HJBFDMSolver``'s nD path and ``HJBGFDMSolver`` compare an
+    UNSCALED 2-norm against ``DEFAULT_NEWTON_TOLERANCE``, the same constant this scaled norm is
+    tested against -- so the same tolerance means different things on different paths. Closing
+    that is a behaviour change on those paths and is tracked separately; this docstring is here
+    so the next reader does not assume the consolidation is finished.
+    """
+    return float(np.linalg.norm(residual) * np.sqrt(dx))
+
+
 def newton_hjb_step(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new_np1 in notebook
@@ -1096,7 +1116,7 @@ def newton_hjb_step(
     # Issue #1745: the residual at the CURRENT iterate is already in hand for the linear
     # solve. Returning it costs nothing and gives the caller the quantity that actually says
     # whether this is a root; the step norm below says only that the iteration stopped moving.
-    residual_norm = float(np.linalg.norm(residual_F_U) * np.sqrt(dx_norm))
+    residual_norm = hjb_residual_norm(residual_F_U, dx_norm)
 
     if has_nan_or_inf(residual_F_U, backend):
         return U_n_current_newton_iterate, np.inf, np.inf
