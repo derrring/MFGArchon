@@ -4,6 +4,9 @@
     "fdm_centered/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 2
+        },
         "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.762e-01. Clipping it to zero would fabricate 5.722% of the total mass, so the solve is stopped rather than repor"
       },
       "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.722% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
@@ -12,6 +15,9 @@
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
+        "library_said": {
+          "RuntimeWarning: JAX autodiff failed: TracerArrayConversionError('The numpy.ndarray conversion method __array__() was called on": 6
+        },
         "message": "FP solver: at timestep 2/6, advection_scheme='divergence_centered': density went to -6.618e-01. Clipping it to zero would fabricate 2.329% of the total mass, so the solve is stopped rather than report"
       },
       "intended": "DEFECT \u2014 #1865, and this cell now fails EARLIER than the other two. With the inner Newton closing (PR #1864), the solve reaches the FP step, where divergence_centered drives the density to -6.618e-01 at timestep 2/6 and the mass-fabrication gate (#1683) refuses it -- the same refusal its 1-D sibling records, and INTENDED there. Whether this cell is a #1865 instance or a well-posedness problem of its own is unsettled. See also #1866: NumericalScheme.FDM_CENTERED leaves the HJB on upwind gradients, so this cell's HJB solve is identical to fdm_upwind_2d's and only the FP half is centered.",
@@ -20,6 +26,9 @@
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 39
+        },
         "mass_max": 1.0000000000000002,
         "mass_t0": 1.0000000000000002,
         "max_drift": 1.2212453270876722e-15,
@@ -33,6 +42,9 @@
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
+        "library_said": {
+          "RuntimeWarning: JAX autodiff failed: TracerArrayConversionError('The numpy.ndarray conversion method __array__() was called on": 13
+        },
         "message": "newton solver failed to converge after 30 iterations (residual: 2.95e+01)"
       },
       "intended": "DEFECT \u2014 #1865. The inner-solver half of #1745 is fixed (PR #1864: the finite-difference Jacobian straddled the upwind kink). Twelve of the thirteen inner Newton solves in this cell now converge in 4-7 iterations, final residuals 4.881e-12 to 7.433e-07. The thirteenth -- the first backward step of the third Picard sweep -- has no root within reach: scipy.optimize.least_squares(method='trf') on the same residual from the same x0 also fails, ending at 3.58 after 12100 evaluations with the iterate 2.4e+04 away. What remains is the COUPLED iteration diverging: measured at the FP call site -- max|U| of the value function handed to the FP solve, and the peak of the density it returns -- 1.86 -> 37.35 and 34.9 -> 101 over the two available sweeps. Name the instrument, because the iterator's own iteration_callback reports the DAMPED iterate and gives half of these (0.93 -> 19.14 at damping 0.5); both are correct and they are not the same quantity. 3, 5 or 10 outer iterations end identically. Not dimension-specific -- the same parameters in 1-D give max|U| 0.489 -> 0.507, and 2-D converges at coupling x0.1, or at high enough sigma -- but that bound moves with the outer budget and is not a property of sigma alone. At this cell's own max_iterations=3: 0.40 and 0.45 fail, 0.50 / 0.55 / 0.60 / 1.00 pass. At max_iterations=5, 0.50 fails too (residual 9.88e+00) and the bound is 0.55. More sweeps is more opportunity to diverge, which is the shape of the defect rather than a surprise. Read the residual as a coupled-iteration number, not an inner-solver one.",
@@ -53,6 +65,9 @@
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
         "exception": "ConvergenceError",
+        "library_said": {
+          "RuntimeWarning: JAX autodiff failed: TracerArrayConversionError('The numpy.ndarray conversion method __array__() was called on": 8
+        },
         "message": "newton solver failed to converge after 30 iterations (residual: 1.15e+02)"
       },
       "intended": "DEFECT \u2014 #1865, the same coupled divergence as fdm_upwind_2d: this cell shares HJBFDMSolver, and SL_LINEAR, which does not, passes.",
@@ -76,6 +91,10 @@
     "gfdm_rbf/construction": {
       "artifact": {
         "exception": "NotImplementedError",
+        "library_said": {
+          "UserWarning: HJBGFDMSolver: no `monotonicity_scheme` specified; defaulting to 'none' (no QP correction). This produces bare": 2,
+          "UserWarning: Hybrid neighborhood: N/N points (N%) had fewer than k=N neighbors within delta=N Used kNNN fallback.": 1
+        },
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
       "intended": "ABSENT BY DESIGN \u2014 not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue \u2014 the cell exists so that doing so cannot land unnoticed.",
@@ -84,6 +103,9 @@
     "regime_switching/non_negativity": {
       "artifact": {
         "all_finite": true,
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 42
+        },
         "max_rel_drift": 0.0888200989332657,
         "min_density": 0.0008425476627731638,
         "picard_converged": false,

@@ -55,6 +55,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -62,7 +63,14 @@ import warnings
 
 import numpy as np
 
-warnings.filterwarnings("ignore")
+# No blanket `warnings.filterwarnings("ignore")` here. There was one until #1879, and it
+# silenced the library while this file measured it -- including the warning base_hjb raises
+# 39 times in the fdm_upwind cell, saying in as many words that the value function it
+# returned "is not a root of the discrete HJB, and the outer iteration will consume it as
+# if it were". That is a statement about capability, made by the code under test, to the
+# instrument that exists to record capability, and it went to /dev/null for the life of
+# this file. What replaces it is `_recorded`: each cell runs under `catch_warnings`, and
+# what the library said lands in the artifact where a baseline diff can show it.
 
 # Set by --self-test. Applied to every density this module measures, so a mass oracle
 # that does not read the density it claims to read stays green and the self-test
@@ -624,42 +632,75 @@ MASS_ORACLE_CELLS = {
 }
 
 
+def _warning_summary(caught) -> dict:
+    """Fold a cell's warnings into something a baseline can carry and a diff can show.
+
+    Keyed by category and a normalised prefix -- digits collapsed -- because the useful
+    signal is "this cell emitted 39 non-convergence warnings", not 39 near-identical
+    strings differing in a time index and a residual. Counts are stable: the solvers are
+    deterministic (verified for HJB and FP separately), and `simplefilter("always")` means
+    the count does not depend on Python's once-per-location registry.
+    """
+    seen: dict[str, int] = {}
+    for w in caught:
+        # ImportWarning and DeprecationWarning are about the environment and the API, not
+        # about whether this configuration solves, and they differ between machines --
+        # recording "requires POT" would make a regeneration elsewhere produce a false diff.
+        # What survives can still be environment-sensitive (the JAX-autodiff fallback fires
+        # only where JAX is installed), and that is capability information rather than noise.
+        if issubclass(w.category, (ImportWarning, DeprecationWarning, PendingDeprecationWarning)):
+            continue
+        text = " ".join(str(w.message).split())
+        norm = re.sub(r"[-+0-9][0-9.eE+-]*", "N", text)[:110]
+        seen[f"{w.category.__name__}: {norm}"] = seen.get(f"{w.category.__name__}: {norm}", 0) + 1
+    return dict(sorted(seen.items()))
+
+
 def evaluate(only: list[str] | None = None) -> dict:
     results = {}
     for name, run in CELLS.items():
         if only and name not in only:
             continue
         t0 = time.perf_counter()
-        try:
-            status, artifact = run()
-        # A HarnessError names its own phase: construct or measure, never the solve.
-        except HarnessError as exc:
-            status = "ERROR"
-            artifact = {
-                "exception": "HarnessError",
-                "message": " ".join(str(exc).split())[:200],
-                "traceback_tail": traceback.format_exc().strip().splitlines()[-1],
-            }
-        # Broad by design: classifying the refusal IS the measurement here. Anything
-        # reaching this point came out of the solve phase.
-        except Exception as exc:
-            status = "UNSUPPORTED"
-            artifact = {
-                "exception": type(exc).__name__,
-                "message": " ".join(str(exc).split())[:200],
-            }
-            # Second net, for exception classes that cannot come from a library
-            # refusal no matter which phase raised them.
-            if type(exc).__name__ in {
-                "ImportError",
-                "ModuleNotFoundError",
-                "AttributeError",
-                "TypeError",
-                "AssertionError",
-                "KeyError",
-            }:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                status, artifact = run()
+            # A HarnessError names its own phase: construct or measure, never the solve.
+            except HarnessError as exc:
                 status = "ERROR"
-                artifact["traceback_tail"] = traceback.format_exc().strip().splitlines()[-1]
+                artifact = {
+                    "exception": "HarnessError",
+                    "message": " ".join(str(exc).split())[:200],
+                    "traceback_tail": traceback.format_exc().strip().splitlines()[-1],
+                }
+            # Broad by design: classifying the refusal IS the measurement here. Anything
+            # reaching this point came out of the solve phase.
+            except Exception as exc:
+                status = "UNSUPPORTED"
+                artifact = {
+                    "exception": type(exc).__name__,
+                    "message": " ".join(str(exc).split())[:200],
+                }
+                # Second net, for exception classes that cannot come from a library
+                # refusal no matter which phase raised them.
+                if type(exc).__name__ in {
+                    "ImportError",
+                    "ModuleNotFoundError",
+                    "AttributeError",
+                    "TypeError",
+                    "AssertionError",
+                    "KeyError",
+                }:
+                    status = "ERROR"
+                    artifact["traceback_tail"] = traceback.format_exc().strip().splitlines()[-1]
+        # Recorded, not gated (#1879). A cell that emits 39 "not a root of the discrete
+        # HJB" warnings has said something about its capability; the status alone cannot
+        # carry it, and `--check-baseline` compares status only, so this shows up where a
+        # human diffing a regeneration will see it.
+        said = _warning_summary(caught)
+        if said:
+            artifact["library_said"] = said
         results[name] = {
             "status": status,
             "artifact": artifact,
