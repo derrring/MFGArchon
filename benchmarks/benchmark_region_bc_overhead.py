@@ -1,30 +1,36 @@
 """How much does a region-based boundary condition cost against a plain one?
 
-This was `tests/integration/test_region_based_bc.py::TestRegionBasedBCPerformance`
-until #1877, where it failed the nightly full suite at "overhead 12.3% exceeds 10%".
-It was measuring the runner, not the code.
+This was `tests/integration/test_region_based_bc.py::TestRegionBasedBCPerformance` until #1877,
+where it failed the nightly full suite at "overhead 12.3% exceeds 10%". No wall-clock ratio of
+these two paths reaches that precision, so the assertion could not have been satisfied reliably by
+any threshold near its own bound.
 
-The original estimator timed 100 standard applications, then 100 region applications, and
-divided. Those blocks run at different moments, so anything the machine does in between is
-charged to the region path. Measured over 21 repeats on a loaded machine: min -59.5%, median
-1.0%, max +105.3%, sd 34.7pp, exceeding its own 10% bound 24% of the time. An overhead of
--59.5% is not a number the region path can produce.
+The original estimator timed 100 standard applications, then 100 region applications, and divided.
+Those blocks run at different moments, so anything the machine does in between is charged to the
+region path. Over 21 repeats on a loaded machine: min -59.5%, median 1.0%, max +105.3%, sd 34.7pp,
+exceeding its own 10% bound 24% of the time. An overhead of -59.5% is not a cost the region path
+can have.
 
-Interleaving the two variants so machine drift cancels -- same machine, same load, same work,
-only the estimator changed -- gives min -4.3%, median 0.4%, max 4.2%, sd 2.0pp. That isolates
-the estimator's structure as the cause rather than the environment.
+Interleaving the two variants fixes that particular defect -- within one process, 11 repeats give
+min -4.3%, median 0.4%, max 4.2%, sd 2.0pp. **That figure does not transfer to a fresh process,
+and an earlier version of this file implied it did.** Repeats inside one process share warm caches,
+one allocation layout and one core assignment; the ratio itself shifts between processes. Measured
+across 14 fresh invocations of this script at load average 2.0 -- an idle machine -- the headline
+median-of-9 ran from -13.33% to +13.25%, sd 5.50, with 86% of invocations outside the 0.1-1% band
+that repeated measurement puts the true cost in. Taking the ratio of per-variant MINIMA instead of
+the median of ratios, on the theory that noise is one-sided, does not help: 16 fresh processes gave
+sd 5.60 against the median's 5.58.
 
-Interleaving alone is still not enough to gate on. In a fresh short-lived process the FIRST
-repeat is systematically the worst (14.5%, 9.5%, 11.0% in three of six runs), and individual
-repeats excurse to -35% even after warmup; medians of 5 above 5% do occur under heavy
-contention. The true overhead is 0.1-1%, so no threshold both admits the truth and survives the
-noise. Hence a benchmark, run deliberately, rather than a test that gates a merge.
+So: the central estimate is that the region path costs about **1% or less**, and a single
+invocation of this script carries roughly +/-14 points around it. Compare builds by running it many
+times, not once.
 
     python benchmarks/benchmark_region_bc_overhead.py
 """
 
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -94,10 +100,16 @@ def measure() -> tuple[float, list[float]]:
 def main() -> None:
     median, overheads = measure()
     print(f"Region-based BC overhead, {N_ITERATIONS} interleaved applications x {N_REPEATS} repeats")
-    print(f"  per repeat: {[f'{o:.1f}%' for o in overheads]}")
-    print(f"  median:     {median:.2f}%")
-    print(f"  spread:     min {min(overheads):.1f}%  max {max(overheads):.1f}%")
-    print("\nRead the median. A single repeat carries the machine's noise, not the code's cost.")
+    print(f"  load average: {os.getloadavg()[0]:.1f}")
+    print(f"  per repeat:   {[f'{o:.1f}%' for o in overheads]}")
+    print(f"  median:       {median:.2f}%")
+    print(f"  spread:       min {min(overheads):.1f}%  max {max(overheads):.1f}%")
+    print(
+        "\nOne invocation is not an answer. These repeats share a process, so they share caches, "
+        "\nallocation layout and core assignment; measured across 14 fresh invocations on an idle "
+        "\nmachine the median above ranged -13.3% to +13.2% (sd 5.5). The central estimate from "
+        "\nrepeated running is about 1% or less. Compare builds over many invocations."
+    )
 
 
 if __name__ == "__main__":
