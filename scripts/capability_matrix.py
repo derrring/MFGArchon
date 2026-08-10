@@ -37,6 +37,16 @@ What ``--check-baseline`` compares is STATUS, not the recorded artifacts. The ar
 blocks in the baseline are a record for a human diffing a PR; a cell can degrade well
 within its own tolerance and the gate stays green.
 
+An artifact may carry ``library_said``: what the library warned about while that cell ran,
+folded by category and message with numbers collapsed, and absent entirely from a cell that
+warned about nothing. It records capability the oracles cannot see -- `fdm_upwind` passes its
+mass oracle while saying 39 times that the value function it returned is not a root of the
+discrete HJB. Warnings that describe the machine rather than the solve are excluded: import
+and deprecation by category, the JAX-autodiff fallback by message. That exclusion is not
+tidiness. An entry that appears only where an optional package is installed makes this
+committed baseline machine-dependent, and a regeneration elsewhere both fakes a diff and
+drops the ``intended`` note of every cell whose artifact moved.
+
 Every cell but one drives the public API. ``regime_switching/non_negativity`` reaches
 through the deep module path because ``RegimeSwitchingIterator`` is exported from no
 package ``__init__`` -- recorded in that cell rather than treated as a reason to leave
@@ -55,6 +65,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -62,7 +73,15 @@ import warnings
 
 import numpy as np
 
-warnings.filterwarnings("ignore")
+# No blanket `warnings.filterwarnings("ignore")` here. There was one until #1879, and it
+# silenced the library while this file measured it -- including the warning base_hjb raises
+# 39 times in the fdm_upwind cell, saying in as many words that the value function it
+# returned "is not a root of the discrete HJB, and the outer iteration will consume it as
+# if it were". That is a statement about capability, made by the code under test, to the
+# instrument that exists to record capability, and it went to /dev/null for the life of
+# this file. What replaces it is `_warning_summary`: each cell runs under `catch_warnings`,
+# and what the library said lands in the artifact as `library_said`, where a baseline diff
+# can show it.
 
 # Set by --self-test. Applied to every density this module measures, so a mass oracle
 # that does not read the density it claims to read stays green and the self-test
@@ -624,42 +643,93 @@ MASS_ORACLE_CELLS = {
 }
 
 
+# Substrings that identify a warning as a report about the machine rather than about whether
+# the configuration solves. Category alone does not separate these: the JAX-autodiff fallback
+# is a RuntimeWarning, and it fires only where JAX is importable.
+_ENVIRONMENT_MARKERS = (
+    "JAX autodiff failed",
+    "Falling back to finite-difference Jacobian",
+)
+
+
+def _warning_summary(caught) -> dict:
+    """Fold a cell's warnings into something a baseline can carry and a diff can show.
+
+    Keyed by category and a normalised prefix -- digits collapsed -- because the useful
+    signal is "this cell emitted 39 non-convergence warnings", not 39 near-identical
+    strings differing in a time index and a residual. Counts are stable against Python's
+    once-per-location registry, because `simplefilter("always")` defeats it; a library that
+    keeps its own warn-once set (`backends/__init__.py` has one) is not covered by that
+    argument, and no cell here selects a configuration that reaches it.
+    """
+    seen: dict[str, int] = {}
+    for w in caught:
+        # Environment, not capability. These say what is installed on the machine that ran
+        # the harness, so recording them makes the committed baseline machine-dependent:
+        # a regeneration elsewhere produces a false diff, and -- worse -- `_note_still_applies`
+        # drops the `intended` note attached to every cell whose artifact moved. Measured on
+        # the JAX-autodiff fallback: forcing `_JAX_AVAILABLE = False` changes no number in
+        # three 2-D cells (the numeric half is byte-identical) yet destroys three notes,
+        # including the ~1500-character #1865 investigation record. A statement that holds
+        # with and without a package installed is not a statement about the package.
+        if issubclass(w.category, (ImportWarning, DeprecationWarning, PendingDeprecationWarning)):
+            continue
+        text = " ".join(str(w.message).split())
+        if any(marker in text for marker in _ENVIRONMENT_MARKERS):
+            continue
+        # Collapse numbers so near-identical warnings fold, but only tokens that START with a
+        # digit or a signed digit: `[-+0-9][0-9.eE+-]*` also ate the hyphen in ordinary words
+        # ("non-negativity" -> "nonNnegativity"), which is not what "digits collapsed" means.
+        norm = re.sub(r"(?<![\w.])[-+]?\d[\d.eE]*(?:[-+]\d+)?", "N", text)[:110]
+        seen[f"{w.category.__name__}: {norm}"] = seen.get(f"{w.category.__name__}: {norm}", 0) + 1
+    return dict(sorted(seen.items()))
+
+
 def evaluate(only: list[str] | None = None) -> dict:
     results = {}
     for name, run in CELLS.items():
         if only and name not in only:
             continue
         t0 = time.perf_counter()
-        try:
-            status, artifact = run()
-        # A HarnessError names its own phase: construct or measure, never the solve.
-        except HarnessError as exc:
-            status = "ERROR"
-            artifact = {
-                "exception": "HarnessError",
-                "message": " ".join(str(exc).split())[:200],
-                "traceback_tail": traceback.format_exc().strip().splitlines()[-1],
-            }
-        # Broad by design: classifying the refusal IS the measurement here. Anything
-        # reaching this point came out of the solve phase.
-        except Exception as exc:
-            status = "UNSUPPORTED"
-            artifact = {
-                "exception": type(exc).__name__,
-                "message": " ".join(str(exc).split())[:200],
-            }
-            # Second net, for exception classes that cannot come from a library
-            # refusal no matter which phase raised them.
-            if type(exc).__name__ in {
-                "ImportError",
-                "ModuleNotFoundError",
-                "AttributeError",
-                "TypeError",
-                "AssertionError",
-                "KeyError",
-            }:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                status, artifact = run()
+            # A HarnessError names its own phase: construct or measure, never the solve.
+            except HarnessError as exc:
                 status = "ERROR"
-                artifact["traceback_tail"] = traceback.format_exc().strip().splitlines()[-1]
+                artifact = {
+                    "exception": "HarnessError",
+                    "message": " ".join(str(exc).split())[:200],
+                    "traceback_tail": traceback.format_exc().strip().splitlines()[-1],
+                }
+            # Broad by design: classifying the refusal IS the measurement here. Anything
+            # reaching this point came out of the solve phase.
+            except Exception as exc:
+                status = "UNSUPPORTED"
+                artifact = {
+                    "exception": type(exc).__name__,
+                    "message": " ".join(str(exc).split())[:200],
+                }
+                # Second net, for exception classes that cannot come from a library
+                # refusal no matter which phase raised them.
+                if type(exc).__name__ in {
+                    "ImportError",
+                    "ModuleNotFoundError",
+                    "AttributeError",
+                    "TypeError",
+                    "AssertionError",
+                    "KeyError",
+                }:
+                    status = "ERROR"
+                    artifact["traceback_tail"] = traceback.format_exc().strip().splitlines()[-1]
+        # Recorded, not gated (#1879). A cell that emits 39 "not a root of the discrete
+        # HJB" warnings has said something about its capability; the status alone cannot
+        # carry it, and `--check-baseline` compares status only, so this shows up where a
+        # human diffing a regeneration will see it.
+        said = _warning_summary(caught)
+        if said:
+            artifact["library_said"] = said
         results[name] = {
             "status": status,
             "artifact": artifact,
@@ -907,6 +977,13 @@ def main() -> None:
                 "Regenerate with --write-baseline. A non-PASS cell may carry an `intended` "
                 "note saying WHY it is not PASS; cells without one are unexplained and are the "
                 "actual backlog."
+                " A cell's artifact may also carry `library_said`: the warnings the library"
+                " emitted while that cell ran, folded by category and message with numbers"
+                " collapsed. Warnings about the machine rather than about whether the"
+                " configuration solves (import, deprecation, and the JAX-autodiff fallback) are"
+                " excluded by design -- recording them makes this file machine-dependent and"
+                " silently drops the `intended` notes of every cell whose artifact moves. A cell"
+                " that emitted nothing carries no field at all."
             ),
             "cells": {
                 k: (

@@ -1,9 +1,12 @@
 {
-  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog.",
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog. A cell's artifact may also carry `library_said`: the warnings the library emitted while that cell ran, folded by category and message with numbers collapsed. Warnings about the machine rather than about whether the configuration solves (import, deprecation, and the JAX-autodiff fallback) are excluded by design -- recording them makes this file machine-dependent and silently drops the `intended` notes of every cell whose artifact moves. A cell that emitted nothing carries no field at all.",
   "cells": {
     "fdm_centered/mass_conservation": {
       "artifact": {
         "exception": "ValueError",
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 2
+        },
         "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.762e-01. Clipping it to zero would fabricate 5.722% of the total mass, so the solve is stopped rather than repor"
       },
       "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.722% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
@@ -20,6 +23,9 @@
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 39
+        },
         "mass_max": 1.0000000000000002,
         "mass_t0": 1.0000000000000002,
         "max_drift": 1.2212453270876722e-15,
@@ -76,6 +82,10 @@
     "gfdm_rbf/construction": {
       "artifact": {
         "exception": "NotImplementedError",
+        "library_said": {
+          "UserWarning: HJBGFDMSolver: no `monotonicity_scheme` specified; defaulting to 'none' (no QP correction). This produces bare": 2,
+          "UserWarning: Hybrid neighborhood: N/N points (N%) had fewer than k=N neighbors within delta=N Used k-NN fallback.": 1
+        },
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
       "intended": "ABSENT BY DESIGN \u2014 not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue \u2014 the cell exists so that doing so cannot land unnoticed.",
@@ -84,6 +94,9 @@
     "regime_switching/non_negativity": {
       "artifact": {
         "all_finite": true,
+        "library_said": {
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 42
+        },
         "max_rel_drift": 0.0888200989332657,
         "min_density": 0.0008425476627731638,
         "picard_converged": false,
