@@ -1,5 +1,5 @@
 {
-  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog. A cell's artifact may also carry `library_said`: the warnings the library emitted while that cell ran, folded by category and message with numbers collapsed. Warnings about the machine rather than about whether the configuration solves (import, deprecation, and the JAX-autodiff fallback) are excluded by design -- recording them makes this file machine-dependent and silently drops the `intended` notes of every cell whose artifact moves. A cell that emitted nothing carries no field at all.",
+  "_comment": "Executed capability of the solve surface. --check-baseline compares STATUS only, in BOTH directions: a recovered cell must be recorded here in the same change that recovers it. The artifact blocks are a record for diffing by a human reviewer, NOT a gate -- a cell can degrade within its own tolerance (fvm_vs_fdm at 4.891% could reach 6.99%) and the status check stays green. Regenerate with --write-baseline. A non-PASS cell may carry an `intended` note saying WHY it is not PASS; cells without one are unexplained and are the actual backlog. A cell's artifact may also carry `library_said`: the warnings the library emitted while that cell ran, folded by category and message with numbers collapsed. Warnings about the machine rather than about whether the configuration solves (import, deprecation, and the JAX-autodiff fallback) are excluded by design -- recording them makes this file machine-dependent and silently drops the `intended` notes of every cell whose artifact moves. A cell that emitted nothing carries no field at all. The three 2-D cells read PASS from 2026-08-11 because the fixture was restated at a coupling strength comparable to its 1-D sibling (#1865), not because a solver improved. The configuration they used to fail at -- `coupling=m` unscaled, the aggregating regime -- is no longer covered here and is tracked on #1865.",
   "cells": {
     "fdm_centered/mass_conservation": {
       "artifact": {
@@ -14,11 +14,15 @@
     },
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
-        "exception": "ValueError",
-        "message": "FP solver: at timestep 3/6, advection_scheme='divergence_centered': density went to -1.817e-01. Clipping it to zero would fabricate 0.722% of the total mass, so the solve is stopped rather than report"
+        "all_finite": true,
+        "mass_t0": 0.9999999999999999,
+        "max_rel_drift": 1.1102230246251568e-16,
+        "min_density": 2.9212271516776556e-06,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865, and this cell now fails EARLIER than the other two. With the inner Newton closing (PR #1864), the solve reaches the FP step, where divergence_centered drives the density to -6.618e-01 at timestep 2/6 and the mass-fabrication gate (#1683) refuses it -- the same refusal its 1-D sibling records, and INTENDED there. Whether this cell is a #1865 instance or a well-posedness problem of its own is unsettled. See also #1866: NumericalScheme.FDM_CENTERED leaves the HJB on upwind gradients, so this cell's HJB solve is identical to fdm_upwind_2d's and only the FP half is centered. [MEASURED PRE-#1888] Re-measured at the corrected initial mass, the refusal moves to timestep 3/6 at a density of -1.817e-01 and 0.722% fabricated mass, from 2/6, -6.618e-01 and 2.329%. The refusal itself is unchanged and so is the reading of it; only the operating point moved.",
-      "status": "UNSUPPORTED"
+      "status": "PASS"
     },
     "fdm_upwind/mass_conservation": {
       "artifact": {
@@ -38,11 +42,15 @@
     },
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
-        "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 1.33e+02)"
+        "all_finite": true,
+        "mass_t0": 0.9999999999999999,
+        "max_rel_drift": 1.1102230246251568e-16,
+        "min_density": 2.9212271516776556e-06,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865. The inner-solver half of #1745 is fixed (PR #1864: the finite-difference Jacobian straddled the upwind kink). Twelve of the thirteen inner Newton solves in this cell now converge in 4-7 iterations, final residuals 4.881e-12 to 7.433e-07. The thirteenth -- the first backward step of the third Picard sweep -- has no root within reach: scipy.optimize.least_squares(method='trf') on the same residual from the same x0 also fails, ending at 3.58 after 12100 evaluations with the iterate 2.4e+04 away. What remains is the COUPLED iteration diverging: measured at the FP call site -- max|U| of the value function handed to the FP solve, and the peak of the density it returns -- 1.86 -> 37.35 and 34.9 -> 101 over the two available sweeps. Name the instrument, because the iterator's own iteration_callback reports the DAMPED iterate and gives half of these (0.93 -> 19.14 at damping 0.5); both are correct and they are not the same quantity. 3, 5 or 10 outer iterations end identically. Not dimension-specific -- the same parameters in 1-D give max|U| 0.489 -> 0.507, and 2-D converges at coupling x0.1, or at high enough sigma -- but that bound moves with the outer budget and is not a property of sigma alone. At this cell's own max_iterations=3: 0.40 and 0.45 fail, 0.50 / 0.55 / 0.60 / 1.00 pass. At max_iterations=5, 0.50 fails too (residual 9.88e+00) and the bound is 0.55. More sweeps is more opportunity to diverge, which is the shape of the defect rather than a surprise. Read the residual as a coupled-iteration number, not an inner-solver one. [MEASURED PRE-#1888] The inner-Newton counts and the scipy least_squares trace above were taken when this fixture's initial mass was 1.21 rather than 1, so the coupling was 21% stronger than its source says. The qualitative finding survives -- the cell still raises ConvergenceError at every Picard budget -- but the residual it now reports is 1.33e+02 against the 2.95e+01 recorded then, and the individual solve counts have not been re-run. Do not cite the numbers above without re-measuring; #1865 carries the corrected picture.",
-      "status": "UNSUPPORTED"
+      "status": "PASS"
     },
     "fvm_muscl/mass_conservation": {
       "artifact": {
@@ -58,11 +66,15 @@
     },
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
-        "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 3.46e+01)"
+        "all_finite": true,
+        "mass_t0": 0.9999999999999999,
+        "max_rel_drift": 1.2212453270876724e-15,
+        "min_density": 2.9212271516776556e-06,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865, the same coupled divergence as fdm_upwind_2d: this cell shares HJBFDMSolver, and SL_LINEAR, which does not, passes. [MEASURED PRE-#1888] Residual re-measured at the corrected initial mass: 3.46e+01, from 1.15e+02. The cell still fails and still shares HJBFDMSolver with fdm_upwind_2d, which is the note's point.",
-      "status": "UNSUPPORTED"
+      "status": "PASS"
     },
     "fvm_vs_fdm/agreement": {
       "artifact": {
