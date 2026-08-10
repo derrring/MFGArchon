@@ -111,14 +111,22 @@ def test_a_solve_that_loses_mass_reports_an_order_one_error():
 
 
 def test_the_metric_is_drift_not_deviation_from_one():
-    """Why the target is the initial mass rather than 1.0.
+    """Why the target is the initial mass rather than 1.0: a ratio is invariant to the cell measure.
 
-    Two owners disagree on the cell measure: ``MFGProblem._initialize_functions`` normalises with
-    ``prod(L_i / Nx_points_i)`` while ``volume_element()`` returns ``prod(L_i / (Nx_points_i - 1))``
-    -- points against intervals. Measured against 1.0 that fork reports ``(N/(N-1))**d - 1``: 21%
-    on an 11-point 2D grid whose mass is flat to 4e-16, shrinking like d/N so it reads as a
-    first-order-convergent error. A ratio is invariant to the measure. The fork itself is
-    pre-existing and out of scope here.
+    The construction below is synthetic -- it normalises one way and measures the other on purpose --
+    and that is now the only place the fork exists. ~~Two owners disagree on the cell measure:
+    ``MFGProblem._initialize_functions`` normalises with ``prod(L_i / Nx_points_i)`` while
+    ``volume_element()`` returns ``prod(L_i / (Nx_points_i - 1))``. The fork itself is pre-existing
+    and out of scope here.~~ [FIXED 2026-08-10] The normaliser now takes its spacing from the
+    geometry, so `m(0, .)` integrates to 1 in every dimension, pinned by
+    ``tests/unit/test_core/test_initial_density_mass_1888.py``.
+
+    Worth keeping as a lesson about this file rather than about the product: that paragraph
+    described the defect correctly on 2026-07-21, including the ``(N/(N-1))**d - 1`` closed form and
+    the 21% figure, declared it out of scope, and no issue was filed. The test was then written to
+    be invariant to it -- correctly, since drift is the physical property -- which removed the last
+    reading that could have surfaced it. It cost a full re-investigation twenty days later.
+    "Out of scope" without a filed issue is a deletion with extra steps.
     """
     n, d = 11, 2
     flat = np.ones((5,) + (n,) * d)
