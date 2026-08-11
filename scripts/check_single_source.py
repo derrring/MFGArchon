@@ -15,9 +15,25 @@ is not hypothetical: `% *Nx\\b` and `np\\.roll\\b` both returned 0 from `git gre
 this machine on 2026-08-11, because that grep does not implement `\\b` -- the true counts
 were 18 and 18.
 
-So each entry names a `sentinel_file` that MUST be scanned and in which the pattern MUST
-match at least once. Choose the quantity's OWNER file: it contains the quantity by
-definition, so the sentinel stays live for as long as the entry is meaningful.
+So each entry names a `sentinel_file` and a `sentinel_symbol` -- a `def` inside it whose body
+MUST contain a match. Naming the symbol rather than only the file is what makes the anchor
+checkable: the second review found that entry 1's sole match in `pde_coefficients.py` sits in
+`diffusion_from_volatility_torch`, not in `diffusion_from_volatility`, which its `owner` field
+names. The primary owner's body computes on a local `arr` (`0.5 * arr**2`), invisible to any
+sigma-anchored pattern, so a file-level sentinel was being held up by a duplicate -- and
+consolidating that duplicate, which is exactly what the ratchet exists to encourage, would
+have bricked the entry.
+
+Pick a symbol that survives the consolidation the entry is pushing for. `owner` says where the
+quantity SHOULD come from; `sentinel_symbol` says which body is load-bearing for the
+measurement. They are usually the same and for entry 1 they are not, which is a fact about the
+registry that the check now forces into the open instead of leaving in prose.
+
+What the sentinel does NOT catch: drift that leaves the anchor alone. Respelling every site
+outside `sentinel_symbol` still lowers the count, and the operator can still record that with
+`--write-baseline`. That path is not silent -- it exits 1 first, reddens both gates, and the
+baseline diff is reviewable -- but it is a smaller guarantee than "the sentinel closes
+laundering", which is what an earlier version of this docstring claimed.
 
 The first version of this checker used a `sentinel_text` literal stored in the JSON
 instead, and that is not strong enough -- it proves the pattern intersects one hardcoded
@@ -28,8 +44,9 @@ had four alternatives of which three were structurally unreachable, because `ruf
 12 real sites went uncounted. Worse, respelling the counted sites to the ruff-canonical
 `0.5 * sigma**2` -- which removes nothing -- dropped the count 6 -> 0, printed SHRANK, and
 the tool instructed the operator to run `--write-baseline`, after which the entry read
-clean forever. A live-site sentinel closes that: the owner's own line stops matching too,
-so the same drift raises InstrumentError instead of reporting progress.
+clean forever. A live-site sentinel closes THAT drift, which was total: it took the anchor
+with it, so the same edit now raises InstrumentError instead of reporting progress. It does
+not close partial drift -- see the paragraph above.
 
 Either sentinel condition failing exits 2 (instrument broken), never 0 and never 1.
 
@@ -43,6 +60,7 @@ blanking only `tokenize.STRING` leaves their text visible to the matcher -- whic
 """
 
 import argparse
+import ast
 import fnmatch
 import io
 import json
@@ -106,6 +124,26 @@ def code_only_lines(path: Path) -> list[str]:
     return blanked
 
 
+def _symbol_line_range(path: Path, symbol: str, entry_name: str) -> tuple[int, int]:
+    """First and last line of the `def symbol` body in `path`.
+
+    A missing symbol is an instrument failure, not a count of zero: the anchor the entry
+    declares has been renamed or removed, and until someone says where it went the check
+    cannot claim to have measured anything.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        raise InstrumentError(f"{entry_name}: cannot parse sentinel file {path}: {exc}") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == symbol:
+            return node.lineno, (node.end_lineno or node.lineno)
+    raise InstrumentError(
+        f"{entry_name}: sentinel_symbol {symbol}() is not defined in {path}. It was renamed or "
+        f"removed; move the anchor deliberately rather than letting the entry measure nothing."
+    )
+
+
 def scan_files(root: Path, include: list[str], exclude: list[str]) -> list[Path]:
     """Files selected by the include globs and not knocked out by the exclude globs."""
     selected: dict[str, Path] = {}
@@ -147,13 +185,17 @@ def measure(entry: dict, root: Path) -> tuple[int, list[str]]:
             if regex.search(line):
                 sites.append(f"{rel}:{lineno}")
 
-    if not any(s.startswith(f"{sentinel_file}:") for s in sites):
+    symbol = entry["sentinel_symbol"]
+    lo, hi = _symbol_line_range(root / sentinel_file, symbol, name)
+    anchored = [s for s in sites if s.startswith(f"{sentinel_file}:") and lo <= int(s.split(":")[1]) <= hi]
+    if not anchored:
         raise InstrumentError(
-            f"{name}: pattern {entry['pattern']!r} matches nothing in its sentinel file "
-            f"{sentinel_file}, which owns this quantity and must contain it. The pattern no "
-            f"longer describes the tree -- the {len(sites)} site(s) it did find are not a "
-            f"verdict about the code. Re-read the pattern against the tree's actual spelling "
-            f"(ruff normalises `x ** 2` to `x**2`, so a pattern written the spaced way is dead)."
+            f"{name}: pattern {entry['pattern']!r} matches nothing inside {symbol}() at "
+            f"{sentinel_file}:{lo}-{hi}, the body this entry's measurement is anchored to. The "
+            f"pattern no longer describes the tree -- the {len(sites)} site(s) it did find are "
+            f"not a verdict about the code. Re-read the pattern against the tree's actual "
+            f"spelling (ruff normalises `x ** 2` to `x**2`, so a spaced pattern is dead), or, if "
+            f"{symbol}() legitimately no longer restates the quantity, move the anchor and say so."
         )
     return len(sites), sites
 

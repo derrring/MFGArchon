@@ -5,7 +5,7 @@
       "name": "diffusion_sigma_squared",
       "quantity": "D = sigma^2 / 2, the PDE diffusion coefficient from the SDE volatility",
       "owner": "diffusion_from_volatility -- mfgarchon/utils/pde_coefficients.py:142",
-      "pattern": "0\\.5 \\* [\\w.]*sigma\\w*\\s*\\*\\*\\s*2|\\(?\\s*[\\w.]*sigma\\w*\\s*\\*\\*\\s*2\\s*\\)?\\s*/\\s*2|0\\.5 \\* [\\w.]*sigma\\w* \\* [\\w.]*sigma\\w*|[\\w.]*sigma\\w* \\* [\\w.]*sigma\\w* / 2",
+      "pattern": "0\\.5 \\* [\\w.]*sigma\\w*\\s*\\*\\*\\s*2|\\(?\\s*[\\w.]*sigma\\w*\\s*\\*\\*\\s*2\\s*\\)?\\s*/|0\\.5 \\* [\\w.]*sigma\\w* \\* [\\w.]*sigma\\w*|[\\w.]*sigma\\w* \\* [\\w.]*sigma\\w* /",
       "include": [
         "mfgarchon/**/*.py"
       ],
@@ -14,8 +14,9 @@
         "mfgarchon/alg/reinforcement/**"
       ],
       "sentinel_file": "mfgarchon/utils/pde_coefficients.py",
-      "count": 18,
-      "note": "CLAUDE.md states the rule outright: 'Resolve sigma->D through the one converter diffusion_from_volatility(sigma); never inline 0.5*sigma**2 in a solver.' The pattern must cover the ruff-canonical hugged spelling `sigma**2`, because `ruff format --check mfgarchon/` at local_ci.sh:214 means the spaced form CLAUDE.md writes cannot exist in the tree. Two sites are counted but are NOT restatements to fix: pde_coefficients.py:263 is `diffusion_from_volatility_torch`, a second owner declared for the torch substrate so the module stays importable without torch (#1189/#1193); noise_processes.py:391 is the Ito log-drift correction in the GBM exact solution, the same arithmetic in a different role -- routing it through a PDE diffusion converter would be the wrong abstraction, which is the counter-force clause, and it is left counted rather than path-excluded so the exclusion stays visible instead of becoming a blind spot."
+      "count": 36,
+      "note": "CLAUDE.md states the rule outright: 'Resolve sigma->D through the one converter diffusion_from_volatility(sigma); never inline 0.5*sigma**2 in a solver.' The pattern must cover the ruff-canonical hugged spelling `sigma**2` (`ruff format --check mfgarchon/` at local_ci.sh:214 means the spaced form CLAUDE.md writes cannot exist), and the stencil family `sigma**2 / Dx**2` and `-(sigma**2) / (2 * Dx**2)`, which are D folded into a coefficient (2D/Dx^2 and D/Dx^2). THE COUNT IS WHAT THIS PATTERN MATCHES, NOT A CENSUS of sites computing D -- no regex can be that, and an earlier version of this note and the changelog both asserted otherwise. sentinel_symbol is diffusion_from_volatility_torch, NOT the owner named above: the primary owner's body computes on a local `arr` (`0.5 * arr**2`, `0.5 * np.matmul(arr, ...)`), which no sigma-anchored pattern can see without going absurdly broad. The torch converter is a declared permanent second owner for the torch substrate (#1189/#1193), so it is a durable anchor; the divergence between `owner` and `sentinel_symbol` is a real fact about this registry, and naming the symbol is what forced it into the open. Counted but NOT restatements to fix: pde_coefficients.py:263 (that second owner) and noise_processes.py:391 (the Ito log-drift correction in the GBM exact solution -- same arithmetic, different role, which is the counter-force clause). Left counted rather than path-excluded so the exclusion stays visible instead of becoming a blind spot. UNCOUNTED BY DESIGN: source held in string templates. code_generation.py:400 emits `0.5 * sigma**2` into every generated FP solver and is live and exported (_generate_flux_code, called at code_generation.py:222), but STRING tokens are blanked and un-blanking them would re-admit 17 prose hits. Growth in that channel is invisible here.",
+      "sentinel_symbol": "diffusion_from_volatility_torch"
     },
     {
       "name": "fp_drift_lambda",
@@ -31,7 +32,8 @@
       ],
       "sentinel_file": "mfgarchon/utils/pde_coefficients.py",
       "count": 1,
-      "note": "Already single-sourced: the only site is the owner's own return. The baseline therefore pins a quantity that is currently CORRECT -- this entry exists to keep it that way, and any growth is a per-solver copy reappearing. CLAUDE.md: 'FP drift scale comes from fp_drift_coefficient(problem), not a private per-solver copy.'"
+      "note": "Already single-sourced: the only site is the owner's own return. The baseline therefore pins a quantity that is currently CORRECT -- this entry exists to keep it that way, and any growth is a per-solver copy reappearing. CLAUDE.md: 'FP drift scale comes from fp_drift_coefficient(problem), not a private per-solver copy.'",
+      "sentinel_symbol": "fp_drift_coefficient"
     },
     {
       "name": "hjb_residual_norm_handrolled",
@@ -47,7 +49,8 @@
       ],
       "sentinel_file": "mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
       "count": 5,
-      "note": "The owner was added in #1894 after a second caller dropped the sqrt(dx): the resulting 4.5x norm mismatch made Armijo reject every step while reporting the starting iterate's residual, which read as a five-order improvement. Of the current sites, one is the owner, three are hjb_gfdm comparing an unscaled norm against newton_tolerance (#1896 item 5), and one is base_variational scaling by sqrt(dx*dt) -- a space-time norm, distinct by design. The closing paren in the pattern is load-bearing: without it the two anderson_acceleration sites match on `residual_flat`, which is the Picard residual, a different quantity. The count is the ratchet; that classification is a map and will need re-reading when it moves."
+      "note": "The owner was added in #1894 after a second caller dropped the sqrt(dx): the resulting 4.5x norm mismatch made Armijo reject every step while reporting the starting iterate's residual, which read as a five-order improvement. Of the current sites, one is the owner, three are hjb_gfdm comparing an unscaled norm against newton_tolerance (#1896 item 5), and one is base_variational scaling by sqrt(dx*dt) -- a space-time norm, distinct by design. The closing paren in the pattern is load-bearing: without it the two anderson_acceleration sites match on `residual_flat`, which is the Picard residual, a different quantity. The count is the ratchet; that classification is a map and will need re-reading when it moves.",
+      "sentinel_symbol": "hjb_residual_norm"
     },
     {
       "name": "periodic_wrap_modulo",
@@ -63,7 +66,8 @@
       ],
       "sentinel_file": "mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
       "count": 12,
-      "note": "Hardcodes the exclusive convention (wrap at (0, Nx-1)) at every site. ENDPOINT_INCLUSIVE, which TensorProductGrid uses, puts the wrap at (0, Nx-2) instead -- so these sites and the grid disagree about which nodes are the same physical point. #1895 hit this three times in a row while extracting the Jacobian's BC bands. This entry has no owner yet, so its sentinel_file is the heaviest concentration of sites rather than an owner: if those are ever all consolidated the sentinel goes dead and the check exits 2, which is the intended outcome -- an entry whose quantity is fully single-sourced should be RETIRED, not left sitting at 0 where it reads clean forever. Uncounted by design: `np.roll` periodic wraps (9 code sites, of which base_hjb.py:1042-1043 and hjb_fdm.py:1322-1323 are genuine Jacobian wraps and the rest are Voronoi polygon shifts) -- too noisy to ratchet, so this entry does not cover them."
+      "note": "Hardcodes the exclusive convention (wrap at (0, Nx-1)) at every site. ENDPOINT_INCLUSIVE, which TensorProductGrid uses, puts the wrap at (0, Nx-2) instead -- so these sites and the grid disagree about which nodes are the same physical point. #1895 hit this three times in a row while extracting the Jacobian's BC bands. This entry has no owner yet, so its anchor is _calculate_derivatives(), the densest concentration of sites rather than an owner: if those are ever all consolidated the sentinel goes dead and the check exits 2, which is the intended outcome -- an entry whose quantity is fully single-sourced should be RETIRED, not left sitting at 0 where it reads clean forever. Uncounted by design: `np.roll` periodic wraps (9 code sites, of which base_hjb.py:1042-1043 and hjb_fdm.py:1322-1323 are genuine Jacobian wraps and the rest are Voronoi polygon shifts) -- too noisy to ratchet, so this entry does not cover them.",
+      "sentinel_symbol": "_calculate_derivatives"
     }
   ]
 }

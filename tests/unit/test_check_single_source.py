@@ -86,6 +86,7 @@ def baseline(tmp_path: Path) -> Path:
                         "include": ["pkg/**/*.py"],
                         "exclude": [],
                         "sentinel_file": "pkg/owner.py",
+                        "sentinel_symbol": "diffusion",
                         "count": 2,
                         "note": "synthetic",
                     }
@@ -142,13 +143,13 @@ def test_dead_pattern_is_instrument_error(tree, baseline):
     ``\\b`` is the exact keystroke that produced two false zeros on 2026-08-11. Python's
     ``re`` does implement it, so the synthetic dead pattern here is a literal that cannot
     occur; the mechanism under test -- the pattern must match inside the file that owns the
-    quantity -- is dialect-independent and catches both.
+    quantity's anchor -- is dialect-independent and catches both.
     """
     _patch_baseline(baseline, pattern=r"0\.5 \* sigma \* NOTASYMBOL")
     result = _run(tree, baseline)
     assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
     assert "INSTRUMENT BROKEN" in result.stdout
-    assert "matches nothing in its sentinel file" in result.stdout
+    assert "matches nothing inside diffusion()" in result.stdout
 
 
 def test_dead_pattern_is_not_reported_as_progress(tree, baseline):
@@ -180,8 +181,8 @@ def test_a_pattern_blind_to_the_owner_cannot_report_a_count(tree, baseline):
     assert "no longer describes the tree" in result.stdout
 
 
-def test_respelling_a_site_cannot_launder_the_entry(tree, baseline):
-    """Drift that hides the tree from the pattern must not be recorded as progress.
+def test_respelling_including_the_anchor_cannot_launder_the_entry(tree, baseline):
+    """TOTAL drift -- drift that also takes the anchor -- must not be recorded as progress.
 
     Reproduced against the real registry on 2026-08-12: respelling six sites from
     `0.5 * sigma * sigma` to the ruff-canonical `0.5 * sigma**2` -- which deletes nothing --
@@ -202,6 +203,50 @@ def test_respelling_a_site_cannot_launder_the_entry(tree, baseline):
     laundered = _run(tree, baseline, "--write-baseline")
     assert laundered.returncode == EXIT_INSTRUMENT_BROKEN, laundered.stdout
     assert json.loads(baseline.read_text())["entries"][0]["count"] == 2
+
+
+def test_respelling_outside_the_anchor_is_recorded_not_blocked(tree, baseline):
+    """The honest limit of the sentinel, asserted so nobody re-reads it as stronger.
+
+    PARTIAL drift -- respelling every site EXCEPT the anchor -- still lowers the count, and
+    `--write-baseline` will still record it. That is not silent: it exits 1 first, which reddens
+    both `local_ci.sh` and the `ci.yml` step, and the baseline diff is reviewable. But the
+    guarantee is "total drift is fail-closed", not "laundering is impossible", and the module
+    docstring claimed the stronger thing until the second review.
+    """
+    solver = tree / "pkg" / "solver.py"
+    solver.write_text(solver.read_text().replace("0.5 * sigma * sigma", "0.5 * sigma**2"))
+
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_COUNT_CHANGED, result.stdout
+    assert "SHRANK" in result.stdout
+
+    assert _run(tree, baseline, "--write-baseline").returncode == EXIT_OK
+    assert json.loads(baseline.read_text())["entries"][0]["count"] == 1
+
+
+def test_anchor_outside_the_named_symbol_is_instrument_error(tree, baseline):
+    """A match elsewhere in the sentinel FILE is not an anchor.
+
+    This is what a file-level sentinel could not see and what shipped in d8d58e0e: entry 1's
+    only match in `pde_coefficients.py` sat in `diffusion_from_volatility_torch`, while its
+    `owner` field named `diffusion_from_volatility`, whose body computes on a local `arr` and
+    is invisible to a sigma-anchored pattern. The sentinel was held up by a duplicate.
+    """
+    (tree / "pkg" / "owner.py").write_text(
+        "def diffusion(sigma):\n    return _helper(sigma)\n\n\ndef _helper(sigma):\n    return 0.5 * sigma * sigma\n"
+    )
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "matches nothing inside diffusion()" in result.stdout
+
+
+def test_missing_sentinel_symbol_is_instrument_error(tree, baseline):
+    """A renamed or deleted anchor must be moved deliberately, not silently measure nothing."""
+    _patch_baseline(baseline, sentinel_symbol="no_such_function")
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "is not defined in" in result.stdout
 
 
 def test_dead_globs_are_instrument_error(tree, baseline):
@@ -251,3 +296,4 @@ def test_every_repo_entry_names_an_owner_or_says_there_is_none():
     for entry in registry["entries"]:
         assert entry["owner"].strip(), f"{entry['name']}: empty owner"
         assert entry["note"].strip(), f"{entry['name']}: empty note"
+        assert entry["sentinel_symbol"].strip(), f"{entry['name']}: empty sentinel_symbol"
