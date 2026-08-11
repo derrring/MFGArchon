@@ -792,6 +792,96 @@ def compute_hjb_residual(
     return Phi_U
 
 
+def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
+    """Bands of the BC-aware Laplacian, extracted from the operator `compute_hjb_residual` applies.
+
+        Returns ``(sub, diag, sup)`` with ``sub[i] = L[i, i-1]``, ``diag[i] = L[i, i]``,
+        ``sup[i] = L[i, i+1]`` -- the convention `J_L`/`J_D`/`J_U` use.
+
+        Extracted rather than restated. The Jacobian used to write the interior three-point stencil by
+        hand, which is right in the interior and wrong at both ends: the true end rows are
+        ``[-1, 1]/dx^2`` under no-flux and ``[-3, 1]/dx^2`` under Dirichlet against the hardcoded
+        ``[-2, 1]/dx^2``. That is #1894, and a second implementation of this operator is what caused it.
+
+        Under periodic BC the operator is *cyclic* tridiagonal -- row 0 reads ``[-2, 1, 0 ... 0, 1]``,
+        the interior stencil plus a wrap term the hardcoded version simply omitted -- so the corners
+        ``L[0, Nx-1]`` and ``L[Nx-1, 0]`` are returned too and the caller carries them as extra bands.
+
+    Two tiers. Comb probes recover a banded operator in O(Nx); a control vector none of them was
+        built from decides whether that held, and one probe per column -- exact for any structure --
+        is used when it did not. Obstacle masks, nonlocal terms and Robin BCs all produce operators the
+        comb cannot attribute, so the fallback is reached in practice rather than defensively.
+    """
+    zero = _compute_laplacian_1d(np.zeros(Nx), dx, bc=bc, time=time)
+
+    def column(cols) -> np.ndarray:
+        probe = np.zeros(Nx)
+        probe[cols] = 1.0
+        return _compute_laplacian_1d(probe, dx, bc=bc, time=time) - zero
+
+    def pack(columns) -> tuple:
+        """Bands plus off-band (row, col, value) triples, from a map of column index -> its column."""
+        sub, diag, sup = np.zeros(Nx), np.zeros(Nx), np.zeros(Nx)
+        extras: list[tuple[int, int, float]] = []
+        for j, col in columns.items():
+            tol = 1e-9 * max(float(np.abs(col).max()), 1.0)
+            diag[j] = col[j]
+            if j >= 1:
+                sup[j - 1] = col[j - 1]
+            if j + 1 < Nx:
+                sub[j + 1] = col[j + 1]
+            for i in np.nonzero(np.abs(col) > tol)[0]:
+                if abs(int(i) - j) > 1:
+                    extras.append((int(i), j, float(col[i])))
+        return sub, diag, sup, extras
+
+    def reconstruct(sub, diag, sup, extras, vec) -> np.ndarray:
+        out = diag * vec
+        if Nx > 1:
+            out[1:] += sub[1:] * vec[:-1]
+            out[:-1] += sup[:-1] * vec[1:]
+        for i, j, value in extras:
+            out[i] += value * vec[j]
+        return out
+
+    # Control vector no probe was built from.
+    check = np.linspace(-1.0, 1.0, Nx) + 0.37
+    want = _compute_laplacian_1d(check, dx, bc=bc, time=time) - zero
+    scale = max(float(np.abs(want).max()), 1.0)
+
+    # Tier 1: comb probes, O(Nx). Exact when the operator is banded, which is the common case --
+    # the wrap columns get their own probes because a comb mixes columns and an off-band entry
+    # cannot then be attributed, and because the wrap POSITION depends on the periodic convention
+    # (exclusive puts it at (0, Nx-1); ENDPOINT_INCLUSIVE, which TensorProductGrid uses, at
+    # (0, Nx-2)). Assuming that position is how the first version of this got grid periodics wrong.
+    edges = sorted({0, 1, Nx - 2, Nx - 1} & set(range(Nx)))
+    columns = {j: column([j]) for j in edges}
+    interior = [j for j in range(Nx) if j not in edges]
+    stride = 3 if len(interior) >= 3 else 1
+    for k in range(min(stride, max(len(interior), 1))):
+        cols = interior[k::stride]
+        if cols:
+            shared = column(cols)
+            for j in cols:
+                columns[j] = shared
+
+    packed = pack(columns)
+    if np.allclose(reconstruct(*packed, check), want, rtol=1e-9, atol=1e-9 * scale):
+        return packed
+
+    # Tier 2: one probe per column, O(Nx^2). Exact for any structure -- obstacle masks, nonlocal
+    # terms and Robin/adjoint-consistent BCs (#574) all produce operators the comb cannot attribute.
+    # Reached only when tier 1's control fails, so the cost is paid only where it is needed; the FD
+    # fallback assembly is already O(Nx^2), and the analytic path keeps O(Nx) wherever tier 1 holds.
+    packed = pack({j: column([j]) for j in range(Nx)})
+    if not np.allclose(reconstruct(*packed, check), want, rtol=1e-9, atol=1e-9 * scale):
+        raise ValueError(
+            "the BC-aware Laplacian is not linear in U, so it has no Jacobian to extract (max "
+            f"mismatch {float(np.abs(reconstruct(*packed, check) - want).max()):.3e}). #1894."
+        )
+    return packed
+
+
 def compute_hjb_jacobian(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook Newton step
     U_k_n_from_prev_picard: np.ndarray,  # U_k_n (or Uoldn) in notebook Jacobian
@@ -853,6 +943,7 @@ def compute_hjb_jacobian(
     J_D = np.zeros(Nx)
     J_L = np.zeros(Nx)
     J_U = np.zeros(Nx)
+    J_extras: list[tuple[int, int, float]] = []  # off-band entries, periodic wrap only
 
     if has_nan_or_inf(U_n_current_newton_iterate, backend):
         return sparse.diags([np.full(Nx, np.nan)], [0], shape=(Nx, Nx)).tocsr()
@@ -864,12 +955,18 @@ def compute_hjb_jacobian(
     # Diffusion part: d/dU_n_current[j] of -(sigma^2/2) * (U_n_current)_xx[i]
     # NumPy broadcasts scalar σ automatically to match array shapes
     if abs(dx) > 1e-14 and Nx > 1:
-        # Diagonal: ∂/∂U[i] of -(σ²/2)(U[i-1] - 2U[i] + U[i+1])/dx² = σ²/dx²
-        J_D += sigma**2 / dx**2
-        # Off-diagonal: coefficient for U[i±1] terms
-        val_off_diag_diff = -(sigma**2) / (2 * dx**2)
-        J_L += val_off_diag_diff
-        J_U += val_off_diag_diff
+        # d/dU_j of -D*(L U)_i is -D*L[i,j], with D = sigma^2/2 and L the SAME operator the
+        # residual applies. Restating L's interior stencil here left both end rows wrong by
+        # 1/dx^2 -- exactly proportional to sigma^2, absent at sigma=0, which is why every
+        # measurement taken on the sigma=0 fixture missed it (#1894).
+        _diffusion = diffusion_from_volatility(sigma, kind="field")
+        _sub, _diag, _sup, _extras = _bc_laplacian_bands(Nx, dx, bc, current_time)
+        J_D += -_diffusion * _diag
+        J_L += -_diffusion * _sub
+        J_U += -_diffusion * _sup
+        # Periodic wrap: entries a [-1, 0, +1] band structure cannot hold. Omitting them is what the
+        # hardcoded stencil did -- correct on the entries it had, and short by these (#1894).
+        J_extras = [(i, j, -_diffusion * v) for i, j, v in _extras]
         # Note: For spatially varying σ(x), this assumes σ is smooth.
         # More accurate treatment would include ∂σ/∂x terms (Phase 3 extension)
 
@@ -1047,6 +1144,13 @@ def compute_hjb_jacobian(
 
     try:
         Jac = sparse.spdiags(diagonals_data, offsets, Nx, Nx, format="csr")
+        # Periodic wrap. A [-1, 0, +1] structure cannot hold these, and the hardcoded stencil this
+        # replaced simply left them out -- correct on the entries it had, two short (#1894).
+        if J_extras:
+            Jac = Jac.tolil()
+            for _i, _j, _v in J_extras:
+                Jac[_i, _j] += _v
+            Jac = Jac.tocsr()
     except ValueError:
         fallback_diag = np.ones(Nx) * (1.0 / dt if abs(dt) > 1e-14 else 1.0)
         Jac = sparse.diags([fallback_diag], [0], shape=(Nx, Nx)).tocsr()

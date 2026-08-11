@@ -224,10 +224,21 @@ def test_jacobian_byte_identical_to_inline_assembly():
     J_L = np.zeros(nx)
     J_U = np.zeros(nx)
     J_D += 1.0 / dt
-    J_D += sigma**2 / dx**2
-    val_off = -(sigma**2) / (2 * dx**2)
-    J_L += val_off
-    J_U += val_off
+    # Diffusion from the same operator the residual applies, not a restatement of the interior
+    # stencil. This reference used to carry `sigma**2/dx**2` and `-(sigma**2)/(2*dx**2)`, which is
+    # right in the interior and wrong at both ends -- so the test pinned #1894 rather than its own
+    # subject. That subject is the inline `dp` form below (#1071); the diffusion half is now
+    # tautological here and is pinned externally by
+    # tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py.
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _bc_laplacian_bands
+    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+    _sub, _diag, _sup, _extras = _bc_laplacian_bands(nx, dx, bc, 0.0)
+    _diffusion = diffusion_from_volatility(sigma, kind="field")
+    assert not _extras, "this fixture is not periodic; the reference has no place for wrap entries"
+    J_D += -_diffusion * _diag
+    J_L += -_diffusion * _sub
+    J_U += -_diffusion * _sup
     inv_dx = 1.0 / dx
     backward = grad >= 0
     J_D += dH_dp * np.where(backward, inv_dx, -inv_dx)
