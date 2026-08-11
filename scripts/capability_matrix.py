@@ -94,25 +94,40 @@ import numpy as np
 # the same error as a test that passes either way.
 _DENSITY_MUTATION: float | None = None
 
-# Set by --self-test's second axis. Every fixture routes its coupling through `_coupling_pair`,
-# so this deletes f(m) from the whole matrix at once.
+# Set by --self-test's second axis: a transform applied to every fixture's f(m) and df/dm.
 #
-# It exists because the first axis cannot see the coupling. Perturbing the recorded density proves
-# a mass oracle reads the density it reports; it says nothing about whether the cell's verdict
-# depends on the problem being a coupled MFG at all. Measured, it does not: all five cells that
-# are PASS today stay PASS with f(m) identically zero, including `fvm_vs_fdm/agreement`, whose
-# independence claim rests on a second discretisation solving the same coupled problem.
-_COUPLING_DELETED: bool = False
+# It exists because the first axis cannot see the coupling. Perturbing the recorded density proves a
+# mass oracle reads the density it reports; it says nothing about whether the verdict depends on the
+# problem being a coupled MFG at all.
+#
+# A FAMILY, not one mutation, because deletion turns out to be the weakest member. Setting f(m) to
+# zero also makes the problem easier, so surviving it is weaker evidence of blindness than it looks.
+# Measured 2026-08-11 over the five cells that are PASS: deletion and a sign flip leave all five
+# PASS, and scaling by 10 turns `fvm_vs_fdm/agreement` FAIL. A cell counts as coupling-inert only if
+# it survives every member.
+_COUPLING_MUTATION: str | None = None
+
+_COUPLING_MUTATIONS = {
+    "delete (x0)": lambda v: 0.0 * v,
+    "sign flip (x-1)": lambda v: -v,
+    "scale x10": lambda v: 10.0 * v,
+}
 
 
 def _coupling_pair(f, df):
     """The (coupling, coupling_dm) pair a fixture hands to its Hamiltonian.
 
-    One owner, so `--self-test` can delete f(m) everywhere without each fixture knowing.
+    One owner, so `--self-test` can transform f(m) across the whole matrix without each fixture
+    knowing. Returns the originals untouched unless `_COUPLING_MUTATION` names a member of
+    `_COUPLING_MUTATIONS`.
     """
-    if _COUPLING_DELETED:
-        return (lambda m: 0.0 * np.asarray(m, dtype=float), lambda m: 0.0 * np.asarray(m, dtype=float))
-    return (f, df)
+    if _COUPLING_MUTATION is None:
+        return (f, df)
+    transform = _COUPLING_MUTATIONS[_COUPLING_MUTATION]
+    return (
+        lambda m: transform(np.asarray(f(m), dtype=float)),
+        lambda m: transform(np.asarray(df(m), dtype=float)),
+    )
 
 
 def _apply_mutation(M: np.ndarray) -> np.ndarray:
@@ -850,16 +865,74 @@ def print_report(results: dict) -> None:
 # Shrinking it is the work, and it is #1891. The mass oracles cannot see f(m) by construction:
 # `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
 # on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
-# `fvm_vs_fdm/agreement` is the one that stings: its independence claim rests on a second
-# discretisation solving the same coupled problem, and it agrees just as well when there is no
-# coupling to solve.
+# `fvm_vs_fdm/agreement` is NOT on this list, and finding that out is what the family bought: it
+# survives deletion and a sign flip and fails under a 10x scale, so deletion alone would have
+# recorded it as inert. Its independence claim is weaker than it reads -- two discretisations
+# agreeing on an uncoupled problem is not the same statement -- but the cell does have a coupling
+# it can feel.
 COUPLING_INERT_BASELINE = {
     "fdm_upwind/mass_conservation",
     "sl_linear/mass_conservation",
     "fvm_muscl/mass_conservation",
-    "fvm_vs_fdm/agreement",
     "sl_linear_2d/mass_conservation",
 }
+
+
+def _seam_probes():
+    """(name, predicate) for each fixture, asking whether ITS coupling actually moved.
+
+    The point is to reach the call sites. A control that only checks `_coupling_pair` proves the
+    helper works and says nothing about whether a fixture asked it -- measured, stubbing one
+    fixture's call back to a plain tuple left the whole axis byte-identical and exit 0, which is the
+    same "deleted it and nothing changed vs never deleted it" ambiguity the axis exists to avoid,
+    one level up.
+
+    Evaluated through the public Hamiltonian at `p = 0` and differenced against `m = 0`, so nothing
+    is assumed about the other terms; reading `hamiltonian._coupling` would reach a private of the
+    class under test, and `hamiltonian.coupling` does not exist.
+    """
+    probe_m = np.array([1.0, 2.0])
+
+    def moved(build):
+        def check() -> bool:
+            problem = build()
+            hamiltonian = problem.components.hamiltonian
+            x = np.atleast_1d(0.5)
+            zero_p = np.zeros(1)
+
+            def f_of(m: float) -> float:
+                return float(np.asarray(hamiltonian(x, m, zero_p)).ravel()[0])
+
+            baseline_f = f_of(0.0)
+            mutated = np.array([f_of(float(m)) - baseline_f for m in probe_m])
+            unmutated = _COUPLING_MUTATIONS[_COUPLING_MUTATION](np.array([_unmutated_f(build, m) for m in probe_m]))
+            return bool(np.allclose(mutated, unmutated, rtol=1e-9, atol=1e-12))
+
+        return check
+
+    return [
+        ("_smoke_problem", moved(_smoke_problem)),
+        ("_smoke_problem_2d", moved(_smoke_problem_2d)),
+        ("_lq_problem_1d", moved(_lq_problem_1d)),
+    ]
+
+
+def _unmutated_f(build, m: float) -> float:
+    """f(m) - f(0) for a fixture built with the seam off. One line, but it must not see the flag."""
+    global _COUPLING_MUTATION
+    saved, _COUPLING_MUTATION = _COUPLING_MUTATION, None
+    try:
+        problem = build()
+        hamiltonian = problem.components.hamiltonian
+        x = np.atleast_1d(0.5)
+        zero_p = np.zeros(1)
+
+        def at(mm: float) -> float:
+            return float(np.asarray(hamiltonian(x, mm, zero_p)).ravel()[0])
+
+        return at(m) - at(0.0)
+    finally:
+        _COUPLING_MUTATION = saved
 
 
 def self_test() -> int:
@@ -876,7 +949,7 @@ def self_test() -> int:
 
     Neither axis proves the solver correct.
     """
-    global _DENSITY_MUTATION, _COUPLING_DELETED
+    global _DENSITY_MUTATION, _COUPLING_MUTATION
 
     baseline = evaluate(only=sorted(MASS_ORACLE_CELLS))
     broken = errored(baseline)
@@ -906,54 +979,71 @@ def self_test() -> int:
     print("axis 1 -- 10% injected mass drift:")
     inert = [k for k in passing if mutated[k]["status"] == "PASS"]
     for k in passing:
-        verdict = "INERT" if k in inert else "discriminates"
-        print(f"  {k:<34} PASS -> {mutated[k]['status']:<12} {verdict}")
+        print(f"  {k:<34} PASS -> {mutated[k]['status']:<12} {'INERT' if k in inert else 'discriminates'}")
 
-    # Positive control on the seam, before trusting anything axis 2 reports. Every cell here is
-    # inert to the coupling, so "deleted it and nothing changed" and "never deleted it" produce the
-    # identical output -- measured: stubbing `_coupling_pair` back to a pass-through still printed
-    # SELF-TEST PASSED with five known-inert cells. A detector that cannot tell those apart is
-    # reporting its own no-op as a result.
-    _COUPLING_DELETED = True
-    try:
-        f_deleted, _ = _coupling_pair(lambda m: m, lambda m: 1.0)
-        probe = float(np.asarray(f_deleted(np.array([1.0, 2.0]))).max())
-        if probe != 0.0:
-            print(f"SELF-TEST ABORTED: the coupling seam did not fire -- f(1,2) returned {probe}, not 0.")
+    # A cell is coupling-inert only if it survives EVERY member of the family.
+    survives_all = set(passing)
+    print("\naxis 2 -- f(m) transformed in every fixture:")
+    for name in _COUPLING_MUTATIONS:
+        _COUPLING_MUTATION = name
+        try:
+            # Positive control on the seam, reaching the CALL SITES and not just the helper.
+            # Checking that `_coupling_pair` returns a transformed function proves the helper works
+            # and nothing about whether any fixture asked it -- measured, a fixture that stops
+            # calling it leaves this axis byte-identical and exit 0. Each fixture is built under the
+            # flag and its Hamiltonian evaluated, so a call site that bypasses the seam is caught.
+            unreached = [name_of for name_of, probe in _seam_probes() if not probe()]
+            if unreached:
+                print(f"SELF-TEST ABORTED: the coupling seam did not reach {', '.join(unreached)} under '{name}'.")
+                return 2
+            transformed = evaluate(only=passing)
+        finally:
+            _COUPLING_MUTATION = None
+
+        transformed_broken = errored(transformed)
+        if transformed_broken:
+            print(f"SELF-TEST ABORTED: harness broke under '{name}' in {', '.join(transformed_broken)}.")
             return 2
-        uncoupled = evaluate(only=passing)
-    finally:
-        _COUPLING_DELETED = False
 
-    uncoupled_broken = errored(uncoupled)
-    if uncoupled_broken:
-        print(f"SELF-TEST ABORTED: harness broke with the coupling deleted in {', '.join(uncoupled_broken)}.")
-        return 2
+        noticed = [k for k in passing if transformed[k]["status"] != "PASS"]
+        survives_all -= set(noticed)
+        print(
+            f"  {name}: "
+            + (f"{len(noticed)} cell(s) notice -- {', '.join(sorted(noticed))}" if noticed else "no cell notices")
+        )
 
-    print("\naxis 2 -- f(m) deleted from every fixture:")
-    coupling_inert = {k for k in passing if uncoupled[k]["status"] == "PASS"}
     for k in passing:
-        verdict = "inert (known)" if k in COUPLING_INERT_BASELINE else "INERT (NEW)"
-        if k not in coupling_inert:
+        if k in survives_all:
+            verdict = "inert (known)" if k in COUPLING_INERT_BASELINE else "INERT (NEW)"
+        else:
             verdict = "discriminates"
-        print(f"  {k:<34} PASS -> {uncoupled[k]['status']:<12} {verdict}")
+        print(f"  {k:<34} {verdict}")
 
-    regressed = sorted(coupling_inert - COUPLING_INERT_BASELINE)
-    recovered = sorted(COUPLING_INERT_BASELINE - coupling_inert)
-    if recovered:
-        print(f"\n{len(recovered)} cell(s) now discriminate on the coupling: {', '.join(recovered)}")
-        print("Remove them from COUPLING_INERT_BASELINE in the same change.")
-        return 1
+    # Only cells that ran under the family can be judged on it. A baselined cell that is no longer
+    # PASS was never mutated, so calling it "recovered" would report a capability regression as an
+    # improvement -- and `--check-baseline` already owns status changes.
+    judged = set(passing)
+    regressed = sorted(survives_all - COUPLING_INERT_BASELINE)
+    recovered = sorted((COUPLING_INERT_BASELINE & judged) - survives_all)
+    unjudged = sorted(COUPLING_INERT_BASELINE - judged)
+    if unjudged:
+        print(f"\nnot judged this run (no longer PASS, so never mutated): {', '.join(unjudged)}")
 
+    # Axis 1 first: it is the older and stronger claim, and a `recovered` return placed before it
+    # masked an axis-1 failure entirely -- measured.
     if inert:
         print(f"\nSELF-TEST FAILED: {len(inert)} cell(s) do not read the density they report.")
         return 1
     if regressed:
         print(f"\nSELF-TEST FAILED: {len(regressed)} cell(s) newly inert to the coupling: {', '.join(regressed)}.")
         return 1
+    if recovered:
+        print(f"\nSELF-TEST FAILED: {len(recovered)} cell(s) now discriminate on the coupling: {', '.join(recovered)}.")
+        print("Remove them from COUPLING_INERT_BASELINE in the same change.")
+        return 1
     print(
         f"\nSELF-TEST PASSED: {len(passing)} cell(s) go red under injected drift; "
-        f"{len(coupling_inert)} known-inert on the coupling (#1891), none new."
+        f"{len(survives_all)} known-inert on the coupling (#1891), none new."
     )
     return 0
 

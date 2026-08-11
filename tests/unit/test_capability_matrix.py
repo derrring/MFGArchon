@@ -487,6 +487,54 @@ def test_axis_two_fails_when_a_recorded_cell_starts_discriminating(cm, monkeypat
     assert cm.self_test() == 1
 
 
+def test_axis_one_failure_is_not_masked_by_an_axis_two_verdict(cm, monkeypatch, capsys):
+    """Axis 1 is the older and stronger claim and must be the reported one.
+
+    The first version returned on `recovered` before checking `inert`, so a cell that does not read
+    the density it reports -- axis 1's entire subject -- was replaced in the output by a coupling
+    verdict.
+
+    Asserting the exit code cannot see this: both orderings return 1. The cell below is built so
+    both lists are non-empty at once -- it ignores the injected drift (axis-1 inert) and notices any
+    coupling mutation (so, being baselined, it lands in `recovered`) -- and the assertion is on
+    which message came out.
+    """
+
+    def blind_to_drift_but_sees_coupling():
+        cm._apply_mutation(np.ones((5, 4)))  # read and discarded: this is the axis-1 blindness
+        f, _ = cm._coupling_pair(lambda m: m, lambda m: 1.0)
+        untouched = float(np.asarray(f(np.array([1.0]))).max()) == 1.0
+        return ("PASS" if untouched else "FAIL"), {}
+
+    monkeypatch.setattr(cm, "CELLS", {"blind/cell": blind_to_drift_but_sees_coupling})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"blind/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"blind/cell"})
+
+    assert cm.self_test() == 1
+    out = capsys.readouterr().out
+    assert "do not read the density they report" in out, out
+    assert "now discriminate on the coupling" not in out, out
+
+
+def test_a_baselined_cell_that_stopped_passing_is_not_called_recovered(cm, monkeypatch):
+    """It was never mutated, so no coupling verdict was measured for it.
+
+    `coupling_inert` is drawn from the cells that PASS on the baseline run, so a baselined cell that
+    is FAIL or UNSUPPORTED can never appear in it. Reporting the difference as "now discriminates on
+    the coupling" announced a capability regression as an improvement -- and `--check-baseline`
+    already owns status changes.
+    """
+
+    def honest():
+        M = cm._apply_mutation(np.ones((5, 4)))
+        return ("PASS" if _drift(M) == 0.0 else "FAIL"), {}
+
+    monkeypatch.setattr(cm, "CELLS", {"honest/cell": honest, "broken/cell": lambda: ("FAIL", {})})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"honest/cell", "broken/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"honest/cell", "broken/cell"})
+    assert cm.self_test() == 0
+
+
 def test_axis_two_aborts_when_its_own_seam_does_not_fire(cm, monkeypatch):
     """Without this control the axis reports its own no-op as a result.
 
