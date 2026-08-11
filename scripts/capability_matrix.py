@@ -94,6 +94,26 @@ import numpy as np
 # the same error as a test that passes either way.
 _DENSITY_MUTATION: float | None = None
 
+# Set by --self-test's second axis. Every fixture routes its coupling through `_coupling_pair`,
+# so this deletes f(m) from the whole matrix at once.
+#
+# It exists because the first axis cannot see the coupling. Perturbing the recorded density proves
+# a mass oracle reads the density it reports; it says nothing about whether the cell's verdict
+# depends on the problem being a coupled MFG at all. Measured, it does not: all five cells that
+# are PASS today stay PASS with f(m) identically zero, including `fvm_vs_fdm/agreement`, whose
+# independence claim rests on a second discretisation solving the same coupled problem.
+_COUPLING_DELETED: bool = False
+
+
+def _coupling_pair(f, df):
+    """The (coupling, coupling_dm) pair a fixture hands to its Hamiltonian.
+
+    One owner, so `--self-test` can delete f(m) everywhere without each fixture knowing.
+    """
+    if _COUPLING_DELETED:
+        return (lambda m: 0.0 * np.asarray(m, dtype=float), lambda m: 0.0 * np.asarray(m, dtype=float))
+    return (f, df)
+
 
 def _apply_mutation(M: np.ndarray) -> np.ndarray:
     """Inject ``_DENSITY_MUTATION`` relative drift, linear in time, zero at t=0."""
@@ -125,6 +145,7 @@ def _smoke_problem():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
         Nt=10,
@@ -134,8 +155,8 @@ def _smoke_problem():
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -154,6 +175,7 @@ def _smoke_problem_2d():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
@@ -166,8 +188,8 @@ def _smoke_problem_2d():
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -182,6 +204,7 @@ def _lq_problem_1d():
     from mfgarchon.geometry.boundary import no_flux_bc
 
     coupling = 0.3
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[25], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.3,
@@ -193,8 +216,8 @@ def _lq_problem_1d():
             u_terminal=lambda x: 0.2 * (np.asarray(x) - 0.6) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0 / coupling),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -556,8 +579,8 @@ def _regime_switching_cell():
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0),
-                        coupling=lambda m: coupling_coeff * m,
-                        coupling_dm=lambda m: coupling_coeff,
+                        coupling=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[0],
+                        coupling_dm=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[1],
                     ),
                 ),
             )
@@ -817,14 +840,43 @@ def print_report(results: dict) -> None:
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(tally.items())))
 
 
-def self_test() -> int:
-    """Prove each mass-oracle cell is load-bearing on the density it reports.
+# Cells known to be inert to `coupling -> 0` as of 2026-08-11, with the reason.
+#
+# A ratchet, not a pass: every cell that is PASS today is on this list, so the second axis cannot
+# fail the build on a defect it merely discovered. What it does catch is the list GROWING -- a new
+# cell, or a recovered one, arriving with an oracle that cannot tell an MFG from two uncoupled PDEs.
+# Same structure as `check_fail_fast.py` / `fail_fast_baseline.json`.
+#
+# Shrinking it is the work, and it is #1891. The mass oracles cannot see f(m) by construction:
+# `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
+# on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
+# `fvm_vs_fdm/agreement` is the one that stings: its independence claim rests on a second
+# discretisation solving the same coupled problem, and it agrees just as well when there is no
+# coupling to solve.
+COUPLING_INERT_BASELINE = {
+    "fdm_upwind/mass_conservation",
+    "sl_linear/mass_conservation",
+    "fvm_muscl/mass_conservation",
+    "fvm_vs_fdm/agreement",
+    "sl_linear_2d/mass_conservation",
+}
 
-    Injects 10% relative mass drift, linear in time, and requires each such cell to
-    leave PASS. This proves the oracle reads the density it reports; it does NOT prove
-    the solver correct.
+
+def self_test() -> int:
+    """Prove each mass-oracle cell is load-bearing, on two independent axes.
+
+    Axis 1, density: inject 10% relative mass drift, linear in time, and require each PASS cell to
+    leave PASS. This proves the oracle reads the density it reports.
+
+    Axis 2, coupling: delete `f(m)` from every fixture and report which cells still pass. This asks
+    a different question -- whether the verdict depends on the problem being a coupled MFG at all --
+    and axis 1 cannot answer it, because perturbing the recorded density says nothing about what
+    produced it. Measured 2026-08-11, all five PASS cells are inert, so axis 2 is a ratchet against
+    `COUPLING_INERT_BASELINE` rather than a pass/fail. See #1891.
+
+    Neither axis proves the solver correct.
     """
-    global _DENSITY_MUTATION
+    global _DENSITY_MUTATION, _COUPLING_DELETED
 
     baseline = evaluate(only=sorted(MASS_ORACLE_CELLS))
     broken = errored(baseline)
@@ -851,14 +903,58 @@ def self_test() -> int:
         print(f"SELF-TEST ABORTED: harness broke under mutation in {', '.join(mutated_broken)}.")
         return 2
 
+    print("axis 1 -- 10% injected mass drift:")
     inert = [k for k in passing if mutated[k]["status"] == "PASS"]
     for k in passing:
         verdict = "INERT" if k in inert else "discriminates"
         print(f"  {k:<34} PASS -> {mutated[k]['status']:<12} {verdict}")
+
+    # Positive control on the seam, before trusting anything axis 2 reports. Every cell here is
+    # inert to the coupling, so "deleted it and nothing changed" and "never deleted it" produce the
+    # identical output -- measured: stubbing `_coupling_pair` back to a pass-through still printed
+    # SELF-TEST PASSED with five known-inert cells. A detector that cannot tell those apart is
+    # reporting its own no-op as a result.
+    _COUPLING_DELETED = True
+    try:
+        f_deleted, _ = _coupling_pair(lambda m: m, lambda m: 1.0)
+        probe = float(np.asarray(f_deleted(np.array([1.0, 2.0]))).max())
+        if probe != 0.0:
+            print(f"SELF-TEST ABORTED: the coupling seam did not fire -- f(1,2) returned {probe}, not 0.")
+            return 2
+        uncoupled = evaluate(only=passing)
+    finally:
+        _COUPLING_DELETED = False
+
+    uncoupled_broken = errored(uncoupled)
+    if uncoupled_broken:
+        print(f"SELF-TEST ABORTED: harness broke with the coupling deleted in {', '.join(uncoupled_broken)}.")
+        return 2
+
+    print("\naxis 2 -- f(m) deleted from every fixture:")
+    coupling_inert = {k for k in passing if uncoupled[k]["status"] == "PASS"}
+    for k in passing:
+        verdict = "inert (known)" if k in COUPLING_INERT_BASELINE else "INERT (NEW)"
+        if k not in coupling_inert:
+            verdict = "discriminates"
+        print(f"  {k:<34} PASS -> {uncoupled[k]['status']:<12} {verdict}")
+
+    regressed = sorted(coupling_inert - COUPLING_INERT_BASELINE)
+    recovered = sorted(COUPLING_INERT_BASELINE - coupling_inert)
+    if recovered:
+        print(f"\n{len(recovered)} cell(s) now discriminate on the coupling: {', '.join(recovered)}")
+        print("Remove them from COUPLING_INERT_BASELINE in the same change.")
+        return 1
+
     if inert:
         print(f"\nSELF-TEST FAILED: {len(inert)} cell(s) do not read the density they report.")
         return 1
-    print(f"\nSELF-TEST PASSED: {len(passing)} mass-oracle cell(s) go red under 10% injected drift.")
+    if regressed:
+        print(f"\nSELF-TEST FAILED: {len(regressed)} cell(s) newly inert to the coupling: {', '.join(regressed)}.")
+        return 1
+    print(
+        f"\nSELF-TEST PASSED: {len(passing)} cell(s) go red under injected drift; "
+        f"{len(coupling_inert)} known-inert on the coupling (#1891), none new."
+    )
     return 0
 
 
