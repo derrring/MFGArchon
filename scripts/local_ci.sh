@@ -271,6 +271,16 @@ step "Frozen prototype areas"
 "$PY" scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
 check $? "no new tests against a frozen prototype paradigm"
 
+# CLAUDE.md names three quantities that must have exactly one owner (diffusion_from_volatility,
+# fp_drift_coefficient, hjb_residual_norm) and nothing measured whether the restatements were
+# growing. Bidirectional, like the capability matrix: a consolidation fails until the baseline
+# records it. Exit 2 is distinct from exit 1 on purpose -- a search pattern that stops matching
+# returns 0 hits, which reads exactly like clean code, so the checker refuses to report a verdict
+# when its own sentinels do not fire.
+step "Single-source ratchet"
+"$PY" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
+check $? "no new site restating a single-owner quantity"
+
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
   # here that measures the product rather than the source. Counts of tests, issues or
