@@ -41,7 +41,9 @@ string, never that it still describes the TREE. Measured on 2026-08-12: entry 1'
 had four alternatives of which three were structurally unreachable, because `ruff format`
 (gated at `local_ci.sh:214`) hugs `**` and no file under `mfgarchon/` can contain
 `sigma ** 2`. The literal sentinel matched the one live alternative and stayed green while
-12 real sites went uncounted. Worse, respelling the counted sites to the ruff-canonical
+12 sites the widened pattern of the day would have seen went uncounted (the pattern was widened
+again later; the entry now stands at 36, so do not read 6 and 18 as a before/after of the same
+measurement). Worse, respelling the counted sites to the ruff-canonical
 `0.5 * sigma**2` -- which removes nothing -- dropped the count 6 -> 0, printed SHRANK, and
 the tool instructed the operator to run `--write-baseline`, after which the entry read
 clean forever. A live-site sentinel closes THAT drift, which was total: it took the anchor
@@ -135,12 +137,26 @@ def _symbol_line_range(path: Path, symbol: str, entry_name: str) -> tuple[int, i
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         raise InstrumentError(f"{entry_name}: cannot parse sentinel file {path}: {exc}") from exc
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == symbol:
-            return node.lineno, (node.end_lineno or node.lineno)
+    # Every definition of the name, not the first: `ast.walk` is breadth-first, so with a name
+    # defined more than once it hands back whichever node the traversal reached first --
+    # module-level before a method, then source order. Taking that silently would let the anchor
+    # land in a dead duplicate while the check still printed OK, which is round 2's own defect
+    # (an instrument propped up by a duplicate) recurring one level down. 136 files under
+    # mfgarchon/ define some name more than once, so the ambiguity is not hypothetical.
+    found = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == symbol]
+    if len(found) == 1:
+        node = found[0]
+        return node.lineno, (node.end_lineno or node.lineno)
+    if not found:
+        raise InstrumentError(
+            f"{entry_name}: sentinel_symbol {symbol}() is not defined in {path}. It was renamed or "
+            f"removed; move the anchor deliberately rather than letting the entry measure nothing."
+        )
     raise InstrumentError(
-        f"{entry_name}: sentinel_symbol {symbol}() is not defined in {path}. It was renamed or "
-        f"removed; move the anchor deliberately rather than letting the entry measure nothing."
+        f"{entry_name}: sentinel_symbol {symbol}() is defined {len(found)} times in {path} "
+        f"(lines {', '.join(str(n.lineno) for n in sorted(found, key=lambda n: n.lineno))}). An "
+        f"ambiguous anchor resolves arbitrarily and could sit in a dead duplicate while this check "
+        f"still reported OK. Name a symbol that is unique in the file."
     )
 
 
@@ -160,7 +176,13 @@ def scan_files(root: Path, include: list[str], exclude: list[str]) -> list[Path]
 
 def measure(entry: dict, root: Path) -> tuple[int, list[str]]:
     """Site count and site list for one registry entry, after both sentinel checks."""
-    name = entry["name"]
+    name = entry.get("name", "<unnamed entry>")
+    # A registry key typo would otherwise surface as an uncaught KeyError, and an uncaught
+    # exception exits 1 -- which this module's own contract reserves for "the count changed", a
+    # verdict about the tree. A malformed entry is an instrument failure and must exit 2.
+    missing = [k for k in ("name", "pattern", "include", "sentinel_file", "sentinel_symbol", "count") if k not in entry]
+    if missing:
+        raise InstrumentError(f"{name}: registry entry is missing required field(s): {', '.join(missing)}")
     try:
         regex = re.compile(entry["pattern"])
     except re.error as exc:

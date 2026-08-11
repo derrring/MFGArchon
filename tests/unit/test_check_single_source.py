@@ -241,6 +241,37 @@ def test_anchor_outside_the_named_symbol_is_instrument_error(tree, baseline):
     assert "matches nothing inside diffusion()" in result.stdout
 
 
+def test_ambiguous_sentinel_symbol_is_instrument_error(tree, baseline):
+    """A name defined twice resolves arbitrarily, so it must not resolve at all.
+
+    `ast.walk` is breadth-first: for three defs named `f` at lines 1, 6 (a method) and 10 it
+    yields (1, 10, 6), so taking the first hit picks module-level over method and then source
+    order. An anchor landing in a dead duplicate while the check still printed OK is round 2's
+    defect one level down. 136 files under `mfgarchon/` define some name more than once.
+    """
+    (tree / "pkg" / "owner.py").write_text(
+        "def diffusion(sigma):\n    return 0.5 * sigma * sigma\n\n\ndef diffusion(sigma):\n    return 1.0\n"
+    )
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "defined 2 times" in result.stdout
+    assert "lines 1, 5" in result.stdout
+
+
+def test_malformed_entry_is_instrument_error_not_a_count_change(tree, baseline):
+    """A missing registry field must exit 2, not 1.
+
+    Read as a bare subscript it raised `KeyError`, and an uncaught exception exits 1 -- which
+    this module reserves for "the count changed", a verdict about the tree.
+    """
+    data = json.loads(baseline.read_text())
+    del data["entries"][0]["sentinel_symbol"]
+    baseline.write_text(json.dumps(data))
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "missing required field" in result.stdout
+
+
 def test_missing_sentinel_symbol_is_instrument_error(tree, baseline):
     """A renamed or deleted anchor must be moved deliberately, not silently measure nothing."""
     _patch_baseline(baseline, sentinel_symbol="no_such_function")
