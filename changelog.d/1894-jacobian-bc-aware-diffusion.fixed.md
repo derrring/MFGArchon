@@ -47,3 +47,5 @@
   unchanged; what moved is where a deliberately truncated iteration (`max_iterations=3`) stands after
   three sweeps with a corrected Newton step — 92 of 231 elements, max absolute difference `3.49e-08`.
   Recorded in the fixture file beside the #1745 and #1420 regenerations.
+
+Single-source baseline: `diffusion_sigma_squared` 36 → 34. This change deletes the two hardcoded diffusion-block sites in `compute_hjb_jacobian` (`J_D += sigma**2 / dx**2` and `val_off_diag_diff = -(sigma**2) / (2 * dx**2)`) and routes the block through `diffusion_from_volatility` and the residual's own BC-aware operator. The ratchet added in #1897 requires a shrink to be recorded rather than silently accepted, so the baseline moves in this PR.
