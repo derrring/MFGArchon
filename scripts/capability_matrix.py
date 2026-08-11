@@ -94,6 +94,41 @@ import numpy as np
 # the same error as a test that passes either way.
 _DENSITY_MUTATION: float | None = None
 
+# Set by --self-test's second axis: a transform applied to every fixture's f(m) and df/dm.
+#
+# It exists because the first axis cannot see the coupling. Perturbing the recorded density proves a
+# mass oracle reads the density it reports; it says nothing about whether the verdict depends on the
+# problem being a coupled MFG at all.
+#
+# A FAMILY, not one mutation, because deletion turns out to be the weakest member. Setting f(m) to
+# zero also makes the problem easier, so surviving it is weaker evidence of blindness than it looks.
+# Measured 2026-08-11 over the five cells that are PASS: deletion and a sign flip leave all five
+# PASS, and scaling by 10 turns `fvm_vs_fdm/agreement` FAIL. A cell counts as coupling-inert only if
+# it survives every member.
+_COUPLING_MUTATION: str | None = None
+
+_COUPLING_MUTATIONS = {
+    "delete (x0)": lambda v: 0.0 * v,
+    "sign flip (x-1)": lambda v: -v,
+    "scale x10": lambda v: 10.0 * v,
+}
+
+
+def _coupling_pair(f, df):
+    """The (coupling, coupling_dm) pair a fixture hands to its Hamiltonian.
+
+    One owner, so `--self-test` can transform f(m) across the whole matrix without each fixture
+    knowing. Returns the originals untouched unless `_COUPLING_MUTATION` names a member of
+    `_COUPLING_MUTATIONS`.
+    """
+    if _COUPLING_MUTATION is None:
+        return (f, df)
+    transform = _COUPLING_MUTATIONS[_COUPLING_MUTATION]
+    return (
+        lambda m: transform(np.asarray(f(m), dtype=float)),
+        lambda m: transform(np.asarray(df(m), dtype=float)),
+    )
+
 
 def _apply_mutation(M: np.ndarray) -> np.ndarray:
     """Inject ``_DENSITY_MUTATION`` relative drift, linear in time, zero at t=0."""
@@ -125,6 +160,7 @@ def _smoke_problem():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
         Nt=10,
@@ -134,8 +170,8 @@ def _smoke_problem():
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -154,6 +190,7 @@ def _smoke_problem_2d():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
@@ -166,8 +203,8 @@ def _smoke_problem_2d():
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -182,6 +219,7 @@ def _lq_problem_1d():
     from mfgarchon.geometry.boundary import no_flux_bc
 
     coupling = 0.3
+    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[25], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.3,
@@ -193,8 +231,8 @@ def _lq_problem_1d():
             u_terminal=lambda x: 0.2 * (np.asarray(x) - 0.6) ** 2,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0 / coupling),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                coupling=_f,
+                coupling_dm=_df,
             ),
         ),
     )
@@ -556,8 +594,8 @@ def _regime_switching_cell():
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0),
-                        coupling=lambda m: coupling_coeff * m,
-                        coupling_dm=lambda m: coupling_coeff,
+                        coupling=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[0],
+                        coupling_dm=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[1],
                     ),
                 ),
             )
@@ -817,14 +855,101 @@ def print_report(results: dict) -> None:
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(tally.items())))
 
 
-def self_test() -> int:
-    """Prove each mass-oracle cell is load-bearing on the density it reports.
+# Cells known to be inert to `coupling -> 0` as of 2026-08-11, with the reason.
+#
+# A ratchet, not a pass: every cell that is PASS today is on this list, so the second axis cannot
+# fail the build on a defect it merely discovered. What it does catch is the list GROWING -- a new
+# cell, or a recovered one, arriving with an oracle that cannot tell an MFG from two uncoupled PDEs.
+# Same structure as `check_fail_fast.py` / `fail_fast_baseline.json`.
+#
+# Shrinking it is the work, and it is #1891. The mass oracles cannot see f(m) by construction:
+# `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
+# on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
+# `fvm_vs_fdm/agreement` is NOT on this list, and finding that out is what the family bought: it
+# survives deletion and a sign flip and fails under a 10x scale, so deletion alone would have
+# recorded it as inert. Its independence claim is weaker than it reads -- two discretisations
+# agreeing on an uncoupled problem is not the same statement -- but the cell does have a coupling
+# it can feel.
+COUPLING_INERT_BASELINE = {
+    "fdm_upwind/mass_conservation",
+    "sl_linear/mass_conservation",
+    "fvm_muscl/mass_conservation",
+    "sl_linear_2d/mass_conservation",
+}
 
-    Injects 10% relative mass drift, linear in time, and requires each such cell to
-    leave PASS. This proves the oracle reads the density it reports; it does NOT prove
-    the solver correct.
+
+def _seam_probes():
+    """(name, predicate) for each fixture, asking whether ITS coupling actually moved.
+
+    The point is to reach the call sites. A control that only checks `_coupling_pair` proves the
+    helper works and says nothing about whether a fixture asked it -- measured, stubbing one
+    fixture's call back to a plain tuple left the whole axis byte-identical and exit 0, which is the
+    same "deleted it and nothing changed vs never deleted it" ambiguity the axis exists to avoid,
+    one level up.
+
+    Evaluated through the public Hamiltonian at `p = 0` and differenced against `m = 0`, so nothing
+    is assumed about the other terms; reading `hamiltonian._coupling` would reach a private of the
+    class under test, and `hamiltonian.coupling` does not exist.
     """
-    global _DENSITY_MUTATION
+    probe_m = np.array([1.0, 2.0])
+
+    def moved(build):
+        def check() -> bool:
+            problem = build()
+            hamiltonian = problem.components.hamiltonian
+            x = np.atleast_1d(0.5)
+            zero_p = np.zeros(1)
+
+            def f_of(m: float) -> float:
+                return float(np.asarray(hamiltonian(x, m, zero_p)).ravel()[0])
+
+            baseline_f = f_of(0.0)
+            mutated = np.array([f_of(float(m)) - baseline_f for m in probe_m])
+            unmutated = _COUPLING_MUTATIONS[_COUPLING_MUTATION](np.array([_unmutated_f(build, m) for m in probe_m]))
+            return bool(np.allclose(mutated, unmutated, rtol=1e-9, atol=1e-12))
+
+        return check
+
+    return [
+        ("_smoke_problem", moved(_smoke_problem)),
+        ("_smoke_problem_2d", moved(_smoke_problem_2d)),
+        ("_lq_problem_1d", moved(_lq_problem_1d)),
+    ]
+
+
+def _unmutated_f(build, m: float) -> float:
+    """f(m) - f(0) for a fixture built with the seam off. One line, but it must not see the flag."""
+    global _COUPLING_MUTATION
+    saved, _COUPLING_MUTATION = _COUPLING_MUTATION, None
+    try:
+        problem = build()
+        hamiltonian = problem.components.hamiltonian
+        x = np.atleast_1d(0.5)
+        zero_p = np.zeros(1)
+
+        def at(mm: float) -> float:
+            return float(np.asarray(hamiltonian(x, mm, zero_p)).ravel()[0])
+
+        return at(m) - at(0.0)
+    finally:
+        _COUPLING_MUTATION = saved
+
+
+def self_test() -> int:
+    """Prove each mass-oracle cell is load-bearing, on two independent axes.
+
+    Axis 1, density: inject 10% relative mass drift, linear in time, and require each PASS cell to
+    leave PASS. This proves the oracle reads the density it reports.
+
+    Axis 2, coupling: delete `f(m)` from every fixture and report which cells still pass. This asks
+    a different question -- whether the verdict depends on the problem being a coupled MFG at all --
+    and axis 1 cannot answer it, because perturbing the recorded density says nothing about what
+    produced it. Measured 2026-08-11, all five PASS cells are inert, so axis 2 is a ratchet against
+    `COUPLING_INERT_BASELINE` rather than a pass/fail. See #1891.
+
+    Neither axis proves the solver correct.
+    """
+    global _DENSITY_MUTATION, _COUPLING_MUTATION
 
     baseline = evaluate(only=sorted(MASS_ORACLE_CELLS))
     broken = errored(baseline)
@@ -851,14 +976,75 @@ def self_test() -> int:
         print(f"SELF-TEST ABORTED: harness broke under mutation in {', '.join(mutated_broken)}.")
         return 2
 
+    print("axis 1 -- 10% injected mass drift:")
     inert = [k for k in passing if mutated[k]["status"] == "PASS"]
     for k in passing:
-        verdict = "INERT" if k in inert else "discriminates"
-        print(f"  {k:<34} PASS -> {mutated[k]['status']:<12} {verdict}")
+        print(f"  {k:<34} PASS -> {mutated[k]['status']:<12} {'INERT' if k in inert else 'discriminates'}")
+
+    # A cell is coupling-inert only if it survives EVERY member of the family.
+    survives_all = set(passing)
+    print("\naxis 2 -- f(m) transformed in every fixture:")
+    for name in _COUPLING_MUTATIONS:
+        _COUPLING_MUTATION = name
+        try:
+            # Positive control on the seam, reaching the CALL SITES and not just the helper.
+            # Checking that `_coupling_pair` returns a transformed function proves the helper works
+            # and nothing about whether any fixture asked it -- measured, a fixture that stops
+            # calling it leaves this axis byte-identical and exit 0. Each fixture is built under the
+            # flag and its Hamiltonian evaluated, so a call site that bypasses the seam is caught.
+            unreached = [name_of for name_of, probe in _seam_probes() if not probe()]
+            if unreached:
+                print(f"SELF-TEST ABORTED: the coupling seam did not reach {', '.join(unreached)} under '{name}'.")
+                return 2
+            transformed = evaluate(only=passing)
+        finally:
+            _COUPLING_MUTATION = None
+
+        transformed_broken = errored(transformed)
+        if transformed_broken:
+            print(f"SELF-TEST ABORTED: harness broke under '{name}' in {', '.join(transformed_broken)}.")
+            return 2
+
+        noticed = [k for k in passing if transformed[k]["status"] != "PASS"]
+        survives_all -= set(noticed)
+        print(
+            f"  {name}: "
+            + (f"{len(noticed)} cell(s) notice -- {', '.join(sorted(noticed))}" if noticed else "no cell notices")
+        )
+
+    for k in passing:
+        if k in survives_all:
+            verdict = "inert (known)" if k in COUPLING_INERT_BASELINE else "INERT (NEW)"
+        else:
+            verdict = "discriminates"
+        print(f"  {k:<34} {verdict}")
+
+    # Only cells that ran under the family can be judged on it. A baselined cell that is no longer
+    # PASS was never mutated, so calling it "recovered" would report a capability regression as an
+    # improvement -- and `--check-baseline` already owns status changes.
+    judged = set(passing)
+    regressed = sorted(survives_all - COUPLING_INERT_BASELINE)
+    recovered = sorted((COUPLING_INERT_BASELINE & judged) - survives_all)
+    unjudged = sorted(COUPLING_INERT_BASELINE - judged)
+    if unjudged:
+        print(f"\nnot judged this run (no longer PASS, so never mutated): {', '.join(unjudged)}")
+
+    # Axis 1 first: it is the older and stronger claim, and a `recovered` return placed before it
+    # masked an axis-1 failure entirely -- measured.
     if inert:
         print(f"\nSELF-TEST FAILED: {len(inert)} cell(s) do not read the density they report.")
         return 1
-    print(f"\nSELF-TEST PASSED: {len(passing)} mass-oracle cell(s) go red under 10% injected drift.")
+    if regressed:
+        print(f"\nSELF-TEST FAILED: {len(regressed)} cell(s) newly inert to the coupling: {', '.join(regressed)}.")
+        return 1
+    if recovered:
+        print(f"\nSELF-TEST FAILED: {len(recovered)} cell(s) now discriminate on the coupling: {', '.join(recovered)}.")
+        print("Remove them from COUPLING_INERT_BASELINE in the same change.")
+        return 1
+    print(
+        f"\nSELF-TEST PASSED: {len(passing)} cell(s) go red under injected drift; "
+        f"{len(survives_all)} known-inert on the coupling (#1891), none new."
+    )
     return 0
 
 

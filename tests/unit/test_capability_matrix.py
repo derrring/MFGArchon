@@ -444,13 +444,109 @@ def test_self_test_reports_an_inert_oracle(cm, monkeypatch):
 
 
 def test_self_test_passes_when_the_oracle_reads_the_mutation(cm, monkeypatch):
+    """Axis 1 only. The stub builds no problem, so it has no coupling to delete and axis 2 would
+    correctly flag it as a cell whose verdict ignores the coupling -- which is what axis 2 is for,
+    and not what this test is about. Listing it as known-inert isolates the axis under test."""
+
     def honest():
         M = cm._apply_mutation(np.ones((5, 4)))
         return ("PASS" if _drift(M) == 0.0 else "FAIL"), {}
 
     monkeypatch.setattr(cm, "CELLS", {"honest/cell": honest})
     monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"honest/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"honest/cell"})
     assert cm.self_test() == 0
+
+
+def test_axis_two_fails_on_a_cell_newly_inert_to_the_coupling(cm, monkeypatch):
+    """The ratchet's purpose: a cell arriving with an oracle that cannot see the coupling.
+
+    Every cell that is inert today is recorded, so this is what remains catchable -- a new cell, or
+    a recovered one, whose verdict would be identical on two uncoupled PDEs.
+    """
+    monkeypatch.setattr(cm, "CELLS", {"newcomer/cell": lambda: ("PASS", {})})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"newcomer/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", set())
+    assert cm.self_test() == 1
+
+
+def test_axis_two_fails_when_a_recorded_cell_starts_discriminating(cm, monkeypatch):
+    """The other direction, for the same reason `--check-baseline` checks both.
+
+    A cell that begins to notice the coupling is good news, and leaving it on the known-inert list
+    means the next genuine regression there is absorbed silently.
+    """
+
+    def notices_the_coupling():
+        f, _ = cm._coupling_pair(lambda m: m, lambda m: 1.0)
+        return ("FAIL" if float(np.asarray(f(np.array([1.0]))).max()) == 0.0 else "PASS"), {}
+
+    monkeypatch.setattr(cm, "CELLS", {"improved/cell": notices_the_coupling})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"improved/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"improved/cell"})
+    assert cm.self_test() == 1
+
+
+def test_axis_one_failure_is_not_masked_by_an_axis_two_verdict(cm, monkeypatch, capsys):
+    """Axis 1 is the older and stronger claim and must be the reported one.
+
+    The first version returned on `recovered` before checking `inert`, so a cell that does not read
+    the density it reports -- axis 1's entire subject -- was replaced in the output by a coupling
+    verdict.
+
+    Asserting the exit code cannot see this: both orderings return 1. The cell below is built so
+    both lists are non-empty at once -- it ignores the injected drift (axis-1 inert) and notices any
+    coupling mutation (so, being baselined, it lands in `recovered`) -- and the assertion is on
+    which message came out.
+    """
+
+    def blind_to_drift_but_sees_coupling():
+        cm._apply_mutation(np.ones((5, 4)))  # read and discarded: this is the axis-1 blindness
+        f, _ = cm._coupling_pair(lambda m: m, lambda m: 1.0)
+        untouched = float(np.asarray(f(np.array([1.0]))).max()) == 1.0
+        return ("PASS" if untouched else "FAIL"), {}
+
+    monkeypatch.setattr(cm, "CELLS", {"blind/cell": blind_to_drift_but_sees_coupling})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"blind/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"blind/cell"})
+
+    assert cm.self_test() == 1
+    out = capsys.readouterr().out
+    assert "do not read the density they report" in out, out
+    assert "now discriminate on the coupling" not in out, out
+
+
+def test_a_baselined_cell_that_stopped_passing_is_not_called_recovered(cm, monkeypatch):
+    """It was never mutated, so no coupling verdict was measured for it.
+
+    `coupling_inert` is drawn from the cells that PASS on the baseline run, so a baselined cell that
+    is FAIL or UNSUPPORTED can never appear in it. Reporting the difference as "now discriminates on
+    the coupling" announced a capability regression as an improvement -- and `--check-baseline`
+    already owns status changes.
+    """
+
+    def honest():
+        M = cm._apply_mutation(np.ones((5, 4)))
+        return ("PASS" if _drift(M) == 0.0 else "FAIL"), {}
+
+    monkeypatch.setattr(cm, "CELLS", {"honest/cell": honest, "broken/cell": lambda: ("FAIL", {})})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"honest/cell", "broken/cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"honest/cell", "broken/cell"})
+    assert cm.self_test() == 0
+
+
+def test_axis_two_aborts_when_its_own_seam_does_not_fire(cm, monkeypatch):
+    """Without this control the axis reports its own no-op as a result.
+
+    Every real cell is inert to the coupling, so "deleted it and nothing changed" and "never deleted
+    it" print identically -- measured: stubbing `_coupling_pair` back to a pass-through still gave
+    `SELF-TEST PASSED ... none new`. Exit 2, not 1: the apparatus is broken, not the subject.
+    """
+    monkeypatch.setattr(cm, "CELLS", {"cell": lambda: ("PASS", {})})
+    monkeypatch.setattr(cm, "MASS_ORACLE_CELLS", {"cell"})
+    monkeypatch.setattr(cm, "COUPLING_INERT_BASELINE", {"cell"})
+    monkeypatch.setattr(cm, "_coupling_pair", lambda f, df: (f, df))
+    assert cm.self_test() == 2
 
 
 def test_self_test_restores_the_mutation(cm, monkeypatch):
