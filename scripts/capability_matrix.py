@@ -257,6 +257,28 @@ def _mass_drift(result, problem) -> dict:
     }
 
 
+def _solved(art: dict) -> bool:
+    """Did the coupled iteration reach a fixed point? A cell's `ok` must include this.
+
+    Without it a cell asks whether the FP time-stepping conserves mass, which it does on whatever
+    drift field it is handed, converged or not -- #1871 recorded the field for exactly that reason
+    and left it out of the verdict, and #1865 then required any 2-D restatement to assert
+    convergence or stop claiming the configuration solves.
+
+    It is also the only field measured to depend on the coupling. Under the mutation family in
+    #1892, deleting f(m) makes `fdm_upwind` and `sl_linear` converge in ONE sweep against five, and
+    a 10x coupling stops `fvm_vs_fdm/agreement` converging at all -- while every other recorded
+    field stays put. A verdict that ignores this one cannot tell an MFG from two uncoupled PDEs.
+
+    Absent means not applicable rather than not converged: cells that run no coupled iteration
+    (construction checks) carry no such field and are unaffected.
+    """
+    for field in ("picard_converged", "fdm_picard_converged"):
+        if field in art:
+            return bool(art[field]) and bool(art.get("fvm_picard_converged", True))
+    return True
+
+
 def _picard_verdict(result, prefix: str = "") -> dict:
     """What the coupled iteration said about itself, recorded beside the oracle (#1871).
 
@@ -385,7 +407,7 @@ def _mass_conservation_cell(scheme_name: str):
             art = _mass_drift(result, problem)
             art |= _picard_verdict(result)
             art["tolerance"] = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
-            ok = art["all_finite"] and art["max_drift"] <= art["tolerance"]
+            ok = art["all_finite"] and art["max_drift"] <= art["tolerance"] and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("mass drift", verdict)
@@ -422,7 +444,7 @@ def _mass_conservation_2d_cell(scheme_name: str):
                 "tolerance": 1e-9,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("2-D mass drift", verdict)
@@ -536,7 +558,7 @@ def _fvm_mass_cell():
                 "tolerance": 1e-6,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("FVM mass drift", verdict)
@@ -640,7 +662,7 @@ def _regime_switching_cell():
                 "tolerance": 1e-6,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("regime mass/non-negativity", verdict)
@@ -862,7 +884,13 @@ def print_report(results: dict) -> None:
 # cell, or a recovered one, arriving with an oracle that cannot tell an MFG from two uncoupled PDEs.
 # Same structure as `check_fail_fast.py` / `fail_fast_baseline.json`.
 #
-# Shrinking it is the work, and it is #1891. The mass oracles cannot see f(m) by construction:
+# Shrinking it is the work, and it is #1891. It went 5 -> 4 when the mutation family replaced plain
+# deletion, and 4 -> 1 when `picard_converged` entered the verdict: the three cells that left are no
+# longer PASS, so they are never mutated and cannot be judged. They are deliberately NOT kept here
+# against their return. A cell coming back green should have to prove its oracle can see the
+# coupling, and leaving it listed would let it arrive as `inert (known)` instead -- the mirror of
+# why `MASS_ORACLE_CELLS` does keep its non-PASS members, where listing is what makes the proof
+# happen rather than what waives it. The mass oracles cannot see f(m) by construction:
 # `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
 # on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
 # `fvm_vs_fdm/agreement` is NOT on this list, and finding that out is what the family bought: it
@@ -871,10 +899,7 @@ def print_report(results: dict) -> None:
 # agreeing on an uncoupled problem is not the same statement -- but the cell does have a coupling
 # it can feel.
 COUPLING_INERT_BASELINE = {
-    "fdm_upwind/mass_conservation",
-    "sl_linear/mass_conservation",
     "fvm_muscl/mass_conservation",
-    "sl_linear_2d/mass_conservation",
 }
 
 
