@@ -265,10 +265,18 @@ def _solved(art: dict) -> bool:
     and left it out of the verdict, and #1865 then required any 2-D restatement to assert
     convergence or stop claiming the configuration solves.
 
-    It is also the only field measured to depend on the coupling. Under the mutation family in
-    #1892, deleting f(m) makes `fdm_upwind` and `sl_linear` converge in ONE sweep against five, and
-    a 10x coupling stops `fvm_vs_fdm/agreement` converging at all -- while every other recorded
-    field stays put. A verdict that ignores this one cannot tell an MFG from two uncoupled PDEs.
+    It moves under the coupling: deleting f(m) makes `fdm_upwind` and `sl_linear` converge in ONE
+    sweep against five, and a 10x coupling stops `fvm_vs_fdm/agreement` converging at all.
+
+    ~~It is also the only field measured to depend on the coupling ... while every other recorded
+    field stays put.~~ [CORRECTED 2026-08-11] That was asserted from measuring this field alone. A
+    full-artifact diff over the family shows `min_density` moving in FOUR cells against this field's
+    two, and `max_drift`, `mass_max`, `max_rel_drift`, `rel_l2_*` and `worst` moving as well. What is
+    true, and what matters, is narrower: of the fields a verdict reads, only `worst` (in the
+    agreement cell, at 10x) ever crosses its own threshold, so before this change four of the five
+    coupled cells had a verdict no coupling mutation could move. Gating this field does not make
+    those four coupling-sensitive either -- it makes three of them honestly red, which is the
+    argument for it. The coupling-sensitivity argument was mine and it was wrong.
 
     Absent means not applicable rather than not converged: cells that run no coupled iteration
     (construction checks) carry no such field and are unaffected.
@@ -532,7 +540,7 @@ def _fvm_fdm_agreement_cell():
             art["rel_l2_U"] = _rel_l2(U_fvm, U_fdm, dx)
             art["rel_l2_M_terminal"] = _rel_l2(M_fvm[-1], M_fdm[-1], dx)
             art["worst"] = max(art["rel_l2_M"], art["rel_l2_U"], art["rel_l2_M_terminal"])
-            return ("PASS" if art["worst"] < AGREEMENT_RTOL else "FAIL"), art
+            return ("PASS" if art["worst"] < AGREEMENT_RTOL and _solved(art) else "FAIL"), art
 
         return _measure("FVM/FDM agreement", verdict)
 
@@ -1050,9 +1058,13 @@ def self_test() -> int:
     judged = set(passing)
     regressed = sorted(survives_all - COUPLING_INERT_BASELINE)
     recovered = sorted((COUPLING_INERT_BASELINE & judged) - survives_all)
-    unjudged = sorted(COUPLING_INERT_BASELINE - judged)
+    # Over MASS_ORACLE_CELLS, not over the waiver list: a cell that is no longer PASS is never
+    # mutated and so has no coupling verdict this run, and that is worth saying whether or not it
+    # was ever waived. Computing it as `COUPLING_INERT_BASELINE - judged` printed nothing at all
+    # once the waiver list was pruned -- which is exactly the three cells the prose claimed it named.
+    unjudged = sorted(MASS_ORACLE_CELLS - judged)
     if unjudged:
-        print(f"\nnot judged this run (no longer PASS, so never mutated): {', '.join(unjudged)}")
+        print(f"\nnot judged this run (not PASS, so never mutated): {', '.join(unjudged)}")
 
     # Axis 1 first: it is the older and stronger claim, and a `recovered` return placed before it
     # masked an axis-1 failure entirely -- measured.
