@@ -124,6 +124,17 @@ jobs:
         echo "Checking that no test was added against a frozen prototype paradigm..."
         python scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
 
+    # 3 s, pure text over the package. Here rather than nightly for the same reason as the
+    # doc-API ratchet: the local gate is authoritative, but this is the only mechanical
+    # backstop if someone pushes with --no-verify. Exit 2 (its own patterns no longer match
+    # the tree) fails the step just like exit 1, which is intended -- a broken instrument is
+    # not a clean result.
+    - name: Single-source ratchet (no new site restating a single-owner quantity)
+      timeout-minutes: 1
+      run: |
+        echo "Checking that no quantity with one owner gained another implementation..."
+        python scripts/check_single_source.py --baseline scripts/single_source_baseline.json
+
   # === PHASE 1: Import Validation ===
   # Note: Ruff formatting, linting, and MyPy checks run in modern_quality.yml workflow
   import-validation:

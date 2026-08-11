@@ -1,11 +1,11 @@
 {
-  "_comment": "Registry + baseline for scripts/check_single_source.py. Each entry names a quantity that has (or should have) exactly one owner, and records how many sites currently restate it. The check fails in BOTH directions: growth is a regression, shrink is progress that must be written down here. Counts are measured on code only -- comments and string literals are blanked via tokenize before matching. `mfgarchon/alg/neural` and `mfgarchon/alg/reinforcement` are excluded by CLAUDE.md's frozen-area rule (all four entries measure 0 there today, so the exclusion changes no current count; it keeps a future frozen-area edit from turning this red on code nobody is allowed to touch). Every entry carries two sentinels because a broken pattern returns 0 and reads exactly like clean code: `sentinel_text` is a literal the pattern must match (catches a dead pattern), `sentinel_file` is a path that must be scanned (catches dead globs). Either failing exits 2, never 0.",
+  "_comment": "Registry + baseline for scripts/check_single_source.py. Each entry names a quantity that has (or should have) exactly one owner, and records how many sites currently restate it. The check fails in BOTH directions: growth is a regression, shrink is progress that must be written down here. Counts are measured on code only -- comments, string literals and f-string bodies are blanked via tokenize before matching. `mfgarchon/alg/neural` and `mfgarchon/alg/reinforcement` are excluded by CLAUDE.md's frozen-area rule (all four entries measure 0 there today, so the exclusion changes no current count; it keeps a future frozen-area edit from turning this red on code nobody is allowed to touch). `sentinel_file` is the file that OWNS the quantity: it must be scanned AND the pattern must match inside it, or the check exits 2 rather than reporting a count. That is stronger than a stored literal, which only proves the pattern intersects one hardcoded string and not that it still describes the tree -- see the module docstring for the measured case where three of four alternatives were unreachable because ruff hugs `**`.",
   "entries": [
     {
       "name": "diffusion_sigma_squared",
       "quantity": "D = sigma^2 / 2, the PDE diffusion coefficient from the SDE volatility",
       "owner": "diffusion_from_volatility -- mfgarchon/utils/pde_coefficients.py:142",
-      "pattern": "0\\.5 \\* (self\\.)?sigma \\*\\* 2|0\\.5 \\* (self\\.)?sigma \\* (self\\.)?sigma|(self\\.)?sigma \\*\\* 2 / 2|(self\\.)?sigma \\* (self\\.)?sigma / 2",
+      "pattern": "0\\.5 \\* [\\w.]*sigma\\w*\\s*\\*\\*\\s*2|\\(?\\s*[\\w.]*sigma\\w*\\s*\\*\\*\\s*2\\s*\\)?\\s*/\\s*2|0\\.5 \\* [\\w.]*sigma\\w* \\* [\\w.]*sigma\\w*|[\\w.]*sigma\\w* \\* [\\w.]*sigma\\w* / 2",
       "include": [
         "mfgarchon/**/*.py"
       ],
@@ -13,10 +13,9 @@
         "mfgarchon/alg/neural/**",
         "mfgarchon/alg/reinforcement/**"
       ],
-      "sentinel_text": "        diffusion = 0.5 * sigma * sigma * d2M_dx2",
       "sentinel_file": "mfgarchon/utils/pde_coefficients.py",
-      "count": 6,
-      "note": "CLAUDE.md states the rule outright: 'Resolve sigma->D through the one converter diffusion_from_volatility(sigma); never inline 0.5*sigma**2 in a solver.' Nothing measured it. The surviving sites are the three backends plus hjb_howard; a backend kernel arguably cannot import the converter, which is a real distinction and the reason this is a ratchet rather than a sweep."
+      "count": 18,
+      "note": "CLAUDE.md states the rule outright: 'Resolve sigma->D through the one converter diffusion_from_volatility(sigma); never inline 0.5*sigma**2 in a solver.' The pattern must cover the ruff-canonical hugged spelling `sigma**2`, because `ruff format --check mfgarchon/` at local_ci.sh:214 means the spaced form CLAUDE.md writes cannot exist in the tree. Two sites are counted but are NOT restatements to fix: pde_coefficients.py:263 is `diffusion_from_volatility_torch`, a second owner declared for the torch substrate so the module stays importable without torch (#1189/#1193); noise_processes.py:391 is the Ito log-drift correction in the GBM exact solution, the same arithmetic in a different role -- routing it through a PDE diffusion converter would be the wrong abstraction, which is the counter-force clause, and it is left counted rather than path-excluded so the exclusion stays visible instead of becoming a blind spot."
     },
     {
       "name": "fp_drift_lambda",
@@ -30,7 +29,6 @@
         "mfgarchon/alg/neural/**",
         "mfgarchon/alg/reinforcement/**"
       ],
-      "sentinel_text": "        return 1.0 / h_class.control_cost.lambda_",
       "sentinel_file": "mfgarchon/utils/pde_coefficients.py",
       "count": 1,
       "note": "Already single-sourced: the only site is the owner's own return. The baseline therefore pins a quantity that is currently CORRECT -- this entry exists to keep it that way, and any growth is a per-solver copy reappearing. CLAUDE.md: 'FP drift scale comes from fp_drift_coefficient(problem), not a private per-solver copy.'"
@@ -47,7 +45,6 @@
         "mfgarchon/alg/neural/**",
         "mfgarchon/alg/reinforcement/**"
       ],
-      "sentinel_text": "    return float(np.linalg.norm(residual) * np.sqrt(dx))",
       "sentinel_file": "mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
       "count": 5,
       "note": "The owner was added in #1894 after a second caller dropped the sqrt(dx): the resulting 4.5x norm mismatch made Armijo reject every step while reporting the starting iterate's residual, which read as a five-order improvement. Of the current sites, one is the owner, three are hjb_gfdm comparing an unscaled norm against newton_tolerance (#1896 item 5), and one is base_variational scaling by sqrt(dx*dt) -- a space-time norm, distinct by design. The closing paren in the pattern is load-bearing: without it the two anderson_acceleration sites match on `residual_flat`, which is the Picard residual, a different quantity. The count is the ratchet; that classification is a map and will need re-reading when it moves."
@@ -64,10 +61,9 @@
         "mfgarchon/alg/neural/**",
         "mfgarchon/alg/reinforcement/**"
       ],
-      "sentinel_text": "                        ip1 = (i + 1) % Nx",
       "sentinel_file": "mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
       "count": 12,
-      "note": "Hardcodes the exclusive convention (wrap at (0, Nx-1)) at every site. ENDPOINT_INCLUSIVE, which TensorProductGrid uses, puts the wrap at (0, Nx-2) instead -- so these sites and the grid disagree about which nodes are the same physical point. #1895 hit this three times in a row while extracting the Jacobian's BC bands. An entry with no owner still holds a line: growth means a new site guessed the convention instead of asking the grid."
+      "note": "Hardcodes the exclusive convention (wrap at (0, Nx-1)) at every site. ENDPOINT_INCLUSIVE, which TensorProductGrid uses, puts the wrap at (0, Nx-2) instead -- so these sites and the grid disagree about which nodes are the same physical point. #1895 hit this three times in a row while extracting the Jacobian's BC bands. This entry has no owner yet, so its sentinel_file is the heaviest concentration of sites rather than an owner: if those are ever all consolidated the sentinel goes dead and the check exits 2, which is the intended outcome -- an entry whose quantity is fully single-sourced should be RETIRED, not left sitting at 0 where it reads clean forever. Uncounted by design: `np.roll` periodic wraps (9 code sites, of which base_hjb.py:1042-1043 and hjb_fdm.py:1322-1323 are genuine Jacobian wraps and the rest are Voronoi polygon shifts) -- too noisy to ratchet, so this entry does not cover them."
     }
   ]
 }

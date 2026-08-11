@@ -6,10 +6,14 @@ returned 0 hits from ``git grep -E`` on this machine -- that grep does not imple
 ``\\b`` -- while the true counts were 18 and 18. Two candidate registry entries were a
 keystroke away from being recorded as "already single-sourced".
 
-So the load-bearing test here is ``test_dead_pattern_is_instrument_error``: break the
-pattern and the check must exit 2, never 0 (silently clean) and never 1 (a verdict about
-the tree). The rest pin the both-directions ratchet and the second instrument failure
-mode, dead include/exclude globs.
+The first version of this suite tested a weaker sentinel -- a literal string stored in the
+registry that the pattern had to match -- and adversarial review broke it on 2026-08-12.
+A literal proves the pattern intersects one hardcoded string, never that it still
+describes the TREE, so an entry whose pattern had four alternatives passed green with
+three of them structurally unreachable and 12 real sites uncounted. Hence
+``test_respelling_a_site_cannot_launder_the_entry``: the sentinel is now a live site in
+the file that OWNS the quantity, and drift that hides the tree from the pattern must exit
+2 rather than print SHRANK and offer ``--write-baseline`` as the remedy.
 
 Every test builds its own synthetic tree and registry, so none of them depends on the
 real baseline's current counts -- except ``test_repo_baseline_is_current``, which is the
@@ -44,16 +48,25 @@ def _run(root: Path, baseline: Path, *extra: str) -> subprocess.CompletedProcess
 def tree(tmp_path: Path) -> Path:
     """Synthetic package with exactly two restatements of `0.5 * sigma * sigma`.
 
-    The third occurrence is inside a docstring and the fourth inside a comment: both must
-    be invisible, which is what forces tokenize-based blanking rather than raw text.
+    One of the counted sites is the owner's own return, which is what makes `owner.py` a
+    usable sentinel file. Three further occurrences are decoys the matcher must not see: a
+    docstring, a comment, and an f-string body. The f-string is not decoration -- on Python
+    3.12+ it tokenizes as FSTRING_MIDDLE rather than STRING, so blanking only
+    `tokenize.STRING` leaves its text visible, which is how a log message in
+    `pde_coefficients.py:330` was counted as a site.
     """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "owner.py").write_text(
-        '"""Converter module.\n\nNever inline 0.5 * sigma * sigma in a solver.\n"""\n\n\ndef diffusion(sigma):\n    return 0.5 * sigma * sigma\n'
+        '"""Converter module.\n\nNever inline 0.5 * sigma * sigma in a solver.\n"""\n\n\n'
+        "def diffusion(sigma):\n    return 0.5 * sigma * sigma\n"
     )
     (pkg / "solver.py").write_text(
-        "def step(sigma, u):\n    # avoid writing 0.5 * sigma * sigma here\n    d = 0.5 * sigma * sigma\n    return d * u\n"
+        "def step(sigma, u):\n"
+        "    # avoid writing 0.5 * sigma * sigma here\n"
+        "    d = 0.5 * sigma * sigma\n"
+        '    print(f"used 0.5 * sigma * sigma for {u}")\n'
+        "    return d * u\n"
     )
     return tmp_path
 
@@ -72,7 +85,6 @@ def baseline(tmp_path: Path) -> Path:
                         "pattern": r"0\.5 \* sigma \* sigma",
                         "include": ["pkg/**/*.py"],
                         "exclude": [],
-                        "sentinel_text": "    return 0.5 * sigma * sigma",
                         "sentinel_file": "pkg/owner.py",
                         "count": 2,
                         "note": "synthetic",
@@ -95,14 +107,15 @@ def test_clean_tree_at_baseline_passes(tree, baseline):
     assert result.returncode == EXIT_OK, result.stdout
 
 
-def test_comments_and_docstrings_are_not_counted(tree, baseline):
-    """Two of the four textual occurrences are prose; a raw-text scan would report 4."""
+def test_comments_docstrings_and_fstrings_are_not_counted(tree, baseline):
+    """Three of the five textual occurrences are prose; a raw-text scan would report 5."""
     result = _run(tree, baseline, "--list")
     assert result.returncode == EXIT_OK
     assert "2 site(s)" in result.stdout
     assert "pkg/owner.py:8" in result.stdout
     assert "pkg/solver.py:3" in result.stdout
     assert "pkg/solver.py:2" not in result.stdout  # the comment
+    assert "pkg/solver.py:4" not in result.stdout  # the f-string body (FSTRING_MIDDLE on 3.12+)
 
 
 def test_new_restatement_turns_it_red(tree, baseline):
@@ -128,14 +141,14 @@ def test_dead_pattern_is_instrument_error(tree, baseline):
 
     ``\\b`` is the exact keystroke that produced two false zeros on 2026-08-11. Python's
     ``re`` does implement it, so the synthetic dead pattern here is a literal that cannot
-    occur; the mechanism under test -- the pattern must match its own sentinel text -- is
-    dialect-independent and catches both.
+    occur; the mechanism under test -- the pattern must match inside the file that owns the
+    quantity -- is dialect-independent and catches both.
     """
     _patch_baseline(baseline, pattern=r"0\.5 \* sigma \* NOTASYMBOL")
     result = _run(tree, baseline)
     assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
     assert "INSTRUMENT BROKEN" in result.stdout
-    assert "sentinel text" in result.stdout
+    assert "matches nothing in its sentinel file" in result.stdout
 
 
 def test_dead_pattern_is_not_reported_as_progress(tree, baseline):
@@ -151,12 +164,52 @@ def test_dead_pattern_is_not_reported_as_progress(tree, baseline):
     assert "OK:" not in result.stdout
 
 
+def test_a_pattern_blind_to_the_owner_cannot_report_a_count(tree, baseline):
+    """A pattern live SOMEWHERE but blind to the owner is still a broken instrument.
+
+    This is what a stored-literal sentinel could not see, and what shipped: the pattern
+    matched real sites, so it looked alive, while missing the spelling the owner actually
+    uses. It must not be allowed to report a number.
+    """
+    (tree / "pkg" / "extra.py").write_text("def other(sigma):\n    return 0.5 * sigma * sigma\n")
+    (tree / "pkg" / "owner.py").write_text(
+        "def diffusion(sigma):\n    return 0.5 * sigma**2\n"  # ruff-canonical; the pattern is blind to it
+    )
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "no longer describes the tree" in result.stdout
+
+
+def test_respelling_a_site_cannot_launder_the_entry(tree, baseline):
+    """Drift that hides the tree from the pattern must not be recorded as progress.
+
+    Reproduced against the real registry on 2026-08-12: respelling six sites from
+    `0.5 * sigma * sigma` to the ruff-canonical `0.5 * sigma**2` -- which deletes nothing --
+    dropped the count 6 -> 0, printed SHRANK, and `--write-baseline` then recorded the entry
+    as clean forever while every site still restated D. Both sentinels stayed green because
+    neither was a live site.
+    """
+    for name in ("owner.py", "solver.py"):
+        path = tree / "pkg" / name
+        path.write_text(path.read_text().replace("0.5 * sigma * sigma", "0.5 * sigma**2"))
+
+    result = _run(tree, baseline)
+    assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
+    assert "SHRANK" not in result.stdout
+    assert "--write-baseline" not in result.stdout
+
+    # And the remedy the old version offered must not silently succeed either.
+    laundered = _run(tree, baseline, "--write-baseline")
+    assert laundered.returncode == EXIT_INSTRUMENT_BROKEN, laundered.stdout
+    assert json.loads(baseline.read_text())["entries"][0]["count"] == 2
+
+
 def test_dead_globs_are_instrument_error(tree, baseline):
     """Second instrument failure mode: the sentinel file is no longer scanned."""
     _patch_baseline(baseline, exclude=["pkg/owner.py"])
     result = _run(tree, baseline)
     assert result.returncode == EXIT_INSTRUMENT_BROKEN, result.stdout
-    assert "sentinel file" in result.stdout
+    assert "is not among the" in result.stdout
 
 
 def test_globs_selecting_nothing_is_instrument_error(tree, baseline):

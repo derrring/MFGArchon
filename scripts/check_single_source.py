@@ -8,25 +8,38 @@ Nothing measured whether the restatements were growing. This does: each registry
 records how many sites currently restate a quantity, and the check fails in BOTH
 directions -- growth is a regression, shrink is progress that must be written down.
 
-Why every entry carries sentinels
----------------------------------
+Why every entry carries a sentinel, and why it is a live site
+-------------------------------------------------------------
 A broken search pattern returns 0 hits, and 0 hits reads exactly like clean code. That
 is not hypothetical: `% *Nx\\b` and `np\\.roll\\b` both returned 0 from `git grep -E` on
 this machine on 2026-08-11, because that grep does not implement `\\b` -- the true counts
-were 18 and 18. A ratchet that can silently read "clean" is worse than no ratchet, so
-each entry declares two sentinels covering the two ways the instrument breaks:
+were 18 and 18.
 
-* `sentinel_text` -- a literal string the pattern MUST match. Catches a pattern that
-  compiles but means nothing (the `\\b` case, a typo'd escape, a dialect assumption).
-* `sentinel_file` -- a path that MUST be among the scanned files. Catches include/exclude
-  globs that select nothing after a directory move.
+So each entry names a `sentinel_file` that MUST be scanned and in which the pattern MUST
+match at least once. Choose the quantity's OWNER file: it contains the quantity by
+definition, so the sentinel stays live for as long as the entry is meaningful.
 
-Either failing exits 2 (instrument broken), never 0 and never 1.
+The first version of this checker used a `sentinel_text` literal stored in the JSON
+instead, and that is not strong enough -- it proves the pattern intersects one hardcoded
+string, never that it still describes the TREE. Measured on 2026-08-12: entry 1's pattern
+had four alternatives of which three were structurally unreachable, because `ruff format`
+(gated at `local_ci.sh:214`) hugs `**` and no file under `mfgarchon/` can contain
+`sigma ** 2`. The literal sentinel matched the one live alternative and stayed green while
+12 real sites went uncounted. Worse, respelling the counted sites to the ruff-canonical
+`0.5 * sigma**2` -- which removes nothing -- dropped the count 6 -> 0, printed SHRANK, and
+the tool instructed the operator to run `--write-baseline`, after which the entry read
+clean forever. A live-site sentinel closes that: the owner's own line stops matching too,
+so the same drift raises InstrumentError instead of reporting progress.
+
+Either sentinel condition failing exits 2 (instrument broken), never 0 and never 1.
 
 Comments and strings are stripped before matching, via `tokenize`. `check_fail_fast.py`
 records the same trap from the other side: its regex era counted `hasattr` mentions
 inside docstrings as calls, 40 of 164. Here the noise is heavier -- 6 of the 18 `% Nx`
-hits are prose about the periodic fallback, not the fallback.
+hits are prose about the periodic fallback, not the fallback. f-string bodies need their
+own handling: on Python 3.12+ they tokenize as FSTRING_MIDDLE rather than STRING, so
+blanking only `tokenize.STRING` leaves their text visible to the matcher -- which counted
+`pde_coefficients.py:330`, a log message, as a site.
 """
 
 import argparse
@@ -71,8 +84,15 @@ def code_only_lines(path: Path) -> list[str]:
         tokens = list(tokenize.generate_tokens(readline))
     except (tokenize.TokenError, SyntaxError, IndentationError) as exc:
         raise InstrumentError(f"cannot tokenize {path}: {exc}") from exc
+    # FSTRING_MIDDLE carries the literal text of an f-string on Python 3.12+, where an
+    # f-string is no longer one STRING token. Its interpolated `{...}` expressions arrive as
+    # ordinary NAME/OP tokens and are real code, so they are correctly left alone.
+    blank_types = {tokenize.COMMENT, tokenize.STRING}
+    fstring_middle = getattr(tokenize, "FSTRING_MIDDLE", None)
+    if fstring_middle is not None:
+        blank_types.add(fstring_middle)
     for tok in tokens:
-        if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+        if tok.type not in blank_types:
             continue
         (srow, scol), (erow, ecol) = tok.start, tok.end
         for row in range(srow, erow + 1):
@@ -108,14 +128,6 @@ def measure(entry: dict, root: Path) -> tuple[int, list[str]]:
     except re.error as exc:
         raise InstrumentError(f"{name}: pattern does not compile: {exc}") from exc
 
-    sentinel_text = entry["sentinel_text"]
-    if not regex.search(sentinel_text):
-        raise InstrumentError(
-            f"{name}: pattern {entry['pattern']!r} does not match its own sentinel text "
-            f"{sentinel_text!r}. The pattern is broken, not the tree -- a zero count here "
-            f"would read as clean code."
-        )
-
     files = scan_files(root, entry["include"], entry.get("exclude", []))
     if not files:
         raise InstrumentError(f"{name}: include globs {entry['include']} selected no files under {root}")
@@ -134,6 +146,15 @@ def measure(entry: dict, root: Path) -> tuple[int, list[str]]:
         for lineno, line in enumerate(code_only_lines(path), start=1):
             if regex.search(line):
                 sites.append(f"{rel}:{lineno}")
+
+    if not any(s.startswith(f"{sentinel_file}:") for s in sites):
+        raise InstrumentError(
+            f"{name}: pattern {entry['pattern']!r} matches nothing in its sentinel file "
+            f"{sentinel_file}, which owns this quantity and must contain it. The pattern no "
+            f"longer describes the tree -- the {len(sites)} site(s) it did find are not a "
+            f"verdict about the code. Re-read the pattern against the tree's actual spelling "
+            f"(ruff normalises `x ** 2` to `x**2`, so a pattern written the spaced way is dead)."
+        )
     return len(sites), sites
 
 
