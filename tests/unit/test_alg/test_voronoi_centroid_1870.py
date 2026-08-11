@@ -80,10 +80,61 @@ def test_the_area_weighted_centroid_of_a_symmetric_tiling_is_the_domain_centre()
     assert np.allclose((areas[:, None] * centroids).sum(axis=0) / areas.sum(), [0.5, 0.5], atol=1e-12)
 
 
+def test_the_public_path_computes_the_area_centroid_and_not_the_vertex_mean():
+    """The closed-form tests call the helper directly, so they cannot see the call site.
+
+    Measured before this test existed: replacing `centroid = _polygon_centroid(poly)` in
+    `clipped_voronoi_cells` with `poly.mean(axis=0)` left all nine other assertions green. The two
+    that touch the public path could not separate them -- a vertex mean is always inside its own
+    bounding box, and on a SYMMETRIC tiling its area-weighted average lands on the domain centre by
+    symmetry. So this uses an irregular cloud, where the two differ, and compares against the
+    closed form cell by cell.
+    """
+    from mfgarchon.alg.numerical.meshless_galerkin.voronoi_cells import clipped_voronoi_cells
+
+    rng = np.random.default_rng(20260811)
+    nodes = rng.uniform(0.05, 0.95, size=(60, 2))
+    cells = clipped_voronoi_cells(nodes, bounds=[(0.0, 1.0), (0.0, 1.0)])
+
+    worst = 0.0
+    for cell in cells:
+        expected = _polygon_centroid(cell.polygon)
+        assert np.allclose(cell.centroid, expected, rtol=0, atol=1e-13)
+        worst = max(worst, float(np.abs(expected - cell.polygon.mean(axis=0)).max()))
+
+    assert worst > 1e-3, (
+        f"the vertex mean and the area centroid differ by only {worst:.2e} on this cloud, so the "
+        "assertions above would pass for either and this test has stopped discriminating"
+    )
+
+
+def test_the_winding_order_does_not_change_the_centroid():
+    """A clockwise polygon must give the same centroid as its counter-clockwise reversal.
+
+    Both the numerator and `twice_area` change sign together, so the quotient is winding-invariant.
+    Taking `abs` of the denominator alone -- a natural-looking edit -- negates the result for
+    clockwise input, and every shape above is counter-clockwise, so nothing here noticed. Measured:
+    that mutation left all nine assertions green.
+    """
+    for _, vertices, expected in _SHAPES:
+        ccw = np.asarray(vertices, dtype=float)
+        assert np.allclose(_polygon_centroid(ccw[::-1]), expected, rtol=0, atol=1e-13)
+
+
 def test_a_degenerate_polygon_raises_rather_than_dividing_by_a_vanishing_area():
-    """The guard the PR advertises. It is unreachable through `clipped_voronoi_cells`, whose own
-    area check (`<= 1e-14`) fires first on the same polygon, so it is tested directly -- otherwise
-    it is an untested branch guarding a state its only caller has already refused."""
+    """The guard the PR advertises, tested directly because the caller may never reach it.
+
+    The caller refuses at `area <= 1e-14` and this threshold is `abs(2A) <= 2e-14`, the same bound
+    once, except that the caller reverses the polygon when the area comes out negative and reversal
+    changes the shoelace sum's summation order. Searched for a polygon that passes one and trips the
+    other: 320k random polygons over extents 1e-8..1e-6, offsets 0..1e7 and 3..9 vertices, plus 45
+    deliberate slivers of length up to 1e4 and thickness down to 1e-17 -- none, and the largest
+    reversal asymmetry seen was 4.0e-28 against a 2e-14 threshold. A review reported three such
+    polygons out of 5106; that has not been reproduced here and the disagreement is recorded rather
+    than resolved.
+
+    Either way this test is what makes the branch live: unreachable, it would otherwise be defensive
+    code for an impossible state; reachable, it is a real precondition with no other coverage."""
     collinear = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
     with pytest.raises(ValueError, match="degenerate"):
         _polygon_centroid(collinear)
