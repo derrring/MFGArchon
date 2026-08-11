@@ -23,7 +23,7 @@ from mfgarchon.backends import create_backend
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 
 
 def _problem(sigma: float, nx: int) -> MFGProblem:
@@ -140,3 +140,55 @@ def test_a_wide_operator_is_carried_rather_than_refused():
         assert np.allclose(got, pentadiagonal(probe, 0.125)), "the wide operator was not represented"
     finally:
         base_hjb._compute_laplacian_1d = original
+
+
+def test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian():
+    """The combination this file could not see: periodic BC (extras non-empty) AND array sigma.
+
+    Every other case in this module builds `no_flux_bc`, for which `_bc_laplacian_bands` returns
+    `extras == []`, so the off-band assembly path was entered by no test here. With a volatility
+    field the off-band value was formed as `-_diffusion * v` with `_diffusion` an (Nx,) array;
+    `Jac[i, j] += <array>` raised ValueError, and a pre-existing handler meant for the band shapes
+    swapped the whole Jacobian for `(1/dt) * I`. Measured at Nx=21, T=0.2, Nt=10, sigma(x)=0.3+0.4x:
+    nnz fell 63 -> 21, `np.allclose(J, I/dt)` was True, and the backward solve returned a non-root
+    while 5998 tests stayed green.
+
+    Asserted here as structure rather than as a residual comparison, because the collapse is total:
+    an identity Jacobian has no wrap entries and a diagonal of exactly 1/dt.
+    """
+    nx, dt = 21, 0.02
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=10,
+        T=0.2,
+        sigma=0.5,
+        components=MFGComponents(
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: -(np.asarray(m) ** 2)
+            ),
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+        ),
+    )
+    x = np.linspace(0.0, 1.0, nx)
+    field = 0.3 + 0.4 * x
+    u = np.zeros(nx)
+    m = np.ones(nx) / nx
+
+    jac = compute_hjb_jacobian(u, u, m, problem, t_idx_n=9, sigma_at_n=field, bc=grid.boundary_conditions)
+    dense = np.asarray(jac.todense())
+
+    assert not np.allclose(dense, np.eye(nx) / dt), "the Jacobian collapsed to (1/dt) * I"
+    assert int((np.abs(dense) > 1e-14).sum()) == 63, "the two periodic wrap entries are missing"
+
+    # The wrap entries must carry the ROW's diffusion, not the column's: dRes_i/dU_j = -D_i L[i, j].
+    wrap = [(i, j) for i in range(nx) for j in range(nx) if abs(i - j) > 1 and abs(dense[i, j]) > 1e-14]
+    assert len(wrap) == 2, f"expected exactly two off-band entries, got {wrap}"
+    dx = 1.0 / (nx - 1)
+    for i, j in wrap:
+        # dRes_i/dU_j = -D_i * L[i, j], and the 3-point periodic Laplacian's off-band value is 1/dx^2.
+        expected = -(0.5 * field[i] ** 2) / dx**2
+        assert dense[i, j] == pytest.approx(expected, rel=1e-9), (
+            f"wrap entry ({i},{j}) = {dense[i, j]} != {expected}; it does not carry row {i}'s diffusion"
+        )

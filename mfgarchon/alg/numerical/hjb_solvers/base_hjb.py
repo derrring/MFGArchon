@@ -966,7 +966,15 @@ def compute_hjb_jacobian(
         J_U += -_diffusion * _sup
         # Periodic wrap: entries a [-1, 0, +1] band structure cannot hold. Omitting them is what the
         # hardcoded stencil did -- correct on the entries it had, and short by these (#1894).
-        J_extras = [(i, j, -_diffusion * v) for i, j, v in _extras]
+        #
+        # Index the diffusion by ROW. `_diffusion` is an (Nx,) array for a volatility field, and
+        # dRes_i/dU_j = -D_i * L[i, j], so the scalar band value belongs with D at the row. Writing
+        # `-_diffusion * v` put the whole array in each entry, `Jac[i, j] += <array>` raised
+        # ValueError, and the pre-existing handler below replaced the entire Jacobian with
+        # (1/dt)*I -- a plausible wrong answer, not a crash. The bands above already do this right
+        # by elementwise broadcast; only the off-band entries needed the explicit row index.
+        _D_row = np.broadcast_to(np.asarray(_diffusion, dtype=float), (Nx,))
+        J_extras = [(i, j, -float(_D_row[i]) * v) for i, j, v in _extras]
         # Note: For spatially varying σ(x), this assumes σ is smooth.
         # More accurate treatment would include ∂σ/∂x terms (Phase 3 extension)
 
@@ -1144,16 +1152,21 @@ def compute_hjb_jacobian(
 
     try:
         Jac = sparse.spdiags(diagonals_data, offsets, Nx, Nx, format="csr")
-        # Periodic wrap. A [-1, 0, +1] structure cannot hold these, and the hardcoded stencil this
-        # replaced simply left them out -- correct on the entries it had, two short (#1894).
-        if J_extras:
-            Jac = Jac.tolil()
-            for _i, _j, _v in J_extras:
-                Jac[_i, _j] += _v
-            Jac = Jac.tocsr()
     except ValueError:
         fallback_diag = np.ones(Nx) * (1.0 / dt if abs(dt) > 1e-14 else 1.0)
         Jac = sparse.diags([fallback_diag], [0], shape=(Nx, Nx)).tocsr()
+
+    # Periodic wrap, assembled OUTSIDE that handler on purpose. A [-1, 0, +1] structure cannot hold
+    # these, and the hardcoded stencil this replaced simply left them out -- correct on the entries
+    # it had, two short (#1894). Inside the try, a ValueError from this loop was caught by a handler
+    # meant for the band shapes and silently swapped the whole Jacobian for (1/dt)*I; the solve then
+    # returned a non-root with only a "Newton did not converge" warning pointing nowhere near the
+    # cause. An assembly bug here must propagate.
+    if J_extras:
+        Jac = Jac.tolil()
+        for _i, _j, _v in J_extras:
+            Jac[_i, _j] += _v
+        Jac = Jac.tocsr()
 
     return Jac.tocsr()
 
