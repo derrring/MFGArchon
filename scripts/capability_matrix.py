@@ -257,6 +257,36 @@ def _mass_drift(result, problem) -> dict:
     }
 
 
+def _solved(art: dict) -> bool:
+    """Did the coupled iteration reach a fixed point? A cell's `ok` must include this.
+
+    Without it a cell asks whether the FP time-stepping conserves mass, which it does on whatever
+    drift field it is handed, converged or not -- #1871 recorded the field for exactly that reason
+    and left it out of the verdict, and #1865 then required any 2-D restatement to assert
+    convergence or stop claiming the configuration solves.
+
+    It moves under the coupling: deleting f(m) makes `fdm_upwind` and `sl_linear` converge in ONE
+    sweep against five, and a 10x coupling stops `fvm_vs_fdm/agreement` converging at all.
+
+    ~~It is also the only field measured to depend on the coupling ... while every other recorded
+    field stays put.~~ [CORRECTED 2026-08-11] That was asserted from measuring this field alone. A
+    full-artifact diff over the family shows `min_density` moving in FOUR cells against this field's
+    two, and `max_drift`, `mass_max`, `max_rel_drift`, `rel_l2_*` and `worst` moving as well. What is
+    true, and what matters, is narrower: of the fields a verdict reads, only `worst` (in the
+    agreement cell, at 10x) ever crosses its own threshold, so before this change four of the five
+    coupled cells had a verdict no coupling mutation could move. Gating this field does not make
+    those four coupling-sensitive either -- it makes three of them honestly red, which is the
+    argument for it. The coupling-sensitivity argument was mine and it was wrong.
+
+    Absent means not applicable rather than not converged: cells that run no coupled iteration
+    (construction checks) carry no such field and are unaffected.
+    """
+    for field in ("picard_converged", "fdm_picard_converged"):
+        if field in art:
+            return bool(art[field]) and bool(art.get("fvm_picard_converged", True))
+    return True
+
+
 def _picard_verdict(result, prefix: str = "") -> dict:
     """What the coupled iteration said about itself, recorded beside the oracle (#1871).
 
@@ -385,7 +415,7 @@ def _mass_conservation_cell(scheme_name: str):
             art = _mass_drift(result, problem)
             art |= _picard_verdict(result)
             art["tolerance"] = MASS_RTOL * max(abs(art["mass_t0"]), 1.0)
-            ok = art["all_finite"] and art["max_drift"] <= art["tolerance"]
+            ok = art["all_finite"] and art["max_drift"] <= art["tolerance"] and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("mass drift", verdict)
@@ -422,7 +452,7 @@ def _mass_conservation_2d_cell(scheme_name: str):
                 "tolerance": 1e-9,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("2-D mass drift", verdict)
@@ -510,7 +540,7 @@ def _fvm_fdm_agreement_cell():
             art["rel_l2_U"] = _rel_l2(U_fvm, U_fdm, dx)
             art["rel_l2_M_terminal"] = _rel_l2(M_fvm[-1], M_fdm[-1], dx)
             art["worst"] = max(art["rel_l2_M"], art["rel_l2_U"], art["rel_l2_M_terminal"])
-            return ("PASS" if art["worst"] < AGREEMENT_RTOL else "FAIL"), art
+            return ("PASS" if art["worst"] < AGREEMENT_RTOL and _solved(art) else "FAIL"), art
 
         return _measure("FVM/FDM agreement", verdict)
 
@@ -536,7 +566,7 @@ def _fvm_mass_cell():
                 "tolerance": 1e-6,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("FVM mass drift", verdict)
@@ -640,7 +670,7 @@ def _regime_switching_cell():
                 "tolerance": 1e-6,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6
+            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6 and _solved(art)
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("regime mass/non-negativity", verdict)
@@ -862,7 +892,13 @@ def print_report(results: dict) -> None:
 # cell, or a recovered one, arriving with an oracle that cannot tell an MFG from two uncoupled PDEs.
 # Same structure as `check_fail_fast.py` / `fail_fast_baseline.json`.
 #
-# Shrinking it is the work, and it is #1891. The mass oracles cannot see f(m) by construction:
+# Shrinking it is the work, and it is #1891. It went 5 -> 4 when the mutation family replaced plain
+# deletion, and 4 -> 1 when `picard_converged` entered the verdict: the three cells that left are no
+# longer PASS, so they are never mutated and cannot be judged. They are deliberately NOT kept here
+# against their return. A cell coming back green should have to prove its oracle can see the
+# coupling, and leaving it listed would let it arrive as `inert (known)` instead -- the mirror of
+# why `MASS_ORACLE_CELLS` does keep its non-PASS members, where listing is what makes the proof
+# happen rather than what waives it. The mass oracles cannot see f(m) by construction:
 # `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
 # on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
 # `fvm_vs_fdm/agreement` is NOT on this list, and finding that out is what the family bought: it
@@ -871,10 +907,7 @@ def print_report(results: dict) -> None:
 # agreeing on an uncoupled problem is not the same statement -- but the cell does have a coupling
 # it can feel.
 COUPLING_INERT_BASELINE = {
-    "fdm_upwind/mass_conservation",
-    "sl_linear/mass_conservation",
     "fvm_muscl/mass_conservation",
-    "sl_linear_2d/mass_conservation",
 }
 
 
@@ -1025,9 +1058,13 @@ def self_test() -> int:
     judged = set(passing)
     regressed = sorted(survives_all - COUPLING_INERT_BASELINE)
     recovered = sorted((COUPLING_INERT_BASELINE & judged) - survives_all)
-    unjudged = sorted(COUPLING_INERT_BASELINE - judged)
+    # Over MASS_ORACLE_CELLS, not over the waiver list: a cell that is no longer PASS is never
+    # mutated and so has no coupling verdict this run, and that is worth saying whether or not it
+    # was ever waived. Computing it as `COUPLING_INERT_BASELINE - judged` printed nothing at all
+    # once the waiver list was pruned -- which is exactly the three cells the prose claimed it named.
+    unjudged = sorted(MASS_ORACLE_CELLS - judged)
     if unjudged:
-        print(f"\nnot judged this run (no longer PASS, so never mutated): {', '.join(unjudged)}")
+        print(f"\nnot judged this run (not PASS, so never mutated): {', '.join(unjudged)}")
 
     # Axis 1 first: it is the older and stronger claim, and a `recovered` return placed before it
     # masked an axis-1 failure entirely -- measured.

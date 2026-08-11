@@ -217,23 +217,36 @@ def test_a_quiet_cell_carries_no_field_at_all():
 
 
 def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
-    """The point of the change, pinned against the artifact it produced.
+    """The point of #1879, pinned against the artifact it produced.
 
-    `fdm_upwind/mass_conservation` is PASS and emits 39 non-convergence warnings. If a
-    future change makes the solve produce roots the count drops and this test must be
-    updated -- deliberately, since that is exactly the event #1878 tracks and it should not
-    pass silently.
+    `fdm_upwind/mass_conservation` emits 39 non-convergence warnings, and the harness silenced every
+    one of them until #1879. The count is what this file exists to keep visible.
+
+    The cell is now **FAIL**, and not because the solve improved: `picard_converged` entered the
+    verdict on 2026-08-11 (#1891), so a cell that does not reach a fixed point stops being PASS. It
+    was PASS on the mass oracle alone, which holds on whatever drift field the FP step is handed --
+    the same fact these 39 warnings state in words. An earlier version of this test asserted
+    `status == "PASS"` and said "if that changed, #1878 moved"; #1878 has not moved, the verdict did,
+    and the two are worth keeping apart. The pin below is written so the interesting event -- the
+    warnings going away, which IS #1878 moving -- still fails it.
     """
     import json
 
     cells = json.loads((_SCRIPT.parent / "capability_baseline.json").read_text())["cells"]
-    said = cells["fdm_upwind/mass_conservation"]["artifact"]["library_said"]
+    cell = cells["fdm_upwind/mass_conservation"]
+    said = cell["artifact"]["library_said"]
 
     newton = {k: v for k, v in said.items() if "inner Newton did not converge" in k}
     assert newton, f"the recorded warnings no longer mention the inner Newton: {said}"
     assert sum(newton.values()) == 39, f"expected 39 non-convergence warnings (#1878), got {newton}"
-    assert cells["fdm_upwind/mass_conservation"]["status"] == "PASS", (
-        "the cell is PASS while its inner solves fail; if that changed, #1878 moved"
+
+    assert cell["artifact"]["picard_converged"] is False, (
+        "the coupled solve now converges; that is #1878/#1873 moving and this file must be updated "
+        "deliberately rather than adjusted to match"
+    )
+    assert cell["status"] != "PASS", (
+        "the cell is PASS while recording 39 inner-Newton failures and picard_converged=False -- "
+        "the verdict has stopped requiring convergence (#1891)"
     )
 
 

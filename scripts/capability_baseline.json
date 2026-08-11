@@ -34,7 +34,8 @@
         "picard_iterations": 5,
         "tolerance": 1.0000000000000003e-09
       },
-      "status": "PASS"
+      "intended": "DEFECT -- #1873/#1878. Mass is conserved to 1.2e-15, but the coupled iteration does not reach a fixed point: `picard_converged: false` after 5 sweeps, and it does not converge at 100, 200 or 400 either (final errors 2.3e-04, 4.1e-03, 4.0e-03, not descending). Red from 2026-08-11, when `picard_converged` entered the verdict (#1891). It was PASS before that on the mass oracle alone, which holds on whatever drift field the FP step is handed. The inner Newton's half is #1878; the residual there has more than one root and a line search converges to a non-viscosity branch.",
+      "status": "FAIL"
     },
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
@@ -131,7 +132,8 @@
         "picard_iterations": 5,
         "tolerance": 1.0000000000000003e-09
       },
-      "status": "PASS"
+      "intended": "DEFECT -- #1873/#1880. `picard_converged: false` after 5 sweeps; unlike its FDM sibling all four criterion arms are above tolerance and the density arm is not descending (never below 0.357). #1880 has the mechanism: SL_LINEAR amplifies asymmetry 2.75x per sweep on a symmetric fixture. Red from 2026-08-11 for the same reason as the row above.",
+      "status": "FAIL"
     },
     "sl_linear_2d/mass_conservation": {
       "artifact": {
@@ -143,7 +145,8 @@
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
-      "status": "PASS"
+      "intended": "DEFECT -- #1865. `picard_converged: false` at its 3-sweep budget, and the budget is why this cell is the one member of the family whose convergence flag does not move under the coupling mutations of #1892 -- it exhausts the budget at every scale. Red from 2026-08-11. It DOES converge given more sweeps: measured here, converged=True at iteration 32 with budgets of 35 and 60, which `capability_matrix.py`'s own module docstring already recorded as \"the one a budget fixes -- it converges at 35 sweeps in ~3s\". An earlier version of this note called that unmeasured; it was measured, twenty lines above the helper that gates this cell. So the cell is red on its budget rather than on the scheme, and raising the budget is a deliberate decision about what the matrix costs -- #1865.",
+      "status": "FAIL"
     }
   }
 }
