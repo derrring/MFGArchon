@@ -795,10 +795,10 @@ def compute_hjb_residual(
 def _extract_bands(Nx: int, apply, label: str):
     """Bands of a linear operator, recovered by probing it. `apply(vec)` is that operator.
 
-    Shared by every band extraction in this module so the machinery has one owner: the Laplacian
-    (linear in U, probed directly) and the advection gradient (linearised at the current iterate by
-    a directional difference) differ only in what `apply` does. A second copy of this would be the
-    same defect class the extraction exists to close.
+    Shared by every band extraction in this module so the machinery has one owner: the Laplacian and
+    the central gradient differ only in what `apply` does, and the upwind gradient -- which is not
+    linear and has no bands to probe -- is built from those two by `_advection_bands`. A second copy
+    of this would be the same defect class the extraction exists to close.
 
         Returns ``(sub, diag, sup)`` with ``sub[i] = L[i, i-1]``, ``diag[i] = L[i, i]``,
         ``sup[i] = L[i, i+1]`` -- the convention `J_L`/`J_D`/`J_U` use.
@@ -914,7 +914,7 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
     return _extract_bands(Nx, apply, "BC-aware Laplacian")
 
 
-def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool):
+def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, laplacian_bands):
     """Bands of ``d(grad U)/dU``, linearised at ``U`` by probing the residual's own gradient.
 
     The advection block used to restate the stencil by hand -- central as ``[-1/2dx, 0, +1/2dx]``,
@@ -932,21 +932,123 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool):
     there, so ``dH/dp`` is zero and the spurious diagonal is multiplied away. Under Dirichlet or
     periodic nothing masks it.
 
-    Unlike the Laplacian, the upwind gradient is NOT linear in U -- the branch selection depends on
-    it. This linearises at the current iterate, which is what a Jacobian is and what semismooth
-    Newton wants: at a node where the branch is switching, the value returned is one element of the
-    Clarke generalised Jacobian, the same choice the residual makes.
+    Central is linear in U, so it is probed directly. Upwind is not, and probing it does not merely
+    lose accuracy -- at a node where the branch is switching the two-sided directional difference
+    disagrees with itself, so `_extract_bands` raises instead of returning a Jacobian (9 of 15
+    measured wall cells at Nx=9, for one-sided differences as well as two-sided). That is not an
+    implementation fault: the upwind gradient is nondifferentiable there and no Jacobian exists,
+    only a Clarke generalised Jacobian.
+
+    So the upwind bands are assembled from the two operators that ARE linear::
+
+        forward  = central + (dx / 2) * laplacian
+        backward = central - (dx / 2) * laplacian
+
+    exact identities of the ghost-padded stencils, boundaries included -- measured at 1.4e-14 or
+    better over seven BCs (no-flux, Dirichlet, Neumann, periodic, three Robin parameter sets) and
+    three states, and pinned there, since it is the premise the whole construction rests on. Robin
+    is the case that would break it, by padding the Laplacian differently from the gradient.
+
+    Which branch holds at row ``i`` is then **observed**, never restated.
+    Restating it is #1896 item 3: the residual selects on ``sign(central)`` while the Jacobian
+    selected on ``sign(grad_upwind)``, which disagree at 8 of 41 nodes on a random field and at 0 of
+    41 on the monotone states every test used.
+
+    Observation is in two parts, because value and row do not carry the same information:
+
+    1. Where forward and backward differ in VALUE, ``grad_upwind(U)`` equals exactly one of them and
+       the branch is read off directly.
+    2. Where they agree in value -- any locally linear stretch, so not a rare coincidence -- the
+       ROWS still differ, and picking wrong puts the Jacobian one column across. Those rows are
+       decided by how ``grad_upwind`` MOVES under an alternating probe, whose central difference
+       vanishes at every interior node and so cannot move the branch being measured.
+    3. Where the probe is inconclusive, the branch is switching at ``U``: both rows are elements of
+       the Clarke generalised Jacobian and either is admissible.
+
+    ``laplacian_bands`` is passed in rather than extracted here because the caller already holds it
+    for the diffusion block, and extracting it twice per Jacobian build is the same quantity
+    computed on two paths -- cheap to avoid, and measured at roughly half the added cost of the
+    upwind branch.
     """
     U = np.asarray(U, dtype=float)
     Nx = len(U)
-    step = 1e-6 * max(float(np.abs(U).max()), 1.0)
+
+    zero = _compute_gradient_array_1d(np.zeros(Nx), dx, bc=bc, upwind=False, time=time)
 
     def apply(vec):
-        plus = _compute_gradient_array_1d(U + step * vec, dx, bc=bc, upwind=upwind, time=time)
-        minus = _compute_gradient_array_1d(U - step * vec, dx, bc=bc, upwind=upwind, time=time)
-        return (plus - minus) / (2.0 * step)
+        return _compute_gradient_array_1d(vec, dx, bc=bc, upwind=False, time=time) - zero
 
-    return _extract_bands(Nx, apply, "gradient operator")
+    central = _extract_bands(Nx, apply, "central gradient operator")
+    if not upwind:
+        return central
+
+    half = dx / 2.0
+    c_sub, c_diag, c_sup, c_extras = central
+    l_sub, l_diag, l_sup, l_extras = laplacian_bands
+
+    g_up = _compute_gradient_array_1d(U, dx, bc=bc, upwind=True, time=time)
+    g_c = _compute_gradient_array_1d(U, dx, bc=bc, upwind=False, time=time)
+    lap = _compute_laplacian_1d(U, dx, bc=bc, time=time)
+    forward, backward = g_c + half * lap, g_c - half * lap
+
+    took_backward = np.abs(g_up - backward) <= np.abs(g_up - forward)
+    # Fail loudly if the identity above does not hold: the mask is then recovered by picking the
+    # closer of two wrong reconstructions, which is silent and produces a plausible Jacobian. A BC
+    # whose Laplacian pads differently from its gradient would land exactly here.
+    picked = np.where(took_backward, backward, forward)
+    scale = max(float(np.abs(g_up).max()), 1.0)
+    if not np.allclose(picked, g_up, rtol=1e-9, atol=1e-9 * scale):
+        raise ValueError(
+            "the upwind gradient is not one of central +/- (dx/2)*laplacian, so its branch cannot "
+            f"be read off (max mismatch {float(np.abs(picked - g_up).max()):.3e}). #1896."
+        )
+
+    # That comparison is blind wherever forward == backward in VALUE -- which is every locally
+    # linear stretch, not a rare coincidence. The two ROWS still differ there, so the tie is not
+    # harmless: read off values alone it put the whole Jacobian one column across on a
+    # piecewise-linear state, 4.000e+01 against a column-wise finite difference at Nx=21, and
+    # eps-independent. Resolve it by probing how the residual's own gradient MOVES.
+    #
+    # The probe direction is alternating. Its central difference vanishes at every interior node
+    # (v[i+1] == v[i-1]), so it cannot move the branch it is measuring, while its Laplacian is
+    # maximal at -4v/dx^2, separating the two candidate rows by 4/dx. That property is exact in the
+    # interior and only approximate at the walls, where ghost padding is not the interior stencil --
+    # so the probe is trusted per row, and only where one candidate clearly wins.
+    probe = np.empty(Nx)
+    probe[::2], probe[1::2] = 1.0, -1.0
+    step = 1e-7 * max(float(np.abs(U).max()), 1.0)
+    moved = (
+        _compute_gradient_array_1d(U + step * probe, dx, bc=bc, upwind=True, time=time)
+        - _compute_gradient_array_1d(U - step * probe, dx, bc=bc, upwind=True, time=time)
+    ) / (2.0 * step)
+    zero_lap = _compute_laplacian_1d(np.zeros(Nx), dx, bc=bc, time=time)
+    c_probe = _compute_gradient_array_1d(probe, dx, bc=bc, upwind=False, time=time) - zero
+    l_probe = _compute_laplacian_1d(probe, dx, bc=bc, time=time) - zero_lap
+    to_backward, to_forward = np.abs(moved - (c_probe - half * l_probe)), np.abs(moved - (c_probe + half * l_probe))
+    gap = np.abs(dx * l_probe)
+    # A row whose branch the probe did move lands between the two candidates rather than on one of
+    # them; leave those to the value comparison above. They are the nodes where the branch is
+    # switching at U, and there both rows are elements of the Clarke generalised Jacobian.
+    decided = np.minimum(to_backward, to_forward) < 0.25 * gap
+    took_backward = np.where(decided, to_backward <= to_forward, took_backward)
+
+    sign = np.where(took_backward, -1.0, 1.0)
+    sub = c_sub + sign * half * l_sub
+    diag = c_diag + sign * half * l_diag
+    sup = c_sup + sign * half * l_sup
+
+    merged: dict[tuple[int, int], float] = {}
+    for i, j, value in c_extras:
+        merged[(i, j)] = merged.get((i, j), 0.0) + value
+    for i, j, value in l_extras:
+        merged[(i, j)] = merged.get((i, j), 0.0) + float(sign[i]) * half * value
+    # The wrap entry cancels exactly on the branch that does not reach across it -- row 0's forward
+    # difference reads U[1], not the wrap column -- so drop what cancelled rather than carry a
+    # rounding-scale entry that changes nnz without changing the operator.
+    band_scale = max(float(np.abs(np.concatenate([sub, diag, sup])).max()), 1.0)
+    extras = [(i, j, v) for (i, j), v in sorted(merged.items()) if abs(v) > 1e-12 * band_scale]
+
+    return sub, diag, sup, extras
 
 
 def compute_hjb_jacobian(
@@ -1015,6 +1117,11 @@ def compute_hjb_jacobian(
     if has_nan_or_inf(U_n_current_newton_iterate, backend):
         return sparse.diags([np.full(Nx, np.nan)], [0], shape=(Nx, Nx)).tocsr()
 
+    # Extracted once. Both blocks below need this operator -- diffusion applies it, advection builds
+    # the one-sided gradients out of it -- and extracting it twice is the same quantity on two paths
+    # for no reason, at roughly half the cost of the whole advection extraction.
+    _lap_bands = _bc_laplacian_bands(Nx, dx, bc, current_time) if abs(dx) > 1e-14 and Nx > 1 else None
+
     # Time derivative part: d/dU_n_current[j] of (U_n_current[i] - U_{n+1}[i])/dt
     if abs(dt) > 1e-14:
         J_D += 1.0 / dt
@@ -1027,7 +1134,7 @@ def compute_hjb_jacobian(
         # 1/dx^2 -- exactly proportional to sigma^2, absent at sigma=0, which is why every
         # measurement taken on the sigma=0 fixture missed it (#1894).
         _diffusion = diffusion_from_volatility(sigma, kind="field")
-        _sub, _diag, _sup, _extras = _bc_laplacian_bands(Nx, dx, bc, current_time)
+        _sub, _diag, _sup, _extras = _lap_bands
         J_D += -_diffusion * _diag
         J_L += -_diffusion * _sub
         J_U += -_diffusion * _sup
@@ -1041,7 +1148,7 @@ def compute_hjb_jacobian(
         # (1/dt)*I -- a plausible wrong answer, not a crash. The bands above already do this right
         # by elementwise broadcast; only the off-band entries needed the explicit row index.
         _D_row = np.broadcast_to(np.asarray(_diffusion, dtype=float), (Nx,))
-        J_extras = [(i, j, -float(_D_row[i]) * v) for i, j, v in _extras]
+        J_extras += [(i, j, -float(_D_row[i]) * v) for i, j, v in _extras]
         # Note: For spatially varying σ(x), this assumes σ is smooth.
         # More accurate treatment would include ∂σ/∂x terms (Phase 3 extension)
 
@@ -1077,24 +1184,19 @@ def compute_hjb_jacobian(
             HEvalState(x=x_grid, p=p_grid, m=m_grid, t=current_time)
         ).ravel()  # (Nx,) — squeeze the 1D momentum dimension
 
-        # Stencil coefficients: dp_i/dU_j depends on upwind direction
-        # Godunov upwind: p >= 0 uses backward (U_i - U_{i-1})/dx,
-        #                 p < 0  uses forward  (U_{i+1} - U_i)/dx
-        inv_dx = 1.0 / dx
-        if use_upwind:
-            backward_mask = precomputed_grad >= 0  # (Nx,)
-            # Diagonal: dp_i/dU_i
-            J_D += dH_dp * np.where(backward_mask, inv_dx, -inv_dx)
-            # Lower: dp_i/dU_{i-1} (backward stencil only)
-            J_L += dH_dp * np.where(backward_mask, -inv_dx, 0.0)
-            # Upper: dp_i/dU_{i+1} (forward stencil only)
-            J_U += dH_dp * np.where(backward_mask, 0.0, inv_dx)
-        else:
-            # Central difference: p_i = (U_{i+1} - U_{i-1}) / (2*dx)
-            half_inv_dx = inv_dx / 2.0
-            # dp_i/dU_i = 0 (central difference has no diagonal stencil)
-            J_L += dH_dp * (-half_inv_dx)
-            J_U += dH_dp * half_inv_dx
+        # dp_i/dU_j: row i of the SAME gradient operator the residual applied, extracted rather than
+        # restated. Restating it wrote the interior stencil into the wall rows, which are one-sided
+        # under every BC: central row 0 is {0: -4, 1: +4} under no-flux and {0: +4, 1: +4} under
+        # Dirichlet against the hardcoded {1: +4} -- wrong in magnitude, and in sign between the two.
+        # The upwind branch was restated too, selecting on sign(grad_upwind) where the residual
+        # selects on sign(central); they part at 8 of 41 nodes on a random field and at none on a
+        # monotone one, which is what every test used (#1896 items 3 and 4).
+        _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(U_n_np, dx, bc, current_time, use_upwind, _lap_bands)
+        J_D += dH_dp * _g_diag
+        J_L += dH_dp * _g_sub
+        J_U += dH_dp * _g_sup
+        # Row-index dH_dp for the same reason the diffusion block row-indexes sigma (#1894 B1).
+        J_extras += [(i, j, float(dH_dp[i]) * v) for i, j, v in _g_extras]
     else:
         # Fallback: per-point numerical FD Jacobian for backend or no H_class
         for i in range(Nx):
