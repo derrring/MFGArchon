@@ -351,3 +351,78 @@ def test_every_mutation_declares_a_verify_expression(td):
     """Without it there is no way to tell a live mutation from an unapplied one."""
     for mut in td.MUTATIONS:
         assert mut.verify.strip(), f"{mut.name}: empty verify"
+
+
+# --- killer-set ratchet (#1901): the half a kill COUNT cannot express -------------------
+
+_MATRIX = {
+    "mutations": {
+        "drift_coefficient_2x": {
+            "kill_count": 2,
+            "killed": ["tests/a.py::test_alpha", "tests/a.py::test_beta"],
+            "status": "ok",
+        }
+    }
+}
+
+
+def _results(failed, status="ok"):
+    return {"drift_coefficient_2x": {"status": status, "kill_count": len(failed), "failed": set(failed)}}
+
+
+def _baseline_for(count):
+    return {"mutations": {"drift_coefficient_2x": {"kill_count": count, "status": "ok", "owner": "x"}}}
+
+
+def test_an_equal_size_killer_swap_is_caught(td):
+    """The motivating case. `drift_coefficient_2x` held 19 -> 19 across a one-for-one swap.
+
+    One test stopped noticing the convention and a different one started. The count ratchet
+    reported no change, which is why a count is a weaker instrument than it reads (#1901).
+    """
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert problems, "an equal-size swap passed: the killer-set ratchet is not wired in"
+    assert any("STOPPED killing" in p and "test_beta" in p for p in problems), problems
+
+
+def test_a_killer_leaving_is_a_loss_even_when_the_count_rises(td):
+    """Two arriving and one leaving is a net gain by count and a real loss by coverage."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma", "tests/a.py::test_delta"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("STOPPED killing" in p for p in problems), problems
+
+
+def test_identical_killer_sets_report_nothing(td):
+    """Control: the new check must be silent when nothing moved, or it is noise."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta"])
+    assert td.compare_to_baseline(results, _baseline_for(2), _MATRIX) == []
+
+
+def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
+    """Gains trip it too, same contract as the counts -- otherwise the next baseline
+    encodes the gain as if it had always held."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta", "tests/a.py::test_gamma"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("IMPROVED" in p for p in problems), problems
+
+
+def test_an_ineffective_mutation_contributes_no_killer_noise(td):
+    """Its zeros mean nothing, and the count ratchet already reports it.
+
+    Without this the same mutation would be reported twice, once truthfully and once as a
+    mass departure that is really just 'the mutation stopped applying'.
+    """
+    results = _results([], status="INEFFECTIVE")
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("INEFFECTIVE" in p for p in problems)
+    assert not any("STOPPED killing" in p for p in problems), problems
+
+
+def test_without_a_matrix_the_gate_degrades_to_counts_and_says_so(td):
+    """A silently weaker gate is the failure mode this tool exists to remove."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
+    assert td.compare_to_baseline(results, _baseline_for(2), None) == []
+    body = inspect.getsource(td.main)
+    assert "killer sets unchecked" in body, "main() no longer announces the degraded gate"
+    assert "discrimination_killmatrix.json" in body, "main() no longer loads the matrix"

@@ -370,7 +370,7 @@ def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: i
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def compare_to_baseline(results: dict, baseline: dict) -> list[str]:
+def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = None) -> list[str]:
     """Every way discrimination can degrade. Empty list means it did not.
 
     Two ratchets, both unforgeable by renaming -- which matters, because the
@@ -381,6 +381,12 @@ def compare_to_baseline(results: dict, baseline: dict) -> list[str]:
       discriminating test trips this, which is correct: it is a real loss.
     - **The UNCOVERED set must not grow.** A convention going from watched to
       unwatched is the defect this tool exists to find.
+    - **No killer may silently leave**, which a count cannot see. `drift_coefficient_2x`
+      held 19 -> 19 across a one-for-one swap of killers: one test stopped noticing the
+      convention and a different one started, and the gate reported no change. Measured
+      2026-08-12 (#1901), where it ranked as the reason a kill *count* is a weaker
+      instrument than it reads. The killer sets live in the sibling kill matrix, which
+      until now was committed as evidence that nothing read.
 
     Improvements trip it too, and must be recorded in the same change -- otherwise the
     next baseline encodes the gain as if it had always held, and the ratchet loses the
@@ -402,8 +408,47 @@ def compare_to_baseline(results: dict, baseline: dict) -> list[str]:
             problems.append(
                 f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [IMPROVED -- record it in the baseline]"
             )
+    if matrix is not None:
+        problems.extend(_compare_killers(results, matrix))
     for name in sorted(set(results) - set(base_muts)):
         problems.append(f"  {name}: NEW mutation, not in baseline")
+    return problems
+
+
+def _compare_killers(results: dict, matrix: dict) -> list[str]:
+    """Which tests kill each mutation, not how many -- the half a count cannot express.
+
+    A departure is a regression even when the count holds: that test stopped noticing the
+    convention, and whatever replaced it is a different assertion about a different thing.
+    Renames land here too, and that is the intended cost: the fix is to regenerate the
+    baseline in the same commit, exactly as a count change requires. Silence would be the
+    alternative, and silence is what this whole tool exists to remove.
+    """
+    problems: list[str] = []
+    base = matrix.get("mutations", {})
+    for name, was in sorted(base.items()):
+        now = results.get(name)
+        if now is None or now.get("status") == "INEFFECTIVE":
+            continue  # already reported by the count ratchet, and its zeros mean nothing
+        before = set(was.get("killed", ()))
+        after = set(now.get("failed", ()))
+        if not before and not after:
+            continue
+        departed = sorted(before - after)
+        if departed:
+            shown = ", ".join(t.rsplit("::", 1)[-1] for t in departed[:3])
+            more = f" (+{len(departed) - 3} more)" if len(departed) > 3 else ""
+            problems.append(
+                f"  {name}: {len(departed)} test(s) STOPPED killing it while the count "
+                f"{'held' if len(before) == len(after) else 'moved'}  [DISCRIMINATION LOST]: {shown}{more}"
+            )
+        arrived = sorted(after - before)
+        if arrived and not departed:
+            shown = ", ".join(t.rsplit("::", 1)[-1] for t in arrived[:3])
+            more = f" (+{len(arrived) - 3} more)" if len(arrived) > 3 else ""
+            problems.append(
+                f"  {name}: {len(arrived)} new killer(s)  [IMPROVED -- record it in the baseline]: {shown}{more}"
+            )
     return problems
 
 
@@ -536,14 +581,24 @@ def main() -> None:
         sys.exit(0)
 
     if args.check_baseline:
-        baseline = json.loads(Path(args.check_baseline).read_text())
-        problems = compare_to_baseline(results, baseline)
+        baseline_path = Path(args.check_baseline)
+        baseline = json.loads(baseline_path.read_text())
+        # The killer sets are the half a count cannot express, and they live beside the
+        # baseline rather than inside it -- the matrix is the richer artifact and a test
+        # already pins the two to the same run. Absent, the gate degrades to counts and
+        # SAYS so, because a silently weaker gate is the failure mode this tool is for.
+        matrix_path = baseline_path.parent / "discrimination_killmatrix.json"
+        matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
+        if matrix is None:
+            print(f"NOTE: {matrix_path.name} absent -- comparing counts only, killer sets unchecked.")
+        problems = compare_to_baseline(results, baseline, matrix)
         if problems:
             print("\nDiscrimination baseline mismatch:")
             print("\n".join(problems))
             print("\nIf intended, regenerate with --write-baseline in the same commit.")
             sys.exit(1)
-        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations).")
+        scope = "counts" if matrix is None else "counts and killer sets"
+        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations, {scope}).")
         sys.exit(0)
 
     sys.exit(0 if effective else 1)
