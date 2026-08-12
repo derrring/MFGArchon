@@ -792,8 +792,13 @@ def compute_hjb_residual(
     return Phi_U
 
 
-def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
-    """Bands of the BC-aware Laplacian, extracted from the operator `compute_hjb_residual` applies.
+def _extract_bands(Nx: int, apply, label: str):
+    """Bands of a linear operator, recovered by probing it. `apply(vec)` is that operator.
+
+    Shared by every band extraction in this module so the machinery has one owner: the Laplacian
+    (linear in U, probed directly) and the advection gradient (linearised at the current iterate by
+    a directional difference) differ only in what `apply` does. A second copy of this would be the
+    same defect class the extraction exists to close.
 
         Returns ``(sub, diag, sup)`` with ``sub[i] = L[i, i-1]``, ``diag[i] = L[i, i]``,
         ``sup[i] = L[i, i+1]`` -- the convention `J_L`/`J_D`/`J_U` use.
@@ -812,12 +817,11 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
         is used when it did not. Obstacle masks, nonlocal terms and Robin BCs all produce operators the
         comb cannot attribute, so the fallback is reached in practice rather than defensively.
     """
-    zero = _compute_laplacian_1d(np.zeros(Nx), dx, bc=bc, time=time)
 
     def column(cols) -> np.ndarray:
         probe = np.zeros(Nx)
         probe[cols] = 1.0
-        return _compute_laplacian_1d(probe, dx, bc=bc, time=time) - zero
+        return apply(probe)
 
     def pack(columns, isolated) -> tuple:
         """Bands plus off-band (row, col, value) triples, from a map of column index -> its column.
@@ -857,7 +861,7 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
 
     # Control vector no probe was built from.
     check = np.linspace(-1.0, 1.0, Nx) + 0.37
-    want = _compute_laplacian_1d(check, dx, bc=bc, time=time) - zero
+    want = apply(check)
     scale = max(float(np.abs(want).max()), 1.0)
 
     # Tier 1: comb probes, O(Nx). Exact when the operator is banded, which is the common case --
@@ -887,10 +891,62 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
     packed = pack({j: column([j]) for j in range(Nx)}, isolated=set(range(Nx)))
     if not np.allclose(reconstruct(*packed, check), want, rtol=1e-9, atol=1e-9 * scale):
         raise ValueError(
-            "the BC-aware Laplacian is not linear in U, so it has no Jacobian to extract (max "
-            f"mismatch {float(np.abs(reconstruct(*packed, check) - want).max()):.3e}). #1894."
+            f"the {label} is not linear in U, so it has no Jacobian to extract (max mismatch "
+            f"{float(np.abs(reconstruct(*packed, check) - want).max()):.3e}). #1894."
         )
     return packed
+
+
+def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
+    """Bands of the BC-aware Laplacian, extracted from the operator `compute_hjb_residual` applies.
+
+    The Jacobian used to write the interior three-point stencil by hand, which is right in the
+    interior and wrong at both ends: the true end rows are ``[-1, 1]/dx^2`` under no-flux and
+    ``[-3, 1]/dx^2`` under Dirichlet against the hardcoded ``[-2, 1]/dx^2``. That is #1894, and a
+    second implementation of this operator is what caused it. Under periodic BC the operator is
+    *cyclic* tridiagonal, so the corners come back as ``extras`` and the caller carries them.
+    """
+    zero = _compute_laplacian_1d(np.zeros(Nx), dx, bc=bc, time=time)
+
+    def apply(vec):
+        return _compute_laplacian_1d(vec, dx, bc=bc, time=time) - zero
+
+    return _extract_bands(Nx, apply, "BC-aware Laplacian")
+
+
+def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool):
+    """Bands of ``d(grad U)/dU``, linearised at ``U`` by probing the residual's own gradient.
+
+    The advection block used to restate the stencil by hand -- central as ``[-1/2dx, 0, +1/2dx]``,
+    upwind as a one-sided pair chosen by ``sign(precomputed_grad)``. Measured against the residual's
+    actual operator at Nx=9, both wall rows are wrong for every BC and both schemes (#1896 item 4):
+
+        no_flux   central  true {0: -4, 1: +4}      hardcoded {1: +4}
+        dirichlet central  true {0: +4, 1: +4}      hardcoded {1: +4}     <- opposite sign
+        periodic  central  true {1: +4, 8: -4}      hardcoded {1: +4}     <- wrap omitted
+        no_flux   upwind   true {}                  hardcoded {0: +8}     <- spurious diagonal
+        dirichlet upwind   true {0: +16}            hardcoded {0: +8}
+        periodic  upwind   true {0: -8, 1: +8}      hardcoded {0: +8}
+
+    The no-flux upwind row is why this survived: its true row is empty AND the BC forces ``p=0``
+    there, so ``dH/dp`` is zero and the spurious diagonal is multiplied away. Under Dirichlet or
+    periodic nothing masks it.
+
+    Unlike the Laplacian, the upwind gradient is NOT linear in U -- the branch selection depends on
+    it. This linearises at the current iterate, which is what a Jacobian is and what semismooth
+    Newton wants: at a node where the branch is switching, the value returned is one element of the
+    Clarke generalised Jacobian, the same choice the residual makes.
+    """
+    U = np.asarray(U, dtype=float)
+    Nx = len(U)
+    step = 1e-6 * max(float(np.abs(U).max()), 1.0)
+
+    def apply(vec):
+        plus = _compute_gradient_array_1d(U + step * vec, dx, bc=bc, upwind=upwind, time=time)
+        minus = _compute_gradient_array_1d(U - step * vec, dx, bc=bc, upwind=upwind, time=time)
+        return (plus - minus) / (2.0 * step)
+
+    return _extract_bands(Nx, apply, "gradient operator")
 
 
 def compute_hjb_jacobian(
