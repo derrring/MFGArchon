@@ -7,8 +7,9 @@ reference to the Jacobian), pointed at the other block. Two defects, both measur
     {0: -4, 1: +4} and the Jacobian wrote {1: +4}; under Dirichlet the true row is {0: +4, 1: +4},
     so the missing entry has the OPPOSITE SIGN between two BCs of the same scheme.
   item 3 -- the branch was selected by a second rule. The residual selects on sign(central), the
-    Jacobian selected on sign(grad_upwind); they part at 8 of 41 nodes on a random field and at
-    none on a monotone one, which is what every test used.
+    Jacobian selected on sign(grad_upwind); they part at a median 10 of 41 nodes on a noisy field
+    (200 seeds, range 6 to 16) and at none at all on a monotone one, which is what every test
+    used.
 
 Why it hid, beyond that: `use_upwind=True` is the default, and under no-flux upwind the true wall
 row is EMPTY while the BC forces p=0 there, so `dH/dp` multiplies the spurious diagonal away. The
@@ -49,6 +50,11 @@ BC_FACTORIES = {
     "no_flux": lambda: no_flux_bc(dimension=1),
     "dirichlet": lambda: dirichlet_bc(dimension=1, value=0.0),
     "periodic": lambda: periodic_bc(dimension=1),
+    # Robin is the BC most likely to break the forward/backward identity, by padding the Laplacian
+    # differently from the gradient. alpha == beta specifically: the ghost is u_ghost = a*u[0] + c
+    # with a = (2 + alpha/beta)/(2 - alpha/beta), so a == 3 there, and that is the wall where review
+    # found the wrong branch being chosen -- 2.0000e+01 at row 0.
+    "robin_alpha_eq_beta": lambda: robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.0),
 }
 
 
@@ -114,7 +120,7 @@ def _switching_nodes(u, bc, upwind: bool):
     return np.abs(g_c) < 1e-9
 
 
-# States with no switching node under any of the three BCs; `_no_switching_states_are_actually_smooth`
+# States with no switching node under any BC above; `test_no_switching_states_are_actually_smooth`
 # is the control that keeps that claim honest as the fixture changes.
 SMOOTH_STATES = {
     "monotone": 2.0 * X**2,
@@ -125,16 +131,15 @@ SMOOTH_STATES = {
 
 
 @pytest.mark.parametrize("bc_name", list(BC_FACTORIES))
-@pytest.mark.parametrize("upwind", [False, True])
 @pytest.mark.parametrize("state", list(SMOOTH_STATES))
-def test_no_switching_states_are_actually_smooth(bc_name: str, upwind: bool, state: str):
+def test_no_switching_states_are_actually_smooth(bc_name: str, state: str):
     """Positive control for the exclusion below: these states must have nothing to exclude.
 
     Without this, `_switching_nodes` growing to cover every row would make every assertion in this
     file vacuous while the suite stayed green -- the exclusion would be laundering the measurement.
     """
     _, bc, _ = _fixture(bc_name)
-    switching = _switching_nodes(SMOOTH_STATES[state], bc, upwind)
+    switching = _switching_nodes(SMOOTH_STATES[state], bc, True)
     assert not switching.any(), f"{state} under {bc_name}: switching at rows {np.nonzero(switching)[0].tolist()}"
 
 
@@ -344,3 +349,92 @@ def test_the_legacy_no_bc_path_linearises_its_own_residual_too(upwind: bool):
 
     jac = compute_hjb_jacobian(u, u, m, problem, 5, None, None, upwind, bc=None).toarray()
     assert float(np.abs(jac - _fd_columns(residual, u)).max()) < 1e-5
+
+
+def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch():
+    """The fallback's hardest customer: the branch is well defined, and unmeasurable.
+
+    A linear state has zero Laplacian, so forward and backward agree in VALUE and the measurement
+    ties. In the interior that happens under every BC — `test_every_row_linearises_the_residual`
+    covers it with `piecewise_linear`. At a WALL it depends on the ghost rule, and the Robin
+    `alpha == beta` ghost is the case where it happens: `a = (2 + alpha/beta)/(2 - alpha/beta) = 3`
+    extends a linear state exactly, so `lap[0] = 0` too.
+
+    `central[0]` is nowhere near zero there, so this is NOT a switching node — the residual takes
+    one specific branch, the two ROWS differ, and choosing by the tie alone was worth `2.0000e+01`.
+    Found by review; no other BC in this file reaches it, which is why it is written out separately
+    rather than parametrised.
+
+    Asserted as a measurement against the residual, not by inspecting which part of the recovery
+    fired, so it survives a reimplementation of the branch recovery.
+    """
+    problem, bc, m = _fixture("robin_alpha_eq_beta")
+    u = -1.0 * (X - DX / 2)
+    assert abs(_compute_laplacian_1d(u, DX, bc=bc, time=0.0)[0]) < 1e-9, "the wall row no longer ties"
+    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
+    assert abs(central[0]) > 0.1, f"row 0 is a switching node ({central[0]:.3e}); the test proves nothing"
+
+    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
+    assert err[0].max() < 1e-5, f"row 0: {err[0].max():.3e}"
+
+
+def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
+    """Pins the sparsity, which the agreement tests cannot see: they compare dense arrays.
+
+    Under periodic upwind, row 0's forward difference reads `U[1]`, not the wrap column, so the
+    central and Laplacian contributions to that entry cancel exactly. Keeping the residue would
+    leave a `~1e-16` entry in the matrix — numerically invisible, but it changes `nnz` and so
+    changes what every downstream sparse solve is handed.
+    """
+    _, bc, _ = _fixture("periodic")
+    lap_bands = _bc_laplacian_bands(NX, DX, bc, 0.0)
+    # A strictly monotone state cannot be periodic, so the branch is pinned at row 0 only: the wrap
+    # ghost makes `central[0]` follow the sign of `u[1] - u[-1]`. These two differ there and agree
+    # nowhere else that matters, which is exactly the discriminating pair.
+    takes_forward, takes_backward = -np.sin(2 * np.pi * X), np.sin(2 * np.pi * X)
+    assert _compute_gradient_array_1d(takes_forward, DX, bc=bc, upwind=False, time=0.0)[0] < 0
+    assert _compute_gradient_array_1d(takes_backward, DX, bc=bc, upwind=False, time=0.0)[0] > 0
+
+    _, _, _, fwd_extras = _advection_bands(takes_forward, DX, bc, 0.0, True, lap_bands)
+    _, _, _, back_extras = _advection_bands(takes_backward, DX, bc, 0.0, True, lap_bands)
+    scale = 1.0 / DX
+    assert all(abs(v) > 1e-6 * scale for _, _, v in fwd_extras), f"a cancelled entry survived: {fwd_extras}"
+    assert all(abs(v) > 1e-6 * scale for _, _, v in back_extras), f"a cancelled entry survived: {back_extras}"
+
+    fwd_cells = {(i, j) for i, j, _ in fwd_extras}
+    back_cells = {(i, j) for i, j, _ in back_extras}
+    assert fwd_cells != back_cells, "both branches reach the same wrap columns; the drop is invisible here"
+    assert 0 not in {i for i, _ in fwd_cells}, f"row 0 took forward, so it must not reach a wrap column: {fwd_extras}"
+
+
+def test_the_jacobian_follows_a_changed_selection_rule_without_being_told(monkeypatch):
+    """The reason the branch is measured rather than restated, made testable.
+
+    On every configuration this repo can build, measuring which one-sided form `grad_upwind`
+    returned and restating `sign(central) >= 0` give the same answer — so no ordinary test can tell
+    a measurement from a second copy of the rule, and the mutation "let the fallback decide
+    everything" kills nothing. The difference only appears when the rule CHANGES, which is exactly
+    the failure #1896 item 3 is: a second copy that silently stopped agreeing.
+
+    So change it. `gradient_upwind` is inverted here — forward where it took backward — and both the
+    residual and the Jacobian go through it. A Jacobian that measures follows; one that restates
+    `sign(central)` is now wrong on every non-tied row and cannot pass.
+    """
+    from mfgarchon.operators.stencils.finite_difference import gradient_backward, gradient_forward
+
+    def inverted(u, axis, h, xp=np):
+        fwd, bwd = gradient_forward(u, axis, h, xp), gradient_backward(u, axis, h, xp)
+        return xp.where((fwd + bwd) / 2.0 >= 0, fwd, bwd)  # the OPPOSITE of Godunov
+
+    monkeypatch.setattr(base_hjb, "gradient_upwind", inverted)
+
+    problem, bc, m = _fixture("no_flux")
+    u = SMOOTH_STATES["rough"]
+    # Control: the inverted rule must actually differ from the real one on this state, or the
+    # monkeypatch proves nothing.
+    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
+    assert (central > 0).any(), "state does not exercise the backward branch"
+    assert (central < 0).any(), "state does not exercise the forward branch"
+
+    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
+    assert err.max() < 1e-5, f"the Jacobian did not follow the rule change: {err.max():.3e}"

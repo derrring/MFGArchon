@@ -814,8 +814,12 @@ def _extract_bands(Nx: int, apply, label: str):
 
     Two tiers. Comb probes recover a banded operator in O(Nx); a control vector none of them was
         built from decides whether that held, and one probe per column -- exact for any structure --
-        is used when it did not. Obstacle masks, nonlocal terms and Robin BCs all produce operators the
-        comb cannot attribute, so the fallback is reached in practice rather than defensively.
+        is used when it did not. ~~Obstacle masks, nonlocal terms and Robin BCs all produce operators
+        the comb cannot attribute, so the fallback is reached in practice rather than defensively.~~
+        [CORRECTED 2026-08-12] Measured over every BC constructible in this repo, including Robin:
+        tier 1 succeeds for all of them, at a constant 9 probes for every Nx. The fallback exists for
+        an operator that is banded-plus-something -- an obstacle mask or a nonlocal term would be one
+        -- and nothing in the repo builds one today, so it is reached by no in-tree configuration.
     """
 
     def column(cols) -> np.ndarray:
@@ -949,21 +953,22 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, la
     three states, and pinned there, since it is the premise the whole construction rests on. Robin
     is the case that would break it, by padding the Laplacian differently from the gradient.
 
-    Which branch holds at row ``i`` is then **observed**, never restated.
-    Restating it is #1896 item 3: the residual selects on ``sign(central)`` while the Jacobian
-    selected on ``sign(grad_upwind)``, which disagree at 8 of 41 nodes on a random field and at 0 of
-    41 on the monotone states every test used.
+    Which branch holds at row ``i`` is then **measured wherever a measurement exists**. Restating it
+    instead is #1896 item 3: the residual selects on ``sign(central)`` while the Jacobian selected on
+    ``sign(grad_upwind)``. How far they part is a random variable -- at Nx=41 on ``0.4 sin(4pi x)``
+    plus noise, median 10 nodes over 200 seeds, range 6 to 16 -- but it is exactly 0 of 41 on the
+    monotone ``x^2`` that every test used, and that is the half that matters.
 
-    Observation is in two parts, because value and row do not carry the same information:
+    Value and row do not carry the same information, so recovery is in two parts:
 
     1. Where forward and backward differ in VALUE, ``grad_upwind(U)`` equals exactly one of them and
-       the branch is read off directly.
+       the branch is read off it. This is what closes item 3, and it covers every row where the two
+       rules could have parted: a rule disagreement that does not change the value cannot change
+       which one-sided stencil produced it either.
     2. Where they agree in value -- any locally linear stretch, so not a rare coincidence -- the
-       ROWS still differ, and picking wrong puts the Jacobian one column across. Those rows are
-       decided by how ``grad_upwind`` MOVES under an alternating probe, whose central difference
-       vanishes at every interior node and so cannot move the branch being measured.
-    3. Where the probe is inconclusive, the branch is switching at ``U``: both rows are elements of
-       the Clarke generalised Jacobian and either is admissible.
+       ROWS still differ and nothing observable separates them, so ``sign(central)`` decides.
+       Picking wrong here puts the Jacobian one column across: 4.000e+01 against a column-wise
+       finite difference at Nx=21, eps-independent, before the case was handled at all.
 
     ``laplacian_bands`` is passed in rather than extracted here because the caller already holds it
     for the diffusion block, and extracting it twice per Jacobian build is the same quantity
@@ -991,46 +996,35 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, la
     lap = _compute_laplacian_1d(U, dx, bc=bc, time=time)
     forward, backward = g_c + half * lap, g_c - half * lap
 
-    took_backward = np.abs(g_up - backward) <= np.abs(g_up - forward)
+    scale = max(float(np.abs(g_up).max()), 1.0)
+    # Where the two candidates differ in VALUE, the branch is MEASURED: grad_upwind equals exactly
+    # one of them. That is the part that closes #1896 item 3, and it covers every row where the two
+    # rules could have parted -- a rule disagreement that changes nothing about the value changes
+    # nothing about the row either.
+    #
+    # Where they agree in value -- every locally linear stretch, so not a rare coincidence -- the
+    # two ROWS still differ and nothing observable separates them, so `sign(central)` decides. That
+    # is a second statement of `gradient_upwind`'s rule, which is the defect this function exists to
+    # close, and it is tolerable only because of where it sits: it never runs on a row any
+    # measurement could decide, and if the rule ever changes to something that is not one of these
+    # two stencils, the check below raises rather than letting it quietly disagree.
+    #
+    # An earlier version resolved these rows by probing how grad_upwind MOVES under an alternating
+    # direction, on the principle that observing beats restating. Deleted after measurement: over
+    # 27345 such rows (9 grid sizes x 4 spacings x 13 BCs x 36 states) the probe never once decided
+    # a row differently from `sign(central)`, and it was structurally blind at a Robin wall with
+    # alpha == beta, where its separation |a - 3|/dx is identically zero.
+    value_decides = np.abs(forward - backward) > 1e-12 * scale
+    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c >= 0)
     # Fail loudly if the identity above does not hold: the mask is then recovered by picking the
     # closer of two wrong reconstructions, which is silent and produces a plausible Jacobian. A BC
     # whose Laplacian pads differently from its gradient would land exactly here.
     picked = np.where(took_backward, backward, forward)
-    scale = max(float(np.abs(g_up).max()), 1.0)
     if not np.allclose(picked, g_up, rtol=1e-9, atol=1e-9 * scale):
         raise ValueError(
             "the upwind gradient is not one of central +/- (dx/2)*laplacian, so its branch cannot "
             f"be read off (max mismatch {float(np.abs(picked - g_up).max()):.3e}). #1896."
         )
-
-    # That comparison is blind wherever forward == backward in VALUE -- which is every locally
-    # linear stretch, not a rare coincidence. The two ROWS still differ there, so the tie is not
-    # harmless: read off values alone it put the whole Jacobian one column across on a
-    # piecewise-linear state, 4.000e+01 against a column-wise finite difference at Nx=21, and
-    # eps-independent. Resolve it by probing how the residual's own gradient MOVES.
-    #
-    # The probe direction is alternating. Its central difference vanishes at every interior node
-    # (v[i+1] == v[i-1]), so it cannot move the branch it is measuring, while its Laplacian is
-    # maximal at -4v/dx^2, separating the two candidate rows by 4/dx. That property is exact in the
-    # interior and only approximate at the walls, where ghost padding is not the interior stencil --
-    # so the probe is trusted per row, and only where one candidate clearly wins.
-    probe = np.empty(Nx)
-    probe[::2], probe[1::2] = 1.0, -1.0
-    step = 1e-7 * max(float(np.abs(U).max()), 1.0)
-    moved = (
-        _compute_gradient_array_1d(U + step * probe, dx, bc=bc, upwind=True, time=time)
-        - _compute_gradient_array_1d(U - step * probe, dx, bc=bc, upwind=True, time=time)
-    ) / (2.0 * step)
-    zero_lap = _compute_laplacian_1d(np.zeros(Nx), dx, bc=bc, time=time)
-    c_probe = _compute_gradient_array_1d(probe, dx, bc=bc, upwind=False, time=time) - zero
-    l_probe = _compute_laplacian_1d(probe, dx, bc=bc, time=time) - zero_lap
-    to_backward, to_forward = np.abs(moved - (c_probe - half * l_probe)), np.abs(moved - (c_probe + half * l_probe))
-    gap = np.abs(dx * l_probe)
-    # A row whose branch the probe did move lands between the two candidates rather than on one of
-    # them; leave those to the value comparison above. They are the nodes where the branch is
-    # switching at U, and there both rows are elements of the Clarke generalised Jacobian.
-    decided = np.minimum(to_backward, to_forward) < 0.25 * gap
-    took_backward = np.where(decided, to_backward <= to_forward, took_backward)
 
     sign = np.where(took_backward, -1.0, 1.0)
     sub = c_sub + sign * half * l_sub
@@ -1189,8 +1183,9 @@ def compute_hjb_jacobian(
         # under every BC: central row 0 is {0: -4, 1: +4} under no-flux and {0: +4, 1: +4} under
         # Dirichlet against the hardcoded {1: +4} -- wrong in magnitude, and in sign between the two.
         # The upwind branch was restated too, selecting on sign(grad_upwind) where the residual
-        # selects on sign(central); they part at 8 of 41 nodes on a random field and at none on a
-        # monotone one, which is what every test used (#1896 items 3 and 4).
+        # selects on sign(central); they part at a median 10 of 41 nodes on a noisy field (200
+        # seeds, range 6 to 16) and at none at all on a monotone one, which is what every test
+        # used (#1896 items 3 and 4).
         _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(U_n_np, dx, bc, current_time, use_upwind, _lap_bands)
         J_D += dH_dp * _g_diag
         J_L += dH_dp * _g_sub

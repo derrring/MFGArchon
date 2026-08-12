@@ -22,9 +22,12 @@
   fixed the diffusion block of the same function and was identically absent at `σ = 0`.
 
 - **The branch was also selected by a second rule** (item 3). `gradient_upwind` selects on
-  `sign(central)`; the Jacobian selected on `sign(grad_upwind)`. They coincide only where the two
-  share a sign — measured to disagree at **8 of 41 nodes** on a random field, 2 of 41 on
-  `sin(4πx)`, 1 of 41 on `|x-0.5|`, and **0 of 41 on the monotone `x²`** that the tests used.
+  `sign(central)`; the Jacobian selected on `sign(grad_upwind)`. How far they part on a noisy field
+  is a random variable — at `Nx=41`, median **10 of 41**, range 6–16 over 200 seeds. (#1896's
+  inventory quoted "8 of 41" from a single unseeded draw; that draw is inside this range, so the
+  number was not wrong, but stating it as a constant was.) Deterministic fixtures: 2 of 41 on
+  `sin(4πx)`, 1 of 41 on `|x-0.5|`, and **0 of 41 on the monotone `x²`** that the tests used —
+  which is the load-bearing half and reproduces exactly.
 
 - **Extracted, not restated — and for upwind, not extractable either.** The upwind gradient is not
   linear in `U`, and probing it does not merely lose accuracy: at a node where the branch is
@@ -40,49 +43,78 @@
   ```
 
   exact identities of the ghost-padded stencils, walls included — measured at `1.4e-14` over seven
-  BCs (no-flux, Dirichlet, Neumann, periodic, three Robin parameter sets) and three states, and
-  pinned at `1e-12`. Which
-  branch holds at a row is then **observed** rather than restated, which is what closes item 3:
-  observation cannot disagree with the residual, because it is a measurement of it.
+  BCs (no-flux, Dirichlet, Neumann, periodic, three Robin parameter sets) × three states, and pinned
+  at `1e-12`, since it is the premise the whole construction rests on.
 
-- **Observing the branch takes two steps, and the second one was found by measurement.** Comparing
-  `grad_upwind(U)` against both reconstructions is exact where they differ in value — but they agree
-  in value on every locally linear stretch, and the two *rows* still differ there. Reading values
-  alone put the whole Jacobian one column across on a piecewise-linear state: `4.000e+01`,
-  ε-independent, against a column-wise finite difference at `Nx=21`. Those rows are now decided by
-  how `grad_upwind` **moves** under an alternating probe, whose central difference vanishes at every
-  interior node and so cannot move the branch it is measuring. Where the probe is inconclusive the
-  branch is switching at `U`, and both rows are admissible.
+- **Which branch holds is measured, wherever a measurement exists.** Where forward and backward
+  differ in value, `grad_upwind(U)` equals exactly one of them and the branch is read off it. That
+  is what closes item 3, and it covers every row where the two rules could have parted: a rule
+  disagreement that does not change the value cannot change which stencil produced it either. Where
+  they agree in value — every locally linear stretch, so not a rare coincidence — the two *rows*
+  still differ and nothing observable separates them, so `sign(central)` decides. Choosing by the
+  tie alone was worth `4.000e+01`, ε-independent, at `Nx=21`.
 
-- **Result**, column-wise finite difference against the assembled Jacobian, `Nx=21`, over 3 BCs × 2
+- **Result**, column-wise finite difference against the assembled Jacobian, `Nx=21`, over 4 BCs × 2
   schemes × 4 states: every wall row and every interior row agrees to `< 1e-5`, worst `1.19e-07`
-  (Dirichlet, central, monotone), which is the finite difference's own truncation floor. The two residual disagreements are the instrument, not the Jacobian, and each was
-  measured rather than assumed: at a switching node the two-sided difference averages two one-sided
-  operators and equals neither (the Jacobian row converges to one of them exactly, `4e-1 → 4e-2 →
-  4e-3` as the isolating tilt shrinks 10× each time, while the branches stay `2e+01` apart); and at
-  the flat state `u ≡ 0` the advection term is quadratic in `p`, so the difference leaves an O(ε)
-  tail — `1e-2 → 1e-4 → 1e-6` at ε = `1e-4 / 1e-6 / 1e-8`.
+  (Dirichlet, central, monotone), which is the finite difference's own truncation floor. The two
+  residual disagreements are the **instrument**, not the Jacobian, and each was measured rather than
+  assumed: at a switching node the two-sided difference averages two one-sided operators and equals
+  neither (the Jacobian row converges to one of them exactly, `4e-1 → 4e-2 → 4e-3` as the isolating
+  tilt shrinks 10× each time, while the branches stay `2e+01` apart); and at the flat state `u ≡ 0`
+  the advection term is quadratic in `p`, so the difference leaves an O(ε) tail — `1e-2 → 1e-4 →
+  1e-6` at ε = `1e-4 / 1e-6 / 1e-8`.
 
-- **Cost**: the analytic path stays O(Nx) and is ~2.0× slower — `3.6 → 7.3` ms at `Nx=1601`,
-  `1.9 → 3.9` ms at 801, `0.35 → 0.76` ms at 21 — the ratio flat across `Nx`, so no complexity
-  regression. The Laplacian bands are extracted once per Jacobian and shared by both blocks; before
-  that they were extracted twice, worth `10.9 → 7.3` ms at `Nx=1601`. The FD fallback path is
-  untouched. #1607's reason for the analytic path survives: the alternative is O(Nx²).
+- **Cost**: the analytic path stays O(Nx) and is ~2.1× slower — `3.6 → 7.4` ms at `Nx=1601`,
+  `1.9 → 3.8` ms at 801, `0.35 → 0.73` ms at 21 — the ratio flat across `Nx`, so no complexity
+  regression, and the probe count is constant in `Nx` for every BC. The Laplacian bands are
+  extracted once per Jacobian and shared by both blocks; before that they were extracted twice,
+  worth `10.9 → 7.4` ms at `Nx=1601`. The FD fallback path is untouched. #1607's reason for the
+  analytic path survives: the alternative is O(Nx²).
 
 - **Oracle**: `tests/unit/test_alg/test_hjb_jacobian_advection_1896.py`, external — a column-wise
   finite difference of the residual is a law the Jacobian must reproduce, computed independently of
-  it. Mutation-verified, seven mutations, all killed: neutering the tie-break probe (3 tests),
-  restating the branch rule as `sign(grad_upwind)` (15), inverting the mask (20), dropping the
-  per-row sign on the wrap entries (6), dropping the wrap entries (7), using central bands for
-  upwind (20), and removing the identity guard (1). Reverting the whole change turns 34 of 84 red.
-  The file also carries its own positive controls: that the states it calls smooth have no switching
-  node (otherwise the exclusion would silently make every assertion vacuous), and that the two
-  branch-selection rules actually part on the fixture (otherwise item 3's test proves nothing).
+  it. Mutation-verified, ten mutations, all killed:
 
-- **The analytic block is opt-in.** It is reached only when `backend is None`, which is
-  `HJBFDMSolver(analytic_jacobian=True)` (#1607); the default routes to the per-point FD fallback.
-  An earlier measurement of this fix passed a NumPy backend and reproduced the baseline byte for
-  byte — it had been measuring the other path.
+  | mutation | tests killed |
+  |:--|--:|
+  | restate the branch rule as `sign(grad_upwind)` (item 3) | 20 |
+  | invert the mask | 29 |
+  | use central bands for upwind | 27 |
+  | drop the wrap entries entirely | 8 |
+  | drop the per-row sign on the wrap entries | 7 |
+  | revert the tie-break to bare backward-preference | 5 |
+  | invert the tie-break predicate | 5 |
+  | let the tie-break decide every row (measurement never fires) | 1 |
+  | keep cancelled wrap entries instead of dropping them | 1 |
+  | skip the identity guard | 1 |
+
+  Reverting the whole change turns 34 of 84 red. The file carries its own positive controls: that
+  the states it calls smooth have no switching node (otherwise the exclusion silently makes every
+  assertion vacuous), and that the two branch-selection rules actually part on the fixture
+  (otherwise item 3's test proves nothing).
+
+- **What review changed, and it was not cosmetic.** The first version resolved tied rows by probing
+  how `grad_upwind` *moves* under an alternating direction, on the principle that observing beats
+  restating. Review found that probe **structurally blind at a Robin wall with `alpha == beta`**: the
+  ghost is `u_ghost = a·u[0] + c` with `a = (2 + α/β)/(2 − α/β)`, so `a = 3` exactly there, and the
+  probe's separation at row 0 is `|a − 3|/dx` — identically zero, for every state. On a state whose
+  Laplacian also vanishes at the wall the value comparison ties too, and both blind gave the wrong
+  branch on a row that is *not* a switching node: `2.0000e+01`, reproduced independently.
+
+  Fixing that made the probe redundant, and the mutation suite said so — neutering it killed zero
+  tests. A sweep over **27,345** tied rows (9 grid sizes × 4 spacings × 13 BCs × 36 states) found the
+  probe and `sign(central)` never once deciding a row differently, so it was deleted: 14 lines, four
+  operator applications, and three magic constants. Deleting it did **not** measurably change
+  runtime (`7.31 → 7.44` ms at `Nx=1601`, within noise); it bought simplicity and removed the blind
+  spot.
+
+- **The remaining restatement is pinned by a test, not by an argument.** On every configuration this
+  repo can build, measuring the branch and restating `sign(central) >= 0` agree — so no ordinary test
+  separates them, and "let the tie-break decide everything" killed nothing. The difference only
+  appears when the rule *changes*, which is precisely what item 3 was. So
+  `test_the_jacobian_follows_a_changed_selection_rule_without_being_told` inverts `gradient_upwind`
+  itself and asserts the Jacobian still linearises the residual. A Jacobian that measures follows;
+  one that restates cannot.
 
 - **One reference test moved, and was not adjusted to match.**
   `test_jacobian_byte_identical_to_inline_assembly` (#1071) rebuilt the Jacobian from a hand-written
@@ -92,3 +124,16 @@
   diffusion bands. Both stencil halves are tautological there now and are pinned externally instead.
   What the test still discriminates is `dH/dp` — verified, not assumed: perturbing the assembled
   `dH_dp` by one part in 10⁵ turns it red.
+
+- **The analytic block is opt-in.** It is reached only when `backend is None`, which is
+  `HJBFDMSolver(analytic_jacobian=True)` (#1607); the default routes to the per-point FD fallback.
+  An earlier measurement of this fix passed a NumPy backend and reproduced the baseline byte for
+  byte — it had been measuring the other path. The FD fallback remains wrong at periodic row 0
+  (`4.145e+01`) and on upwind interior rows (`7.814e+01`) at `Nx=21`; pre-existing, measured during
+  review, not addressed by this change.
+
+- **Corrected while here**: `_extract_bands`' docstring claimed its O(Nx²) tier was "reached in
+  practice rather than defensively" because obstacle masks, nonlocal terms and Robin BCs defeat the
+  comb. Measured false — tier 1 succeeds for every BC constructible in this repo, at a constant 9
+  probes for every `Nx`, and nothing in-tree builds a banded-plus-something operator. The claim is
+  struck rather than deleted, with the measurement in its place.
