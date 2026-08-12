@@ -816,10 +816,22 @@ def _extract_bands(Nx: int, apply, label: str):
         built from decides whether that held, and one probe per column -- exact for any structure --
         is used when it did not. ~~Obstacle masks, nonlocal terms and Robin BCs all produce operators
         the comb cannot attribute, so the fallback is reached in practice rather than defensively.~~
-        [CORRECTED 2026-08-12] Measured over every BC constructible in this repo, including Robin:
-        tier 1 succeeds for all of them, at a constant 9 probes for every Nx. The fallback exists for
-        an operator that is banded-plus-something -- an obstacle mask or a nonlocal term would be one
-        -- and nothing in the repo builds one today, so it is reached by no in-tree configuration.
+        [CORRECTED 2026-08-12, and the correction was itself wrong -- see below] Measured over every
+        BC constructible in this repo, including Robin: tier 1 succeeds for all of them. Probe counts
+        are 4 / 5 / 6 at Nx = 3 / 4 / 5, **12 at Nx = 6**, and a flat 8 for every Nx >= 7, identically
+        under no-flux, Dirichlet and periodic.
+
+        Nx = 6 is the one size where the comb degenerates: `edges` takes {0, 1, 4, 5}, leaving
+        `interior = [2, 3]`, whose length below 3 collapses `stride` to 1 -- so the single comb probes
+        two ADJACENT columns, `pack` cannot attribute them, the control vector fails, and tier 2 runs.
+        It is not a BC effect; a hand-built pure tridiagonal operator pays it too. The bands are still
+        exact there, because tier 2 is exact for any structure. `tests/conftest.py`'s `tiny_problem`
+        is Nx = 6, so this fires in-tree on every run.
+
+        ~~at a constant 9 probes for every Nx ... reached by no in-tree configuration~~ was written
+        here on 2026-08-12 and is false on both halves. The "9" was lifted from a review that had
+        measured Nx in {9, 21, 101, 401} and restated as a universal without carrying its population;
+        the true count on that set is 8. This is the defect class the correction was documenting.
     """
 
     def column(cols) -> np.ndarray:
@@ -996,7 +1008,17 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, la
     lap = _compute_laplacian_1d(U, dx, bc=bc, time=time)
     forward, backward = g_c + half * lap, g_c - half * lap
 
-    scale = max(float(np.abs(g_up).max()), 1.0)
+    # Scale the tolerance by the CANCELLED magnitudes, not only by the survivor. `forward` and
+    # `backward` recover a small number by cancelling `g_c` against `(dx/2)*lap`, so the
+    # reconstruction's rounding floor is set by those terms, while `g_up` can be orders of
+    # magnitude smaller -- an inhomogeneous wall points both end rows' gradient inward, so a large
+    # ghost never reaches `g_up` at all. Scaling by `g_up` alone made the guard raise on bands it
+    # was about to build exactly right: at Nx=51 with a Dirichlet value of 1e6, mismatch 4.172e-09
+    # against an atol of 1.98e-09, where the cancelled terms are 5e+07 and eps*5e+07 is 1.1e-08.
+    # Found by review. It is a false alarm rather than a missed detection in that regime: where it
+    # tripped, |forward - backward| is 2x the cancelled magnitude while the reconstruction error is
+    # eps times it, so the branch measurement is immune by a factor 1/eps to the very error flagged.
+    scale = max(float(np.abs(g_up).max()), float(np.abs(g_c).max()), float(np.abs(half * lap).max()), 1.0)
     # Where the two candidates differ in VALUE, the branch is MEASURED: grad_upwind equals exactly
     # one of them. That is the part that closes #1896 item 3, and it covers every row where the two
     # rules could have parted -- a rule disagreement that changes nothing about the value changes

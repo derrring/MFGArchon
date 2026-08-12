@@ -73,13 +73,14 @@
 
 - **Oracle**: `tests/unit/test_alg/test_hjb_jacobian_advection_1896.py`, external — a column-wise
   finite difference of the residual is a law the Jacobian must reproduce, computed independently of
-  it. Mutation-verified, ten mutations, all killed:
+  it. Mutation-verified across three files (122 tests) — twelve mutations, eleven killed and one
+  proved equivalent:
 
   | mutation | tests killed |
   |:--|--:|
-  | restate the branch rule as `sign(grad_upwind)` (item 3) | 20 |
-  | invert the mask | 29 |
-  | use central bands for upwind | 27 |
+  | invert the mask | 30 |
+  | use central bands for upwind | 28 |
+  | restate the branch rule as `sign(grad_upwind)` (item 3) | 21 |
   | drop the wrap entries entirely | 8 |
   | drop the per-row sign on the wrap entries | 7 |
   | revert the tie-break to bare backward-preference | 5 |
@@ -87,8 +88,10 @@
   | let the tie-break decide every row (measurement never fires) | 1 |
   | keep cancelled wrap entries instead of dropping them | 1 |
   | skip the identity guard | 1 |
+  | revert the identity-guard scale to the survivor only (F1) | 1 |
+  | freeze `current_time` to 0 in the advection call | **equivalent — see below** |
 
-  Reverting the whole change turns 34 of 84 red. The file carries its own positive controls: that
+  Reverting the whole change turns 52 of 95 red. The file carries its own positive controls: that
   the states it calls smooth have no switching node (otherwise the exclusion silently makes every
   assertion vacuous), and that the two branch-selection rules actually part on the fixture
   (otherwise item 3's test proves nothing).
@@ -137,3 +140,62 @@
   comb. Measured false — tier 1 succeeds for every BC constructible in this repo, at a constant 9
   probes for every `Nx`, and nothing in-tree builds a banded-plus-something operator. The claim is
   struck rather than deleted, with the measurement in its place.
+
+- **Second review round — MERGE-OK, three findings, all taken.**
+
+  **F1, introduced.** The identity guard scaled its tolerance by the *survivor* while its error is
+  set by the *cancelled* terms. `forward`/`backward` recover a small number by cancelling `g_c`
+  against `(dx/2)·laplacian`, so the reconstruction's rounding floor is `eps ×` the cancelled
+  magnitude, while `atol` was `1e-9 × max(|g_up|, 1)` — and an inhomogeneous wall points both end
+  rows' gradient inward, so a large ghost never reaches `g_up` at all. Reproduced independently: at
+  `Nx=51` with a Dirichlet value of `1e6`, mismatch `4.172e-09` against an atol of `1.98e-09` with
+  the cancelled terms at `5e+07`. It escapes to the user — `compute_hjb_jacobian` is called outside
+  the `try` in `newton_hjb_step`. A false alarm rather than a missed detection: where it tripped,
+  `|forward − backward|` is 2× the cancelled magnitude while the error is `eps` times it, so the
+  branch measurement is immune by `1/eps` to the very error being flagged. The scale now includes
+  the cancelled magnitudes; pinned by `test_a_large_wall_value_does_not_trip_the_identity_guard`.
+
+  **F2 — my own correction was wrong, and wrong in the class it was documenting.** The
+  `[CORRECTED 2026-08-12]` note in `_extract_bands` claimed tier 1 succeeds "at a constant 9 probes
+  for every Nx" and that the fallback "is reached by no in-tree configuration". Both halves false.
+  Measured: 4 / 5 / 6 probes at `Nx = 3 / 4 / 5`, **12 at `Nx = 6`**, a flat **8** for every
+  `Nx ≥ 7`. At `Nx=6`, `edges` takes `{0,1,4,5}` leaving `interior=[2,3]`, whose length below 3
+  collapses `stride` to 1, so the single comb probes two *adjacent* columns and the control vector
+  correctly fails. `tests/conftest.py`'s `tiny_problem` is `Nx=6`, so it fires in-tree on every run.
+  The "9" was lifted from the first review, which had measured `Nx ∈ {9,21,101,401}`, and restated
+  as a universal without carrying its population — a verdict without its denominator, written into
+  the correction that was documenting exactly that. Now pinned by
+  `test_nx_6_degenerates_the_comb_and_that_is_recorded_rather_than_assumed_away`, which also asserts
+  the bands are still exact there (tier 2 is exact for any structure), so this records a cost of 8
+  extra applies on the smallest grid in the tree, not a defect.
+
+  **F3, nit.** `test_the_flat_state_the_repo_defaults_to_is_a_total_branch_degeneracy` cannot see
+  the advection block at all: at `u ≡ 0`, `max|dH/dp| = 0`, and review showed that replacing the
+  entire output of `_advection_bands` with zero bands changes the assembled Jacobian by exactly
+  `0.0` there. The docstring already said the true derivative is zero; only the *name* overclaimed.
+  Renamed to `test_the_flat_state_leaves_an_eps_tail_not_a_defect`, and the degeneracy is now a
+  **measured premise** (`assert max|dH_dp| == 0`) rather than an implication of the title. The tie
+  case it appeared to cover is covered for real by `piecewise_linear` and by
+  `test_a_tied_wall_row_...`, both tied in value with `dH/dp ≠ 0`.
+
+- **A coverage gap that turned out to be an equivalent mutation.** Review flagged that freezing
+  `current_time` to `0.0` in the `_advection_bands` call survives the whole suite, and named it the
+  cheapest gap to close. It is not a gap: a BC value enters the ghost as an affine **offset**, and
+  `_advection_bands` subtracts the zero-state, so the offset cancels by construction. Measured over
+  time-dependent Dirichlet, Neumann and Robin, both schemes: `max|bands(t=0) − bands(t=0.6)|` is
+  `0.0` to `1.4e-14`. Only `alpha`/`beta` could move a coefficient and no constructor makes those
+  time-dependent, so the threading **cannot** affect this function's output for any BC constructible
+  today. `test_a_time_dependent_boundary_reaches_the_advection_block` is kept anyway, because
+  `dH/dp` *does* vary with time and the end-to-end property (the Jacobian linearises the residual at
+  the time it was handed) is real. Its fixture carries the sign lesson: with a large **positive**
+  wall value, `central < 0` at both walls, upwinding selects the branch that never reads the ghost,
+  and the test would have asserted nothing while looking fine — caught by its own control.
+
+- **Five findings were refuted** by the second round's skeptics, including one filed as a blocker:
+  that the test advertised as pinning the `sign(central)` restatement pins nothing. Direct mutation
+  says otherwise — replacing the whole recovery with `took_backward = g_c >= 0` gives 1 failed, and
+  the single failure *is* that test; the proposed "safe" fix turns it red at `4.000e+01`. Also
+  refuted: that the probe deletion removed a real discriminator (two independent sweeps, 239,138 and
+  160,280 tied rows, zero disagreements — roughly 10× this PR's own 27,345), and that the
+  linearisation point is unpinned (behaviourally real, but `main` carries the identical unpinning at
+  `e3fdd10c:1005`, so pre-existing).

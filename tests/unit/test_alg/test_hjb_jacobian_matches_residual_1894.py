@@ -23,7 +23,7 @@ from mfgarchon.backends import create_backend
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc
 
 
 def _problem(sigma: float, nx: int) -> MFGProblem:
@@ -227,6 +227,61 @@ def test_the_comb_tier_actually_fires_for_a_banded_operator(nx):
             )
     finally:
         base_hjb._compute_laplacian_1d = original
+
+
+def test_nx_6_degenerates_the_comb_and_that_is_recorded_rather_than_assumed_away():
+    """Nx=6 is the one size where the comb cannot fire, and it is an in-tree fixture.
+
+    `edges` takes {0, 1, 4, 5}, leaving `interior = [2, 3]`; a length below 3 collapses `stride` to
+    1, so the single comb probes two ADJACENT columns, `pack` cannot attribute them, the control
+    vector fails and tier 2 runs. Not a BC effect -- it is arithmetic on the index sets, identical
+    under every BC.
+
+    Pinned because the test above parametrises nx over [9, 21, 201, 801] and a docstring in
+    `_extract_bands` generalised that population to "a constant 9 probes for every Nx", which is
+    false twice over: the count on that set is 8, and Nx=6 costs 12. `tests/conftest.py`'s
+    `tiny_problem` is Nx=6, so the fallback fires in-tree on every run. Found by review (#1899).
+
+    The bands are still exact at Nx=6 -- tier 2 is exact for any structure -- so this records a
+    cost, not a defect.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+
+    original = base_hjb._compute_laplacian_1d
+
+    def count_for(nx, bc):
+        calls = []
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        base_hjb._compute_laplacian_1d = counting
+        try:
+            bands = base_hjb._bc_laplacian_bands(nx, 1.0 / (nx - 1), bc, 0.0)
+        finally:
+            base_hjb._compute_laplacian_1d = original
+        return len(calls), bands
+
+    for bc in (no_flux_bc(dimension=1), dirichlet_bc(dimension=1, value=0.0), periodic_bc(dimension=1)):
+        n6, bands6 = count_for(6, bc)
+        n7, _ = count_for(7, bc)
+        assert n6 > 9, f"Nx=6 no longer degenerates ({n6} probes); the recorded cost is stale"
+        assert n7 <= 9, f"Nx=7 should still comb ({n7} probes)"
+
+        # ...and the answer is still right, which is why this is a cost and not a defect.
+        nx, dx = 6, 1.0 / 5
+        zero = base_hjb._compute_laplacian_1d(np.zeros(nx), dx, bc=bc, time=0.0)
+        reference = np.zeros((nx, nx))
+        for j in range(nx):
+            e = np.zeros(nx)
+            e[j] = 1.0
+            reference[:, j] = base_hjb._compute_laplacian_1d(e, dx, bc=bc, time=0.0) - zero
+        sub, diag, sup, extras = bands6
+        rebuilt = np.diag(diag) + np.diag(sub[1:], -1) + np.diag(sup[:-1], 1)
+        for i, j, v in extras:
+            rebuilt[i, j] += v
+        assert np.abs(rebuilt - reference).max() < 1e-12, "tier 2 did not extract Nx=6 exactly"
 
 
 @pytest.mark.parametrize("bc_name", ["no_flux", "periodic", "periodic_endpoint_inclusive"])

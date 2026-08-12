@@ -36,7 +36,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     compute_hjb_jacobian,
     compute_hjb_residual,
 )
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.hamiltonian import HEvalState, QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc, robin_bc
@@ -232,16 +232,34 @@ def test_a_switching_node_gets_a_clarke_element_not_an_average():
     assert nearest < 0.2 * coarse, f"gap does not shrink with the tilt: {coarse:.3e} -> {nearest:.3e}"
 
 
-def test_the_flat_state_the_repo_defaults_to_is_a_total_branch_degeneracy():
+def test_the_flat_state_leaves_an_eps_tail_not_a_defect():
     """`u_terminal = 0` is this repo's own default, and it makes every node a tie.
 
-    Forward and backward agree in value everywhere (both zero), so the value comparison decides
-    nothing at any row. The residual's advection term is quadratic in p, so the true derivative is
+    Read the name carefully: this pins the FINITE-DIFFERENCE tail, not the branch recovery. At this
+    state `dH/dp` is identically zero, so the advection block is multiplied away entirely -- review
+    (#1899) showed that replacing the whole output of `_advection_bands` with zero bands changes the
+    assembled Jacobian by exactly 0.0 here. No mutation confined to the branch recovery can move
+    this assertion, and the earlier name ("a total branch degeneracy") implied otherwise.
+
+    The tie case IS covered, by `piecewise_linear` in `test_every_row_linearises_the_residual` and
+    by `test_a_tied_wall_row_...`, both of which are tied in value with `dH/dp != 0`.
+
+    What this does test: the residual's advection term is quadratic in p, so the true derivative is
     zero and the two-sided FD leaves an O(eps) tail rather than a defect -- pinned by its scaling,
-    since a fixed tolerance here would pass over a genuinely wrong row of the same size.
+    since a fixed tolerance would pass over a genuinely wrong row of the same size.
     """
     problem, bc, m = _fixture("no_flux")
     u = np.zeros(NX)
+    # The premise, measured rather than implied by the name.
+    x_grid = problem.geometry.get_spatial_grid()
+    grad = _compute_gradient_array_1d(u, DX, bc=bc, upwind=True, time=0.0)
+    dh_dp = problem.hamiltonian_class.evaluate_dp(
+        HEvalState(x=x_grid, p=grad.reshape(-1, 1), m=np.asarray(m, dtype=float), t=0.0)
+    ).ravel()
+    assert np.abs(dh_dp).max() == 0.0, (
+        f"dH/dp is no longer identically zero here ({np.abs(dh_dp).max():.3e}); this test would then "
+        f"be reachable by the advection block and its name should say so"
+    )
     jac = _jacobian(problem, bc, m, u, True)
     residual = _residual(problem, bc, m, True)
     coarse = float(np.abs(jac - _fd_columns(residual, u, eps=1e-4)).max())
@@ -438,3 +456,87 @@ def test_the_jacobian_follows_a_changed_selection_rule_without_being_told(monkey
 
     err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
     assert err.max() < 1e-5, f"the Jacobian did not follow the rule change: {err.max():.3e}"
+
+
+@pytest.mark.parametrize("upwind", [False, True])
+def test_a_time_dependent_boundary_reaches_the_advection_block(upwind: bool):
+    """`time` is threaded into all three operator calls, and nothing varied it on this path.
+
+    Review (#1899) found that mutating `current_time` to 0.0 inside the `_advection_bands` call
+    survives the whole suite: every fixture in this file uses a time-independent BC, so the
+    threading was carried by no assertion. A BC whose value moves with `t` makes the wall rows
+    depend on it, and the Jacobian must linearise the residual *at that time*, not at zero.
+    """
+    # The SIGN matters, and the control below is what caught it. With a large POSITIVE wall value
+    # the ghost is far above the interior, so `central < 0` at both walls and upwinding selects the
+    # branch that never reads the ghost -- the upwind gradient is then genuinely independent of the
+    # BC value, and a test built on it would assert nothing while looking fine.
+    bc = dirichlet_bc(dimension=1, value=lambda t: -(2.0 + 5.0 * t))
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=bc)
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=10,
+        T=1.0,
+        sigma=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    m = np.exp(-10 * (X - 0.5) ** 2)
+    m /= m.sum() * DX
+    u = SMOOTH_STATES["bump_off_node"]
+    u_next = np.zeros(NX)
+    t = 0.6
+
+    # Control: the BC must actually differ between t=0 and t, or the test cannot see the threading.
+    at_zero = _compute_gradient_array_1d(u, DX, bc=bc, upwind=upwind, time=0.0)
+    at_t = _compute_gradient_array_1d(u, DX, bc=bc, upwind=upwind, time=t)
+    assert np.abs(at_zero - at_t).max() > 1.0, "the BC is not time-dependent on this fixture"
+
+    def residual(state):
+        return np.asarray(
+            compute_hjb_residual(
+                state, u_next, m, problem, 5, None, None, upwind, bc=bc, domain_bounds=BOUNDS, current_time=t
+            ),
+            dtype=float,
+        )
+
+    jac = compute_hjb_jacobian(
+        u, u, m, problem, 5, None, None, upwind, bc=bc, domain_bounds=BOUNDS, current_time=t
+    ).toarray()
+    assert float(np.abs(jac - _fd_columns(residual, u)).max()) < 1e-5
+
+
+@pytest.mark.parametrize("nx", [21, 51, 201])
+def test_a_large_wall_value_does_not_trip_the_identity_guard(nx: int):
+    """The guard must not raise on bands it is about to build exactly right.
+
+    `forward`/`backward` recover a small number by cancelling `g_c` against `(dx/2)*lap`, so the
+    reconstruction's rounding floor is set by those CANCELLED terms. Scaling the tolerance by
+    `g_up` alone made the guard fire whenever a wall value was large enough that the cancelled
+    magnitude exceeded it by ~1/eps: at Nx=51 with a Dirichlet value of 1e6, mismatch 4.172e-09
+    against an atol of 1.98e-09 while the cancelled terms were 5e+07. Found by review (#1899).
+
+    It escapes to the user: `compute_hjb_jacobian` is called OUTSIDE the `try` in
+    `newton_hjb_step`, so the ValueError propagates out of the solve.
+    """
+    dx = 1.0 / (nx - 1)
+    x = np.linspace(0.0, 1.0, nx)
+    u = x**2
+    for value in (7.0, 1.0e4, 1.0e6):
+        bc = dirichlet_bc(dimension=1, value=value)
+        lap_bands = _bc_laplacian_bands(nx, dx, bc, 0.0)
+        cancelled = float(np.abs(dx / 2 * _compute_laplacian_1d(u, dx, bc=bc, time=0.0)).max())
+        survivor = float(np.abs(_compute_gradient_array_1d(u, dx, bc=bc, upwind=True, time=0.0)).max())
+        # Control: this fixture must actually exercise the regime, or it asserts nothing.
+        if value == 1.0e6:
+            assert cancelled > 1e6 * max(survivor, 1.0), (
+                f"nx={nx}: cancelled {cancelled:.3e} vs survivor {survivor:.3e} -- no longer the trip regime"
+            )
+        _advection_bands(u, dx, bc, 0.0, True, lap_bands)  # must not raise
