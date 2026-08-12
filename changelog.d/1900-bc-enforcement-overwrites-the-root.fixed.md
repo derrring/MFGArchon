@@ -1,3 +1,14 @@
+> **[BLOCKED 2026-08-12 -- SUPERSEDED-BY: #1904]** The claim below that `pad_array_with_ghosts` is
+> an `O(h^2)` treatment which "owns" the no-flux condition is **false**. The ghost is `u[-1] = u[0]`,
+> cell-centred, on a node-centred grid: the wall Laplacian converges to **half** the true value
+> (0.4959 / 0.4990 / 0.499984 at Nx = 21 / 81 / 321, against 0.9918 -> 0.99997 for the node-centred
+> reflection). The evidence quoted -- that the two implementations approach the same limit -- is a
+> statement about their difference, not about either being right. This deletion removes a
+> first-order boundary correction that was compensating for an inconsistent wall equation, and
+> measurably worsens the solve (L2 6-24%, wall node 1.1-3.2x). It also regresses
+> `neumann_bc(value != 0)`, which the deleted branch covered and which no row of the table below
+> measures. Fix #1904 first; this fragment must not ship as written.
+
 - **The 1-D HJB inner Newton no longer overwrites the root it just found** (Issue #1900).
   `solve_hjb_timestep_newton` ran Newton to convergence and then rewrote the boundary values with a
   *different* discretisation of the same boundary condition, so the array it returned was not a root

@@ -1645,12 +1645,16 @@ def solve_hjb_timestep_newton(
             # tolerance it had just certified. `converged` is True there, so the non-convergence
             # warning is structurally blind to it.
             #
-            # Which of the two implementations owns the condition was measured, not assumed: over
-            # Nx in {41, 81, 161, 321, 641} at fixed t_idx, the enforced and un-enforced boundary
-            # values converge to the SAME limit with the gap falling 8.9e-03 -> 4.0e-05, a clean
-            # factor of ~3.9 per halving, i.e. O(h^2). The enforcement does not change what is
-            # converged to; it perturbs u[0] off the root. Dirichlet and Robin are the opposite
-            # case and keep their branches -- see the Dirichlet branch above.
+            # ~~Which of the two implementations owns the condition was measured ... O(h^2).~~
+            # [RETRACTED 2026-08-12 -- SUPERSEDED-BY: #1904] That measurement showed the two
+            # implementations approach the SAME LIMIT, which is a statement about their difference
+            # and not about either being right. The residual does NOT own this condition: the ghost
+            # is `u[-1] = u[0]`, a CELL-centred mirror on a NODE-centred grid, so the wall Laplacian
+            # converges to HALF the true value -- 0.4959 / 0.4990 / 0.49997 / 0.499984 at
+            # Nx = 21 / 81 / 161 / 321, against 0.9918 -> 0.99997 for the node-centred reflection
+            # `u[-1] = u[1]`. The wall equation is inconsistent, and this overwrite was compensating
+            # for it: deleting it destroys a first-order boundary correction and makes the answer
+            # measurably worse (L2 6-24%, wall node 1.1-3.2x). Fix #1904 first.
             #
             # Issue #1685's point survives: on the HJB side NO_FLUX *is* du/dn = 0, so it must not
             # fall through to the `else` and raise. It is a distinct condition only on the FP side.

@@ -12,14 +12,16 @@ residual was 4.338e-02.
 
 Three implementations of no-flux were in play, which is why this is #1894/#1896's class one layer up:
 
-    pad_array_with_ghosts          mirror ghost              O(h^2)   <- the residual; defines the problem
+    pad_array_with_ghosts          ghost = u[0]              O(h)     <- the residual; defines the problem
     enforce_neumann_value_nd       u[0] = (4u[1] - u[2])/3   O(h^2)   <- exists, called by no solver
     base_hjb (hand-rolled, 1-D)    u[0] = u[1] - g*dx        O(h)     <- deleted here
 
-Which one owns the condition was measured rather than argued: over Nx in {41, 81, 161, 321, 641} at
-fixed t_idx, enforced and un-enforced boundary values converge to the SAME limit with the gap falling
-8.9e-03 -> 4.0e-05, i.e. O(h^2). Dirichlet and Robin are the opposite case -- the residual only
-approaches the boundary value at O(h) there -- so their branches stay.
+~~O(h^2) ... the residual owns it~~ [RETRACTED 2026-08-12 -- SUPERSEDED-BY: #1904]. The ghost is
+CELL-centred on a NODE-centred grid, so the wall Laplacian converges to HALF the true value
+(0.4959 -> 0.499984 over Nx 21..321). The two implementations approaching the same limit says
+nothing about either being right, and this overwrite was the more accurate of the two. Dirichlet
+and Robin are a different case -- the residual only approaches a prescribed value at O(h) -- so
+their branches stay regardless.
 """
 
 from __future__ import annotations
