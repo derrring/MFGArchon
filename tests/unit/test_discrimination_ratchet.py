@@ -244,7 +244,7 @@ def test_a_long_excerpt_keeps_the_tail_and_says_what_it_dropped(td):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("index", range(7))
+@pytest.mark.parametrize("index", range(24))
 def test_every_mutation_anchor_still_matches_exactly_once(td, index):
     """A silently unapplied mutation reports zero kills and reads as total blindness.
 
@@ -261,7 +261,7 @@ def test_every_mutation_anchor_still_matches_exactly_once(td, index):
 
 def test_the_mutation_list_matches_the_parametrisation(td):
     """The parametrize range above is a literal; this is what notices when it drifts."""
-    assert len(td.MUTATIONS) == 7
+    assert len(td.MUTATIONS) == 24
 
 
 def test_the_end_of_run_guard_checks_the_mutated_files_only(td, monkeypatch):

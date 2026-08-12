@@ -153,6 +153,142 @@ MUTATIONS: list[Mutation] = [
             " ghost_depth=1, spacing=0.05)[0] == 3.0"
         ),
     ),
+    Mutation(
+        name="grid_spacing_uses_point_count",
+        path="mfgarchon/geometry/grids/tensor_grid.py",
+        old="                (bounds[i][1] - bounds[i][0]) / (self._Nx_points[i] - 1) if self._Nx_points[i] > 1 else 0.0",
+        new="                (bounds[i][1] - bounds[i][0]) / self._Nx_points[i] if self._Nx_points[i] > 1 else 0.0  # MUTATED: L/n instead of L/(n-1)",
+        owner='uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs["Dx"] reads it (:484), cell volume ',
+        verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11",
+    ),
+    Mutation(
+        name="grid_interval_count_reads_as_points",
+        path="mfgarchon/geometry/grids/tensor_grid.py",
+        old="            self._Nx_points: list[int] = [n + 1 for n in Nx]",
+        new="            self._Nx_points: list[int] = [n for n in Nx]  # MUTATED: Nx read as node count, not interval count",
+        owner='`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid\'s own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: "- Nx (intervals): Nx_points = Nx + 1" / "- Nx_points (points): Nx = Nx_points - 1". Line 220-221 normalises a s',
+        verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]",
+    ),
+    Mutation(
+        name="periodic_endpoint_convention_inverted",
+        path="mfgarchon/geometry/grids/tensor_grid.py",
+        old="        if abs(coords[-1] - hi) > 0.5 * abs(coords[-1] - coords[-2]):\n            return PeriodicGridConvention.ENDPOINT_EXCLUSIVE\n        return PeriodicGridConvention.ENDPOINT_INCLUSIVE",
+        new="        if abs(coords[-1] - hi) > 0.5 * abs(coords[-1] - coords[-2]):  # MUTATED: verdicts swapped\n            return PeriodicGridConvention.ENDPOINT_INCLUSIVE\n        return PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
+        owner='where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: "Derive',
+        verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
+    ),
+    Mutation(
+        name="m_initial_1d_counting_measure",
+        path="mfgarchon/core/mfg_problem.py",
+        old="            # 1D normalization (original)\n            dx = self._get_spacing() or 1.0",
+        new="            # 1D normalization (original)\n            dx = 1.0  # MUTATED: normaliser ignores the grid spacing (counting measure)",
+        owner="m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
+        verify="abs(float(np.sum(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).m_initial)) - 1.0) < 1e-9",
+    ),
+    Mutation(
+        name="mass_drift_reported_as_deviation_from_one",
+        path="mfgarchon/alg/numerical/coupling/fixed_point_iterator.py",
+        old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
+        new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: absolute deviation from 1.0",
+        owner='`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `max|mass(t)/mass(0) - 1|`, not deviation from a 1.0 target (#1672). Documented at `mfgarchon/utils/solver_result.py:41` -- "mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the" -- and argued a',
+        verify="MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.5",
+    ),
+    Mutation(
+        name="particle_mass_counting_measure",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
+        old="            dV = float(spacing) if spacing > 1e-14 else 1.0",
+        new="            dV = 1.0  # MUTATED: scalar spacing ignored, mass measured with the counting measure",
+        owner="The particle FP step measures total mass as `sum(density) * dV` with dV the grid volume element, and the KDE normalisation divides by it so the density on the grid integrates to 1 (`FPParticleSolver._compute_total_mass`, the scalar-spacing branch; consumed by `_normalize_density` at :823 and by the ",
+        verify="FPParticleSolver(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))), num_particles=10)._compute_total_mass(np.ones(4), 0.25) == 4.0",
+    ),
+    Mutation(
+        name="picard_criterion_reads_as_or",
+        path="mfgarchon/alg/numerical/coupling/fixed_point_utils.py",
+        old="    if max_rel_err < tol_picard and max_abs_err < tol_picard:",
+        new="    if max_rel_err < tol_picard or max_abs_err < tol_picard:  # MUTATED: conjunction -> disjunction",
+        owner="Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
+        verify="check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]",
+    ),
+    Mutation(
+        name="newton_residual_grid_scaling_dropped",
+        path="mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
+        old="    return float(np.linalg.norm(residual) * np.sqrt(dx))",
+        new="    return float(np.linalg.norm(residual))  # MUTATED: sqrt(dx) grid scaling dropped",
+        owner="The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
+        verify="hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0",
+    ),
+    Mutation(
+        name="godunov_branch_swap",
+        path="mfgarchon/operators/stencils/finite_difference.py",
+        old="    return xp.where(grad_central >= 0, grad_backward, grad_forward)",
+        new="    return xp.where(grad_central >= 0, grad_forward, grad_backward)  # MUTATED: Godunov branches swapped",
+        owner="Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
+        verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 2.0",
+    ),
+    Mutation(
+        name="upwind_jacobian_tiebreak_inverted",
+        path="mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
+        old="    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c >= 0)",
+        new="    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c < 0)  # MUTATED: locally-linear tie-break inverted",
+        owner="on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
+        verify="float(_advection_bands(np.zeros(5), 0.25, None, 0.0, True, _bc_laplacian_bands(5, 0.25, None, 0.0))[1][2]) == -4.0",
+    ),
+    Mutation(
+        name="fv_upwind_donor_cell_swapped",
+        path="mfgarchon/operators/differential/advection.py",
+        old="            flux = np.where(v_face >= 0.0, v_face * md[..., :-1], v_face * md[..., 1:])",
+        new="            flux = np.where(v_face >= 0.0, v_face * md[..., 1:], v_face * md[..., :-1])  # MUTATED: donor cell swapped",
+        owner="the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
+        verify="float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 2.0",
+    ),
+    Mutation(
+        name="periodic_wrap_endpoint_inverted",
+        path="mfgarchon/geometry/boundary/types.py",
+        old="    return 1 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 0",
+        new="    return 0 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 1  # MUTATED: wrap convention swapped",
+        owner='how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: "Every periodic wrap in the package is one of two expressions of this single number, which ',
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0",
+    ),
+    Mutation(
+        name="bc_uniform_dispatch_reads_as_mixed",
+        path="mfgarchon/geometry/boundary/applicator_fdm.py",
+        old="        if bc.is_uniform:",
+        new="        if False:  # MUTATED: uniform BC reads as mixed -- every BC takes the per-face path",
+        owner="PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 1.0",
+    ),
+    Mutation(
+        name="neumann_low_wall_flux_sign",
+        path="mfgarchon/geometry/boundary/applicator_fdm.py",
+        old="                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)",
+        new="                        buf[tuple(lo_ghost)] -= dx * v  # MUTATED: low wall reads du/dx instead of du/dn",
+        owner='inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and ghost = interior + dx*v, the same expression as the high wall (#1262). The line\'s own comment states the convention it replaced: "Issue #1262: was -= (du/dx sign), now += (du/dn sign)".',
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9",
+    ),
+    Mutation(
+        name="terminal_condition_pinned_at_initial_index",
+        path="mfgarchon/alg/numerical/coupling/fixed_point_utils.py",
+        old="    U[-1] = U_terminal",
+        new="    U[0] = U_terminal  # MUTATED: terminal condition re-imposed at t=0 instead of t=T",
+        owner="u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
+        verify="preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0",
+    ),
+    Mutation(
+        name="hjb_marches_forward_in_time",
+        path="mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
+        old="    for n_idx_hjb in range(Nt - 2, -1, -1):  # Solves for U_solution_this_picard_iter at t_idx_n = n_idx_hjb",
+        new="    for n_idx_hjb in range(0, Nt - 1):  # MUTATED: HJB marched forward from t=0, not backward from T",
+        owner='The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: "# BUG #7',
+        verify="float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0",
+    ),
+    Mutation(
+        name="fp_initial_condition_written_at_final_index",
+        path="mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py",
+        old="    M_solution[0] = m_initial_condition.copy()",
+        new="    M_solution[-1] = m_initial_condition.copy()  # MUTATED: forward march anchored at t=T, not t=0",
+        owner='The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: "- Forward time evolution: k=0 -> Nt-1". No issue n',
+        verify="float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0",
+    ),
 ]
 
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?:\s|$)", re.MULTILINE)
@@ -300,6 +436,24 @@ from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon import MFGProblem
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
+from mfgarchon.alg.numerical.coupling.fixed_point_utils import preserve_terminal_condition
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system
+from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _advection_bands, _bc_laplacian_bands
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import hjb_residual_norm
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import solve_hjb_system_backward
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import dirichlet_bc, periodic_bc, robin_bc
+from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import periodic_bc   # _VERIFY_PRELUDE line 301 currently imports only `neumann_bc` from this module; it must become `from mfgarchon.geometry.boundary import neumann_bc, periodic_bc`
+from mfgarchon.geometry.boundary.types import PeriodicGridConvention
+from mfgarchon.operators.differential.advection import AdvectionOperator
+from mfgarchon.operators.stencils.finite_difference import gradient_upwind
+from mfgarchon.types import NumericalScheme
 
 def _stub_problem(control_cost):
     class P:
