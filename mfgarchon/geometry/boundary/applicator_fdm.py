@@ -108,6 +108,8 @@ logger = get_logger(__name__)
 LegacyBoundaryConditions1D = BoundaryConditions1DFDM
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
 
 
@@ -887,6 +889,7 @@ class PreallocatedGhostBuffer:
         config: GhostCellConfig | None = None,
         geometry: object | None = None,
         periodic_convention: PeriodicGridConvention | None = None,
+        spacing: float | Sequence[float] | None = None,
     ):
         """
         Initialize pre-allocated ghost buffer.
@@ -934,8 +937,19 @@ class PreallocatedGhostBuffer:
         self._interior_slices = tuple(slice(ghost_depth, -ghost_depth) for _ in range(self._dimension))
 
         # Pre-compute grid spacing if domain_bounds provided
+        # Explicit spacing wins, because most callers have it and no `domain_bounds`. Without it
+        # `_grid_spacing` stayed None and every consumer below silently used dx = 1.0 -- so an
+        # inhomogeneous Neumann condition was applied as g/h instead of g, and the recovered du/dn
+        # diverged as 1/h (11.8 / 23.7 / 47.4 at Nx = 21 / 41 / 81 against a requested 2.0). #1904
         self._grid_spacing: tuple[float, ...] | None = None
-        if domain_bounds is not None:
+        if spacing is not None:
+            values = (float(spacing),) * self._dimension if np.isscalar(spacing) else tuple(float(v) for v in spacing)
+            if len(values) != self._dimension:
+                raise ValueError(
+                    f"spacing has {len(values)} entries for a {self._dimension}-D array; pass one per axis or a scalar"
+                )
+            self._grid_spacing = values
+        elif domain_bounds is not None:
             domain_bounds = np.atleast_2d(domain_bounds)
             spacing = []
             for d in range(self._dimension):
@@ -1761,6 +1775,7 @@ def pad_array_with_ghosts(
     time: float = 0.0,
     geometry: object | None = None,
     periodic_convention: PeriodicGridConvention | None = None,
+    spacing: float | Sequence[float] | None = None,
 ) -> NDArray[np.floating]:
     """
     Pad array with ghost cells based on boundary conditions.
@@ -1801,6 +1816,7 @@ def pad_array_with_ghosts(
         ghost_depth=ghost_depth,
         geometry=geometry,
         periodic_convention=periodic_convention,
+        spacing=spacing,
     )
     # Copy array into interior view and update ghosts
     buffer.interior[:] = array

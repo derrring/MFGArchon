@@ -372,28 +372,47 @@ def test_the_legacy_no_bc_path_linearises_its_own_residual_too(upwind: bool):
 def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch():
     """The fallback's hardest customer: the branch is well defined, and unmeasurable.
 
-    A linear state has zero Laplacian, so forward and backward agree in VALUE and the measurement
-    ties. In the interior that happens under every BC — `test_every_row_linearises_the_residual`
-    covers it with `piecewise_linear`. At a WALL it depends on the ghost rule, and the Robin
-    `alpha == beta` ghost is the case where it happens: `a = (2 + alpha/beta)/(2 - alpha/beta) = 3`
-    extends a linear state exactly, so `lap[0] = 0` too.
+    Forward and backward agree in VALUE wherever the Laplacian vanishes. At a WALL that depends on
+    the ghost rule, and the cleanest witness is a BC CONSISTENT WITH THE STATE: a linear state of
+    slope 2 under `neumann(du/dn = 2)` has its ghost continue the line exactly, so `lap[-1] = 0`
+    while `central[-1] = 2` -- nowhere near a switching node. The residual takes one specific
+    branch, the two ROWS differ, and choosing by the tie alone was worth `2.0000e+01`.
 
-    `central[0]` is nowhere near zero there, so this is NOT a switching node — the residual takes
-    one specific branch, the two ROWS differ, and choosing by the tie alone was worth `2.0000e+01`.
-    Found by review; no other BC in this file reaches it, which is why it is written out separately
-    rather than parametrised.
+    ~~Robin with alpha == beta~~ was the original witness (found by review of #1899). It stopped
+    tying once #1904 threaded the real grid spacing into the ghost buffer: that wall's tie was an
+    artefact of the `dx = 1.0` fallback, not a property of the BC. The precondition below is what
+    reported that, which is the whole reason it is asserted rather than assumed.
 
     Asserted as a measurement against the residual, not by inspecting which part of the recovery
     fired, so it survives a reimplementation of the branch recovery.
     """
-    problem, bc, m = _fixture("robin_alpha_eq_beta")
-    u = -1.0 * (X - DX / 2)
-    assert abs(_compute_laplacian_1d(u, DX, bc=bc, time=0.0)[0]) < 1e-9, "the wall row no longer ties"
+    bc = neumann_bc(dimension=1, value=2.0)
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=bc)
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=10,
+        T=1.0,
+        sigma=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    m = np.exp(-10 * (X - 0.5) ** 2)
+    m /= m.sum() * DX
+    u = 2.0 * X - 0.3
+
+    assert abs(DX * _compute_laplacian_1d(u, DX, bc=bc, time=0.0)[-1]) < 1e-12, "the wall row no longer ties"
     central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
-    assert abs(central[0]) > 0.1, f"row 0 is a switching node ({central[0]:.3e}); the test proves nothing"
+    assert abs(central[-1]) > 0.1, f"row -1 is a switching node ({central[-1]:.3e}); the test proves nothing"
 
     err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
-    assert err[0].max() < 1e-5, f"row 0: {err[0].max():.3e}"
+    assert err[-1].max() < 1e-5, f"row -1: {err[-1].max():.3e}"
 
 
 def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
