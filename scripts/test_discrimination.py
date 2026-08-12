@@ -144,7 +144,13 @@ MUTATIONS: list[Mutation] = [
     ),
 ]
 
-_FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?:\s|$)", re.MULTILINE)
+# Node IDs, not the first whitespace-delimited token. A parametrisation label may contain
+# spaces -- `test_x[a-V+f(m), lambda=2]` -- and `\S+?` cut it at the comma, so two committed
+# killer IDs were already truncated. Harmless while both sides truncated identically; not
+# harmless once these strings are compared as identities, because three params sharing a
+# prefix collapse into one set member. Found by review (#1903); the two affected entries were
+# repaired mechanically (each truncation resolved to exactly one collected node ID).
+_FAILED = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - |$)", re.MULTILINE)
 
 
 @dataclass
@@ -423,17 +429,25 @@ def _compare_killers(results: dict, matrix: dict) -> list[str]:
     Renames land here too, and that is the intended cost: the fix is to regenerate the
     baseline in the same commit, exactly as a count change requires. Silence would be the
     alternative, and silence is what this whole tool exists to remove.
+
+    Two details are deliberately unpinned because they change no verdict, only how it reads:
+    the held/moved word and the "+N more" truncation. Everything that decides pass or fail
+    is mutation-covered; see `tests/unit/test_discrimination_ratchet.py`.
     """
     problems: list[str] = []
     base = matrix.get("mutations", {})
+    compared = 0
     for name, was in sorted(base.items()):
         now = results.get(name)
         if now is None or now.get("status") == "INEFFECTIVE":
             continue  # already reported by the count ratchet, and its zeros mean nothing
         before = set(was.get("killed", ()))
-        after = set(now.get("failed", ()))
-        if not before and not after:
-            continue
+        # `main()` writes this under "killed" (see the results dict it builds). Reading
+        # "failed" here made `after` empty on every real run, so all 220 baseline killers
+        # reported as departed on an unchanged tree -- and the new tests could not see it,
+        # because their fixture fabricated "failed" too. Found by review (#1903).
+        after = set(now["killed"])
+        compared += 1
         departed = sorted(before - after)
         if departed:
             shown = ", ".join(t.rsplit("::", 1)[-1] for t in departed[:3])
@@ -443,12 +457,19 @@ def _compare_killers(results: dict, matrix: dict) -> list[str]:
                 f"{'held' if len(before) == len(after) else 'moved'}  [DISCRIMINATION LOST]: {shown}{more}"
             )
         arrived = sorted(after - before)
-        if arrived and not departed:
+        if arrived:
             shown = ", ".join(t.rsplit("::", 1)[-1] for t in arrived[:3])
             more = f" (+{len(arrived) - 3} more)" if len(arrived) > 3 else ""
             problems.append(
-                f"  {name}: {len(arrived)} new killer(s)  [IMPROVED -- record it in the baseline]: {shown}{more}"
+                f"  {name}: {len(arrived)} new killer(s)  "
+                f"[{'a rename? regenerate' if departed else 'IMPROVED -- record it in the baseline'}]: {shown}{more}"
             )
+    unchecked = sorted(set(results) - set(base))
+    if unchecked:
+        problems.append(
+            f"  killer sets compared for {compared} of {len(results)} mutation(s); "
+            f"NO matrix entry for: {', '.join(unchecked)} -- regenerate the matrix alongside the baseline"
+        )
     return problems
 
 
@@ -590,15 +611,26 @@ def main() -> None:
         matrix_path = baseline_path.parent / "discrimination_killmatrix.json"
         matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
         if matrix is None:
-            print(f"NOTE: {matrix_path.name} absent -- comparing counts only, killer sets unchecked.")
+            print(
+                f"CANNOT MEASURE: {matrix_path.name} is absent, so killer sets cannot be compared "
+                f"and this gate would silently degrade to counts. Exit 2 is 'could not measure', "
+                f"distinct from 0 (matches) and 1 (degraded) -- a green run with half the gate off "
+                f"is invisible in a three-hour log."
+            )
+            sys.exit(2)
         problems = compare_to_baseline(results, baseline, matrix)
         if problems:
             print("\nDiscrimination baseline mismatch:")
             print("\n".join(problems))
-            print("\nIf intended, regenerate with --write-baseline in the same commit.")
+            print(
+                "\nIf intended, regenerate BOTH in one sweep and commit them together:\n"
+                "  python scripts/test_discrimination.py --json scripts/discrimination_killmatrix.json "
+                "--write-baseline scripts/discrimination_baseline.json\n"
+                "--write-baseline alone leaves the matrix at the old run, which reddens "
+                "test_the_kill_matrix_is_committed_beside_the_baseline and costs a second sweep."
+            )
             sys.exit(1)
-        scope = "counts" if matrix is None else "counts and killer sets"
-        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations, {scope}).")
+        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations, counts and killer sets).")
         sys.exit(0)
 
     sys.exit(0 if effective else 1)
