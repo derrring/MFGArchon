@@ -230,20 +230,29 @@ def test_jacobian_byte_identical_to_inline_assembly():
     # subject. That subject is the inline `dp` form below (#1071); the diffusion half is now
     # tautological here and is pinned externally by
     # tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py.
-    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _bc_laplacian_bands
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _advection_bands, _bc_laplacian_bands
     from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
-    _sub, _diag, _sup, _extras = _bc_laplacian_bands(nx, dx, bc, 0.0)
+    lap_bands = _bc_laplacian_bands(nx, dx, bc, t)
+    _sub, _diag, _sup, _extras = lap_bands
     _diffusion = diffusion_from_volatility(sigma, kind="field")
     assert not _extras, "this fixture is not periodic; the reference has no place for wrap entries"
     J_D += -_diffusion * _diag
     J_L += -_diffusion * _sub
     J_U += -_diffusion * _sup
-    inv_dx = 1.0 / dx
-    backward = grad >= 0
-    J_D += dH_dp * np.where(backward, inv_dx, -inv_dx)
-    J_L += dH_dp * np.where(backward, -inv_dx, 0.0)
-    J_U += dH_dp * np.where(backward, 0.0, inv_dx)
+    # Advection from the same operator too, for the same reason and one issue later. This reference
+    # used to restate the one-sided pair and select it with `grad >= 0` on the UPWIND gradient --
+    # two defects at once, since the residual selects on the CENTRAL gradient (#1896 item 3) and the
+    # interior stencil is wrong at both walls (#1896 item 4). So it pinned those rather than its own
+    # subject. That subject is the inline `dp` form above (#1071); both stencil halves are now
+    # tautological here and are pinned externally by
+    # tests/unit/test_alg/test_hjb_jacobian_advection_1896.py against a finite difference of the
+    # residual.
+    _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(u_cur, dx, bc, t, True, lap_bands)
+    assert not _g_extras, "this fixture is not periodic; the reference has no place for wrap entries"
+    J_D += dH_dp * _g_diag
+    J_L += dH_dp * _g_sub
+    J_U += dH_dp * _g_sup
     j_l_roll = np.roll(J_L, -1)
     j_u_roll = np.roll(J_U, 1)
     ref = sparse.spdiags([j_l_roll, J_D, j_u_roll], [-1, 0, 1], nx, nx, format="csr").tocsr()
