@@ -142,6 +142,17 @@ MUTATIONS: list[Mutation] = [
         owner="absent BC defaults to clamp/absorbing (#1698)",
         verify="bc_type_to_geometric_operation(None) == 'reflect'",
     ),
+    Mutation(
+        name="ghost_spacing_ignored",
+        path="mfgarchon/geometry/boundary/applicator_fdm.py",
+        old="            self._grid_spacing = values",
+        new="            self._grid_spacing = None  # MUTATED: explicit spacing dropped, dx = 1.0 fallback",
+        owner="the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
+        verify=(
+            "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0),"
+            " ghost_depth=1, spacing=0.05)[0] == 3.0"
+        ),
+    ),
 ]
 
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?:\s|$)", re.MULTILINE)
@@ -287,6 +298,8 @@ import numpy as np
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry.boundary import neumann_bc
+from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
 
 def _stub_problem(control_cost):
     class P:

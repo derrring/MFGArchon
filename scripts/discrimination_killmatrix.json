@@ -197,6 +197,9 @@
     "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic": [
       "diffusion_scalar_2x"
     ],
@@ -631,6 +634,69 @@
     "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive": [
       "bc_noflux_reads_as_clamp"
     ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[161]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[21]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[41]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[81]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.01]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.05]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.5]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[0.05]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[scalar_or_sequence1]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[scalar_or_sequence2]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_fallback_would_diverge_which_is_why_the_spacing_is_threaded": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.01]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.05]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.5]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.01]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.05]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.5]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[-3.0-21]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[-3.0-81]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-21]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through": [
       "bc_noflux_reads_as_clamp"
     ],
@@ -882,6 +948,37 @@
       "seconds": 344.9,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
+    },
+    "ghost_spacing_ignored": {
+      "kill_count": 22,
+      "killed": [
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[161]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[21]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[41]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution[81]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.01]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.05]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.5]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[0.05]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[scalar_or_sequence1]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[scalar_or_sequence2]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_fallback_would_diverge_which_is_why_the_spacing_is_threaded",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.01]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.05]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[-1.5-0.5]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.01]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.05]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_laplacian_path_threads_its_own_spacings_parameter[3.0-0.5]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[-3.0-21]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[-3.0-81]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-21]",
+        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]"
+      ],
+      "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
+      "seconds": 150.6,
+      "status": "ok",
+      "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 3.0"
     },
     "optimal_control_sign": {
       "kill_count": 40,

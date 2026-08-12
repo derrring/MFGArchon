@@ -94,33 +94,68 @@ def test_zero_flux_is_unaffected_because_it_multiplies_the_spacing_by_zero():
 
 
 @pytest.mark.parametrize("nx", [21, 81])
-def test_the_solver_gradient_path_now_carries_the_spacing(nx: int):
-    """End-to-end through `_compute_gradient_array_1d`, which is what the residual calls."""
+@pytest.mark.parametrize("g", [2.0, -3.0])
+def test_the_solver_gradient_path_now_carries_the_spacing(nx: int, g: float):
+    """End-to-end through `_compute_gradient_array_1d`, which is what the residual calls.
+
+    The law, not a band: the ghost differs from the `g = 0` ghost by exactly `dx*g`, and the
+    centred difference divides by `2*dx`, so requesting `g` shifts the wall rows by exactly
+    `-g/2` and `+g/2` -- for ANY interior field and ANY spacing. A random field is used to
+    make that independence part of the assertion rather than a remark.
+
+    ~~`1e-9 < abs(tight[0] - loose[0]) < 5.0`~~ was the original form and pinned nothing
+    [CORRECTED 2026-08-13, found by independent review of #1906]: that band admits the correct
+    1.0, the halved 0.5, and the measured-but-wrong 1.2447 alike.
+    """
     dx = 1.0 / (nx - 1)
-    u = 0.5 * np.cos(2 * np.pi * np.linspace(0.0, 1.0, nx))
-    tight = _compute_gradient_array_1d(u, dx, bc=neumann_bc(dimension=1, value=2.0), upwind=False, time=0.0)
+    u = np.random.default_rng(7).normal(size=nx)
+    tight = _compute_gradient_array_1d(u, dx, bc=neumann_bc(dimension=1, value=g), upwind=False, time=0.0)
     loose = _compute_gradient_array_1d(u, dx, bc=neumann_bc(dimension=1, value=0.0), upwind=False, time=0.0)
-    # A non-zero requested flux must change the wall rows, and by an amount that does not blow up.
-    assert abs(tight[0] - loose[0]) < 5.0, f"nx={nx}: wall gradient moved by {abs(tight[0] - loose[0]):.3e}"
-    assert abs(tight[0] - loose[0]) > 1e-9, "the requested flux reached nothing"
+    assert tight[0] - loose[0] == pytest.approx(-g / 2, abs=1e-12), f"nx={nx}, g={g}: low wall"
+    assert tight[-1] - loose[-1] == pytest.approx(g / 2, abs=1e-12), f"nx={nx}, g={g}: high wall"
 
 
-def test_robin_reads_the_same_spacing():
-    """Robin used the fallback too, in the denominator `alpha + beta/dx`."""
-    u = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    bc = robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.5)
-    coarse = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=0.5)
-    fine = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=0.01)
-    assert coarse[0] != fine[0], "Robin ghosts are spacing-independent; the threading did not reach it"
+@pytest.mark.parametrize("dx", [0.5, 0.05, 0.01])
+def test_robin_reads_the_same_spacing(dx: float):
+    """Robin used the fallback too, in the denominator `alpha + beta/dx`.
+
+    The law: the ghost is the exact algebraic solution of the condition the applicator writes,
+    `alpha*(u_g + u_i)/2 + beta*(u_g - u_i)/dx*outward_sign = g`, FOR THE SPACING GIVEN. Assert
+    that residual at both walls. It is machine-zero when the spacing is threaded and O(1/dx)
+    when the buffer substitutes 1.0 -- 32 and 105 at dx = 0.05 and 0.01 on this fixture.
+
+    ~~`coarse[0] != fine[0]`~~ was the original form and pinned nothing [CORRECTED 2026-08-13,
+    found by independent review of #1906]: two spacings give different ghosts under any
+    denominator whatever, and it probed only index 0.
+
+    NOTE the sign convention this asserts is the applicator's own, `outward_sign = -1` at the
+    low wall, which #1907 reports is one factor too many there. This test pins the ghost against
+    the equation the code currently writes; it is deliberately NOT the oracle for that defect,
+    and it will need re-pointing when #1907 lands.
+    """
+    u = np.random.default_rng(7).normal(size=7)
+    alpha, beta, g = 1.0, 1.0, 0.5
+    bc = robin_bc(dimension=1, alpha=alpha, beta=beta, value=g)
+    p = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=dx)
+    low = alpha * (p[0] + p[1]) / 2 + beta * (p[0] - p[1]) / dx * (-1.0) - g
+    high = alpha * (p[-1] + p[-2]) / 2 + beta * (p[-1] - p[-2]) / dx * (+1.0) - g
+    assert low == pytest.approx(0.0, abs=1e-12), f"dx={dx}: Robin low wall residual {low:.3e}"
+    assert high == pytest.approx(0.0, abs=1e-12), f"dx={dx}: Robin high wall residual {high:.3e}"
 
 
-def test_the_laplacian_path_threads_its_own_spacings_parameter():
-    """`laplacian_with_bc` already took `spacings` and dropped it at the padding call."""
-    u = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    bc = neumann_bc(dimension=1, value=3.0)
-    coarse = _compute_laplacian_1d(u, 0.5, bc=bc, time=0.0)
-    fine = _compute_laplacian_1d(u, 0.01, bc=bc, time=0.0)
-    # The wall row must respond to the spacing; interior rows scale as 1/h^2 either way.
-    assert not np.allclose(coarse[0] * 0.5**2, fine[0] * 0.01**2), (
-        "the wall Laplacian is spacing-independent, so the flux term is still applied as g/h"
-    )
+@pytest.mark.parametrize("h", [0.5, 0.05, 0.01])
+@pytest.mark.parametrize("g", [3.0, -1.5])
+def test_the_laplacian_path_threads_its_own_spacings_parameter(h: float, g: float):
+    """`laplacian_with_bc` already took `spacings` and dropped it at the padding call.
+
+    The law: the wall row is `(u[1] - 2*u[0] + ghost)/h^2` with `ghost = u[0] + h*g`, so
+    `lap[0]*h^2 - (u[1] - u[0])` is exactly `h*g` -- for any field and any h. Under the
+    `dx = 1.0` fallback the ghost carries `1.0*g` instead and the identity misses by `(1-h)*g`.
+
+    ~~`not np.allclose(coarse[0]*0.5**2, fine[0]*0.01**2)`~~ was the original form and pinned
+    nothing [CORRECTED 2026-08-13, found by independent review of #1906]: it asserts only that
+    the wall row is not spacing-independent, which almost any wrong formula also satisfies.
+    """
+    u = np.random.default_rng(7).normal(size=6)
+    lap = _compute_laplacian_1d(u, h, bc=neumann_bc(dimension=1, value=g), time=0.0)
+    assert lap[0] * h * h - (u[1] - u[0]) == pytest.approx(h * g, abs=1e-12), f"h={h}, g={g}: wall row"

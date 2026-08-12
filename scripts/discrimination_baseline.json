@@ -35,6 +35,12 @@
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
+    "ghost_spacing_ignored": {
+      "kill_count": 22,
+      "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
+      "status": "ok",
+      "_measured_at": "6138 collected at e84be818; the other six counts predate it and were not re-measured"
+    },
     "optimal_control_sign": {
       "kill_count": 40,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
