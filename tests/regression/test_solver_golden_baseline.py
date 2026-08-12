@@ -34,6 +34,14 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: both fixtures were regenerated for #1894 on 2026-08-11. The Jacobian's diffusion block was
+# restating the interior three-point stencil while the residual applies a BC-aware Laplacian, so
+# both boundary rows were wrong by an amount proportional to sigma^2. The RESIDUAL is untouched, so
+# the root these fixtures approach is unchanged; what moved is where a deliberately truncated
+# iteration (max_iterations=3) stands after three sweeps with a corrected Newton step. Measured:
+# 92 of 231 elements, max absolute difference 3.49e-08. The correctness argument is external -- a
+# directional finite difference of the residual, in
+# tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py.
 # NOTE: both fixtures were regenerated for #1745. The inner HJB Newton used to declare
 # convergence on the STEP norm and never checked the residual, so the previous baselines pinned
 # a less-converged answer. Measured at THIS configuration, before and after:
