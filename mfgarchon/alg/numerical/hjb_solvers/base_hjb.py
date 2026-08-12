@@ -819,8 +819,17 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
         probe[cols] = 1.0
         return _compute_laplacian_1d(probe, dx, bc=bc, time=time) - zero
 
-    def pack(columns) -> tuple:
-        """Bands plus off-band (row, col, value) triples, from a map of column index -> its column."""
+    def pack(columns, isolated) -> tuple:
+        """Bands plus off-band (row, col, value) triples, from a map of column index -> its column.
+
+        Off-band entries are read only from columns in `isolated` -- those probed alone. A comb
+        response is nonzero near EVERY tooth, so attributing its far rows to each tooth mints one
+        spurious entry per (tooth, other tooth's row) pair: 240 of them at Nx=21 under no-flux,
+        where the true operator has none. The control vector then always failed and tier 2 always
+        ran, making the whole O(Nx) tier dead code -- measured as `Nx + 9` probes for every Nx and
+        every BC. A comb can see the three band positions and nothing else; if a comb column really
+        does carry an off-band entry, the control catches it and tier 2 runs, which is the contract.
+        """
         sub, diag, sup = np.zeros(Nx), np.zeros(Nx), np.zeros(Nx)
         extras: list[tuple[int, int, float]] = []
         for j, col in columns.items():
@@ -830,6 +839,8 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
                 sup[j - 1] = col[j - 1]
             if j + 1 < Nx:
                 sub[j + 1] = col[j + 1]
+            if j not in isolated:
+                continue
             for i in np.nonzero(np.abs(col) > tol)[0]:
                 if abs(int(i) - j) > 1:
                     extras.append((int(i), j, float(col[i])))
@@ -865,7 +876,7 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
             for j in cols:
                 columns[j] = shared
 
-    packed = pack(columns)
+    packed = pack(columns, isolated=set(edges))
     if np.allclose(reconstruct(*packed, check), want, rtol=1e-9, atol=1e-9 * scale):
         return packed
 
@@ -873,7 +884,7 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
     # terms and Robin/adjoint-consistent BCs (#574) all produce operators the comb cannot attribute.
     # Reached only when tier 1's control fails, so the cost is paid only where it is needed; the FD
     # fallback assembly is already O(Nx^2), and the analytic path keeps O(Nx) wherever tier 1 holds.
-    packed = pack({j: column([j]) for j in range(Nx)})
+    packed = pack({j: column([j]) for j in range(Nx)}, isolated=set(range(Nx)))
     if not np.allclose(reconstruct(*packed, check), want, rtol=1e-9, atol=1e-9 * scale):
         raise ValueError(
             "the BC-aware Laplacian is not linear in U, so it has no Jacobian to extract (max "

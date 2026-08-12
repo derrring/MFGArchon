@@ -192,3 +192,77 @@ def test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian():
         assert dense[i, j] == pytest.approx(expected, rel=1e-9), (
             f"wrap entry ({i},{j}) = {dense[i, j]} != {expected}; it does not carry row {i}'s diffusion"
         )
+
+
+@pytest.mark.parametrize("nx", [9, 21, 201, 801])
+def test_the_comb_tier_actually_fires_for_a_banded_operator(nx):
+    """The O(Nx) tier must be reached, not merely present.
+
+    It was not. `pack` attributed a comb response to every tooth, and a comb is nonzero near EVERY
+    tooth, so each tooth received one spurious off-band entry per other tooth's row -- 240 of them
+    at Nx=21 under no-flux, where the true operator has none. The control vector then failed every
+    time and the O(Nx^2) fallback always ran: probe count was `Nx + 9` for every Nx and every BC,
+    and the whole two-tier design was dead code. The full suite could not see it, because nothing
+    observed which tier ran; it cost 1311 ms at Nx=1601 against 3.5 ms once fixed.
+
+    Counting probes is the only observable that distinguishes the tiers, so it is what this pins.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+
+    original = base_hjb._compute_laplacian_1d
+    calls = []
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    base_hjb._compute_laplacian_1d = counting
+    try:
+        for bc in (no_flux_bc(dimension=1), periodic_bc(dimension=1)):
+            calls.clear()
+            base_hjb._bc_laplacian_bands(nx, 1.0 / (nx - 1), bc, 0.0)
+            assert len(calls) <= 9, (
+                f"nx={nx}, {type(bc).__name__}: {len(calls)} probes -- the comb tier did not fire, "
+                f"so the O(Nx^2) fallback ran on a banded operator"
+            )
+    finally:
+        base_hjb._compute_laplacian_1d = original
+
+
+@pytest.mark.parametrize("bc_name", ["no_flux", "periodic", "periodic_endpoint_inclusive"])
+def test_extracted_bands_equal_a_column_by_column_reference(bc_name):
+    """External oracle for the extraction: apply the operator to every basis vector.
+
+    The comb tier is a shortcut; this is the thing it is a shortcut for, computed without any comb.
+    Both periodic conventions are covered because the wrap position differs between them
+    (exclusive at (0, Nx-1), ENDPOINT_INCLUSIVE at (0, Nx-2)) and that difference caused three
+    successive wrong structural assumptions while #1894 was being written.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import base_hjb
+
+    nx = 21
+    dx = 1.0 / (nx - 1)
+    if bc_name == "no_flux":
+        bc = no_flux_bc(dimension=1)
+    elif bc_name == "periodic":
+        bc = periodic_bc(dimension=1)
+    else:
+        bc = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1)
+        ).boundary_conditions
+
+    zero = base_hjb._compute_laplacian_1d(np.zeros(nx), dx, bc=bc, time=0.0)
+    reference = np.column_stack([base_hjb._compute_laplacian_1d(e, dx, bc=bc, time=0.0) - zero for e in np.eye(nx)])
+
+    sub, diag, sup, extras = base_hjb._bc_laplacian_bands(nx, dx, bc, 0.0)
+    got = np.diag(diag)
+    for i in range(1, nx):
+        got[i, i - 1] = sub[i]
+    for i in range(nx - 1):
+        got[i, i + 1] = sup[i]
+    for i, j, value in extras:
+        got[i, j] += value
+
+    assert np.abs(got - reference).max() == pytest.approx(0.0, abs=1e-12), (
+        f"{bc_name}: extracted bands differ from a column-by-column probe by {np.abs(got - reference).max():.3e}"
+    )
