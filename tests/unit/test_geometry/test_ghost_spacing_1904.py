@@ -3,10 +3,18 @@
 `PreallocatedGhostBuffer` derived its spacing only from `domain_bounds`, and almost no caller
 passes those: `pad_array_with_ghosts(..., geometry=None)` left `_grid_spacing = None` and every
 consumer read `dx = 1.0`. An inhomogeneous Neumann condition was therefore applied as `g/h`
-instead of `g`, so the recovered `du/dn` DIVERGED as `1/h` -- measured through the solver's own
-gradient path at a requested 2.0:
+instead of `g`. Reading the flux back off the ghost, `-(padded[1] - padded[0])/dx`, returned
+exactly `g/h` for a requested `g = 2` -- and does so for any state, because that expression is the
+algebraic inverse of the ghost write:
 
-    Nx = 21 / 41 / 81   ->   11.83 / 23.71 / 47.44
+    Nx = 21 / 41 / 81 / 161   ->   40 / 80 / 160 / 320      before
+                              ->   2.0 at every Nx          after
+
+So what the assertions below certify is that the ghost ENCODES what the caller asked for, not that
+any derivative the solver goes on to form is exact. It is not: the centred wall gradient the HJB
+path builds converges to `g/2 - u'(wall)/2` at O(h) -- for `u = x^2 - 2x` under `neumann(2.0)`,
+1.9750 / 1.9875 / 1.9938 at Nx = 21 / 41 / 81 against the true 2.0. That gap is the node-centring
+half of #1904 and is not what this file measures.
 
 Robin read the same fallback, in the denominator `alpha + beta/dx`.
 

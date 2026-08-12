@@ -374,14 +374,26 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
 
     Forward and backward agree in VALUE wherever the Laplacian vanishes. At a WALL that depends on
     the ghost rule, and the cleanest witness is a BC CONSISTENT WITH THE STATE: a linear state of
-    slope 2 under `neumann(du/dn = 2)` has its ghost continue the line exactly, so `lap[-1] = 0`
-    while `central[-1] = 2` -- nowhere near a switching node. The residual takes one specific
-    branch, the two ROWS differ, and choosing by the tie alone was worth `2.0000e+01`.
+    slope -2 under `neumann(du/dn = 2)` has its ghost continue the line exactly at the LOW wall, so
+    `lap[0] = 0` while `central[0] = -2` -- nowhere near a switching node. The residual takes one
+    specific branch, the two ROWS differ, and choosing by the tie alone is worth `4.0000e+01` here.
+
+    The SIGN of `central` is the whole point, and it is asserted below rather than assumed. On a
+    tied row `|g_up - backward| <= |g_up - forward|` holds by construction, so the tie-agnostic
+    rule always answers "backward"; `g_c >= 0` can only disagree with it where `central < 0`. A
+    witness with `central > 0` passes under both rules and measures nothing.
 
     ~~Robin with alpha == beta~~ was the original witness (found by review of #1899). It stopped
     tying once #1904 threaded the real grid spacing into the ghost buffer: that wall's tie was an
     artefact of the `dx = 1.0` fallback, not a property of the BC. The precondition below is what
     reported that, which is the whole reason it is asserted rather than assumed.
+
+    ~~a slope +2 state read at the HIGH wall~~ replaced it and was itself non-discriminating
+    [CORRECTED 2026-08-13, found by independent review of #1906]: `central[-1] = +2 > 0`, the half
+    on which the two rules agree, so deleting the tie-break left this test green. What reddened
+    instead were four `test_every_row_linearises_the_residual[piecewise_linear-True-*]` cases,
+    interior rows that pre-date #1896 -- a real kill count attached to the wrong claim. Slope -2 at
+    the low wall is the same construction moved onto the half where the rules part.
 
     Asserted as a measurement against the residual, not by inspecting which part of the recovery
     fired, so it survives a reimplementation of the branch recovery.
@@ -405,14 +417,15 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
     )
     m = np.exp(-10 * (X - 0.5) ** 2)
     m /= m.sum() * DX
-    u = 2.0 * X - 0.3
+    u = -2.0 * X + 0.3
 
-    assert abs(DX * _compute_laplacian_1d(u, DX, bc=bc, time=0.0)[-1]) < 1e-12, "the wall row no longer ties"
+    assert abs(DX * _compute_laplacian_1d(u, DX, bc=bc, time=0.0)[0]) < 1e-12, "the wall row no longer ties"
     central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
-    assert abs(central[-1]) > 0.1, f"row -1 is a switching node ({central[-1]:.3e}); the test proves nothing"
+    assert abs(central[0]) > 0.1, f"row 0 is a switching node ({central[0]:.3e}); the test proves nothing"
+    assert central[0] < 0, f"central[0] = {central[0]:.3e} > 0; both branch rules agree there"
 
     err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
-    assert err[-1].max() < 1e-5, f"row -1: {err[-1].max():.3e}"
+    assert err[0].max() < 1e-5, f"row 0: {err[0].max():.3e}"
 
 
 def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
