@@ -39,3 +39,33 @@
   `feedback_net_negative_test_mass` already prescribed: the correct form of net-negative is "add
   less", not "hunt for deletions", and a kill count cannot prove a test is removable, only fail to
   falsify it.
+
+- **A second quality number beside it, and the deletion PR it was meant to justify does not exist.**
+  `scripts/check_assertion_strength.py` counts tests whose assertions a well-formed **wrong** answer
+  would satisfy — every assertion being `is not None` / `isfinite` / `.shape` / `len` / `isinstance`,
+  or none at all:
+
+  ```
+  assertion strength : 1137 of 5513 collected tests assert only what a well-formed WRONG answer
+                       satisfies = 20.6%
+  ```
+
+  This is a **structural** selector, and that is the point. "Inert under the six convention
+  mutations" is not: it selects for *tests something else*, which is why all five tests #1715 named
+  that way are genuine cross-path pins. An assertion that only checks well-formedness cannot
+  separate right from wrong for **any** input.
+
+- **It is a review queue, not a delete list, and the attempt to treat it as one is the finding.**
+  Reading the assertion-free subset by hand: of 115, **37 are capability cells** ("can this
+  configuration run at all" — a close-out `CLAUDE.md` explicitly allows), **15 are negative controls
+  for fail-loud guards** (`test_x_accepts_supported` next to `test_x_fails_loud_on_unsupported`;
+  without it the guard could reject everything and its `pytest.raises` siblings would still pass),
+  and **10 are dependency probes**. All three are assertion-free *by nature*. A promised
+  115-deletion PR was withdrawn on that evidence.
+
+- **The scanner needed the discipline it enforces**, and did not get it first time. Three defects
+  found by reading its own output: it counted `def test_helper()` **nested inside** a test, which
+  pytest never collects (three files contributed duplicate rows); it omitted `pytest.raises` and
+  `pytest.warns` from the strong list, so every fail-loud guard in the tree was flagged; and the
+  first count (21.9%) was taken over that inflated population. Corrected to **20.6%**, validated on
+  9 control cases — 4 known-weak flagged, 5 known-strong kept — and the controls are committed.

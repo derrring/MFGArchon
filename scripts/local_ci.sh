@@ -310,6 +310,7 @@ fi
 # so the gating lives in the weekly `test_discrimination.py --check-baseline` tier. (#1901)
 if [[ $FAST -eq 0 ]]; then
   "$PY" scripts/report_discrimination.py || true
+  "$PY" scripts/check_assertion_strength.py || true
 fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
