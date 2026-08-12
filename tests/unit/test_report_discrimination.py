@@ -22,7 +22,7 @@ _spec.loader.exec_module(rd)
 
 def test_it_reports_the_denominator_and_the_commit(capsys, monkeypatch):
     """A fraction without its population is the defect this line exists to avoid printing."""
-    monkeypatch.setattr(rd, "_current_collected", lambda: 5872)
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: 5872)
     rd.main()
     out = capsys.readouterr().out
     baseline = json.loads(rd.BASELINE.read_text())
@@ -35,7 +35,7 @@ def test_it_reports_the_denominator_and_the_commit(capsys, monkeypatch):
 
 def test_a_moved_suite_size_is_called_stale(capsys, monkeypatch):
     """The whole point: the recorded fraction silently ages as the suite grows."""
-    monkeypatch.setattr(rd, "_current_collected", lambda: 9999)
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: 9999)
     rd.main()
     out = capsys.readouterr().out
     assert "STALE" in out, f"a moved denominator was not reported: {out!r}"
@@ -45,13 +45,13 @@ def test_a_moved_suite_size_is_called_stale(capsys, monkeypatch):
 def test_an_unmoved_suite_size_is_not_called_stale(capsys, monkeypatch):
     """Control: the warning must not fire when nothing moved, or it is noise."""
     then = json.loads(rd.BASELINE.read_text())["_measured_at"]["collected"]
-    monkeypatch.setattr(rd, "_current_collected", lambda: then)
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: then)
     rd.main()
     assert "STALE" not in capsys.readouterr().out
 
 
 def test_an_undeterminable_suite_size_says_so_rather_than_guessing(capsys, monkeypatch):
-    monkeypatch.setattr(rd, "_current_collected", lambda: None)
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: None)
     rd.main()
     assert "unknown" in capsys.readouterr().out
 
@@ -63,7 +63,7 @@ def test_a_convention_no_test_notices_is_named(capsys, monkeypatch, tmp_path):
     fake = tmp_path / "b.json"
     fake.write_text(json.dumps(baseline))
     monkeypatch.setattr(rd, "BASELINE", fake)
-    monkeypatch.setattr(rd, "_current_collected", lambda: baseline["_measured_at"]["collected"])
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: baseline["_measured_at"]["collected"])
     rd.main()
     out = capsys.readouterr().out
     assert "a_convention_nothing_notices" in out, f"an uncovered convention was not named: {out!r}"
@@ -115,3 +115,61 @@ def test_an_unparseable_summary_returns_none_rather_than_a_guess(bad):
         assert rd._current_collected() is None
     finally:
         subprocess.run = real
+
+
+# --- the printed line itself, which 18 mutations walked through (#1905) -------------------
+
+
+def test_the_printed_line_carries_the_numerator_the_denominator_and_the_percentage(capsys, monkeypatch):
+    """Every one of these was movable without a test noticing: the numerator could switch from the
+    union to the sum (212 -> 220), the percentage could be halved, the convention count could read
+    99, and `of {then} tests` could be dropped entirely -- taking the denominator with it."""
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: 5872)
+    rd.main()
+    out = capsys.readouterr().out
+    baseline = json.loads(rd.BASELINE.read_text())
+    matrix = json.loads((rd.BASELINE.parent / "discrimination_killmatrix.json").read_text())
+    union = {t for e in matrix["mutations"].values() for t in e.get("killed", ())}
+    then = baseline["_measured_at"]["collected"]
+    assert f"{len(union)} of {then}" in out, f"numerator/denominator pair missing from: {out!r}"
+    assert f"{len(baseline['mutations'])} conventions" in out, "the convention count is wrong or absent"
+    assert f"{100 * len(union) / then:.2f}%" in out, "the percentage does not match the artifacts"
+    # The union, not the sum: 8 tests kill more than one mutation, so they differ.
+    assert sum(v["kill_count"] for v in baseline["mutations"].values()) != len(union), (
+        "sum and union coincide on this baseline, so this test cannot tell them apart"
+    )
+    assert f"{sum(v['kill_count'] for v in baseline['mutations'].values())} of" not in out
+
+
+def test_the_staleness_check_uses_the_same_exclusion_the_baseline_recorded(monkeypatch):
+    """The baseline ignores its own self-test file; comparing against a count that includes it
+    reported +5.0% where the like-for-like figure is +4.6% -- a verdict over a denominator
+    different from the thing it judges, inside the instrument built to report exactly that."""
+    seen = {}
+
+    class _Fake:
+        stdout = "6141/6551 tests collected (410 deselected) in 1.7s"
+
+    def spy(*args, **kwargs):
+        seen["argv"] = args[0]
+        return _Fake()
+
+    import subprocess
+
+    real = subprocess.run
+    subprocess.run = spy
+    try:
+        excluded = json.loads(rd.BASELINE.read_text())["_measured_at"]["excluded"]
+        rd._current_collected(excluded)
+    finally:
+        subprocess.run = real
+    assert "--ignore" in seen["argv"], "the exclusion is not passed to the collect"
+    assert excluded in seen["argv"], f"{excluded} not in {seen['argv']}"
+
+
+def test_a_shrinking_suite_is_also_called_stale(capsys, monkeypatch):
+    """`now != then`, not `now > then`: a suite that shrank has moved just as much."""
+    then = json.loads(rd.BASELINE.read_text())["_measured_at"]["collected"]
+    monkeypatch.setattr(rd, "_current_collected", lambda *a, **k: then - 500)
+    rd.main()
+    assert "STALE" in capsys.readouterr().out

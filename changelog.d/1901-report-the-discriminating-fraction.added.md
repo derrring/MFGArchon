@@ -46,26 +46,63 @@
   or none at all:
 
   ```
-  assertion strength : 1137 of 5513 collected tests assert only what a well-formed WRONG answer
-                       satisfies = 20.6%
+  assertion strength : 1036 of 5369 collected tests assert only what a well-formed WRONG answer
+                       satisfies = 19.3%
   ```
 
-  This is a **structural** selector, and that is the point. "Inert under the six convention
-  mutations" is not: it selects for *tests something else*, which is why all five tests #1715 named
-  that way are genuine cross-path pins. An assertion that only checks well-formedness cannot
-  separate right from wrong for **any** input.
+  A **structural** selector, and that is the point. "Inert under the six convention mutations" is
+  not: it selects for *tests something else*, which is why all five tests #1715 named that way are
+  genuine cross-path pins. An assertion that only checks well-formedness cannot separate right from
+  wrong for **any** input.
 
-- **It is a review queue, not a delete list, and the attempt to treat it as one is the finding.**
-  Reading the assertion-free subset by hand: of 115, **37 are capability cells** ("can this
-  configuration run at all" — a close-out `CLAUDE.md` explicitly allows), **15 are negative controls
-  for fail-loud guards** (`test_x_accepts_supported` next to `test_x_fails_loud_on_unsupported`;
-  without it the guard could reject everything and its `pytest.raises` siblings would still pass),
-  and **10 are dependency probes**. All three are assertion-free *by nature*. A promised
+- **It is a review queue, not a delete list.** Of the 71 assertion-free tests: **32 are negative
+  controls for fail-loud guards** (`test_x_accepts_supported` beside `test_x_fails_loud_on_unsupported`
+  — without it the guard could reject everything and its `pytest.raises` siblings would still pass),
+  **24 are capability cells** ("can this configuration run at all", a close-out `CLAUDE.md` allows),
+  and **15 have no stated purpose**. The first two are assertion-free *by nature*. A promised
   115-deletion PR was withdrawn on that evidence.
 
-- **The scanner needed the discipline it enforces**, and did not get it first time. Three defects
-  found by reading its own output: it counted `def test_helper()` **nested inside** a test, which
-  pytest never collects (three files contributed duplicate rows); it omitted `pytest.raises` and
-  `pytest.warns` from the strong list, so every fail-loud guard in the tree was flagged; and the
-  first count (21.9%) was taken over that inflated population. Corrected to **20.6%**, validated on
-  9 control cases — 4 known-weak flagged, 5 known-strong kept — and the controls are committed.
+  ~~37 capability cells / 15 negative controls / 10 dependency probes, of 115~~ **[CORRECTED]** —
+  that reading was taken over the *superseded* population, before the classifier defects below were
+  fixed, and it inverted the two largest buckets. Re-derived above over the committed scan.
+
+- **The scanner needed the discipline it enforces, twice.** Three defects found by reading its own
+  output: it counted `def test_helper()` **nested inside** a test, which pytest never collects; it
+  omitted `pytest.raises`/`pytest.warns`, so **every fail-loud guard in the tree** was flagged; and
+  the first figure (21.9%) was taken over that inflated population. Two more found by review:
+
+  - **The frozen-paradigm filter excluded nothing.** `FROZEN = ("alg/neural", "alg/reinforcement")`
+    names the *source* layout and matches **zero** files under `tests/`, where those live as
+    `test_dgm_*`, `test_pinn_*`, `test_rl_*`. 131 frozen test functions sat in the denominator at a
+    47% flag rate. Worse, the test "verifying" it asserted `"alg/neural" in cas.FROZEN` — the
+    constant containing itself, which is the tautological shape this very script exists to count.
+    It now asserts the **behaviour**: a frozen-named file must be absent from the scan.
+  - **The separation assertion was called the weakest class when it is the strongest.**
+    `assert not allclose(a, b)` says two things must *differ* — this repo's own doctrine, "assert on
+    disagreement, not validity; byte-identity is the defect, not the pass". Every `not` was treated
+    as weak, inverting it on **70** tests including `test_coupling_affects_solution` and
+    `test_fp_velocity_consumes_cross_density_1071`. Only a bare `assert not x` is weak now.
+
+  Net effect of both: **20.6% → 19.3%**.
+
+- **The staleness line was itself measured over the wrong denominator.** The baseline records
+  `"excluded": "tests/unit/test_discrimination_ratchet.py"` and the sweep ignores it; the reporter
+  did not, comparing 5872 against 6168 and printing **+5.0%** where the like-for-like figure is
+  **+4.6%**. #1901 class 2, inside the instrument built to report class 2. The exclusion is now
+  threaded from the field that was already being read.
+
+- **Mutation table, which the first revision shipped without.** Review found 18 of 23 mutations
+  surviving 26 tests, because neither test file called `main()` — so nothing about either *printed
+  line* was pinned. Now:
+
+  | mutation | reddens |
+  |:--|--:|
+  | halve the percentage (`100 *` → `50 *`) | 1 |
+  | drop `of {then} tests` — the denominator disappears | 2 |
+  | `now != then` → `now > then` (a shrinking suite never called stale) | 1 |
+  | drop the `--ignore` exclusion from the collect | 1 |
+  | invert the fraction (`len(weak)/total` → its complement) | 1 |
+  | drop `of {total} collected tests` | 1 |
+
+- **`CLAUDE.md`**: the cited comment date was **2026-07-30**; `created_at` is **2026-07-27**. Fixed.
+  The link resolves and does contain `39 (60%)` and `96.8% notice nothing`, verified against the API.

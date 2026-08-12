@@ -36,8 +36,21 @@ STRONG_HELPERS = (
     "assert_series_equal",
 )
 WEAK_CALLS = {"isfinite", "isinstance", "len", "hasattr", "callable", "id", "type", "bool", "any", "all"}
-# Frozen paradigms are out of scope by default (CLAUDE.md).
-FROZEN = ("alg/neural", "alg/reinforcement")
+# Frozen paradigms are out of scope by default (CLAUDE.md § FROZEN). These are TEST-tree names,
+# not source paths: `alg/neural` and `alg/reinforcement` name the SOURCE layout and match ZERO
+# files under `tests/`, so the first version of this filter excluded nothing while its comment and
+# its own test both said otherwise -- and that test asserted the constant contains itself, which is
+# the tautological shape this script exists to count. Found by review (#1905).
+FROZEN = (
+    "test_neural",
+    "test_dgm",
+    "test_pinn",
+    "test_rl_",
+    "test_actor",
+    "test_ppo",
+    "test_training",
+    "test_reinforcement",
+)
 
 
 def _weak(node: ast.Assert) -> bool:
@@ -55,7 +68,19 @@ def _weak(node: ast.Assert) -> bool:
         return name in WEAK_CALLS
     if isinstance(t, ast.Name):
         return True
-    return isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not)
+    if isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not):
+        # `assert not <closeness>(a, b)` is a SEPARATION assertion -- two things must DIFFER --
+        # and it is the strongest class this repo has, not the weakest ("byte-identity is the
+        # defect, not the pass"). Calling every `not` weak inverted that doctrine on 70 tests,
+        # among them `test_coupling_affects_solution` and
+        # `test_fp_velocity_consumes_cross_density_1071`. Only a bare `assert not x` is weak.
+        # Found by review (#1905).
+        inner = ast.dump(t.operand)
+        return not any(
+            f"attr='{h}'" in inner or f"id='{h}'" in inner
+            for h in ("array_equal", "allclose", "isclose", "array_equiv", "approx", "array_almost_equal")
+        )
+    return False
 
 
 def _collected_tests(tree: ast.Module):

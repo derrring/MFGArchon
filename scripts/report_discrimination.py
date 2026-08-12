@@ -24,8 +24,15 @@ BASELINE = REPO / "scripts" / "discrimination_baseline.json"
 MATRIX = REPO / "scripts" / "discrimination_killmatrix.json"
 
 
-def _current_collected() -> int | None:
-    """What the CI marker set collects today. None if it cannot be determined -- never a guess."""
+def _current_collected(excluded: str | None = None) -> int | None:
+    """Collected today over the SAME population the baseline measured.
+
+    None if it cannot be determined -- never a guess. `excluded` is `_measured_at["excluded"]`:
+    the sweep ignores its own self-test file, so a count that includes it compared 6168 against a
+    like-for-like 6141 and reported +5.0% where the truth is +4.6%. A staleness verdict taken over
+    a different denominator than the thing it judges is exactly the defect this line exists to
+    report. Found by review (#1905).
+    """
     proc = subprocess.run(
         [
             sys.executable,
@@ -39,6 +46,7 @@ def _current_collected() -> int | None:
             "no:randomly",
             "-o",
             "addopts=",
+            *(["--ignore", excluded] if excluded else []),
             "-m",
             "not slow and not benchmark and not experimental and not optional_torch and not environment",
         ],
@@ -80,7 +88,7 @@ def main() -> int:
     if uncovered:
         print(f"                 {len(uncovered)} convention(s) NO test notices: {', '.join(uncovered)}")
 
-    now = _current_collected()
+    now = _current_collected(measured.get("excluded"))
     if now is None:
         print("                 current suite size unknown -- the fraction above may be stale")
     elif now != then:

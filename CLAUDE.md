@@ -157,7 +157,7 @@ the sum over-counts and the honest figure is the lower one. Current numbers from
 `scripts/discrimination_baseline.json` + `discrimination_killmatrix.json`, measured at `db3496f9`;
 `./scripts/local_ci.sh` prints them beside the suite result and flags the denominator when it moves.)
 Of the tests whose *names* claim `single_source` / `cross_path` / `_agree`, **60% are inert** —
-[#1715's comment of 2026-07-30](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
+[#1715's comment of 2026-07-27](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
 not its body, which says the prevalence "is not established". **Inert is not the same as worthless**,
 and that distinction has cost real time: all five tests #1715 names are genuine cross-path pins —
 delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on six
