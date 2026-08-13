@@ -23,7 +23,6 @@ Components:
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 from .common import ExecutionStatus
@@ -244,20 +243,14 @@ __all__ = [
 ]
 
 
-# Initialize workflow system
-def _initialize_workflow_system():
-    """Initialize the workflow system with default configuration."""
-    try:
-        # Set up default workspace if needed
-        import os
-
-        if not os.getenv("MFG_WORKFLOW_INITIALIZED"):
-            manager = get_workflow_manager()
-            manager.initialize_default_workspace()
-            os.environ["MFG_WORKFLOW_INITIALIZED"] = "true"
-    except Exception as e:
-        warnings.warn(f"Could not initialize workflow system: {e}", stacklevel=2)
-
-
-# Initialize on import
-_initialize_workflow_system()
+# [REMOVED 2026-08-14] `_initialize_workflow_system()` ran at import and is gone. It built the
+# global manager, created `.mfg_workflows/` under the CALLER's working directory, and persisted an
+# example workflow -- `example_parameter_study`, with a step -- as a side effect of reading the
+# module. The `MFG_WORKFLOW_INITIALIZED` env guard only suppressed a repeat within one process, so
+# every process contributed a fresh UUID directory: 20,322 accumulated in this repository in two
+# weeks, and a sample of 500 were all empty. Nothing in the survey that found them was using the
+# workflow system; they came from test collection and from `import mfgarchon`.
+#
+# `initialize_default_workspace()` and `_create_example_workflows()` were unreachable once this
+# call went, and are deleted with it -- the change's own tail. Example content belongs in
+# `examples/`, not in a directory the library invents under someone else's cwd. #1917

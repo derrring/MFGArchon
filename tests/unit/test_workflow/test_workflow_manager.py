@@ -13,6 +13,7 @@ import pytest
 from mfgarchon.workflow.workflow_manager import (
     StepStatus,
     Workflow,
+    WorkflowManager,
     WorkflowStatus,
 )
 
@@ -47,14 +48,19 @@ def test_workflow_creation_with_description():
 @pytest.mark.unit
 @pytest.mark.fast
 def test_workflow_creation_with_workspace():
-    """Test workflow creation with custom workspace path."""
+    """Test workflow creation with custom workspace path.
+
+    ~~`assert wf.workflow_dir.exists()`~~ [CORRECTED 2026-08-14] — construction no longer
+    creates the directory (#1917). The path is computed; the directory appears when something
+    is persisted into it. See `test_the_directory_appears_when_something_is_saved` below.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         workspace = Path(tmpdir)
         wf = Workflow(name="test", workspace_path=workspace)
 
         assert wf.workspace_path == workspace
-        assert wf.workflow_dir.exists()
         assert wf.workflow_dir.parent == workspace
+        assert not wf.workflow_dir.exists(), "naming a workflow must not create its directory"
 
 
 @pytest.mark.unit
@@ -69,12 +75,37 @@ def test_workflow_generates_unique_ids():
 
 @pytest.mark.unit
 @pytest.mark.fast
-def test_workflow_creates_directory():
-    """Test workflow automatically creates its directory."""
-    wf = Workflow(name="test")
+def test_workflow_does_not_create_a_directory_when_merely_named():
+    """[SUPERSEDED 2026-08-14] Was `test_workflow_creates_directory`, asserting the opposite.
 
-    assert wf.workflow_dir.exists()
-    assert wf.workflow_dir.is_dir()
+    It pinned the defect, and it was also a producer of it: `Workflow(name="test")` passes no
+    workspace, so every run of this test wrote `.mfg_workflows/workflow_<uuid>/` into whatever
+    directory pytest was launched from. That is part of how 21,498 empty directories reached
+    this repository (#1917). A workspace is named here so the assertion cannot depend on where
+    the suite is run from.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wf = Workflow(name="test", workspace_path=Path(tmpdir) / "ws")
+
+        assert not wf.workflow_dir.exists()
+        assert not wf.workspace_path.exists(), "naming a workflow created the workspace itself"
+
+
+def test_the_directory_appears_when_something_is_saved():
+    """The other direction: deferring the write must not mean never writing.
+
+    A change that simply stopped persisting would satisfy every "creates nothing" assertion in
+    this file and in tests/unit/test_no_writes_at_import.py.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workspace = Path(tmpdir) / "ws"
+        manager = WorkflowManager(workspace_path=workspace)
+        assert not workspace.exists(), "the manager created its workspace at construction"
+
+        wf = manager.create_workflow("real", "persisted on purpose")
+
+        assert wf.workflow_dir.exists(), "create_workflow did not materialise the workflow"
+        assert (wf.workflow_dir / "metadata.json").exists(), "metadata was not written"
 
 
 # ============================================================================

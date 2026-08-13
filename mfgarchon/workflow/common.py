@@ -9,6 +9,7 @@ Issue #621: Consolidate duplicate patterns in workflow/ module.
 from __future__ import annotations
 
 import logging
+import os
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -67,18 +68,20 @@ def serialize_value(value: Any, name: str = "") -> Any:
 
 def setup_workflow_logging(
     name: str,
-    log_file: Path,
+    log_file: Path | None = None,
     *,
     console: bool = False,
 ) -> logging.Logger:
-    """Configure a logger with a file handler and optional console handler.
+    """Configure a logger with an optional file handler and optional console handler.
 
     All five ``_setup_logging()`` methods across the workflow module follow the
     same pattern. This function consolidates that pattern.
 
     Args:
         name: Logger name passed to :func:`get_logger`.
-        log_file: Path to the log file.
+        log_file: Path to the log file, or ``None`` for console only. `None` is what a
+            caller passes before it owns a directory to write into -- attach the file
+            later with :func:`attach_log_file`.
         console: If ``True``, also attach a :class:`~logging.StreamHandler`.
 
     Returns:
@@ -88,24 +91,42 @@ def setup_workflow_logging(
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
         if console:
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.INFO)
-            console_handler.setFormatter(formatter)
+            console_handler.setFormatter(_FORMATTER)
             logger.addHandler(console_handler)
+
+    if log_file is not None:
+        attach_log_file(logger, log_file)
 
     return logger
 
 
+_FORMATTER = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+
+def attach_log_file(logger: logging.Logger, log_file: Path) -> None:
+    """Attach a file handler, once, to a logger that may already have one.
+
+    `delay=True` matters: `logging.FileHandler` opens its file in `__init__` by default, so
+    constructing the handler is itself a write. Deferring means the file appears when a record
+    is actually emitted, which is the same moment the caller has committed to owning the
+    directory. #1917.
+    """
+    resolved = os.path.abspath(str(log_file))
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == resolved:
+            return
+    file_handler = logging.FileHandler(log_file, delay=True)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(_FORMATTER)
+    logger.addHandler(file_handler)
+
+
 __all__ = [
     "ExecutionStatus",
+    "attach_log_file",
     "serialize_value",
     "setup_workflow_logging",
 ]

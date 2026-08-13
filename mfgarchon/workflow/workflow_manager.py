@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .common import ExecutionStatus, serialize_value, setup_workflow_logging
+from .common import ExecutionStatus, attach_log_file, serialize_value, setup_workflow_logging
 
 if TYPE_CHECKING:
     import logging
@@ -135,9 +135,15 @@ class Workflow:
         self.current_result: WorkflowResult | None = None
 
         # Storage
+        # No mkdir here, and no file handler. Constructing a Workflow used to create
+        # `.mfg_workflows/workflow_<uuid>/` and open `workflow.log` inside it -- so merely
+        # naming a workflow wrote to the caller's working directory. Combined with an
+        # import-time initialiser (deleted with this change) that produced 20,322 empty
+        # directories in this repository in two weeks. The directory is created by
+        # `_materialise()`, which every writing path calls and no constructor does. #1917
         self.workspace_path = workspace_path or Path.cwd() / ".mfg_workflows"
         self.workflow_dir = self.workspace_path / f"workflow_{self.id}"
-        self.workflow_dir.mkdir(parents=True, exist_ok=True)
+        self._materialised = False
 
         # Logging
         self.logger = self._setup_logging()
@@ -378,7 +384,7 @@ class Workflow:
 
     def save_result(self, result: WorkflowResult):
         """Save workflow result to disk."""
-        result_file = self.workflow_dir / "result.json"
+        result_file = self._materialise() / "result.json"
 
         # Save main result metadata
         with open(result_file, "w") as f:
@@ -466,13 +472,23 @@ class Workflow:
             "context": self.context,
         }
 
+    def _materialise(self) -> Path:
+        """Create the workflow directory and attach its log file. Idempotent.
+
+        Every path that writes calls this; no constructor does. That split is the whole fix
+        for #1917 -- the directory now appears when a workflow is persisted, not when one is
+        named.
+        """
+        if not self._materialised:
+            self.workflow_dir.mkdir(parents=True, exist_ok=True)
+            attach_log_file(self.logger, self.workflow_dir / "workflow.log")
+            self._materialised = True
+        return self.workflow_dir
+
     def _setup_logging(self) -> logging.Logger:
-        """Set up logging for the workflow."""
-        return setup_workflow_logging(
-            f"mfg_workflow.{self.id}",
-            self.workflow_dir / "workflow.log",
-            console=True,
-        )
+        """Console only. The file handler is attached by `_materialise()`, because attaching
+        it here would create the directory this change exists to stop creating."""
+        return setup_workflow_logging(f"mfg_workflow.{self.id}", console=True)
 
 
 class WorkflowManager:
@@ -490,8 +506,9 @@ class WorkflowManager:
         Args:
             workspace_path: Path to workspace directory
         """
+        # Same split as Workflow above: naming a manager must not create a directory. #1917
         self.workspace_path = workspace_path or Path.cwd() / ".mfg_workflows"
-        self.workspace_path.mkdir(parents=True, exist_ok=True)
+        self._materialised = False
 
         self.workflows: dict[str, Workflow] = {}
         self.logger = self._setup_logging()
@@ -503,7 +520,7 @@ class WorkflowManager:
 
     def create_workflow(self, name: str, description: str = "", **kwargs) -> Workflow:
         """Create a new workflow."""
-        workflow = Workflow(name, description, self.workspace_path)
+        workflow = Workflow(name, description, self._materialise())
         self.workflows[workflow.id] = workflow
 
         # Save workflow metadata
@@ -562,45 +579,6 @@ class WorkflowManager:
 
         return workflow.execute(**kwargs)
 
-    def initialize_default_workspace(self):
-        """Initialize default workspace with example workflows."""
-        self.logger.info("Initializing default workspace")
-
-        # Create workspace structure
-        (self.workspace_path / "templates").mkdir(exist_ok=True)
-        (self.workspace_path / "shared").mkdir(exist_ok=True)
-        (self.workspace_path / "exports").mkdir(exist_ok=True)
-
-        # Create example workflows if none exist
-        if not self.workflows:
-            self._create_example_workflows()
-
-    def _create_example_workflows(self):
-        """Create example workflows for demonstration."""
-        # Example 1: Simple parameter study
-        workflow1 = self.create_workflow("example_parameter_study", "Example parameter study workflow")
-
-        def example_solve(sigma, Nx=20, Nt=10):
-            from mfgarchon import MFGProblem
-            from mfgarchon.geometry import TensorProductGrid
-            from mfgarchon.geometry.boundary import no_flux_bc
-
-            geometry = TensorProductGrid(
-                bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
-            )
-            problem = MFGProblem(geometry=geometry, sigma=sigma, Nt=Nt)
-            result = problem.solve()
-            return {
-                "converged": getattr(result, "converged", False),
-                "iterations": getattr(result, "iterations", 0),
-                "final_error": getattr(result, "final_error", 0.0),
-                "execution_time": getattr(result, "execution_time", 0.0),
-            }
-
-        workflow1.add_step("solve_problem", example_solve, inputs={"sigma": 0.5, "Nx": 20, "Nt": 10})
-
-        self.logger.info("Created example workflows")
-
     def _load_existing_workflows(self):
         """Load existing workflows from workspace."""
         if not self.workspace_path.exists():
@@ -631,7 +609,7 @@ class WorkflowManager:
 
     def _save_workflow_metadata(self, workflow: Workflow):
         """Save workflow metadata to disk."""
-        metadata_file = workflow.workflow_dir / "metadata.json"
+        metadata_file = workflow._materialise() / "metadata.json"
 
         metadata = {
             "id": workflow.id,
@@ -644,12 +622,19 @@ class WorkflowManager:
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
+    def _materialise(self) -> Path:
+        """Create the workspace and attach its log file. Idempotent; never called by
+        `__init__`. #1917"""
+        if not self._materialised:
+            self.workspace_path.mkdir(parents=True, exist_ok=True)
+            attach_log_file(self.logger, self.workspace_path / "workflow_manager.log")
+            self._materialised = True
+        return self.workspace_path
+
     def _setup_logging(self) -> logging.Logger:
-        """Set up logging for the workflow manager."""
-        return setup_workflow_logging(
-            "mfg_workflow_manager",
-            self.workspace_path / "workflow_manager.log",
-        )
+        """Console only until `_materialise()` runs -- naming the log file here would
+        require the directory that this change exists to stop creating."""
+        return setup_workflow_logging("mfg_workflow_manager")
 
 
 # Export main classes
