@@ -838,8 +838,23 @@ class FixedPointIterator(BaseCouplingIterator):
                         self.l2distm_rel[iiter],
                     )
                     if should_continue is False:
-                        converged = True
-                        convergence_reason = "callback_stopped"
+                        # A user abort is not evidence of convergence, and it is not evidence
+                        # against it either -- so evaluate the real criteria at this iterate and
+                        # report what they say. Setting `converged = True` here (Issue #1684 item
+                        # 2) made an abort at iteration 1 report success at l2distu_rel 1.000e+00
+                        # while the same problem run to 3 iterations reported FAILURE at
+                        # 3.259e-01: the aborted run claimed convergence at three times the error
+                        # of the run that admitted it had not converged.
+                        converged, _criteria_reason = check_convergence_criteria(
+                            self.l2distu_rel[iiter],
+                            self.l2distm_rel[iiter],
+                            self.l2distu_abs[iiter],
+                            self.l2distm_abs[iiter],
+                            final_tolerance,
+                        )
+                        convergence_reason = (
+                            f"callback_stopped ({_criteria_reason})" if converged else "callback_stopped"
+                        )
                         break
 
                 # Check convergence
