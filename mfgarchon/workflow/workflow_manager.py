@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .common import ExecutionStatus, attach_log_file, serialize_value, setup_workflow_logging
+from .common import ExecutionStatus, serialize_value, setup_workflow_logging
 
 if TYPE_CHECKING:
     import logging
@@ -135,12 +135,14 @@ class Workflow:
         self.current_result: WorkflowResult | None = None
 
         # Storage
-        # No mkdir here, and no file handler. Constructing a Workflow used to create
-        # `.mfg_workflows/workflow_<uuid>/` and open `workflow.log` inside it -- so merely
-        # naming a workflow wrote to the caller's working directory. Combined with an
-        # import-time initialiser (deleted with this change) that produced 20,322 empty
-        # directories in this repository in two weeks. The directory is created by
-        # `_materialise()`, which every writing path calls and no constructor does. #1917
+        # No mkdir here. Constructing a Workflow used to create `.mfg_workflows/workflow_<uuid>/`,
+        # so merely NAMING a workflow wrote to the caller's working directory. ~~and open
+        # `workflow.log` inside it~~ [CORRECTED 2026-08-14] -- it did not: `setup_workflow_logging`
+        # guards on `if not logger.handlers:` and `get_logger` always attaches a StreamHandler
+        # first, so no FileHandler has been constructed since #621 (2026-02-06). The 21,498
+        # directories being ALL EMPTY is the proof, and it was in hand when the wrong claim was
+        # written. The directory is created by `_materialise()`, which every writing path calls
+        # and no constructor does. #1917
         self.workspace_path = workspace_path or Path.cwd() / ".mfg_workflows"
         self.workflow_dir = self.workspace_path / f"workflow_{self.id}"
         self._materialised = False
@@ -481,7 +483,6 @@ class Workflow:
         """
         if not self._materialised:
             self.workflow_dir.mkdir(parents=True, exist_ok=True)
-            attach_log_file(self.logger, self.workflow_dir / "workflow.log")
             self._materialised = True
         return self.workflow_dir
 
@@ -627,7 +628,6 @@ class WorkflowManager:
         `__init__`. #1917"""
         if not self._materialised:
             self.workspace_path.mkdir(parents=True, exist_ok=True)
-            attach_log_file(self.logger, self.workspace_path / "workflow_manager.log")
             self._materialised = True
         return self.workspace_path
 

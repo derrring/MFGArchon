@@ -247,9 +247,18 @@ __all__ = [
 # global manager, created `.mfg_workflows/` under the CALLER's working directory, and persisted an
 # example workflow -- `example_parameter_study`, with a step -- as a side effect of reading the
 # module. The `MFG_WORKFLOW_INITIALIZED` env guard only suppressed a repeat within one process, so
-# every process contributed a fresh UUID directory: 20,322 accumulated in this repository in two
-# weeks, and a sample of 500 were all empty. Nothing in the survey that found them was using the
-# workflow system; they came from test collection and from `import mfgarchon`.
+# every process contributed fresh UUID directories: 21,498 accumulated in this repository in two
+# weeks, 800 sampled and all empty. Nothing that produced them was using the workflow system;
+# they came from test collection and from `import mfgarchon`.
+#
+# The producer was `_load_existing_workflows`, not the example builder. ~~`if not self.workflows`
+# is always true in a fresh process, so every import created a directory and wrote nothing~~
+# [CORRECTED 2026-08-14] -- that is self-contradictory, as review pointed out: were it true there
+# would be 21,498 metadata.json files, not one. Traced instead: the loader constructs a
+# `Workflow(...)` for each metadata-bearing directory it finds, that constructor mkdir'd a FRESH
+# uuid directory, and the next line reassigned `workflow_dir` and orphaned it. Measured on main
+# with one seeded workflow: dirs = 2, 3, 4 over three imports while metadata files stayed at 1.
+# So the growth was one orphan PER already-persisted workflow per import, not a flat one.
 #
 # `initialize_default_workspace()` and `_create_example_workflows()` were unreachable once this
 # call went, and are deleted with it -- the change's own tail. Example content belongs in

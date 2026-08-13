@@ -9,7 +9,6 @@ Issue #621: Consolidate duplicate patterns in workflow/ module.
 from __future__ import annotations
 
 import logging
-import os
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -74,59 +73,45 @@ def setup_workflow_logging(
 ) -> logging.Logger:
     """Configure a logger with an optional file handler and optional console handler.
 
-    All five ``_setup_logging()`` methods across the workflow module follow the
-    same pattern. This function consolidates that pattern.
+    `log_file` is optional so a caller that does not yet own a directory can still get a logger;
+    `Workflow` and `WorkflowManager` construct theirs before any directory exists (#1917).
 
-    Args:
-        name: Logger name passed to :func:`get_logger`.
-        log_file: Path to the log file, or ``None`` for console only. `None` is what a
-            caller passes before it owns a directory to write into -- attach the file
-            later with :func:`attach_log_file`.
-        console: If ``True``, also attach a :class:`~logging.StreamHandler`.
+    The `if not logger.handlers:` guard is deliberate and is restored here after a review found
+    that lifting it revived a path dead since #621 (`d424be1d`, 2026-02-06). `get_logger` always
+    attaches a StreamHandler before returning, so this branch has been False for every caller
+    since then and no `FileHandler` has been constructed. An earlier revision of this change
+    moved the file handler outside the guard; the result wrote `parameter_sweep.log` and
+    `experiment.log` into the caller's working directory, and -- because `mfg_workflow_manager`,
+    `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger names -- appended a new
+    handler per instance, so records from 126 distinct output directories landed in one file at
+    this repository's root, 298 KB of them during the gate run that reviewed the change.
 
-    Returns:
-        Configured :class:`~logging.Logger`.
+    Reviving workflow file logging is a separate decision from stopping import-time writes, and
+    it needs the shared-name loggers fixed first. Tracked separately; not done here.
     """
     logger = get_logger(name)
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+        if log_file is not None:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
         if console:
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.INFO)
-            console_handler.setFormatter(_FORMATTER)
+            console_handler.setFormatter(formatter)
             logger.addHandler(console_handler)
-
-    if log_file is not None:
-        attach_log_file(logger, log_file)
 
     return logger
 
 
-_FORMATTER = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-
-def attach_log_file(logger: logging.Logger, log_file: Path) -> None:
-    """Attach a file handler, once, to a logger that may already have one.
-
-    `delay=True` matters: `logging.FileHandler` opens its file in `__init__` by default, so
-    constructing the handler is itself a write. Deferring means the file appears when a record
-    is actually emitted, which is the same moment the caller has committed to owning the
-    directory. #1917.
-    """
-    resolved = os.path.abspath(str(log_file))
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler) and handler.baseFilename == resolved:
-            return
-    file_handler = logging.FileHandler(log_file, delay=True)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(_FORMATTER)
-    logger.addHandler(file_handler)
-
-
 __all__ = [
     "ExecutionStatus",
-    "attach_log_file",
     "serialize_value",
     "setup_workflow_logging",
 ]
