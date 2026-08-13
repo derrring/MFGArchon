@@ -14,10 +14,12 @@ can silently stop working:
 - the mutation anchors, which are literal source text and rot when the source moves.
 """
 
+import ast
 import importlib.util
 import inspect
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -420,7 +422,12 @@ def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta", "tests/a.py::test_gamma"])
     problems = td.compare_to_baseline(results, _baseline_for(3), _MATRIX)
     assert any("IMPROVED" in p for p in problems), problems
-    assert not any("killed [" in p for p in problems), f"the count ratchet fired; the witness is not the arrival: {problems}"
+    # Assert on the arrival line's own words, not on the ABSENCE of the count line. The first
+    # version of this guard searched for `"killed ["` while the emitted text is `"killed  ["`
+    # with two spaces, so it matched nothing and passed over a reverted baseline -- a guard
+    # written to prove the witness is not the count ratchet, which could not detect the count
+    # ratchet. Found by re-review (#1903); the wrong spacing came from this commit's own message.
+    assert any("new killer(s)" in p for p in problems), f"the witness is not the arrival line: {problems}"
 
 
 def test_an_ineffective_mutation_contributes_no_killer_noise(td):
@@ -448,12 +455,32 @@ def test_without_a_matrix_the_comparison_itself_is_silent(td):
     assert "discrimination_killmatrix.json" in body, "main() no longer loads the matrix"
     # Loading it is not using it. Dropping the third argument leaves the string above present
     # -- the CANNOT MEASURE block still names the file -- so this assertion was green over a
-    # dead killer-set gate: independent review mutated the call to `compare_to_baseline(results,
-    # baseline)` and all 41 tests stayed green while `--check-baseline` reported "counts and
-    # killer sets" over a comparison that never saw a killer set. Fourth recurrence of pinning
-    # the function and not the call site, inside the change written to close that class.
-    assert "compare_to_baseline(results, baseline, matrix)" in body, (
-        "main() loads the matrix but no longer hands it to the comparison"
+    # dead killer-set gate: review mutated the call to `compare_to_baseline(results, baseline)`
+    # and all 41 tests stayed green while `--check-baseline` reported "counts and killer sets"
+    # over a comparison that never saw a killer set. Fourth recurrence of pinning the function
+    # and not the call site, inside the change written to close that class.
+    #
+    # Parsed, not grepped. The first repair asserted the call text was PRESENT in the source,
+    # and `inspect.getsource` returns comments: leaving the exact line in a `# superseded:`
+    # comment while the real call dropped its argument passed all 41 tests -- the same false
+    # green in a new costume, and this file quotes code inside comments constantly. It also
+    # went red on `matrix=matrix` and on a wrapped call, both of which are correctly wired.
+    # Measured by re-review (#1903): text pin 4/6, AST pin 6/6.
+    calls = [
+        node
+        for node in ast.walk(ast.parse(textwrap.dedent(body)))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "compare_to_baseline"
+    ]
+    assert calls, "main() no longer calls compare_to_baseline at all"
+    wired = [
+        c
+        for c in calls
+        if (len(c.args) >= 3 and not (isinstance(c.args[2], ast.Constant) and c.args[2].value is None))
+        or any(k.arg == "matrix" and not (isinstance(k.value, ast.Constant) and k.value.value is None) for k in c.keywords)
+    ]
+    assert wired, (
+        "main() loads the matrix but no longer hands it to the comparison: "
+        f"{len(calls)} call(s) to compare_to_baseline, none passing a non-None matrix"
     )
 
 
@@ -578,9 +605,17 @@ def test_no_committed_killer_id_is_truncated(td):
     assert not bad_kb, f"truncated killer IDs among the killed_by keys: {bad_kb}"
     # Both halves name the same population, so a repair applied to one and not the other is
     # itself the defect -- check the identity, not just each side's well-formedness.
-    named = {t for v in matrix["mutations"].values() for t in v.get("killed", ())}
+    #
+    # Mirror what the producer actually builds. `killed_by` comes from `effective` alone
+    # (`status == "ok"`), while `payload["mutations"]` carries every status, so an INEFFECTIVE
+    # mutation keeps a non-empty `killed` that never reaches `killed_by`. A plain equality here
+    # would be a false red the first time a mutation goes INEFFECTIVE with kills -- and the
+    # message would blame the ID repair for something else entirely. Reachable, not theoretical:
+    # `_FAILED` matches `^ERROR ` lines, so the broken-collection case that sets INEFFECTIVE is
+    # exactly the case that fills `failed`. Found by re-review (#1903).
+    named = {t for v in matrix["mutations"].values() if v.get("status") == "ok" for t in v.get("killed", ())}
     assert set(matrix["killed_by"]) == named, (
-        f"killed_by and mutations[].killed disagree: "
+        f"killed_by and the effective mutations' killed sets disagree: "
         f"{sorted(set(matrix['killed_by']) - named)} only in killed_by, "
         f"{sorted(named - set(matrix['killed_by']))} only in mutations"
     )
