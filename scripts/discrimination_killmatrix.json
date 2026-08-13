@@ -6,7 +6,8 @@
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
     "paths": [
       "tests"
-    ]
+    ],
+    "_note": "24 axes at f961db90/6138; the two formerly UNCOVERED remeasured at HEAD after their pins landed"
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
   "baseline_seconds": 150.2,
@@ -910,6 +911,27 @@
     ],
     "tests/unit/test_check_single_source.py::test_repo_baseline_is_current": [
       "drift_coefficient_2x"
+    ],
+    "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[201]": [
+      "newton_residual_grid_scaling_dropped"
+    ],
+    "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[3201]": [
+      "newton_residual_grid_scaling_dropped"
+    ],
+    "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[51]": [
+      "newton_residual_grid_scaling_dropped"
+    ],
+    "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[801]": [
+      "newton_residual_grid_scaling_dropped"
+    ],
+    "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable": [
+      "newton_residual_grid_scaling_dropped"
+    ],
+    "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_absolute_error_alone_is_not_convergence": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence": [
+      "picard_criterion_reads_as_or"
     ],
     "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_backend_literal_equals_single_source[0.1]": [
       "diffusion_scalar_2x"
@@ -2086,11 +2108,17 @@
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9"
     },
     "newton_residual_grid_scaling_dropped": {
-      "kill_count": 0,
-      "killed": [],
+      "kill_count": 5,
+      "killed": [
+        "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[201]",
+        "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[3201]",
+        "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[51]",
+        "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[801]",
+        "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
+      ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 163.4,
-      "status": "UNCOVERED",
+      "seconds": 170.4,
+      "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "optimal_control_sign": {
@@ -2228,11 +2256,14 @@
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 0,
-      "killed": [],
+      "kill_count": 2,
+      "killed": [
+        "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_absolute_error_alone_is_not_convergence",
+        "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence"
+      ],
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "seconds": 156.8,
-      "status": "UNCOVERED",
+      "seconds": 179.2,
+      "status": "ok",
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
     "terminal_condition_pinned_at_initial_index": {
@@ -2266,8 +2297,5 @@
   "paths": [
     "tests"
   ],
-  "uncovered": [
-    "newton_residual_grid_scaling_dropped",
-    "picard_criterion_reads_as_or"
-  ]
+  "uncovered": []
 }

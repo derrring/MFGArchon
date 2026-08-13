@@ -7,7 +7,8 @@
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
     "paths": [
       "tests"
-    ]
+    ],
+    "_note": "24 axes at f961db90/6138; the two formerly UNCOVERED remeasured at HEAD after their pins landed"
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
@@ -91,9 +92,9 @@
       "status": "ok"
     },
     "newton_residual_grid_scaling_dropped": {
-      "kill_count": 0,
+      "kill_count": 5,
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "status": "UNCOVERED"
+      "status": "ok"
     },
     "optimal_control_sign": {
       "kill_count": 40,
@@ -116,9 +117,9 @@
       "status": "ok"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 0,
+      "kill_count": 2,
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "status": "UNCOVERED"
+      "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
       "kill_count": 4,
