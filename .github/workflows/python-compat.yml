@@ -3,8 +3,20 @@ name: Python Version Compatibility
 # Verifies the package installs and its fast test suite passes across the supported Python
 # versions. Kept OFF the per-PR and nightly paths (they pin one version) so this matrix adds no
 # cost there; it runs weekly and on demand. A version is "supported" only once it is green here
-# (this is what backs the pyproject version classifiers). 3.15 is pre-release (ships Oct 2026) and
-# runs allow-failure as an early-warning signal, NOT a support claim.
+# (this is what backs the pyproject version classifiers).
+#
+# 3.15-dev was carried here as an allow-failure early-warning entry and removed 2026-08-13. It
+# never reached a test: scipy publishes no 3.15 wheel, so pip built it from source and the build
+# died at `scipy/meson.build:296: Dependency "OpenBLAS" not found`. That is an upstream packaging
+# fact with no repository action behind it, and it will stay true until scipy ships 3.15 wheels.
+#
+# What it cost is the reason for removing it rather than muting it: `continue-on-error` keeps the
+# WORKFLOW green but leaves the check run itself reporting FAILURE, so every PR showed a red
+# `py3.15-dev` indistinguishable from a real one, and separating them meant opening the run and
+# reading the workflow-level conclusion. A permanent red that must be explained every time is a
+# worse early-warning signal than no signal: it trains the reader to skip the colour. Add the
+# entry back when scipy ships 3.15 wheels, at which point it can be a required check like the
+# rest -- and then it will mean something.
 
 on:
   schedule:
@@ -25,15 +37,13 @@ jobs:
     name: py${{ matrix.python-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Only the pre-release (3.15) entry is allowed to fail; released versions must pass.
-    continue-on-error: ${{ matrix.experimental == true }}
+    # No allow-failure entry any more, so every job here is required. `continue-on-error` went
+    # with the 3.15-dev row it existed for: leaving it would let a future matrix entry be added
+    # as non-blocking without that being a decision anyone made.
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.12', '3.13', '3.14']
-        include:
-          - python-version: '3.15-dev'
-            experimental: true
 
     steps:
       - name: Checkout code
@@ -43,7 +53,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-          allow-prereleases: true   # no-op for released versions; lets 3.15-dev resolve
           cache: 'pip'
 
       - name: Install (default deps + dev tooling)

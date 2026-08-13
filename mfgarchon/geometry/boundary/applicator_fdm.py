@@ -108,6 +108,8 @@ logger = get_logger(__name__)
 LegacyBoundaryConditions1D = BoundaryConditions1DFDM
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
 
 
@@ -187,8 +189,15 @@ class FDMApplicator(BaseStructuredApplicator):
         Args:
             field: Interior field values
             boundary_conditions: BC specification
-            grid_spacing: Grid spacing (not used for ghost cells, but kept for API consistency)
-            domain_bounds: Domain bounds (required for mixed BCs)
+            grid_spacing: ACCEPTED AND DISCARDED. Since #1904 the ghost formulas do use the
+                     spacing -- `pad_array_with_ghosts` takes it as `spacing=` -- and this method
+                     does not forward it, so an inhomogeneous Neumann or Robin condition applied
+                     through here still falls back to dx = 1.0. Threading it changes the values
+                     this public entry point returns, so it is deferred to #1904 with the other
+                     un-threaded call sites rather than done here.
+            domain_bounds: ACCEPTED AND DISCARDED, same as above and for the same reason: the
+                     buffer would honour it (`elif domain_bounds is not None`), and this method
+                     does not pass it on.
             time: Current time for time-dependent BCs
             geometry: Geometry object with marked regions (Issue #596 Phase 2.5).
                      Required if boundary_conditions uses region_name.
@@ -887,6 +896,7 @@ class PreallocatedGhostBuffer:
         config: GhostCellConfig | None = None,
         geometry: object | None = None,
         periodic_convention: PeriodicGridConvention | None = None,
+        spacing: float | Sequence[float] | None = None,
     ):
         """
         Initialize pre-allocated ghost buffer.
@@ -934,8 +944,21 @@ class PreallocatedGhostBuffer:
         self._interior_slices = tuple(slice(ghost_depth, -ghost_depth) for _ in range(self._dimension))
 
         # Pre-compute grid spacing if domain_bounds provided
+        # Explicit spacing wins, because most callers have it and no `domain_bounds`. Without it
+        # `_grid_spacing` stayed None and every consumer below silently used dx = 1.0 -- so an
+        # inhomogeneous Neumann condition was applied as g/h instead of g. Reading the flux back off
+        # the ghost, -(padded[1] - padded[0])/dx, returned exactly g/h -- 40 / 80 / 160 / 320 at
+        # Nx = 21 / 41 / 81 / 161 for a requested g = 2, independent of the state -- and returns
+        # exactly g once the spacing is threaded. #1904
         self._grid_spacing: tuple[float, ...] | None = None
-        if domain_bounds is not None:
+        if spacing is not None:
+            values = (float(spacing),) * self._dimension if np.isscalar(spacing) else tuple(float(v) for v in spacing)
+            if len(values) != self._dimension:
+                raise ValueError(
+                    f"spacing has {len(values)} entries for a {self._dimension}-D array; pass one per axis or a scalar"
+                )
+            self._grid_spacing = values
+        elif domain_bounds is not None:
             domain_bounds = np.atleast_2d(domain_bounds)
             spacing = []
             for d in range(self._dimension):
@@ -1761,6 +1784,7 @@ def pad_array_with_ghosts(
     time: float = 0.0,
     geometry: object | None = None,
     periodic_convention: PeriodicGridConvention | None = None,
+    spacing: float | Sequence[float] | None = None,
 ) -> NDArray[np.floating]:
     """
     Pad array with ghost cells based on boundary conditions.
@@ -1801,6 +1825,7 @@ def pad_array_with_ghosts(
         ghost_depth=ghost_depth,
         geometry=geometry,
         periodic_convention=periodic_convention,
+        spacing=spacing,
     )
     # Copy array into interior view and update ghosts
     buffer.interior[:] = array

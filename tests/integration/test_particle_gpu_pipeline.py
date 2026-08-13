@@ -179,21 +179,58 @@ class TestParticleGPUPipeline:
 
         backend = TorchBackend(device="cpu")
 
-        for bc in [periodic_bc(dimension=1), no_flux_bc(dimension=1), dirichlet_bc(value=0.0, dimension=1)]:
+        # The three original assertions are structurally unfalsifiable here: a Gaussian KDE is
+        # non-negative and finite by construction, and the solver renormalises mass to 1 under
+        # every BC. seed= makes the run bit-reproducible (verified: rerun diff exactly 0.0), which
+        # is what lets the comparisons below be exact rather than statistical.
+        densities = {}
+        absorbed = {}
+        for name, bc in [
+            ("periodic", periodic_bc(dimension=1)),
+            ("no_flux", no_flux_bc(dimension=1)),
+            ("dirichlet", dirichlet_bc(value=0.0, dimension=1)),
+        ]:
             solver = FPParticleSolver(
                 problem,
                 num_particles=2000,
                 kde_bandwidth=0.1,
                 boundary_conditions=bc,
+                seed=1234,
             )
             solver.backend = backend
 
             M = solver.solve_fp_system(m_initial, U_drift)
+            densities[name] = M
+            absorbed[name] = solver.total_absorbed
 
             # Should complete without errors
             assert M.shape == (Nt_points, Nx_points)
             assert np.all(M >= 0)
             assert np.all(np.isfinite(M))
+
+        # Non-absorbing walls must lose no particles. Measured 0 for both on both backends.
+        assert absorbed["periodic"] == 0
+        assert absorbed["no_flux"] == 0
+
+        # Positive control that the BC object reaches the torch path at all: wrapping the domain
+        # must produce a different density from reflecting it. Measured max difference 0.147 on
+        # torch (0.144 on numpy); 0.01 is ~15x below that.
+        assert np.max(np.abs(densities["periodic"] - densities["no_flux"])) > 0.01, (
+            "periodic and no-flux are indistinguishable; BC dispatch is not live on this backend"
+        )
+
+        # RECORDED DEFECT, not a contract. An absorbing Dirichlet wall must remove particles, and
+        # on the NumPy path it does: measured 344 absorbed at this seed, density differing from
+        # no-flux by 0.688. On the torch path the same solver absorbs 0 and returns a density
+        # BYTE-IDENTICAL to no-flux -- so absorption is a silent no-op here while periodic still
+        # dispatches correctly. Pinned rather than asserted the right way round because the fix
+        # belongs in mfgarchon/, not in this test; fixing it trips these two lines.
+        assert absorbed["dirichlet"] == 0, "torch path now absorbs particles -- remove this defect pin"
+        np.testing.assert_array_equal(
+            densities["dirichlet"],
+            densities["no_flux"],
+            err_msg="torch Dirichlet BC is no longer a no-op -- replace this pin with absorbed > 0",
+        )
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

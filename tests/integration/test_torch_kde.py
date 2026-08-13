@@ -155,6 +155,24 @@ def test_edge_cases():
     assert np.all(np.isfinite(density_two)), "Two particle KDE not finite"
     assert np.all(np.isfinite(density_large)), "Large dataset KDE not finite"
 
+    # Each of these edge cases has a closed form, which the finiteness checks above cannot see.
+    # A scalar bw_method is the ABSOLUTE bandwidth here (measured: kde.bandwidth == 0.1 for both
+    # the 1- and 2-particle cases), so a single particle at 0.5 IS the unit Gaussian kernel and
+    # two particles are an equal-weight mixture of two of them. Measured max relative deviation
+    # 1.29e-06 for the single (float32 accumulation in torch), so rtol=1e-5 keeps a 7.8x margin;
+    # 1e-6 would be under the floor. The mixture form subsumes the discarded find_peaks count --
+    # a density matching it to 4.2e-07 has exactly the two modes the print claims.
+    def kernel(x, mu):
+        return np.exp(-((x - mu) ** 2) / (2 * 0.1**2)) / (0.1 * np.sqrt(2 * np.pi))
+
+    np.testing.assert_allclose(density_single, kernel(x_eval, 0.5), rtol=1e-5)
+    np.testing.assert_allclose(density_two, 0.5 * (kernel(x_eval, 0.3) + kernel(x_eval, 0.7)), rtol=1e-5)
+
+    # A KDE is a probability density: it must integrate to 1. N(0.5, 0.1) puts 5 sigma inside
+    # [0, 1], so the truncation loss is ~6e-07 and the measured integral is 0.99999..1.00000 over
+    # 20 draws; abs=0.01 is a 1000x margin and still catches a missing 1/N or 1/h normalisation.
+    assert np.trapezoid(density_large, x_eval_large) == pytest.approx(1.0, abs=0.01)
+
 
 def find_peaks(signal, threshold=0.01):
     """Simple peak detection."""
@@ -191,9 +209,11 @@ def test_device_compatibility():
         density_cuda = kde_cuda(x_eval)
         print(f"   ✅ CUDA KDE works, peak density: {density_cuda.max():.6f}")
 
-        # Verify consistency
+        # Verify consistency: the same KDE on two backends must agree (see the MPS branch below
+        # for the measured threshold; CUDA is not available on this machine to measure against).
         rel_error = np.abs(density_cpu - density_cuda) / (density_cpu + 1e-10)
         print(f"   CPU vs CUDA max error: {np.max(rel_error):.2e}")
+        assert np.max(rel_error) < 1e-4, f"CPU vs CUDA KDE disagree: {np.max(rel_error):.2e}"
     else:
         print("\n2. CUDA: ❌ Not available")
 
@@ -204,9 +224,15 @@ def test_device_compatibility():
         density_mps = kde_mps(x_eval)
         print(f"   ✅ MPS KDE works, peak density: {density_mps.max():.6f}")
 
-        # Verify consistency
+        # Verify consistency. This is the whole subject of the test and it was computed and
+        # thrown away: a backend returning systematically wrong densities passed. The pointwise
+        # ratio is dominated by the distribution tails, where density_cpu falls to ~2e-14 and the
+        # 1e-10 floor takes over, so the statistic is noisy by construction -- measured over 150
+        # unseeded draws it tops out at 5.85e-06 (median 2.45e-07), and 1e-4 keeps a 17x margin
+        # while still catching any real disagreement, which is orders larger.
         rel_error = np.abs(density_cpu - density_mps) / (density_cpu + 1e-10)
         print(f"   CPU vs MPS max error: {np.max(rel_error):.2e}")
+        assert np.max(rel_error) < 1e-4, f"CPU vs MPS KDE disagree: {np.max(rel_error):.2e}"
     else:
         print("\n3. MPS: ❌ Not available")
 

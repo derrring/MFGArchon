@@ -196,7 +196,14 @@ class TestMultiDimensional:
     """Tests for nD support."""
 
     def test_1d_multi_indices(self):
-        """Test with 1D multi-indices."""
+        """Test with 1D multi-indices, both sides of the Laplacian-sign criterion.
+
+        The valid vector alone is one-sided: a 1D regression in the multi-index lookup that
+        biased toward "no violation" -- including a bare ``return False`` -- would pass it. The
+        two vectors below differ only in the sign of the second-order coefficient, so the pair
+        brackets criterion 1 (``D_2 >= -1e-12``) in the 1D dispatch, where ``multi_indices`` are
+        1-tuples and ``laplacian_idx`` comes from ``sum(beta) == 2``.
+        """
         multi_indices = [
             (0,),  # Constant
             (1,),  # ∂/∂x
@@ -220,6 +227,17 @@ class TestMultiDimensional:
         result = enforcer.check_monotonicity_violation(D_valid_1d, point_idx=0, use_adaptive=False)
 
         assert not result, "Valid 1D coefficients should pass"
+
+        # Same vector with the second-order coefficient sign-flipped: diffusion is no longer
+        # dominant, so criterion 1 must fire. The gradient stays 0.1 against a bound of
+        # 10*max(sigma^2, 0.1)*|D_2| = 1.25, so criterion 2 cannot be what fires here.
+        D_positive_laplacian_1d = np.array([1.0, 0.1, 0.5])
+        result = enforcer.check_monotonicity_violation(D_positive_laplacian_1d, point_idx=0, use_adaptive=False)
+
+        assert result, "Positive 1D Laplacian should trigger violation"
+        assert enforcer.stats["violation_laplacian"] == 1
+        assert enforcer.stats["violation_gradient"] == 0
+        assert enforcer.stats["violation_higher_order"] == 0
 
     def test_3d_multi_indices(self):
         """Test with 3D multi-indices."""
@@ -250,6 +268,22 @@ class TestMultiDimensional:
         result = enforcer.check_monotonicity_violation(D_valid_3d, point_idx=0, use_adaptive=False)
 
         assert not result, "Valid 3D coefficients should pass"
+
+        # Complement on the same index set: only the (2,0,0) coefficient flips sign.
+        #
+        # This is the coefficient the implementation actually reads -- it takes the FIRST
+        # order-2 multi-index and stops (``if laplacian_idx is None: laplacian_idx = k``), rather
+        # than the Laplacian trace. So the pair below brackets what the code does, not what
+        # "Laplacian negativity" says: measured, D = [1.0, .1, .1, .1, -0.3, +5.0, +5.0] has
+        # trace +9.7 and still returns False. That gap is a defect in the enforcer, not something
+        # this test can assert today without failing.
+        D_positive_laplacian_3d = np.array([1.0, 0.1, 0.1, 0.1, 0.3, -0.3, -0.3])
+        result = enforcer.check_monotonicity_violation(D_positive_laplacian_3d, point_idx=0, use_adaptive=False)
+
+        assert result, "Positive leading 3D second-order coefficient should trigger violation"
+        assert enforcer.stats["violation_laplacian"] == 1
+        assert enforcer.stats["violation_gradient"] == 0
+        assert enforcer.stats["violation_higher_order"] == 0
 
 
 if __name__ == "__main__":

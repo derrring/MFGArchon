@@ -82,7 +82,9 @@ def _compute_gradient_array_1d(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = pad_array_with_ghosts(U_array, bc, ghost_depth=1, time=time)
+        # `Dx` is threaded so the buffer does not fall back to dx = 1.0, which applied an
+        # inhomogeneous Neumann value as g/h rather than g (#1904).
+        u_work = pad_array_with_ghosts(U_array, bc, ghost_depth=1, time=time, spacing=Dx)
     else:
         u_work = U_array
 

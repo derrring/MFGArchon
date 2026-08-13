@@ -79,6 +79,24 @@ class TestWarmStartNameError1285:
         assert np.all(np.isfinite(result.U))
         assert np.all(np.isfinite(result.M))
 
+        # The warm-start arrays must actually enter the solve.  Everything above is satisfied by
+        # a solver that accepted them and silently discarded them, which is a superset of the
+        # #1285 failure mode.  Measured separation from the cold run: max|dU| = 0.169,
+        # max|dM| = 1.224, so 1e-3 is two orders of margin.
+        cold_problem = _make_problem()
+        cold = FixedPointIterator(
+            cold_problem, HJBFDMSolver(cold_problem), FPFDMSolver(cold_problem), relaxation=0.5
+        ).solve(max_iterations=2, tolerance=1e-10)
+        assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
+
+        # U_terminal and M_initial are exactly the two names that were undefined on the warm
+        # path in #1285, so pin the data each one supplies.  u_terminal is 0, and M_initial is
+        # normalised to unit mass -- whereas the warm M array carries mass 0.1, so a warm branch
+        # that used it in place of M_initial would fail this by 10x.
+        np.testing.assert_allclose(result.U[-1], 0.0, atol=1e-12)
+        dx = problem.geometry.spacing[0]
+        np.testing.assert_allclose(result.M[0].sum() * dx, 1.0, atol=1e-10)
+
     def test_fictitious_play_iterator_warm_start(self):
         """FictitiousPlayIterator.solve() must complete without NameError on warm path."""
         problem = _make_problem()
@@ -98,24 +116,15 @@ class TestWarmStartNameError1285:
         assert np.all(np.isfinite(result.U))
         assert np.all(np.isfinite(result.M))
 
-    def test_cold_start_still_works_fixed_point(self):
-        """Cold-start path must be unaffected by the hoist."""
-        problem = _make_problem()
-        hjb = HJBFDMSolver(problem)
-        fp = FPFDMSolver(problem)
+        # Same three pins as the FixedPointIterator case; FictitiousPlayIterator has its own
+        # warm/cold branch and needs its own coverage.  Measured separation from the cold run:
+        # max|dU| = 0.102, max|dM| = 1.145, so 1e-3 is two orders of margin.
+        cold_problem = _make_problem()
+        cold = FictitiousPlayIterator(
+            cold_problem, HJBFDMSolver(cold_problem), FPFDMSolver(cold_problem), learning_rate_schedule="harmonic"
+        ).solve(max_iterations=2, tolerance=1e-10)
+        assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
 
-        solver = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
-        result = solver.solve(max_iterations=3, tolerance=1e-10)
-        assert result.U is not None
-        assert np.all(np.isfinite(result.U))
-
-    def test_cold_start_still_works_fictitious_play(self):
-        """Cold-start path must be unaffected by the hoist."""
-        problem = _make_problem()
-        hjb = HJBFDMSolver(problem)
-        fp = FPFDMSolver(problem)
-
-        solver = FictitiousPlayIterator(problem, hjb, fp)
-        result = solver.solve(max_iterations=3, tolerance=1e-10)
-        assert result.U is not None
-        assert np.all(np.isfinite(result.U))
+        np.testing.assert_allclose(result.U[-1], 0.0, atol=1e-12)
+        dx = problem.geometry.spacing[0]
+        np.testing.assert_allclose(result.M[0].sum() * dx, 1.0, atol=1e-10)

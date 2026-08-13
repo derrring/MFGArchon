@@ -148,10 +148,19 @@ class TestLevelSetEvolver:
         assert np.abs(x_interface - x_expected) < 2 * dx
 
     def test_cfl_adaptive_substepping(self):
-        """Test CFL-adaptive substepping."""
+        """Test CFL-adaptive substepping.
+
+        The substep count (n_substeps = ceil(cfl / cfl_max)) is not exposed, so the branch is
+        pinned against a CFL-safe reference instead, with the un-substepped run as the control.
+
+        The state must be CURVED. With the linear phi0 = x - 0.5 used elsewhere in this class,
+        |grad phi| == 1 everywhere and the update is exact at any CFL -- there is no instability
+        to detect and the test passes with substepping removed. phi0 = |x - 0.5| - 0.25 has a
+        kink, so a single 100x-over-CFL step is visibly wrong.
+        """
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[50], boundary_conditions=no_flux_bc(dimension=1))
         x = grid.coordinates[0]
-        phi0 = x - 0.5
+        phi0 = np.abs(x - 0.5) - 0.25
 
         evolver = LevelSetEvolver(grid, cfl_max=0.9)
 
@@ -164,6 +173,24 @@ class TestLevelSetEvolver:
 
         assert phi1.shape == phi0.shape
         assert np.isfinite(phi1).all()
+
+        # CFL-safe reference: the same evolution in 2000 hand-rolled steps, each far below the
+        # stability limit. Measured stable in the step count (8.5e-07 at n=1000 through 1.2e-06
+        # at n=8000), so the reference is converged and the threshold is not pinning its error.
+        n_ref = 2000
+        reference = phi0.copy()
+        for _ in range(n_ref):
+            reference = evolver.evolve_step(reference, velocity=V_large, dt=dt / n_ref)
+
+        # Measured 1.0e-06; 1e-4 is ~96x margin.
+        assert np.abs(phi1 - reference).max() < 1e-4
+
+        # Control: with the CFL cap raised out of reach the single step is NOT substepped and
+        # lands nowhere near the reference. Measured 0.98, i.e. ~10x above this threshold and
+        # ~10^6x above the substepped error. Without this line the assertion above would also
+        # pass for an evolver that simply took smaller steps for an unrelated reason.
+        unlimited = LevelSetEvolver(grid, cfl_max=1e9)
+        assert np.abs(unlimited.evolve_step(phi0, velocity=V_large, dt=dt) - reference).max() > 0.1
 
     def test_2d_expansion(self):
         """Test 2D circle expansion."""
@@ -309,6 +336,21 @@ class TestTimeDependentDomain:
         assert phi_mid.shape == phi0.shape
         assert np.isfinite(phi_mid).all()
 
+        # t=0.15 sits exactly halfway between the snapshots at 0.1 and 0.2, so the linear
+        # interpolant is pinnable in closed form.
+        p10 = ls_domain.get_phi_at_time(0.1, interpolate=False)
+        p20 = ls_domain.get_phi_at_time(0.2, interpolate=False)
+        # Measured max deviation 5.6e-17; atol 1e-14 is ~180x margin.
+        np.testing.assert_allclose(phi_mid, 0.5 * (p10 + p20), atol=1e-14)
+
+        # It really interpolated rather than returning the floor snapshot: measured 0.025,
+        # half the 0.05 separation between the two snapshots.
+        assert np.abs(phi_mid - p10).max() > 1e-3
+
+        # ...and the interpolate flag is live, not inert -- with it off the same query returns
+        # the nearest snapshot exactly.
+        np.testing.assert_array_equal(ls_domain.get_phi_at_time(0.15, interpolate=False), p10)
+
     def test_history_clearing(self):
         """Test clearing old history."""
         grid = TensorProductGrid(bounds=[(0, 1)], Nx=[50], boundary_conditions=no_flux_bc(dimension=1))
@@ -340,6 +382,24 @@ class TestTimeDependentDomain:
 
         assert isinstance(ls, LevelSetFunction)
         assert ls.is_signed_distance is True
+
+        # Stale-snapshot is the defect class a wrapper actually has, and nothing above excludes
+        # it: the domain has not been evolved, so a wrapper returning the initial snapshot is
+        # indistinguishable from one returning the current state. Evolve, then pin freshness.
+        for _ in range(3):
+            ls_domain.evolve_step(0.5, 0.1)
+
+        ls_evolved = ls_domain.get_level_set_function()
+
+        np.testing.assert_array_equal(ls_evolved.phi, ls_domain.current_phi)
+        # And the state really moved, so the equality above is not trivially true.
+        # Measured max|phi - phi0| = 0.15 after 3 steps at V=0.5, dt=0.1.
+        assert np.abs(ls_evolved.phi - phi0).max() > 1e-3
+        assert ls_evolved.geometry is grid
+        # is_signed_distance is read per-snapshot from is_sdf_history, not from the constructor
+        # argument, so evolution (which does not reinitialise) flips it to False. A wrapper
+        # handing back the construction-time flag would still report True here.
+        assert ls_evolved.is_signed_distance is False
 
 
 class TestCurvature:

@@ -166,15 +166,6 @@ class TestFPParticleSolverInitialization:
         assert solver.backend is not None
         assert solver.backend.name == "numpy"
 
-    def test_strategy_selector_initialized(self):
-        """Test that strategy selector is properly initialized."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem)
-
-        assert solver.strategy_selector is not None
-        assert solver.current_strategy is None  # Not set until solve
-
     def test_time_step_counter_initialized(self):
         """Test that time step counter is initialized."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -186,25 +177,6 @@ class TestFPParticleSolverInitialization:
 
 class TestFPParticleSolverSolveFPSystem:
     """Test the main solve_fp_system method."""
-
-    def test_solve_fp_system_shape(self):
-        """Test that solve_fp_system returns correct shape."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        # Create inputs
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        # Solve
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert M_solution.shape == (Nt_points, Nx_points)
-        assert np.all(np.isfinite(M_solution))
 
     def test_solve_fp_system_initial_condition(self):
         """Test that initial condition center of mass is approximately preserved."""
@@ -232,22 +204,6 @@ class TestFPParticleSolverSolveFPSystem:
         cm_solution = np.sum(x_coords * M_solution[0, :] * dx)
         assert np.isclose(cm_initial, cm_solution, rtol=0.2)
 
-    def test_solve_with_zero_drift(self):
-        """Test solving with zero drift field."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
     def test_solve_with_non_zero_drift(self):
         """Test solving with non-zero drift field."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
@@ -267,55 +223,14 @@ class TestFPParticleSolverSolveFPSystem:
 
         assert np.all(np.isfinite(M_solution))
 
-    def test_solve_with_different_num_particles(self):
-        """Test solver with different numbers of particles."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
+        # The solver derives alpha = -fp_drift_coefficient(problem) * grad(U) with U = x^2, i.e.
+        # -2x, which must move mass LEFT. A sign flip in the #1043/#1233 drift convention inverts
+        # this while leaving the density finite. Measured over 25 seeds: the centre of mass drops
+        # by 0.2227..0.2424, so the 0.15 threshold clears the worst case by 49%.
+        def com(t):
+            return np.sum(x_coords * M_solution[t]) / np.sum(M_solution[t])
 
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        for num_particles in [100, 500, 1000]:
-            solver = FPParticleSolver(problem, num_particles=num_particles)
-
-            m_initial = np.ones(Nx_points) / Nx_points
-            U_solution = np.zeros((Nt_points, Nx_points))
-
-            M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-            assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_kde_normalization_none(self):
-        """Test solving with no KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.NONE)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_kde_normalization_initial_only(self):
-        """Test solving with initial-only KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.INITIAL_ONLY)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
+        assert com(-1) < com(0) - 0.15, f"drift -2*x must move mass left: {com(0):.3f} -> {com(-1):.3f}"
 
     def test_strategy_selection(self):
         """Test that strategy is selected during solve."""
@@ -334,7 +249,10 @@ class TestFPParticleSolverSolveFPSystem:
         solver.solve_fp_system(m_initial, U_solution)
 
         assert solver.current_strategy is not None  # After solve
-        assert hasattr(solver.current_strategy, "name")
+        # The dispatch outcome is what the caller branches on (fp_particle.py:1542,
+        # `if self.current_strategy.name == "cpu"`), and the numpy backend must select the CPU
+        # strategy. Measured: "cpu" on every run. Also drops the hasattr duck-typing check.
+        assert solver.current_strategy.name == "cpu"
 
     def test_time_step_counter_reset(self):
         """Test that time step counter is reset on solve."""
@@ -352,33 +270,15 @@ class TestFPParticleSolverSolveFPSystem:
 
         solver.solve_fp_system(m_initial, U_solution)
 
-        # Counter should be reset (though it gets incremented during solve)
-        # Just verify solve completed without error
+        # The counter drives the INITIAL_ONLY normalisation branch, so a missing reset silently
+        # disables initial-step normalisation on the second solve of a reused solver. Measured on
+        # this configuration (Nt=15 -> Nt_points=16): the counter reads 16 regardless of the 999
+        # preset. Without the reset it would read 1015.
+        assert solver._time_step_counter == problem.Nt_points, f"counter not reset: {solver._time_step_counter}"
 
 
 class TestFPParticleSolverNumericalProperties:
     """Test numerical properties of particle FP solutions."""
-
-    def test_solution_finiteness(self):
-        """Test that solution remains finite throughout."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=1000)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-        dx = problem.geometry.get_grid_spacing()[0]
-        bounds = problem.geometry.get_bounds()
-
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        m_initial = np.exp(-((x_coords - 0.5) ** 2) / (2 * 0.1**2))
-        m_initial = m_initial / np.sum(m_initial * dx)
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        # All values should be finite
-        assert np.all(np.isfinite(M_solution))
 
     def test_forward_time_propagation(self):
         """Test that solution is computed for all time steps."""
@@ -406,6 +306,26 @@ class TestFPParticleSolverNumericalProperties:
         # Verify solution exists at all time points (not all zeros)
         assert np.any(M_solution > 0)
 
+        # External oracle: with zero drift the density spreads by free diffusion, so
+        # var(t) = var(0) + sigma^2 t exactly (sigma=0.3, dt=1/30). Measured over 30 seeds, the
+        # relative deviation stays within 0.116 at t = 1, 2, 3, so rel=0.25 clears it 2.2x while
+        # still catching a factor-2 sigma/diffusion confusion (which is -0.5 or +1.0).
+        # NOT extended to late times: by t=30 the no-flux walls saturate the spread (measured
+        # var 0.070 against a free-law 0.090), and that is a wall effect, not a scheme error.
+        def moments(t):
+            w = M_solution[t] * dx
+            w = w / w.sum()
+            mean = np.sum(x_coords * w)
+            return mean, np.sum((x_coords - mean) ** 2 * w)
+
+        dt = problem.T / problem.Nt
+        _, var_0 = moments(0)
+        for t in (1, 2, 3):
+            mean_t, var_t = moments(t)
+            assert var_t == pytest.approx(var_0 + 0.3**2 * t * dt, rel=0.25), f"free-diffusion law broken at t={t}"
+            # No drift anywhere, so the centre of mass must stay put. Measured max drift 0.0054.
+            assert mean_t == pytest.approx(0.5, abs=0.02)
+
     def test_approximate_mass_conservation(self):
         """Test that total mass is approximately conserved."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -431,40 +351,9 @@ class TestFPParticleSolverNumericalProperties:
             # Allow larger error for particle methods with KDE
             assert np.isclose(current_mass, initial_mass, rtol=0.3)
 
-    def test_non_negativity(self):
-        """Test that density remains non-negative."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=1000)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        # Density should be non-negative (KDE ensures this)
-        assert np.all(M_solution >= -1e-10)
-
 
 class TestFPParticleSolverIntegration:
     """Integration tests with actual FP problems."""
-
-    def test_solver_not_abstract(self):
-        """Test that FPParticleSolver can be instantiated."""
-        import inspect
-
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-
-        # Should not raise TypeError about abstract methods
-        solver = FPParticleSolver(problem)
-        assert isinstance(solver, FPParticleSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(FPParticleSolver)
 
     def test_solver_with_different_parameters(self):
         """Test solver with various parameter configurations."""
@@ -490,25 +379,66 @@ class TestFPParticleSolverIntegration:
 
             assert np.all(np.isfinite(M_solution))
 
+        # kde_bandwidth is the one axis above that this file never pins through a solve
+        # (test_custom_kde_bandwidth only reads the attribute back off the constructor). A Gaussian
+        # KDE convolves the empirical measure, adding h^2 to its variance, so widening h must widen
+        # the density -- an analytic property of the estimator, not of the scheme. Same seed, so
+        # both solves see identical particles (zero drift here) and the difference is purely the
+        # kernel. Measured over 25 seeds: 0.02668..0.02685, against an unclipped h2^2 - h1^2 =
+        # 0.0375; the shortfall is the domain truncation at [0,1], which can only reduce it.
+        dx = problem.geometry.get_grid_spacing()[0]
+        x_coords = np.linspace(0.0, 1.0, Nx_points)
+        m_peaked = np.exp(-((x_coords - 0.5) ** 2) / (2 * 0.05**2))
+        m_peaked /= np.sum(m_peaked * dx)
+        U_zero = np.zeros((Nt_points, Nx_points))
+
+        def initial_density_variance(bandwidth):
+            np.random.seed(0)
+            M = FPParticleSolver(problem, num_particles=1000, kde_bandwidth=bandwidth).solve_fp_system(m_peaked, U_zero)
+            w = M[0] * dx
+            w = w / w.sum()
+            mean = np.sum(x_coords * w)
+            return np.sum((x_coords - mean) ** 2 * w)
+
+        widening = initial_density_variance(0.2) - initial_density_variance(0.05)
+        assert 0.02 < widening < 0.2**2 - 0.05**2, f"kde_bandwidth did not widen the density as h^2: {widening:.4f}"
+
     def test_solver_with_different_boundary_conditions(self):
-        """Test solver with different boundary condition types."""
+        """Test solver with different boundary condition types.
+
+        The data has to be able to separate the branches: with a uniform m_initial and U = 0 there
+        is no transport at all, so wrap and reflect produce the same density and the loop is
+        decorative. Mass starts at the right wall and is pushed further right, so the two BCs must
+        disagree about where it ends up (fp_particle.py:125, "reflecting ... wrap (periodic)").
+        """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
 
         Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
 
-        bc_options = [periodic_bc(dimension=1), no_flux_bc(dimension=1)]
+        x_coords = np.linspace(0.0, 1.0, Nx_points)
+        m_initial = np.exp(-((x_coords - 0.9) ** 2) / (2 * 0.05**2))
+        m_initial /= np.sum(m_initial)
 
-        for bc in bc_options:
+        def rightward_drift(t, x, m):
+            return 0.5 * np.ones_like(x)
+
+        # Fraction of the mass sitting in the leftmost 5 cells at the final time. Measured over 25
+        # seeds: periodic 0.616..0.761 (the wrapped mass), no_flux exactly 0.0 (nothing crosses a
+        # reflecting wall). The thresholds sit between those two populations, not near either.
+        expected_left_edge = {"periodic": (0.3, 1.0), "no_flux": (-1e-12, 1e-3)}
+
+        for bc in [periodic_bc(dimension=1), no_flux_bc(dimension=1)]:
             solver = FPParticleSolver(problem, num_particles=500, boundary_conditions=bc)
 
-            m_initial = np.ones(Nx_points) / Nx_points
-            U_solution = np.zeros((Nt_points, Nx_points))
-
-            M_solution = solver.solve_fp_system(m_initial, U_solution)
+            M_solution = solver.solve_fp_system(M_initial=m_initial, drift_field=rightward_drift, show_progress=False)
 
             assert np.all(np.isfinite(M_solution))
+
+            M_final = M_solution[-1] / np.sum(M_solution[-1])
+            left_edge = np.sum(M_final[:5])
+            low, high = expected_left_edge[bc.type]
+            assert low < left_edge < high, f"{bc.type}: left-edge mass {left_edge:.4f} outside ({low}, {high})"
 
 
 class TestFPParticleSolverHelperMethods:
@@ -535,6 +465,14 @@ class TestFPParticleSolverHelperMethods:
         gradient = gradients[0]
         assert np.all(np.isfinite(gradient))
         assert gradient.shape == U_array.shape
+
+        # Central differences are EXACT for a quadratic in the interior, so d(x^2)/dx = 2x is a
+        # closed form, not a tolerance: measured max deviation 3.33e-15, five orders below atol.
+        # This is the accuracy of the helper that produces the FP advective drift, and a wrong
+        # spacing, a halved/doubled factor or a sign flip all survive the checks above.
+        # The boundary entries are excluded on purpose -- test_compute_gradient_bc_aware_at_boundary
+        # owns them, since the one-sided BC-aware stencil is not exact there.
+        np.testing.assert_allclose(gradient[1:-1], 2.0 * x_coords[1:-1], rtol=0, atol=1e-10)
 
     def test_compute_gradient_bc_aware_at_boundary(self):
         """The drift gradient must be BC-aware at non-periodic walls (silent-divergence bug-hunt).
@@ -725,6 +663,17 @@ class TestFPParticleSolverCallableDrift:
         # Density should be non-negative (KDE ensures this)
         assert np.all(M >= -1e-10)
 
+        # 0.3 * (1 - 0.5 * m/max(m)) is bounded in [0.15, 0.3], so the drift is strictly positive
+        # everywhere and the mass MUST move right -- nothing above checks that it moves at all.
+        # The lower bound is analytic: min drift 0.15 over T=0.5 gives >= 0.075 before wall
+        # effects. Measured over 25 seeds the rise is 0.0956..0.1096, so 0.05 clears it 1.9x.
+        def com(t):
+            return np.sum(x_grid * M[t]) / np.sum(M[t])
+
+        assert com(-1) > com(0) + 0.05, (
+            f"strictly positive crowd-aware drift must move mass right: {com(0):.3f} -> {com(-1):.3f}"
+        )
+
     def test_time_dependent_drift_1d(self):
         """Test time-dependent drift: alpha(t, x, m) varies with time."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
@@ -748,6 +697,18 @@ class TestFPParticleSolverCallableDrift:
 
         assert np.all(np.isfinite(M))
         assert np.all(M >= -1e-10)
+
+        # The time integral is the oracle. Displacement is proportional to the integral of
+        # sin(2*pi*t), i.e. (1 - cos(2*pi*t))/(2*pi): maximal at the half period and back to ZERO
+        # over the full period T=1.0. A constant-drift bug or a frozen t fails the second
+        # assertion; a sign flip fails the first. Measured over 25 seeds: half-period rise
+        # 0.0854..0.1051 and net displacement -0.0108..0.0091, both clearing their bounds ~2.8x.
+        def com(t):
+            return np.sum(x_grid * M[t]) / np.sum(M[t])
+
+        half = M.shape[0] // 2
+        assert com(half) > com(0) + 0.03, f"mass has not moved right at the half period: {com(half):.3f}"
+        assert com(-1) == pytest.approx(com(0), abs=0.03), f"one full period must net to zero: {com(-1):.3f}"
 
     def test_callable_drift_with_array_diffusion(self):
         """Test callable drift combined with array diffusion."""
@@ -774,6 +735,36 @@ class TestFPParticleSolverCallableDrift:
 
         assert np.all(np.isfinite(M))
         assert np.all(M >= -1e-10)
+
+        # volatility_field OVERRIDES problem.sigma (#1412), and nothing here saw which one was
+        # used. Free diffusion gives var(t) = var(0) + sigma^2 t, so the slope of var against t is
+        # the volatility that was actually applied. Fitted over the whole trajectory rather than
+        # differenced at one step, because at 1000 particles a two-point estimate is too noisy to
+        # separate the two conventions. Measured over 30 seeds: slope 0.02274..0.02718 with the
+        # override (law 0.15^2 = 0.0225), against 0.00806..0.01372 when the override is dropped
+        # and problem.sigma=0.1 is used (law 0.0100) -- the populations do not overlap, and the
+        # band below excludes the sigma=0.1 one by 31%.
+        dx = problem.geometry.get_grid_spacing()[0]
+        dt = problem.T / problem.Nt
+        t_grid = np.arange(M.shape[0]) * dt
+
+        def moments(t):
+            w = M[t] * dx
+            w = w / w.sum()
+            mean = np.sum(x_grid * w)
+            return mean, np.sum((x_grid - mean) ** 2 * w)
+
+        means, variances = np.array([moments(t) for t in range(M.shape[0])]).T
+        design = np.vstack([t_grid, np.ones_like(t_grid)]).T
+        var_slope = np.linalg.lstsq(design, variances, rcond=None)[0][0]
+        mean_slope = np.linalg.lstsq(design, means, rcond=None)[0][0]
+
+        assert 0.8 * 0.15**2 < var_slope < 1.45 * 0.15**2, (
+            f"spread rate {var_slope:.5f} does not match the override volatility 0.15 "
+            f"(law {0.15**2:.5f}); problem.sigma={problem.sigma} would give {problem.sigma**2:.5f}"
+        )
+        # The drift is the other half of the SDE: measured mean-slope 0.1899..0.2176 against 0.2.
+        assert mean_slope == pytest.approx(0.2, rel=0.25), f"drift rate {mean_slope:.4f} is not 0.2"
 
 
 class TestProjectToNavigableOrDefer:

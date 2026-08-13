@@ -22,7 +22,6 @@ from mfgarchon.utils.numerical.particle.mcmc import (
     MCMCResult,
     MetropolisHastings,
     NoUTurnSampler,
-    bayesian_neural_network_sampling,
     compute_rhat,
     effective_sample_size,
     sample_mfg_posterior,
@@ -145,6 +144,15 @@ def test_metropolis_hastings_thinning():
     # After thinning, should have 1000/5 = 200 samples
     assert result.samples.shape[0] == 200
 
+    # Which samples survive, not just how many.  Thinning exists to drop the autocorrelated head
+    # of a chain, and a regression that returned the FIRST 200 samples satisfies the count above
+    # while doing the opposite.  Thinning affects only the final slice, so at the same seed the
+    # underlying chain is identical and the stride identity is exact (verified: the truncation
+    # alternative, thin1[:200], does NOT match).
+    config_full = MCMCConfig(num_samples=1000, num_warmup=100, thinning=1, seed=42)
+    result_full = MetropolisHastings(potential_fn, config=config_full).sample(np.array([0.0]), 1000)
+    assert np.array_equal(result.samples, result_full.samples[::5])
+
 
 @pytest.mark.unit
 def test_metropolis_hastings_step_size_adaptation():
@@ -265,17 +273,33 @@ def test_hmc_leapfrog_integration():
 
 @pytest.mark.unit
 def test_hmc_mass_matrix_adaptation():
-    """Test HMC adapts mass matrix during warmup."""
+    """Test HMC adapts mass matrix during warmup.
+
+    Two things are needed to make this test see the flag it is named for, and the previous
+    fixture had neither:
+
+    1. num_warmup must exceed 200.  The adaptation branch is `metric_adaptation and i > 100 and
+       i % 100 == 0` nested inside `i < num_warmup`, so at num_warmup=200 no index qualifies and
+       adaptation never runs at all.
+    2. The target must be anisotropic.  The adapted matrix is a sample covariance, and on
+       N(0, I) that is the identity -- which is also the un-adapted initialisation, so the two
+       branches are indistinguishable.
+
+    With the old fixture the mass matrix came out exactly eye(2) whether metric_adaptation was
+    True or False.
+    """
+    # Target covariance diag(1, 25): potential 0.5 * x^T A x with A = diag(1, 1/25).
+    A = np.diag([1.0, 1.0 / 25.0])
 
     def potential_fn(x):
-        return 0.5 * np.sum(x**2)
+        return 0.5 * x @ A @ x
 
     def gradient_fn(x):
-        return x
+        return A @ x
 
     config = MCMCConfig(
-        num_samples=300,
-        num_warmup=200,
+        num_samples=400,
+        num_warmup=300,
         step_size=0.1,
         metric_adaptation=True,
         seed=42,
@@ -287,6 +311,13 @@ def test_hmc_mass_matrix_adaptation():
     # Mass matrix should have been adapted
     assert sampler.mass_matrix is not None
     assert sampler.mass_matrix.shape == (2, 2)
+
+    # The adapted matrix must have picked up the 25:1 anisotropy of the target.  Measured
+    # [[1.156, 0.230], [0.230, 24.257]], ratio 21.0 against the true 25; the same run with
+    # metric_adaptation=False leaves it exactly eye(2), ratio 1.0.  A threshold of 10 sits 2.1x
+    # below the adapted value and 10x above the un-adapted one.
+    ratio = sampler.mass_matrix[1, 1] / sampler.mass_matrix[0, 0]
+    assert ratio > 10.0, f"mass matrix did not adapt to the target anisotropy: ratio = {ratio}"
 
 
 @pytest.mark.unit
@@ -328,6 +359,13 @@ def test_hmc_thinning():
 
     # After thinning, should have 1000/10 = 100 samples
     assert result.samples.shape[0] == 100
+
+    # HMC inherits the same final slice as Metropolis-Hastings but reaches it through its own
+    # sample loop, so the stride identity needs its own case.  Verified exact; the truncation
+    # alternative, thin1[:100], does not match.
+    config_full = MCMCConfig(num_samples=1000, num_warmup=100, thinning=1, step_size=0.1, seed=42)
+    result_full = HamiltonianMonteCarlo(potential_fn, gradient_fn, config=config_full).sample(np.array([0.0]), 1000)
+    assert np.array_equal(result.samples, result_full.samples[::10])
 
 
 # =============================================================================
@@ -404,24 +442,6 @@ def test_langevin_dynamics_basic():
     sample_std = np.std(result.samples)
     assert abs(sample_mean) < 0.5
     assert abs(sample_std - 1.0) < 0.5
-
-
-@pytest.mark.unit
-def test_langevin_dynamics_2d():
-    """Test Langevin dynamics in 2D."""
-
-    def potential_fn(x):
-        return 0.5 * np.sum(x**2)
-
-    def gradient_fn(x):
-        return x
-
-    config = MCMCConfig(num_samples=500, num_warmup=100, step_size=0.01, seed=42)
-    sampler = LangevinDynamics(potential_fn, gradient_fn, config=config)
-
-    result = sampler.sample(np.array([0.0, 0.0]), config.num_samples)
-
-    assert result.samples.shape == (500, 1, 2)
 
 
 @pytest.mark.unit
@@ -511,6 +531,12 @@ def test_effective_sample_size_basic():
     assert ess.shape == (dimension,)
     assert np.all(ess > 0)
     assert np.all(ess <= num_samples * num_chains)
+
+    # These chains are i.i.d. draws, so the autocorrelation is zero and the effective sample
+    # size must be the total sample count -- not merely somewhere in (0, N*C], which an
+    # estimator returning 1 for every dimension also satisfies.  Measured exactly 1000.0 on
+    # both dimensions, so rtol=0.1 is generous.
+    np.testing.assert_allclose(ess, num_samples * num_chains, rtol=0.1)
 
 
 @pytest.mark.unit
@@ -636,6 +662,16 @@ def test_sample_mfg_posterior_langevin():
 
     assert result.samples.shape == (300, 1, 2)
 
+    # Langevin has no accept/reject step, so every proposal is kept.  This narrows the dispatch:
+    # an implementation that ignored method= and fell back to MH would report ~0.9 here.  It is
+    # not a complete discriminator -- NUTS also returns exactly 1.0 on this target -- so it is
+    # paired with the moment check below rather than used alone.
+    assert result.acceptance_rate == 1.0
+
+    # The target is N(0, I_2); measured sample mean [-0.021, 0.066], so 0.3 is ~4.6x margin.
+    s = result.samples.reshape(300, 2)
+    assert np.abs(s.mean(axis=0)).max() < 0.3
+
 
 @pytest.mark.unit
 def test_sample_mfg_posterior_invalid_method():
@@ -656,61 +692,9 @@ def test_sample_mfg_posterior_invalid_method():
         )
 
 
-@pytest.mark.unit
-def test_bayesian_neural_network_sampling_basic():
-    """Test Bayesian neural network sampling function signature."""
-    # Note: The bayesian_neural_network_sampling function has hardcoded num_weights=100
-    # which doesn't match our simple 2D network. We'll test the API works rather than
-    # expecting correct posterior samples.
-
-    # Simple linear network
-    def neural_network(weights, inputs):
-        # weights: (100,), inputs: (N, 2) -> outputs: (N,)
-        # Use only first 2 weights for actual computation
-        return inputs @ weights[:2]
-
-    # Generate synthetic data
-    np.random.seed(42)
-    inputs = np.random.randn(50, 2)
-    targets = np.random.randn(50)
-
-    result = bayesian_neural_network_sampling(
-        neural_network,
-        (inputs, targets),
-        prior_std=1.0,
-        likelihood_std=0.1,
-        num_samples=50,
-        num_warmup=10,
-        step_size=0.001,
-        seed=42,
-    )
-
-    # Should return samples of weights (100 hardcoded in function)
-    assert result.samples.shape[0] == 50
-    assert result.samples.shape[1] == 1
-    assert result.samples.shape[2] == 100
-
-
 # =============================================================================
 # Test Numerical Gradient Fallback
 # =============================================================================
-
-
-@pytest.mark.unit
-def test_numerical_gradient_fallback():
-    """Test MCMC sampler uses numerical gradient when analytical not provided."""
-
-    def potential_fn(x):
-        return 0.5 * np.sum(x**2)
-
-    # Don't provide gradient_fn
-    config = MCMCConfig(num_samples=100, num_warmup=20, seed=42)
-    sampler = MetropolisHastings(potential_fn, config=config)
-
-    # Should still work using numerical gradient
-    result = sampler.sample(np.array([0.0]), config.num_samples)
-
-    assert result.samples.shape[0] == 100
 
 
 @pytest.mark.unit
@@ -756,6 +740,15 @@ def test_mcmc_high_dimensional():
     result = sampler.sample(np.zeros(10), config.num_samples)
 
     assert result.samples.shape == (200, 1, 10)
+
+    # Shape cannot distinguish a working 10D sampler from one that never leaves the origin.
+    # The target is N(0, I_10); these are the same moment checks test_hmc_basic already makes
+    # for 1D and 2D.  Measured max|mean| = 0.259 (threshold 0.5) and per-coordinate std in
+    # [0.898, 1.121] (thresholds 0.7 / 1.3).
+    s = result.samples.reshape(200, 10)
+    assert np.abs(s.mean(axis=0)).max() < 0.5
+    assert (s.std(axis=0) > 0.7).all()
+    assert (s.std(axis=0) < 1.3).all()
 
 
 @pytest.mark.unit

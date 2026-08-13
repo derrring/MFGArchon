@@ -14,18 +14,20 @@ Date: October 2025
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mfgarchon.alg.reinforcement.environments import (
+# Imported from their owner in `geometry/graph/`. The frozen RL package re-exported these and
+# was deleted; maze generation was never RL infrastructure, it only had a wrapper there.
+from mfgarchon.geometry.graph.maze_cellular_automata import (
     CellularAutomataConfig,
     CellularAutomataGenerator,
-    MazeAlgorithm,
-    MazeGeometry,
+)
+from mfgarchon.geometry.graph.maze_generator import MazeAlgorithm, MazeGeometry
+from mfgarchon.geometry.graph.maze_recursive_division import (
     RecursiveDivisionConfig,
     RecursiveDivisionGenerator,
-    VoronoiMazeConfig,
-    VoronoiMazeGenerator,
     add_loops,
     create_room_based_config,
 )
+from mfgarchon.geometry.graph.maze_voronoi import VoronoiMazeConfig, VoronoiMazeGenerator
 
 
 def visualize_all_algorithms():

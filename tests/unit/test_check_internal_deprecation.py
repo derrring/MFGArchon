@@ -42,9 +42,25 @@ def _load():
 
 # Module scope, not a fixture: `parametrize` is evaluated at collection time and cannot read one.
 CHECK = _load()
-FROZEN_A, FROZEN_B = CHECK.FROZEN
+# Synthetic, not read from `CHECK.FROZEN`. The two paradigms that populated that tuple were
+# deleted, so it is empty and unpacking it raises at COLLECTION time -- taking the whole file with
+# it. What these tests exercise is `is_frozen`'s prefix rule, and that rule is worth testing
+# whether or not anything is currently frozen; reading the ambient tuple only tied the rule's
+# verification to the package list. Each test that needs the rule to fire patches FROZEN itself.
+FROZEN_A = "mfgarchon.alg.a_frozen_paradigm"
+FROZEN_B = "mfgarchon.alg.another_frozen_paradigm"
 DEEP_FROZEN = FROZEN_B + ".algorithms.some_algorithm"
 LIVE = "mfgarchon.utils.numerical"
+
+
+@pytest.fixture(autouse=True)
+def _frozen_scope(monkeypatch):
+    """Two frozen paradigms exist, for the duration of each test in this file.
+
+    `is_frozen` answers False for everything when `FROZEN` is empty, which is correct for the live
+    package and useless for testing the prefix rule.
+    """
+    monkeypatch.setattr(CHECK, "FROZEN", (FROZEN_A, FROZEN_B))
 
 
 def _entry(name: str, *modules: str) -> dict:

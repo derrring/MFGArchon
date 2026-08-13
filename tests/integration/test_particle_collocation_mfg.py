@@ -84,11 +84,28 @@ class TestHJBGFDMWithParticleFP:
 
         assert hjb_solver.collocation_points.shape == (N_points, 2)
 
+        # The constructor runs the delta-neighbourhood search and assembles the Taylor matrices;
+        # a node whose neighbourhood came back empty carries None. Measured: all 200 carry a stencil.
+        assert all(hjb_solver.taylor_matrices[i] is not None for i in range(hjb_solver.n_points))
+
+        # taylor_order defaults to 2, so the weighted least-squares stencils must reproduce any
+        # quadratic exactly. Measured worst error over all 200 nodes and all five multi-indices:
+        # 2.52e-12, so abs=1e-8 sits ~4000x above the observed error.
+        x, y = points[:, 0], points[:, 1]
+        u = 1 + 2 * x + 3 * y + 0.5 * x**2 - y**2 + 1.5 * x * y
+        for i in range(hjb_solver.n_points):
+            derivs = hjb_solver.approximate_derivatives(u, i)
+            assert derivs[(2, 0)] == pytest.approx(1.0, abs=1e-8)
+            assert derivs[(0, 2)] == pytest.approx(-2.0, abs=1e-8)
+            assert derivs[(1, 1)] == pytest.approx(1.5, abs=1e-8)
+            assert derivs[(1, 0)] == pytest.approx(2 + x[i] + 1.5 * y[i], abs=1e-8)
+            assert derivs[(0, 1)] == pytest.approx(3 - 2 * y[i] + 1.5 * x[i], abs=1e-8)
+
     def test_fp_particle_outputs_to_grid(self):
         """Test that FP particle solver outputs density on grid."""
         problem = SimpleLQMFG2D()
 
-        fp_solver = FPParticleSolver(problem, num_particles=1000)
+        fp_solver = FPParticleSolver(problem, num_particles=1000, seed=20260813)
 
         (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
         Nt_points = problem.Nt + 1  # Temporal grid points
@@ -100,11 +117,24 @@ class TestHJBGFDMWithParticleFP:
         # Particle solver outputs on grid via KDE
         assert M.shape == (Nt_points, Nx_points)
 
+        # The projection returns a density, not raw particle counts: it integrates to 1 at every
+        # time. Measured max|sum(M)*Dx - 1| = 4.4e-16 (unchanged under kde_normalization="none"),
+        # so atol=1e-12 sits ~2000x above the observed error.
+        Dx = problem.geometry.get_grid_spacing()[0]
+        np.testing.assert_allclose(M.sum(axis=1) * Dx, 1.0, atol=1e-12)
+
+        # At t=0 the answer is known independently of the scheme: m0 is uniform on [0, 1], so the
+        # KDE projection must return its own input. Measured max|M[0] - 1| = 0.156 at this seed
+        # (0.083-0.156 across seeds 0/1/7/1234/20260813 at N=1000); 0.3 leaves ~2x margin over the
+        # sampling error while still catching a projection that drops the walls.
+        assert np.abs(M[0] - 1.0).max() < 0.3
+
     def test_mass_conservation_particle_fp(self):
         """Test mass conservation in particle FP solver."""
         problem = SimpleLQMFG2D()
 
-        fp_solver = FPParticleSolver(problem, num_particles=2000)
+        num_particles = 2000
+        fp_solver = FPParticleSolver(problem, num_particles=num_particles, seed=20260813)
 
         # Uniform initial density
         (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
@@ -117,6 +147,23 @@ class TestHJBGFDMWithParticleFP:
         # Check density is non-negative and finite
         assert np.all(M >= 0)
         assert np.all(np.isfinite(M))
+
+        # The grid density is not the place to read mass off: sum(M)*Dx == 1 to 3.3e-16 even with
+        # kde_normalization="none", so it is a property of the projection and says nothing about the
+        # transport. For a particle method the conservation law is particle conservation: none
+        # created, none destroyed, none outside the domain. Reflection puts particles exactly on the
+        # wall (measured min 0.0, max 1.0, with 111 of 42000 landing on a boundary), so the bound is
+        # inclusive; a broken no-flux BC leaks them past it.
+        particles = np.asarray(fp_solver.M_particles_trajectory)
+        assert particles.shape == (Nt_points, num_particles)
+        assert particles.min() >= 0.0
+        assert particles.max() <= 1.0
+
+        # U == 0 gives zero drift, so this is reflected Brownian motion on [0, 1], whose invariant
+        # measure is the uniform density it started from -- an oracle independent of the scheme.
+        # Measured max|M - 1| = 0.122 at this seed (0.102-0.126 across seeds at N=2000); 0.25 leaves
+        # ~2x margin over the Monte-Carlo error.
+        assert np.abs(M - 1.0).max() < 0.25
 
 
 class TestFPGFDMSolver:
@@ -134,29 +181,6 @@ class TestFPGFDMSolver:
 
         assert fp_solver.n_points == N_points
         assert fp_solver.dimension == 2
-
-    def test_fp_gfdm_outputs_on_collocation_points(self):
-        """Test that FPGFDMSolver outputs on collocation points."""
-        problem = SimpleLQMFG2D()
-        N_points = 100
-
-        domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-        points = domain.sample_uniform(N_points, seed=42)
-
-        fp_solver = FPGFDMSolver(problem, collocation_points=points, delta=0.15)
-
-        # Use temporal grid size (Nt + 1), not spatial grid
-        n_time_points = problem.Nt + 1
-        m0 = np.ones(N_points) / N_points
-
-        # drift_field must be shape (Nt+1, N, d) for GFDM solver
-        # Use zero drift for this test
-        drift_field = np.zeros((n_time_points, N_points, problem.d))
-
-        M = fp_solver.solve_fp_system(m0, drift_field=drift_field, show_progress=False)
-
-        # GFDM solver outputs on collocation points
-        assert M.shape == (n_time_points, N_points)
 
     def test_fp_gfdm_mass_conservation(self):
         """Test mass conservation in GFDM-based FP solver."""

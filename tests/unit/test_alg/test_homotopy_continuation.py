@@ -10,7 +10,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.continuation.homotopy import (
-    ContinuationResult,
     HomotopyContinuation,
 )
 
@@ -77,21 +76,6 @@ class TestHomotopyContinuationInstantiation:
 
 class TestHomotopyContinuationTrace:
     """Test the trace() method on toy problems."""
-
-    def test_trace_returns_result(self):
-        """trace() should return a ContinuationResult."""
-        cont = HomotopyContinuation(
-            problem_factory=_linear_problem_factory,
-            solver_factory=_linear_solver_factory,
-            extract_solution=_extract,
-            parameter_range=(0.0, 1.0),
-            initial_step=0.5,
-            max_steps=10,
-            detect_bifurcation=False,
-        )
-        m0 = np.zeros(20)
-        result = cont.trace(initial_solution=m0)
-        assert isinstance(result, ContinuationResult)
 
     def test_trace_records_parameter_values(self):
         """Parameter values should start at lam_start and end at lam_end."""
@@ -162,9 +146,9 @@ class TestCorrectorConvergence:
         np.testing.assert_allclose(m_corr, 0.3 * np.ones(20) / 20.0, atol=1e-5)
 
     def test_corrector_fails_on_non_convergent(self):
-        """Corrector should report non-convergence when map is not contractive."""
+        """Corrector must report False when the iteration budget runs out before the tolerance."""
 
-        # Solver that always doubles the input (divergent)
+        # Solver that ignores its input and returns a constant far from it
         def divergent_factory(problem):
             class _Div:
                 def solve(self):
@@ -172,18 +156,27 @@ class TestCorrectorConvergence:
 
             return _Div()
 
-        cont = HomotopyContinuation(
-            problem_factory=_linear_problem_factory,
-            solver_factory=divergent_factory,
-            extract_solution=_extract,
-            parameter_range=(0.0, 1.0),
-            corrector_tol=1e-12,
-            max_corrector_iters=3,
-        )
-        m_pred = np.zeros(10)
-        _m_corr, converged = cont._corrector(m_pred, lam=0.5)
-        # May or may not converge depending on map behavior, but should not crash
-        assert isinstance(converged, bool)
+        def _make(max_corrector_iters):
+            return HomotopyContinuation(
+                problem_factory=_linear_problem_factory,
+                solver_factory=divergent_factory,
+                extract_solution=_extract,
+                parameter_range=(0.0, 1.0),
+                corrector_tol=1e-12,
+                max_corrector_iters=max_corrector_iters,
+            )
+
+        # One iteration: error is 999 on the only pass, so the budget is exhausted -> False branch
+        m_corr, converged = _make(1)._corrector(np.zeros(10), lam=0.5)
+        assert converged is False, "budget exhausted before the residual fell below tol"
+        np.testing.assert_allclose(m_corr, 999.0)
+
+        # Three iterations: the map is constant, so pass 2 has error exactly 0 < tol -> True branch.
+        # This is the reason the old `isinstance(converged, bool)` hid a defect: the fixture named
+        # "non convergent" actually converges, and both exits satisfy the isinstance check.
+        m_corr, converged = _make(3)._corrector(np.zeros(10), lam=0.5)
+        assert converged is True
+        np.testing.assert_allclose(m_corr, 999.0)
 
 
 class TestAdaptiveStepSizing:

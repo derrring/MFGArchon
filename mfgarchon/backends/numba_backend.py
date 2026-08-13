@@ -17,15 +17,23 @@ from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
-# Check Numba availability - raise ImportError if not available
+# Numba is optional, and this module must stay importable without it: a tree-wide scan
+# (the deprecation census, #1787) imports every module and cannot tell "declines to load
+# without its optional dependency" from "broken", so an ImportError here fails the scan
+# for the whole package. Raising moved to __init__ -- see the comment there for why the
+# failure must still be loud rather than a fallback.
 try:
     import numba
-    from numba import jit, njit  # noqa: F401
+    from numba import jit, njit
     from numba import vectorize as numba_vectorize
 
     NUMBA_AVAILABLE = True
-except ImportError as e:
-    raise ImportError("Numba required for Numba backend. Install with: pip install numba") from e
+except ImportError:
+    NUMBA_AVAILABLE = False
+    numba = None  # type: ignore[assignment]
+    jit = None  # type: ignore[assignment]
+    njit = None  # type: ignore[assignment]
+    numba_vectorize = None  # type: ignore[assignment]
 
 
 class NumbaBackend(BaseBackend):
@@ -38,6 +46,19 @@ class NumbaBackend(BaseBackend):
     - CPU parallelization of numerical kernels
     - JIT compilation of performance-critical functions
     """
+
+    def __init__(self, device: str = "auto", precision: str = "float64", **kwargs):
+        # Loud at construction, never a fallback. #1638 removed a NumPy fallback from
+        # `fpk_step` that dropped advection outright (`flux_div = 0.0`), which would have
+        # silently solved pure diffusion instead of the FP equation; the surviving
+        # `if NUMBA_AVAILABLE` branches in this file are unreachable for the same reason
+        # and carry the same risk if that ever stops being true. Matches JAXBackend.
+        if not NUMBA_AVAILABLE:
+            raise ImportError(
+                "Numba backend requested but Numba is not installed. "
+                "Install with: pip install 'mfgarchon[all]' or 'pip install numba'"
+            )
+        super().__init__(device=device, precision=precision, **kwargs)
 
     def _setup_backend(self):
         """Initialize Numba backend."""

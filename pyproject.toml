@@ -18,8 +18,9 @@ readme = "README.md"
 requires-python = ">=3.12"  # Updated to match conda environments
 classifiers = [
     "Programming Language :: Python :: 3",
-    # Verified by .github/workflows/python-compat.yml (weekly matrix). 3.15 is pre-release
-    # (early-warning only) so it is intentionally not claimed here.
+    # Verified by .github/workflows/python-compat.yml (weekly matrix). Every version listed there
+    # is required and every one required is listed here; 3.15 is not claimed and is no longer
+    # tested, because scipy publishes no 3.15 wheel (see that workflow's header).
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -96,24 +97,16 @@ core = [
     "typing-inspection",
 ]
 
-# torch is live -- it backs mfgarchon.backends and utils/acceleration. Of the rest, gymnasium and
-# stable-baselines3 serve only alg/reinforcement, a FROZEN design prototype (CLAUDE.md), and
-# tensorboard serves nothing.
+# torch is live -- it backs mfgarchon.backends and utils/acceleration. gymnasium,
+# stable-baselines3 and tensorboard served only alg/reinforcement and were dropped with it.
 nn = [
-    "torch>=2.0",              # PyTorch: backends/, utils/acceleration/ (live), and DGM/PINN (frozen)
-    "gymnasium>=0.29",         # frozen RL only: zero importers outside alg/reinforcement/
-    "stable-baselines3>=2.0",  # frozen RL only: one importer, alg/reinforcement/__init__.py
-    "tensorboard>=2.20.0",       # zero importers anywhere in the repo
+    "torch>=2.0",              # PyTorch: backends/ and utils/acceleration/
 ]
 
 # Everything: default + nn + JAX + performance + advanced viz
 all = [
-    # Same as [nn]: torch is live; gymnasium and stable-baselines3 serve only the frozen
-    # alg/reinforcement, and tensorboard has no importer anywhere in the repo.
+    # Same as [nn]: torch is live for backends/ and utils/acceleration/.
     "torch>=2.0",
-    "gymnasium>=0.29",
-    "stable-baselines3>=2.0",
-    "tensorboard>=2.20.0",
     # JAX acceleration
     "jax>=0.4.20",
     "jaxlib",

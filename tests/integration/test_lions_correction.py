@@ -49,32 +49,6 @@ def _make_problem(Nx: int = 51, source_term_hjb=None) -> MFGProblem:
 class TestCreateLionsSource:
     """Test create_lions_source bridge function."""
 
-    def test_returns_callable(self):
-        """Bridge should return a callable with correct signature."""
-        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-
-        def energy(m):
-            return 0.5 * np.sum(m**2) * 0.02
-
-        source = create_lions_source(energy, fd, weights=0.02)
-        assert callable(source)
-
-    def test_source_signature(self):
-        """Source should accept (x, m, v, t) and return array."""
-        fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-
-        def energy(m):
-            return 0.5 * np.sum(m**2) * 0.02
-
-        source = create_lions_source(energy, fd, weights=0.02)
-        x = np.linspace(0, 1, 50)
-        m = np.ones(50) / 50
-        v = np.zeros(50)
-        result = source(x, m, v, 0.0)
-
-        assert isinstance(result, np.ndarray)
-        assert result.shape == (50,)
-
     def test_quadratic_functional_derivative(self):
         """For F[m] = (1/2) int m^2 dx, delta F/delta m = m(x).
 

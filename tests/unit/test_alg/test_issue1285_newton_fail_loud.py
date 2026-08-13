@@ -91,7 +91,7 @@ def _make_solvers(problem: MFGProblem):
     return HJBFDMSolver(problem), FPFDMSolver(problem)
 
 
-def _assert_finite_solve(problem: MFGProblem) -> None:
+def _assert_finite_solve(problem: MFGProblem) -> tuple[np.ndarray, np.ndarray]:
     """NewtonMFGSolver must produce a finite (U, M) for the given problem."""
     from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 
@@ -104,6 +104,17 @@ def _assert_finite_solve(problem: MFGProblem) -> None:
     assert np.all(np.isfinite(M)), "M not finite"
     assert U.shape == solver.mfg_residual.solution_shape
     assert M.shape == solver.mfg_residual.solution_shape
+    return U, M
+
+
+def _picard_solve(problem: MFGProblem) -> tuple[np.ndarray, np.ndarray]:
+    """The same problem through the Picard path, as the oracle for the Newton equilibrium."""
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator
+
+    hjb_solver, fp_solver = _make_solvers(problem)
+    iterator = FixedPointIterator(problem, hjb_solver=hjb_solver, fp_solver=fp_solver)
+    result = iterator.solve(max_iterations=200, tolerance=1e-10, verbose=False)
+    return result.U, result.M
 
 
 # ---------------------------------------------------------------------------
@@ -111,61 +122,40 @@ def _assert_finite_solve(problem: MFGProblem) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mfg_residual_constructs_with_nonlocal_operator():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_nonlocal()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_source_term_hjb():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_source_hjb()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_source_term_fp():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_source_fp()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_obstacle():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_obstacle()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
 # ---------------------------------------------------------------------------
 # NewtonMFGSolver must CONSTRUCT and SOLVE (finite output) for each field
 # ---------------------------------------------------------------------------
 
 
-def test_newton_solver_solves_with_nonlocal_operator():
-    _assert_finite_solve(_make_problem_with_nonlocal())
-
-
-def test_newton_solver_solves_with_source_term_hjb():
-    _assert_finite_solve(_make_problem_with_source_hjb())
-
-
-def test_newton_solver_solves_with_source_term_fp():
-    _assert_finite_solve(_make_problem_with_source_fp())
-
-
 def test_newton_solver_solves_with_obstacle():
-    _assert_finite_solve(_make_problem_with_obstacle())
+    """Newton must reach the SAME equilibrium as Picard on an obstacle problem.
+
+    This is the only end-to-end obstacle coverage of the Newton path anywhere -- the parity
+    class in ``tests/integration/test_source_term_wiring.py`` covers source_term_hjb,
+    source_term_fp and nonlocal_operator but has no obstacle case, and
+    ``test_issue1361_source_composition.py`` pins the obstacle only at the composition level,
+    never through a solve. Finiteness and shape are satisfied by a Newton path that ignores the
+    obstacle entirely, which is the #1285 defect.
+
+    Threshold. The obstacle enters as ``(1/eps)*max(0, psi(x))`` with ``eps = 1e6``
+    (source_composition.py:130-133), so it is a small perturbation and the tolerance has to sit
+    below it or it certifies nothing. Measured on this fixture:
+
+    - Newton-vs-Picard relative gap with the obstacle wired to both: 2.4e-10 (U), 7.6e-11 (M).
+    - Effect of the obstacle itself, same solver with it on vs off: 9.5e-07 (U), 2.9e-08 (M).
+
+    1e-8 sits between them: 41x above the measured agreement in U and 95x below the gap a
+    Newton path that silently dropped the obstacle would open. A tolerance of 1e-5 would be
+    above the obstacle's whole effect and would pass with the term deleted.
+    """
+    problem = _make_problem_with_obstacle()
+    U_newton, M_newton = _assert_finite_solve(problem)
+    U_picard, M_picard = _picard_solve(problem)
+
+    u_gap = np.max(np.abs(U_newton - U_picard)) / np.max(np.abs(U_picard))
+    m_gap = np.max(np.abs(M_newton - M_picard)) / np.max(np.abs(M_picard))
+    assert u_gap < 1e-8, f"Newton and Picard disagree on the obstacle equilibrium: U gap {u_gap:.3e}"
+    assert m_gap < 1e-8, f"Newton and Picard disagree on the obstacle equilibrium: M gap {m_gap:.3e}"
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +171,3 @@ def test_mfg_residual_plain_problem_does_not_raise():
     residual = MFGResidual(problem, hjb_solver, fp_solver)
     assert residual.problem is problem
     assert residual.num_time_steps == problem.Nt + 1
-
-
-def test_newton_solver_plain_problem_does_not_raise():
-    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
-
-    problem = _make_plain_problem()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    solver = NewtonMFGSolver(problem, hjb_solver, fp_solver)
-    assert solver.problem is problem

@@ -139,8 +139,9 @@ class TestHJBFDMSolverAlias:
     def test_internal_fixed_point_solver_receives_canonical_kwarg(self):
         """When HJBFDMSolver constructs an internal FixedPointSolver for nD,
         it should forward `relaxation`, not `damping_factor`."""
-        # 1D skips the internal FixedPointSolver path; this is a smoke test
-        # to ensure the canonical kwarg is accepted without error.
+        # 1D never builds the internal solver at all (hjb_fdm.py guards it with
+        # `if self.dimension > 1`), so `HJBFDMSolver(p1D)` has no `nonlinear_solver`
+        # attribute; on 1D this only checks that the canonical kwarg is silent.
         p = _make_problem()
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -149,3 +150,28 @@ class TestHJBFDMSolverAlias:
             # (which previously would have, if it still passed damping_factor internally)
             dep = [x for x in w if issubclass(x.category, DeprecationWarning) and "damping_factor" in str(x.message)]
         assert len(dep) == 0
+
+        # The forwarding this test is named for needs BOTH dimension > 1 and
+        # solver_type="fixed_point" (the default is "newton", which builds a NewtonSolver with
+        # no relaxation at all).  Under those two conditions the value must arrive intact.
+        H = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
+        )
+        p2d = MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
+            ),
+            T=0.2,
+            Nt=5,
+            sigma=0.3,
+            components=MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0),
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            s2d = HJBFDMSolver(p2d, relaxation=0.37, solver_type="fixed_point")
+            dep2 = [x for x in w if issubclass(x.category, DeprecationWarning) and "damping_factor" in str(x.message)]
+        assert len(dep2) == 0
+        assert isinstance(s2d.nonlinear_solver, FixedPointSolver)
+        assert s2d.nonlinear_solver.relaxation == 0.37

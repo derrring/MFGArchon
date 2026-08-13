@@ -76,22 +76,6 @@ class TestThreadSafety:
 
         assert cached_loggers == expected_loggers, f"Cache mismatch: expected {expected_loggers}, got {cached_loggers}"
 
-    def test_same_logger_returned_across_threads(self):
-        """Same logger name should return identical logger object."""
-        loggers: list[logging.Logger] = []
-
-        def get_shared_logger(_: int) -> logging.Logger:
-            return get_logger("test.shared")
-
-        # Run concurrent access
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(get_shared_logger, i) for i in range(20)]
-            loggers = [f.result() for f in futures]
-
-        # All should be the same object
-        first_logger = loggers[0]
-        assert all(logger is first_logger for logger in loggers), "Different logger instances returned for same name"
-
 
 class TestLoggerCreation:
     """Test basic logger creation functionality."""
@@ -109,10 +93,15 @@ class TestLoggerCreation:
         assert MFGLogger._loggers[logger_name] is logger
 
     def test_repeated_get_logger_returns_same_instance(self):
-        """Calling get_logger twice should return the same logger."""
+        """Calling get_logger twice should return the same logger, already configured (Issue #620)."""
         logger1 = get_logger("test.repeated")
+        n = len(logger1.handlers)
         logger2 = get_logger("test.repeated")
         assert logger1 is logger2
+        # Identity alone is guaranteed by stdlib getLogger; what get_logger owes is a CONFIGURED
+        # logger, which a bare logging.getLogger (0 handlers, propagate=True) would not be.
+        assert len(logger2.handlers) == n == 1
+        assert logger2.propagate is False
 
 
 class TestHandlerDeduplication:

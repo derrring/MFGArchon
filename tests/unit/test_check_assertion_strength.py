@@ -90,90 +90,49 @@ def test_class_level_tests_are_counted():
     assert len(weak) == 1
 
 
-def test_the_frozen_paradigms_are_actually_excluded_not_merely_named():
-    """A membership assertion is a tautology: the constant contains itself, always.
+def test_no_test_file_is_excluded_from_the_denominator():
+    """[SUPERSEDED 2026-08-14] The three frozen-exclusion tests that stood here are gone with the
+    thing they tested. `alg/neural` and `alg/reinforcement` were the only frozen paradigms and
+    they were DELETED, taking `scripts/check_frozen_areas.py` -- the AST decider this module had
+    just been rewritten to defer to -- with them.
 
-    The first version of this asserted `"alg/neural" in cas.FROZEN` and passed while the filter
-    matched ZERO files under `tests/` -- those are SOURCE paths, and the filter was matching test
-    FILENAMES. Found by review (#1905), which named it as the same tautological shape this script
-    exists to count.
+    The history is worth keeping because the number moved three times and each move was real:
 
-    ~~131 frozen test functions sat in the denominator with a 47% flag rate against 20.6%
-    overall~~ [CORRECTED 2026-08-13] -- neither figure is reproducible from any state of the
-    committed code, and re-review found this line still asserting them. Re-measured under the
-    single owner (`check_frozen_areas._references`): the frozen set is **14 files, 145 test
-    functions**, of which 66 would be flagged = **46%**, against 19.5% over the 5393 that remain.
-    A wrong number inside a test docstring is worse than one in prose, because the file around it
-    reads as verified.
+        name-based filter   1037 of 5371 = 19.3%   12 files, by filename substring
+        AST decider         1049 of 5393 = 19.5%   14 files, by import; the two disagreed on six
+                                                   files, 40 test functions wrongly out and 20 in
+        no exclusion         653 of 5210 = 12.5%   on the tree that also deleted 206 of those
+                                                   functions outright
 
-    So assert the BEHAVIOUR: a frozen-named file must be absent from the scan, and a non-frozen
-    one present.
+    The last move is not the exclusion's doing. Decomposed against the pre-merge tree with one
+    scanner applied to both: 206 test functions removed by whole-file deletion (108 of them
+    flagged, a 52% rate against 12.5% in what survives), 164 more removed from files that stayed,
+    and the remaining drop is surviving tests that stopped being flagged because their assertions
+    were given oracles. Totals reconcile exactly (342 = 342).
+
+    What is asserted now is the negative: nothing is excluded, so a filter cannot come back
+    silently. An empty exclusion reads as though it does something, which is the inert-filter
+    defect the frozen machinery was itself introduced to fix.
     """
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
-        (root / "test_reaches_frozen.py").write_text(
-            "from mfgarchon.alg.neural.nn import feedforward\n\ndef test_a():\n    assert feedforward is not None\n"
-        )
-        (root / "test_ordinary.py").write_text("def test_b():\n    assert y is not None\n")
+        # Names and imports that the two retired deciders each keyed on. Both must be counted.
+        (root / "test_neural_thing.py").write_text("def test_a():\n    assert x is not None\n")
+        (root / "test_rl_thing.py").write_text("def test_b():\n    assert y is not None\n")
+        (root / "test_ordinary.py").write_text("def test_c():\n    assert z is not None\n")
         weak, total = cas.scan(root)
-    assert total == 1, f"the frozen file was not excluded from the denominator (total={total})"
-    names = [n for _, n, _ in weak]
-    assert names == ["test_b"], f"scan returned {names}; the frozen file leaked in"
+    assert total == 3, f"a file was excluded from the denominator; the filter is back (total={total})"
+    assert sorted(n for _, n, _ in weak) == ["test_a", "test_b", "test_c"]
 
 
-def test_a_file_named_after_a_frozen_paradigm_but_not_reaching_one_stays_in_the_denominator():
-    """The specific error the single-owner change fixes, as a fixture.
-
-    A file whose PATH contains `test_neural` while it imports nothing frozen is not frozen.
-    `tests/unit/test_utils/test_neural/test_normalization.py` is the real instance: 36 test
-    functions were dropped from the denominator because a DIRECTORY is spelled that way, while
-    CLAUDE.md freezes `alg/neural` and `alg/reinforcement` only. Found by re-review (#1905).
-    """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d:
-        root = pathlib.Path(d) / "test_neural"
-        root.mkdir()
-        (root / "test_normalization.py").write_text(
-            "from mfgarchon.utils.numerical import integration\n\ndef test_a():\n    assert integration is not None\n"
-        )
-        _weak, total = cas.scan(pathlib.Path(d))
-    assert total == 1, (
-        "a file named after a frozen paradigm was excluded although it reaches none; "
-        "the decider is back to matching names"
-    )
-
-
-def test_frozen_membership_has_one_owner_and_this_module_is_not_it():
-    """Positive control against the real tree, plus the invariant that keeps them from diverging.
-
-    `check_frozen_areas.py` decides frozen membership by AST -- imports and string literals --
-    and carries the argument for why a name match is insufficient. This module answered the same
-    question by filename substring; the two disagreed on six files, 40 test functions wrongly out
-    and 20 wrongly in. Re-review (#1905) also found that the previous repair had entrenched the
-    wrong set by pinning its file count in a test, so the pin is now on the OWNER, not the answer.
-    """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "check_frozen_areas_probe", pathlib.Path(cas.REPO) / "scripts" / "check_frozen_areas.py"
-    )
-    cfa = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cfa)
-
+def test_the_scan_reaches_the_real_tree_and_the_denominator_is_the_whole_of_it():
+    """Positive control: the fixture above proves nothing if `scan` cannot read the repo."""
+    weak, total = cas.scan(pathlib.Path(cas.REPO) / "tests")
     tree = list((pathlib.Path(cas.REPO) / "tests").rglob("test_*.py"))
-    frozen = [f for f in tree if cfa._references(f)]
-    assert frozen, "no test file reaches a frozen package; the exclusion is inert or the tree moved"
-    # The two must not be able to disagree, which is what a shared decider buys. Asserting it
-    # here means a future local shortcut in check_assertion_strength reddens rather than drifts.
-    assert [f for f in tree if cas._is_frozen(f)] == frozen, (
-        "check_assertion_strength and check_frozen_areas disagree about frozen membership; "
-        "there must be exactly one decider"
-    )
-    weak, _total = cas.scan(pathlib.Path(cas.REPO) / "tests")
-    assert not any(cfa._references(f) for f, _, _ in weak), "a frozen-paradigm test appears in the flagged set"
+    assert total > 1000, f"the scan returned {total} over {len(tree)} files; it is not reading the tree"
+    assert 0 < len(weak) < total, f"flagged {len(weak)} of {total} is not a proper fraction"
 
 
 def test_a_separation_assertion_is_the_strongest_class_not_the_weakest():

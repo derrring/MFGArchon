@@ -84,15 +84,6 @@ class TestSourceTermHJBWiring:
             err_msg="Zero source_term_hjb should match no source_term",
         )
 
-    def test_source_term_field_stored(self):
-        """Verify source_term_hjb is stored on MFGProblem."""
-
-        def src(x, m, v, t):
-            return np.ones(x.shape[0])
-
-        problem = _make_problem(source_term_hjb=src)
-        assert problem.source_term_hjb is src
-
 
 class TestSourceTermFPWiring:
     """Verify source_term_fp flows through to FP solver."""

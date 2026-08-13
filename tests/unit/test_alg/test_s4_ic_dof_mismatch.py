@@ -45,3 +45,24 @@ def test_ic_correct_length_is_accepted():
     u = np.zeros((fp.problem.Nt + 1, n))
     m = fp.solve_fp_system(np.ones(n) / n, potential_field=u)  # correct length: no raise
     assert m.shape == (fp.problem.Nt + 1, n)
+
+    # Oracle 1 (closed form): potential_field == 0 means no drift, so under no-flux walls a
+    # uniform density is an exact stationary solution. Measured max|m - 1/n| = 3.5e-13.
+    np.testing.assert_allclose(m, 1.0 / n, atol=1e-10)
+
+    # Oracle 2 (conservation): the weak-form mass is 1^T M m, NOT the nodal sum -- the basis
+    # integrals differ between interior and boundary DOFs, so the coefficient sum is conserved
+    # only for a uniform density. Measured relative drift 2.2e-16 over the sweep.
+    mass = np.asarray((fp._M @ m.T).sum(axis=0)).ravel()
+    np.testing.assert_allclose(mass, mass[0], rtol=1e-12)
+
+    # Positive control. A stationary solution is also what a solver that returned its input
+    # unchanged would produce, so neither oracle above can separate the two on its own.
+    # Diffusing a bump must move the density, and under no-flux the discrete minimum is
+    # non-decreasing in time (maximum principle) while the mass is still conserved.
+    bump = np.exp(-20.0 * (np.linspace(0.0, 1.0, n) - 0.5) ** 2)
+    m_bump = fp.solve_fp_system(bump / bump.sum(), potential_field=u)
+    assert np.max(np.abs(m_bump[-1] - m_bump[0])) > 1e-2  # measured 3.89e-02
+    assert np.all(np.diff(m_bump.min(axis=1)) > 0)  # measured smallest increment 4.89e-03
+    mass_bump = np.asarray((fp._M @ m_bump.T).sum(axis=0)).ravel()
+    np.testing.assert_allclose(mass_bump, mass_bump[0], rtol=1e-12)

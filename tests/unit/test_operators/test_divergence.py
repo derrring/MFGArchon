@@ -82,13 +82,6 @@ class TestDivergenceOperator:
         assert error < 1e-10  # Central diff exact for quadratic
 
     @pytest.mark.unit
-    def test_operator_shape(self):
-        """Operator shape should be (N, dim * N)."""
-        div_op = DivergenceOperator(spacings=[0.1, 0.1], field_shape=(20, 30))
-        N = 20 * 30
-        assert div_op.shape == (N, 2 * N)
-
-    @pytest.mark.unit
     def test_matvec_callable_consistency(self):
         """div_op(F) and div_op @ F.ravel() should match."""
         X, Y, dx, dy = _2d_grid(30, 30)
@@ -270,13 +263,6 @@ class TestAdvectionInterface:
         v = np.ones((2, 20, 20))
         adv = AdvectionOperator(velocity_field=v, spacings=[0.1, 0.1], field_shape=(20, 20))
         assert isinstance(adv, LinearOperator)
-
-    @pytest.mark.unit
-    def test_operator_shape(self):
-        """Operator shape should be (N, N)."""
-        v = np.ones((2, 20, 30))
-        adv = AdvectionOperator(velocity_field=v, spacings=[0.1, 0.1], field_shape=(20, 30))
-        assert adv.shape == (600, 600)
 
     @pytest.mark.unit
     def test_matvec_callable_consistency(self):

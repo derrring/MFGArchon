@@ -70,7 +70,13 @@ class TestReinitializationGlobal:
         )
 
     def test_convergence_tolerance(self):
-        """Test that reinitialization stops early when tolerance is met."""
+        """An exact SDF must be a fixed point of reinitialization.
+
+        Note the name overstates what is exercised: reinitialize defaults to method="fmm", which
+        reads neither max_iterations nor tolerance -- max_iterations=1 returns output identical to
+        max_iterations=100 here.  What this configuration does have is a perfect oracle, since
+        phi0 = x - 0.5 is already the exact signed distance to the interface at x = 0.5.
+        """
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[100], boundary_conditions=no_flux_bc(dimension=1))
         x = grid.coordinates[0]
 
@@ -80,9 +86,15 @@ class TestReinitializationGlobal:
         # Reinitialize with tight tolerance
         phi_reinit = reinitialize(phi0, grid, max_iterations=100, tolerance=0.01)
 
-        # Should converge quickly (good initial SDF)
-        # Just check it completes without error
         assert np.all(np.isfinite(phi_reinit)), "Reinitialization produced NaN/Inf"
+
+        # Fixed point: measured max deviation 2.8e-16, so 1e-12 is ~3500x margin.
+        np.testing.assert_allclose(phi_reinit, phi0, atol=1e-12)
+
+        # The defining property of a signed distance function, |grad phi| = 1.
+        # Measured deviation 7.1e-15 on the interior, so 1e-12 is ~140x margin.
+        grad = np.gradient(phi_reinit, x)
+        np.testing.assert_allclose(np.abs(grad[1:-1]), 1.0, atol=1e-12)
 
     def test_circle_2d(self):
         """Test reinitialization on 2D circle."""
@@ -266,6 +278,21 @@ class TestReinitializationEdgeCases:
         phi_reinit = reinitialize(phi, grid, max_iterations=10)
 
         assert np.all(np.isfinite(phi_reinit)), "Reinitialization produced NaN/Inf with sign(0)"
+
+        # sign(0) = 0 exists to guarantee the zero level set does not move.  Node 50 (x = 0.5) is
+        # the one exact zero; it must still be exactly zero afterwards.
+        zeros = np.where(phi == 0.0)[0]
+        assert zeros.size > 0, "input must actually contain exact zeros"
+        np.testing.assert_array_equal(phi_reinit[zeros], 0.0)
+
+        # Reinitialization moves no point across the interface.
+        np.testing.assert_array_equal(np.sign(phi_reinit), np.sign(phi))
+
+        # External oracle: the interface sits at x = 0.5, so the signed distance is exactly
+        # x - 0.5.  Measured max deviation 2.8e-16; the input itself is 0.4 away, so this
+        # separates "reinitialised" from "returned unchanged" by 15 orders of magnitude.
+        np.testing.assert_allclose(phi_reinit, x - 0.5, atol=1e-12)
+        np.testing.assert_allclose(np.abs(np.gradient(phi_reinit, x))[1:-1], 1.0, atol=1e-12)
 
 
 if __name__ == "__main__":

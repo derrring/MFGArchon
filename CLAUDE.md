@@ -24,25 +24,16 @@ Production-ready infrastructure for Mean Field Games research and applications.
 
 **Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical numerical algorithms (FDM, FEM, GFDM); ⛔ the neural and RL families (DGM, PINN, Actor-Critic, PPO) are **in scope as a direction but FROZEN as code** — see the next section; ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
 
-### ⛔ FROZEN: `alg/neural/` and `alg/reinforcement/` — prototype, not under development
+### `alg/neural/` and `alg/reinforcement/` were deleted, not frozen
 
-**These two paradigms are design prototypes / placeholders. Do not develop them until told
-otherwise, by name.** That includes: adding features, adding tests, refactoring, fixing
-non-blocking defects, and "improving coverage while I'm here".
+They were frozen design prototypes for months and are now gone (23,118 lines, 60 files). The
+deciding measurement: `boundary_conditions` appeared **zero times** in `alg/neural/`. They were
+designed before the geometry and boundary-condition layer this library is built on, so they were
+not BC-aware and had no seam to make them so — the gap was architectural, not a set of defects to
+patch. Severing them touched exactly one import (`alg/__init__.py`).
 
-What is still allowed without asking:
-- Keeping them **importable** — a change elsewhere that would break `import mfgarchon` must not.
-- A **one-line** fix for something that breaks the gate or the build.
-- **Recording** a defect as a GitHub issue. Filing is free; fixing is not.
-
-Why the ban includes tests, which is the counter-intuitive part: adding tests to a placeholder
-makes it look like it has a pinned contract. A later reader — human or agent — reads coverage as a
-promise that the behaviour is intended and load-bearing, and starts preserving decisions nobody
-made. An untested prototype is honestly labelled; a tested one is not.
-
-If a campaign sweeps the whole repo (a ratchet, an audit, a convention migration), these two
-directories are **out of scope by default** and their exclusion should be stated in the PR rather
-than silently assumed.
+Git history is the archive, the same reasoning that removed `archive/` in #1710. If either
+paradigm returns, it returns designed around the geometry/BC layer rather than beside it.
 
 ### MFG-Research: Private Research Repository
 Novel/experimental algorithms, unpublished methods. **Key principle**: MFG-Research **imports** MFGArchon but **never modifies** it.
@@ -143,7 +134,6 @@ The axiom testing discipline governs **what** a test must cover (edge/stress/fai
 |:----------|:--------------|:------------|:----------|
 | `solve_mfg()`, config system | No | Yes | Unit |
 | New HJB/FP solver | Yes | Maybe/No | Smoke |
-| `alg/neural`, `alg/reinforcement` | — | — | **None — frozen, see above** |
 | Visualization | Sometimes | Yes | Smoke |
 | Utility function | No | Internal | Unit or smoke |
 

@@ -127,12 +127,6 @@ class TestInheritance:
         """Returns MESHFREE discretization type (inherited from base)."""
         assert applicator.discretization_type == DiscretizationType.MESHFREE
 
-    def test_has_particle_bc_methods(self, applicator):
-        """Inherits particle BC methods from MeshfreeApplicator."""
-        assert callable(getattr(applicator, "apply_particle_bc", None))
-        assert callable(getattr(applicator, "apply_particles", None))
-        assert callable(getattr(applicator, "apply_field_bc", None))
-
 
 # ---------------------------------------------------------------------------
 # Boundary condition application tests
@@ -163,9 +157,19 @@ class TestBCApplication:
         bc = neumann_bc(dimension=2)
         result = applicator.apply(field, bc, grid_points)
 
-        # No-flux should modify boundary values (not leave them as original)
-        # Result should still be finite
-        assert np.all(np.isfinite(result))
+        # `result = field` unchanged satisfies a finiteness check, which is what the comment above
+        # this line used to say was wrong while asserting nothing that could see it.
+        mask = geometry.is_on_boundary(grid_points, tolerance=0.03)
+        assert mask.sum() == 56, "no boundary points detected; the assertions below are then vacuous"
+        assert np.array_equal(result[~mask], field[~mask]), "interior must be untouched"
+        # The radial field |x - c| has unit normal derivative on this circle, so copying the inward
+        # value must pull every boundary value down. Measured drops: 0.0426 to 0.0707, all 56.
+        assert np.all(result[mask] < field[mask]), "no-flux must pull boundary values toward the interior"
+
+        # A field with zero normal derivative is a fixed point of the no-flux operator. Measured
+        # exact (max deviation 0.0), so array_equal rather than a tolerance.
+        constant = np.full(len(grid_points), 3.0)
+        np.testing.assert_array_equal(applicator.apply(constant, neumann_bc(dimension=2), grid_points), constant)
 
     def test_apply_time_positional(self, applicator, grid_points):
         """time parameter can be passed positionally (LSP compliance)."""
@@ -187,11 +191,20 @@ class TestBCApplication:
 class TestProtocolUsage:
     """Boundary detection uses protocol methods directly, not hasattr."""
 
-    def test_boundary_detection_uses_protocol(self, applicator, grid_points):
+    def test_boundary_detection_uses_protocol(self, applicator, geometry, grid_points):
         """_detect_boundary_points calls geometry.is_on_boundary directly."""
         mask = applicator._detect_boundary_points(grid_points)
         assert mask.dtype == np.bool_
         assert mask.shape == (len(grid_points),)
+
+        # dtype and length are satisfied by any boolean mask, including an all-False one. This is
+        # the oracle for the claim the test's name makes: detection went through the protocol at
+        # the applicator's own tolerance. Measured: a bounding-box detector on this circle selects
+        # 80 points with ZERO overlap with the true 56, so the two are fully separated.
+        assert np.array_equal(mask, geometry.is_on_boundary(grid_points, tolerance=0.03)), (
+            "detection did not go through the geometry protocol at the applicator's tolerance"
+        )
+        assert mask.sum() == 56, "no boundary points detected; every BC assertion in this file is then vacuous"
 
     def test_normals_use_protocol(self, applicator, geometry, grid_points):
         """_compute_boundary_normals calls geometry.get_boundary_normal directly."""
@@ -226,4 +239,10 @@ class TestDispatch:
         from mfgarchon.geometry.boundary.dispatch import get_applicator_for_geometry
 
         applicator = get_applicator_for_geometry(geometry, discretization="GFDM")
-        assert isinstance(applicator, MeshfreeApplicator)
+        # isinstance alone cannot see this branch: ImplicitApplicator IS-A MeshfreeApplicator, so
+        # it passes whichever of the two dispatch returns. This fixture's geometry is IMPLICIT, and
+        # the MESHFREE branch tested above specialises on exactly that -- so the exact type is the
+        # only form that separates the GFDM branch from it.
+        assert type(applicator) is MeshfreeApplicator, (
+            "GFDM must not pick up the MESHFREE branch's implicit-geometry specialisation"
+        )

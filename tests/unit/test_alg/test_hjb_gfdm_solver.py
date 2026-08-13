@@ -540,42 +540,6 @@ class TestHJBGFDMSolverSolveHJBSystem:
         assert np.allclose(U_solution[-1, :], U_final, rtol=0.1)
 
 
-class TestHJBGFDMSolverIntegration:
-    """Integration tests with actual MFG problems."""
-
-    def test_solver_with_example_problem(self, standard_problem):
-        """Test solver works with standard MFGProblem."""
-        problem = standard_problem
-        bounds = problem.geometry.get_bounds()
-        (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        collocation_points = x_coords.reshape(-1, 1)
-
-        solver = HJBGFDMSolver(problem, collocation_points)
-
-        # Basic instantiation should work
-        assert solver is not None
-        assert hasattr(solver, "solve_hjb_system")
-        assert callable(solver.solve_hjb_system)
-
-    def test_solver_not_abstract(self, standard_problem):
-        """Test that HJBGFDMSolver can be instantiated (is concrete)."""
-        import inspect
-
-        # Should be instantiable (not abstract)
-        problem = standard_problem
-        bounds = problem.geometry.get_bounds()
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], 10)
-        collocation_points = x_coords.reshape(-1, 1)
-
-        # This should not raise TypeError about abstract methods
-        solver = HJBGFDMSolver(problem, collocation_points)
-        assert isinstance(solver, HJBGFDMSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(HJBGFDMSolver)
-
-
 class TestHJBGFDMSigmaConvention:
     """Issue #1073: residual/Jacobian must use σ²/2 (not (σ²/2)² = σ⁴/8) as
     the diffusion-term coefficient. Verifies that all 4 fixed sites consume

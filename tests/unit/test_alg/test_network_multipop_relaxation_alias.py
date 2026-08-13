@@ -88,3 +88,9 @@ class TestNetworkFactorySignatures:
         assert any(p["param"] == "damping_factor" for p in meta1)
         assert meta2 is not None
         assert any(p["param"] == "damping" for p in meta2)
+
+        # A deprecation that is registered but redirects somewhere else is exactly what the
+        # repo's deprecation policy exists to prevent, and the `any(...)` lines above cannot
+        # see it. Pin the redirect target, which @deprecated_parameter stores beside the name.
+        assert next(p for p in meta1 if p["param"] == "damping_factor")["replacement"] == "relaxation"
+        assert next(p for p in meta2 if p["param"] == "damping")["replacement"] == "relaxation"

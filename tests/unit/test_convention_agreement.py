@@ -19,6 +19,8 @@ read) so the two are complementary.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 import numpy as np
@@ -290,3 +292,97 @@ class TestDiffusionOperatorSingleSource:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestHJBResidualNormGridScaling:
+    """``hjb_residual_norm`` is ``||F||_2 * sqrt(dx)``, and the ``sqrt(dx)`` is the whole point.
+
+    Measured by the 24-axis discrimination ratchet (#1906): dropping the scaling was killed by
+    ZERO of 6138 tests. The docstring at ``base_hjb.py:1362`` calls it load-bearing and records
+    what it cost -- an iteration comparing an unscaled residual against this one is on a scale
+    4.5x apart at Nx=21, rejects every step, returns its input unchanged, and reports the
+    residual at the starting iterate, which reads as a five-order improvement (#1878).
+
+    Pinned against an EXTERNAL oracle rather than against a second implementation: the grid
+    scaling exists so the number does not change meaning under refinement, so the law is that
+    the discrete norm converges to the continuum one. For ``f(x) = sin(pi x)`` on [0, 1],
+    ``int_0^1 sin^2 = 1/2``, so the limit is ``1/sqrt(2)`` in closed form. Without the
+    ``sqrt(dx)`` the same quantity grows as ``sqrt(Nx)`` and matches nothing.
+    """
+
+    @pytest.mark.parametrize("nx", [51, 201, 801, 3201])
+    def test_the_scaled_norm_converges_to_the_continuum_l2_norm(self, nx: int):
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import hjb_residual_norm
+
+        dx = 1.0 / (nx - 1)
+        f = np.sin(np.pi * np.linspace(0.0, 1.0, nx))
+        # EXACT, not asymptotic: sum_i sin^2(pi i / (nx-1)) = (nx-1)/2 identically, so
+        # ||f||_2 * sqrt(dx) = sqrt((nx-1)/2 * 1/(nx-1)) = 1/sqrt(2) at every resolution.
+        # Measured 0.707107 at all four. A tolerance is not needed and would only hide drift.
+        assert hjb_residual_norm(f, dx) == pytest.approx(1.0 / np.sqrt(2.0), abs=1e-14)
+
+    def test_the_unscaled_norm_does_not_converge_at_all(self):
+        """The control: without the scaling the quantity has no continuum limit to converge to."""
+        norms = []
+        for nx in (51, 201, 801, 3201):
+            f = np.sin(np.pi * np.linspace(0.0, 1.0, nx))
+            norms.append(float(np.linalg.norm(f)))
+        ratios = [b / a for a, b in pairwise(norms)]
+        # Each refinement quadruples (nx-1), so an unscaled 2-norm doubles -- measured exactly
+        # 2.0 at every step. The scaled norm is flat at 1/sqrt(2) over the same four grids, so
+        # this control establishes that the test above measures the scaling and not the field.
+        assert all(r == pytest.approx(2.0, abs=1e-12) for r in ratios), f"unscaled ratios {ratios}"
+
+    def test_the_scaling_is_what_makes_two_resolutions_comparable(self):
+        """A residual of the same size on two grids must produce the same number."""
+        from mfgarchon.alg.numerical.hjb_solvers.base_hjb import hjb_residual_norm
+
+        coarse = np.sin(np.pi * np.linspace(0.0, 1.0, 51))
+        fine = np.sin(np.pi * np.linspace(0.0, 1.0, 3201))
+        assert hjb_residual_norm(coarse, 1.0 / 50) == pytest.approx(hjb_residual_norm(fine, 1.0 / 3200), rel=1e-3)
+
+
+class TestPicardCriterionIsAConjunction:
+    """``check_convergence_criteria`` requires the relative AND the absolute error below tol.
+
+    Measured by the 24-axis ratchet (#1906): reading the ``and`` as ``or`` was killed by ZERO of
+    6138 tests. The function's own docstring states "Convergence criteria (both must be
+    satisfied)", so the declaration was live and unguarded.
+
+    The cases below are exactly the two where a conjunction and a disjunction disagree; a test
+    that only checks "both small -> True" and "both large -> False" passes under either.
+    """
+
+    TOL = 1e-6
+
+    def test_a_small_relative_error_alone_is_not_convergence(self):
+        from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
+
+        converged, _ = check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, self.TOL)
+        assert converged is False
+
+    def test_a_small_absolute_error_alone_is_not_convergence(self):
+        from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
+
+        converged, _ = check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, self.TOL)
+        assert converged is False
+
+    def test_both_below_tolerance_is_convergence_and_says_so(self):
+        from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
+
+        converged, reason = check_convergence_criteria(1e-9, 1e-8, 1e-7, 1e-9, self.TOL)
+        assert converged is True
+        assert "Converged" in reason
+
+    def test_one_field_converging_is_not_enough_either(self):
+        """The `max` over (U, M) is the other half of the conjunction, and #1914 is its shape.
+
+        On the fixture of #1914 the density's error falls three orders while the value
+        function's rises two. A criterion that accepted the smaller of the two fields would
+        call that solve converged.
+        """
+        from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
+
+        u_diverging, m_settled = 8.9e1, 4.1e-3
+        converged, _ = check_convergence_criteria(u_diverging, m_settled, u_diverging, m_settled, self.TOL)
+        assert converged is False

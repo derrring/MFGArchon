@@ -11,7 +11,7 @@ import numpy as np
 
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.base import CartesianGrid, Geometry
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import BCType, no_flux_bc
 from mfgarchon.geometry.protocol import AdaptiveGeometry, is_adaptive
 
 
@@ -32,17 +32,6 @@ class TestGeometryProtocolCompliance:
 
 class TestSolverOperations:
     """Test solver operation methods."""
-
-    def test_laplacian_operator_exists(self):
-        """Test that Laplacian operator is callable."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        laplacian = grid.get_laplacian_operator()
-        assert callable(laplacian)
 
     def test_laplacian_on_quadratic_function_2d(self):
         """
@@ -165,17 +154,6 @@ class TestSolverOperations:
         # At x=0.5, du/dx = 2*0.5 = 1.0
         assert np.isclose(grad_value, 1.0, rtol=0.05), f"Gradient at x=0.5: {grad_value}, expected 1.0"
 
-    def test_interpolator_exists(self):
-        """Test that interpolator is callable."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        interpolate = grid.get_interpolator()
-        assert callable(interpolate)
-
     def test_interpolator_on_linear_function(self):
         """
         Test linear interpolation on u(x,y) = 2*x + 3*y.
@@ -218,7 +196,11 @@ class TestSolverOperations:
         )
 
         bc_handler = grid.get_boundary_handler()
-        assert bc_handler is not None
+        # Resolution order is "stored BC first, else build from bc_type" -- and bc_type
+        # defaults to "periodic". If that precedence ever inverts, a no-flux grid hands
+        # solvers a periodic handler, which `is not None` cannot see.
+        assert bc_handler is grid.get_boundary_conditions()
+        assert bc_handler.default_bc is BCType.NO_FLUX
 
 
 class TestCartesianGridUtilities:
@@ -302,6 +284,12 @@ class TestDataInterface:
 
         points = grid.get_spatial_grid()
         assert points.shape == (25, 2)  # 5*5 points, 2D
+        # Pin the flattening convention the shape cannot see: 'ij' indexing with a
+        # C-order ravel, so the last axis varies fastest. A Fortran-order flip would
+        # give points[1] == [0.25, 0.0] with the shape unchanged.
+        np.testing.assert_allclose(points[0], [0.0, 0.0], atol=1e-15)
+        np.testing.assert_allclose(points[1], [0.0, 0.25], atol=1e-15)
+        np.testing.assert_allclose(points[-1], [1.0, 1.0], atol=1e-15)
 
     def test_get_problem_config(self):
         """Test problem configuration dictionary."""
@@ -367,18 +355,6 @@ class TestEdgeCases:
 
 class TestAdaptiveGeometryProtocol:
     """Test AdaptiveGeometry protocol for AMR support (Issue #459)."""
-
-    def test_tensorproductgrid_is_not_adaptive(self):
-        """Regular TensorProductGrid does not implement AdaptiveGeometry."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        # Regular grids are not adaptive
-        assert not isinstance(grid, AdaptiveGeometry)
-        assert not is_adaptive(grid)
 
     def test_is_adaptive_helper_function(self):
         """Test is_adaptive() helper function."""

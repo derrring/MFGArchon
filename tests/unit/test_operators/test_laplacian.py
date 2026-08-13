@@ -115,6 +115,12 @@ class TestLaplacianBasic:
         Lu = L(u)
 
         assert Lu.shape == (40, 30)
+        # The anisotropy this grid sets up, used: _2d_grid(40, 30) gives dx = 1/39 and dy = 1/29,
+        # and the central Laplacian of u = x^2 is exactly 2 everywhere. Measured interior residual
+        # 4.6e-13 (the 2/dx^2 = 3042 amplification of double-precision roundoff, not zero), 217x
+        # inside this tolerance. Swapping the two spacings puts the interior at 2*(dx/dy)^2 =
+        # 1.106, a residual of 8.9e-01 -- nine orders outside it.
+        assert np.max(np.abs(Lu[2:-2, 2:-2] - 2.0)) < 1e-10
 
     @pytest.mark.unit
     def test_integer_field_shape(self):
@@ -528,6 +534,17 @@ class TestLaplacianBCFailLoud1071:
         op = LaplacianOperator(spacings=[0.1], field_shape=(10,), bc=None)
         mat = op.as_scipy_sparse()  # must not raise
         assert mat.shape == (10, 10)
+
+        # "Periodic" asserted, not just claimed. TestLaplacianBC::test_no_bc_periodic_wrapping
+        # covers bc=None on the __call__/np.roll path only, so the sparse assembly could stop
+        # wrapping with the suite green -- the #1822 class of defect, matrix and matvec describing
+        # different operators. Measured: both wrap entries are exactly 1/h^2 = 100.0 and every row
+        # sums to exactly 0.0; a non-wrapping assembly puts 0 in those two corners.
+        dense = mat.toarray()
+        h2 = 0.1**2
+        assert dense[0, -1] == pytest.approx(1.0 / h2)
+        assert dense[-1, 0] == pytest.approx(1.0 / h2)
+        assert np.max(np.abs(dense.sum(axis=1))) < 1e-9
 
 
 if __name__ == "__main__":

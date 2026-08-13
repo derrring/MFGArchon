@@ -442,13 +442,16 @@ def test_validate_array_dimensions_none_array():
     class MockSolver:
         pass
 
-    # Should handle None gracefully (will raise TypeError, AttributeError, or DimensionMismatchError)
-    exception_raised = False
-    try:
+    # The behaviour is deterministic, so decide it rather than accepting any of three types:
+    # exceptions.py:371 evaluates ``array.shape`` with no None guard, so None reaches the
+    # attribute lookup and the interpreter raises. Accepting a set of types let the diagnostic
+    # regress unnoticed.
+    #
+    # This pins the CURRENT contract, and that contract is a gap: a boundary validator should
+    # reject None with its own DimensionMismatchError, not lean on an AttributeError from the
+    # interpreter. If the guard is added, this becomes pytest.raises(DimensionMismatchError).
+    with pytest.raises(AttributeError, match=r"NoneType.*shape"):
         validate_array_dimensions(None, expected_shape=(10, 10), array_name="test", solver_name="Test")
-    except (TypeError, AttributeError, DimensionMismatchError):
-        exception_raised = True
-    assert exception_raised, "Expected an error when passing None array"
 
 
 @pytest.mark.unit
@@ -464,10 +467,9 @@ def test_check_numerical_stability_empty_array():
     """Test check_numerical_stability with empty array."""
     arr = np.array([])
 
-    # Should handle empty arrays gracefully (either succeeds or raises expected error)
-    completed = True
-    try:
-        check_numerical_stability(arr, "empty_array")
-    except (ValueError, NumericalInstabilityError):
-        completed = False
-    assert isinstance(completed, bool)  # Verify no unexpected exception type
+    # The old form assigned a bool literal on both branches and asserted isinstance(..., bool),
+    # which is true whether the call returns or raises either listed type. Traced instead:
+    # exceptions.py:406-422 runs np.any over the empty array for all three guards (isnan, isinf,
+    # |x| > 1e10), each False by vacuity, so control reaches the bare ``return``. An empty array
+    # is not an instability; pin that, rather than accepting either outcome.
+    assert check_numerical_stability(arr, "empty_array") is None

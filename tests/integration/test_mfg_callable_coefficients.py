@@ -206,41 +206,30 @@ class TestMFGCallableCoefficients:
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= -1e-6)  # Allow small numerical noise
 
-    def test_mfg_callable_with_small_iterations(self):
-        """Test that callable diffusion works with few Picard iterations."""
-        # Create small problem
-        geometry = TensorProductGrid(
-            bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[21]
-        )  # Nx=20 intervals
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=10, sigma=0.1, components=_default_components())
+        def _solve_with(field):
+            iterator = FixedPointIterator(
+                problem,
+                hjb_solver=HJBFDMSolver(problem),
+                fp_solver=FPFDMSolver(problem),
+                relaxation=0.5,
+                volatility_field=field,
+            )
+            return iterator.solve(max_iterations=5, tolerance=1e-3, verbose=False)[1]
 
-        # Simple state-dependent diffusion
-        def state_diffusion(t, x, m):
-            return 0.08 + 0.02 * m
+        M_none = _solve_with(None)
 
-        # Create solvers
-        hjb_solver = HJBFDMSolver(problem)
-        fp_solver = FPFDMSolver(problem)
-
-        # Create MFG solver
-        mfg_solver = FixedPointIterator(
-            problem,
-            hjb_solver=hjb_solver,
-            fp_solver=fp_solver,
-            relaxation=0.5,
-            volatility_field=state_diffusion,
+        # Single source of truth: an array holding problem.sigma everywhere must reproduce the
+        # volatility_field=None path exactly, since both name the same volatility.
+        # Measured byte-identical (max|dU| = max|dM| = 0.0), so equality is asserted, not a tolerance.
+        flat_field = np.tile(np.full(Nx_points, problem.sigma), (Nt_points, 1))
+        np.testing.assert_array_equal(
+            _solve_with(flat_field), M_none, err_msg="constant array volatility diverges from the problem.sigma path"
         )
 
-        # Solve with just 2 iterations
-        result = mfg_solver.solve(max_iterations=2, tolerance=1e-6, verbose=False)
-
-        # Verify it runs (may not converge, but should execute)
-        U, M = result[:2]
-        (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
-        Nt_points = problem.Nt + 1  # Temporal grid points
-        assert U.shape == (Nt_points, Nx_points)
-        assert M.shape == (Nt_points, Nx_points)
-        assert np.all(M >= -1e-6)  # Allow small numerical noise
+        # Liveness: the spatially varying array must reach the solve. Byte-identity above establishes
+        # that a dropped array falls back to exactly M_none, so any real difference proves it was read.
+        # Measured max|M - M_none| = 4.393; threshold 0.5 leaves ~9x margin.
+        assert np.abs(M - M_none).max() > 0.5, "spatially varying volatility_field array was ignored"
 
 
 if __name__ == "__main__":

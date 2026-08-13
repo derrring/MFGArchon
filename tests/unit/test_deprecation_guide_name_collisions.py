@@ -144,25 +144,49 @@ def _raising(unimportable):
 
 
 # The nightly's own failure, minus the module that made it interesting. `.[dev,numerical]` cannot
-# import 20 modules; nineteen are frozen and the twentieth, `backends/numba_backend`, is LIVE -- it
-# is why this branch installs numba rather than only guarding the test. These three are from the
-# traceback's own "(+17 more)" prefix, built from FROZEN because check_frozen_areas.py counts
-# literals naming a frozen package.
+# import 20 modules; nineteen were frozen and the twentieth, `backends/numba_backend`, is LIVE --
+# it is why this branch installs numba rather than only guarding the test.
+#
+# Built from a SYNTHETIC frozen prefix rather than from `_RATCHET.FROZEN[0]`. The two packages that
+# populated that tuple were deleted, so `FROZEN` is now empty and indexing it raises -- but the
+# scoping mechanism it feeds is still the right shape for the next thing that gets frozen, and what
+# this file tests is the CLASSIFIER, not whichever package happens to be in scope. Coupling the
+# classifier's verification to a live package name is what made these tests go red on a deletion
+# that did not touch the classifier at all.
+_FROZEN_PREFIX = "mfgarchon.alg.a_frozen_paradigm"
 _FROZEN_ONLY = {
-    f"{_RATCHET.FROZEN[0]}.core.networks": "ModuleNotFoundError: No module named 'torch'",
-    f"{_RATCHET.FROZEN[0]}.core.utils": "ModuleNotFoundError: No module named 'torch'",
-    f"{_RATCHET.FROZEN[0]}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.core.networks": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.core.utils": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
 }
 _LIVE_HOLE = "mfgarchon.backends.numba_backend"
 
 
-def test_the_scan_guard_classifies_the_holes():
+@pytest.fixture
+def a_frozen_paradigm_exists(monkeypatch):
+    """Give the classifier something frozen to classify.
+
+    `FROZEN` is empty in the live package -- the two paradigms that populated it were deleted -- so
+    "a frozen hole" is not a reachable category without one. Patching it puts the CLASSIFIER under a
+    controlled scope instead of under whatever the package happens to be carrying, which is what
+    these tests were always about; reading the ambient value only made them hostage to it.
+
+    NOT autouse, and that distinction is the whole bug: as an autouse fixture it also reached the
+    module-scoped `gen` and `registry` above, which run a REAL scan of the tree. Under the synthetic
+    prefix the live `backends.numba_backend` hole stopped being explained by anything, `_scan_or_skip`
+    raised where it had skipped, and three unrelated tests errored at setup. Invisible locally, where
+    numba is installed and there is no hole at all; red on every CI interpreter, where there is.
+    """
+    monkeypatch.setattr(_RATCHET, "FROZEN", (_FROZEN_PREFIX,))
+
+
+def test_the_scan_guard_classifies_the_holes(a_frozen_paradigm_exists):
     """The classifier alone: frozen holes are not live ones, and a live hole is reported."""
     assert _live_holes(_FROZEN_ONLY) == []
     assert _live_holes({**_FROZEN_ONLY, _LIVE_HOLE: "ImportError: Numba required"}) == [_LIVE_HOLE]
 
 
-def test_the_scan_guard_skips_on_a_frozen_only_tree():
+def test_the_scan_guard_skips_on_a_frozen_only_tree(a_frozen_paradigm_exists):
     """Driving the guard, not the classifier under it.
 
     Asserting on `_live_holes` alone leaves the `try/except` untested, and independent review
@@ -174,7 +198,7 @@ def test_the_scan_guard_skips_on_a_frozen_only_tree():
         _scan_or_skip(_raising(_FROZEN_ONLY))
 
 
-def test_the_scan_guard_refuses_a_tree_with_a_live_hole():
+def test_the_scan_guard_refuses_a_tree_with_a_live_hole(a_frozen_paradigm_exists):
     """The half that must NOT be a skip, asserted so that a skip fails rather than passes.
 
     `pytest.raises(IncompleteScanError)` is the obvious spelling and it is not enough: under a
