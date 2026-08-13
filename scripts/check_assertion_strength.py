@@ -41,18 +41,49 @@ WEAK_CALLS = {"isfinite", "isinstance", "len", "hasattr", "callable", "id", "typ
 # files under `tests/`, so the first version of this filter excluded nothing while its comment and
 # its own test both said otherwise -- and that test asserted the constant contains itself, which is
 # the tautological shape this script exists to count. Found by review (#1905).
-# Every entry must match at least one file: `test_actor`, `test_ppo` and `test_reinforcement`
-# matched zero and were removed 2026-08-13. The old control asserted only that SOME entry
-# matched, so a dead entry -- and the removal of a live one -- were both invisible; review
-# (#1905) deleted `test_training`, a real 29-test file, and the whole test file stayed green.
-# That is a reduced form of the very defect this constant was rewritten to fix.
-FROZEN = (
-    "test_neural",
-    "test_dgm",
-    "test_pinn",
-    "test_rl_",
-    "test_training",
-)
+def _is_frozen(path: Path) -> bool:
+    """Frozen membership has exactly one owner, and it is not this file.
+
+    `scripts/check_frozen_areas.py` decides it by AST -- imports and string literals reaching
+    `FROZEN_PACKAGES` -- with a docstring explaining at length why a name match is insufficient
+    and citing a file it measurably missed. This module answered the same question by filename
+    substring, and the two disagreed on six files:
+
+        frozen by NAME   : 12        frozen by IMPORT : 14
+
+        excluded by name but NOT frozen (2 files, 40 test functions)
+            tests/unit/test_alg/test_rl_stub_metrics_1688.py            (4)
+            tests/unit/test_utils/test_neural/test_normalization.py     (36)
+        frozen by import but LEFT IN the denominator (4 files, 20 test functions)
+            tests/unit/test_alg/test_adaptive_training_canonical_mode_1572.py   (5)
+            tests/unit/test_alg/test_mean_field_rl_requires_pop_state_1508.py   (1)
+            tests/unit/test_alg/test_solver_construction_smoke_887.py           (5)
+            tests/unit/test_config/test_enum_conversions.py                     (9)
+
+    36 of those were dropped from the denominator because a DIRECTORY in their path is spelled
+    `test_neural`, while CLAUDE.md freezes `alg/neural` and `alg/reinforcement` only -- `utils/neural`
+    is not frozen, and the commit that deletes both frozen packages leaves that file alive, which
+    is independent confirmation. Found by re-review (#1905), which also noted that the previous
+    repair had entrenched the wrong set by pinning it in a test.
+    """
+    return bool(_frozen_areas()._references(path))
+
+
+def _frozen_areas():
+    """Imported lazily and by path: `scripts/` is not a package, so a plain import would depend
+    on how this script was invoked."""
+    global _CFA
+    if _CFA is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("check_frozen_areas", REPO / "scripts" / "check_frozen_areas.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CFA = module
+    return _CFA
+
+
+_CFA = None
 
 
 def _weak(node: ast.Assert) -> bool:
@@ -104,7 +135,7 @@ def _collected_tests(tree: ast.Module):
 def scan(root: Path):
     weak, total = [], 0
     for f in sorted(root.rglob("test_*.py")):
-        if any(fr in str(f) for fr in FROZEN):
+        if _is_frozen(f):
             continue
         try:
             tree = ast.parse(f.read_text())

@@ -46,10 +46,18 @@ def _current_collected(measured: dict | None = None) -> int | None:
     """
     measured = measured or {}
     excluded = measured.get("excluded")
-    paths = measured.get("paths") or ["tests"]
+    paths = measured.get("paths")
     markers = measured.get("markers")
-    if not markers:
+    # Both, symmetrically. `paths` used to fall back to `["tests"]` while `markers` refused --
+    # a guess about the population, inside the function whose contract forbids guessing, and one
+    # that happened to equal the recorded value so no test could tell threading from hardcoding.
+    # Re-review (#1905) mutated `paths` to the literal `["tests"]` and all 15 tests survived.
+    if not markers or not paths:
         return None  # an unrecorded population is not a population; say nothing rather than guess
+    if isinstance(paths, str):
+        # A bare string splats to one argument per character. pytest then exits 4 and the
+        # returncode guard below turns it into None, but say so here rather than rely on that.
+        return None
     proc = subprocess.run(
         [
             sys.executable,

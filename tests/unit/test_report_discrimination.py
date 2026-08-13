@@ -114,10 +114,16 @@ def test_an_unparseable_summary_returns_none_rather_than_a_guess(bad):
 
     class _Fake:
         stdout = bad
+        returncode = 0
 
     subprocess.run = lambda *a, **k: _Fake()
     try:
-        assert rd._current_collected() is None
+        # `_MEASURED`, not `()`. Calling with no argument means `markers is None`, which returns
+        # on the fourth line before `subprocess.run` is ever reached -- so all three inputs above
+        # stopped testing the parser the moment the population moved into `_measured_at`. Caught
+        # by re-review (#1905) with the control that settles it: replacing the parse loop with
+        # `return 999999` left these three green while the sibling parser test went red.
+        assert rd._current_collected(_MEASURED) is None
     finally:
         subprocess.run = real
 
@@ -218,8 +224,22 @@ def test_a_broken_collection_is_not_reported_as_a_shrinking_suite():
         subprocess.run = real
 
 
-def test_an_unrecorded_population_returns_no_number():
-    """`_measured_at` without `markers` cannot say what `now` would even be counted over."""
+@pytest.mark.parametrize(
+    "measured",
+    [
+        pytest.param({"paths": ["tests"]}, id="markers-missing"),
+        pytest.param({"markers": "not slow"}, id="paths-missing"),
+        pytest.param({"paths": "tests", "markers": "not slow"}, id="paths-is-a-bare-string"),
+    ],
+)
+def test_an_unrecorded_population_returns_no_number(measured):
+    """`_measured_at` missing either half cannot say what `now` would be counted over.
+
+    Both keys, symmetrically. `paths` used to fall back to `["tests"]` -- a guess about the
+    population inside the function whose docstring forbids guessing -- and the bare-string case
+    splats to one argument per character, which pytest answers with exit 4 over a completely
+    different tree. Found by re-review (#1905).
+    """
     import subprocess
 
     class _Fake:
@@ -229,9 +249,38 @@ def test_an_unrecorded_population_returns_no_number():
     real = subprocess.run
     try:
         subprocess.run = lambda *a, **k: _Fake()
-        assert rd._current_collected({"paths": ["tests"]}) is None, "guessed a population that was not recorded"
+        assert rd._current_collected(measured) is None, "guessed a population that was not recorded"
     finally:
         subprocess.run = real
+
+
+def test_the_recorded_paths_are_what_gets_collected_not_a_default():
+    """The recorded value and the old fallback were both `["tests"]`, so no test could separate
+    "reads the record" from "hardcodes the same string". Re-review (#1905) replaced the lookup
+    with the literal and all 15 tests survived. Use a value the default could not produce.
+    """
+    seen = {}
+
+    class _Fake:
+        stdout = "12 tests collected in 0.1s"
+        returncode = 0
+
+    def spy(*args, **kwargs):
+        seen["argv"] = args[0]
+        return _Fake()
+
+    import subprocess
+
+    real = subprocess.run
+    try:
+        subprocess.run = spy
+        rd._current_collected({"paths": ["tests/unit/test_alg", "tests/integration"], "markers": "not slow"})
+    finally:
+        subprocess.run = real
+    argv = seen["argv"]
+    assert "tests/unit/test_alg" in argv, f"the first recorded path did not reach pytest; argv was {argv}"
+    assert "tests/integration" in argv, f"the second recorded path did not reach pytest; argv was {argv}"
+    assert "tests" not in argv, f"a hardcoded default reached pytest alongside the record: {argv}"
 
 
 def test_a_shrinking_suite_is_also_called_stale(capsys, monkeypatch):

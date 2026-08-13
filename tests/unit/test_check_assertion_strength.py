@@ -94,10 +94,17 @@ def test_the_frozen_paradigms_are_actually_excluded_not_merely_named():
     """A membership assertion is a tautology: the constant contains itself, always.
 
     The first version of this asserted `"alg/neural" in cas.FROZEN` and passed while the filter
-    matched ZERO files under `tests/` -- those are SOURCE paths, and the frozen tests live as
-    `test_dgm_*`, `test_pinn_*`, `test_rl_*`. 131 frozen test functions sat in the denominator
-    with a 47% flag rate against 20.6% overall. Found by review (#1905), which named it as the
-    same tautological shape this script exists to count.
+    matched ZERO files under `tests/` -- those are SOURCE paths, and the filter was matching test
+    FILENAMES. Found by review (#1905), which named it as the same tautological shape this script
+    exists to count.
+
+    ~~131 frozen test functions sat in the denominator with a 47% flag rate against 20.6%
+    overall~~ [CORRECTED 2026-08-13] -- neither figure is reproducible from any state of the
+    committed code, and re-review found this line still asserting them. Re-measured under the
+    single owner (`check_frozen_areas._references`): the frozen set is **14 files, 145 test
+    functions**, of which 66 would be flagged = **46%**, against 19.5% over the 5393 that remain.
+    A wrong number inside a test docstring is worse than one in prose, because the file around it
+    reads as verified.
 
     So assert the BEHAVIOUR: a frozen-named file must be absent from the scan, and a non-frozen
     one present.
@@ -106,7 +113,9 @@ def test_the_frozen_paradigms_are_actually_excluded_not_merely_named():
 
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
-        (root / "test_dgm_thing.py").write_text("def test_a():\n    assert x is not None\n")
+        (root / "test_reaches_frozen.py").write_text(
+            "from mfgarchon.alg.neural.nn import feedforward\n\ndef test_a():\n    assert feedforward is not None\n"
+        )
         (root / "test_ordinary.py").write_text("def test_b():\n    assert y is not None\n")
         weak, total = cas.scan(root)
     assert total == 1, f"the frozen file was not excluded from the denominator (total={total})"
@@ -114,34 +123,57 @@ def test_the_frozen_paradigms_are_actually_excluded_not_merely_named():
     assert names == ["test_b"], f"scan returned {names}; the frozen file leaked in"
 
 
-def test_at_least_one_real_frozen_test_file_is_excluded_from_the_repo_scan():
-    """Positive control against the tree, not a fixture: the pattern must match something real."""
+def test_a_file_named_after_a_frozen_paradigm_but_not_reaching_one_stays_in_the_denominator():
+    """The specific error the single-owner change fixes, as a fixture.
+
+    A file whose PATH contains `test_neural` while it imports nothing frozen is not frozen.
+    `tests/unit/test_utils/test_neural/test_normalization.py` is the real instance: 36 test
+    functions were dropped from the denominator because a DIRECTORY is spelled that way, while
+    CLAUDE.md freezes `alg/neural` and `alg/reinforcement` only. Found by re-review (#1905).
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d) / "test_neural"
+        root.mkdir()
+        (root / "test_normalization.py").write_text(
+            "from mfgarchon.utils.numerical import integration\n\ndef test_a():\n    assert integration is not None\n"
+        )
+        _weak, total = cas.scan(pathlib.Path(d))
+    assert total == 1, (
+        "a file named after a frozen paradigm was excluded although it reaches none; "
+        "the decider is back to matching names"
+    )
+
+
+def test_frozen_membership_has_one_owner_and_this_module_is_not_it():
+    """Positive control against the real tree, plus the invariant that keeps them from diverging.
+
+    `check_frozen_areas.py` decides frozen membership by AST -- imports and string literals --
+    and carries the argument for why a name match is insufficient. This module answered the same
+    question by filename substring; the two disagreed on six files, 40 test functions wrongly out
+    and 20 wrongly in. Re-review (#1905) also found that the previous repair had entrenched the
+    wrong set by pinning its file count in a test, so the pin is now on the OWNER, not the answer.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_frozen_areas_probe", pathlib.Path(cas.REPO) / "scripts" / "check_frozen_areas.py"
+    )
+    cfa = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cfa)
+
     tree = list((pathlib.Path(cas.REPO) / "tests").rglob("test_*.py"))
-    frozen_files = [f for f in tree if any(fr in str(f) for fr in cas.FROZEN)]
-    assert frozen_files, "FROZEN matches no file in the tree; the exclusion is inert"
-    # Per ENTRY, not per tuple. "Some entry matches" cannot see a dead entry, and cannot see a
-    # live one being deleted: review (#1905) removed `test_training` -- a real 29-test file --
-    # and every test here stayed green, while `test_actor`, `test_ppo` and `test_reinforcement`
-    # had been matching nothing since they were written. An entry that matches no file excludes
-    # nothing while reading as though it does, which is exactly what this constant was rewritten
-    # to stop. When a frozen paradigm is deleted from the tree, delete its entry in the same
-    # change -- this is the assertion that will say so.
-    dead = [fr for fr in cas.FROZEN if not any(fr in str(f) for f in tree)]
-    assert not dead, f"FROZEN entries matching no file in the tree: {dead}"
-    # The per-entry check above is one direction only: it catches a DEAD entry, not the deletion
-    # of a LIVE one. Removing `test_training` leaves every surviving entry matching something, so
-    # the assertion above stays green while a 29-test file silently re-enters the denominator.
-    # Ratchet the count, in the repo's usual shape -- a drop is a real change and must be
-    # deliberate, an increase means a frozen paradigm grew and the baseline follows it.
-    assert len(frozen_files) == 12, (
-        f"FROZEN now excludes {len(frozen_files)} files, not 12. If a frozen paradigm was deleted "
-        f"from the tree, remove its FROZEN entry and update this count in the same commit; if one "
-        f"was added, update the count. Currently matched: {sorted(str(f.name) for f in frozen_files)}"
+    frozen = [f for f in tree if cfa._references(f)]
+    assert frozen, "no test file reaches a frozen package; the exclusion is inert or the tree moved"
+    # The two must not be able to disagree, which is what a shared decider buys. Asserting it
+    # here means a future local shortcut in check_assertion_strength reddens rather than drifts.
+    assert [f for f in tree if cas._is_frozen(f)] == frozen, (
+        "check_assertion_strength and check_frozen_areas disagree about frozen membership; "
+        "there must be exactly one decider"
     )
     weak, _total = cas.scan(pathlib.Path(cas.REPO) / "tests")
-    assert not any(any(fr in str(f) for fr in cas.FROZEN) for f, _, _ in weak), (
-        "a frozen-paradigm test appears in the flagged set"
-    )
+    assert not any(cfa._references(f) for f, _, _ in weak), "a frozen-paradigm test appears in the flagged set"
 
 
 def test_a_separation_assertion_is_the_strongest_class_not_the_weakest():

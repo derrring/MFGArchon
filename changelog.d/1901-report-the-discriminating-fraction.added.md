@@ -46,7 +46,7 @@
   or none at all:
 
   ```
-  assertion strength : 1036 of 5369 collected tests assert only what a well-formed WRONG answer
+  assertion strength : 1049 of 5393 defined test functions assert only what a well-formed WRONG answer
                        satisfies = 19.3%
   ```
 
@@ -73,8 +73,9 @@
 
   - **The frozen-paradigm filter excluded nothing.** `FROZEN = ("alg/neural", "alg/reinforcement")`
     names the *source* layout and matches **zero** files under `tests/`, where those live as
-    `test_dgm_*`, `test_pinn_*`, `test_rl_*`. 131 frozen test functions sat in the denominator at a
-    47% flag rate. Worse, the test "verifying" it asserted `"alg/neural" in cas.FROZEN` — the
+    the filter was matching test FILENAMES. ~~131 frozen test functions at a 47% flag rate~~
+    [CORRECTED 2026-08-13] — neither figure is reproducible; re-measured under the single owner
+    (`check_frozen_areas._references`) the frozen set is 14 files / 145 test functions, 66 flagged = 46%. Worse, the test "verifying" it asserted `"alg/neural" in cas.FROZEN` — the
     constant containing itself, which is the tautological shape this very script exists to count.
     It now asserts the **behaviour**: a frozen-named file must be absent from the scan.
   - **The separation assertion was called the weakest class when it is the strongest.**
@@ -83,7 +84,10 @@
     as weak, inverting it on **70** tests including `test_coupling_affects_solution` and
     `test_fp_velocity_consumes_cross_density_1071`. Only a bare `assert not x` is weak now.
 
-  Net effect of both: **20.6% → 19.3%**.
+  Net effect: ~~**20.6% → 19.3%**~~ [CORRECTED 2026-08-13] **20.6% → 19.5%**, over a denominator of
+  5393. The 19.3% figure was measured while frozen membership was decided by filename substring,
+  which disagreed with `check_frozen_areas.py` on six files — 40 test functions wrongly excluded,
+  20 wrongly kept. Frozen membership now has one owner and this number follows it.
 
 - **The staleness line was itself measured over the wrong denominator.** The baseline records
   `"excluded": "tests/unit/test_discrimination_ratchet.py"` and the sweep ignores it; the reporter
@@ -102,7 +106,7 @@
   | `now != then` → `now > then` (a shrinking suite never called stale) | 1 |
   | drop the `--ignore` exclusion from the collect | 1 |
   | invert the fraction (`len(weak)/total` → its complement) | 1 |
-  | drop `of {total} collected tests` | 1 |
+  | drop `of {total} defined test functions` | 1 |
 
 - **`CLAUDE.md`**: the cited comment date was **2026-07-30**; `created_at` is **2026-07-27**. Fixed.
   The link resolves and does contain `39 (60%)` and `96.8% notice nothing`, verified against the API.
