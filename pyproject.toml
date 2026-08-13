@@ -18,8 +18,9 @@ readme = "README.md"
 requires-python = ">=3.12"  # Updated to match conda environments
 classifiers = [
     "Programming Language :: Python :: 3",
-    # Verified by .github/workflows/python-compat.yml (weekly matrix). 3.15 is pre-release
-    # (early-warning only) so it is intentionally not claimed here.
+    # Verified by .github/workflows/python-compat.yml (weekly matrix). Every version listed there
+    # is required and every one required is listed here; 3.15 is not claimed and is no longer
+    # tested, because scipy publishes no 3.15 wheel (see that workflow's header).
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
