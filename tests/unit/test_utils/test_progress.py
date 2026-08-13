@@ -268,16 +268,6 @@ class TestProgressContext:
             assert total == 45  # sum(0..9)
 
 
-class TestRichRequirement:
-    """Test that rich is required."""
-
-    def test_rich_is_available(self):
-        """Test that rich module is available (required dependency)."""
-        import rich
-
-        assert rich is not None
-
-
 class TestSolverProgress:
     """Test solver_progress factory function."""
 

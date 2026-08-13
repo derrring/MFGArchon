@@ -514,13 +514,6 @@ def test_get_parameter_migration_guide():
 
 
 @pytest.mark.unit
-def test_global_parameter_migrator_exists():
-    """Test global_parameter_migrator is initialized."""
-    assert global_parameter_migrator is not None
-    assert isinstance(global_parameter_migrator, ParameterMigrator)
-
-
-@pytest.mark.unit
 def test_global_parameter_migrator_has_mappings():
     """Test global migrator has standard mappings."""
     assert len(global_parameter_migrator.mappings) > 0

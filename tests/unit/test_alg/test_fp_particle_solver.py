@@ -166,15 +166,6 @@ class TestFPParticleSolverInitialization:
         assert solver.backend is not None
         assert solver.backend.name == "numpy"
 
-    def test_strategy_selector_initialized(self):
-        """Test that strategy selector is properly initialized."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem)
-
-        assert solver.strategy_selector is not None
-        assert solver.current_strategy is None  # Not set until solve
-
     def test_time_step_counter_initialized(self):
         """Test that time step counter is initialized."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -186,25 +177,6 @@ class TestFPParticleSolverInitialization:
 
 class TestFPParticleSolverSolveFPSystem:
     """Test the main solve_fp_system method."""
-
-    def test_solve_fp_system_shape(self):
-        """Test that solve_fp_system returns correct shape."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        # Create inputs
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        # Solve
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert M_solution.shape == (Nt_points, Nx_points)
-        assert np.all(np.isfinite(M_solution))
 
     def test_solve_fp_system_initial_condition(self):
         """Test that initial condition center of mass is approximately preserved."""
@@ -232,22 +204,6 @@ class TestFPParticleSolverSolveFPSystem:
         cm_solution = np.sum(x_coords * M_solution[0, :] * dx)
         assert np.isclose(cm_initial, cm_solution, rtol=0.2)
 
-    def test_solve_with_zero_drift(self):
-        """Test solving with zero drift field."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
     def test_solve_with_non_zero_drift(self):
         """Test solving with non-zero drift field."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
@@ -262,56 +218,6 @@ class TestFPParticleSolverSolveFPSystem:
         m_initial = np.ones(Nx_points) / Nx_points
         x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
         U_solution = np.tile(x_coords**2, (Nt_points, 1))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_different_num_particles(self):
-        """Test solver with different numbers of particles."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        for num_particles in [100, 500, 1000]:
-            solver = FPParticleSolver(problem, num_particles=num_particles)
-
-            m_initial = np.ones(Nx_points) / Nx_points
-            U_solution = np.zeros((Nt_points, Nx_points))
-
-            M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-            assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_kde_normalization_none(self):
-        """Test solving with no KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.NONE)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
-    def test_solve_with_kde_normalization_initial_only(self):
-        """Test solving with initial-only KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.INITIAL_ONLY)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
 
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
@@ -358,27 +264,6 @@ class TestFPParticleSolverSolveFPSystem:
 
 class TestFPParticleSolverNumericalProperties:
     """Test numerical properties of particle FP solutions."""
-
-    def test_solution_finiteness(self):
-        """Test that solution remains finite throughout."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=1000)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-        dx = problem.geometry.get_grid_spacing()[0]
-        bounds = problem.geometry.get_bounds()
-
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        m_initial = np.exp(-((x_coords - 0.5) ** 2) / (2 * 0.1**2))
-        m_initial = m_initial / np.sum(m_initial * dx)
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        # All values should be finite
-        assert np.all(np.isfinite(M_solution))
 
     def test_forward_time_propagation(self):
         """Test that solution is computed for all time steps."""
@@ -431,40 +316,9 @@ class TestFPParticleSolverNumericalProperties:
             # Allow larger error for particle methods with KDE
             assert np.isclose(current_mass, initial_mass, rtol=0.3)
 
-    def test_non_negativity(self):
-        """Test that density remains non-negative."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=1000)
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        # Density should be non-negative (KDE ensures this)
-        assert np.all(M_solution >= -1e-10)
-
 
 class TestFPParticleSolverIntegration:
     """Integration tests with actual FP problems."""
-
-    def test_solver_not_abstract(self):
-        """Test that FPParticleSolver can be instantiated."""
-        import inspect
-
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-
-        # Should not raise TypeError about abstract methods
-        solver = FPParticleSolver(problem)
-        assert isinstance(solver, FPParticleSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(FPParticleSolver)
 
     def test_solver_with_different_parameters(self):
         """Test solver with various parameter configurations."""

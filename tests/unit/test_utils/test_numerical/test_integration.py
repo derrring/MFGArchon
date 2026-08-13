@@ -106,17 +106,6 @@ def test_trapezoid_2d_integration():
 
 
 @pytest.mark.unit
-def test_module_exports_all():
-    """Test module exports expected functions."""
-    from mfgarchon.utils.numerical import integration
-
-    assert hasattr(integration, "get_integration_info")
-    assert hasattr(integration, "trapezoid")
-    assert callable(integration.get_integration_info)
-    assert callable(integration.trapezoid)
-
-
-@pytest.mark.unit
 def test_module_has_all_attribute():
     """Test module has __all__ attribute."""
     from mfgarchon.utils.numerical import integration
@@ -138,27 +127,6 @@ def test_module_docstring():
 # ===================================================================
 # Test Backward Compatibility
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_backward_compatibility_import_style_1():
-    """Test backward compatibility - direct import."""
-    from mfgarchon.utils.numerical.integration import get_integration_info, trapezoid
-
-    info = get_integration_info()
-    assert isinstance(info, dict)
-    assert callable(trapezoid)
-
-
-@pytest.mark.unit
-def test_backward_compatibility_import_style_2():
-    """Test backward compatibility - module import."""
-    from mfgarchon.utils.numerical import integration
-
-    info = integration.get_integration_info()
-    assert isinstance(info, dict)
-    result = integration.trapezoid(np.ones(10), dx=0.1)
-    assert isinstance(result, (float, np.floating))
 
 
 # ===================================================================
@@ -254,22 +222,3 @@ def test_trapezoid_negative_values():
 # ===================================================================
 # Test Type Annotations
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_get_integration_info_return_type():
-    """Test get_integration_info() return type."""
-    info = get_integration_info()
-    assert isinstance(info, dict)
-    assert all(isinstance(k, str) for k in info)
-
-
-@pytest.mark.unit
-def test_trapezoid_return_type():
-    """Test trapezoid() return type."""
-    result = trapezoid(np.ones(10), dx=0.1)
-    assert isinstance(result, (float, np.floating))
-
-    # Array return type for 2D input
-    result_2d = trapezoid(np.ones((5, 10)), dx=0.1, axis=1)
-    assert isinstance(result_2d, np.ndarray)

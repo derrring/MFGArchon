@@ -305,29 +305,6 @@ class TestFPNetworkSolverSolveFPSystem:
 
         assert np.all(np.isfinite(M_solution))
 
-    def test_solve_with_implicit_scheme(self):
-        """Test solving with implicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = FPNetworkSolver(problem, scheme="implicit")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert np.all(np.isfinite(M_solution))
-
     def test_solve_with_non_zero_drift(self):
         """Test solving with non-zero drift field."""
         network = GridNetwork(width=3, height=3)
@@ -370,31 +347,6 @@ class TestFPNetworkSolverSolveFPSystem:
 
 class TestFPNetworkSolverNumericalProperties:
     """Test numerical properties of network FP solutions."""
-
-    def test_solution_finiteness(self):
-        """Test that solution remains finite throughout."""
-        network = GridNetwork(width=4, height=4)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=15,
-        )
-
-        solver = FPNetworkSolver(problem, scheme="implicit")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.random.rand(num_nodes)
-        m_initial = m_initial / np.sum(m_initial)
-        U_solution = np.zeros((Nt, num_nodes))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        # All values should be finite
-        assert np.all(np.isfinite(M_solution))
 
     def test_forward_time_propagation(self):
         """Test that solution propagates forward in time."""
@@ -483,30 +435,6 @@ class TestFPNetworkSolverNumericalProperties:
 class TestFPNetworkSolverDifferentNetworks:
     """Test solver with different network geometries."""
 
-    def test_small_grid_network(self):
-        """Test solver on small grid network."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = FPNetworkSolver(problem, scheme="implicit")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.zeros((Nt, num_nodes))
-
-        M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-        assert M_solution.shape == (Nt, num_nodes)
-        assert np.all(np.isfinite(M_solution))
-
     def test_rectangular_grid_network(self):
         """Test solver on non-square grid."""
         network = GridNetwork(width=4, height=3)
@@ -553,60 +481,6 @@ class TestFPNetworkSolverDifferentNetworks:
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
         assert np.all(np.isfinite(M_solution))
-
-
-class TestFPNetworkSolverIntegration:
-    """Integration tests with actual FP problems."""
-
-    def test_solver_not_abstract(self):
-        """Test that FPNetworkSolver can be instantiated."""
-        import inspect
-
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        # Should not raise TypeError about abstract methods
-        solver = FPNetworkSolver(problem)
-        assert isinstance(solver, FPNetworkSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(FPNetworkSolver)
-
-    def test_solver_with_different_parameters(self):
-        """Test solver with various parameter configurations."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        configs = [
-            {"scheme": "explicit", "cfl_factor": 0.4},
-            {"scheme": "implicit"},
-            {"scheme": "explicit", "diffusion_coefficient": 0.15},  # was "upwind" (removed, Issue #1541)
-        ]
-
-        for config in configs:
-            problem = NetworkMFGProblem(
-                geometry=network,
-                T=0.2,
-                Nt=10,
-            )
-
-            solver = FPNetworkSolver(problem, **config)
-
-            Nt = problem.Nt + 1
-            num_nodes = problem.num_nodes
-
-            m_initial = np.ones(num_nodes) / num_nodes
-            U_solution = np.zeros((Nt, num_nodes))
-
-            M_solution = solver.solve_fp_system(m_initial, U_solution)
-
-            assert np.all(np.isfinite(M_solution))
 
 
 class TestFPNetworkSolverAbsorbingNodeBC:

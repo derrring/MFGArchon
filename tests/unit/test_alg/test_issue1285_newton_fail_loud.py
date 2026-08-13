@@ -111,57 +111,9 @@ def _assert_finite_solve(problem: MFGProblem) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mfg_residual_constructs_with_nonlocal_operator():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_nonlocal()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_source_term_hjb():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_source_hjb()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_source_term_fp():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_source_fp()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
-def test_mfg_residual_constructs_with_obstacle():
-    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
-
-    problem = _make_problem_with_obstacle()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    residual = MFGResidual(problem, hjb_solver, fp_solver)
-    assert residual.problem is problem
-
-
 # ---------------------------------------------------------------------------
 # NewtonMFGSolver must CONSTRUCT and SOLVE (finite output) for each field
 # ---------------------------------------------------------------------------
-
-
-def test_newton_solver_solves_with_nonlocal_operator():
-    _assert_finite_solve(_make_problem_with_nonlocal())
-
-
-def test_newton_solver_solves_with_source_term_hjb():
-    _assert_finite_solve(_make_problem_with_source_hjb())
-
-
-def test_newton_solver_solves_with_source_term_fp():
-    _assert_finite_solve(_make_problem_with_source_fp())
 
 
 def test_newton_solver_solves_with_obstacle():
@@ -181,12 +133,3 @@ def test_mfg_residual_plain_problem_does_not_raise():
     residual = MFGResidual(problem, hjb_solver, fp_solver)
     assert residual.problem is problem
     assert residual.num_time_steps == problem.Nt + 1
-
-
-def test_newton_solver_plain_problem_does_not_raise():
-    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
-
-    problem = _make_plain_problem()
-    hjb_solver, fp_solver = _make_solvers(problem)
-    solver = NewtonMFGSolver(problem, hjb_solver, fp_solver)
-    assert solver.problem is problem

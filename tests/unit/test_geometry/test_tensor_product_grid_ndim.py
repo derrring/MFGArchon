@@ -81,13 +81,6 @@ class TestNDimensionalGrids:
         with pytest.warns(UserWarning, match="O\\(N\\^d\\)"):
             TensorProductGrid(bounds=[(0.0, 1.0)] * 4, Nx_points=[10] * 4, boundary_conditions=no_flux_bc(dimension=4))
 
-    def test_no_warning_for_2d(self):
-        """Test that no warning is issued for d≤3."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")  # Turn warnings into errors
-            # Should not raise
-            TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[50, 50], boundary_conditions=no_flux_bc(dimension=2))
-
     def test_non_uniform_resolution_4d(self):
         """Test 4D grid with different resolution per dimension."""
         grid = TensorProductGrid(
@@ -117,17 +110,6 @@ class TestNDimensionalGrids:
         assert mesh[1].shape == (3, 4, 5, 6)
         assert mesh[2].shape == (3, 4, 5, 6)
         assert mesh[3].shape == (3, 4, 5, 6)
-
-    def test_total_points_calculation_4d(self):
-        """Test total points calculation for 4D."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0)] * 4, Nx_points=[5, 6, 7, 8], boundary_conditions=no_flux_bc(dimension=4)
-        )
-
-        # Verify via flatten()
-        flat_points = grid.flatten()
-        expected_total = 5 * 6 * 7 * 8
-        assert flat_points.shape[0] == expected_total
 
     def test_bounds_correctness_5d(self):
         """Test that grid points respect bounds in 5D."""

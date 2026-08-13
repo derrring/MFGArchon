@@ -162,15 +162,5 @@ class TestMesh2D:
         np.testing.assert_array_equal(max_coords, [3, 3])
 
 
-def test_geometry_package_import():
-    """Test that the geometry package imports correctly."""
-    from mfgarchon.geometry import BoundaryConditions, Mesh2D, MeshData
-
-    # Test that classes are available
-    assert MeshData is not None
-    assert Mesh2D is not None
-    assert BoundaryConditions is not None
-
-
 if __name__ == "__main__":
     pytest.main([__file__])

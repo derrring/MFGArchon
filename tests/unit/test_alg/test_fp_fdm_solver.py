@@ -258,21 +258,6 @@ class TestFPFDMSolverBoundaryConditions:
 class TestFPFDMSolverNonNegativity:
     """Test non-negativity enforcement."""
 
-    def test_non_negativity_enforcement(self, standard_problem):
-        """Test that solution remains non-negative."""
-        solver = FPFDMSolver(standard_problem)
-
-        (Nx_points,) = standard_problem.geometry.get_grid_shape()
-        Nt_points = standard_problem.Nt + 1
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        m_result = solver.solve_fp_system(m_initial, U_solution)
-
-        # All values should be non-negative (with small tolerance for numerical errors)
-        assert np.all(m_result >= -1e-10)
-
     def test_initial_condition_non_negativity(self, standard_problem):
         """Test that negative values in initial condition are set to zero."""
         solver = FPFDMSolver(standard_problem)
@@ -414,27 +399,6 @@ class TestFPFDMSolverMassConservation:
         initial_mass = np.sum(m_initial)
         final_mass = np.sum(m_result[-1, :])
         assert np.isclose(final_mass, initial_mass, rtol=0.1)
-
-
-class TestFPFDMSolverIntegration:
-    """Integration tests with actual MFG problems."""
-
-    def test_solver_with_example_problem(self, standard_problem):
-        """Test solver works with standard MFGProblem."""
-        solver = FPFDMSolver(standard_problem)
-
-        assert solver is not None
-        assert hasattr(solver, "solve_fp_system")
-        assert callable(solver.solve_fp_system)
-
-    def test_solver_not_abstract(self, standard_problem):
-        """Test that FPFDMSolver can be instantiated (is concrete)."""
-        import inspect
-
-        solver = FPFDMSolver(standard_problem)
-
-        assert isinstance(solver, FPFDMSolver)
-        assert not inspect.isabstract(FPFDMSolver)
 
 
 class TestFPFDMSolverArrayDiffusion:

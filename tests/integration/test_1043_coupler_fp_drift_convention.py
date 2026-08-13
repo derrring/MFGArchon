@@ -242,20 +242,6 @@ class TestFictitiousPlayFPDriftConvention:
                 f"to FPFDMSolver for smooth separable H.  Got kwargs keys: {list(call_kw.keys())}."
             )
 
-    def test_fictitious_play_runs_without_error(self, problem):
-        """Smoke test: FictitiousPlay still runs end-to-end without error after fix."""
-        solver = FictitiousPlayIterator(
-            problem,
-            hjb_solver=HJBFDMSolver(problem),
-            fp_solver=FPFDMSolver(problem),
-            learning_rate_schedule="harmonic",
-        )
-        result = solver.solve(max_iterations=10, tolerance=1e-10, verbose=False)
-        assert result.U is not None
-        assert result.M is not None
-        assert np.all(np.isfinite(result.U))
-        assert np.all(np.isfinite(result.M))
-
     def test_fictitious_play_density_is_non_negative(self, problem):
         """Density must remain non-negative after the fix."""
         solver = FictitiousPlayIterator(

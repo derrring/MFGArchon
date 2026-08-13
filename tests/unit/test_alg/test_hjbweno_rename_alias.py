@@ -33,13 +33,6 @@ def _problem():
     return MFGProblem(geometry=grid, T=1.0, Nt=20, sigma=0.1, components=comp)
 
 
-def test_new_name_constructs():
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        solver = HJBWENOSolver(_problem(), weno_variant="weno5")
-    assert isinstance(solver, HJBWENOSolver)
-
-
 def test_deprecated_alias_warns_and_builds_new_class():
     """Old name still works (backward compat) but emits a DeprecationWarning and returns an
     instance of the new class."""

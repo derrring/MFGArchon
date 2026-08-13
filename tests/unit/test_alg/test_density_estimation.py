@@ -254,18 +254,6 @@ class TestWendlandC2Kernel:
             "Wendland kernel must give zero density outside support of any particle"
         )
 
-    def test_wendland_density_nonnegative_and_finite(self):
-        """Sanity: density is non-negative and finite for arbitrary samples."""
-        from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu
-        from mfgarchon.backends.numpy_backend import NumPyBackend
-
-        rng = np.random.default_rng(42)
-        particles = rng.normal(0.0, 1.0, size=2000)
-        grid = np.linspace(-5, 5, 100)
-        density = gaussian_kde_gpu(particles, grid, 0.5, NumPyBackend(), kernel="wendland_c2")
-        assert np.all(density >= 0), "Wendland density must be non-negative"
-        assert np.all(np.isfinite(density)), "Wendland density must be finite"
-
     def test_wendland_total_mass_preserves(self):
         """Wendland KDE preserves total mass to within trapezoidal-rule accuracy."""
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu

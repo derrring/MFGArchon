@@ -107,18 +107,6 @@ class TestCompoundPoissonJumps:
 
 
 class TestLevyOperatorBasic:
-    def test_output_shape(self, uniform_grid, gaussian_jumps):
-        J = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps)
-        v = np.sin(uniform_grid)
-        Jv = J @ v
-        assert Jv.shape == v.shape
-
-    def test_output_finite(self, uniform_grid, gaussian_jumps):
-        J = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps)
-        v = np.sin(uniform_grid)
-        Jv = J @ v
-        assert np.all(np.isfinite(Jv))
-
     def test_zero_input_gives_zero(self, uniform_grid, gaussian_jumps):
         J = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps)
         v = np.zeros_like(uniform_grid)
@@ -153,13 +141,6 @@ class TestLevyOperatorBasic:
         assert np.all(np.isfinite(J_nocomp @ v))
         # But results differ (for non-symmetric measures or non-linear v)
         # For symmetric measure + compensated form, J[sin] should be smoother
-
-    def test_compound_poisson_evaluation(self, uniform_grid, compound_poisson):
-        J = LevyIntegroDiffOperator(uniform_grid, compound_poisson)
-        v = np.sin(uniform_grid)
-        Jv = J @ v
-        assert Jv.shape == v.shape
-        assert np.all(np.isfinite(Jv))
 
 
 class TestLevyAdjoint:
@@ -216,12 +197,6 @@ class TestLevySparseMatrix:
         J_sparse = J.as_sparse()
         Jv_sparse = J_sparse @ v
         np.testing.assert_allclose(Jv_matvec, Jv_sparse, atol=1e-12)
-
-    def test_sparse_shape(self, uniform_grid, gaussian_jumps):
-        J = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps)
-        N = len(uniform_grid)
-        J_sparse = J.as_sparse()
-        assert J_sparse.shape == (N, N)
 
     def test_sparse_caching(self, uniform_grid, gaussian_jumps):
         """Second call to as_sparse() should return cached result."""

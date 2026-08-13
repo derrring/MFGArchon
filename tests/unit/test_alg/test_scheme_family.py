@@ -93,12 +93,6 @@ class TestImportability:
 
         assert SchemeFamily.GFDM.value == "gfdm"
 
-    def test_no_circular_imports(self):
-        """Test that importing doesn't cause circular import errors."""
-        from mfgarchon.alg.base_solver import SchemeFamily
-
-        assert SchemeFamily is not None
-
 
 class TestEnumDocumentation:
     """Test that enum has comprehensive docstrings."""

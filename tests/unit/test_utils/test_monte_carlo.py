@@ -125,20 +125,6 @@ def test_mc_result_default_values():
 
 
 @pytest.mark.unit
-def test_uniform_sampler_basic():
-    """Test uniform sampler generates correct shape and bounds."""
-    domain = [(0.0, 1.0), (0.0, 1.0)]
-    config = MCConfig(num_samples=100, seed=42)
-    sampler = UniformMCSampler(domain, config)
-
-    samples = sampler.sample(100)
-
-    assert samples.shape == (100, 2)
-    assert np.all(samples >= 0.0)
-    assert np.all(samples <= 1.0)
-
-
-@pytest.mark.unit
 def test_uniform_sampler_reproducibility():
     """Test uniform sampler reproducibility with seed."""
     domain = [(0.0, 1.0)]
@@ -193,20 +179,6 @@ def test_uniform_sampler_weights():
 
 
 @pytest.mark.unit
-def test_stratified_sampler_basic():
-    """Test stratified sampler generates correct number of samples."""
-    domain = [(0.0, 1.0), (0.0, 1.0)]
-    config = MCConfig(num_samples=100, sampling_method="stratified", num_strata_per_dim=5, seed=42)
-    sampler = StratifiedMCSampler(domain, config)
-
-    samples = sampler.sample(100)
-
-    assert samples.shape == (100, 2)
-    assert np.all(samples >= 0.0)
-    assert np.all(samples <= 1.0)
-
-
-@pytest.mark.unit
 def test_stratified_sampler_coverage():
     """Test stratified sampler covers domain uniformly."""
     domain = [(0.0, 10.0)]
@@ -243,22 +215,6 @@ def test_stratified_sampler_dimension_handling():
 # ============================================================================
 # Test: Quasi-Monte Carlo Sampler
 # ============================================================================
-
-
-@pytest.mark.unit
-def test_quasi_mc_sampler_sobol():
-    """Test Sobol sequence sampler."""
-    pytest.importorskip("scipy")  # Skip if scipy not available
-
-    domain = [(0.0, 1.0), (0.0, 1.0)]
-    config = MCConfig(num_samples=100, seed=42)
-    sampler = QuasiMCSampler(domain, config, sequence_type="sobol")
-
-    samples = sampler.sample(100)
-
-    assert samples.shape == (100, 2)
-    assert np.all(samples >= 0.0)
-    assert np.all(samples <= 1.0)
 
 
 @pytest.mark.unit

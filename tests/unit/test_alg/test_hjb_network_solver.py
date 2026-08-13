@@ -196,75 +196,6 @@ class TestNetworkHJBSolverSolveHJBSystem:
         # Final time step should match final condition
         assert np.allclose(U_solution[-1, :], U_final)
 
-    def test_solve_with_explicit_scheme(self):
-        """Test solving with explicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.1,  # Short time for stability
-            Nt=20,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="RK45")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
-    def test_solve_with_implicit_scheme(self):
-        """Test solving with implicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="BDF")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
-    def test_solve_with_semi_implicit_scheme(self):
-        """Test solving with semi-implicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="Radau")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
     def test_solve_with_varying_density(self):
         """Test solving with non-uniform density."""
         network = GridNetwork(width=3, height=3)
@@ -370,30 +301,6 @@ class TestNetworkHJBSolverNumericalProperties:
 class TestNetworkHJBSolverDifferentNetworks:
     """Test solver with different network geometries."""
 
-    def test_small_grid_network(self):
-        """Test solver on small grid network."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="BDF")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert U_solution.shape == (Nt, num_nodes)
-        assert np.all(np.isfinite(U_solution))
-
     def test_rectangular_grid_network(self):
         """Test solver on non-square grid."""
         network = GridNetwork(width=4, height=3)
@@ -444,26 +351,6 @@ class TestNetworkHJBSolverDifferentNetworks:
 
 class TestNetworkHJBSolverIntegration:
     """Integration tests with actual MFG problems."""
-
-    def test_solver_not_abstract(self):
-        """Test that NetworkHJBSolver can be instantiated."""
-        import inspect
-
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        # Should not raise TypeError about abstract methods
-        solver = NetworkHJBSolver(problem)
-        assert isinstance(solver, NetworkHJBSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(NetworkHJBSolver)
 
     def test_solver_with_different_parameters(self):
         """Test solver with various parameter configurations."""

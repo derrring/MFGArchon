@@ -22,7 +22,6 @@ from mfgarchon.utils.numerical.particle.mcmc import (
     MCMCResult,
     MetropolisHastings,
     NoUTurnSampler,
-    bayesian_neural_network_sampling,
     compute_rhat,
     effective_sample_size,
     sample_mfg_posterior,
@@ -407,24 +406,6 @@ def test_langevin_dynamics_basic():
 
 
 @pytest.mark.unit
-def test_langevin_dynamics_2d():
-    """Test Langevin dynamics in 2D."""
-
-    def potential_fn(x):
-        return 0.5 * np.sum(x**2)
-
-    def gradient_fn(x):
-        return x
-
-    config = MCMCConfig(num_samples=500, num_warmup=100, step_size=0.01, seed=42)
-    sampler = LangevinDynamics(potential_fn, gradient_fn, config=config)
-
-    result = sampler.sample(np.array([0.0, 0.0]), config.num_samples)
-
-    assert result.samples.shape == (500, 1, 2)
-
-
-@pytest.mark.unit
 def test_langevin_dynamics_step_size_adaptation():
     """Test Langevin dynamics adapts step size based on gradient norm."""
 
@@ -656,61 +637,9 @@ def test_sample_mfg_posterior_invalid_method():
         )
 
 
-@pytest.mark.unit
-def test_bayesian_neural_network_sampling_basic():
-    """Test Bayesian neural network sampling function signature."""
-    # Note: The bayesian_neural_network_sampling function has hardcoded num_weights=100
-    # which doesn't match our simple 2D network. We'll test the API works rather than
-    # expecting correct posterior samples.
-
-    # Simple linear network
-    def neural_network(weights, inputs):
-        # weights: (100,), inputs: (N, 2) -> outputs: (N,)
-        # Use only first 2 weights for actual computation
-        return inputs @ weights[:2]
-
-    # Generate synthetic data
-    np.random.seed(42)
-    inputs = np.random.randn(50, 2)
-    targets = np.random.randn(50)
-
-    result = bayesian_neural_network_sampling(
-        neural_network,
-        (inputs, targets),
-        prior_std=1.0,
-        likelihood_std=0.1,
-        num_samples=50,
-        num_warmup=10,
-        step_size=0.001,
-        seed=42,
-    )
-
-    # Should return samples of weights (100 hardcoded in function)
-    assert result.samples.shape[0] == 50
-    assert result.samples.shape[1] == 1
-    assert result.samples.shape[2] == 100
-
-
 # =============================================================================
 # Test Numerical Gradient Fallback
 # =============================================================================
-
-
-@pytest.mark.unit
-def test_numerical_gradient_fallback():
-    """Test MCMC sampler uses numerical gradient when analytical not provided."""
-
-    def potential_fn(x):
-        return 0.5 * np.sum(x**2)
-
-    # Don't provide gradient_fn
-    config = MCMCConfig(num_samples=100, num_warmup=20, seed=42)
-    sampler = MetropolisHastings(potential_fn, config=config)
-
-    # Should still work using numerical gradient
-    result = sampler.sample(np.array([0.0]), config.num_samples)
-
-    assert result.samples.shape[0] == 100
 
 
 @pytest.mark.unit

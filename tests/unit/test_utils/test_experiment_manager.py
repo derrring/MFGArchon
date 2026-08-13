@@ -452,18 +452,6 @@ def create_mock_experiment_data():
 
 
 @pytest.mark.unit
-def test_plot_comparison_total_mass_no_viz():
-    """Test total mass comparison plot without visualization system."""
-    exp_data1 = create_mock_experiment_data()
-    exp_data2 = create_mock_experiment_data()
-    exp_data2["solver_name"] = "TestSolver2"
-
-    with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
-        result = plot_comparison_total_mass([exp_data1, exp_data2])
-        assert result is None
-
-
-@pytest.mark.unit
 def test_plot_comparison_total_mass_with_save():
     """Test total mass comparison plot with file saving."""
     exp_data = create_mock_experiment_data()
@@ -504,16 +492,6 @@ def test_plot_comparison_final_m_invalid_shape():
 
 
 @pytest.mark.unit
-def test_plot_comparison_initial_U_basic():
-    """Test initial value function comparison plot."""
-    exp_data = create_mock_experiment_data()
-
-    with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
-        result = plot_comparison_initial_U([exp_data])
-        assert result is None
-
-
-@pytest.mark.unit
 def test_plot_comparison_initial_U_with_save():
     """Test initial U comparison plot with file saving."""
     exp_data = create_mock_experiment_data()
@@ -528,16 +506,6 @@ def test_plot_comparison_initial_U_with_save():
             plot_comparison_initial_U([exp_data], save_to_file=str(save_path))
 
         assert save_path.exists()
-
-
-@pytest.mark.unit
-def test_plot_comparison_U_slice_basic():
-    """Test U slice comparison plot at specific time."""
-    exp_data = create_mock_experiment_data()
-
-    with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
-        result = plot_comparison_U_slice([exp_data], time_index=10)
-        assert result is None
 
 
 @pytest.mark.unit

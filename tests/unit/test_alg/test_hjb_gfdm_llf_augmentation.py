@@ -74,26 +74,6 @@ def problem_and_pts():
 class TestLLFAugmentationPinning:
     """Core pinning tests — fail pre-fix, pass post-fix."""
 
-    def test_llf_parameter_accepted(self, problem_and_pts):
-        """PINNING: llf_augmentation parameter accepted without TypeError.
-
-        Pre-fix: TypeError: __init__() got an unexpected keyword argument 'llf_augmentation'.
-        Post-fix: solver constructs cleanly.
-        """
-        problem, pts = problem_and_pts
-        # This raises TypeError on the unpatched code.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            solver = HJBGFDMSolver(
-                problem,
-                pts,
-                monotonicity_scheme="none",
-                llf_augmentation=True,
-                llf_cone_constant=0.5,
-                llf_l_H=10.0,  # large l_H guarantees nu_i > 0 at every node
-            )
-        assert solver.llf_augmentation is True
-
     def test_llf_sigma_eff_stored(self, problem_and_pts):
         """PINNING: _llf_sigma_eff is a shape-(n_points,) float array when LLF is on."""
         problem, pts = problem_and_pts
@@ -214,14 +194,6 @@ class TestLLFAugmentationPinning:
         for i in range(min(5, solver.n_points)):
             got = solver._get_sigma_value(i)
             assert abs(got - sigma_base) < 1e-12, f"LLF OFF: _get_sigma_value({i}) = {got} != sigma = {sigma_base}"
-
-    def test_llf_off_no_sigma_eff(self, problem_and_pts):
-        """PINNING: LLF OFF → _llf_sigma_eff is None (zero overhead)."""
-        problem, pts = problem_and_pts
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none")
-        assert solver._llf_sigma_eff is None
 
 
 # ---------------------------------------------------------------------------

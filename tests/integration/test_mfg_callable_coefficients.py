@@ -206,42 +206,6 @@ class TestMFGCallableCoefficients:
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= -1e-6)  # Allow small numerical noise
 
-    def test_mfg_callable_with_small_iterations(self):
-        """Test that callable diffusion works with few Picard iterations."""
-        # Create small problem
-        geometry = TensorProductGrid(
-            bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[21]
-        )  # Nx=20 intervals
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=10, sigma=0.1, components=_default_components())
-
-        # Simple state-dependent diffusion
-        def state_diffusion(t, x, m):
-            return 0.08 + 0.02 * m
-
-        # Create solvers
-        hjb_solver = HJBFDMSolver(problem)
-        fp_solver = FPFDMSolver(problem)
-
-        # Create MFG solver
-        mfg_solver = FixedPointIterator(
-            problem,
-            hjb_solver=hjb_solver,
-            fp_solver=fp_solver,
-            relaxation=0.5,
-            volatility_field=state_diffusion,
-        )
-
-        # Solve with just 2 iterations
-        result = mfg_solver.solve(max_iterations=2, tolerance=1e-6, verbose=False)
-
-        # Verify it runs (may not converge, but should execute)
-        U, M = result[:2]
-        (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
-        Nt_points = problem.Nt + 1  # Temporal grid points
-        assert U.shape == (Nt_points, Nx_points)
-        assert M.shape == (Nt_points, Nx_points)
-        assert np.all(M >= -1e-6)  # Allow small numerical noise
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

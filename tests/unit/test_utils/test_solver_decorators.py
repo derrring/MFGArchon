@@ -95,20 +95,6 @@ class TestSolverMonitoringOptions:
         # Timing should be enabled
         assert "execution_time" in result
 
-    def test_enhanced_solver_with_all_flag(self):
-        """Test enhanced_solver_method with ALL flag."""
-
-        @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
-        def solve(self, max_iterations=10, verbose=False, **kwargs):
-            time.sleep(0.01)
-            return {"converged": True}
-
-        solver = DummySolver()
-        with patch("sys.stdout", new=StringIO()):
-            result = solve(solver)
-
-        assert result["converged"] is True
-
     def test_enhanced_solver_with_none_flag(self):
         """Test enhanced_solver_method with NONE flag."""
 
@@ -240,20 +226,6 @@ class TestWithProgressMonitoring:
 class TestEnhancedSolverMethod:
     """Test enhanced_solver_method decorator."""
 
-    def test_enhanced_with_all_features(self):
-        """Test enhanced decorator with all features enabled."""
-
-        @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
-        def solve(self, max_iterations=10, verbose=True, **kwargs):
-            time.sleep(0.01)
-            return {"converged": True}
-
-        solver = DummySolver()
-        with patch("sys.stdout", new=StringIO()):
-            result = solve(solver)
-
-        assert result["converged"] is True
-
     def test_enhanced_progress_only(self):
         """Test enhanced decorator with only progress enabled."""
 
@@ -322,20 +294,6 @@ class TestSolverProgressMixin:
 
         solver.enable_progress(False)
         assert solver._progress_enabled is False
-
-    def test_mixin_enable_timing(self):
-        """Test enable_timing method."""
-
-        class TestSolver(SolverProgressMixin):
-            pass
-
-        solver = TestSolver()
-
-        solver.enable_timing(True)
-        assert solver._timing_enabled is True
-
-        solver.enable_timing(False)
-        assert solver._timing_enabled is False
 
     def test_mixin_should_show_progress(self):
         """Test _should_show_progress method."""

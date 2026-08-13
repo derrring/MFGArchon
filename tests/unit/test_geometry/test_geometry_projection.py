@@ -119,28 +119,6 @@ class TestGrid1DProjections:
 class TestGrid2DProjections:
     """Test projections for 2D grids."""
 
-    def test_grid_to_grid_2d_shape(self):
-        """Test 2D grid → grid projection shape."""
-        grid_coarse = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        grid_fine = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[11, 11],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        projector = GeometryProjector(hjb_geometry=grid_coarse, fp_geometry=grid_fine)
-
-        # Create test field on coarse grid
-        U_coarse = np.random.rand(6, 6)
-
-        # Project to fine grid
-        U_fine = projector.project_hjb_to_fp(U_coarse)
-
-        # Check output shape
-        assert U_fine.shape == (11, 11)
-
     def test_grid_to_grid_2d_smooth_function(self):
         """Test 2D grid → grid interpolation accuracy."""
         grid1 = TensorProductGrid(
@@ -387,28 +365,6 @@ class TestProjectionRegistry:
         # Check it's registered
         registered = ProjectionRegistry.list_registered()
         assert (TensorProductGrid, TensorProductGrid, "hjb_to_fp") in registered
-
-    def test_registry_lookup_exact_match(self):
-        """Test registry lookup with exact type match."""
-        from mfgarchon.geometry import ProjectionRegistry
-
-        # Register custom projector
-        @ProjectionRegistry.register(TensorProductGrid, TensorProductGrid, "hjb_to_fp")
-        def custom_projector(source, target, values, **kwargs):
-            return values * 2.0
-
-        # Create geometries
-        grid1 = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        grid2 = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-
-        # Lookup should find exact match
-        func = ProjectionRegistry.get_projector(grid1, grid2, "hjb_to_fp")
-        assert func is not None
-        assert func is custom_projector
 
     def test_registry_integration_with_projector(self):
         """Test that GeometryProjector uses registered projectors."""

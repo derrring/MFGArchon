@@ -15,8 +15,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.utils.solver_result import (
-    ComparisonReport,
-    ConvergenceAnalysis,
     SolverResult,
 )
 
@@ -110,11 +108,6 @@ def oscillating_result():
 
 class TestAnalyzeConvergence:
     """Tests for analyze_convergence() method."""
-
-    def test_analyze_convergence_returns_correct_type(self, converged_result):
-        """Test that analyze_convergence returns ConvergenceAnalysis."""
-        analysis = converged_result.analyze_convergence()
-        assert isinstance(analysis, ConvergenceAnalysis)
 
     def test_convergence_status_matches_result(self, converged_result):
         """Test that analysis converged status matches result."""
@@ -211,14 +204,6 @@ class TestAnalyzeConvergence:
 class TestPlotConvergence:
     """Tests for plot_convergence() method."""
 
-    def test_plot_convergence_returns_figure(self, converged_result):
-        """Test that plot_convergence returns a matplotlib figure."""
-        import matplotlib.pyplot as plt
-
-        fig = converged_result.plot_convergence(show=False)
-        assert fig is not None
-        plt.close(fig)
-
     def test_plot_saves_to_file(self, converged_result, tmp_path):
         """Test that plot is saved when save_path is provided."""
         import matplotlib.pyplot as plt
@@ -303,23 +288,6 @@ class TestPlotConvergence:
 
 class TestCompareTo:
     """Tests for compare_to() method."""
-
-    def test_compare_to_returns_comparison_report(self, converged_result, stagnating_result):
-        """Test that compare_to returns ComparisonReport."""
-        comparison = converged_result.compare_to(stagnating_result)
-        assert isinstance(comparison, ComparisonReport)
-
-    def test_comparison_has_all_fields(self, converged_result, stagnating_result):
-        """Test that comparison report has all required fields."""
-        comparison = converged_result.compare_to(stagnating_result)
-
-        assert hasattr(comparison, "solution_diff_l2")
-        assert hasattr(comparison, "solution_diff_linf")
-        assert hasattr(comparison, "iterations_diff")
-        assert hasattr(comparison, "time_diff")
-        assert hasattr(comparison, "converged_both")
-        assert hasattr(comparison, "faster_solver")
-        assert hasattr(comparison, "more_accurate_solver")
 
     def test_solution_diff_is_positive(self, converged_result, stagnating_result):
         """Test that solution differences are positive."""

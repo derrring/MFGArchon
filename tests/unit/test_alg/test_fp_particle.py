@@ -191,18 +191,6 @@ class TestBoundaryConditionRequirements:
         solver = FPParticleSolver(problem, num_particles=100)
         assert solver.boundary_conditions is not None
 
-    def test_fp_particle_with_explicit_bc_parameter(self):
-        """Test FPParticleSolver with explicit BC parameter."""
-        from mfgarchon.geometry.boundary import periodic_bc
-
-        # Problem without geometry
-        problem = MFGProblem(T=1.0, Nt=10, components=_default_components())
-
-        # Should work with explicit BC
-        bc = periodic_bc(dimension=1)
-        solver = FPParticleSolver(problem, num_particles=100, boundary_conditions=bc)
-        assert solver.boundary_conditions is bc
-
     def test_fp_particle_bc_parameter_takes_priority(self):
         """Test that explicit BC parameter overrides geometry BC."""
         from mfgarchon.geometry import TensorProductGrid

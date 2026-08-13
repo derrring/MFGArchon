@@ -488,24 +488,6 @@ class TestCommonNoiseSolverEdgeCases:
         assert len(paths) == 1
         assert paths[0].shape == (12,)
 
-    def test_large_number_of_noise_samples(self):
-        """Test solver can handle large K (doesn't run solve, just checks setup)."""
-        noise_process = OrnsteinUhlenbeckProcess(kappa=1.0, mu=0.0, sigma=0.1)
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[22], boundary_conditions=no_flux_bc(dimension=1))
-        problem = StochasticMFGProblem(
-            geometry=geometry,
-            T=0.5,
-            Nt=11,
-            noise_process=noise_process,
-            conditional_hamiltonian=lambda x, p, m, theta: 0.5 * p**2,
-            components=_default_components(),
-        )
-
-        solver = CommonNoiseMFGSolver(problem, num_noise_samples=1000)
-        paths = solver._sample_noise_paths()
-
-        assert len(paths) == 1000
-
 
 class TestCommonNoiseSolverConfiguration:
     """Test solver configuration and parameter validation."""

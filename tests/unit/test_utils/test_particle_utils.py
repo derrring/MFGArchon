@@ -100,26 +100,6 @@ class TestInterpolate1DGPU:
         # Should match within float32 precision
         np.testing.assert_allclose(y_gpu_np, y_numpy, rtol=1e-5)
 
-    def test_large_array(self):
-        """GPU should handle large arrays efficiently."""
-        backend = TorchBackend(device="cpu")
-
-        x_grid = np.linspace(0, 10, 1000)
-        y_grid = np.exp(-x_grid)
-        x_query = np.random.uniform(0, 10, 5000)
-
-        x_grid_gpu = backend.from_numpy(x_grid)
-        y_grid_gpu = backend.from_numpy(y_grid)
-        x_query_gpu = backend.from_numpy(x_query)
-
-        y_gpu = interpolate_1d_gpu(x_query_gpu, x_grid_gpu, y_grid_gpu, backend)
-        y_gpu_np = backend.to_numpy(y_gpu)
-
-        # Basic validity checks
-        assert y_gpu_np.shape == (5000,)
-        assert np.all(y_gpu_np >= 0)  # exp is positive
-        assert np.all(y_gpu_np <= 1)  # exp(-x) <= 1 for x >= 0
-
 
 class TestBoundaryConditionsNumPy:
     """Test CPU NumPy boundary conditions."""

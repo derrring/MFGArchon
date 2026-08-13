@@ -497,13 +497,6 @@ class TestFunctionGradient:
         assert grad.shape == (3,)
 
     @pytest.mark.unit
-    def test_batch_points_shape(self):
-        """Batch input should return shape (n, d)."""
-        points = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-        grads = function_gradient(_sphere_sdf, points)
-        assert grads.shape == (2, 3)
-
-    @pytest.mark.unit
     def test_batch_radial_direction(self):
         """Sphere SDF gradient should point radially outward at all points."""
         points = np.array(

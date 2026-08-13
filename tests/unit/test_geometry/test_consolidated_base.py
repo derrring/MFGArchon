@@ -33,17 +33,6 @@ class TestGeometryProtocolCompliance:
 class TestSolverOperations:
     """Test solver operation methods."""
 
-    def test_laplacian_operator_exists(self):
-        """Test that Laplacian operator is callable."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        laplacian = grid.get_laplacian_operator()
-        assert callable(laplacian)
-
     def test_laplacian_on_quadratic_function_2d(self):
         """
         Test finite difference Laplacian on u(x,y) = x² + y².
@@ -164,17 +153,6 @@ class TestSolverOperations:
         grad_value = du_dx_field[10]
         # At x=0.5, du/dx = 2*0.5 = 1.0
         assert np.isclose(grad_value, 1.0, rtol=0.05), f"Gradient at x=0.5: {grad_value}, expected 1.0"
-
-    def test_interpolator_exists(self):
-        """Test that interpolator is callable."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        interpolate = grid.get_interpolator()
-        assert callable(interpolate)
 
     def test_interpolator_on_linear_function(self):
         """
@@ -367,18 +345,6 @@ class TestEdgeCases:
 
 class TestAdaptiveGeometryProtocol:
     """Test AdaptiveGeometry protocol for AMR support (Issue #459)."""
-
-    def test_tensorproductgrid_is_not_adaptive(self):
-        """Regular TensorProductGrid does not implement AdaptiveGeometry."""
-        grid = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[10, 10],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        # Regular grids are not adaptive
-        assert not isinstance(grid, AdaptiveGeometry)
-        assert not is_adaptive(grid)
 
     def test_is_adaptive_helper_function(self):
         """Test is_adaptive() helper function."""

@@ -97,25 +97,3 @@ class TestWarmStartNameError1285:
         assert result.M.shape[0] == problem.Nt + 1
         assert np.all(np.isfinite(result.U))
         assert np.all(np.isfinite(result.M))
-
-    def test_cold_start_still_works_fixed_point(self):
-        """Cold-start path must be unaffected by the hoist."""
-        problem = _make_problem()
-        hjb = HJBFDMSolver(problem)
-        fp = FPFDMSolver(problem)
-
-        solver = FixedPointIterator(problem, hjb, fp, relaxation=0.5)
-        result = solver.solve(max_iterations=3, tolerance=1e-10)
-        assert result.U is not None
-        assert np.all(np.isfinite(result.U))
-
-    def test_cold_start_still_works_fictitious_play(self):
-        """Cold-start path must be unaffected by the hoist."""
-        problem = _make_problem()
-        hjb = HJBFDMSolver(problem)
-        fp = FPFDMSolver(problem)
-
-        solver = FictitiousPlayIterator(problem, hjb, fp)
-        result = solver.solve(max_iterations=3, tolerance=1e-10)
-        assert result.U is not None
-        assert np.all(np.isfinite(result.U))

@@ -126,18 +126,6 @@ class TestRegimeSwitchingInstantiation:
 class TestRegimeSwitchingSolve:
     """Test solve() method produces valid results."""
 
-    def test_returns_result_type(self):
-        problems, config, hjbs, fps = _make_2regime_system()
-        iterator = RegimeSwitchingIterator(
-            problems=problems,
-            regime_config=config,
-            hjb_solvers=hjbs,
-            fp_solvers=fps,
-            max_iterations=3,
-        )
-        result = iterator.solve()
-        assert isinstance(result, RegimeSwitchingResult)
-
     def test_result_shapes(self):
         problems, config, hjbs, fps = _make_2regime_system()
         iterator = RegimeSwitchingIterator(

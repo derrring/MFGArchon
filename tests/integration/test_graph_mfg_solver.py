@@ -11,7 +11,6 @@ from mfgarchon.alg.numerical.coupling.graph_coupling import (
     LaplacianCoupling,
 )
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import (
-    GraphMFGResult,
     GraphMFGSolver,
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
@@ -94,18 +93,6 @@ class TestGraphMFGSolverInstantiation:
 
 @pytest.mark.slow
 class TestGraphMFGSolverSolve:
-    def test_returns_result(self):
-        problems, coupling, hjbs, fps = _make_3node_system()
-        solver = GraphMFGSolver(
-            problems=problems,
-            coupling=coupling,
-            hjb_solvers=hjbs,
-            fp_solvers=fps,
-            max_iterations=3,
-        )
-        result = solver.solve()
-        assert isinstance(result, GraphMFGResult)
-
     def test_result_shapes(self):
         problems, coupling, hjbs, fps = _make_3node_system()
         solver = GraphMFGSolver(

@@ -10,7 +10,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.continuation.homotopy import (
-    ContinuationResult,
     HomotopyContinuation,
 )
 
@@ -77,21 +76,6 @@ class TestHomotopyContinuationInstantiation:
 
 class TestHomotopyContinuationTrace:
     """Test the trace() method on toy problems."""
-
-    def test_trace_returns_result(self):
-        """trace() should return a ContinuationResult."""
-        cont = HomotopyContinuation(
-            problem_factory=_linear_problem_factory,
-            solver_factory=_linear_solver_factory,
-            extract_solution=_extract,
-            parameter_range=(0.0, 1.0),
-            initial_step=0.5,
-            max_steps=10,
-            detect_bifurcation=False,
-        )
-        m0 = np.zeros(20)
-        result = cont.trace(initial_solution=m0)
-        assert isinstance(result, ContinuationResult)
 
     def test_trace_records_parameter_values(self):
         """Parameter values should start at lam_start and end at lam_end."""

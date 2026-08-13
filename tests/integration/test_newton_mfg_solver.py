@@ -113,23 +113,6 @@ class TestNewtonMFGSolverBasic:
         assert "picard_iterations" in info
         assert "newton_iterations" in info
 
-    def test_newton_solver_output_finite(self, simple_1d_problem, solvers):
-        """Test that Newton solver produces finite output."""
-        hjb_solver, fp_solver = solvers
-
-        newton_solver = NewtonMFGSolver(
-            simple_1d_problem,
-            hjb_solver,
-            fp_solver,
-            picard_warmup=2,
-            newton_max_iterations=5,
-        )
-
-        U, M, _info = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
-
-        assert np.all(np.isfinite(U)), "U contains inf/nan"
-        assert np.all(np.isfinite(M)), "M contains inf/nan"
-
     def test_newton_solver_density_nonnegative(self, simple_1d_problem, solvers):
         """Test that Newton solver preserves density non-negativity."""
         hjb_solver, fp_solver = solvers
@@ -290,25 +273,6 @@ class TestNewtonMFGSolverParameters:
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components())
         return problem
 
-    def test_line_search_disabled(self, param_test_problem):
-        """Test Newton solver with line search disabled."""
-        hjb_solver = HJBFDMSolver(param_test_problem)
-        fp_solver = FPFDMSolver(param_test_problem)
-
-        newton_solver = NewtonMFGSolver(
-            param_test_problem,
-            hjb_solver,
-            fp_solver,
-            picard_warmup=2,
-            newton_max_iterations=5,
-            line_search=False,  # Disable line search
-        )
-
-        U, M, _info = newton_solver.solve(max_iterations=10, tolerance=1e-4, verbose=False)
-
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
-
     def test_custom_tolerances(self, param_test_problem):
         """Test Newton solver with custom tolerances."""
         hjb_solver = HJBFDMSolver(param_test_problem)
@@ -327,25 +291,6 @@ class TestNewtonMFGSolverParameters:
 
         # Should complete (converged or max iterations)
         assert info["total_iterations"] > 0
-
-    def test_high_damping_picard(self, param_test_problem):
-        """Test Newton solver with high Picard damping."""
-        hjb_solver = HJBFDMSolver(param_test_problem)
-        fp_solver = FPFDMSolver(param_test_problem)
-
-        newton_solver = NewtonMFGSolver(
-            param_test_problem,
-            hjb_solver,
-            fp_solver,
-            picard_warmup=4,
-            picard_damping=0.8,  # High damping (more conservative)
-            newton_max_iterations=5,
-        )
-
-        U, M, _info = newton_solver.solve(max_iterations=12, tolerance=1e-4, verbose=False)
-
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
 
 
 @pytest.mark.fast

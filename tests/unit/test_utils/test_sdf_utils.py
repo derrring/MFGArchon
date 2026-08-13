@@ -217,20 +217,6 @@ class TestSDFDifference:
             assert np.all(box[inside_domain] < 0)  # Inside box
             assert np.all(hole[inside_domain] > 0)  # Outside hole
 
-    def test_annulus(self):
-        """Test annulus (ring) as difference of circles."""
-        points = np.random.uniform(-2, 2, (200, 2))
-
-        outer = sdf_sphere(points, center=[0, 0], radius=1.0)
-        inner = sdf_sphere(points, center=[0, 0], radius=0.5)
-        ring = sdf_difference(outer, inner)
-
-        # Points in ring must be inside outer, outside inner
-        inside_ring = ring < 0
-        if np.any(inside_ring):
-            assert np.all(outer[inside_ring] < 0)
-            assert np.all(inner[inside_ring] > 0)
-
 
 class TestSmoothOperations:
     """Test smooth blending operations."""

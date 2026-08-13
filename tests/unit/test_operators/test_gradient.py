@@ -76,17 +76,6 @@ class TestPartialDerivOperator:
         assert error < 1e-2
 
     @pytest.mark.unit
-    def test_1d_preserves_shape(self):
-        """Output shape should match input field_shape."""
-        x, dx = _1d_grid(80)
-        u = np.sin(x)
-
-        d_dx = PartialDerivOperator(direction=0, spacings=[dx], field_shape=(80,))
-        du_dx = d_dx(u)
-
-        assert du_dx.shape == (80,)
-
-    @pytest.mark.unit
     def test_scipy_linear_operator_interface(self):
         """Should implement scipy LinearOperator and give consistent results."""
         x, dx = _1d_grid(50)

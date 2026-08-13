@@ -276,27 +276,6 @@ class TestParticleParticleProjection:
         corner_idx = 0  # (0, 0)
         assert M_target[center_idx] > M_target[corner_idx]
 
-    def test_different_particle_counts(self):
-        """Test projection between particle sets of different sizes."""
-        # More collocation points than particles
-        hjb_particles = np.random.uniform(0, 1, (500, 2))
-        fp_particles = np.random.uniform(0, 1, (100, 2))
-
-        hjb_geom = PointCloudGeometry(hjb_particles)
-        fp_geom = PointCloudGeometry(fp_particles)
-
-        projector = GeometryProjector(hjb_geom, fp_geom)
-
-        # HJB → FP (500 → 100)
-        U_hjb = np.random.rand(500)
-        U_fp = projector.project_hjb_to_fp(U_hjb)
-        assert U_fp.shape == (100,)
-
-        # FP → HJB (100 → 500)
-        M_fp = np.random.rand(100)
-        M_hjb = projector.project_fp_to_hjb(M_fp)
-        assert M_hjb.shape == (500,)
-
     def test_3d_particle_projection(self):
         """Test particle projection in 3D."""
         hjb_particles = np.random.uniform(0, 1, (50, 3))

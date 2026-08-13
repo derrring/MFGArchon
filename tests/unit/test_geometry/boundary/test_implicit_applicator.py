@@ -127,12 +127,6 @@ class TestInheritance:
         """Returns MESHFREE discretization type (inherited from base)."""
         assert applicator.discretization_type == DiscretizationType.MESHFREE
 
-    def test_has_particle_bc_methods(self, applicator):
-        """Inherits particle BC methods from MeshfreeApplicator."""
-        assert callable(getattr(applicator, "apply_particle_bc", None))
-        assert callable(getattr(applicator, "apply_particles", None))
-        assert callable(getattr(applicator, "apply_field_bc", None))
-
 
 # ---------------------------------------------------------------------------
 # Boundary condition application tests

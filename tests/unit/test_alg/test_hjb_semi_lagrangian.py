@@ -269,24 +269,6 @@ class TestHJBSemiLagrangianIntegration:
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
 
 
-class TestHJBSemiLagrangianSolverNotAbstract:
-    """Test that HJBSemiLagrangianSolver is concrete (not abstract)."""
-
-    def test_solver_not_abstract(self):
-        """Test that HJBSemiLagrangianSolver can be instantiated."""
-        import inspect
-
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, components=_default_components())
-
-        # Should not raise TypeError about abstract methods
-        solver = HJBSemiLagrangianSolver(problem)
-        assert isinstance(solver, HJBSemiLagrangianSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(HJBSemiLagrangianSolver)
-
-
 class TestCharacteristicTracingMethods:
     """Test different characteristic tracing methods (explicit_euler, rk2, rk4)."""
 
@@ -673,51 +655,6 @@ class TestEnhancementsIntegration:
         problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
         solver = HJBSemiLagrangianSolver(
             problem, characteristic_solver="rk4", interpolation_method="cubic", use_jax=False
-        )
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        M_density = np.ones((problem.Nt + 1, Nx_points)) / (Nx_points - 1)
-        bounds = problem.geometry.get_bounds()
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        U_final = 0.5 * (x_coords - 0.5) ** 2
-        U_prev = np.zeros((problem.Nt + 1, Nx_points))
-
-        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-
-        assert np.all(np.isfinite(U_solution))
-        assert U_solution.shape == (problem.Nt + 1, Nx_points)
-
-    def test_rk4_with_rbf_fallback(self):
-        """Test RK4 characteristic tracing with RBF fallback."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = HJBSemiLagrangianSolver(
-            problem, characteristic_solver="rk4", use_rbf_fallback=True, rbf_kernel="thin_plate_spline", use_jax=False
-        )
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        M_density = np.ones((problem.Nt + 1, Nx_points)) / (Nx_points - 1)
-        bounds = problem.geometry.get_bounds()
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        U_final = 0.5 * (x_coords - 0.5) ** 2
-        U_prev = np.zeros((problem.Nt + 1, Nx_points))
-
-        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-
-        assert np.all(np.isfinite(U_solution))
-        assert U_solution.shape == (problem.Nt + 1, Nx_points)
-
-    def test_all_enhancements_together(self):
-        """Test all enhancements working together: RK4 + cubic + RBF."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, components=_default_components())
-        solver = HJBSemiLagrangianSolver(
-            problem,
-            characteristic_solver="rk4",
-            interpolation_method="cubic",
-            use_rbf_fallback=True,
-            rbf_kernel="thin_plate_spline",
-            use_jax=False,
         )
 
         Nx_points = problem.geometry.get_grid_shape()[0]

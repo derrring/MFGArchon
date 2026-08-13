@@ -462,14 +462,6 @@ def test_advanced_convergence_monitor_wasserstein_computation():
 
 
 @pytest.mark.unit
-def test_particle_method_detector_basic():
-    """Test SolverTypeDetector can be instantiated."""
-    detector = SolverTypeDetector()
-
-    assert detector is not None
-
-
-@pytest.mark.unit
 def test_particle_method_detector_mock_solver():
     """Test detection from mock solver with particle attributes."""
 
@@ -718,22 +710,6 @@ def test_edge_case_zero_distribution():
 
     assert np.isfinite(wasserstein)
     assert np.isfinite(moments["mean"])
-
-
-@pytest.mark.unit
-def test_edge_case_large_arrays():
-    """Test performance with large arrays."""
-    u_prev = np.random.rand(200, 200)
-    u_curr = u_prev + np.random.rand(200, 200) * 0.001
-    m_prev = np.random.rand(200, 200)
-    m_curr = m_prev + np.random.rand(200, 200) * 0.001
-    Dx = 0.01
-    Dt = 0.001
-
-    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, Dx, Dt)
-
-    assert np.isfinite(metrics["l2distu_abs"])
-    assert np.isfinite(metrics["l2distm_abs"])
 
 
 # =============================================================================

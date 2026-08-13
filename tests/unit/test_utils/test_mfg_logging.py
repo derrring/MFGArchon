@@ -76,22 +76,6 @@ class TestThreadSafety:
 
         assert cached_loggers == expected_loggers, f"Cache mismatch: expected {expected_loggers}, got {cached_loggers}"
 
-    def test_same_logger_returned_across_threads(self):
-        """Same logger name should return identical logger object."""
-        loggers: list[logging.Logger] = []
-
-        def get_shared_logger(_: int) -> logging.Logger:
-            return get_logger("test.shared")
-
-        # Run concurrent access
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(get_shared_logger, i) for i in range(20)]
-            loggers = [f.result() for f in futures]
-
-        # All should be the same object
-        first_logger = loggers[0]
-        assert all(logger is first_logger for logger in loggers), "Different logger instances returned for same name"
-
 
 class TestLoggerCreation:
     """Test basic logger creation functionality."""

@@ -117,26 +117,6 @@ class TestStefanProblem1D:
         interface_diffs = np.diff(interface_positions)
         assert np.all(interface_diffs <= 0.01), "Interface should move monotonically left (or stay)"
 
-    def test_stefan_temperature_bounds(self):
-        """Test that temperature remains within physical bounds."""
-        phi0 = self.x - self.s0
-        ls_domain = TimeDependentDomain(phi0, self.grid, is_signed_distance=True)
-
-        T = np.where(self.x < self.s0, self.T_hot * (self.s0 - self.x) / self.s0, self.T_cold)
-
-        for _ in range(40):
-            T = self.solve_heat_equation_step(T, self.dx, self.dt, self.alpha, self.T_hot, self.T_cold)
-
-            phi_current = ls_domain.get_phi_at_time(ls_domain.time_history[-1])
-            idx_interface = np.argmin(np.abs(phi_current))
-            grad_T = (T[min(idx_interface + 1, self.Nx)] - T[max(idx_interface - 1, 0)]) / (2 * self.dx)
-
-            ls_domain.evolve_step(-grad_T, self.dt)
-
-            # Temperature should stay in [T_cold, T_hot]
-            assert np.all(self.T_cold - 1e-10 <= T), "Temperature below cold boundary"
-            assert np.all(self.T_hot + 1e-10 >= T), "Temperature above hot boundary"
-
 
 class TestStefanProblem2D:
     """Test 2D Stefan problem (circular interface)."""

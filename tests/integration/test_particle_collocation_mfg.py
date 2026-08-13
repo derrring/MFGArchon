@@ -135,29 +135,6 @@ class TestFPGFDMSolver:
         assert fp_solver.n_points == N_points
         assert fp_solver.dimension == 2
 
-    def test_fp_gfdm_outputs_on_collocation_points(self):
-        """Test that FPGFDMSolver outputs on collocation points."""
-        problem = SimpleLQMFG2D()
-        N_points = 100
-
-        domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-        points = domain.sample_uniform(N_points, seed=42)
-
-        fp_solver = FPGFDMSolver(problem, collocation_points=points, delta=0.15)
-
-        # Use temporal grid size (Nt + 1), not spatial grid
-        n_time_points = problem.Nt + 1
-        m0 = np.ones(N_points) / N_points
-
-        # drift_field must be shape (Nt+1, N, d) for GFDM solver
-        # Use zero drift for this test
-        drift_field = np.zeros((n_time_points, N_points, problem.d))
-
-        M = fp_solver.solve_fp_system(m0, drift_field=drift_field, show_progress=False)
-
-        # GFDM solver outputs on collocation points
-        assert M.shape == (n_time_points, N_points)
-
     def test_fp_gfdm_mass_conservation(self):
         """Test mass conservation in GFDM-based FP solver."""
         problem = SimpleLQMFG2D()

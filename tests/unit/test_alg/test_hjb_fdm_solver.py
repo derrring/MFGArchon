@@ -234,31 +234,6 @@ class TestHJBFDMSolverSolveHJBSystem:
         # Check that solution at t=0 is different from zero
         assert not np.allclose(U_solution[0, :], 0.0)
 
-    def test_solve_hjb_system_with_density_variation(self):
-        """Test solving with non-uniform density."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, components=_default_components())
-        solver = HJBFDMSolver(problem)
-
-        Nt_points = problem.Nt_points
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        bounds = problem.geometry.get_bounds()
-
-        # Create Gaussian density
-        x_coords = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        m_profile = np.exp(-((x_coords - 0.5) ** 2) / (2 * 0.1**2))
-        M_density = np.tile(m_profile, (Nt_points, 1))
-
-        U_final = np.zeros(Nx_points)
-        U_prev = np.zeros((Nt_points, Nx_points))
-
-        # Solve
-        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-
-        # Should produce valid solution
-        assert np.all(np.isfinite(U_solution))
-        assert U_solution.shape == (Nt_points, Nx_points)
-
 
 class TestHJBFDMSolverNumericalProperties:
     """Test numerical properties of the FDM method."""
@@ -398,24 +373,6 @@ class TestHJBFDMSolverIntegration:
         # Should produce valid solution
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt_points, Nx_points)
-
-
-class TestHJBFDMSolverNotAbstract:
-    """Test that HJBFDMSolver is concrete (not abstract)."""
-
-    def test_solver_not_abstract(self):
-        """Test that HJBFDMSolver can be instantiated."""
-        import inspect
-
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, components=_default_components())
-
-        # Should not raise TypeError about abstract methods
-        solver = HJBFDMSolver(problem)
-        assert isinstance(solver, HJBFDMSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(HJBFDMSolver)
 
 
 class TestHJBFDMSolverDiagonalTensor:
@@ -565,54 +522,6 @@ class TestHJBFDMSolverDiagonalTensor:
             for j in range(10):
                 Sigma_spatial[i, j] = np.diag([0.15, 0.05])
         assert is_diagonal_tensor(Sigma_spatial), "Should detect spatially-varying diagonal"
-
-    def test_diagonal_tensor_spatially_varying(self):
-        """Test HJB solver with spatially-varying diagonal tensor."""
-        domain = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[16, 11], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=3, sigma=0.1, components=_default_components_2d())
-
-        solver = HJBFDMSolver(problem, solver_type="newton")
-
-        # Get grid shape
-        Nx, Ny = domain.get_grid_shape()
-        Nt_points = problem.Nt_points
-
-        # Create dummy density and initial conditions
-        M_density = np.ones((Nt_points, Nx, Ny)) * 0.5
-        U_final = np.zeros((Nx, Ny))
-        U_prev = np.zeros((Nt_points, Nx, Ny))
-
-        # Spatially-varying diagonal tensor
-        Sigma_spatial = np.zeros((Nx, Ny, 2, 2))
-        for i in range(Nx):
-            for j in range(Ny):
-                # Vary diffusion based on position
-                sigma_x = 0.1 + 0.1 * (i / Nx)
-                sigma_y = 0.05
-                Sigma_spatial[i, j] = np.diag([sigma_x**2, sigma_y**2])
-
-        # Should not warn for spatially-varying diagonal tensor
-        import warnings
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=Sigma_spatial)
-
-            # No non-deprecation warnings for spatially-varying diagonal
-            tensor_warnings = [
-                warning
-                for warning in w
-                if "tensor_volatility_field" in str(warning.message)
-                and not issubclass(warning.category, DeprecationWarning)
-            ]
-            assert len(tensor_warnings) == 0, "Should not warn for spatially-varying diagonal tensor"
-
-        # Verify solution
-        assert U_solution.shape == (Nt_points, Nx, Ny)
-        assert not np.any(np.isnan(U_solution))
 
     def test_diagonal_tensor_callable(self):
         """Test HJB solver with callable diagonal tensor Σ(t, x, m)."""

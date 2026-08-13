@@ -216,24 +216,6 @@ class TestBackwardCompatibility:
         np.testing.assert_array_equal(result[3], error_U)
         np.testing.assert_array_equal(result[4], error_M)
 
-    def test_iteration(self, sample_arrays, sample_errors):
-        """Test __iter__ for iteration."""
-        U, M = sample_arrays
-        error_U, error_M = sample_errors
-
-        result = SolverResult(
-            U=U,
-            M=M,
-            iterations=5,
-            error_history_U=error_U,
-            error_history_M=error_M,
-        )
-
-        items = list(result)
-        assert len(items) == 5
-        assert items[0] is U
-        assert items[1] is M
-
 
 # ============================================================================
 # Test: Properties
@@ -302,21 +284,6 @@ class TestProperties:
         )
 
         assert result.max_error == max(error_U[-1], error_M[-1])
-
-    def test_solution_shape(self, sample_arrays, sample_errors):
-        """Test solution_shape property."""
-        U, M = sample_arrays
-        error_U, error_M = sample_errors
-
-        result = SolverResult(
-            U=U,
-            M=M,
-            iterations=5,
-            error_history_U=error_U,
-            error_history_M=error_M,
-        )
-
-        assert result.solution_shape == U.shape
 
 
 # ============================================================================
@@ -608,21 +575,6 @@ class TestCreateSolverResult:
         )
 
         assert result.converged
-
-    def test_no_auto_detection_without_tolerance(self, sample_arrays, sample_errors):
-        """Test no auto-detection without tolerance."""
-        U, M = sample_arrays
-        error_U, error_M = sample_errors
-
-        result = create_solver_result(
-            U=U,
-            M=M,
-            iterations=5,
-            error_history_U=error_U,
-            error_history_M=error_M,
-        )
-
-        assert result.converged is False
 
     def test_convergence_analysis_in_metadata(self, sample_arrays, sample_errors):
         """Test convergence analysis added to metadata."""

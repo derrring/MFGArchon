@@ -111,15 +111,6 @@ class TestEdgeCases:
         test_points = np.array([[0.5, 0.5], [2.5, 2.5], [1.5, 1.5]])
         assert not np.any(intersection.contains(test_points))
 
-    def test_very_small_domain(self):
-        """Test sampling from very small domain."""
-        small_rect = Hyperrectangle(np.array([[0, 0.001], [0, 0.001]]))
-
-        particles = small_rect.sample_uniform(100, seed=42)
-        assert particles.shape == (100, 2)
-        assert np.all(particles >= 0)
-        assert np.all(particles <= 0.001)
-
     def test_thin_domain(self):
         """Test domain with very different aspect ratios."""
         thin_rect = Hyperrectangle(np.array([[0, 10], [0, 0.01]]))

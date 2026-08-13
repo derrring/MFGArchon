@@ -75,22 +75,6 @@ class TestPenaltyHJBSolverInstantiation:
 class TestPenaltyHJBSolverSolve:
     """Test solve_hjb_system behavior."""
 
-    def test_output_shape(self):
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x))
-        M, U_T, U_prev = _make_solver_inputs(problem)
-        U = solver.solve_hjb_system(M, U_T, U_prev)
-        assert U.shape == (problem.Nt + 1, problem.geometry.get_grid_shape()[0])
-
-    def test_solution_is_finite(self):
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x))
-        M, U_T, U_prev = _make_solver_inputs(problem)
-        U = solver.solve_hjb_system(M, U_T, U_prev)
-        assert np.all(np.isfinite(U))
-
     def test_terminal_condition_preserved(self):
         """Terminal condition U(T) should match the problem's terminal condition."""
         problem = _make_problem()

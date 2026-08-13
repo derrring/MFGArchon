@@ -164,20 +164,6 @@ class TestMixedBC2D:
         assert padded[4, -1] == 1.0  # y=0.75, Neumann
         assert padded[5, -1] == 1.0  # y=1.0, Neumann
 
-    def test_domain_bounds_from_mixed_bc(self):
-        """Test that domain_bounds can be provided via MixedBoundaryConditions."""
-        exit_bc = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0)
-        mixed_bc = MixedBoundaryConditions(
-            dimension=2,
-            segments=[exit_bc],
-            domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
-        )
-
-        field = np.ones((5, 5))
-        # Should work without passing domain_bounds explicitly
-        padded = apply_boundary_conditions_2d(field, mixed_bc)
-        assert padded.shape == (7, 7)
-
 
 class TestBC1D:
     """Tests for 1D boundary conditions."""

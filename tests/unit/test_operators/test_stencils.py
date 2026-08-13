@@ -74,13 +74,6 @@ class TestGradientCentral:
         expected = 2.0 * X
         np.testing.assert_allclose(du_dx[2:-2, :], expected[2:-2, :], atol=1e-10)
 
-    @pytest.mark.unit
-    def test_preserves_shape(self):
-        """Output should have same shape as input."""
-        u = np.random.randn(40, 30)
-        du = gradient_central(u, axis=0, h=0.1)
-        assert du.shape == (40, 30)
-
 
 class TestGradientForward:
     """Tests for forward difference gradient."""

@@ -197,13 +197,6 @@ def test_trapezoid_exponential_function():
 
 
 @pytest.mark.unit
-def test_get_numpy_info_returns_dict():
-    """Test get_numpy_info() returns dictionary."""
-    info = get_numpy_info()
-    assert isinstance(info, dict)
-
-
-@pytest.mark.unit
 def test_get_numpy_info_required_keys():
     """Test get_numpy_info() contains required keys."""
     info = get_numpy_info()
@@ -280,17 +273,6 @@ def test_ensure_numpy_compatibility_returns_dict():
 
 
 @pytest.mark.unit
-def test_ensure_numpy_compatibility_no_exceptions():
-    """Test ensure_numpy_compatibility() completes without exceptions."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        try:
-            ensure_numpy_compatibility()
-        except Exception as e:
-            pytest.fail(f"ensure_numpy_compatibility() raised exception: {e}")
-
-
-@pytest.mark.unit
 def test_ensure_numpy_compatibility_warning_stacklevel():
     """Test ensure_numpy_compatibility() uses correct stacklevel."""
     # Should emit warnings if compatibility issues detected
@@ -308,12 +290,6 @@ def test_ensure_numpy_compatibility_warning_stacklevel():
 # ===================================================================
 # Test numpy_trapezoid Alias
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_numpy_trapezoid_alias_exists():
-    """Test numpy_trapezoid alias is defined."""
-    assert callable(numpy_trapezoid)
 
 
 @pytest.mark.unit

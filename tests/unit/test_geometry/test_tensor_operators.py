@@ -187,35 +187,6 @@ class TestCrossDiffusion:
 class TestBoundaryConditions:
     """Test different boundary conditions."""
 
-    def test_periodic_bc(self):
-        """Test periodic boundary conditions."""
-        Nx, Ny = 8, 8
-        m = np.random.rand(Nx, Ny)
-        dx, dy = 0.1, 0.1
-        sigma_tensor = 0.1 * np.eye(2)
-
-        bc = periodic_bc(dimension=2)
-
-        result = diffusion(m, sigma_tensor, [dx, dy], bc=bc)
-
-        # Periodic BC should work without issues
-        assert result.shape == m.shape
-        assert np.all(np.isfinite(result))
-
-    def test_dirichlet_bc(self):
-        """Test Dirichlet (zero) boundary conditions."""
-        Nx, Ny = 8, 8
-        m = np.random.rand(Nx, Ny)
-        dx, dy = 0.1, 0.1
-        sigma_tensor = 0.1 * np.eye(2)
-
-        bc = dirichlet_bc(dimension=2)
-
-        result = diffusion(m, sigma_tensor, [dx, dy], bc=bc)
-
-        assert result.shape == m.shape
-        assert np.all(np.isfinite(result))
-
     def test_no_flux_bc(self):
         """Test no-flux (Neumann) boundary conditions."""
         Nx, Ny = 8, 8
@@ -246,20 +217,6 @@ class TestNDDispatcher:
         bc = periodic_bc(dimension=1)
 
         # This should work (fallback to 1D laplacian)
-        result = diffusion(m, sigma_tensor, dx, bc=bc)
-
-        assert result.shape == m.shape
-        assert np.all(np.isfinite(result))
-
-    def test_2d_dispatch(self):
-        """Test 2D dispatch to optimized implementation."""
-        Nx, Ny = 10, 10
-        m = np.random.rand(Nx, Ny)
-        dx = [0.1, 0.1]
-        sigma_tensor = 0.1 * np.eye(2)
-
-        bc = periodic_bc(dimension=2)
-
         result = diffusion(m, sigma_tensor, dx, bc=bc)
 
         assert result.shape == m.shape

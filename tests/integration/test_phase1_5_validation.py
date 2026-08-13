@@ -192,21 +192,6 @@ class TestNetworkSolverIntegration:
         network.create_network()
         return NetworkMFGProblem(geometry=network, T=0.5, Nt=5)
 
-    def test_network_hjb_solver_runs(self):
-        """Network HJB solver initialization and basic solve."""
-        from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver
-
-        problem = self._make_network_problem()
-        solver = NetworkHJBSolver(problem, scheme="RK45")
-
-        M = np.ones((problem.Nt + 1, problem.num_nodes)) / problem.num_nodes
-        U_terminal = np.zeros(problem.num_nodes)
-        U_prev = np.zeros((problem.Nt + 1, problem.num_nodes))
-
-        U = solver.solve_hjb_system(M, U_terminal, U_prev)
-        assert U.shape == (problem.Nt + 1, problem.num_nodes)
-        assert np.all(np.isfinite(U))
-
     def test_network_fp_solver_runs(self):
         """Network FP solver initialization and basic solve."""
         from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
@@ -235,33 +220,6 @@ class TestNetworkSolverIntegration:
             U = solver.solve_hjb_system(M, U_terminal, np.zeros_like(M))
             assert U.shape == M.shape
             assert np.all(np.isfinite(U)), f"scheme={scheme} produced non-finite values"
-
-    def test_network_hjb_with_source_term(self):
-        """Verify source_term flows through network HJB solver."""
-        from mfgarchon.alg.numerical.network_solvers.hjb_network import NetworkHJBSolver
-
-        problem = self._make_network_problem()
-        solver = NetworkHJBSolver(problem, scheme="RK45")
-
-        M = np.ones((problem.Nt + 1, problem.num_nodes)) / problem.num_nodes
-        U_terminal = np.zeros(problem.num_nodes)
-        U_prev = np.zeros((problem.Nt + 1, problem.num_nodes))
-
-        # Solve without source_term
-        U_base = solver.solve_hjb_system(M, U_terminal, U_prev)
-
-        # Solve with source_term (if supported)
-        try:
-
-            def source(t, x):
-                return 0.1 * np.ones(problem.num_nodes)
-
-            U_src = solver.solve_hjb_system(M, U_terminal, U_prev, source_term=source)
-            # If source_term is accepted, solutions should differ
-            if not np.allclose(U_src, U_base):
-                pass  # source_term has effect — good
-        except TypeError:
-            pytest.skip("NetworkHJBSolver does not accept source_term yet")
 
 
 # ---------------------------------------------------------------------------

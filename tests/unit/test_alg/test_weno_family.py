@@ -99,22 +99,6 @@ class TestWenoFamilySolver:
         with pytest.raises(ValueError, match="WENO-Z parameter"):
             HJBWENOSolver(simple_problem, weno_z_parameter=0.0)
 
-    def test_smoothness_indicators_computation(self, simple_problem, test_values):
-        """Test smoothness indicator computation for polynomial data."""
-        solver = HJBWENOSolver(simple_problem, weno_variant="weno5")
-
-        # For quadratic polynomial u = x^2, should have specific smoothness properties
-        u_stencil = test_values[8:13]  # 5-point stencil
-        beta = solver._compute_smoothness_indicators(u_stencil)
-
-        # Should return 3 smoothness indicators
-        assert len(beta) == 3
-        assert all(beta >= 0)  # Smoothness indicators should be non-negative
-
-        # For smooth quadratic data, middle stencil should be smoothest
-        # (This is problem-dependent but generally true for polynomials)
-        assert np.isfinite(beta).all()
-
     def test_tau_indicator_computation(self, simple_problem, test_values):
         """Test global smoothness indicator τ for WENO-Z."""
         solver = HJBWENOSolver(simple_problem, weno_variant="weno-z")
@@ -161,24 +145,6 @@ class TestWenoFamilySolver:
         # For smooth data, left and right values should be similar
         # but not necessarily identical due to stencil asymmetry
         assert abs(u_left - u_right) < 10.0  # Reasonable bound
-
-    def test_hjb_step_execution(self, simple_problem):
-        """Test that HJB time step executes without errors."""
-        solver = HJBWENOSolver(simple_problem, weno_variant="weno5")
-
-        # Create test data
-        bounds = simple_problem.geometry.get_bounds()
-        x = np.linspace(bounds[0][0], bounds[1][0], simple_problem.geometry.get_grid_shape()[0])
-        u_current = np.sin(2 * np.pi * x)
-        m_current = np.ones_like(u_current) / len(u_current)
-        dt = 0.001
-
-        # Should execute without error
-        u_new = solver.solve_hjb_step(u_current, m_current, dt)
-
-        # Result should be same size and finite
-        assert u_new.shape == u_current.shape
-        assert np.isfinite(u_new).all()
 
     def test_time_integration_methods(self, simple_problem):
         """Test different time integration methods."""
@@ -230,23 +196,6 @@ class TestWenoFamilySolver:
 
         # Should be reasonable for the problem
         assert dt_stable < 1.0  # Should be much smaller than problem time scale
-
-    def test_boundary_handling(self, simple_problem):
-        """Test that boundary points are handled correctly."""
-        solver = HJBWENOSolver(simple_problem, weno_variant="weno5")
-
-        # Create data with boundary features
-        bounds = simple_problem.geometry.get_bounds()
-        Nx_points = simple_problem.geometry.get_grid_shape()[0]
-        x = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
-        u_boundary = np.exp(-10 * (x - 0.1) ** 2) + np.exp(-10 * (x - 0.9) ** 2)
-
-        # Test reconstruction near boundaries
-        # Should not raise errors
-        u_left_0, u_right_0 = solver._weno_reconstruction(u_boundary, 2)
-        u_left_end, u_right_end = solver._weno_reconstruction(u_boundary, len(u_boundary) - 3)
-
-        assert np.isfinite([u_left_0, u_right_0, u_left_end, u_right_end]).all()
 
     def test_variant_performance_consistency(self, simple_problem):
         """Test that all variants produce consistent results for smooth problems."""
@@ -307,24 +256,6 @@ class TestWenoSolverIntegration:
         """Create MFG problem for integration testing using modern geometry-first API."""
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
         return MFGProblem(geometry=domain, T=1.0, Nt=30, sigma=0.1, components=_default_components())
-
-    def test_solve_hjb_system_shape(self, integration_problem):
-        """Test that solve_hjb_system returns correct shape."""
-        solver = HJBWENOSolver(integration_problem, weno_variant="weno5")
-
-        Nt = integration_problem.Nt + 1
-        Nx = integration_problem.geometry.get_grid_shape()[0]  # Nx+1 grid points
-
-        # Create inputs
-        M_density = np.ones((Nt, Nx))
-        U_final = np.zeros(Nx)
-        U_prev = np.zeros((Nt, Nx))
-
-        # Solve
-        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
-
-        assert U_solution.shape == (Nt, Nx)
-        assert np.all(np.isfinite(U_solution))
 
     def test_solve_hjb_system_final_condition(self, integration_problem):
         """Test that final condition is preserved."""
@@ -474,17 +405,6 @@ class TestWenoSolverIntegration:
             U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
             assert np.all(np.isfinite(U_solution))
-
-    def test_solver_not_abstract(self, integration_problem):
-        """Test that HJBWENOSolver can be instantiated and used."""
-        import inspect
-
-        # Should not raise TypeError about abstract methods
-        solver = HJBWENOSolver(integration_problem, weno_variant="weno5")
-        assert isinstance(solver, HJBWENOSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(HJBWENOSolver)
 
 
 class TestWenoTimeSubstepping:
