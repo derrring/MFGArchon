@@ -58,8 +58,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The CI marker set, matching scripts/local_ci.sh so a kill here means a kill there.
-MARKERS = "not slow and not benchmark and not experimental and not optional_torch and not environment"
+# The CI marker set. ONE owner, read by scripts/local_ci.sh and by this script, so that a kill
+# here means a kill there. It was two byte-identical string literals bound by a comment until
+# #1909, and a comment is not a mechanism: diverging them silently measures kill counts against a
+# different population than the gate runs, and nothing reports it.
+MARKERS = (REPO / "scripts" / "ci_markers.txt").read_text().strip()
 
 # The instrument must not be inside its own population.
 #

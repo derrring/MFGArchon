@@ -297,7 +297,7 @@ if [[ $FAST -eq 0 ]]; then
   # `-P` alone under `-n` crashes every worker (no tests ran); with PYTHONSAFEPATH=1 the real
   # pytest runs and correctly reports it. Anything that forks needs the env var, not just the flag.
   PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
-    -m "not slow and not benchmark and not experimental and not optional_torch and not environment" \
+    -m "$(cat "$(dirname "$0")/ci_markers.txt")" \
     -q --durations=10
   check $? "full suite"
 else

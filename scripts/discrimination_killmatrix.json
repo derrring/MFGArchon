@@ -3,11 +3,11 @@
     "collected": 6138,
     "commit": "f961db90",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
-    "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment",
+    "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ],
-    "_note": "24 axes at f961db90/6138; the two formerly UNCOVERED remeasured at HEAD after their pins landed"
+    "_note": "markers gained `not manual` in #1909; the population is UNCHANGED -- measured 6002 collected and 388 deselected under both sets, because every `manual` test also carries `slow` -- so the kill counts recorded here remain valid without a re-sweep"
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
   "baseline_seconds": 150.2,
