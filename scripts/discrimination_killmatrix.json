@@ -1371,16 +1371,16 @@
     "tests/unit/test_geometry/test_sparse_operations.py::TestSparseSolver::test_direct_solver_1d": [
       "grid_spacing_uses_point_count"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100,": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100, 50]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101,": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101, 51]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx-[20,": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx-[20, 20]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx_points-[21,": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx_points-[21, 21]]": [
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1583-]": [
@@ -1954,10 +1954,10 @@
         "tests/unit/test_geometry/level_set/test_level_set_core.py::TestLevelSetFunction::test_2d_creation",
         "tests/unit/test_geometry/level_set/test_level_set_core.py::TestLevelSetFunction::test_normal_field_1d",
         "tests/unit/test_geometry/level_set/test_subcell_interface.py::TestSubcellInterface1D::test_accuracy_vs_argmin",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100,",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101,",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx-[20,",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx_points-[21,",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx-[100, 50]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[104-grid.Nx_points-[101, 51]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx-[20, 20]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[624-grid.refine(2).Nx_points-[21, 21]]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1583-]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1635-]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1694-]",

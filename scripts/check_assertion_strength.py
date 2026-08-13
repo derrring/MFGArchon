@@ -36,54 +36,22 @@ STRONG_HELPERS = (
     "assert_series_equal",
 )
 WEAK_CALLS = {"isfinite", "isinstance", "len", "hasattr", "callable", "id", "type", "bool", "any", "all"}
-# Frozen paradigms are out of scope by default (CLAUDE.md § FROZEN). These are TEST-tree names,
-# not source paths: `alg/neural` and `alg/reinforcement` name the SOURCE layout and match ZERO
-# files under `tests/`, so the first version of this filter excluded nothing while its comment and
-# its own test both said otherwise -- and that test asserted the constant contains itself, which is
-# the tautological shape this script exists to count. Found by review (#1905).
-def _is_frozen(path: Path) -> bool:
-    """Frozen membership has exactly one owner, and it is not this file.
-
-    `scripts/check_frozen_areas.py` decides it by AST -- imports and string literals reaching
-    `FROZEN_PACKAGES` -- with a docstring explaining at length why a name match is insufficient
-    and citing a file it measurably missed. This module answered the same question by filename
-    substring, and the two disagreed on six files:
-
-        frozen by NAME   : 12        frozen by IMPORT : 14
-
-        excluded by name but NOT frozen (2 files, 40 test functions)
-            tests/unit/test_alg/test_rl_stub_metrics_1688.py            (4)
-            tests/unit/test_utils/test_neural/test_normalization.py     (36)
-        frozen by import but LEFT IN the denominator (4 files, 20 test functions)
-            tests/unit/test_alg/test_adaptive_training_canonical_mode_1572.py   (5)
-            tests/unit/test_alg/test_mean_field_rl_requires_pop_state_1508.py   (1)
-            tests/unit/test_alg/test_solver_construction_smoke_887.py           (5)
-            tests/unit/test_config/test_enum_conversions.py                     (9)
-
-    36 of those were dropped from the denominator because a DIRECTORY in their path is spelled
-    `test_neural`, while CLAUDE.md freezes `alg/neural` and `alg/reinforcement` only -- `utils/neural`
-    is not frozen, and the commit that deletes both frozen packages leaves that file alive, which
-    is independent confirmation. Found by re-review (#1905), which also noted that the previous
-    repair had entrenched the wrong set by pinning it in a test.
-    """
-    return bool(_frozen_areas()._references(path))
-
-
-def _frozen_areas():
-    """Imported lazily and by path: `scripts/` is not a package, so a plain import would depend
-    on how this script was invoked."""
-    global _CFA
-    if _CFA is None:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("check_frozen_areas", REPO / "scripts" / "check_frozen_areas.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _CFA = module
-    return _CFA
-
-
-_CFA = None
+# There is no frozen paradigm left to exclude. `alg/neural` and `alg/reinforcement` were the
+# only two, and they were DELETED rather than frozen (CLAUDE.md; 23,118 lines, 60 files), taking
+# `scripts/check_frozen_areas.py` -- the AST decider this module deferred to -- with them.
+#
+# The exclusion is retired rather than re-homed. Kept, it would need a new owner for a set that
+# is now empty, and an empty exclusion reads as though it does something: exactly the inert-filter
+# defect that #1905 was fixing when it introduced the deferral. The denominator is now every
+# collected test function in the tree.
+#
+# History, because the number moves twice and both moves are real:
+#   name-based filter   1037 of 5371 = 19.3%   (12 files by filename substring)
+#   AST decider         1049 of 5393 = 19.5%   (14 files by import; 40 functions wrongly excluded
+#                                               by the name filter came back, 20 wrongly kept left)
+#   no exclusion        this run                (the remaining 145 functions come back)
+# Found while merging: the deferral and the deletion of its owner were on two branches that
+# text-merged with zero conflicts and a broken tree.
 
 
 def _weak(node: ast.Assert) -> bool:
@@ -135,8 +103,6 @@ def _collected_tests(tree: ast.Module):
 def scan(root: Path):
     weak, total = [], 0
     for f in sorted(root.rglob("test_*.py")):
-        if _is_frozen(f):
-            continue
         try:
             tree = ast.parse(f.read_text())
         except SyntaxError:
