@@ -37,7 +37,11 @@ reason that said nothing about the tree. Two things fixed that, and both are nee
   ``alg/reinforcement/multi_population`` raises ``AttributeError``, which ``pkgutil.walk_packages``
   re-raises, and the walk stopped at **160 of 428** modules -- so 29 of the 31 missing deprecations
   were not torch's, they were in ``geometry/``, ``utils/`` and ``operators/``, never reached.
-- The census is scoped to the **live** library. ``alg/neural`` and ``alg/reinforcement`` are frozen
+- The census is scoped to the **live** library. [The two packages named in this paragraph and
+  the two above it were DELETED on 2026-08-13; the passages are kept because they are why
+  ``FROZEN`` and ``is_frozen`` exist, and that mechanism is still the right shape for whatever
+  is frozen next. ``FROZEN`` is now empty, so nothing is excluded today.]
+  ``alg/neural`` and ``alg/reinforcement`` are frozen
   prototypes and out of scope for repo-wide campaigns (CLAUDE.md), and measured, they are also
   exactly where every torch-dependent module lives. Scoped that way the count is **63 with torch
   and 63 without**, which is what makes a committed baseline meaningful.

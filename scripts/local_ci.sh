@@ -283,13 +283,6 @@ step "Doc-API ratchet"
 "$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 check $? "docs teach no more missing API than the baseline records"
 
-step "Frozen prototype areas"
-# alg/neural and alg/reinforcement are prototypes, not under development (CLAUDE.md). The
-# counter-intuitive half of that freeze is that ADDING TESTS is also out: coverage reads as a
-# promise the behaviour is intended, and on a placeholder that promise is false. Prose alone does
-# not hold this line -- hasattr is banned by the same conventions and was written into a test on
-# 2026-07-30 because the fail-fast ratchet does not scan tests/ (#1780).
-
 # CLAUDE.md names three quantities that must have exactly one owner (diffusion_from_volatility,
 # fp_drift_coefficient, hjb_residual_norm) and nothing measured whether the restatements were
 # growing. Bidirectional, like the capability matrix: a consolidation fails until the baseline
