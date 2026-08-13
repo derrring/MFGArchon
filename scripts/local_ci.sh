@@ -186,6 +186,27 @@ RUFF=("$PY" -P -m ruff)
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 
+# A discrimination sweep mutates production source in place and restores it in a `finally`.
+# That survives an exception and SIGINT; it does not survive SIGKILL or a harness timeout, and
+# what a killed sweep leaves behind is a silently wrong solver -- `bc_type_to_geometric_operation`
+# answering "clamp" for no_flux, or `hjb_residual_norm` with its load-bearing sqrt(dx) deleted.
+# Both observed (#1849, and again 2026-08-13 in the MAIN checkout).
+#
+# The script's own `_assert_clean_tree()` runs at ITS startup, so it protects the next SWEEP and
+# nothing else. This is the guard at the point of CONSUMPTION: whatever killed the sweep, the gate
+# refuses to report on a mutated tree. Verified complete rather than assumed -- all 24 mutations
+# in scripts/test_discrimination.py carry the marker (`0 without a MUTATED marker`), so grepping
+# for it cannot miss one.
+#
+# GATE CANNOT RUN, not FAIL: nothing was measured about the code you meant to test, and a red
+# gate here would read as a defect in the working tree's content rather than in its state.
+if MUTATED_LEFTOVER=$(grep -rn '# MUTATED' mfgarchon/ 2>/dev/null) && [[ -n "$MUTATED_LEFTOVER" ]]; then
+  cannot_run "a mutation marker is still in the source tree -- a discrimination sweep was killed
+before it could restore. Recover with \`git checkout -- mfgarchon/\` and re-run.
+
+$MUTATED_LEFTOVER"
+fi
+
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 check() {
