@@ -144,16 +144,34 @@ def _raising(unimportable):
 
 
 # The nightly's own failure, minus the module that made it interesting. `.[dev,numerical]` cannot
-# import 20 modules; nineteen are frozen and the twentieth, `backends/numba_backend`, is LIVE -- it
-# is why this branch installs numba rather than only guarding the test. These three are from the
-# traceback's own "(+17 more)" prefix, built from FROZEN because check_frozen_areas.py counts
-# literals naming a frozen package.
+# import 20 modules; nineteen were frozen and the twentieth, `backends/numba_backend`, is LIVE --
+# it is why this branch installs numba rather than only guarding the test.
+#
+# Built from a SYNTHETIC frozen prefix rather than from `_RATCHET.FROZEN[0]`. The two packages that
+# populated that tuple were deleted, so `FROZEN` is now empty and indexing it raises -- but the
+# scoping mechanism it feeds is still the right shape for the next thing that gets frozen, and what
+# this file tests is the CLASSIFIER, not whichever package happens to be in scope. Coupling the
+# classifier's verification to a live package name is what made these tests go red on a deletion
+# that did not touch the classifier at all.
+_FROZEN_PREFIX = "mfgarchon.alg.a_frozen_paradigm"
 _FROZEN_ONLY = {
-    f"{_RATCHET.FROZEN[0]}.core.networks": "ModuleNotFoundError: No module named 'torch'",
-    f"{_RATCHET.FROZEN[0]}.core.utils": "ModuleNotFoundError: No module named 'torch'",
-    f"{_RATCHET.FROZEN[0]}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.core.networks": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.core.utils": "ModuleNotFoundError: No module named 'torch'",
+    f"{_FROZEN_PREFIX}.nn.feedforward": "ModuleNotFoundError: No module named 'torch'",
 }
 _LIVE_HOLE = "mfgarchon.backends.numba_backend"
+
+
+@pytest.fixture(autouse=True)
+def _a_frozen_paradigm_exists(monkeypatch):
+    """Give the classifier something frozen to classify.
+
+    `FROZEN` is empty in the live package -- the two paradigms that populated it were deleted -- so
+    "a frozen hole" is not a reachable category without one. Patching it here tests the CLASSIFIER
+    under a controlled scope instead of under whatever the package happens to be carrying, which is
+    what these tests were always about; reading the ambient value only made them hostage to it.
+    """
+    monkeypatch.setattr(_RATCHET, "FROZEN", (_FROZEN_PREFIX,))
 
 
 def test_the_scan_guard_classifies_the_holes():

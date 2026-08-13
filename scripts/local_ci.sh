@@ -289,8 +289,6 @@ step "Frozen prototype areas"
 # promise the behaviour is intended, and on a placeholder that promise is false. Prose alone does
 # not hold this line -- hasattr is banned by the same conventions and was written into a test on
 # 2026-07-30 because the fail-fast ratchet does not scan tests/ (#1780).
-"$PY" scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
-check $? "no new tests against a frozen prototype paradigm"
 
 # CLAUDE.md names three quantities that must have exactly one owner (diffusion_from_volatility,
 # fp_drift_coefficient, hjb_residual_norm) and nothing measured whether the restatements were

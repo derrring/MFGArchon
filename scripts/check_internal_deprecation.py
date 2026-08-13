@@ -76,7 +76,10 @@ BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"
 # The two frozen prototype paradigms (CLAUDE.md): out of scope for repo-wide campaigns, and the
 # only place in the package where a module needs torch to import. Excluding them is what makes the
 # count identical with and without it.
-FROZEN = ("mfgarchon.alg.neural", "mfgarchon.alg.reinforcement")
+# The frozen paradigms this excluded were deleted (see the changelog for this change), so the
+# tuple is empty rather than removed: the exclusion mechanism is still the right shape if a
+# package is ever frozen again, and an empty tuple keeps `startswith(FROZEN)` well defined.
+FROZEN: tuple[str, ...] = ()
 
 
 def is_frozen(module: str) -> bool:

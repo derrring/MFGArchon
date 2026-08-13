@@ -20,7 +20,6 @@ python examples/advanced/solvers_advanced/semi_lagrangian_validation.py
 
 ### [comprehensive/](comprehensive/)
 Full-featured demonstrations combining multiple systems:
-- **`mfg_rl_comprehensive_demo.py`** - Complete RL workflow with MFG
 - **`all_maze_algorithms_visualization.py`** - Comparison of maze generation algorithms
 - **`pydantic_validation_example.py`** - Configuration validation with Pydantic
 
@@ -46,28 +45,11 @@ Constrained optimization and primal-dual methods:
 - **`primal_dual_constrained_example.py`** - Primal-dual methods for constrained MFG
 - **`lagrangian_constrained_optimization.py`** - Lagrangian optimization with constraints
 
-### [machine_learning/](machine_learning/)
-Neural network and deep learning methods:
-- **`pinn_mfg_example.py`** - Physics-Informed Neural Networks
-- **`pinn_bayesian_mfg_demo.py`** - Bayesian PINN with uncertainty quantification
-- **`adaptive_pinn_demo.py`** - Adaptive training strategies
-- **`dgm_simple_validation.py`** - Deep Galerkin Method validation
-- **`neural_operator_mfg_demo.py`** - Neural operators for MFG
-
-#### [rl_algorithms/](machine_learning/rl_algorithms/)
-Reinforcement learning methods for MFG:
-- **`rl_intro_comparison.py`** - RL algorithms overview and comparison
-- **`nash_q_learning_demo.py`** - Nash Q-Learning for discrete actions
-- **`continuous_action_ddpg_demo.py`** - Deep Deterministic Policy Gradient
-- **`continuous_control_comparison.py`** - Continuous control methods comparison
-
 ### [applications/](applications/)
 Real-world applications and case studies:
 - **`traffic_flow_2d_demo.py`** - Traffic flow modeling
 - **`portfolio_optimization_2d_demo.py`** - Financial portfolio optimization
 - **`epidemic_modeling_2d_demo.py`** - Epidemic spread dynamics
-- **`predator_prey_mfg.py`** - Predator-prey systems
-- **`heterogeneous_traffic_multi_pop.py`** - Multi-population traffic
 - **`network_mfg_comparison_example.py`** - Network MFG methods
 - **`el_farol_bar_demo.py`** - El Farol Bar coordination game
 - **`santa_fe_bar_demo.py`** - Santa Fe Bar problem
@@ -203,11 +185,8 @@ All examples save to `examples/outputs/advanced/`:
    - `solvers_advanced/semi_lagrangian_validation.py`
 
 4. **Machine Learning** (Data-driven):
-   - `machine_learning/pinn_mfg_example.py`
-   - `machine_learning/rl_algorithms/rl_intro_comparison.py`
 
 5. **Comprehensive** (Integration):
-   - `comprehensive/mfg_rl_comprehensive_demo.py`
 
 ---
 

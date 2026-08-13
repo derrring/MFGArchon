@@ -99,10 +99,6 @@ def check_import_health():
 
     imports_to_check = [
         ("Core package", "import mfgarchon"),
-        ("DDPG", "from mfgarchon.alg.reinforcement.algorithms import MeanFieldDDPG"),
-        ("TD3", "from mfgarchon.alg.reinforcement.algorithms import MeanFieldTD3"),
-        ("SAC", "from mfgarchon.alg.reinforcement.algorithms import MeanFieldSAC"),
-        ("Q-Learning", "from mfgarchon.alg.reinforcement.algorithms import MeanFieldQLearning"),
     ]
 
     failures = []
