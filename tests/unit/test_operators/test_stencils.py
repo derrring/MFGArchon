@@ -235,10 +235,46 @@ class TestGradientUpwind:
 
     @pytest.mark.unit
     def test_result_shape(self):
-        """Output shape should match input."""
-        u = np.random.randn(50)
-        du = gradient_upwind(u, axis=0, h=0.1)
+        """Output shape, and the selection applied node-by-node on a mixed-sign field.
+
+        This fixture's unique value is that both branches fire inside ONE call -- the two
+        selection tests above use uniformly monotone fields plus a single tie node, so each of
+        their calls exercises one branch array-wide. That leaves a mutation none of them can see:
+        replacing the elementwise ``np.where`` with a whole-array ``if np.all(grad_central >= 0)``
+        agrees with the correct answer on any single-signed fixture. Measured on the seeded field
+        below it disagrees at 26 of the 48 interior nodes, and inverting the selection disagrees
+        at all 48.
+
+        The field is seeded because the assertion is now on values: the previous
+        ``np.random.randn(50)`` drew fresh data every run under pytest-randomly's reseeding.
+        Measured decision margin: the smallest ``|grad_central|`` on the interior is 0.102, so no
+        node sits near the tie and rounding cannot flip a selection here. The tie itself is a
+        different case and is pinned by ``test_the_selection_predicate_is_pinned_not_only_the_branch_bodies``.
+        """
+        h = 0.1
+        u = np.random.default_rng(0).standard_normal(50)
+
+        du = gradient_upwind(u, axis=0, h=h)
         assert du.shape == (50,)
+
+        bwd = gradient_backward(u, axis=0, h=h)
+        fwd = gradient_forward(u, axis=0, h=h)
+        grad_central = (fwd + bwd) / 2.0
+
+        # Interior only: np.roll wraps, so the end nodes read across the domain and carry no
+        # upwind meaning (``fix_boundaries_one_sided`` is what exists for them).
+        interior = slice(1, -1)
+        backward_nodes = int(np.sum(grad_central[interior] >= 0))
+        assert backward_nodes not in (0, grad_central[interior].size), (
+            f"fixture is single-signed ({backward_nodes} of {grad_central[interior].size} nodes "
+            "backward) -- it cannot see an array-wide selection"
+        )
+
+        np.testing.assert_array_equal(
+            du[interior],
+            np.where(grad_central >= 0, bwd, fwd)[interior],
+            err_msg="Godunov selection must be applied per node, not once for the whole array",
+        )
 
 
 # =============================================================================

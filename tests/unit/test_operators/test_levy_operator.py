@@ -71,6 +71,17 @@ class TestGaussianJumps:
         assert nu.shape == (50,)
         assert np.all(nu >= 0)
 
+        # Closed form for N(0, 0.3^2). Measured max relative deviation 1.0e-15, so rtol=1e-12
+        # leaves ~1000x margin without pinning float noise.
+        sigma = 0.3
+        np.testing.assert_allclose(nu, np.exp(-(z**2) / (2 * sigma**2)) / (sigma * np.sqrt(2 * np.pi)), rtol=1e-12)
+
+        # This grid extends outside support_bounds() = +/-0.9, and `density` does NOT zero there:
+        # truncation lives in support_bounds() alone. Measured nu(1.0) = 0.00514. Asserted so that
+        # a future implementation which starts truncating inside `density` is caught rather than
+        # silently changing the operator's quadrature.
+        assert np.all(nu[np.abs(z) > 0.9] > 0)
+
     def test_density_peak_at_mean(self, gaussian_jumps):
         z = np.array([0.0, 0.3, -0.3, 1.0])
         nu = gaussian_jumps.density(z)
@@ -132,15 +143,33 @@ class TestLevyOperatorBasic:
         np.testing.assert_allclose(lhs, rhs, atol=1e-10)
 
     def test_without_compensator(self, uniform_grid, gaussian_jumps):
-        """J without compensator should differ from J with compensator."""
+        """The compensator subtracts z*Dv*nu(dz); it is a no-op iff the measure has zero first moment."""
         J_comp = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps, compensate=True)
         J_nocomp = LevyIntegroDiffOperator(uniform_grid, gaussian_jumps, compensate=False)
         v = np.sin(uniform_grid)
-        # Both should be finite
-        assert np.all(np.isfinite(J_comp @ v))
-        assert np.all(np.isfinite(J_nocomp @ v))
-        # But results differ (for non-symmetric measures or non-linear v)
-        # For symmetric measure + compensated form, J[sin] should be smoother
+
+        # The fixture is symmetric (mu=0), so integral z*nu(dz) = 0 and the two operators must
+        # AGREE, not differ. Measured max|difference| = 2.78e-17; 1e-14 is ~360x above that.
+        np.testing.assert_allclose(J_comp @ v, J_nocomp @ v, atol=1e-14)
+
+        # An asymmetric measure is required to separate the two branches at all.
+        nu_asym = GaussianJumps(mu=0.3, sigma=0.1, truncate_at=3.0)
+        J_comp_a = LevyIntegroDiffOperator(uniform_grid, nu_asym, compensate=True)
+        J_nocomp_a = LevyIntegroDiffOperator(uniform_grid, nu_asym, compensate=False)
+
+        # Closed form on v(x) = x. Compensated: the integrand v(x+z) - v(x) - z*Dv vanishes
+        # identically for linear v, so J_comp[x] = 0 exactly. Measured 8.83e-15 over the whole
+        # grid; 1e-12 leaves ~113x margin.
+        assert np.max(np.abs(J_comp_a @ uniform_grid)) < 1e-12
+
+        # Uncompensated: J[x] = Dv * integral z*nu(dz) = mu * total_mass, on the interior points
+        # whose full jump support [0, 0.6] stays inside the grid. Measured relative deviation
+        # 2.4e-15 against 0.2991900611810219; rtol=1e-12 leaves ~400x margin.
+        np.testing.assert_allclose((J_nocomp_a @ uniform_grid)[40:60], 0.3 * nu_asym.total_mass(), rtol=1e-12)
+
+        # With the first moment now non-zero, the docstring's original claim is true. Measured
+        # max|difference| = 0.299.
+        assert not np.allclose(J_comp_a @ v, J_nocomp_a @ v)
 
 
 class TestLevyAdjoint:

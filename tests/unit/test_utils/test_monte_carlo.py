@@ -209,7 +209,15 @@ def test_stratified_sampler_dimension_handling():
     samples = sampler.sample(192)
 
     assert samples.shape == (192, 3)
-    # 192 samples across 64 strata = exactly 3 samples per stratum
+
+    # 192 samples across 64 strata = exactly 3 samples per stratum. Asserting the balance is
+    # what exercises the 3-index np.unravel_index that d=1 covers only trivially; the shape
+    # alone is satisfied by np.random.rand(192, 3). The sizes were chosen so that equality
+    # holds rather than an inequality (no `all_samples[:num_samples]` truncation).
+    stratum = np.minimum((samples * 4).astype(int), 3)
+    linear = stratum[:, 0] * 16 + stratum[:, 1] * 4 + stratum[:, 2]
+    counts = np.bincount(linear, minlength=64)
+    np.testing.assert_array_equal(counts, np.full(64, 3))
 
 
 # ============================================================================
@@ -219,7 +227,18 @@ def test_stratified_sampler_dimension_handling():
 
 @pytest.mark.unit
 def test_quasi_mc_sampler_halton():
-    """Test Halton sequence sampler."""
+    """Halton samples are low-discrepancy, not merely 50 numbers in [0, 1].
+
+    The reason to ask for Halton is the discrepancy, so assert it: the sorted sample must track
+    the equidistributed grid (i + 0.5)/n. Measured 0.0187 here, and across seeds 0/1/7/42/123/
+    999/2026 it stays in [0.0135, 0.0201]; the same statistic on pseudo-random draws of the same
+    size is 0.052-0.132 over those seeds, and its minimum over 2000 draws is 0.041.
+
+    This also closes a live fail-silent path: ``_init_sequence_generator`` sets
+    ``scipy_available = False`` and ``sample()`` then falls back to UniformMCSampler, while
+    ``importorskip("scipy")`` does not check ``scipy.stats.qmc``. That fallback scores 0.118 at
+    this seed -- 3x the threshold -- and today passes this test unchanged.
+    """
     pytest.importorskip("scipy")
 
     domain = [(0.0, 1.0)]
@@ -232,10 +251,22 @@ def test_quasi_mc_sampler_halton():
     assert np.all(samples >= 0.0)
     assert np.all(samples <= 1.0)
 
+    equidistributed = (np.arange(50) + 0.5) / 50
+    discrepancy = np.max(np.abs(np.sort(samples.ravel()) - equidistributed))
+    assert discrepancy < 0.04, f"not a low-discrepancy sequence: {discrepancy:.4f}"
+
 
 @pytest.mark.unit
 def test_quasi_mc_sampler_latin_hypercube():
-    """Test Latin hypercube sampler."""
+    """Latin hypercube: exactly one sample in each of the n strata of every dimension.
+
+    That is the defining property, and it is exact rather than statistical -- measured 100
+    occupied strata out of 100 in both dimensions. The shape assertion alone is satisfied by
+    np.zeros((100, 2)). Measured on the alternatives: the silent UniformMCSampler fallback
+    (scipy.stats.qmc unavailable) gives 69 and 61, and a Sobol or Halton sequence mistakenly
+    wired to this branch gives 86/83 and 84/86 -- so this separates the LHS branch from every
+    neighbour it could be confused with.
+    """
     pytest.importorskip("scipy")
 
     domain = [(0.0, 1.0), (0.0, 1.0)]
@@ -245,6 +276,10 @@ def test_quasi_mc_sampler_latin_hypercube():
     samples = sampler.sample(100)
 
     assert samples.shape == (100, 2)
+
+    for j in range(2):
+        occupied = len(np.unique(np.minimum((samples[:, j] * 100).astype(int), 99)))
+        assert occupied == 100, f"dimension {j}: {occupied}/100 strata occupied, not a Latin hypercube"
 
 
 @pytest.mark.unit

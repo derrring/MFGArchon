@@ -223,11 +223,16 @@ class TestTraitDispatch:
         grid = _make_tensor_grid_2d()
         field = np.ones(grid.num_spatial_points)
 
-        if isinstance(grid, StructureAware):
-            if grid.structure_type == StructureType.STRUCTURED:
-                shape = grid.get_grid_shape()
-                reshaped = field.reshape(shape)
-                assert reshaped.shape == (5, 5)
+        # Asserted rather than branched on: as an `if`, a regression in either trait
+        # check skips the body and the test reports success having checked nothing.
+        assert isinstance(grid, StructureAware)
+        assert grid.structure_type == StructureType.STRUCTURED
+
+        shape = grid.get_grid_shape()
+        assert shape == (5, 5)
+        # The reshape is only well-defined because these two agree.
+        assert int(np.prod(shape)) == grid.num_spatial_points
+        assert field.reshape(shape).shape == (5, 5)
 
     def test_trait_first_with_fallback(self):
         """Trait check first, then GeometryType fallback."""
@@ -235,11 +240,12 @@ class TestTraitDispatch:
 
         grid = _make_tensor_grid()
 
-        # Trait path (preferred)
-        is_structured = False
-        if isinstance(grid, StructureAware):
-            is_structured = grid.structure_type == StructureType.STRUCTURED
-        elif grid.geometry_type == GeometryType.CARTESIAN_GRID:
-            is_structured = True  # legacy fallback
+        # Both paths evaluated unconditionally. As an if/elif only one ever runs, and the
+        # legacy branch hardcodes True -- so the assertion held whether or not the trait
+        # path worked. The claim worth making is that the two encodings agree.
+        trait = isinstance(grid, StructureAware) and grid.structure_type == StructureType.STRUCTURED
+        legacy = grid.geometry_type == GeometryType.CARTESIAN_GRID
 
-        assert is_structured
+        assert trait
+        assert legacy
+        assert trait == legacy

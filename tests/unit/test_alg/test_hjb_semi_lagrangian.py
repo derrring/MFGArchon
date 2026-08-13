@@ -121,6 +121,14 @@ class TestHJBSemiLagrangianSolveHJBSystem:
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
         assert np.all(np.isfinite(U_solution))
 
+        # Closed form: with M == 1 everywhere, U_T == 0 and coupling f(m) = m, the HJB reduces to
+        # -du/dt = -1 with zero terminal data, so u(t, x) = -(T - t), spatially constant.  This
+        # pins the coupling sign, its time weighting and the spatial uniformity of the SL update
+        # at once.  Measured max deviation 7.77e-16 and per-row spatial spread 1.22e-15.
+        t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
+        U_exact = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        np.testing.assert_allclose(U_solution, U_exact, atol=1e-12)
+
     def test_solve_hjb_system_final_condition(self):
         """Test that final condition is preserved."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
@@ -167,7 +175,7 @@ class TestHJBSemiLagrangianNumericalProperties:
     """Test numerical properties of the semi-Lagrangian method."""
 
     def test_solution_finiteness(self):
-        """Test that solution remains finite throughout."""
+        """Test finiteness and the density-shift invariance of the coupling term."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=40, components=_default_components())
         solver = HJBSemiLagrangianSolver(problem)
@@ -183,6 +191,15 @@ class TestHJBSemiLagrangianNumericalProperties:
 
         # All values should be finite
         assert np.all(np.isfinite(U_solution))
+
+        # External oracle: the coupling is f(m) = m, so raising the density by a constant c raises
+        # the source by c uniformly and in time.  Integrating backward from the SAME terminal data,
+        # the value function must shift by exactly -c*(T - t) -- independent of the oscillatory
+        # terminal condition, which cancels in the difference.  This pins the coupling's sign, its
+        # additivity and its time weighting.  Measured 3.33e-15, per-row spatial spread 4.44e-15.
+        U_shifted = solver.solve_hjb_system(M_density + 1.0, U_final, U_prev)
+        t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
+        assert np.max(np.abs((U_shifted - U_solution) - (-(problem.T - t_grid))[:, None])) < 1e-10
 
     def test_solution_smoothness(self):
         """Test that solution has reasonable smoothness."""
@@ -245,6 +262,12 @@ class TestHJBSemiLagrangianIntegration:
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
 
+        # Reflection symmetry: the terminal cost (x - 0.5)^2, the uniform density and the no-flux
+        # domain are all symmetric about x = 0.5, so U must be too.  A departure-foot or wall
+        # reflection that treats the two ends differently breaks this while staying finite.
+        # Measured 1.39e-16 on a field spanning -0.0333 to 0.2500, so the symmetry is not vacuous.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
+
     def test_solver_with_gaussian_density(self):
         """Test solver with Gaussian density distribution."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
@@ -267,6 +290,13 @@ class TestHJBSemiLagrangianIntegration:
         # Should produce valid solution
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+
+        # The Gaussian density is symmetric about x = 0.5 to 3.47e-17, and so are the terminal
+        # data and the domain, so U must be symmetric too.  Measured 8.33e-17.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
+        # Positive control: an all-zero return would satisfy the symmetry vacuously.
+        # Measured minimum -0.1330, driven entirely by the density coupling.
+        assert U_solution.min() < -1e-3
 
 
 class TestCharacteristicTracingMethods:
@@ -313,6 +343,10 @@ class TestCharacteristicTracingMethods:
 
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+        # Terminal cost, density and domain are all symmetric about x = 0.5, so U must be.
+        # This separates a one-sided departure-foot or reflection bug from a finite answer.
+        # Measured 9.71e-17 for explicit_euler; the field spans -0.0167 to 0.1250.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
     def test_rk2_produces_valid_solution(self):
         """Test that rk2 produces valid solution."""
@@ -331,6 +365,9 @@ class TestCharacteristicTracingMethods:
 
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+        # Reflection symmetry about x = 0.5 (see test_euler_produces_valid_solution).
+        # Measured 9.71e-17 for rk2.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
     def test_rk4_produces_valid_solution(self):
         """Test that rk4 with scipy.solve_ivp produces valid solution."""
@@ -349,6 +386,9 @@ class TestCharacteristicTracingMethods:
 
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+        # Reflection symmetry about x = 0.5 (see test_euler_produces_valid_solution).
+        # Measured 6.94e-17 for rk4 (scipy solve_ivp).
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
     def test_rk2_consistency_with_euler(self):
         """Test that rk2 produces consistent results with euler on smooth problems."""
@@ -456,6 +496,9 @@ class TestInterpolationMethods:
 
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+        # Reflection symmetry about x = 0.5 (see test_euler_produces_valid_solution).
+        # Measured 1.11e-16 for cubic interpolation with rk2 tracing.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
     def test_cubic_consistency_with_linear(self):
         """Test that cubic interpolation is consistent with linear on smooth problems."""
@@ -668,6 +711,9 @@ class TestEnhancementsIntegration:
 
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
+        # Reflection symmetry about x = 0.5 (see test_euler_produces_valid_solution).
+        # Measured 9.71e-17 for rk4 tracing combined with cubic interpolation.
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
     def test_enhanced_vs_baseline_consistency(self):
         """Test that enhanced configuration produces consistent results with baseline."""
@@ -1094,6 +1140,11 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
         U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert U_step.shape == tuple(grid.Nx_points)
         assert np.isfinite(U_step).all()
+        # Exact answer: with U_T == 0 and ZeroH the Lax-Oleinik update is
+        # u_avg + dt*(H(p) - 2*H(0)) = 0 everywhere.  Measured max|U_step| exactly 0.0.
+        # This is the nD analogue of test_constant_terminal_preserved and catches a spurious
+        # H(0) drift or a BC applicator writing into the field, neither of which finiteness sees.
+        np.testing.assert_allclose(U_step, 0.0, atol=1e-12)
 
     def test_2d_cubic_stochastic_uses_pchip(self):
         """Issue #1054: cubic+stochastic in nD routes through monotone PCHIP (no NaN)."""
@@ -1106,10 +1157,23 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
                 interpolation_method="cubic",
                 check_cfl=False,
             )
-        U_terminal = np.zeros(tuple(grid.Nx_points))
+        # A zero terminal makes every interpolant return the same answer (identically 0), so the
+        # test could not see which one ran.  The bowl gives the PCHIP route something to be
+        # monotone about; it is the same terminal test_2d_reflect_bc_no_extrapolation builds.
+        Nx = grid.Nx_points[0]
+        U_terminal = np.fromfunction(
+            lambda i, j: (i / (Nx - 1) - 0.5) ** 2 + (j / (Nx - 1) - 0.5) ** 2,
+            (Nx, Nx),
+        ).astype(float)
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
         U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert np.isfinite(U_step).all()
+        # What PCHIP buys over an unconstrained cubic is the absence of overshoot: averaging
+        # reflected Brownian feet of U_T under H == 0 cannot leave the data range.  Measured
+        # U_step range (0.004637, 0.409246) inside U_T range (0.0, 0.5).  A non-monotone cubic
+        # overshoots that envelope while staying finite, which the finiteness check cannot see.
+        assert U_step.min() >= U_terminal.min() - 1e-12
+        assert U_step.max() <= U_terminal.max() + 1e-12
 
     def test_2d_reflect_bc_no_extrapolation(self):
         """Issue #1054: high-curvature U near walls must not produce NaN under no-flux."""
@@ -1130,6 +1194,14 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
         M_init = m0(np.stack(np.meshgrid(*grid.coordinates, indexing="ij"), axis=-1))
         U_step = solver._stochastic_sl_step(U_terminal, M_init, time_idx=problem.Nt - 1, dt=0.025)
         assert np.isfinite(U_step).all()
+        # Finiteness covers only the NaN half of the failure this test names.  The other half --
+        # "produce nonsense values" -- is a silently extrapolating interpolant, which returns
+        # finite garbage.  Linear interpolation of reflected feet with H == 0 is an average of
+        # U_T values, so it cannot leave the data range.  Measured U_step range
+        # (0.004792, 0.409553) inside U_T range (0.0, 0.5); an extrapolated foot or a mis-folded
+        # reflection lands outside that envelope.
+        assert U_step.min() >= U_terminal.min() - 1e-12
+        assert U_step.max() <= U_terminal.max() + 1e-12
 
 
 class TestADIDiffusionMagnitude:

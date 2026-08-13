@@ -10,6 +10,7 @@ Tests comprehensive NumPy compatibility utilities including:
 - Version detection and fallback mechanisms
 """
 
+import importlib.util
 import warnings
 
 import pytest
@@ -42,24 +43,42 @@ def test_numpy_version_constant():
 
 @pytest.mark.unit
 def test_has_trapezoid_constant():
-    """Test HAS_TRAPEZOID constant matches NumPy availability."""
-    assert isinstance(HAS_TRAPEZOID, bool)
-    # Should be True for NumPy 2.0+
-    if NUMPY_VERSION >= (2, 0):
-        assert HAS_TRAPEZOID is True
+    """HAS_TRAPEZOID is a cache of a capability; pin it to the capability, not to a version gate.
+
+    The version gate it replaces asserted nothing on a NumPy 1.x runner, where the test degraded
+    to a type check. ``is`` against a bool keeps the type claim. Measured here: numpy 2.4.6,
+    both sides True.
+    """
+    assert HAS_TRAPEZOID is hasattr(np, "trapezoid")
 
 
 @pytest.mark.unit
 def test_has_trapz_constant():
-    """Test HAS_TRAPZ constant matches NumPy availability."""
-    assert isinstance(HAS_TRAPZ, bool)
-    # Should be True for NumPy < 2.0 or as legacy function in 2.0+
+    """HAS_TRAPZ against the capability it caches.
+
+    The comment this replaces claimed the flag "should be True for NumPy < 2.0 or as legacy
+    function in 2.0+", asserted nothing, and is false on this environment: measured on numpy
+    2.4.6, ``np.trapz`` has been REMOVED, not kept as a legacy alias, so HAS_TRAPZ is False.
+    That makes this the one flag of the three currently in its False state, and the sharpest --
+    a constant hard-coded True fails here immediately.
+    """
+    assert HAS_TRAPZ is hasattr(np, "trapz")
 
 
 @pytest.mark.unit
 def test_has_scipy_trapezoid_constant():
-    """Test HAS_SCIPY_TRAPEZOID constant is boolean."""
-    assert isinstance(HAS_SCIPY_TRAPEZOID, bool)
+    """HAS_SCIPY_TRAPEZOID against the capability, resolved by a different mechanism.
+
+    The module sets the flag with a try/except on ``from scipy.integrate import trapezoid``.
+    Asking importlib instead is an independent route to the same fact, so this is not a
+    restatement of the source line. Measured True on this environment, scipy present.
+    """
+    spec = importlib.util.find_spec("scipy.integrate")
+    scipy_has_trapezoid = spec is not None and callable(
+        getattr(importlib.import_module("scipy.integrate"), "trapezoid", None)
+    )
+
+    assert HAS_SCIPY_TRAPEZOID is scipy_has_trapezoid
 
 
 # ===================================================================
@@ -231,12 +250,18 @@ def test_get_numpy_info_version_tuple():
 
 @pytest.mark.unit
 def test_get_numpy_info_booleans():
-    """Test get_numpy_info() boolean flags."""
+    """The four flags report the module constants, not just some bool.
+
+    A flag with the wrong VALUE passed the isinstance form, and the values are what callers
+    branch on. ``is`` against a bool constant keeps the type claim (np.bool_ or a truthy int
+    still fails) and adds the value. Measured on this environment: True / False / True / True --
+    the has_trapz row is in its False state, so this is not an all-True tautology.
+    """
     info = get_numpy_info()
-    assert isinstance(info["has_trapezoid"], bool)
-    assert isinstance(info["has_trapz"], bool)
-    assert isinstance(info["has_scipy_trapezoid"], bool)
-    assert isinstance(info["is_numpy_2_plus"], bool)
+    assert info["has_trapezoid"] is HAS_TRAPEZOID
+    assert info["has_trapz"] is HAS_TRAPZ
+    assert info["has_scipy_trapezoid"] is HAS_SCIPY_TRAPEZOID
+    assert info["is_numpy_2_plus"] is (NUMPY_VERSION >= (2, 0))
 
 
 @pytest.mark.unit
@@ -265,11 +290,21 @@ def test_get_numpy_info_consistency():
 
 @pytest.mark.unit
 def test_ensure_numpy_compatibility_returns_dict():
-    """Test ensure_numpy_compatibility() returns dictionary."""
+    """The compatibility record describes the NumPy that is actually imported.
+
+    An empty dict satisfied the isinstance form. Anchored to ``np`` itself rather than only to
+    ``get_numpy_info()``: today ``ensure_numpy_compatibility`` returns that call's result
+    verbatim (numpy_compat.py:105, 123), so an ``ensure == get_numpy_info`` pin alone would be
+    tautological and would pass over a record that is wrong on both paths. The equality is kept
+    as the weaker second claim -- it is what fires if ensure_ ever grows its own record.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         info = ensure_numpy_compatibility()
-    assert isinstance(info, dict)
+
+    assert info["numpy_version"] == np.__version__
+    assert info["has_trapezoid"] is hasattr(np, "trapezoid")
+    assert info == get_numpy_info()
 
 
 @pytest.mark.unit
@@ -346,28 +381,52 @@ def test_recommended_method_matches_availability():
 
 @pytest.mark.unit
 def test_trapezoid_empty_array():
-    """Test trapezoid() with empty array."""
+    """Empty input integrates to exactly zero -- no intervals, no area.
+
+    The expected value was written in a comment and left unasserted, so the test could not
+    separate 0.0 from NaN. Measured np.float64(0.0). The value subsumes the old type claim:
+    NaN, None and an array all fail this comparison (an array raises on truthiness).
+    """
     y = np.array([])
     result = trapezoid(y)
-    # NumPy typically returns 0.0 for empty array
-    assert isinstance(result, (int, float, np.number))
+    assert result == 0.0
 
 
 @pytest.mark.unit
 def test_trapezoid_complex_numbers():
-    """Test trapezoid() with complex numbers."""
+    """The rule is correct on complex data, not merely complex-typed.
+
+    With unit spacing the composite trapezoid rule gives y0/2 + y1 + y2/2 =
+    (0.5+0.5j) + (2+2j) + (1.5+1.5j) = 4+4j, exact in binary floating point. Measured
+    np.complex128(4+4j). This subsumes the old dtype check -- a silent cast to real gives 4.0,
+    which is not equal to 4+4j.
+    """
     y = np.array([1 + 1j, 2 + 2j, 3 + 3j])
     result = trapezoid(y)
-    assert isinstance(result, (complex, np.complexfloating))
+    assert result == 4 + 4j
 
 
 @pytest.mark.unit
 def test_trapezoid_large_array():
-    """Test trapezoid() with large array (performance check)."""
-    y = np.random.rand(10000)
+    """N = 10000 stress input, checked against the closed form of the rule it implements.
+
+    The docstring called this a performance check and no time was measured, while the type
+    assertion held for any wrong number -- so the stress coverage was illusory. Keep the size,
+    make it discriminating: for uniform spacing the composite trapezoid rule is
+    dx * (sum(y) - (y[0] + y[-1]) / 2), computed here by a different summation route than
+    ``trapezoid()`` takes.
+
+    Seeded, because the assertion is now on a value. Measured relative difference 4.4e-16 (one
+    ULP, from linspace's own 1e-16 spacing jitter), so rel=1e-12 sits ~2250x above the
+    floating-point floor; a left-Riemann sum instead of the trapezoid rule would land 1e-4 away.
+    """
+    rng = np.random.default_rng(0)
+    y = rng.random(10000)
     x = np.linspace(0, 1, 10000)
+    dx = x[1] - x[0]
+
     result = trapezoid(y, x=x)
-    assert isinstance(result, (float, np.floating))
+    assert result == pytest.approx(dx * (y.sum() - 0.5 * (y[0] + y[-1])), rel=1e-12)
 
 
 @pytest.mark.unit

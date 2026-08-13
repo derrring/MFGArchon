@@ -474,13 +474,24 @@ def test_plot_comparison_final_m_basic():
     """Test final density comparison plot."""
     exp_data = create_mock_experiment_data()
 
-    with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
-        result = plot_comparison_final_m([exp_data])
-        assert result is None
+    with tempfile.TemporaryDirectory() as tmpdir:
+        save_path = Path(tmpdir) / "final_m.png"
+
+        with (
+            patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False),
+            patch("matplotlib.pyplot.show"),
+        ):
+            result = plot_comparison_final_m([exp_data], save_to_file=str(save_path))
+            assert result is None  # the matplotlib fallback block has no return statement
+
+        # "did not crash" -> "produced a figure", the assertion the file's other three plot
+        # functions already make. Measured file size on this fixture: 43825 bytes.
+        assert save_path.exists()
+        assert save_path.stat().st_size > 1000
 
 
 @pytest.mark.unit
-def test_plot_comparison_final_m_invalid_shape():
+def test_plot_comparison_final_m_invalid_shape(capsys):
     """Test final density plot with invalid M_solution shape."""
     exp_data = create_mock_experiment_data()
     exp_data["M_solution"] = np.array([1.0, 2.0, 3.0])  # Wrong shape (1D)
@@ -489,6 +500,18 @@ def test_plot_comparison_final_m_invalid_shape():
         # Should handle gracefully and print warning
         result = plot_comparison_final_m([exp_data])
         assert result is None
+
+    # `result is None` is true whether the shape guard exists or not, so assert the guard fired.
+    # The message comes from the matplotlib fallback block (experiment_manager.py:281) -- these
+    # tests patch VISUALIZATION_AVAILABLE to False, so the identically worded guard in the
+    # visualization block above it is never reached.
+    assert "is not in expected 2D shape or is empty" in capsys.readouterr().out
+
+    # The complementary control, which pins the guard's boundary rather than its existence: a
+    # valid 2-D M_solution must NOT trip it. Measured: empty stdout on the same fixture.
+    with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
+        plot_comparison_final_m([create_mock_experiment_data()])
+    assert "is not in expected 2D shape or is empty" not in capsys.readouterr().out
 
 
 @pytest.mark.unit
@@ -509,14 +532,26 @@ def test_plot_comparison_initial_U_with_save():
 
 
 @pytest.mark.unit
-def test_plot_comparison_U_slice_out_of_bounds():
+def test_plot_comparison_U_slice_out_of_bounds(capsys):
     """Test U slice plot with out-of-bounds time index."""
+    import matplotlib.pyplot as plt
+
     exp_data = create_mock_experiment_data()
 
     with patch("mfgarchon.utils.experiment_manager.VISUALIZATION_AVAILABLE", False), patch("matplotlib.pyplot.show"):
         # Should handle gracefully and print warning
         result = plot_comparison_U_slice([exp_data], time_index=100)
         assert result is None
+
+    # `result is None` holds unconditionally in the fallback path, so deleting the bounds check
+    # would leave this test green. Assert the branch actually fired. The message comes from the
+    # matplotlib fallback block (experiment_manager.py:404): these tests patch
+    # VISUALIZATION_AVAILABLE to False, so the identically worded guard above it is never reached.
+    assert "time_index 100 out of bounds" in capsys.readouterr().out
+
+    # And that the out-of-range series was skipped rather than plotted with wrong data: measured
+    # 0 lines on the current axes here, against 1 for the same call at an in-bounds time_index.
+    assert len(plt.gca().lines) == 0
 
 
 @pytest.mark.unit

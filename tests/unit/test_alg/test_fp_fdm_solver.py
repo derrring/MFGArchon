@@ -128,6 +128,11 @@ class TestFPFDMSolverBasicSolution:
         m_result = solver.solve_fp_system(m_initial, U_solution)
 
         assert m_result.shape == (Nt_points, Nx_points)
+        # Exact-stationarity oracle: a constant density lies in the kernel of the no-flux Laplacian
+        # and the drift is zero, so the uniform datum must survive to machine precision at every t.
+        # A mis-scaled or mis-padded wall ghost row perturbs the constant on the first step.
+        # Measured here: max|m_result - m_initial| = 5.2e-16, i.e. 190x below this tolerance.
+        np.testing.assert_allclose(m_result, np.tile(m_initial, (Nt_points, 1)), atol=1e-13)
 
     def test_solve_fp_system_initial_condition_preserved(self, standard_problem):
         """Test that initial condition is preserved at t=0."""
@@ -191,19 +196,38 @@ class TestFPFDMSolverBoundaryConditions:
         (Nx_points,) = standard_problem.geometry.get_grid_shape()
         Nt_points = standard_problem.Nt + 1
 
-        # Initial condition with support near boundaries
+        # A single lump one cell in from the seam. It was previously 0.5 at index 0 and 0.5 at
+        # index -1, which under the wrap are the SAME physical point (x=0 == x=1): measured, the
+        # solver kept index 0 and discarded index -1, so half the mass was gone by construction
+        # (sum over the independent nodes 0..Nx-2 was 0.5, not 1.0). That datum was also mirror
+        # symmetric, so no assertion on it could separate periodic from no-flux.
         m_initial = np.zeros(Nx_points)
-        m_initial[0] = 0.5
-        m_initial[-1] = 0.5
+        m_initial[1] = 1.0
 
         U_solution = np.zeros((Nt_points, Nx_points))
 
         m_result = solver.solve_fp_system(m_initial, U_solution)
 
-        # With periodic BC, mass should wrap around
         assert m_result.shape == (Nt_points, Nx_points)
-        # Mass should be preserved
         assert np.all(m_result >= -1e-10)  # Non-negative (with small tolerance)
+
+        # The seam is one point, so the two duplicated columns must agree exactly at every step.
+        # Measured: 0.0 here; the same solve under no_flux_bc leaves them 1.49e-01 apart.
+        np.testing.assert_array_equal(m_result[:, 0], m_result[:, -1])
+
+        # Mass on the torus is the sum over the independent nodes 0..Nx-2 (index Nx-1 duplicates
+        # index 0 and would be double counted). Measured drift 1.3e-14 relative over 51 steps,
+        # ~7700x inside this tolerance; the no-flux control leaks 1.9e-02.
+        torus_mass = m_result[:, :-1].sum(axis=1)
+        np.testing.assert_allclose(torus_mass, torus_mass[0], rtol=1e-10)
+
+        # "Mass wraps around", asserted: pure diffusion from a point source on a circle stays
+        # symmetric about that source under the wrap, x -> 2*x_source - x (mod 1). Measured
+        # residual 1.0e-16; under no-flux the mass reflects instead of wrapping and the same
+        # residual is 1.0e-01.
+        node = np.arange(Nx_points - 1)
+        mirrored = (2 - node) % (Nx_points - 1)
+        np.testing.assert_allclose(m_result[:, node], m_result[:, mirrored], atol=1e-12)
 
     def test_dirichlet_boundary_conditions(self, standard_problem):
         """Test Dirichlet boundary conditions."""
@@ -265,14 +289,20 @@ class TestFPFDMSolverNonNegativity:
         (Nx_points,) = standard_problem.geometry.get_grid_shape()
         Nt_points = standard_problem.Nt + 1
 
-        # Initial condition with some negative values
-        m_initial = np.random.randn(Nx_points)
+        # Initial condition with some negative values (seeded: an unseeded fixture could draw
+        # an all-positive sample and stop exercising the clip this test exists for)
+        rng = np.random.default_rng(20260813)
+        m_initial = rng.standard_normal(Nx_points)
+        assert (m_initial < 0).sum() > 0, "fixture must contain negatives for the clip to be exercised"
         U_solution = np.zeros((Nt_points, Nx_points))
 
         m_result = solver.solve_fp_system(m_initial, U_solution)
 
         # Initial condition should have negative values removed
         assert np.all(m_result[0, :] >= 0)
+        # And removed by clipping, not by zeroing the row or renormalising it: every surviving
+        # entry keeps its exact input value. Measured max deviation 0.0 at this seed (25/51 negative).
+        np.testing.assert_array_equal(m_result[0, :], np.clip(m_initial, 0.0, None))
 
 
 class TestFPFDMSolverWithDrift:
@@ -620,25 +650,54 @@ class TestFPFDMSolverCallableDiffusion:
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
 
+        # U = -0.1*x, so the FP drift is alpha = -grad(U)/control_cost = +0.1: the density must
+        # travel right. Measured centre of mass 0.30032 -> 0.40069, i.e. 2x this threshold.
+        com = (M * x_grid).sum(axis=1) / M.sum(axis=1)
+        assert com[-1] > com[0] + 0.05, f"density did not advect right: {com[0]:.5f} -> {com[-1]:.5f}"
+
+        # Direction control: flipping the sign of U must reverse the transport. Without it the
+        # test passes for a solver that takes |grad U| or drops the sign. Measured 0.20851.
+        M_flipped = solver.solve_fp_system(m_initial, potential_field=-U_solution, volatility_field=state_diffusion)
+        com_flipped = (M_flipped * x_grid).sum(axis=1) / M_flipped.sum(axis=1)
+        assert com_flipped[-1] < com[0] - 0.05, f"sign of the drift not honoured: {com_flipped[-1]:.5f}"
+
+        # Mass budget for upwind advection plus a state-dependent diffusion on this grid: measured
+        # worst-case 0.99238, i.e. 7.6e-03 of leak against the 2e-02 allowed here. This is a
+        # discretization budget, not a conservation law -- the no-flux exact statement is in
+        # TestFPFDMSolverMassConservation.
+        assert np.abs(M.sum(axis=1) - 1.0).max() < 0.02
+
     def test_callable_scalar_return(self, standard_problem):
         """Test callable that returns scalar (constant diffusion)."""
         solver = FPFDMSolver(standard_problem)
 
         (Nx_points,) = standard_problem.geometry.get_grid_shape()
         Nt_points = standard_problem.Nt + 1
+        bounds = standard_problem.geometry.get_bounds()
 
         # Callable returning scalar
         def constant_diffusion(t, x, m):
             return 0.2  # Constant for all x
 
-        # Initial condition
-        m_initial = np.ones(Nx_points) / Nx_points
+        # Initial condition. A uniform datum cannot be used here: it is an exact fixed point of the
+        # no-flux Laplacian for EVERY diffusion coefficient, measured -- solving it at 0.2 and at
+        # 0.04 agrees to 3.0e-16, so no comparison against the constant path could discriminate.
+        # A Gaussian moves, and then the scalar's value is observable.
+        x_grid = np.linspace(bounds[0][0], bounds[1][0], Nx_points)
+        m_initial = np.exp(-((x_grid - 0.5) ** 2) / (2 * 0.1**2))
+        m_initial /= np.sum(m_initial)
 
         # Solve
         M = solver.solve_fp_system(m_initial, volatility_field=constant_diffusion)
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
+
+        # The contract of the scalar-return branch: a callable yielding a bare scalar is broadcast
+        # exactly like the constant-scalar volatility. Byte-identical here (max deviation 0.0);
+        # a silent coercion of the scalar (e.g. squaring it to 0.04) shows up as 3.8e-02.
+        M_const = solver.solve_fp_system(m_initial, volatility_field=0.2)
+        np.testing.assert_array_equal(M, M_const)
 
     def test_callable_validation_wrong_shape(self, standard_problem):
         """Test that callable returning wrong shape raises error."""
@@ -888,6 +947,16 @@ class TestFPFDMSolverTensorDiffusion:
 
         assert M.shape == (problem.Nt + 1, Nx, Ny)
         assert np.all(M >= 0)
+        # No-flux walls on both axes: the tensor path must not create or destroy mass. Measured
+        # |mass - 1| = 2.2e-16 at every step, ~4e6 inside this tolerance.
+        masses = np.sum(M, axis=(1, 2)) * domain.spacing[0] * domain.spacing[1]
+        np.testing.assert_allclose(masses, 1.0, atol=1e-9)
+        # The anisotropy this tensor requests is NOT asserted, because it does not hold at this
+        # commit: with sigma_parallel = 0.15 on axis 0 and sigma_perp = 0.0628 on axis 1, the
+        # measured second-moment growth is 1.74e-04 along x against 7.17e-04 along y -- the wrong
+        # axis. Swapping the two tensor entries recovers the expected ordering (1.76e-03 vs
+        # 1.26e-04), so the tensor's axes are transposed somewhere in the assembly. Pinning that
+        # here needs the solver fix first.
 
     def test_tensor_with_drift(self):
         """Test tensor diffusion combined with drift field.
@@ -1133,6 +1202,17 @@ class TestFPFDMSolverCallableDrift:
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
 
+        # The time argument must actually be threaded: a solver that always passed t=0 gets
+        # sin(0) = 0, i.e. no drift at all, and both assertions above still hold (measured: the
+        # frozen-at-t=0 run has centre of mass exactly 0.5 at every step, min == max). The
+        # density must instead swing both ways. Measured max 0.52610, min 0.47769 about 0.5.
+        com = (M * x_grid).sum(axis=1) / M.sum(axis=1)
+        assert com.max() > com[0] + 0.01, f"drift never pushed right: max com {com.max():.5f}"
+        assert com.min() < com[0] - 0.01, f"drift never pushed left: min com {com.min():.5f}"
+        # sin(2*pi*t) integrates to zero over the full period T = 1, so the net displacement is
+        # small next to the excursion above. Measured 0.0185, against 0.05 allowed here.
+        assert np.abs(com[-1] - com[0]) < 0.05
+
     def test_callable_drift_with_callable_diffusion(self, standard_problem):
         """Test callable drift combined with callable diffusion."""
         solver = FPFDMSolver(standard_problem)
@@ -1144,6 +1224,9 @@ class TestFPFDMSolverCallableDrift:
         # Callable drift - use m for shape since x is coords list
         def simple_drift(t, x, m):
             return 0.2 * np.ones_like(m)
+
+        def reversed_drift(t, x, m):
+            return -0.2 * np.ones_like(m)
 
         # Callable diffusion - use m for shape since x is coords list
         def simple_diffusion(t, x, m):
@@ -1161,6 +1244,24 @@ class TestFPFDMSolverCallableDrift:
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
+
+        # Both callables return constants, so the combined dispatch has exact laws to answer to.
+        # Without them these assertions hold for a solver that ignores the drift callable entirely.
+        mass = M.sum(axis=1)
+        com = (M * x_grid).sum(axis=1) / mass
+
+        # No-flux walls: mass is conserved. Measured drift 9.1e-15 relative, ~1e5 inside rtol.
+        np.testing.assert_allclose(mass, mass[0], rtol=1e-9)
+        # The drift is +0.2, so the density travels right. Measured 0.50000 -> 0.69831.
+        assert com[-1] > com[0] + 0.15, f"callable drift not applied: com {com[0]:.5f} -> {com[-1]:.5f}"
+        # Convention-free direction check: the two signs must land symmetrically about the start,
+        # which no scale or sign convention in the drift assembly can fake. Measured 0.69831 and
+        # 0.30169, summing to 1.0 against 2*com[0] within 2.2e-16.
+        M_reversed = solver.solve_fp_system(
+            m_initial, drift_field=reversed_drift, volatility_field=simple_diffusion, show_progress=False
+        )
+        com_reversed = (M_reversed * x_grid).sum(axis=1) / M_reversed.sum(axis=1)
+        assert com[-1] + com_reversed[-1] == pytest.approx(2 * com[0], abs=1e-9)
 
     def test_callable_drift_2d(self):
         """Test callable drift in 2D problem."""
@@ -1194,6 +1295,22 @@ class TestFPFDMSolverCallableDrift:
         assert M.shape == (problem.Nt + 1, Nx, Ny)
         assert np.all(np.isfinite(M))
         assert np.all(M >= -1e-10)
+
+        # The callable returns drift[0] = 0.3 and drift[1] = 0.0, so the component mapping is
+        # checkable exactly and the swap of the two components -- which the shape assertion above
+        # cannot see -- is what these three catch.
+        total = M.sum(axis=(1, 2))
+        com_x = (M * X).sum(axis=(1, 2)) / total
+        com_y = (M * Y).sum(axis=(1, 2)) / total
+
+        # No-flux walls on both axes: mass is conserved. Measured 2.2e-16 relative.
+        np.testing.assert_allclose(total, total[0], rtol=1e-9)
+        # Zero y-drift acting on a y-symmetric Gaussian: the y centroid cannot move. Measured
+        # 1.1e-16; feeding the swapped vector field instead moves it by 3.0e-02.
+        assert np.abs(com_y - com_y[0]).max() < 1e-10
+        # The x-drift is the component that does move mass. Measured +0.0301; under the swap the
+        # x centroid moves only 1.2e-04.
+        assert com_x[-1] - com_x[0] > 0.02, f"x-drift not applied: {com_x[0]:.5f} -> {com_x[-1]:.5f}"
 
 
 class TestVaryingSigmaExplicitDriftPerPoint:

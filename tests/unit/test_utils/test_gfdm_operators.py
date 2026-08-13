@@ -137,10 +137,10 @@ class TestLaplacianOperator:
         f = points[:, 0] ** 2 + points[:, 1] ** 2
         laplacian = gfdm.laplacian(f)
 
-        # Verify operator runs and returns reasonable values
         assert laplacian.shape == (points.shape[0],)
-        assert not np.any(np.isnan(laplacian))
-        assert not np.any(np.isinf(laplacian))
+        # Order-2 Taylor reproduces a quadratic exactly, at every node including the
+        # boundary ones. Measured max|lap - 4| = 9.1e-14 over all 225 points.
+        np.testing.assert_allclose(laplacian, 4.0, atol=1e-10)
 
     def test_laplacian_1d(self):
         """Test Laplacian in 1D: f(x) = x^2."""
@@ -319,6 +319,11 @@ class TestAccessorMethods:
         derivs = gfdm.approximate_derivatives_at_point(f, 10)
 
         assert isinstance(derivs, dict)
+        # f = x^2 at x = 10/19: f' = 2x, f'' = 2. An under-resolved point returns {}
+        # (see test_small_delta_warning), which the isinstance check alone cannot detect.
+        x10 = 10 / 19
+        assert derivs[(1,)] == pytest.approx(2 * x10, abs=1e-10)
+        assert derivs[(2,)] == pytest.approx(2.0, abs=1e-10)
 
 
 class TestWeightFunctions:
@@ -332,7 +337,9 @@ class TestWeightFunctions:
         f = points[:, 0] ** 2
         laplacian = gfdm.laplacian(f)
 
-        assert not np.any(np.isnan(laplacian))
+        # Polynomial reproduction: measured max|lap - 2| = 5.3e-14 at every node.
+        # Pins conditioning, not the weight's shape -- all three weights are exact on a quadratic.
+        np.testing.assert_allclose(laplacian, 2.0, atol=1e-10)
 
     def test_gaussian_weight(self):
         """Test Gaussian weight function."""
@@ -342,7 +349,9 @@ class TestWeightFunctions:
         f = points[:, 0] ** 2
         laplacian = gfdm.laplacian(f)
 
-        assert not np.any(np.isnan(laplacian))
+        # Measured max|lap - 2| = 2.4e-14. An all-zero return -- what a singular moment
+        # matrix produces here -- passes `not isnan` and fails this.
+        np.testing.assert_allclose(laplacian, 2.0, atol=1e-10)
 
     def test_uniform_weight(self):
         """Test uniform weight function."""
@@ -352,7 +361,8 @@ class TestWeightFunctions:
         f = points[:, 0] ** 2
         laplacian = gfdm.laplacian(f)
 
-        assert not np.any(np.isnan(laplacian))
+        # Uniform weights are the worst-conditioned branch; measured max|lap - 2| = 2.6e-14.
+        np.testing.assert_allclose(laplacian, 2.0, atol=1e-10)
 
     def test_invalid_weight_function(self):
         """Test that invalid weight function raises error."""
@@ -369,13 +379,18 @@ class TestEdgeCases:
         """Test behavior with very small delta (few neighbors)."""
         points = np.linspace(0, 1, 10).reshape(-1, 1)
 
-        # Very small delta may result in too few neighbors
-        gfdm = GFDMOperator(points, delta=0.01, taylor_order=2)
+        # No point has any neighbour within delta=0.01 (spacing is 1/9), so the operator
+        # warns and falls back to k-NN.
+        with pytest.warns(UserWarning, match=r"Hybrid neighborhood: 10/10 points"):
+            gfdm = GFDMOperator(points, delta=0.01, taylor_order=2)
 
         f = points[:, 0] ** 2
-        # Should not crash, may return zeros for points with insufficient neighbors
         laplacian = gfdm.laplacian(f)
         assert laplacian.shape == (10,)
+        # The fallback is still under-determined, and the operator answers with an exact
+        # all-zero sentinel instead of raising. Pinned to make that visible, NOT to bless it:
+        # a correct operator would return 2.0 here, as every other test in this file requires.
+        np.testing.assert_array_equal(laplacian, np.zeros(10))
 
     def test_large_delta(self):
         """Test behavior with large delta (many neighbors)."""
@@ -386,7 +401,9 @@ class TestEdgeCases:
         f = points[:, 0] ** 2
         laplacian = gfdm.laplacian(f)
 
-        assert not np.any(np.isnan(laplacian))
+        # Every point is every other point's neighbour, so this is a conditioning test:
+        # the moment matrix stays invertible. Measured max|lap - 2| = 2.0e-15.
+        np.testing.assert_allclose(laplacian, 2.0, atol=1e-10)
 
     def test_single_point(self):
         """Test with single point (edge case).
@@ -403,12 +420,21 @@ class TestEdgeCases:
             GFDMOperator(points, delta=0.1, taylor_order=1)
 
     def test_3d_points(self):
-        """Test 3D operator."""
-        points = np.random.rand(100, 3)
-        gfdm = GFDMOperator(points, delta=0.3, taylor_order=2)
+        """Test 3D operator on a resolved scattered cloud.
+
+        The order-2 Taylor system in 3D has 9 unknowns, so delta must admit well more
+        than 9 neighbours. At (100 points, delta=0.3) it does not: every point falls
+        back to k-NN with exactly k=10, the system is degenerate, and the Laplacian of
+        x^2+y^2+z^2 comes back with a median error of 2.0 against the exact value 6
+        (max 6.3, i.e. one point returns 0). Seeded and resolved here instead.
+        """
+        points = np.random.default_rng(0).random((200, 3))
+        gfdm = GFDMOperator(points, delta=0.55, taylor_order=2)
 
         f = points[:, 0] ** 2 + points[:, 1] ** 2 + points[:, 2] ** 2
         laplacian = gfdm.laplacian(f)
 
-        assert laplacian.shape == (100,)
-        assert not np.any(np.isnan(laplacian))
+        assert laplacian.shape == (200,)
+        # Smallest neighbourhood is 24 points, no k-NN fallback. Measured
+        # max|lap - 6| = 5.7e-14 at seed 0, and < 7.5e-14 over seeds 0-7.
+        np.testing.assert_allclose(laplacian, 6.0, atol=1e-8)

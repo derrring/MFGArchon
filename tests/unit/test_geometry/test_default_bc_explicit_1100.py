@@ -146,7 +146,7 @@ class TestGlobalPropertyReadsNoneSafe:
 
     def test_has_periodic_check_none_safe(self):
         """validate_boundary_conditions has_periodic read treats None as not-periodic."""
-        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry import Hypersphere, TensorProductGrid
         from mfgarchon.geometry.boundary import no_flux_bc
         from mfgarchon.utils.validation.components import validate_boundary_conditions
 
@@ -160,5 +160,25 @@ class TestGlobalPropertyReadsNoneSafe:
             domain_bounds=_bounds_2d(),
         )
         # Does not raise; None default_bc is not flagged as periodic.
+        # `result is not None` could not show that: the function builds a ValidationResult
+        # on entry and every path returns it.
         result = validate_boundary_conditions(bc, geometry)
-        assert result is not None
+        assert result.is_valid
+        assert not any("Periodic" in issue.message for issue in result.issues)
+
+        # Positive control. The periodic warning only fires on a non-Cartesian geometry,
+        # so on the grid above neither None nor PERIODIC can produce it and the check
+        # discriminates nothing. Same BC objects, same sphere: only default_bc differs.
+        sphere = Hypersphere(center=np.array([0.0, 0.0]), radius=1.0)
+        assert not any("Periodic" in i.message for i in validate_boundary_conditions(bc, sphere).issues)
+
+        bc_periodic = BoundaryConditions(
+            segments=[BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min")],
+            dimension=2,
+            domain_bounds=_bounds_2d(),
+            default_bc=BCType.PERIODIC,
+        )
+        periodic_issues = validate_boundary_conditions(bc_periodic, sphere).issues
+        assert any(
+            "Periodic boundary conditions are intended for Cartesian grids" in i.message for i in periodic_issues
+        )

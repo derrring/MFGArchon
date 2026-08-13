@@ -147,21 +147,40 @@ class TestWenoFamilySolver:
         assert abs(u_left - u_right) < 10.0  # Reasonable bound
 
     def test_time_integration_methods(self, simple_problem):
-        """Test different time integration methods."""
+        """Both time integrators run, are actually dispatched, and reproduce the flat-field closed form.
+
+        ``isfinite`` alone could not tell that ``time_integration=`` was ignored and both loop
+        passes ran the default tvd_rk3. Two observables fix that:
+        (a) the two integrators must disagree on oscillatory data (they are different schemes);
+        (b) on a CONSTANT field ``grad u = 0``, so ``H(0) = 0`` and only the running cost ``-m``
+            survives: one step of size ``dt`` must give exactly ``u - dt*m`` for either integrator.
+        """
         methods = ["tvd_rk3", "explicit_euler"]
 
+        bounds = simple_problem.geometry.get_bounds()
+        Nx = simple_problem.geometry.get_grid_shape()[0]
+        x = np.linspace(bounds[0][0], bounds[1][0], Nx)
+        u_current = np.sin(2 * np.pi * x)
+        m_current = np.ones_like(u_current) / Nx
+        dt = 0.001
+
+        results = {}
         for method in methods:
             solver = HJBWENOSolver(simple_problem, weno_variant="weno5", time_integration=method)
 
-            bounds = simple_problem.geometry.get_bounds()
-            x = np.linspace(bounds[0][0], bounds[1][0], simple_problem.geometry.get_grid_shape()[0])
-            u_current = np.sin(2 * np.pi * x)
-            m_current = np.ones_like(u_current) / len(u_current)
-            dt = 0.001
-
-            # Should execute without error
             u_new = solver.solve_hjb_step(u_current, m_current, dt)
             assert np.isfinite(u_new).all()
+            results[method] = u_new
+
+            # Flat-field closed form: u - dt*m at every node, both integrators (measured 5e-16).
+            u_flat = solver.solve_hjb_step(np.full(Nx, 2.0), m_current, dt)
+            np.testing.assert_allclose(u_flat - 2.0, -dt / Nx, atol=1e-12)
+
+        # Dispatch is real: RK3 and forward Euler differ by 3.30e-03 here, 12% of the step
+        # itself (max|u_new - u_current| = 2.72e-02), so this is scheme difference, not noise.
+        assert np.max(np.abs(results["tvd_rk3"] - results["explicit_euler"])) > 1e-4, (
+            "tvd_rk3 and explicit_euler produced the same field: time_integration= was ignored"
+        )
 
     def test_variant_info_retrieval(self, simple_problem):
         """Test that variant information is properly retrieved."""
@@ -298,7 +317,13 @@ class TestWenoSolverIntegration:
         assert not np.allclose(U_solution[0, :], 0.0)
 
     def test_solve_hjb_system_with_density_variation(self, integration_problem):
-        """Test solving with non-uniform density."""
+        """A Gaussian density symmetric about x=0.5 forces a symmetric value function.
+
+        The m-profile, the zero terminal cost and the no-flux BC are all invariant under
+        x -> 1-x, so the value function must be too, and its extremum must sit at the density
+        peak. ``isfinite`` sees neither: a one-sided WENO sweep (a directional bias in the
+        reconstruction, or a sign error in the coupling) breaks both without producing a NaN.
+        """
         solver = HJBWENOSolver(integration_problem, weno_variant="weno5")
 
         Nt = integration_problem.Nt + 1
@@ -320,9 +345,21 @@ class TestWenoSolverIntegration:
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt, Nx)
 
+        # x -> 1-x symmetry (measured 7.8e-16 against an amplitude of 0.955, margin ~1300x).
+        assert np.max(np.abs(U_solution[0] - U_solution[0][::-1])) < 1e-12
+        # The running cost is -m, so the value function bottoms out where the density peaks.
+        assert int(np.argmin(U_solution[0])) == Nx // 2
+
     @pytest.mark.parametrize("variant", ["weno5", "weno-z", "weno-m", "weno-js"])
     def test_solve_hjb_system_all_variants(self, integration_problem, variant):
-        """Test solve_hjb_system with all WENO variants."""
+        """Every variant reproduces the closed form u(t,x) = -(T-t) on this configuration.
+
+        With ``M = ones``, ``U_final = zeros`` and coupling f(m) = m, the Hamiltonian's gradient
+        term vanishes for a spatially flat solution and only the running cost is left, so the
+        exact value function is -(T-t), uniform in x. This pins the running-cost sign, the
+        coupling, the time integration and spatial homogeneity in one assertion -- none of which
+        shape + isfinite can see (they did not see the pre-#1200 ``-0.25 * du/dx`` gradient bug).
+        """
         solver = HJBWENOSolver(integration_problem, weno_variant=variant)
 
         Nt = integration_problem.Nt + 1
@@ -337,8 +374,18 @@ class TestWenoSolverIntegration:
         assert U_solution.shape == (Nt, Nx)
         assert np.all(np.isfinite(U_solution))
 
+        # Measured max deviation 2.44e-15 for all four variants; margin ~400x to the tolerance.
+        t = np.linspace(0.0, integration_problem.T, Nt)
+        exact = np.tile(-(integration_problem.T - t)[:, None], (1, Nx))
+        np.testing.assert_allclose(U_solution, exact, atol=1e-12)
+
     def test_solve_with_uniform_density(self, integration_problem):
-        """Test solver with uniform density distribution."""
+        """Uniform density with a non-trivial quadratic terminal cost: two exact properties.
+
+        This is the configuration that exercises the Hamiltonian's gradient term rather than
+        only the running cost. The backward sweep must leave the terminal row untouched, and
+        (x-0.5)^2 under a uniform m with no-flux walls is symmetric about x = 0.5.
+        """
         solver = HJBWENOSolver(integration_problem, weno_variant="weno5")
 
         Nt = integration_problem.Nt + 1
@@ -359,6 +406,11 @@ class TestWenoSolverIntegration:
         # Should produce valid solution
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt, Nx)
+
+        # Terminal condition returned bit-for-bit (measured max deviation exactly 0.0).
+        np.testing.assert_array_equal(U_solution[-1], U_final)
+        # x -> 1-x symmetry at t=0 (measured 4.2e-17, margin ~2400x to the tolerance).
+        assert np.max(np.abs(U_solution[0] - U_solution[0][::-1])) < 1e-13
 
     def test_solution_finiteness(self, integration_problem):
         """Oscillatory terminal data stays bounded (Issue #1200 regression).
@@ -391,7 +443,14 @@ class TestWenoSolverIntegration:
         )
 
     def test_different_cfl_numbers(self, integration_problem):
-        """Test solver with different CFL numbers."""
+        """Every CFL number must reproduce the closed form u(t,x) = -(T-t) (Issue #1180 oracle).
+
+        With ``M = ones``, ``U_final = zeros`` and coupling f(m) = m the exact value function is
+        -(T-t), independent of the CFL number: the sub-stepping only changes how many stable
+        steps cover each interval, not the answer. This is what makes the sweep bug visible --
+        advancing only one ``dt_stable`` per interval under-propagates, and does so
+        CFL-dependently, while finiteness holds throughout.
+        """
         for cfl in [0.1, 0.3, 0.5]:
             solver = HJBWENOSolver(integration_problem, weno_variant="weno5", cfl_number=cfl)
 
@@ -405,6 +464,10 @@ class TestWenoSolverIntegration:
             U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
 
             assert np.all(np.isfinite(U_solution))
+            # Measured max deviation 2.44e-15 at each of the three CFL values; margin ~400x.
+            t = np.linspace(0.0, integration_problem.T, Nt)
+            exact = np.tile(-(integration_problem.T - t)[:, None], (1, Nx))
+            np.testing.assert_allclose(U_solution, exact, atol=1e-12)
 
 
 class TestWenoTimeSubstepping:

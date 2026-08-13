@@ -91,10 +91,30 @@ def test_weno_no_hamiltonian_fails_loud(monkeypatch):
         solver._evaluate_hamiltonian(x_idx=0, m_val=1.0, grad=0.3)
 
 
-def test_normal_problem_still_evaluates(monkeypatch):
-    """Sanity: a properly-specified Hamiltonian still evaluates (the fail-loud does not
-    fire on the happy path)."""
-    problem = _problem()
+def test_normal_problem_still_evaluates():
+    """The fail-loud does not fire on the happy path, and the value is the problem's own H.
+
+    Deliberately NOT the shared ``_problem()`` fixture. That one is LQ with ``control_cost=1.0``
+    and ``coupling=lambda m: m``, which coincides with the removed hardcoded default
+    ``H = 0.5*|p|^2 + C*m`` to the bit: both return 1.045 at (x=0.5, p=0.3, m=1.0), so
+    re-introducing the fallback this file exists to forbid would leave the negative control green.
+
+    A non-LQ Hamiltonian separates them. With ``control_cost=2.0`` and ``coupling(m) = m**3``,
+    ``H = |p|^2/(2*control_cost) + m**3 = 8.0225`` at (p=0.3, m=2.0), while the removed default
+    returns 2.045 -- a separation of 6.0, not a tolerance question.
+    """
+    components = MFGComponents(
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(
+            control_cost=QuadraticControlCost(control_cost=2.0),
+            coupling=lambda m: m**3,
+            coupling_dm=lambda m: 3.0 * m**2,
+        ),
+    )
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(geometry=grid, T=0.5, Nt=10, sigma=0.3, components=components)
     solver = HJBSemiLagrangianSolver(problem)
-    val = solver._evaluate_hamiltonian(x=0.5, p=0.3, m=1.0, time_idx=0)
-    assert np.isfinite(val)
+
+    val = solver._evaluate_hamiltonian(x=0.5, p=0.3, m=2.0, time_idx=0)
+    assert val == pytest.approx(0.5 * 0.3**2 / 2.0 + 2.0**3)

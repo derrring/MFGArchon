@@ -245,6 +245,12 @@ def test_backend_default_none():
 
     assert solver.backend is None
 
+    # The line above only reads BackendTestSolver's own keyword default, which it assigns AFTER
+    # super().__init__ and so overwrites whatever the base class set. ConcreteFPSolver never
+    # touches the attribute, so this is the read that actually reaches BaseFPSolver.__init__
+    # (base_fp.py:103) -- the sentinel every backend dispatch downstream branches on.
+    assert ConcreteFPSolver(problem).backend is None
+
 
 @pytest.mark.unit
 def test_backend_can_be_modified():

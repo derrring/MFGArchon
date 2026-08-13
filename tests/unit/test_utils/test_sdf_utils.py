@@ -157,12 +157,18 @@ class TestSDFIntersection:
         assert np.all(intersection >= sdf1)
         assert np.all(intersection >= sdf2)
 
-        # Depends on exact geometry, but intersection should be valid
-        # (no specific test needed here, just that it's more restrictive)
+        # Closed form: the lens of two 1D balls of radius 0.7 at -0.3 and +0.3 is [-0.4, 0.4]
+        x = points[:, 0]
+        expected = np.maximum(np.abs(x + 0.3) - 0.7, np.abs(x - 0.3) - 0.7)
+        np.testing.assert_allclose(intersection, expected, atol=1e-12)
+
+        assert np.all(intersection[np.abs(x) < 0.39] < 0)
+        assert np.all(intersection[np.abs(x) > 0.41] > 0)
 
     def test_box_and_circle(self):
         """Test box intersected with circle."""
-        points = np.random.uniform(-2, 2, (100, 2))
+        rng = np.random.default_rng(20260813)
+        points = rng.uniform(-2, 2, (100, 2))
 
         box_dist = sdf_box(points, bounds=[[-1, 1], [-1, 1]])
         sphere_dist = sdf_sphere(points, center=[0, 0], radius=0.8)
@@ -170,9 +176,19 @@ class TestSDFIntersection:
 
         # Points inside intersection must be inside both
         inside_intersection = intersection < 0
-        if np.any(inside_intersection):
-            assert np.all(box_dist[inside_intersection] < 0)
-            assert np.all(sphere_dist[inside_intersection] < 0)
+        # Positive control: an unseeded cloud can put as few as 6 points here, and a guard would
+        # make an empty selection silently pass. Measured at this seed: 18.
+        assert inside_intersection.sum() > 0
+        assert np.all(box_dist[inside_intersection] < 0)
+        assert np.all(sphere_dist[inside_intersection] < 0)
+
+        # Deterministic probes against the closed form: intersection = max(box, sphere)
+        probes = np.array([[0.0, 0.0], [0.9, 0.0]])
+        probe_box = sdf_box(probes, bounds=[[-1, 1], [-1, 1]])
+        probe_sphere = sdf_sphere(probes, center=[0, 0], radius=0.8)
+        np.testing.assert_allclose(probe_box, [-1.0, -0.1], atol=1e-12)
+        np.testing.assert_allclose(probe_sphere, [-0.8, 0.1], atol=1e-12)
+        np.testing.assert_allclose(sdf_intersection(probe_box, probe_sphere), [-0.8, 0.1], atol=1e-12)
 
 
 class TestSDFComplement:
@@ -205,7 +221,8 @@ class TestSDFDifference:
 
     def test_box_with_hole(self):
         """Test box with circular hole."""
-        points = np.random.uniform(-2, 2, (200, 2))
+        rng = np.random.default_rng(20260813)
+        points = rng.uniform(-2, 2, (200, 2))
 
         box = sdf_box(points, bounds=[[-1, 1], [-1, 1]])
         hole = sdf_sphere(points, center=[0, 0], radius=0.5)
@@ -213,9 +230,18 @@ class TestSDFDifference:
 
         # Points inside domain must be inside box AND outside hole
         inside_domain = domain < 0
-        if np.any(inside_domain):
-            assert np.all(box[inside_domain] < 0)  # Inside box
-            assert np.all(hole[inside_domain] > 0)  # Outside hole
+        # Positive control: measured 44 at this seed. Without it an empty selection passes silently.
+        assert inside_domain.sum() > 0
+        assert np.all(box[inside_domain] < 0)  # Inside box
+        assert np.all(hole[inside_domain] > 0)  # Outside hole
+
+        # Deterministic probes: difference = max(box, -hole)
+        probes = np.array([[0.75, 0.0], [1.5, 1.5]])
+        probe_box = sdf_box(probes, bounds=[[-1, 1], [-1, 1]])
+        probe_hole = sdf_sphere(probes, center=[0, 0], radius=0.5)
+        np.testing.assert_allclose(probe_box, [-0.25, 0.5], atol=1e-12)
+        np.testing.assert_allclose(probe_hole, [0.25, np.sqrt(4.5) - 0.5], atol=1e-12)
+        np.testing.assert_allclose(sdf_difference(probe_box, probe_hole), [-0.25, 0.5], atol=1e-12)
 
 
 class TestSmoothOperations:
@@ -285,8 +311,19 @@ class TestSDFGradient:
 
         grad = sdf_gradient(points, sdf_func, epsilon=1e-5)
 
-        # At center, gradient should be roughly zero (or pointing to nearest edge)
         assert grad.shape == (1, 2)  # One point, 2D gradient
+
+        # At the centre all four walls are equidistant, so the central difference cancels exactly.
+        # Measured -2.78e-12; atol=1e-9 leaves ~360x margin over that cancellation residue.
+        np.testing.assert_allclose(grad, [[0.0, 0.0]], atol=1e-9)
+
+        # Off the medial set the eikonal property bites: |grad d| = 1, pointing at the nearest wall.
+        np.testing.assert_allclose(
+            sdf_gradient(np.array([[0.5, 0.2]]), sdf_func, epsilon=1e-5), [[0.0, -1.0]], atol=1e-9
+        )
+        np.testing.assert_allclose(
+            sdf_gradient(np.array([[0.9, 0.5]]), sdf_func, epsilon=1e-5), [[1.0, 0.0]], atol=1e-9
+        )
 
     def test_single_point_gradient(self):
         """Test gradient for single point."""
@@ -316,11 +353,16 @@ class TestEdgeCases:
     def test_high_dimensional(self):
         """Test with high-dimensional points."""
         # 5D hypersphere
-        points = np.random.randn(10, 5)
+        rng = np.random.default_rng(0)
+        points = rng.standard_normal((10, 5))
         center = np.zeros(5)
         dist = sdf_sphere(points, center=center, radius=1.0)
 
         assert dist.shape == (10,)
+        # Closed form over all five coordinates: an implementation that summed only the first two
+        # or three columns returns a (10,) array of wrong distances and passes the shape check.
+        # Measured max deviation 0.0; atol=1e-15 is the smallest bound not pinning noise.
+        np.testing.assert_allclose(dist, np.linalg.norm(points, axis=1) - 1.0, rtol=0, atol=1e-15)
 
     def test_list_inputs(self):
         """Test that lists are converted correctly."""
@@ -331,6 +373,15 @@ class TestEdgeCases:
 
         assert isinstance(dist, np.ndarray)
         assert dist.shape == (2,)
+
+        # Conversion must be value-preserving, not merely type-producing: a transpose, a
+        # truncation, or a mis-broadcast centre all survive the isinstance/shape pair.
+        np.testing.assert_array_equal(
+            dist,
+            sdf_sphere(np.asarray(points_list, dtype=float), center=np.asarray(center_list, dtype=float), radius=1.0),
+        )
+        # Closed form for the unit circle at (0,0): centre is at -1, (1,0) is on the boundary.
+        np.testing.assert_allclose(dist, [-1.0, 0.0], atol=1e-15)
 
 
 if __name__ == "__main__":

@@ -142,8 +142,20 @@ class TestRegimeSwitchingSolve:
         Nx = problems[0].geometry.get_grid_shape()[0]
         assert result.values[0].shape == (Nt + 1, Nx)
         assert result.values[1].shape == (Nt + 1, Nx)
+        # u_terminal is `lambda x: 0.0` in _make_problem, so EVERY regime must carry it exactly.
+        # Measured max|U[-1]| = 0.0 for both. A terminal condition applied to regime 0 only keeps
+        # both shapes intact, which is all the asserts above can see.
+        for k in range(2):
+            np.testing.assert_array_equal(result.values[k][-1, :], 0.0)
 
     def test_solutions_are_finite(self):
+        """Every field must be spatially CONSTANT on this fixture, which subsumes finiteness.
+
+        ``_make_problem`` gives a uniform ``m_initial = 1.0``, no potential and a no-flux BC, so
+        nothing in the problem breaks translation invariance in x. A BC leak, an asymmetric
+        stencil or a spurious drift all break it, while finiteness alone is nearly unfalsifiable
+        here. NaN or inf fails the comparison too, so the old check is not lost.
+        """
         problems, config, hjbs, fps = _make_2regime_system()
         iterator = RegimeSwitchingIterator(
             problems=problems,
@@ -153,9 +165,13 @@ class TestRegimeSwitchingSolve:
             max_iterations=5,
         )
         result = iterator.solve()
+        # Measured spreads: U 3.02e-12 / 6.62e-13, M 3.47e-11 / 6.97e-12 -- roughly 300x below
+        # the thresholds, and any real asymmetry is O(1e-3) or larger.
         for k in range(2):
-            assert np.all(np.isfinite(result.values[k])), f"Non-finite values in regime {k}"
-            assert np.all(np.isfinite(result.densities[k])), f"Non-finite densities in regime {k}"
+            V = np.asarray(result.values[k], dtype=float)
+            M = np.asarray(result.densities[k], dtype=float)
+            assert np.abs(V - V.mean(axis=1, keepdims=True)).max() < 1e-9, f"values not uniform in regime {k}"
+            assert np.abs(M - M.mean(axis=1, keepdims=True)).max() < 1e-8, f"densities not uniform in regime {k}"
 
     def test_error_history_recorded(self):
         problems, config, hjbs, fps = _make_2regime_system()
@@ -209,7 +225,18 @@ class TestRegimeSwitchingUpdateSchemes:
         )
         result = iterator.solve()
         assert isinstance(result, RegimeSwitchingResult)
-        assert np.all(np.isfinite(result.values[0]))
+
+        # Hold the jacobi branch to the same external oracle the gauss_seidel branch has: the
+        # regime masses must obey M(t) = M(0) @ expm(Qt). Measured on this fixture: 6.16e-04 for
+        # jacobi, 6.16e-04 for gauss_seidel -- the same threshold transfers, with 8x margin.
+        from scipy.linalg import expm
+
+        dx = problems[0].geometry.get_grid_spacing()[0]
+        masses = np.array([np.asarray(d, dtype=float).sum(axis=1) * dx for d in result.densities])
+        t_grid = np.arange(problems[0].Nt + 1) * problems[0].dt
+        exact = np.array([masses[:, 0] @ expm(config.transition_matrix * t) for t in t_grid]).T
+        rel = np.abs(masses - exact).max() / np.abs(exact).max()
+        assert rel < 5e-3, f"jacobi regime masses deviate {rel:.3e} from M(0) @ expm(Qt)"
 
 
 class TestRegimeSwitchingGetResults:
@@ -224,9 +251,14 @@ class TestRegimeSwitchingGetResults:
             fp_solvers=fps,
             max_iterations=3,
         )
-        iterator.solve()
-        U, _M = iterator.get_results()
+        result = iterator.solve()
+        U, M = iterator.get_results()
         assert U.shape[0] == problems[0].Nt + 1
+        # get_results() is a lossy 2-tuple over a K-regime solve: WHICH regime it exposes is the
+        # load-bearing convention, and the shape assert is blind to it because both regimes share
+        # the shape. Measured: both identities hold, and `U is result.values[1]` is False.
+        assert U is result.values[0]
+        assert M is result.densities[0]
 
     def test_get_results_before_solve_raises(self):
         problems, config, hjbs, fps = _make_2regime_system()

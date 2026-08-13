@@ -376,12 +376,30 @@ class TestMFGResidualComputation:
         # Compute residual
         F = residual_computer.residual_function(x0)
 
-        # Residual should be finite
-        assert np.all(np.isfinite(F)), "Residual contains inf/nan"
-
         # Residual size should be 2 * total_size (U and M)
         total_size = np.prod(residual_computer.solution_shape)
         assert F.shape[0] == 2 * total_size, f"Residual size {F.shape[0]} != {2 * total_size}"
+
+        # `isfinite` was the only other check, and any wrong answer of the right shape satisfies it.
+        # The external oracle is that the residual must VANISH at the Picard fixed point -- a law
+        # about the MFG system, computed by a solver that shares no code with residual_function.
+        # This also cross-pins the flat `residual_function` interface (the one the Newton solve
+        # calls) against `compute_residual`, which nothing else does.
+        #
+        # Measured at HEAD: ||F|| = 4.98e-05 at the fixed point, against 14.06 at the initial guess
+        # this same test builds. The 1e-3 threshold leaves ~20x margin over the measured value while
+        # sitting 14000x below the un-converged norm.
+        picard = FixedPointIterator(
+            residual_test_problem,
+            HJBFDMSolver(residual_test_problem),
+            FPFDMSolver(residual_test_problem),
+            relaxation=0.5,
+        ).solve(max_iterations=80, tolerance=1e-6)
+
+        residual_at_fixed_point = residual_computer.residual_function(residual_computer.pack_state(picard.U, picard.M))
+        assert np.linalg.norm(residual_at_fixed_point) < 1e-3, (
+            f"residual does not vanish at the Picard fixed point: {np.linalg.norm(residual_at_fixed_point):.3e}"
+        )
 
     def test_pack_unpack_identity(self, residual_test_problem):
         """Test that pack/unpack are inverse operations."""

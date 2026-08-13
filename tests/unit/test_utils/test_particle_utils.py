@@ -67,11 +67,18 @@ class TestInterpolate1DNumPy:
         x_query = np.array([-0.5, 1.5])
         y_interp = interpolate_1d_numpy(x_query, x_grid, y_grid)
 
-        # Extrapolates using first/last interval slopes
-        # First interval: y(0) = 0, y(0.1) ≈ 0.01, slope ≈ 0.1
-        # Last interval: y(0.9) ≈ 0.81, y(1) = 1, slope ≈ 1.9
-        # Allow extrapolation behavior (values won't match exact quadratic)
-        assert y_interp.shape == (2,)  # Just check shape for now
+        # Extrapolates using first/last interval slopes, which is a closed form on this datum:
+        # first interval y(0) = 0, y(0.1) = 0.01, slope 0.1, so y(-0.5) = -0.05; last interval
+        # y(0.9) = 0.81, y(1) = 1, slope 1.9, so y(1.5) = 1.95. The implementation clips the
+        # bracketing index to [1, N-1] and reuses the same linear formula outside the grid
+        # (particle_utils.py:126-138), so it extrapolates rather than clamps -- and the shape
+        # assertion that used to stand alone here cannot tell those apart, since clamping returns
+        # [0.0, 1.0] with the same shape.
+        assert y_interp.shape == (2,)
+        # rtol is 1e-6, not tighter: the `+ 1e-10` guard in the weight denominator perturbs the
+        # result by exactly 1.0e-09 relative on this grid (measured), so 1e-9 would sit on the
+        # boundary. Clamping differs by 100% and 49% respectively, five orders outside this.
+        np.testing.assert_allclose(y_interp, [-0.05, 1.95], rtol=1e-6)
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

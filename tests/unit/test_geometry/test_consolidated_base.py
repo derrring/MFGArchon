@@ -11,7 +11,7 @@ import numpy as np
 
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.base import CartesianGrid, Geometry
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import BCType, no_flux_bc
 from mfgarchon.geometry.protocol import AdaptiveGeometry, is_adaptive
 
 
@@ -196,7 +196,11 @@ class TestSolverOperations:
         )
 
         bc_handler = grid.get_boundary_handler()
-        assert bc_handler is not None
+        # Resolution order is "stored BC first, else build from bc_type" -- and bc_type
+        # defaults to "periodic". If that precedence ever inverts, a no-flux grid hands
+        # solvers a periodic handler, which `is not None` cannot see.
+        assert bc_handler is grid.get_boundary_conditions()
+        assert bc_handler.default_bc is BCType.NO_FLUX
 
 
 class TestCartesianGridUtilities:
@@ -280,6 +284,12 @@ class TestDataInterface:
 
         points = grid.get_spatial_grid()
         assert points.shape == (25, 2)  # 5*5 points, 2D
+        # Pin the flattening convention the shape cannot see: 'ij' indexing with a
+        # C-order ravel, so the last axis varies fastest. A Fortran-order flip would
+        # give points[1] == [0.25, 0.0] with the shape unchanged.
+        np.testing.assert_allclose(points[0], [0.0, 0.0], atol=1e-15)
+        np.testing.assert_allclose(points[1], [0.0, 0.25], atol=1e-15)
+        np.testing.assert_allclose(points[-1], [1.0, 1.0], atol=1e-15)
 
     def test_get_problem_config(self):
         """Test problem configuration dictionary."""

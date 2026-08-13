@@ -158,3 +158,14 @@ class TestPenaltyEffect:
         # Should not raise — penalty composes with base source
         U = solver.solve_hjb_system(M, U_T, U_prev, source_term=base_source)
         assert np.all(np.isfinite(U))
+
+        # The obstacle is identically zero, so penalty * max(0, psi) == 0 and the wrapper must
+        # reduce exactly to the wrapped solver *carrying the base source through*.  Dropping
+        # `base` from penalized_source is the defect this catches; measured difference 0.0.
+        U_ref = HJBFDMSolver(problem).solve_hjb_system(M, U_T, U_prev, source_term=base_source)
+        np.testing.assert_array_equal(U, U_ref)
+
+        # Anti-vacuity: the identity above must not be satisfied by both sides ignoring the
+        # source entirely.  The constant 0.1 source moves the solution by 0.1 (measured).
+        U_no_source = solver.solve_hjb_system(M, U_T, U_prev)
+        assert np.max(np.abs(U - U_no_source)) > 1e-3

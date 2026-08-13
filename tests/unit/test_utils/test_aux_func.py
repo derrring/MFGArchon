@@ -335,9 +335,13 @@ def test_ppart_return_type_scalar():
 
 
 @pytest.mark.unit
-def test_ppart_return_type_array():
-    """Test ppart() returns ndarray for array input."""
-    arr = np.array([1.0, 2.0, 3.0])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_ppart_return_type_array(dtype):
+    """Test ppart() returns ndarray for array input, preserving the input float dtype."""
+    # Parametrised so the dtype claim is falsifiable: with float64 only, it holds for any
+    # implementation. Integer input is deliberately excluded -- np.maximum(int32, 0.0) promotes
+    # to float64 under NEP 50, so the preservation claim is true for float dtypes only.
+    arr = np.array([1.0, 2.0, 3.0], dtype=dtype)
     result = ppart(arr)
     assert isinstance(result, np.ndarray)
     assert result.dtype == arr.dtype
@@ -351,9 +355,11 @@ def test_npart_return_type_scalar():
 
 
 @pytest.mark.unit
-def test_npart_return_type_array():
-    """Test npart() returns ndarray for array input."""
-    arr = np.array([-1.0, -2.0, -3.0])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_npart_return_type_array(dtype):
+    """Test npart() returns ndarray for array input, preserving the input float dtype."""
+    # npart negates before the maximum, so it is a separate promotion path from ppart.
+    arr = np.array([-1.0, -2.0, -3.0], dtype=dtype)
     result = npart(arr)
     assert isinstance(result, np.ndarray)
     assert result.dtype == arr.dtype

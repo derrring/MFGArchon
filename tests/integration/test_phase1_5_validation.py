@@ -215,11 +215,28 @@ class TestNetworkSolverIntegration:
         M = np.ones((problem.Nt + 1, problem.num_nodes)) / problem.num_nodes
         U_terminal = np.zeros(problem.num_nodes)
 
+        # Closed form: the density is uniform over nodes and constant in time and the terminal cost
+        # is zero, so no flow develops along the edges and the value function is spatially constant
+        # and decays linearly to zero at rate coupling_coefficient * m^2 (= 0.5 * 0.2^2 = 0.02 here).
+        t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
+        decay = problem.coupling_coefficient * (1.0 / problem.num_nodes) ** 2 * (problem.T - t_grid)
+        expected = np.tile(decay[:, None], (1, problem.num_nodes))
+
+        solutions = {}
         for scheme in ["RK45", "BDF"]:
             solver = NetworkHJBSolver(problem, scheme=scheme)
             U = solver.solve_hjb_system(M, U_terminal, np.zeros_like(M))
             assert U.shape == M.shape
             assert np.all(np.isfinite(U)), f"scheme={scheme} produced non-finite values"
+            # Measured max|U - closed form| = 3.5e-18 (RK45) and 8.7e-19 (BDF); atol=1e-12 leaves
+            # ~3e5 margin. Any integrator must reproduce a function linear in t exactly.
+            np.testing.assert_allclose(U, expected, atol=1e-12, err_msg=f"scheme={scheme}")
+            solutions[scheme] = U
+
+        # Both schemes integrate the same ODE, so they must agree far below their own error control.
+        # Measured max|RK45 - BDF| = 3.5e-18; this is what fails if a scheme string is dropped and
+        # both branches run the same integrator on different data, or a different one on the same.
+        assert np.max(np.abs(solutions["RK45"] - solutions["BDF"])) < 1e-12
 
 
 # ---------------------------------------------------------------------------

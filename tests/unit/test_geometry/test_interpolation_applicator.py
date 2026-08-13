@@ -108,7 +108,9 @@ class TestNeumannBCEnforcement:
     def test_3d_neumann(self):
         """Test 3D Neumann BC enforcement."""
         applicator = InterpolationApplicator()
-        U = np.ones((4, 5, 6))
+        # Non-constant data: np.ones is a fixed point of ANY extrapolation rule, so a constant
+        # field cannot distinguish the 2nd-order formula from doing nothing at all.
+        U = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
         bc = neumann_bc(dimension=3)
 
         U_enforced = applicator.enforce_values(U.copy(), bc)
@@ -117,6 +119,14 @@ class TestNeumannBCEnforcement:
         assert U_enforced.shape == (4, 5, 6)
         # Values should be finite
         assert np.isfinite(U_enforced).all()
+
+        # The per-axis loop must apply U[0] = (4*U[1] - U[2]) / 3 on every one of the six faces.
+        # Checked on the strict interior of the other two axes, where the faces do not interact.
+        for axis in range(3):
+            o = np.moveaxis(U_enforced, axis, 0)
+            interior = (slice(1, -1), slice(1, -1))
+            np.testing.assert_allclose(o[0][interior], ((4.0 * o[1] - o[2]) / 3.0)[interior], atol=1e-10)
+            np.testing.assert_allclose(o[-1][interior], ((4.0 * o[-2] - o[-3]) / 3.0)[interior], atol=1e-10)
 
 
 class TestDirichletBCEnforcement:
@@ -190,10 +200,12 @@ class TestPeriodicBC:
 
         U_enforced = applicator.enforce_values(U.copy(), bc)
 
-        # For periodic: boundary copies from opposite interior
-        # U[0] should get value from near U[-2], U[-1] from near U[1]
-        # Note: This is a simple approximation for interpolation context
         assert U_enforced.shape == U.shape
+
+        # Periodic enforcement is a mean identification (#1820/#1829): both endpoints become
+        # (U[0] + U[-1]) / 2 = 3.0, interior untouched.  The halo convention U[0] = U[-2] would
+        # instead give [4, 2, 3, 4, 2], so this pins the routing AND the convention.
+        np.testing.assert_array_equal(U_enforced, [3.0, 2.0, 3.0, 4.0, 3.0])
 
 
 class TestClampQueryPoints:
@@ -281,13 +293,24 @@ class TestDimensionAgnostic:
     def test_4d_enforcement(self):
         """Test BC enforcement works in 4D."""
         applicator = InterpolationApplicator()
-        U = np.ones((3, 4, 5, 6))
+        # Every axis needs >= 4 points: with 3, the min-face stencil (indices 0,1,2) and the
+        # max-face stencil (indices -1,-2,-3) overlap and the formula is not well posed there.
+        # Non-constant data, because np.ones satisfies any extrapolation rule including none.
+        U = np.arange(4 * 5 * 6 * 7, dtype=float).reshape(4, 5, 6, 7)
         bc = neumann_bc(dimension=4)
 
         U_enforced = applicator.enforce_values(U.copy(), bc)
 
-        assert U_enforced.shape == (3, 4, 5, 6)
+        assert U_enforced.shape == (4, 5, 6, 7)
         assert np.isfinite(U_enforced).all()
+
+        # axis_names = ["x", "y", "z", "w"] runs out at 4-D and falls back to f"d{d}"; the
+        # 2nd-order formula must still be applied on all eight faces.
+        for axis in range(4):
+            o = np.moveaxis(U_enforced, axis, 0)
+            interior = (slice(1, -1), slice(1, -1), slice(1, -1))
+            np.testing.assert_allclose(o[0][interior], ((4.0 * o[1] - o[2]) / 3.0)[interior], atol=1e-10)
+            np.testing.assert_allclose(o[-1][interior], ((4.0 * o[-2] - o[-3]) / 3.0)[interior], atol=1e-10)
 
     def test_dimension_mismatch_error(self):
         """Test dimension mismatch raises error when dimension is fixed."""

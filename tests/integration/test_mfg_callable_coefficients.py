@@ -206,6 +206,31 @@ class TestMFGCallableCoefficients:
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= -1e-6)  # Allow small numerical noise
 
+        def _solve_with(field):
+            iterator = FixedPointIterator(
+                problem,
+                hjb_solver=HJBFDMSolver(problem),
+                fp_solver=FPFDMSolver(problem),
+                relaxation=0.5,
+                volatility_field=field,
+            )
+            return iterator.solve(max_iterations=5, tolerance=1e-3, verbose=False)[1]
+
+        M_none = _solve_with(None)
+
+        # Single source of truth: an array holding problem.sigma everywhere must reproduce the
+        # volatility_field=None path exactly, since both name the same volatility.
+        # Measured byte-identical (max|dU| = max|dM| = 0.0), so equality is asserted, not a tolerance.
+        flat_field = np.tile(np.full(Nx_points, problem.sigma), (Nt_points, 1))
+        np.testing.assert_array_equal(
+            _solve_with(flat_field), M_none, err_msg="constant array volatility diverges from the problem.sigma path"
+        )
+
+        # Liveness: the spatially varying array must reach the solve. Byte-identity above establishes
+        # that a dropped array falls back to exactly M_none, so any real difference proves it was read.
+        # Measured max|M - M_none| = 4.393; threshold 0.5 leaves ~9x margin.
+        assert np.abs(M - M_none).max() > 0.5, "spatially varying volatility_field array was ignored"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -242,6 +242,10 @@ class TestMeshgridAndFlatten:
 
         assert X.shape == (4, 3)
         assert Y.shape == (4, 3)
+        # Both outputs share that shape, so swapping them passes the shape check alone.
+        # Under 'xy' the first axis carries y and the second carries x.
+        np.testing.assert_allclose(X[0, :], [0.0, 0.5, 1.0], atol=1e-12)
+        np.testing.assert_allclose(Y[:, 0], [0.0, 2 / 3, 4 / 3, 2.0], atol=1e-12)
 
     def test_flatten_1d(self, bc_1d) -> None:
         """Test flattening for 1D grid."""
@@ -275,6 +279,10 @@ class TestMeshgridAndFlatten:
         points = grid.flatten()
 
         assert points.shape == (8, 3)  # 2 * 2 * 2 points
+        # An xy/ij mix-up across three axes leaves the shape untouched, so pin the
+        # order: 'ij' indexing, C-order ravel, last axis varying fastest.
+        expected = np.array([[i, j, k] for i in (0.0, 1.0) for j in (0.0, 1.0) for k in (0.0, 1.0)], dtype=float)
+        np.testing.assert_allclose(points, expected, atol=1e-15)
 
 
 # ============================================================================

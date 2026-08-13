@@ -10,6 +10,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.network_mfg_solver import (
     create_network_mfg_solver,
     create_simple_network_solver,
@@ -43,6 +44,14 @@ class TestNetworkMFGSolverCreation:
 
         assert solver is not None
 
+        # `is not None` makes this test byte-identical to its implicit sibling apart from the
+        # string, i.e. the one parameter that separates them goes unobserved. The factory
+        # forwards hjb_solver_type/fp_solver_type as scheme= to the two network solvers, so
+        # that is where the dispatch becomes visible.
+        assert isinstance(solver, FixedPointIterator)
+        assert solver.hjb_solver.scheme == "explicit"
+        assert solver.fp_solver.scheme == "explicit"
+
     def test_create_network_solver_implicit(self):
         """Test network solver with implicit schemes."""
         network = GridNetwork(width=4, height=4)
@@ -61,6 +70,13 @@ class TestNetworkMFGSolverCreation:
         )
 
         assert solver is not None
+
+        # The implicit half of the dispatch. Without these three lines this test and
+        # test_create_network_solver_explicit differ only in a string neither of them reads,
+        # which is what makes them look like duplicates when they are actually two branches.
+        assert isinstance(solver, FixedPointIterator)
+        assert solver.hjb_solver.scheme == "implicit"
+        assert solver.fp_solver.scheme == "implicit"
 
     def test_create_solver_with_custom_damping(self):
         """Test solver creation with custom damping factor."""

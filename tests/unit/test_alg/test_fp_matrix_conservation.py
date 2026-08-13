@@ -31,11 +31,16 @@ from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc, rob
 from mfgarchon.geometry.boundary.invariants import mass_drift
 
 
-def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5):
-    """Evolve m = 1 + 0.4 cos(2 pi x) under the production FP implicit step, zero drift.
+def _cos_density(xx):
+    return 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(xx))
 
-    Zero drift isolates pure diffusion, where every conservative scheme must preserve
-    total mass exactly (no advective boundary subtlety). Returns the full M history.
+
+def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos_density):
+    """Evolve an initial density under the production FP implicit step, zero drift.
+
+    Default state is m = 1 + 0.4 cos(2 pi x). Zero drift isolates pure diffusion, where
+    every conservative scheme must preserve total mass exactly (no advective boundary
+    subtlety). Returns the full M history.
     """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=bc)
     H = SeparableHamiltonian(
@@ -45,13 +50,13 @@ def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5):
     )
     x = np.linspace(0.0, 1.0, n)
     comps = MFGComponents(
-        m_initial=lambda xx: 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(xx)),
+        m_initial=m_init,
         u_terminal=lambda xx: 0.0 * np.asarray(xx),
         hamiltonian=H,
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
     solver = FPFDMSolver(prob)
-    m0 = 1.0 + 0.4 * np.cos(2 * np.pi * x)
+    m0 = np.asarray(m_init(x), dtype=float)
     # drift_field as an (nt+1, n) array routes through the implicit per-point assembly
     M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility_field=sigma)
     return M, 1.0 / (n - 1)
@@ -85,6 +90,33 @@ class TestFPProductionConservation:
         # an M-matrix implicit step keeps a positive initial density positive
         M, _ = _zero_drift_density_evolution(periodic_bc(dimension=1))
         assert np.all(M[-1] > -1e-12), "production FP step produced a negative density"
+
+        # The line above cannot fail on this fixture: m0 = 1 + 0.4 cos(2 pi x) has min 0.6 and
+        # pure diffusion contracts toward the mean, so the whole sweep stays above 0.6 and the
+        # -1e-12 bound is unreachable by construction. Repeat on a state that actually reaches
+        # the floor: exp(-500 (x-0.5)^2) spans 54 orders of magnitude at t=0, and one implicit
+        # step still leaves tail values at 2.6e-08 beside a peak of ~1. That is the regime where
+        # a sign error in an off-diagonal (i.e. a loss of the M-matrix property this test is
+        # named for) produces a negative entry rather than a merely inaccurate one.
+        M_peaked, _ = _zero_drift_density_evolution(
+            periodic_bc(dimension=1), m_init=lambda xx: np.exp(-500.0 * (np.asarray(xx) - 0.5) ** 2)
+        )
+        assert M_peaked.min() > -1e-12, "production FP step produced a negative density from a peaked state"
+
+        # The default (cos) solve has a machine-precision closed form, and nothing in this file
+        # used it. The k=1 Fourier mode is an eigenvector of the periodic three-point Laplacian
+        # with eigenvalue -(2 - 2 cos(2 pi h))/h^2, so under backward Euler its amplitude is
+        # multiplied by 1/(1 + dt*lam) per step, exactly.
+        n, nt, T, sigma = 41, 40, 0.2, 0.5
+        h, dt = 1.0 / (n - 1), T / nt
+        lam = (sigma**2 / 2) * (2 - 2 * np.cos(2 * np.pi * h)) / h**2
+        expected_amplitude = 0.4 * (1 + dt * lam) ** (-nt)
+        measured_amplitude = (M[-1].max() - M[-1].min()) / 2
+        # Measured relative error 6.4e-15; 1e-12 is a ~156x margin. This pins the sigma -> D
+        # convention and the time discretization together: D = sigma gives 0.00934 and D = sigma^2
+        # gives 0.0585 against the true 0.15118, and forward Euler differs by 2.4e-2 relative --
+        # every one of them 10 orders of magnitude above this threshold.
+        assert abs(measured_amplitude - expected_amplitude) / expected_amplitude < 1e-12
 
 
 class TestNeumannBCImplicitFP:

@@ -199,7 +199,8 @@ def test_trapezoid_empty_array():
     """Test trapezoid() with empty array."""
     y = np.array([])
     result = trapezoid(y)
-    assert isinstance(result, (int, float, np.number))
+    # The integral over an empty partition is zero, not NaN and not "some scalar".
+    assert result == 0.0
 
 
 @pytest.mark.unit

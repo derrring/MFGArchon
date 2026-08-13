@@ -119,10 +119,10 @@ class TestFiniteDifferenceFunctionalDerivative:
         # Compute second derivative
         second_deriv = derivative_op.compute_second_order(quadratic_functional, measure, None, y_points, z_points)
 
-        # For U[m] = Σ m², we have δ²U/δm² = 0 (second derivative vanishes for quadratic)
-        # Actually, for empirical measures with normalization, there's coupling
-        # Just check it returns correct shape
+        # For U[m] = Σ mᵢ², the second functional derivative is δ²U/δm(y)δm(z) = 2·δ(y - z),
+        # so the (z_points, y_points) block is 2·I. Measured: diagonal 2.0, off-diagonal 2.78e-09.
         assert second_deriv.shape == (len(z_points), len(y_points))
+        np.testing.assert_allclose(second_deriv, 2.0 * np.eye(len(z_points), len(y_points)), atol=1e-6)
 
 
 class TestParticleApproximationFunctionalDerivative:
@@ -166,6 +166,10 @@ class TestParticleApproximationFunctionalDerivative:
 
         # Should have one value per particle index
         assert len(deriv) == len(particle_indices)
+
+        # For U[pts] = Σᵢ pts[i]² the derivative at particle i is 2·x_i. Measured max deviation
+        # 1.00e-06, the finite-difference floor at x = 0, so atol=1e-5 keeps a 10x margin.
+        np.testing.assert_allclose(deriv, 2.0 * particles[particle_indices].ravel(), atol=1e-5)
 
 
 class TestCreateParticleMeasure:

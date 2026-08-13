@@ -197,10 +197,17 @@ class TestRegionRetrieval:
         """Test that get_region_mask returns the correct mask."""
         inlet_mask = grid_with_regions.get_region_mask("inlet")
 
-        # Verify it's the correct mask by checking points
+        # Elementwise equality, not containment: `np.all(points[mask][:, 0] < 0.1)` is vacuously
+        # true on an all-False mask, so an implementation that marks nothing passes it.  Comparing
+        # against the predicate applied to flatten() also pins the ORDER -- a C-vs-Fortran swap in
+        # the tensor grid fails this while any count-only check survives.
         points = grid_with_regions.flatten()
-        inlet_points = points[inlet_mask]
-        assert np.all(inlet_points[:, 0] < 0.1)
+        np.testing.assert_array_equal(inlet_mask, points[:, 0] < 0.1)
+
+        # Analytic count guards against both sides being empty together: bounds [0,1] with Nx=20
+        # gives 21 points per axis at spacing 0.05, so x < 0.1 selects x in {0.00, 0.05} --
+        # 2 columns x 21 rows = 42 of the 441 points.  Measured 42.
+        assert inlet_mask.sum() == 42
 
     def test_get_region_mask_nonexistent_raises(self, grid_with_regions):
         """Test that getting nonexistent region raises KeyError."""
@@ -360,11 +367,18 @@ class TestRegionMarkingUseCases:
 
         obstacle_mask = grid.get_region_mask("obstacle")
 
-        # Verify: points in obstacle satisfy distance condition
+        # Elementwise equality, not containment (an all-False mask satisfies containment
+        # vacuously).  This is the file's only NON-SEPARABLE predicate -- every other one is an
+        # axis-aligned half-space -- so it is the only place an implementation evaluating the
+        # predicate componentwise instead of on whole points can show up, and only once the
+        # comparison is elementwise.
         points = grid.flatten()
-        obstacle_points = points[obstacle_mask]
-        distances = np.linalg.norm(obstacle_points - center, axis=1)
-        assert np.all(distances < radius)
+        np.testing.assert_array_equal(obstacle_mask, np.linalg.norm(points - center, axis=1) < radius)
+
+        # Vacuity guard with an analytic cross-check: 51x51 = 2601 points at spacing 0.02, and a
+        # strict inequality on a lattice marks 309 of them -- 11.88% against the exact area
+        # fraction pi*0.2^2 = 12.57%, the expected shortfall for a strict test on grid points.
+        assert obstacle_mask.sum() == 309
 
     def test_1d_domain_region_marking(self):
         """Test region marking for 1D problems."""

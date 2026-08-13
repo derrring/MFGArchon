@@ -80,12 +80,22 @@ class TestDiagonalTensorEqualsScalar:
         sigma_tensor = np.diag(sigma_diag)
         result_diag = diffusion(m, sigma_tensor, [dx, dy], bc=bc)
 
-        # Manually compute: ∂/∂x(σₓ² ∂m/∂x) + ∂/∂y(σᵧ² ∂m/∂y)
-        # This should match the diagonal operator
-
-        # For now, just check shape and no NaN
         assert result_diag.shape == m.shape
         assert np.all(np.isfinite(result_diag))
+
+        # The comparison the test is named for. Under periodic BC the divergence-form operator
+        # with a constant diagonal tensor is exactly the weighted sum of component-wise Laplacians.
+        #
+        # Note which weight lands on which axis: sigma_x = 0.2 is the tensor's FIRST index but it
+        # multiplies the Laplacian along ARRAY AXIS 1, because _tensor_diffusion_2d unpacks
+        # `Ny, Nx = u.shape` (tensor_calculus.py:1029). The nD branch (tensor_calculus.py:1100
+        # onward) uses the opposite convention -- tensor axis i acts on array axis i.
+        lap_axis0 = (np.roll(m, -1, axis=0) - 2 * m + np.roll(m, 1, axis=0)) / dx**2
+        lap_axis1 = (np.roll(m, -1, axis=1) - 2 * m + np.roll(m, 1, axis=1)) / dy**2
+        # Measured: max deviation 2.1e-14 (worst over 300 random draws) against a signal of
+        # amplitude ~38; atol 1e-12 is ~47x margin. The swapped assignment
+        # (sigma_x*lap_axis0 + sigma_y*lap_axis1) differs by ~22, so this separates the two.
+        np.testing.assert_allclose(result_diag, sigma_y * lap_axis0 + sigma_x * lap_axis1, atol=1e-12)
 
 
 class TestAnisotropic2D:
@@ -108,6 +118,25 @@ class TestAnisotropic2D:
         assert result.shape == m.shape
         assert np.all(np.isfinite(result))
 
+        # Axis-discriminating oracle. Every other tensor test in this file uses an isotropic
+        # tensor, under which the axis assignment is invisible; a symmetric probe (X**2 + Y**2)
+        # is invariant under the swap and must not be used here.
+        #
+        # CONVENTION, as measured: _tensor_diffusion_2d unpacks `Ny, Nx = u.shape`, so the
+        # tensor's FIRST index addresses the SECOND array axis. With meshgrid(indexing="ij"),
+        # u = X**2 varies along array axis 0 and yields 2*D[1,1], not 2*D[0,0].
+        # This is the OPPOSITE of the nD branch (see TestNDDispatcher.test_3d_tensor_diffusion,
+        # where tensor axis i acts on array axis i). tensor_calculus.py:1029 vs 1100.
+        x = np.linspace(0, 1, 16)
+        X, Y = np.meshgrid(x, x, indexing="ij")
+        hx = x[1] - x[0]
+        D = np.array([[0.2, 0.0], [0.0, 0.05]])
+        # Measured deviations 3.1e-15 (X) and 1.3e-14 (Y); atol 1e-10 is >7000x margin.
+        rx = diffusion(X**2, D, [hx, hx], bc=periodic_bc(dimension=2))
+        np.testing.assert_allclose(rx[2:-2, 2:-2], 2 * D[1, 1], atol=1e-10)
+        ry = diffusion(Y**2, D, [hx, hx], bc=periodic_bc(dimension=2))
+        np.testing.assert_allclose(ry[2:-2, 2:-2], 2 * D[0, 0], atol=1e-10)
+
     def test_spatially_varying_tensor(self):
         """Test with spatially-varying diffusion tensor."""
         Nx, Ny = 8, 8
@@ -128,6 +157,36 @@ class TestAnisotropic2D:
 
         assert result.shape == m.shape
         assert np.all(np.isfinite(result))
+
+        # (1) Single-source pin: a constant field must reproduce the constant-tensor branch
+        # byte-for-byte. Measured max difference exactly 0.0 under all three BC families.
+        Sigma_const = np.array([[0.15, 0.03], [0.03, 0.2]])
+        Sigma_field = np.broadcast_to(Sigma_const, (Nx, Ny, 2, 2)).copy()
+        for bc_variant in (periodic_bc(dimension=2), dirichlet_bc(dimension=2), no_flux_bc(dimension=2)):
+            np.testing.assert_array_equal(
+                diffusion(m, Sigma_const, [dx, dy], bc=bc_variant),
+                diffusion(m, Sigma_field, [dx, dy], bc=bc_variant),
+            )
+
+        # (2) Closed form for a genuinely varying coefficient. For isotropic D(s) = alpha + beta*s
+        # varying along one array axis and u = c*s^2 in the same coordinate, the divergence-form
+        # operator gives d/ds(D du/ds) = 2c(alpha + 2 beta s) exactly.
+        # u is quadratic on purpose: with u linear the face-averaged and the cell-valued face
+        # coefficient agree identically (both give c*beta), so a linear probe cannot see the
+        # face averaging at all. Quadratic u separates them by 0.08 here.
+        alpha, beta, c, h, N = 0.05, 0.4, 2.0, 0.1, 9
+        s = np.arange(N) * h
+        for axis in (0, 1):
+            coeff_1d = alpha + beta * s
+            profile = coeff_1d[:, None] * np.ones((1, N)) if axis == 0 else np.ones((N, 1)) * coeff_1d[None, :]
+            u_quad = c * (s[:, None] ** 2 * np.ones((1, N)) if axis == 0 else np.ones((N, 1)) * s[None, :] ** 2)
+            exact = 2 * c * (alpha + 2 * beta * (s[:, None] if axis == 0 else s[None, :])) * np.ones((N, N))
+            Sigma_var = np.zeros((N, N, 2, 2))
+            Sigma_var[..., 0, 0] = profile
+            Sigma_var[..., 1, 1] = profile
+            r_var = diffusion(u_quad, Sigma_var, [h, h], bc=no_flux_bc(dimension=2))
+            # Measured max deviation 6.4e-15 on both axes; atol 1e-10 is >15000x margin.
+            np.testing.assert_allclose(r_var[1:-1, 1:-1], exact[1:-1, 1:-1], atol=1e-10)
 
 
 class TestCrossDiffusion:
@@ -201,6 +260,14 @@ class TestBoundaryConditions:
         assert result.shape == m.shape
         assert np.all(np.isfinite(result))
 
+        # No flux through the boundary means the integral of the divergence vanishes
+        # (divergence theorem) -- the property the FP side of every MFG problem here relies on.
+        # Measured |sum| <= 2.5e-16 (worst over 300 random 8x8 draws); 1e-12 is a ~4000x margin.
+        # This discriminates the BC rather than merely holding: the same expression under
+        # dirichlet_bc measures ~3.1 on the same input, so a silent degradation of the no-flux
+        # ghost treatment to the Dirichlet one fails here.
+        assert abs(np.sum(result) * dx * dy) < 1e-12
+
 
 class TestNDDispatcher:
     """Test nD dispatcher function."""
@@ -208,8 +275,9 @@ class TestNDDispatcher:
     def test_1d_fallback(self):
         """Test 1D case falls back to scalar diffusion."""
         Nx = 20
-        m = np.random.rand(Nx)
-        dx = [0.1]
+        x = np.linspace(0, 1, Nx, endpoint=False)
+        m = np.sin(2 * np.pi * x)
+        dx = [x[1] - x[0]]
 
         # 1D "tensor" is just a scalar
         sigma_tensor = 0.1
@@ -222,6 +290,13 @@ class TestNDDispatcher:
         assert result.shape == m.shape
         assert np.all(np.isfinite(result))
 
+        # Pin the scalar fast path exactly: D * (three-point stencil with periodic wrap).
+        # RFC #1596 -- coeff IS the PDE coefficient D, applied with no internal squaring,
+        # so a re-introduced sigma-squaring (the #1549 shape-flip) fails here immediately.
+        expected = 0.1 * (np.roll(m, -1) - 2 * m + np.roll(m, 1)) / dx[0] ** 2
+        # Measured max deviation 4.4e-16 against a signal of amplitude 3.9; atol 1e-14 is ~20x margin.
+        np.testing.assert_allclose(result, expected, atol=1e-14)
+
     def test_3d_tensor_diffusion(self):
         """Test that 3D tensor diffusion works (nD implementation)."""
         m = np.random.rand(5, 5, 5)
@@ -233,6 +308,23 @@ class TestNDDispatcher:
         result = diffusion(m, sigma_tensor, dx, bc=bc)
         assert result.shape == m.shape
         assert np.all(np.isfinite(result))
+
+        # Polynomial oracle for the nD branch (_tensor_diffusion_nd, taken for d >= 3).
+        # For u = x^2+y^2+z^2 the exact answer is D*Δu = 0.1*6 = 0.6, constant.
+        g = np.linspace(0, 1, 7)
+        h = g[1] - g[0]
+        X, Y, Z = np.meshgrid(g, g, g, indexing="ij")
+        result_iso = diffusion(X**2 + Y**2 + Z**2, 0.1 * np.eye(3), [h, h, h], bc=periodic_bc(dimension=3))
+        # Measured interior deviation 5.8e-15; atol 1e-12 is ~170x margin.
+        np.testing.assert_allclose(result_iso[1:-1, 1:-1, 1:-1], 0.6, atol=1e-12)
+
+        # Axis pin: in the nD branch tensor axis i acts on ARRAY axis i, so D = diag(0.3, 0.1, 0.05)
+        # gives 2*D[i,i] on the corresponding quadratic. (The 2D branch uses the OPPOSITE
+        # convention -- see TestAnisotropic2D.test_constant_anisotropic_tensor.)
+        D = np.diag([0.3, 0.1, 0.05])
+        for field, expected in ((X**2, 0.6), (Y**2, 0.2), (Z**2, 0.1)):
+            r = diffusion(field, D, [h, h, h], bc=periodic_bc(dimension=3))
+            np.testing.assert_allclose(r[1:-1, 1:-1, 1:-1], expected, atol=1e-12)
 
 
 class TestMassConservation:

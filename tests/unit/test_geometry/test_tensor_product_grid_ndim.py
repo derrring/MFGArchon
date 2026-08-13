@@ -112,7 +112,13 @@ class TestNDimensionalGrids:
         assert mesh[3].shape == (3, 4, 5, 6)
 
     def test_bounds_correctness_5d(self):
-        """Test that grid points respect bounds in 5D."""
+        """Each of the five disjoint bound intervals is spanned exactly, not merely respected.
+
+        Containment alone is satisfied by a degenerate grid -- one that collapsed every axis
+        onto its lower bound is inside every interval. Asserting the endpoints and the count of
+        distinct values per axis rules that out, while the intervals being pairwise disjoint
+        still catches a per-axis mix-up in flatten().
+        """
         bounds = [(0.0, 1.0), (-1.0, 1.0), (2.0, 3.0), (-0.5, 0.5), (10.0, 20.0)]
         grid = TensorProductGrid(bounds=bounds, Nx_points=[4] * 5, boundary_conditions=no_flux_bc(dimension=5))
 
@@ -121,6 +127,11 @@ class TestNDimensionalGrids:
         for d in range(5):
             assert np.all(flat_points[:, d] >= bounds[d][0])
             assert np.all(flat_points[:, d] <= bounds[d][1])
+            # Endpoints reached exactly (measured exact on both ends of all five axes).
+            assert flat_points[:, d].min() == pytest.approx(bounds[d][0])
+            assert flat_points[:, d].max() == pytest.approx(bounds[d][1])
+            # Nx_points=4 distinct coordinates on this axis, so the axis did not collapse.
+            assert len(np.unique(flat_points[:, d])) == 4
 
     def test_spacing_4d(self):
         """Test uniform spacing in 4D."""

@@ -135,6 +135,18 @@ def test_distribution_comparator_kl_divergence_stability():
 
     assert np.isfinite(kl_div)
 
+    # Closed form, computed independently of the implementation. The two zero-mass entries of p
+    # must contribute only O(epsilon), so the smoothed result has to agree with the epsilon-free
+    # KL of the surviving support:
+    #   0.99 * ln(0.99/0.5) + 0.01 * ln(0.01/0.3) = 0.99*ln(1.98) + 0.01*ln(1/30)
+    expected = 0.99 * np.log(1.98) + 0.01 * np.log(1 / 30)
+    # Measured: implementation returns 0.6422539023868002 against a closed form of
+    # 0.6422539024427578, i.e. 5.6e-11 -- the O(epsilon) tail. atol 1e-9 is ~18x margin.
+    # This pins what isfinite cannot: the logarithm is natural (base 10 would give 0.2789),
+    # the zero-mass terms stay O(epsilon) instead of becoming a finite artefact, and epsilon
+    # itself stays at 1e-12 (at 1e-6 the tail alone is 2.3e-5 and this fails).
+    assert kl_div == pytest.approx(expected, abs=1e-9)
+
 
 @pytest.mark.unit
 def test_distribution_comparator_statistical_moments_gaussian():
@@ -346,14 +358,33 @@ def test_stochastic_convergence_monitor_check_convergence():
 @pytest.mark.unit
 def test_stochastic_convergence_monitor_insufficient_iterations():
     """Test convergence check with insufficient iterations."""
-    monitor = RollingConvergenceMonitor(min_iterations=10)
+    # min_iterations must be the ONLY thing holding convergence back, so that the assertion
+    # below is about the gate this test is named for. With the default window_size=10 and
+    # median_tolerance=1e-4, five iterations of 0.001 are refused by three independent
+    # mechanisms at once (iteration count, unfilled window, tolerance) and removing the
+    # min_iterations gate entirely would not move the result.
+    # Here window_size=5 so the window is FULL at five iterations, and both tolerances are
+    # loose enough to be satisfied.
+    monitor = RollingConvergenceMonitor(window_size=5, min_iterations=10, median_tolerance=1.0, quantile_tolerance=1.0)
 
     for _i in range(5):
         monitor.add_iteration(0.001, 0.001)
 
-    has_converged, _diagnostics = monitor.check_convergence()
+    has_converged, diagnostics = monitor.check_convergence()
 
     assert not has_converged
+    assert diagnostics["status"] == "insufficient_history"
+    assert diagnostics["iterations"] == 5
+
+    # Feeding the remaining five must flip it. The flip is what shows the test is not passing
+    # for some fourth unrelated reason: the only quantity that changed is the iteration count.
+    for _i in range(5):
+        monitor.add_iteration(0.001, 0.001)
+
+    has_converged, diagnostics = monitor.check_convergence()
+
+    assert has_converged
+    assert diagnostics["status"] == "converged"
 
 
 # =============================================================================
@@ -515,6 +546,16 @@ def test_adaptive_convergence_wrapper_particle_detection():
 
     # Wrapper wraps the solver internally
     assert wrapper._wrapped_solver is mock_solver
+
+    # Detection FAILS here, and that is the fact worth pinning. The attribute scan awards this
+    # solver exactly 0.3 for carrying `particles` and `num_particles`, and the decision is the
+    # strict `has_particles = detection_info["confidence"] > 0.3`, so a solver sitting exactly
+    # on the threshold is classified classical. Nudge the increment or relax `>` to `>=` and a
+    # whole family of solvers silently changes convergence regime.
+    assert wrapper.get_convergence_mode() == "classical"
+    assert wrapper._particle_mode is False
+    assert wrapper.get_detection_info()["confidence"] == pytest.approx(0.3)
+    assert wrapper.get_detection_info()["particle_components"] == ["attribute:num_particles", "attribute:particles"]
 
 
 # =============================================================================
@@ -710,6 +751,16 @@ def test_edge_case_zero_distribution():
 
     assert np.isfinite(wasserstein)
     assert np.isfinite(moments["mean"])
+
+    # isfinite is the real subject (wasserstein_1d guards the 0/0 with
+    # `p = p / np.sum(p) if np.sum(p) > 0 else p`), but the guard embeds a convention that
+    # nothing states: a zero distribution is left as the ZERO MEASURE, not renormalised to
+    # uniform. So P_cdf is identically 0 while Q_cdf = [0.1, 0.2, ..., 1.0], giving
+    # W = sum(Q_cdf) * dx = 5.5 / 9. Renormalising p to uniform instead would give W = 0 --
+    # also finite, which is exactly why isfinite cannot record which branch is live.
+    assert wasserstein == pytest.approx(5.5 / 9, rel=1e-12)
+    assert moments["mean"] == 0.0
+    assert moments["variance"] == 0.0
 
 
 # =============================================================================
@@ -945,6 +996,13 @@ def test_adaptive_convergence_wrapper_get_detection_info():
 
     assert isinstance(info, dict)
 
+    # get_detection_info is `return self._detection_info or {}`, so isinstance(info, dict) is
+    # satisfied precisely when detection did NOT happen -- the empty-dict fallback. Requiring
+    # the keys is what catches that fallback firing.
+    assert set(info) >= {"confidence", "detection_methods", "particle_components"}
+    # And the accessor must hand back what the detector produced, not a reshaped copy.
+    assert info == SolverTypeDetector.detect_particle_methods(solver)[1]
+
 
 @pytest.mark.unit
 def test_adaptive_convergence_decorator_usage():
@@ -963,6 +1021,22 @@ def test_adaptive_convergence_decorator_usage():
     solver = TestSolver()
 
     assert hasattr(solver, "_convergence_wrapper")
+
+    wrapper = solver._convergence_wrapper
+    assert wrapper.classical_tol == 1e-4
+
+    # This decorated class defines `solve`, so it is the only test in this file that reaches
+    # the solve-wrapping branch of ConvergenceWrapper._wrap_solver (the CustomSolver in
+    # test_adaptive_convergence_decorator_with_parameters has no solve method). Pin both
+    # halves of the swap: the adaptive solve is installed on the instance, and the original
+    # is preserved rather than lost.
+    assert solver.solve.__func__ is ConvergenceWrapper._adaptive_solve
+    assert wrapper._original_solve is not solver.solve
+
+    U, M, info = wrapper._original_solve()
+    assert U.shape == (10, 10)
+    assert M.shape == (10, 10)
+    assert info == {}
 
 
 # =============================================================================

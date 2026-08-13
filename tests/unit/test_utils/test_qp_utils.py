@@ -265,7 +265,17 @@ class TestQPSolver:
         assert np.allclose(x1, x2, atol=0.1)
 
     def test_solver_diagonal_weights(self):
-        """Test solver with diagonal weight vectors."""
+        """Diagonal weights given as a VECTOR must reproduce the weighted normal equations.
+
+        This is the only solver test that passes W as a vector rather than a matrix (every
+        other one uses ``W = np.eye(n)``), and shape + finiteness cannot tell whether the
+        weights were applied at all. The closed form separates the two decisively: over 200
+        unseeded draws the solver matched it to 5.2e-15 worst case, while the UNWEIGHTED lstsq
+        solution never came closer than 0.039 to it -- so the assertion below discriminates
+        "weights applied" from "weights ignored" by seven orders of magnitude, and also catches
+        W_diag being misread as a full matrix. Same pattern as
+        ``test_solver_unconstrained_scipy``, which pins the W = I case against lstsq.
+        """
         solver = QPSolver(backend="scipy-lbfgsb", enable_warm_start=False)
 
         A = np.random.randn(20, 5)
@@ -278,6 +288,10 @@ class TestQPSolver:
         # Check solution is reasonable
         assert x.shape == (5,)
         assert np.all(np.isfinite(x))
+
+        # (A^T W A) x = A^T W b, measured worst case 5.2e-15; margin ~2e6 to the tolerance.
+        x_star = np.linalg.solve(A.T @ (W_diag[:, None] * A), A.T @ (W_diag * b))
+        np.testing.assert_allclose(x, x_star, atol=1e-8)
 
     def test_solver_statistics_reset(self):
         """Test statistics reset."""

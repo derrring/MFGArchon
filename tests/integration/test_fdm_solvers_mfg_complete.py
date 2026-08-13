@@ -89,12 +89,38 @@ class TestFDMSolversMFGIntegration:
         # Density should be non-negative everywhere
         assert np.all(M >= -1e-10), "Density contains negative values"
 
+        # Non-negativity alone is one-sided: any non-negative garbage passes it (measured min M =
+        # 8.06e-04 here, comfortably clear of the bound). The no-flux BC also owes conservation --
+        # zero flux through both walls means the total mass is invariant in time. Measured drift
+        # 8.882e-16 on this exact configuration, so 1e-12 is a machine-precision pin with three
+        # orders of margin, and it fires on any break of the flux-integral consistency of the FP
+        # matrix rows at the walls (pointwise ghost-cell extrapolation does NOT guarantee it).
+        dx = problem.geometry.get_grid_spacing()[0]
+        mass = np.sum(M * dx, axis=1)
+        drift = np.max(np.abs(mass / mass[0] - 1))
+        assert drift < 1e-12, f"no-flux mass leak: {drift:.3e}"
+
     def test_fdm_periodic_bc_solution(self):
-        """Test FDM solution with periodic boundary conditions."""
+        """Test FDM solution with periodic boundary conditions.
+
+        The geometry carries the periodic BC too, not only the FP solver. HJB and FP are an
+        adjoint pair and their boundary conditions are dual, so handing the FP solver a periodic
+        BC while the HJB solver reads no-flux off the geometry solves neither system: the old
+        configuration here did exactly that.
+
+        The initial density sits off centre (0.3), because a centred Gaussian on a symmetric grid
+        makes wrap and reflect produce the same wall values -- the data has to be able to tell the
+        boundary treatments apart before any assertion about them means anything.
+        """
         geometry = TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1)
+            bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=periodic_bc(dimension=1)
         )  # Nx=40 -> 41 points
-        problem = MFGProblem(geometry=geometry, components=_default_components(), T=1.0, Nt=30)
+        components = MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (x - 0.3) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=_default_hamiltonian(),
+        )
+        problem = MFGProblem(geometry=geometry, components=components, T=1.0, Nt=30)
 
         bc = periodic_bc()
         fp_solver = FPFDMSolver(problem, boundary_conditions=bc)
@@ -109,6 +135,17 @@ class TestFDMSolversMFGIntegration:
         U, M = result[:2]
         assert np.all(np.isfinite(U))
         assert np.all(np.isfinite(M))
+
+        # A closed domain has no boundary to leak through, so total mass is invariant in time.
+        # Measured on this exact configuration: 3.603e-04, deterministic to the last digit across
+        # runs, so 1e-3 has 2.8x margin. Note the size of that residual -- the no-flux path in
+        # test_fdm_solution_non_negativity conserves to 8.9e-16 on the same solver, so the
+        # periodic FP assembly is NOT conservative to machine precision. This assertion documents
+        # that gap rather than hiding it; tightening it is a product question, not a test one.
+        dx = problem.geometry.get_grid_spacing()[0]
+        mass = np.sum(M * dx, axis=1)
+        drift = np.max(np.abs(mass / mass[0] - 1))
+        assert drift < 1e-3, f"periodic mass leak: {drift:.3e}"
 
     @pytest.mark.slow
     @pytest.mark.xfail(reason="Unified BC API not fully integrated with 1D FDM solver")
@@ -153,8 +190,24 @@ class TestFDMSolversCoupling:
 
         result = mfg_solver.solve(max_iterations=15, tolerance=1e-5)
 
-        # Should converge (result not None indicates convergence or max iterations)
         assert result is not None
+
+        # This test does NOT get to assert `result.converged`, and that is a finding, not an
+        # omission. Measured on this exact configuration: converged=False after all 15 iterations,
+        # with error_history_U RISING 4.573e-01 -> 8.944e+01 while error_history_M falls
+        # 1.238e+00 -> 4.138e-03 -- the value function is diverging while the density looks
+        # settled, and the inner HJB Newton reports its residual stopped decreasing (Issue #1745).
+        # Asserting convergence here would just paint the suite red over a known defect.
+        #
+        # What the solve does still owe, divergence or not, is conservation: the no-flux walls let
+        # no mass out whatever the Picard loop does with u. Measured drift 9.992e-16, so 1e-12 is
+        # a machine-precision pin with three orders of margin, and unlike the old `is not None` it
+        # separates a wrong answer of the right shape from a right one.
+        _U, M = result[:2]
+        dx = problem.geometry.get_grid_spacing()[0]
+        mass = np.sum(M * dx, axis=1)
+        drift = np.max(np.abs(mass / mass[0] - 1))
+        assert drift < 1e-12, f"no-flux mass leak: {drift:.3e}"
 
 
 class TestFDMSolversNumericalProperties:

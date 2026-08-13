@@ -265,6 +265,22 @@ class TestNumericalStability:
         # Check that density stays positive
         assert np.all(result.M >= -1e-10), "Density should remain non-negative"
 
+        # Both checks above are properties the REPAIR supplies rather than the physics -- the
+        # point test_centered_fdm_may_oscillate below records from the other side: isfinite plus
+        # a non-negativity bound passed there while the clip fabricated 0.013% of the mass per
+        # firing, and "only mass can" distinguish that from a healthy solve. So assert mass.
+        M = np.asarray(result.M)
+        dx = 1.0 / 40
+        mass = M.sum(axis=1) * dx
+        # Measured max|mass - mass[0]| = 2.7e-15 (mass[0] = 1.0 exactly); 1e-12 is a ~375x margin.
+        assert np.max(np.abs(mass - mass[0])) < 1e-12, "no-flux upwind FP must conserve mass"
+
+        # Strict positivity, which is the discriminating form: clip_nonnegative_or_raise returns
+        # np.maximum(density, 0.0), so a clipped entry is exactly 0.0 and the `>= -1e-10` bound
+        # above cannot see it, while `> 0` can. Measured min M = 6.4e-07 with zero entries equal
+        # to 0.0, i.e. the clip never fired on this configuration.
+        assert M.min() > 0.0, "a strictly positive density means the non-negativity clip never fired"
+
     def test_centered_fdm_may_oscillate(self):
         """Centered FDM oscillates here, and the FP solver now refuses rather than repairing it.
 

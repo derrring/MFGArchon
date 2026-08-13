@@ -93,10 +93,15 @@ class TestLoggerCreation:
         assert MFGLogger._loggers[logger_name] is logger
 
     def test_repeated_get_logger_returns_same_instance(self):
-        """Calling get_logger twice should return the same logger."""
+        """Calling get_logger twice should return the same logger, already configured (Issue #620)."""
         logger1 = get_logger("test.repeated")
+        n = len(logger1.handlers)
         logger2 = get_logger("test.repeated")
         assert logger1 is logger2
+        # Identity alone is guaranteed by stdlib getLogger; what get_logger owes is a CONFIGURED
+        # logger, which a bare logging.getLogger (0 handlers, propagate=True) would not be.
+        assert len(logger2.handlers) == n == 1
+        assert logger2.propagate is False
 
 
 class TestHandlerDeduplication:

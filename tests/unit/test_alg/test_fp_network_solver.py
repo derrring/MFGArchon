@@ -298,12 +298,29 @@ class TestFPNetworkSolverSolveFPSystem:
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
 
-        m_initial = np.ones(num_nodes) / num_nodes
+        # A ramp, not a uniform density: the uniform state is an exact fixed point of the graph
+        # Laplacian (measured max|M - m0| = 0.0), so the explicit step could violate its stability
+        # limit by any margin and isfinite would stay green.
+        m_initial = np.arange(1, num_nodes + 1, dtype=float)
+        m_initial /= m_initial.sum()
         U_solution = np.zeros((Nt, num_nodes))
 
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
         assert np.all(np.isfinite(M_solution))
+
+        # External oracle: with zero drift this is the graph heat equation, whose exact solution is
+        # exp(-D*L*T) @ m0. L is rebuilt here from the 3x3 grid's Cartesian-product structure
+        # (P3 x P3) rather than read off the solver, so the check also covers the assembled
+        # operator. Measured agreement 2.2e-07; an identity map scores 8.8e-04 and a 2x-wrong D
+        # scores 8.8e-04, both ~88x above the tolerance used here.
+        path_laplacian = np.array([[1.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 1.0]])
+        identity = np.eye(3)
+        laplacian = np.kron(path_laplacian, identity) + np.kron(identity, path_laplacian)
+        eigenvalues, eigenvectors = np.linalg.eigh(laplacian)
+        heat_kernel = eigenvectors @ np.diag(np.exp(-solver.diffusion_coefficient * problem.T * eigenvalues))
+        exact_final = heat_kernel @ eigenvectors.T @ m_initial
+        assert np.max(np.abs(M_solution[-1] - exact_final)) < 1e-5
 
     def test_solve_with_non_zero_drift(self):
         """Test solving with non-zero drift field."""
@@ -321,13 +338,29 @@ class TestFPNetworkSolverSolveFPSystem:
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
 
-        # Create non-zero drift
+        # Create non-zero drift (seeded: the numbers below are only repeatable if it is)
         m_initial = np.ones(num_nodes) / num_nodes
-        U_solution = np.random.rand(Nt, num_nodes)
+        rng = np.random.default_rng(0)
+        U_solution = rng.random((Nt, num_nodes))
 
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
         assert np.all(np.isfinite(M_solution))
+
+        # The uniform datum is an exact fixed point of the pure-diffusion part (measured: with
+        # U = 0 the solve returns it to 5.4e-16), so every departure from uniform here is the
+        # advection term and nothing else. Measured 2.4e-02. Without this the two assertions
+        # below also hold for a solver that drops the drift.
+        assert np.max(np.abs(M_solution - m_initial)) > 1e-3
+
+        # Advection is what breaks conservation, so this is the law worth pinning on the one
+        # non-degenerate configuration in the class. Measured deviation 2.4e-15.
+        mass = M_solution.sum(axis=1)
+        assert np.max(np.abs(mass - mass[0])) < 1e-9
+
+        # Strictly positive, not merely non-negative: the solver's positivity guard clips to
+        # exactly 0.0, so this fails the moment it fires. Measured minimum 0.0944.
+        assert M_solution.min() > 0.0
 
     def test_invalid_scheme_raises_error(self):
         """Issue #1541: an unsupported scheme is rejected at construction (fail loud), not silently
@@ -423,13 +456,24 @@ class TestFPNetworkSolverNumericalProperties:
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
 
-        m_initial = np.ones(num_nodes) / num_nodes
+        # Concentrated datum. A uniform one is an exact fixed point of the graph Laplacian
+        # (measured max|M - m0| = 5.4e-16), so positivity would be inherited from the input
+        # rather than produced by the solve.
+        m_initial = np.zeros(num_nodes)
+        m_initial[num_nodes // 2] = 1.0
         U_solution = np.zeros((Nt, num_nodes))
 
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
         # Density should be non-negative (with small tolerance for numerical errors)
         assert np.all(M_solution >= -1e-10)
+
+        # Strictly positive after the first step. The bound above is imposed rather than computed
+        # -- the positivity guard clips to exactly 0.0 -- so it holds by construction and cannot
+        # tell a healthy solve from one the clip repaired. The heat semigroup of a connected graph
+        # is positivity improving, so every node must carry mass once t > 0 (row 0 is the datum,
+        # which is 0 at 8 of the 9 nodes). Measured minimum over the evolved rows: 4.8e-05.
+        assert M_solution[1:].min() > 0.0
 
 
 class TestFPNetworkSolverDifferentNetworks:
@@ -475,12 +519,33 @@ class TestFPNetworkSolverDifferentNetworks:
         Nt = problem.Nt + 1
         num_nodes = problem.num_nodes
 
-        m_initial = np.ones(num_nodes) / num_nodes
+        # Topology, which isfinite cannot see: a 4x4 grid wrapped into a torus is 4-regular.
+        # Measured degrees are 4 at all 16 nodes with periodic=True, against
+        # [2,3,3,2,3,4,4,3,3,4,4,3,2,3,3,2] without it, so this fails the moment the wrap is lost.
+        degrees = np.asarray(solver.adjacency_matrix.sum(axis=1)).ravel()
+        np.testing.assert_array_equal(degrees, 4)
+
+        # A ramp, not a uniform density, which is an exact fixed point of the Laplacian.
+        m_initial = np.arange(1, num_nodes + 1, dtype=float)
+        m_initial /= m_initial.sum()
         U_solution = np.zeros((Nt, num_nodes))
 
         M_solution = solver.solve_fp_system(m_initial, U_solution)
 
         assert np.all(np.isfinite(M_solution))
+
+        # External oracle: the heat kernel of the 4x4 discrete torus, diagonalised by the 2D DFT
+        # with eigenvalues (2 - 2cos(2*pi*j/4)) + (2 - 2cos(2*pi*k/4)). Built from the requested
+        # geometry alone -- no solver matrix enters -- so it also fails if the wiring is wrong.
+        # Measured agreement 4.6e-05; the non-periodic wiring scores 5.0e-03 against this same
+        # kernel and no evolution at all scores 6.8e-03, both ~10x above the tolerance here.
+        width = 4
+        frequencies = 2 * np.pi * np.arange(width) / width
+        eigenvalues = (2 - 2 * np.cos(frequencies))[:, None] + (2 - 2 * np.cos(frequencies))[None, :]
+        decay = np.exp(-solver.diffusion_coefficient * problem.T * eigenvalues)
+        spectrum = np.fft.fft2(m_initial.reshape(width, width)) * decay
+        exact_final = np.real(np.fft.ifft2(spectrum)).ravel()
+        assert np.max(np.abs(M_solution[-1] - exact_final)) < 5e-4
 
 
 class TestFPNetworkSolverAbsorbingNodeBC:

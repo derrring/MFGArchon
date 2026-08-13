@@ -352,7 +352,15 @@ class TestRobinBC:
         #        = (1 - 1 + 4) / (1 + 4) = 4/5 = 0.8
         # Note: sign changes for min vs max boundary
         assert padded.shape == (7, 7)
-        # Ghost cells should be different from interior due to Robin BC
+        # The derivation above is NOT asserted, and the comment that used to stand here ("ghost
+        # cells should be different from interior due to Robin BC") is false as measured:
+        # padded[3, 0] and padded[3, -1] both come back as 1.0, exactly the interior value. On a
+        # non-uniform field the left ghost column is field[:, 1], i.e. the Neumann mirror, so the
+        # mixed condition is being dropped rather than applied. Three values disagree here --
+        # this docstring's 0.8, RobinCalculator(alpha=1, beta=1, rhs_value=0.5).compute(
+        # interior_value=1.0, dx=0.25, side="min") = 0.888888888888889, and the applicator's 1.0
+        # -- and pinning against the calculator (the owner of the formula) needs the applicator
+        # fixed first.
 
     def test_robin_reduces_to_dirichlet(self):
         """Test that Robin with beta=0 is equivalent to Dirichlet."""

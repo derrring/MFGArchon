@@ -378,6 +378,20 @@ class TestCSGOperations:
         # Verify all particles in base domain
         assert np.all((particles >= 0) & (particles <= 1))
 
+        # The two assertions above constrain only the SUPPORT: three copies of the corner point
+        # (0.01, 0.01) satisfy both.  What sample_uniform promises is the distribution, so check
+        # it against an external oracle -- the exact area fraction of the annulus 0.2 < |x-c| < r
+        # inside the navigable region, which has area 1 - pi*0.2^2.
+        assert particles.shape == (1000, 2)
+        navigable_area = 1.0 - np.pi * 0.2**2
+        for r in (0.3, 0.4):
+            analytic = np.pi * (r**2 - 0.2**2) / navigable_area
+            empirical = np.mean(dists < r)
+            assert abs(empirical - analytic) < 0.05, f"r={r}: sampled {empirical:.4f} vs exact {analytic:.4f}"
+        # Measured at seed=42: r=0.3 gives 0.1810 vs 0.1797, r=0.4 gives 0.4230 vs 0.4312.  The
+        # binomial sigma at n=1000 is ~0.015, so 0.05 is a ~3-sigma band; the seed makes the test
+        # deterministic, and the worst deviation over 30 other seeds is 0.031, still inside it.
+
     def test_difference_domain_empty_raises(self):
         """Issue #1077 (c): DifferenceDomain with empty navigable region must fail fast.
 
