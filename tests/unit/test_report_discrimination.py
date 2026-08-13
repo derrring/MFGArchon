@@ -19,6 +19,10 @@ _spec = importlib.util.spec_from_file_location("report_discrimination", _SCRIPT)
 rd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rd)
 
+# A minimal `_measured_at`, so a test that is about parsing does not also depend on the shipped
+# baseline's contents. Tests that are about the population read the real one.
+_MEASURED = {"paths": ["tests"], "markers": "not slow", "excluded": "tests/unit/x.py"}
+
 
 def test_it_reports_the_denominator_and_the_commit(capsys, monkeypatch):
     """A fraction without its population is the defect this line exists to avoid printing."""
@@ -93,10 +97,11 @@ def test_the_collect_parser_handles_both_pytest_summary_forms():
 
         class _Fake:
             stdout = line
+            returncode = 0
 
         subprocess.run = lambda *a, **k: _Fake()
         try:
-            assert rd._current_collected() == expected, f"failed to parse: {line!r}"
+            assert rd._current_collected(_MEASURED) == expected, f"failed to parse: {line!r}"
         finally:
             subprocess.run = real
 
@@ -149,6 +154,7 @@ def test_the_staleness_check_uses_the_same_exclusion_the_baseline_recorded(monke
 
     class _Fake:
         stdout = "6141/6551 tests collected (410 deselected) in 1.7s"
+        returncode = 0
 
     def spy(*args, **kwargs):
         seen["argv"] = args[0]
@@ -159,12 +165,73 @@ def test_the_staleness_check_uses_the_same_exclusion_the_baseline_recorded(monke
     real = subprocess.run
     subprocess.run = spy
     try:
-        excluded = json.loads(rd.BASELINE.read_text())["_measured_at"]["excluded"]
-        rd._current_collected(excluded)
+        measured = json.loads(rd.BASELINE.read_text())["_measured_at"]
+        rd._current_collected(measured)
     finally:
         subprocess.run = real
-    assert "--ignore" in seen["argv"], "the exclusion is not passed to the collect"
-    assert excluded in seen["argv"], f"{excluded} not in {seen['argv']}"
+    argv = seen["argv"]
+    assert "--ignore" in argv, "the exclusion is not passed to the collect"
+    # `excluded` was threaded and the two keys beside it in the same dict were not: `paths` and
+    # `markers` stayed literals, and review (#1905) mutated the marker set five ways -- deleting
+    # `-m` entirely, dropping `not slow`, adding `not manual`, and changing the path -- with all
+    # 13 tests green through every one, because no test reached the real argv. They were
+    # byte-identical to the gate's set at the time, so no number was wrong; `d345063f` adds
+    # `and not manual` and rewrites this baseline's `markers`, at which point `then` and `now`
+    # would be counted over different marker expressions with the difference reported as suite
+    # drift. Assert the whole population, not the one key that was noticed first.
+    assert measured["excluded"] in argv, f"{measured['excluded']} not in {argv}"
+    assert measured["markers"] in argv, f"the recorded marker set is not what was collected: {argv}"
+    for path in measured["paths"]:
+        assert path in argv, f"the recorded path {path!r} is not what was collected: {argv}"
+
+
+def test_a_broken_collection_is_not_reported_as_a_shrinking_suite():
+    """pytest prints a summary for the PARTIAL population when collection errors.
+
+    One un-importable module gives `2 tests collected, 1 error` and a returncode of 2. Read as
+    a count, that becomes "the suite has since moved 5872 -> 2 (-100.0%)": a confident claim
+    that the suite shrank, when what happened is that collection broke. The sibling instrument
+    over the same artifacts already guards this (`test_discrimination.py`, "Nothing below would
+    be a measurement"); this one had dropped it. Found by review (#1905).
+    """
+    import subprocess
+
+    class _Broken:
+        stdout = "2 tests collected, 1 error in 0.07s"
+        returncode = 2
+
+    class _Fine:
+        stdout = "2 tests collected in 0.07s"
+        returncode = 0
+
+    real = subprocess.run
+    try:
+        subprocess.run = lambda *a, **k: _Broken()
+        assert rd._current_collected(_MEASURED) is None, (
+            "a partial count from a broken collection was returned as a suite size"
+        )
+        # Control: the same stdout with a clean exit MUST still parse, or the guard is just
+        # breaking the parser rather than distinguishing the two cases.
+        subprocess.run = lambda *a, **k: _Fine()
+        assert rd._current_collected(_MEASURED) == 2, "the guard also rejects a healthy collection"
+    finally:
+        subprocess.run = real
+
+
+def test_an_unrecorded_population_returns_no_number():
+    """`_measured_at` without `markers` cannot say what `now` would even be counted over."""
+    import subprocess
+
+    class _Fake:
+        stdout = "6141 tests collected in 1.7s"
+        returncode = 0
+
+    real = subprocess.run
+    try:
+        subprocess.run = lambda *a, **k: _Fake()
+        assert rd._current_collected({"paths": ["tests"]}) is None, "guessed a population that was not recorded"
+    finally:
+        subprocess.run = real
 
 
 def test_a_shrinking_suite_is_also_called_stale(capsys, monkeypatch):

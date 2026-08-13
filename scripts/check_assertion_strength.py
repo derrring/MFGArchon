@@ -41,15 +41,17 @@ WEAK_CALLS = {"isfinite", "isinstance", "len", "hasattr", "callable", "id", "typ
 # files under `tests/`, so the first version of this filter excluded nothing while its comment and
 # its own test both said otherwise -- and that test asserted the constant contains itself, which is
 # the tautological shape this script exists to count. Found by review (#1905).
+# Every entry must match at least one file: `test_actor`, `test_ppo` and `test_reinforcement`
+# matched zero and were removed 2026-08-13. The old control asserted only that SOME entry
+# matched, so a dead entry -- and the removal of a live one -- were both invisible; review
+# (#1905) deleted `test_training`, a real 29-test file, and the whole test file stayed green.
+# That is a reduced form of the very defect this constant was rewritten to fix.
 FROZEN = (
     "test_neural",
     "test_dgm",
     "test_pinn",
     "test_rl_",
-    "test_actor",
-    "test_ppo",
     "test_training",
-    "test_reinforcement",
 )
 
 
@@ -124,7 +126,7 @@ def scan(root: Path):
 def main() -> int:
     weak, total = scan(REPO / "tests")
     print(
-        f"assertion strength : {len(weak)} of {total} collected tests assert only what a "
+        f"assertion strength : {len(weak)} of {total} defined test functions assert only what a "
         f"well-formed WRONG answer satisfies = {100 * len(weak) / total:.1f}%"
     )
     print("                     (a review queue, not a delete list -- capability cells and")

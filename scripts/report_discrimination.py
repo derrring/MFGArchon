@@ -24,21 +24,38 @@ BASELINE = REPO / "scripts" / "discrimination_baseline.json"
 MATRIX = REPO / "scripts" / "discrimination_killmatrix.json"
 
 
-def _current_collected(excluded: str | None = None) -> int | None:
+def _current_collected(measured: dict | None = None) -> int | None:
     """Collected today over the SAME population the baseline measured.
 
-    None if it cannot be determined -- never a guess. `excluded` is `_measured_at["excluded"]`:
-    the sweep ignores its own self-test file, so a count that includes it compared 6168 against a
-    like-for-like 6141 and reported +5.0% where the truth is +4.6%. A staleness verdict taken over
-    a different denominator than the thing it judges is exactly the defect this line exists to
-    report. Found by review (#1905).
+    None if it cannot be determined -- never a guess. The population is read from
+    `_measured_at`, not restated here: `excluded`, `paths` and `markers` all come from the
+    dict the baseline shipped.
+
+    `excluded` came first, and alone: the sweep ignores its own self-test file, so a count
+    that included it compared 6168 against a like-for-like 6141 and reported +5.0% where the
+    truth is +4.6%. The other two keys sat in the same dict and were restated as literals
+    anyway -- review (#1905) mutated the marker set five ways and every one survived all 13
+    tests, because no test reaches the real subprocess. The literals were byte-identical to
+    the gate's set at the time, so no number was wrong; the divergence was already written
+    and waiting in `d345063f`, which adds `and not manual` and rewrites this baseline's
+    `markers` field. After that lands, `then` and `now` would be measured over different
+    marker expressions and the drift percentage would be partly marker drift.
+
+    A staleness verdict taken over a different denominator than the thing it judges is
+    exactly the defect this line exists to report.
     """
+    measured = measured or {}
+    excluded = measured.get("excluded")
+    paths = measured.get("paths") or ["tests"]
+    markers = measured.get("markers")
+    if not markers:
+        return None  # an unrecorded population is not a population; say nothing rather than guess
     proc = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
-            "tests",
+            *paths,
             "--collect-only",
             "-q",
             "--color=no",
@@ -48,13 +65,23 @@ def _current_collected(excluded: str | None = None) -> int | None:
             "addopts=",
             *(["--ignore", excluded] if excluded else []),
             "-m",
-            "not slow and not benchmark and not experimental and not optional_torch and not environment",
+            markers,
         ],
         cwd=REPO,
         capture_output=True,
         text=True,
         timeout=900,
     )
+    # A broken collection still prints a summary, for the PARTIAL population: one un-importable
+    # module gives `2 tests collected, 1 error` and this returned 2, which against the baseline
+    # reads "the suite has since moved 5872 -> 2 (-100.0%)" -- a confident statement that the
+    # suite shrank, when collection broke. The sibling instrument reading the same artifacts
+    # already guards this (`scripts/test_discrimination.py:441`, "Nothing below would be a
+    # measurement"); this one dropped it. The trigger is live: without numba,
+    # `mfgarchon.backends.numba_backend` failed to import and `pytest tests` hit exactly that.
+    # Found by review (#1905).
+    if proc.returncode != 0:
+        return None
     # pytest prints either "N tests collected" or "N/M tests collected (K deselected)". Take the
     # SELECTED count, N, which is the population the sweep actually runs. Parsed against a real
     # run rather than assumed -- the first version of this read `line.split()[0]` and silently
@@ -88,7 +115,7 @@ def main() -> int:
     if uncovered:
         print(f"                 {len(uncovered)} convention(s) NO test notices: {', '.join(uncovered)}")
 
-    now = _current_collected(measured.get("excluded"))
+    now = _current_collected(measured)
     if now is None:
         print("                 current suite size unknown -- the fraction above may be stale")
     elif now != then:

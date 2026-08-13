@@ -116,10 +116,28 @@ def test_the_frozen_paradigms_are_actually_excluded_not_merely_named():
 
 def test_at_least_one_real_frozen_test_file_is_excluded_from_the_repo_scan():
     """Positive control against the tree, not a fixture: the pattern must match something real."""
-    frozen_files = [
-        f for f in (pathlib.Path(cas.REPO) / "tests").rglob("test_*.py") if any(fr in str(f) for fr in cas.FROZEN)
-    ]
+    tree = list((pathlib.Path(cas.REPO) / "tests").rglob("test_*.py"))
+    frozen_files = [f for f in tree if any(fr in str(f) for fr in cas.FROZEN)]
     assert frozen_files, "FROZEN matches no file in the tree; the exclusion is inert"
+    # Per ENTRY, not per tuple. "Some entry matches" cannot see a dead entry, and cannot see a
+    # live one being deleted: review (#1905) removed `test_training` -- a real 29-test file --
+    # and every test here stayed green, while `test_actor`, `test_ppo` and `test_reinforcement`
+    # had been matching nothing since they were written. An entry that matches no file excludes
+    # nothing while reading as though it does, which is exactly what this constant was rewritten
+    # to stop. When a frozen paradigm is deleted from the tree, delete its entry in the same
+    # change -- this is the assertion that will say so.
+    dead = [fr for fr in cas.FROZEN if not any(fr in str(f) for f in tree)]
+    assert not dead, f"FROZEN entries matching no file in the tree: {dead}"
+    # The per-entry check above is one direction only: it catches a DEAD entry, not the deletion
+    # of a LIVE one. Removing `test_training` leaves every surviving entry matching something, so
+    # the assertion above stays green while a 29-test file silently re-enters the denominator.
+    # Ratchet the count, in the repo's usual shape -- a drop is a real change and must be
+    # deliberate, an increase means a frozen paradigm grew and the baseline follows it.
+    assert len(frozen_files) == 12, (
+        f"FROZEN now excludes {len(frozen_files)} files, not 12. If a frozen paradigm was deleted "
+        f"from the tree, remove its FROZEN entry and update this count in the same commit; if one "
+        f"was added, update the count. Currently matched: {sorted(str(f.name) for f in frozen_files)}"
+    )
     weak, _total = cas.scan(pathlib.Path(cas.REPO) / "tests")
     assert not any(any(fr in str(f) for fr in cas.FROZEN) for f, _, _ in weak), (
         "a frozen-paradigm test appears in the flagged set"
@@ -161,7 +179,7 @@ def test_the_printed_line_carries_its_numerator_denominator_and_percentage(capsy
     cas.main()
     out = capsys.readouterr().out
     weak, total = cas.scan(pathlib.Path(cas.REPO) / "tests")
-    assert f"{len(weak)} of {total} collected tests" in out, f"numerator/denominator pair missing: {out!r}"
+    assert f"{len(weak)} of {total} defined test functions" in out, f"numerator/denominator pair missing: {out!r}"
     assert f"{100 * len(weak) / total:.1f}%" in out, "the percentage does not match the scan"
     # The complement must NOT be what is printed: 20.6% and 79.4% are both 'a percentage'.
     assert f"{100 * (total - len(weak)) / total:.1f}%" not in out, "the fraction is inverted"
