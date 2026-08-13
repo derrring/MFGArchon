@@ -14,10 +14,12 @@ can silently stop working:
 - the mutation anchors, which are literal source text and rot when the source moves.
 """
 
+import ast
 import importlib.util
 import inspect
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -351,3 +353,269 @@ def test_every_mutation_declares_a_verify_expression(td):
     """Without it there is no way to tell a live mutation from an unapplied one."""
     for mut in td.MUTATIONS:
         assert mut.verify.strip(), f"{mut.name}: empty verify"
+
+
+# --- killer-set ratchet (#1901): the half a kill COUNT cannot express -------------------
+
+_MATRIX = {
+    "mutations": {
+        "drift_coefficient_2x": {
+            "kill_count": 2,
+            "killed": ["tests/a.py::test_alpha", "tests/a.py::test_beta"],
+            "status": "ok",
+        }
+    }
+}
+
+
+def _results(killed, status="ok"):
+    """Shaped as `main()` writes it -- key "killed", not "failed".
+
+    The first version of this fabricated "failed", matching the reader under test rather
+    than the producer. Both agreed, all six tests passed, and in production every killer
+    read as departed because `main()` writes "killed". A fixture that carries its own copy
+    of the data shape can only prove self-consistency; `test_the_reader_uses_the_key_main_writes`
+    below is the structural guard, because no value-level test can catch this.
+    """
+    return {"drift_coefficient_2x": {"status": status, "kill_count": len(killed), "killed": sorted(killed)}}
+
+
+def _baseline_for(count):
+    return {"mutations": {"drift_coefficient_2x": {"kill_count": count, "status": "ok", "owner": "x"}}}
+
+
+def test_an_equal_size_killer_swap_is_caught(td):
+    """The motivating case. `drift_coefficient_2x` held 19 -> 19 across a one-for-one swap.
+
+    One test stopped noticing the convention and a different one started. The count ratchet
+    reported no change, which is why a count is a weaker instrument than it reads (#1901).
+    """
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert problems, "an equal-size swap passed: the killer-set ratchet is not wired in"
+    assert any("STOPPED killing" in p and "test_beta" in p for p in problems), problems
+
+
+def test_a_killer_leaving_is_a_loss_even_when_the_count_rises(td):
+    """Two arriving and one leaving is a net gain by count and a real loss by coverage."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma", "tests/a.py::test_delta"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("STOPPED killing" in p for p in problems), problems
+
+
+def test_identical_killer_sets_report_nothing(td):
+    """Control: the new check must be silent when nothing moved, or it is noise."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta"])
+    assert td.compare_to_baseline(results, _baseline_for(2), _MATRIX) == []
+
+
+def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
+    """Gains trip it too, same contract as the counts -- otherwise the next baseline
+    encodes the gain as if it had always held.
+
+    The baseline is 3, not 2, on purpose: at 2 the pre-existing COUNT ratchet emits its own
+    `2 -> 3 killed [IMPROVED]` for this same input, so `any("IMPROVED" in p)` was satisfied
+    whether or not the killer-set arrival path existed at all. Independent review (#1903)
+    blanked `arrived` and this test stayed green. At 3 the count is unchanged and only the
+    arrival line can satisfy the assertion.
+    """
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta", "tests/a.py::test_gamma"])
+    problems = td.compare_to_baseline(results, _baseline_for(3), _MATRIX)
+    assert any("IMPROVED" in p for p in problems), problems
+    # Assert on the arrival line's own words, not on the ABSENCE of the count line. The first
+    # version of this guard searched for `"killed ["` while the emitted text is `"killed  ["`
+    # with two spaces, so it matched nothing and passed over a reverted baseline -- a guard
+    # written to prove the witness is not the count ratchet, which could not detect the count
+    # ratchet. Found by re-review (#1903); the wrong spacing came from this commit's own message.
+    assert any("new killer(s)" in p for p in problems), f"the witness is not the arrival line: {problems}"
+
+
+def test_an_ineffective_mutation_contributes_no_killer_noise(td):
+    """Its zeros mean nothing, and the count ratchet already reports it.
+
+    Without this the same mutation would be reported twice, once truthfully and once as a
+    mass departure that is really just 'the mutation stopped applying'.
+    """
+    results = _results([], status="INEFFECTIVE")
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("INEFFECTIVE" in p for p in problems)
+    assert not any("STOPPED killing" in p for p in problems), problems
+
+
+def test_without_a_matrix_the_comparison_itself_is_silent(td):
+    """The function degrades cleanly; `main()` is what refuses, and on a distinct code.
+
+    Split deliberately: `compare_to_baseline(..., None)` returning [] is the library
+    contract, while "do not let a half-off gate exit 0" is a policy that belongs to the
+    caller -- see `test_the_degraded_gate_cannot_exit_zero`.
+    """
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
+    assert td.compare_to_baseline(results, _baseline_for(2), None) == []
+    body = inspect.getsource(td.main)
+    assert "discrimination_killmatrix.json" in body, "main() no longer loads the matrix"
+    # Loading it is not using it. Dropping the third argument leaves the string above present
+    # -- the CANNOT MEASURE block still names the file -- so this assertion was green over a
+    # dead killer-set gate: review mutated the call to `compare_to_baseline(results, baseline)`
+    # and all 41 tests stayed green while `--check-baseline` reported "counts and killer sets"
+    # over a comparison that never saw a killer set. Fourth recurrence of pinning the function
+    # and not the call site, inside the change written to close that class.
+    #
+    # Parsed, not grepped. The first repair asserted the call text was PRESENT in the source,
+    # and `inspect.getsource` returns comments: leaving the exact line in a `# superseded:`
+    # comment while the real call dropped its argument passed all 41 tests -- the same false
+    # green in a new costume, and this file quotes code inside comments constantly. It also
+    # went red on `matrix=matrix` and on a wrapped call, both of which are correctly wired.
+    # Measured by re-review (#1903): text pin 4/6, AST pin 6/6.
+    calls = [
+        node
+        for node in ast.walk(ast.parse(textwrap.dedent(body)))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "compare_to_baseline"
+    ]
+    assert calls, "main() no longer calls compare_to_baseline at all"
+    wired = [
+        c
+        for c in calls
+        if (len(c.args) >= 3 and not (isinstance(c.args[2], ast.Constant) and c.args[2].value is None))
+        or any(k.arg == "matrix" and not (isinstance(k.value, ast.Constant) and k.value.value is None) for k in c.keywords)
+    ]
+    assert wired, (
+        "main() loads the matrix but no longer hands it to the comparison: "
+        f"{len(calls)} call(s) to compare_to_baseline, none passing a non-None matrix"
+    )
+
+
+def test_the_reader_uses_the_key_main_writes(td):
+    """The blocker in #1903's first revision, and no value-level test could see it.
+
+    `_compare_killers` read `now["failed"]` while `main()` writes `"killed"`, so `after` was
+    empty on every real run and all 220 baseline killers reported as departed on an unchanged
+    tree. The six new tests passed because their fixture fabricated `"failed"` too.
+
+    Asserted against the source of both sides, not against a fixture -- a fixture is what
+    failed here.
+    """
+    writer = inspect.getsource(td.main)
+    reader = inspect.getsource(td._compare_killers)
+    assert '"killed": sorted(run.failed)' in writer, "main() no longer writes the killer list as 'killed'"
+    assert 'now["killed"]' in reader, "the killer-set reader is not reading the key main() writes"
+    assert 'now.get("failed"' not in reader, "the reader still reads the results dict under 'failed'"
+    assert 'now["failed"]' not in reader, "the reader still reads the results dict under 'failed'"
+
+
+def test_end_to_end_an_unchanged_tree_reports_nothing(td):
+    """The integration the unit fixtures cannot give: real writer shape into real reader.
+
+    Replays the committed matrix as if the sweep had just produced it. Anything other than
+    silence means the two halves disagree about their own data, which is what shipped.
+    """
+    matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
+    baseline = json.loads(_BASELINE.read_text())
+    results = {
+        name: {
+            "owner": entry.get("owner", "x"),
+            "status": entry["status"],
+            "killed": list(entry["killed"]),
+            "kill_count": entry["kill_count"],
+        }
+        for name, entry in matrix["mutations"].items()
+    }
+    assert td.compare_to_baseline(results, baseline, matrix) == [], (
+        "an unchanged tree is not silent: the reader and the writer disagree about their shape"
+    )
+
+
+def test_a_baseline_mutation_absent_from_the_matrix_is_reported_not_skipped(td):
+    """Silently unchecked is class 2 of #1901 -- a verdict with no denominator."""
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
+    results["a_mutation_the_matrix_never_saw"] = {
+        "status": "ok",
+        "kill_count": 1,
+        "killed": ["tests/b.py::test_x"],
+        "owner": "x",
+    }
+    baseline = _baseline_for(2)
+    baseline["mutations"]["a_mutation_the_matrix_never_saw"] = {"kill_count": 1, "status": "ok", "owner": "x"}
+    problems = td.compare_to_baseline(results, baseline, _MATRIX)
+    assert any("NO matrix entry for" in p and "a_mutation_the_matrix_never_saw" in p for p in problems), problems
+    assert any("compared for 1 of 2" in p for p in problems), problems
+
+
+def test_a_rename_reports_the_arrival_too(td):
+    """Departure alone says 'investigate'; departure WITH an arrival says 'probably a rename'.
+
+    Suppressing arrivals whenever anything departed hid that distinction on exactly the case
+    the design calls its intended cost.
+    """
+    results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta_renamed"])
+    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    assert any("STOPPED killing" in p for p in problems), problems
+    assert any("a rename? regenerate" in p for p in problems), problems
+
+
+def test_the_degraded_gate_cannot_exit_zero(td):
+    """A green run with half the gate off is invisible in a three-hour log."""
+    body = inspect.getsource(td.main)
+    assert "CANNOT MEASURE" in body, "the absent-matrix path no longer announces that it cannot measure"
+    assert "sys.exit(2)" in body, "the absent-matrix path no longer exits on a code distinct from 0 and 1"
+
+
+def test_the_regeneration_instruction_regenerates_both(td):
+    """--write-baseline alone leaves the matrix stale, reddens the pinning test, and costs a
+    second ~3h sweep."""
+    body = inspect.getsource(td.main)
+    assert "--json scripts/discrimination_killmatrix.json" in body, (
+        "the failure text no longer tells the operator to regenerate the matrix too"
+    )
+
+
+def test_the_failure_parser_keeps_whole_node_ids(td):
+    """A parametrisation label can contain spaces; `\\S+?` cut the ID at the first one.
+
+    Harmless while both sides truncated identically. Not harmless once these strings are
+    compared as identities: three params sharing a prefix collapse into one set member, and
+    a kill_count of 1 stands for 3 distinct failing tests. Found by review (#1903).
+    """
+    spaced = (
+        "FAILED tests/unit/test_alg/test_hjb_howard_solver.py::"
+        "test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m), lambda=2]"
+        " - AssertionError: boom"
+    )
+    assert td._FAILED.findall(spaced) == [
+        "tests/unit/test_alg/test_hjb_howard_solver.py::"
+        "test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m), lambda=2]"
+    ]
+    # Control: three params sharing a prefix must stay three, not collapse to one.
+    trio = "\n".join(f"FAILED tests/a.py::test_p[x, case={n}] - AssertionError" for n in ("one", "two", "three"))
+    assert len(set(td._FAILED.findall(trio))) == 3, "distinct parametrisations still collapse"
+    # And the ordinary forms are untouched.
+    assert td._FAILED.findall("FAILED tests/a.py::test_plain") == ["tests/a.py::test_plain"]
+    assert td._FAILED.findall("ERROR tests/a.py::test_e - boom") == ["tests/a.py::test_e"]
+
+
+def test_no_committed_killer_id_is_truncated(td):
+    """The matrix is the gate's identity table now; a truncated entry is a silent collision."""
+    matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
+    bad = [t for v in matrix["mutations"].values() for t in v.get("killed", ()) if t.count("[") != t.count("]")]
+    assert not bad, f"truncated killer IDs in the committed matrix: {bad}"
+    # The same IDs are also the keys of `killed_by`, and scanning only the half above is how
+    # the first revision shipped a half-repaired file: two truncated keys survived here while
+    # `mutations[].killed` was clean, so the artifact named 214 tests for a set of 212 and this
+    # guard was green over the contradiction. Found by independent review (#1903).
+    bad_kb = [k for k in matrix["killed_by"] if k.count("[") != k.count("]")]
+    assert not bad_kb, f"truncated killer IDs among the killed_by keys: {bad_kb}"
+    # Both halves name the same population, so a repair applied to one and not the other is
+    # itself the defect -- check the identity, not just each side's well-formedness.
+    #
+    # Mirror what the producer actually builds. `killed_by` comes from `effective` alone
+    # (`status == "ok"`), while `payload["mutations"]` carries every status, so an INEFFECTIVE
+    # mutation keeps a non-empty `killed` that never reaches `killed_by`. A plain equality here
+    # would be a false red the first time a mutation goes INEFFECTIVE with kills -- and the
+    # message would blame the ID repair for something else entirely. Reachable, not theoretical:
+    # `_FAILED` matches `^ERROR ` lines, so the broken-collection case that sets INEFFECTIVE is
+    # exactly the case that fills `failed`. Found by re-review (#1903).
+    named = {t for v in matrix["mutations"].values() if v.get("status") == "ok" for t in v.get("killed", ())}
+    assert set(matrix["killed_by"]) == named, (
+        f"killed_by and the effective mutations' killed sets disagree: "
+        f"{sorted(set(matrix['killed_by']) - named)} only in killed_by, "
+        f"{sorted(named - set(matrix['killed_by']))} only in mutations"
+    )
