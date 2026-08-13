@@ -777,7 +777,15 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Calculate convergence metrics
                 from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
-                metrics = calculate_l2_convergence_metrics(self.U, U_old, self.M, M_old, grid_spacing, time_step)
+                # The Picard residual is between the MAP'S OUTPUT and its input, U_new vs U_old.
+                # `self.U` is that output after damping or Anderson, so measuring it conflates
+                # "we stopped moving" with "we reached the fixed point" -- and at theta -> 0 the
+                # first happens without the second (Issue #1684 item 7, the same shape as item 6
+                # one level up). Measured on a 21-point no-flux fixture, iteration 2: the reported
+                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as relaxation went 1.0 -> 0.1, a factor
+                # of 7.3 bought by the damping factor rather than by progress toward the fixed
+                # point. Convergence is a property of the map; damping is a property of the path.
+                metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, grid_spacing, time_step)
                 self.l2distu_abs[iiter] = metrics["l2distu_abs"]
                 self.l2distu_rel[iiter] = metrics["l2distu_rel"]
                 self.l2distm_abs[iiter] = metrics["l2distm_abs"]
