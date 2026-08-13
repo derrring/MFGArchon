@@ -431,8 +431,15 @@ def _compare_killers(results: dict, matrix: dict) -> list[str]:
     alternative, and silence is what this whole tool exists to remove.
 
     Two details are deliberately unpinned because they change no verdict, only how it reads:
-    the held/moved word and the "+N more" truncation. Everything that decides pass or fail
-    is mutation-covered; see `tests/unit/test_discrimination_ratchet.py`.
+    the held/moved word and the "+N more" truncation.
+
+    ~~Everything that decides pass or fail is mutation-covered~~ [CORRECTED 2026-08-13] --
+    that sentence was written from inside this function and was false about the one thing
+    outside it: whether `main()` hands the matrix over at all. Dropping that argument left
+    all 41 tests green while `--check-baseline` printed "counts and killer sets" over a
+    comparison that never saw a killer set. Found by independent review (#1903), now pinned
+    by `test_without_a_matrix_the_comparison_itself_is_silent`. The claim is a statement
+    about the test file, so read it there: `tests/unit/test_discrimination_ratchet.py`.
     """
     problems: list[str] = []
     base = matrix.get("mutations", {})

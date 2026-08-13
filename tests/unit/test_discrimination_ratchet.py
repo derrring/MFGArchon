@@ -409,10 +409,18 @@ def test_identical_killer_sets_report_nothing(td):
 
 def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
     """Gains trip it too, same contract as the counts -- otherwise the next baseline
-    encodes the gain as if it had always held."""
+    encodes the gain as if it had always held.
+
+    The baseline is 3, not 2, on purpose: at 2 the pre-existing COUNT ratchet emits its own
+    `2 -> 3 killed [IMPROVED]` for this same input, so `any("IMPROVED" in p)` was satisfied
+    whether or not the killer-set arrival path existed at all. Independent review (#1903)
+    blanked `arrived` and this test stayed green. At 3 the count is unchanged and only the
+    arrival line can satisfy the assertion.
+    """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta", "tests/a.py::test_gamma"])
-    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    problems = td.compare_to_baseline(results, _baseline_for(3), _MATRIX)
     assert any("IMPROVED" in p for p in problems), problems
+    assert not any("killed [" in p for p in problems), f"the count ratchet fired; the witness is not the arrival: {problems}"
 
 
 def test_an_ineffective_mutation_contributes_no_killer_noise(td):
@@ -436,7 +444,17 @@ def test_without_a_matrix_the_comparison_itself_is_silent(td):
     """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
     assert td.compare_to_baseline(results, _baseline_for(2), None) == []
-    assert "discrimination_killmatrix.json" in inspect.getsource(td.main), "main() no longer loads the matrix"
+    body = inspect.getsource(td.main)
+    assert "discrimination_killmatrix.json" in body, "main() no longer loads the matrix"
+    # Loading it is not using it. Dropping the third argument leaves the string above present
+    # -- the CANNOT MEASURE block still names the file -- so this assertion was green over a
+    # dead killer-set gate: independent review mutated the call to `compare_to_baseline(results,
+    # baseline)` and all 41 tests stayed green while `--check-baseline` reported "counts and
+    # killer sets" over a comparison that never saw a killer set. Fourth recurrence of pinning
+    # the function and not the call site, inside the change written to close that class.
+    assert "compare_to_baseline(results, baseline, matrix)" in body, (
+        "main() loads the matrix but no longer hands it to the comparison"
+    )
 
 
 def test_the_reader_uses_the_key_main_writes(td):
@@ -552,3 +570,17 @@ def test_no_committed_killer_id_is_truncated(td):
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())
     bad = [t for v in matrix["mutations"].values() for t in v.get("killed", ()) if t.count("[") != t.count("]")]
     assert not bad, f"truncated killer IDs in the committed matrix: {bad}"
+    # The same IDs are also the keys of `killed_by`, and scanning only the half above is how
+    # the first revision shipped a half-repaired file: two truncated keys survived here while
+    # `mutations[].killed` was clean, so the artifact named 214 tests for a set of 212 and this
+    # guard was green over the contradiction. Found by independent review (#1903).
+    bad_kb = [k for k in matrix["killed_by"] if k.count("[") != k.count("]")]
+    assert not bad_kb, f"truncated killer IDs among the killed_by keys: {bad_kb}"
+    # Both halves name the same population, so a repair applied to one and not the other is
+    # itself the defect -- check the identity, not just each side's well-formedness.
+    named = {t for v in matrix["mutations"].values() for t in v.get("killed", ())}
+    assert set(matrix["killed_by"]) == named, (
+        f"killed_by and mutations[].killed disagree: "
+        f"{sorted(set(matrix['killed_by']) - named)} only in killed_by, "
+        f"{sorted(named - set(matrix['killed_by']))} only in mutations"
+    )

@@ -185,13 +185,13 @@
     "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[None-<lambda>-1.0-f(m)-only]": [
       "diffusion_scalar_2x"
     ],
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m),": [
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-0.5-V+f(m), lambda=0.5]": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-1.0-V+f(m)]": [
       "diffusion_scalar_2x"
     ],
-    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m),": [
+    "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-<lambda>-2.0-V+f(m), lambda=2]": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]": [
