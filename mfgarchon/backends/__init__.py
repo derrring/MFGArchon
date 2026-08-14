@@ -307,8 +307,13 @@ except ImportError:
 # loads fine without it -- but the import still runs when torch IS installed), so registering it
 # eagerly imported torch for
 # anyone who touched this package. Measured on 1aa71b98: deferring this together with the eager
-# `torch_utils` re-export in `utils/acceleration/__init__.py` takes `import mfgarchon` from 4.12s
-# to 3.30s and removes torch from `sys.modules`. Deferring either alone changes nothing -- three
+# `torch_utils` re-export in `utils/acceleration/__init__.py` cuts ~0.8s off `import mfgarchon`
+# and removes torch from `sys.modules`. No absolute pair is quoted here: five measurement rounds
+# put the absolutes between 4.01 and 4.30 (base) and 3.24 and 3.40 (head) on one machine, while
+# the DELTA held at 0.73-0.85. Restating a pair invites the reader to check it against a run that
+# will not reproduce it -- and two of the four restatements of it in this branch had already
+# drifted apart (3.27 vs 3.30). The changelog carries one measurement with its conditions.
+# Deferring either alone changes nothing -- three
 # independent routes reach torch and cutting one leaves the others. #1930.
 #
 # numpy stays eager: it is a hard dependency, costs 0.07s, and several callers assume it is

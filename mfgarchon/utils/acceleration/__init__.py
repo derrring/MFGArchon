@@ -17,6 +17,7 @@ This replaces the old mfgarchon/accelerated/ directory with better organization.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -72,7 +73,8 @@ except ImportError:
 # `adjoint_validation`, through `utils.geometry`, and through `backends` -- so torch was imported
 # unconditionally by anyone who touched the package, whichever route they arrived by. Measured on
 # 1aa71b98: deferring this and the eager registrations in `backends/__init__.py` together takes
-# `import mfgarchon` from 4.12s to 3.27s and removes torch from `sys.modules` entirely. Deferring
+# ~0.8s off `import mfgarchon` and removes torch from `sys.modules` entirely (the changelog holds
+# the one measurement with its conditions; absolutes drift ~0.4s between rounds). Deferring
 # either one alone changes nothing, because the other route still arrives. #1930.
 #
 # `TORCH_UTILS_AVAILABLE` is deferred too, for the same reason the names are.
@@ -101,6 +103,44 @@ _LAZY_TORCH = {
     "to_tensor": "torch_utils",
     "torch_tridiagonal_solve": "torch_utils",
 }
+
+# A KNOWN COST OF THIS DEFERRAL, stated here because it is not recoverable and should not be
+# re-attempted. Defining a module-level `__getattr__` tells a type checker that ANY attribute of
+# this module may exist, so mypy stops reporting `attr-defined` for the whole module -- not only for
+# the ten deferred names. Measured with a probe asserting three nonexistent names, two through this
+# module and one through `mfgarchon.backends` as a control that must stay flagged in every state:
+#
+#     base 7ac9df18                        3 errors
+#     head, before the block below         1 error   (the control only)
+#     head, with the block below           1 error   <- the block does NOT restore it
+#     head, `__getattr__ -> object`        1 error
+#     head, `__getattr__ -> bool`          1 error
+#
+# ~~Re-declaring the names under TYPE_CHECKING restores the check~~ [CORRECTED 2026-08-15] -- that
+# was the fifth review's prescription and it is wrong on the mechanism, measured above: the
+# catch-all is the *presence* of `__getattr__`, and declaring ten names adds types for those ten
+# without removing it. Narrowing the return type does not help either. So a downstream user's
+# `acc.typo` type-checks clean, and that is the price of not importing torch.
+#
+# The block below is kept for what it does deliver: real types for the ten names under IDE hover
+# and `reveal_type`, at zero import cost, since it never runs. `ci.yml` scopes mypy to
+# `mfgarchon/config`, so no gate here would have surfaced any of this.
+if TYPE_CHECKING:
+    from .torch_utils import (
+        HAS_CUDA,
+        HAS_MPS,
+        HAS_TORCH,
+        GaussianKDE,
+        ensure_torch_available,
+        get_default_device,
+        to_numpy,
+        to_tensor,
+    )
+    from .torch_utils import (
+        tridiagonal_solve as torch_tridiagonal_solve,
+    )
+
+    TORCH_UTILS_AVAILABLE: bool
 
 
 def __getattr__(name: str):

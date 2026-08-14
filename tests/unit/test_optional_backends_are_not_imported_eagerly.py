@@ -2,8 +2,8 @@
 
 Both are optional, both are declared in the `[all]` extra rather than in `dependencies`, and
 both were nonetheless imported by anything that touched the package. Measured on `1aa71b98`:
-`import mfgarchon` was 4.12s and put `torch` in `sys.modules`; deferring the two eager sites
-below takes it to 3.27s with `torch` absent — 0.82s, which is exactly torch's own cold import
+`import mfgarchon` put `torch` in `sys.modules`; deferring the two eager sites below removes it
+and cuts ~0.8s — the same order as torch's own cold import
 cost measured on its own.
 
 **Two sites, and cutting either alone changes nothing.** Three independent routes reach torch
@@ -14,7 +14,11 @@ during `import mfgarchon`:
     utils/__init__.py:92 -> utils/geometry.py:30 -> geometry -> ... -> (same leaf)
     base_hjb.py:11 -> backends/compat -> backends/__init__.py -> torch_backend.py:30
 
-The first two converge on `utils/acceleration`; the third does not touch it. Deferring only
+The first two converge on `utils/acceleration`; the third does not *import torch through* it —
+though it does load the module (`import mfgarchon.backends` leaves `utils.acceleration` in
+`sys.modules`, measured on the base tree). `acceleration/__init__.py` states the loading reading
+and this states the torch-route reading; the operative conclusion is the same either way.
+Deferring only
 `backends` leaves routes 1 and 2; deferring only `acceleration` leaves route 3. That is why this
 test asserts the outcome — torch is absent — rather than the shape of either file: an outcome
 assertion cannot be satisfied by fixing one site and calling it done.
@@ -56,7 +60,9 @@ _PROBE_ENV = {
 _PROBE = (
     "import sys, json\n"
     "import mfgarchon\n"
-    "print(json.dumps({p: p in sys.modules for p in ('torch', 'jax', 'numba', 'scipy')}))\n"
+    "d = {p: p in sys.modules for p in ('torch', 'jax', 'numba', 'scipy')}\n"
+    "d['__tree__'] = mfgarchon.__file__\n"
+    "print(json.dumps(d))\n"
 )
 
 
@@ -78,7 +84,31 @@ def _modules_after(code: str) -> dict[str, bool]:
     assert proc.returncode == 0, f"the probe never ran, so it measured nothing:\n{proc.stderr[-1500:]}"
     line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
     assert line, f"the probe produced no verdict:\n{proc.stdout[-800:]}\n{proc.stderr[-800:]}"
-    return json.loads(line[-1])
+    payload = json.loads(line[-1])
+
+    # The tree identity travels WITH each probe's own payload. A separate test that builds its own
+    # `subprocess.run` can only validate its own invocation: review dropped `env=` from this
+    # function alone, pointed PYTHONPATH at an identical package outside the checkout, and got
+    # `18 passed` with the standalone instrument test green -- a clean bill of health while every
+    # probe here had imported a foreign tree. The probe invocation is restated at four sites, so a
+    # fifth copy checking itself proves nothing about the other four.
+    #
+    # The requirement is derived from the probe's own source, not left to the caller to remember:
+    # any probe that imports the package must say which one it imported. A probe that forgets would
+    # otherwise be silently exempt, which is how the hole above opened.
+    if "import mfgarchon" in code:
+        assert "__tree__" in payload, (
+            "this probe imports mfgarchon but does not report `__tree__`, so its result cannot be "
+            "attributed to any particular checkout. Add `d['__tree__'] = mfgarchon.__file__`."
+        )
+        # `resolve().is_relative_to`, not `startswith`: on macOS TMPDIR is a symlink, so logical and
+        # physical spellings differ and a string prefix compares False on a correct tree.
+        assert Path(payload["__tree__"]).resolve().is_relative_to(REPO.resolve()), (
+            f"the probe imported {payload['__tree__']}, not the tree under test at {REPO}. Every "
+            f"number it returned is about a different checkout. Check PYTHONSAFEPATH/PYTHONPATH."
+        )
+        payload.pop("__tree__")
+    return payload
 
 
 def test_the_subprocess_probes_import_the_tree_under_test():
@@ -91,9 +121,13 @@ def test_the_subprocess_probes_import_the_tree_under_test():
     report on the editable install. That is invisible on the canonical checkout, where the two
     coincide, and wrong in a worktree, where they do not.
 
-    This does not stop the other probes from measuring the wrong tree; it makes the whole file go
-    red when they would, which is the point. A check that only confirms the good case is
-    decoration -- so the failure it names must be reachable, and in a worktree it is.
+    ~~This does not stop the other probes from measuring the wrong tree; it makes the whole file go
+    red when they would~~ [CORRECTED 2026-08-15] -- false, and review measured it: this test builds
+    its OWN `subprocess.run`, so it validates its own invocation and fires only when the cause is
+    shared (`_PROBE_ENV`, or the ambient environment). Drop `env=` from `_modules_after` alone and
+    this test stays green while every probe there reads a foreign tree. Each probe now carries its
+    own tree identity in its payload and `_modules_after` asserts it; this test remains as the
+    cheapest check of the shared plumbing, which is all it ever was.
     """
     proc = subprocess.run(
         [sys.executable, "-c", "import json, mfgarchon; print(json.dumps({'tree': mfgarchon.__file__}))"],
@@ -119,7 +153,7 @@ def test_importing_the_package_does_not_import_torch():
     loaded = _modules_after(_PROBE)
     assert not loaded["torch"], (
         "`import mfgarchon` imported torch. It is optional, declared in the `[all]` extra, and "
-        "costs 0.82s. Three routes reach it and cutting one leaves the others -- check both "
+        "costs ~0.8s. Three routes reach it and cutting one leaves the others -- check both "
         "`backends/__init__.py` (eager `register_backend('torch', ...)`) and "
         "`utils/acceleration/__init__.py` (eager `from .torch_utils import ...`). #1930"
     )

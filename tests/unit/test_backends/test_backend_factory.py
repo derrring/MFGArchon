@@ -383,7 +383,7 @@ class TestBackendInitialization:
         """[SUPERSEDED 2026-08-14] Was `test_optional_backends_registered_if_available`, which
         asserted the opposite: that touching the package registers torch and jax when installed.
 
-        #1930 stopped that, because registering them imported them -- 0.82s of a 4.12s
+        #1930 stopped that, because registering them imported them -- ~0.8s of a ~4s
         `import mfgarchon` for anyone who never asked for a backend. `create_backend` already
         carried the on-demand path; eager registration was what made it unreachable.
 
