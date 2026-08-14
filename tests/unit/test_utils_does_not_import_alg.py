@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
 from pathlib import Path
 
@@ -129,9 +130,12 @@ def _runs_at_import(node: ast.AST, tree: ast.Module) -> bool:
       failure message's own advice ("defer it into the function that uses it") can be misread
       into, so it is named here.
     - **`importlib.import_module(...)` / `__import__(...)`** are not `ast.Import` nodes and are
-      invisible to any version of this scanner. The two deleted paths are covered by
-      `test_a_lazy_shim_cannot_restore_a_deleted_import_path`, which resolves at runtime; a NEW
-      edge introduced that way would not be.
+      invisible to this SCANNER. They are not invisible to the file: review injected a
+      module-level `import_module("mfgarchon.alg...gfdm_strategies")` into
+      `utils/numerical/__init__.py` and `test_the_hub_can_be_deferred_without_a_circular_import`
+      caught it (`1 failed, 23 passed`) while the AST ratchet stayed green -- because such an edge
+      recreates the cycle, which that test measures directly. What remains uncovered is a dynamic
+      edge that does NOT recreate a cycle.
     """
     stack: list[ast.AST] = list(tree.body)
     while stack:
@@ -374,7 +378,9 @@ def test_the_hub_can_be_deferred_without_a_circular_import():
 
     hub = REPO / "mfgarchon" / "utils" / "__init__.py"
     source = hub.read_text()
-    match = re.search(r"^# Adjoint duality validation \(Issue #580\)\nfrom \.adjoint_validation import \(([^)]*)\)\n", source, re.M)
+    match = re.search(
+        r"^# Adjoint duality validation \(Issue #580\)\nfrom \.adjoint_validation import \(([^)]*)\)\n", source, re.M
+    )
     assert match, "the eager hub import moved; this test is pinning something that is no longer there"
     names = tuple(n.strip().rstrip(",") for n in match.group(1).split() if n.strip().rstrip(","))
     assert names, "parsed no re-exported names; the deferral below would prove nothing"
@@ -392,16 +398,34 @@ def test_the_hub_can_be_deferred_without_a_circular_import():
         tree = Path(tmp) / "tree"
         shutil.copytree(REPO / "mfgarchon", tree / "mfgarchon", ignore=shutil.ignore_patterns("__pycache__"))
         (tree / "mfgarchon" / "utils" / "__init__.py").write_text(source.replace(match.group(0), lazy, 1))
+        # `PYTHONPATH` and an explicit `sys.path` insert, not cwd: `local_ci.sh:311` runs pytest
+        # under `PYTHONSAFEPATH=1`, which drops cwd from `sys.path` -- and the subprocess then
+        # resolved `mfgarchon` from the EDITABLE INSTALL, which imports fine, so this test passed
+        # over a tree it never read. Measured: back-edge restored + PYTHONSAFEPATH=1 -> 1 passed,
+        # same mutation without it -> 1 failed. Found by review.
+        env = {**os.environ, "PYTHONPATH": str(tree), "PYTHONSAFEPATH": ""}
         proc = subprocess.run(
-            [sys.executable, "-c", "import mfgarchon; print('OK')"],
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.path.insert(0, {str(tree)!r})\nimport mfgarchon; print('TREE:' + mfgarchon.__file__)",
+            ],
             cwd=tree,
             capture_output=True,
             text=True,
             timeout=300,
+            env=env,
         )
 
     assert proc.returncode == 0, (
         "deferring `utils/__init__.py`'s eager import of `adjoint_validation` fails, which means "
         "an upward `utils -> alg` import has reintroduced the cycle:\n" + proc.stderr[-2000:]
     )
-    assert "OK" in proc.stdout
+    # The token identifies the tree, not just success. "OK" would be printed just as happily by
+    # the installed package, which is the whole failure mode above.
+    reported = [line[len("TREE:") :] for line in proc.stdout.splitlines() if line.startswith("TREE:")]
+    assert reported, f"the probe printed no tree token:\n{proc.stdout[-600:]}"
+    assert reported[0].startswith(str(tree)), (
+        f"the subprocess imported {reported[0]}, not the patched copy at {tree}. The result says "
+        f"nothing about the patch."
+    )

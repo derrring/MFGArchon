@@ -28,7 +28,9 @@ Submodules:
 # That error was invisible in normal use because `utils/__init__.py`'s eager
 # `from .adjoint_validation import (...)` completes `utils.numerical` by another route first --
 # so the cycle only surfaced when someone tried to make that import lazy, which is #1930 step 5.
-# Measured: with this block present, deferring it fails; with it gone, deferring it works.
+# Measured: with this block present, deferring that import fails; with it gone, it works.
+# No timing is claimed either way -- import totals on one machine drift 0.4s between rounds,
+# so a two-row before/after would read as a measurement of this change when it is noise.
 #
 # Zero files imported these nine names through `utils.numerical` -- verified by AST over
 # `mfgarchon/`, `tests/` and `examples/`, for both `from`-imports and attribute access. #1930
@@ -118,7 +120,6 @@ from mfgarchon.utils.numerical.particle.interpolation import (
 __all__ = [
     # GFDM operators (legacy; canonical: alg.numerical.gfdm_components.gfdm_strategies)
     "GFDMOperator",
-    # GFDM Strategy Pattern (scattered points)
     # Monotonicity tracking
     "MonotonicityStats",
     "verify_m_matrix_property",
