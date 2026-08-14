@@ -11,4 +11,4 @@ Import from the canonical locations instead:
 
 The deletion halves the module-level `utils -> alg` imports, from 4 to 2. That direction is an
 inversion — `utils` sits below `alg` — and it is what makes the import graph unsplittable
-(#1930). (#1930)
+(#1930).

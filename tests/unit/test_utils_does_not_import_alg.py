@@ -1,10 +1,18 @@
 """`mfgarchon.utils` is below `mfgarchon.alg` and must not import upward.
 
-The inversion is what makes the import graph unsplittable. Every heavy package — torch, jax,
-numba, cvxpy — enters through one line, `utils/__init__.py`'s eager `from .adjoint_validation
-import (...)`, which reaches `alg.base_solver` for a single enum and drags the whole `alg` tree
-in behind it. Measured on 9f84c22c: `import mfgarchon` is 4.89s, of which 2.56s is those four
-packages and 2.14s is the library importing itself.
+The inversion is what creates the cycle that blocks decoupling, and that is why this file exists.
+
+~~Every heavy package enters through one line~~ and ~~`import mfgarchon` is 4.89s~~ [RETRACTED
+2026-08-14, see #1930] — both were refuted by measurement after this file was written. It is not
+a single entry point: with that line cut, torch arrives instead through `utils/__init__.py:65` →
+`utils/data/polars_integration.py:27`. `utils/__init__.py` is an 18-import, 106-name re-export
+hub, so cutting edges one at a time is a treadmill — all three planned cuts applied together
+moved the total 4.31s → 4.62s, which is to say not at all. The absolute figure is a property of
+one process anyway (4.89s here, 6.37s cold and 4.04s warm elsewhere); what reproduces is the
+decomposition, roughly half third-party and half the library importing itself.
+
+A retracted rationale living on in a permanent test file is worse than none, which is why it is
+struck here rather than quietly rewritten.
 
 That line cannot simply be made lazy. Removing it, or replacing it with a PEP 562 `__getattr__`,
 both fail with
@@ -16,14 +24,20 @@ because `utils/numerical/__init__.py` imports `alg`, which reaches `fp_network`,
 name from `utils.numerical` while it is still stopped at that line. The eager import is
 load-bearing: it completes `utils.numerical` by another route first and hides the cycle. #1930.
 
-This test ratchets the count DOWN only. It is not a claim that two edges are acceptable — they
-are the two that need a design decision, and each removal should lower the number here.
+The count is pinned by EQUALITY, not bounded. ~~ratchets the count DOWN only~~ [CORRECTED
+2026-08-14] — that described the `<=` form which the same commit replaced with `==`. A bound
+cannot tell "an edge was removed" from "the scanner stopped seeing edges", and this file had two
+live ways for the second to happen. Two edges is not a claim that two are acceptable: they are
+the two that need a design decision, and each removal lowers `EXPECTED_MODULE_LEVEL` with it.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 UTILS = REPO / "mfgarchon" / "utils"
@@ -44,48 +58,67 @@ EXPECTED_MODULE_LEVEL = 2
 def _absolute_target(node: ast.Import | ast.ImportFrom, path: Path) -> str:
     """The absolute module name an import names, resolving `from ...alg import x`.
 
-    Relative imports were invisible to the first version: it read `node.module`, which for
-    `from ...alg.base_solver import SchemeFamily` is `alg.base_solver` with `level == 3`, and
-    the `mfgarchon.` prefix test then failed. Review demonstrated a working relative import of
-    `alg` that the ratchet scored as absent. Not exploitable by accident today -- all 54
-    relative imports under utils/ are `level == 1` -- but one refactor away.
+    Delegated to `importlib.util.resolve_name`, which is the function Python itself uses. Two
+    hand-derived versions of this arithmetic were wrong before it: the first ignored relative
+    imports entirely, and the second stripped the last path component only for `__init__.py` --
+    but a plain module's package is also `parts[:-1]`, so every non-package file resolved one
+    level too deep and 10 of 16 ground-truth cases mismatched. The single mutation used to
+    validate that version happened to land in the one file shape where it was right.
+
+    Direction of the old bug, for the record: it produced false negatives only. Every computed
+    prefix began `mfgarchon.utils`, which can never match `mfgarchon.alg`.
     """
     if isinstance(node, ast.Import):
         return node.names[0].name if node.names else ""
     if not node.level:
         return node.module or ""
-    package = path.relative_to(REPO).with_suffix("").parts
-    if path.name == "__init__.py":
-        package = package[:-1]
-    base = package[: len(package) - (node.level - 1)] if node.level > 1 else package
-    return ".".join([*base, node.module]) if node.module else ".".join(base)
+    parts = path.relative_to(REPO).with_suffix("").parts
+    package = ".".join(parts[:-1])  # unconditional: a module's package is its parent either way
+    try:
+        return importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+    except (ImportError, ValueError):
+        # Beyond the top-level package. Python raises here too, so the file could not import;
+        # returning "" keeps this scanner from inventing a name for something that cannot exist.
+        return ""
+
+
+# Statement types whose bodies execute when the module is read. `ast.iter_child_nodes` plus an
+# `isinstance(child, ast.stmt)` filter was the first form and it silently dropped two of these:
+# `ast.ExceptHandler` and `ast.match_case` are NOT `ast.stmt` subclasses, so an import in an
+# `except ImportError:` handler -- the idiomatic fallback half of `try: new / except: old`, i.e.
+# the same shape family as the defect this guard exists to catch -- was scored deferred, as was
+# a `match`/`case` body. Neither exclusion was chosen by anyone; both fell out of the filter.
+_CONTAINERS_THAT_RUN = (ast.stmt, ast.ExceptHandler, ast.match_case)
 
 
 def _runs_at_import(node: ast.AST, tree: ast.Module) -> bool:
     """Whether this import executes when the module is read.
 
-    `id(node) in {id(n) for n in tree.body}` was the first test, and it recognised only imports
-    that are DIRECT children of the module body. A module-level `try: import x / except
-    ImportError:` executes at import and costs the full price, and was scored `deferred` --
-    while 18 files under utils/ already use exactly that idiom. Review mutated one in and the
-    ratchet stayed green.
+    Stops at exactly two things:
 
-    So: walk down from the module body through every statement that still executes at import
-    (`try`, `if`, `with`, `for`, `else` branches), and stop at `def`, `class`, and
-    `if TYPE_CHECKING:` -- those genuinely do not run, and TYPE_CHECKING costs nothing at all.
+    - `def` / `async def` -- a body that runs on call.
+    - `if TYPE_CHECKING:` -- never true at runtime. Its `else:` branch DOES run, and is walked;
+      an earlier version `continue`d past the whole `If` node and swept the `orelse` up with it.
+
+    A `class` body is NOT skipped: it executes when the module is read. The earlier version
+    skipped it with the comment "a body that runs on call, not on import", which is true of
+    `FunctionDef` and false of `ClassDef`.
+
+    Known limit, stated rather than implied absent: an import under `if False:` or any other
+    statically-dead branch is counted. Over-counting is the safe direction -- a false red a
+    contributor can act on by moving the import -- but it is a false red.
     """
-    stack: list[tuple[ast.AST, bool]] = [(n, True) for n in tree.body]
+    stack: list[ast.AST] = list(tree.body)
     while stack:
-        current, _ = stack.pop()
+        current = stack.pop()
         if current is node:
             return True
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue  # a body that runs on call, not on import
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
         if isinstance(current, ast.If) and _is_type_checking(current.test):
-            continue  # never true at runtime
-        for child in ast.iter_child_nodes(current):
-            if isinstance(child, ast.stmt):
-                stack.append((child, True))
+            stack.extend(current.orelse)  # the else branch runs; the body does not
+            continue
+        stack.extend(c for c in ast.iter_child_nodes(current) if isinstance(c, _CONTAINERS_THAT_RUN))
     return False
 
 
@@ -109,8 +142,7 @@ def _alg_imports() -> list[tuple[str, str, int, str]]:
             tree = ast.parse(path.read_text())
         except (SyntaxError, UnicodeDecodeError) as exc:  # pragma: no cover - would be a real bug
             raise AssertionError(
-                f"{path.relative_to(REPO)} could not be parsed, so it is silently absent from "
-                f"every count below: {exc}"
+                f"{path.relative_to(REPO)} could not be parsed, so it is silently absent from every count below: {exc}"
             ) from exc
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -143,7 +175,7 @@ def test_module_level_imports_of_alg_do_not_grow():
     """
     module_level = [e for e in _alg_imports() if e[0] == "module-level"]
     assert len(module_level) == EXPECTED_MODULE_LEVEL, (
-        f"utils imports alg at module level in {len(module_level)} places, expected "
+        f"utils imports alg at module level in {len(module_level)} place(s), expected "
         f"{EXPECTED_MODULE_LEVEL}. Each one pulls the whole alg tree into `import mfgarchon`.\n"
         + "\n".join(f"  {f}:{ln} -> {t}" for _k, f, ln, t in module_level)
         + "\nIf you ADDED one: defer it into the function that uses it, or move the shared name "
@@ -208,3 +240,73 @@ def test_a_lazy_shim_cannot_restore_a_deleted_import_path():
         "mfgarchon.alg.numerical.coupling.anderson_acceleration",
     ):
         importlib.import_module(path)
+
+
+# Every statement shape an import can sit in, and whether it executes when the module is read.
+# A table, because this scanner has been wrong twice and both times the validating mutation
+# happened to pick a shape the code got right: first a module-level `try/except` scored as
+# deferred, then a relative import resolved one level too deep everywhere except `__init__.py`.
+# One mutation cannot establish a classifier; a table can.
+_IMPORT = "from mfgarchon.alg.base_solver import SchemeFamily"
+RUNS_AT_IMPORT = [
+    ("try body", f"try:\n    {_IMPORT}\nexcept ImportError:\n    pass\n", True),
+    # The fallback half of `try: new / except ImportError: old` -- the same shape family as the
+    # defect this guard exists to catch, and invisible to the first two versions of the walk.
+    ("except handler", f"try:\n    pass\nexcept ImportError:\n    {_IMPORT}\n", True),
+    ("try finally", f"try:\n    pass\nfinally:\n    {_IMPORT}\n", True),
+    ("with", f"import contextlib\nwith contextlib.suppress(ImportError):\n    {_IMPORT}\n", True),
+    ("module-level for", f"for _ in (1,):\n    {_IMPORT}\n", True),
+    ("if not TYPE_CHECKING", f"from typing import TYPE_CHECKING\nif not TYPE_CHECKING:\n    {_IMPORT}\n", True),
+    ("version guard", f"import sys\nif sys.version_info >= (3, 12):\n    {_IMPORT}\n", True),
+    ("match case", f"match 1:\n    case 1:\n        {_IMPORT}\n", True),
+    (
+        "else of TYPE_CHECKING",
+        f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    {_IMPORT}\n",
+        True,
+    ),
+    # A class body executes when the module is read. An earlier version skipped it with the
+    # comment "a body that runs on call", which is true of `def` and false of `class`.
+    ("class body", f"class C:\n    {_IMPORT}\n", True),
+    ("if TYPE_CHECKING", f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    {_IMPORT}\n", False),
+    ("function body", f"def f():\n    {_IMPORT}\n", False),
+    # Known limit, over-counting: statically dead but scored as running. The safe direction --
+    # a false red a contributor can act on by moving the import -- but still a false red.
+    ("if False (known limit)", f"if False:\n    {_IMPORT}\n", True),
+]
+
+
+@pytest.mark.parametrize(("label", "source", "runs"), RUNS_AT_IMPORT)
+def test_the_walk_classifies_every_statement_shape(label, source, runs):
+    tree = ast.parse(source)
+    imports = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Import, ast.ImportFrom))
+        and (getattr(n, "module", None) or "").startswith("mfgarchon.alg")
+    ]
+    assert imports, f"the fixture for {label!r} contains no alg import; it would prove nothing"
+    assert any(_runs_at_import(n, tree) for n in imports) is runs, (
+        f"{label}: classified as {'running' if not runs else 'deferred'} at import, which is wrong. "
+        f"An import that runs but is scored deferred is invisible to the ratchet; one scored "
+        f"running when it does not is a red nobody can act on."
+    )
+
+
+# (level, file, expected absolute target) -- checked against `importlib.util.resolve_name`, which
+# is what Python itself uses. The hand-derived arithmetic this replaced was right for `__init__.py`
+# and wrong for every plain module, at every level.
+RELATIVE_CASES = [
+    ("mfgarchon/utils/numerical/__init__.py", 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
+    ("mfgarchon/utils/adjoint_validation.py", 2, "alg.base_solver", "mfgarchon.alg.base_solver"),
+    ("mfgarchon/utils/convergence/convergence_monitors.py", 3, "alg.base_solver", "mfgarchon.alg.base_solver"),
+    ("mfgarchon/utils/numerical/particle/sampling.py", 4, "alg.base_solver", "mfgarchon.alg.base_solver"),
+    ("mfgarchon/utils/numerical/__init__.py", 1, "particle", "mfgarchon.utils.numerical.particle"),
+]
+
+
+@pytest.mark.parametrize(("rel", "level", "module", "expected"), RELATIVE_CASES)
+def test_relative_imports_resolve_to_the_same_name_python_would_use(rel, level, module, expected):
+    path = REPO / rel
+    assert path.exists(), f"{rel} moved; this case is testing a file that is not there"
+    node = ast.ImportFrom(module=module, names=[ast.alias(name="X")], level=level)
+    assert _absolute_target(node, path) == expected
