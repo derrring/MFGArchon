@@ -297,21 +297,20 @@ try:
 except ImportError:
     warnings.warn("NumPy backend not available")
 
-try:
-    from .torch_backend import TorchBackend
-
-    register_backend("torch", TorchBackend)
-except ImportError:
-    logger.debug("PyTorch backend not available (optional)")
-    # PyTorch is optional
-
-try:
-    from .jax_backend import JAXBackend
-
-    register_backend("jax", JAXBackend)
-except ImportError:
-    logger.debug("JAX backend not available (optional)")
-    # JAX is optional
+# torch and jax are NOT registered here. `create_backend` already carries the on-demand path --
+# `if backend_name not in _BACKENDS:` imports and registers whichever backend was asked for -- and
+# eager registration is what made that branch unreachable. `test_backend_factory.py` records the
+# consequence: "backends/__init__.py registers 'torch' into _BACKENDS whether or not torch exists.
+# The `if backend_name not in _BACKENDS` branch is therefore unreachable."
+#
+# `torch_backend.py:30` is a bare `import torch`, so registering it eagerly imported torch for
+# anyone who touched this package. Measured on 1aa71b98: deferring this together with the eager
+# `torch_utils` re-export in `utils/acceleration/__init__.py` takes `import mfgarchon` from 4.12s
+# to 3.30s and removes torch from `sys.modules`. Deferring either alone changes nothing -- three
+# independent routes reach torch and cutting one leaves the others. #1930.
+#
+# numpy stays eager: it is a hard dependency, costs 0.07s, and several callers assume it is
+# registered the moment the package is imported.
 
 
 # Ensure essential backends are always available for compatibility

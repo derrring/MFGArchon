@@ -16,6 +16,8 @@ This replaces the old mfgarchon/accelerated/ directory with better organization.
 
 from __future__ import annotations
 
+import importlib.util
+
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,26 +65,48 @@ try:
 except ImportError:
     JAX_UTILS_AVAILABLE = False
 
-# Re-export PyTorch utilities (explicit imports, Issue #756)
-try:
-    from .torch_utils import (
-        HAS_CUDA,
-        HAS_MPS,
-        HAS_TORCH,
-        GaussianKDE,
-        ensure_torch_available,
-        get_default_device,
-        to_numpy,
-        to_tensor,
-    )
-    from .torch_utils import (
-        tridiagonal_solve as torch_tridiagonal_solve,
-    )
+# PyTorch utilities, re-exported LAZILY (PEP 562).
+#
+# This block used to `from .torch_utils import (...)` eagerly, and `torch_utils.py:16` is a bare
+# `import torch`. Three independent routes reach this file during `import mfgarchon` -- through
+# `adjoint_validation`, through `utils.geometry`, and through `backends` -- so torch was imported
+# unconditionally by anyone who touched the package, whichever route they arrived by. Measured on
+# 1aa71b98: deferring this and the eager registrations in `backends/__init__.py` together takes
+# `import mfgarchon` from 4.12s to 3.30s and removes torch from `sys.modules` entirely. Deferring
+# either one alone changes nothing, because the other route still arrives. #1930.
+#
+# `TORCH_UTILS_AVAILABLE` stays eager and cheap: it answers "is torch installed", which
+# `importlib.util.find_spec` settles without importing anything.
+TORCH_UTILS_AVAILABLE = importlib.util.find_spec("torch") is not None
 
-    # Only mark as available if torch is actually installed
-    TORCH_UTILS_AVAILABLE = HAS_TORCH
-except ImportError:
-    TORCH_UTILS_AVAILABLE = False
+_LAZY_TORCH = {
+    "HAS_CUDA": "torch_utils",
+    "HAS_MPS": "torch_utils",
+    "HAS_TORCH": "torch_utils",
+    "GaussianKDE": "torch_utils",
+    "ensure_torch_available": "torch_utils",
+    "get_default_device": "torch_utils",
+    "to_numpy": "torch_utils",
+    "to_tensor": "torch_utils",
+    "torch_tridiagonal_solve": "torch_utils",
+}
+
+
+def __getattr__(name: str):
+    """Import `torch_utils` on first use of a name it owns, not at package import."""
+    if name in _LAZY_TORCH:
+        from importlib import import_module
+
+        module = import_module(f".{_LAZY_TORCH[name]}", __name__)
+        attr = "tridiagonal_solve" if name == "torch_tridiagonal_solve" else name
+        value = getattr(module, attr)
+        globals()[name] = value  # bind, so the next access does not re-enter here
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted([*globals(), *_LAZY_TORCH])
 
 
 def get_acceleration_info():
