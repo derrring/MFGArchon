@@ -8,7 +8,9 @@ Issue:
     When used with 2D arrays (e.g., MFG density m(x,y) on a grid), it would fail.
 
 Fix Location:
-    mfgarchon/utils/numerical/anderson_acceleration.py:112-207
+    mfgarchon/alg/numerical/coupling/anderson_acceleration.py
+    (~~mfgarchon/utils/numerical/anderson_acceleration.py:112-207~~ [CORRECTED 2026-08-14] --
+    that shim was 23 lines and never had those, and it is now deleted as overdue since v0.21.0)
 
 Test Strategy:
     1. Test with 1D arrays (original functionality)
@@ -21,7 +23,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.utils.numerical.anderson_acceleration import AndersonAccelerator
+from mfgarchon.alg.numerical.coupling.anderson_acceleration import AndersonAccelerator
 
 pytestmark = pytest.mark.experimental
 

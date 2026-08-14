@@ -11,7 +11,7 @@ import warnings
 
 warnings.warn(
     "mfgarchon.utils.numerical.gfdm_operators is deprecated since v0.17.15. "
-    "Use mfgarchon.utils.numerical.gfdm_strategies.TaylorOperator instead. "
+    "Use mfgarchon.alg.numerical.gfdm_components.gfdm_strategies.TaylorOperator instead. "
     "GFDMOperator has been moved to _compat and will be removed in v0.25.0.",
     DeprecationWarning,
     stacklevel=2,
