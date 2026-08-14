@@ -198,7 +198,12 @@ def test_dir_lists_each_deferred_name_once():
     """
     import mfgarchon.utils.acceleration as acceleration
 
-    acceleration.TORCH_UTILS_AVAILABLE  # noqa: B018 - bind one lazy name, which is the precondition
+    # `to_tensor`, not `TORCH_UTILS_AVAILABLE`. Both are in `_LAZY_TORCH`, but the flag's
+    # membership is what THIS PR adds, so binding it would make this test's precondition depend on
+    # a decision the same PR is still revising -- review measured that: with the flag reverted to
+    # eager AND the `sorted([...])` defect restored, this test alone goes green again. `to_tensor`
+    # was lazy before this branch and stays lazy after it.
+    acceleration.to_tensor  # noqa: B018 - bind one lazy name, which is the precondition
     listing = dir(acceleration)
     duplicated = sorted({n for n in listing if listing.count(n) > 1})
     assert not duplicated, f"dir() lists these more than once: {duplicated}"
@@ -214,10 +219,31 @@ def test_the_introspection_helper_still_works():
     """
     import mfgarchon.utils.acceleration as acceleration
 
+    # The precondition here is UNBOUND, and it is the exact opposite of the one
+    # `test_dir_lists_each_deferred_name_once` establishes. They share one module global and run in
+    # declaration order, so while that test bound THIS name the bare lookup below found it in
+    # `__dict__`, no `NameError` could fire, and the defect survived the whole file (review
+    # measured 59 passed with both call sites reverted). `vars(...).pop`, not `del`: `del` raises
+    # `AttributeError` when this test runs first and nothing has bound the name yet.
+    vars(acceleration).pop("TORCH_UTILS_AVAILABLE", None)
+
     info = acceleration.get_acceleration_info()
     assert "torch_utils_available" in info
     assert isinstance(info["torch_utils_available"], bool)
     assert "jax_utils_available" in info
+
+    # Pin the lookup ORDER, not just the value. `__getattr__("TORCH_UTILS_AVAILABLE")` reaches the
+    # module `__getattr__` directly and so skips `__dict__`, which means it reads PAST an explicit
+    # override; `sys.modules[__name__].TORCH_UTILS_AVAILABLE` is normal attribute lookup and does
+    # not. Nothing else in the tree overrides this module, so reverting that form was caught by
+    # nothing until this assertion.
+    acceleration.TORCH_UTILS_AVAILABLE = False
+    try:
+        assert acceleration.get_acceleration_info()["torch_utils_available"] is False, (
+            "the helper read past an explicit override, so it is not going through attribute lookup"
+        )
+    finally:
+        vars(acceleration).pop("TORCH_UTILS_AVAILABLE", None)
 
 
 def test_the_availability_flag_reports_whether_torch_IMPORTS_not_whether_it_exists():
