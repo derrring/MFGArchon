@@ -396,9 +396,24 @@ class TestBackendInitialization:
         a global; a fresh interpreter is the instrument.
         """
         import json
+        import os
         import subprocess
         import sys
 
+        repo = Path(__file__).resolve().parents[3]
+        # `cwd=repo` does not pin the tree. For `python -c`, `sys.path[0]` is the current directory
+        # and precedes PYTHONPATH -- so cwd wins, until `-P` / `PYTHONSAFEPATH=1` strips it, which
+        # is exactly what `scripts/local_ci.sh:311` sets and what `subprocess.run` inherits. Under
+        # the gate the cwd entry is gone, nothing replaces it, and this probe measures the EDITABLE
+        # INSTALL instead of the tree under test -- silently identical on the canonical checkout,
+        # wrong in the worktree this repo mandates for pre-merge review. So: put the tree back on
+        # the path, and report `mfgarchon.__file__` so the assertion below can check it rather than
+        # trust the plumbing. (This repo's own #1906 review: an import-origin check is only evidence
+        # if the wrong answer is reachable.)
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(x for x in (str(repo), os.environ.get("PYTHONPATH", "")) if x),
+        }
         proc = subprocess.run(
             [
                 sys.executable,
@@ -410,9 +425,10 @@ class TestBackendInitialization:
                 "if b.get_available_backends()['jax']:\n"
                 "    b.create_backend('jax')\n"
                 "    asked = sorted(b._BACKENDS)\n"
-                "print(json.dumps({'at_import': at_import, 'after_asking': asked}))\n",
+                "print(json.dumps({'at_import': at_import, 'after_asking': asked, 'tree': b.__file__}))\n",
             ],
-            cwd=Path(__file__).resolve().parents[3],
+            cwd=repo,
+            env=env,
             capture_output=True,
             text=True,
             timeout=300,
@@ -421,6 +437,13 @@ class TestBackendInitialization:
         line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
         assert line, f"no verdict:\n{proc.stdout[-600:]}\n{proc.stderr[-600:]}"
         result = json.loads(line[-1])
+
+        # A path check, not a string prefix: on macOS TMPDIR is a symlink, so a worktree's logical
+        # and physical spellings differ and `startswith` compares False on the correct tree.
+        assert Path(result["tree"]).resolve().is_relative_to(repo.resolve()), (
+            f"the probe imported {result['tree']}, not the tree under test at {repo}. Its verdict "
+            f"says nothing about this checkout."
+        )
 
         assert result["at_import"] == ["numpy"], (
             f"at import the registry holds {result['at_import']}, expected only numpy. Registering "

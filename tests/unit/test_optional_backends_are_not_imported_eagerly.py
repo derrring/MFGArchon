@@ -28,6 +28,7 @@ such assertion; the sentence described a test that was never written.)
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,22 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+# `cwd=REPO` alone does NOT pin which tree a probe imports. For `python -c`, `sys.path[0]` is the
+# current directory and precedes PYTHONPATH -- so cwd wins, until `-P` / `PYTHONSAFEPATH=1` strips
+# it, and `scripts/local_ci.sh:311` sets exactly that (deliberately: xdist workers do not inherit
+# `-P`). `subprocess.run` inherits the environment, so under the gate the cwd entry is gone, nothing
+# replaces it, and the probe imports whatever the EDITABLE INSTALL points at. On the canonical
+# checkout the two trees coincide and the gate is honest; in a worktree -- which this repo MANDATES
+# for pre-merge review -- they differ, and the probe reports on a tree that was never under test.
+# Recorded from this repo's own #1906 review: an import-origin check is only evidence if the wrong
+# answer is reachable. Hence both halves: put the tree back on the path, and have each probe print
+# `mfgarchon.__file__` so the caller can assert it rather than trust the plumbing.
+_PROBE_ENV = {
+    **os.environ,
+    "PYTHONPATH": os.pathsep.join(x for x in (str(REPO), os.environ.get("PYTHONPATH", "")) if x),
+}
 
 _PROBE = (
     "import sys, json\n"
@@ -53,6 +70,7 @@ def _modules_after(code: str) -> dict[str, bool]:
     proc = subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         timeout=300,
@@ -61,6 +79,40 @@ def _modules_after(code: str) -> dict[str, bool]:
     line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
     assert line, f"the probe produced no verdict:\n{proc.stdout[-800:]}\n{proc.stderr[-800:]}"
     return json.loads(line[-1])
+
+
+def test_the_subprocess_probes_import_the_tree_under_test():
+    """Validate the instrument before trusting any number it produces.
+
+    Every probe in this file is a fresh interpreter, and which `mfgarchon` that interpreter finds
+    is decided by `sys.path`, not by which directory the test file lives in. `cwd=REPO` puts the
+    tree first only while `sys.path[0]` is the cwd; the gate runs under `PYTHONSAFEPATH=1`, which
+    removes that entry, and `subprocess.run` inherits it -- so without `_PROBE_ENV` the probes
+    report on the editable install. That is invisible on the canonical checkout, where the two
+    coincide, and wrong in a worktree, where they do not.
+
+    This does not stop the other probes from measuring the wrong tree; it makes the whole file go
+    red when they would, which is the point. A check that only confirms the good case is
+    decoration -- so the failure it names must be reachable, and in a worktree it is.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c", "import json, mfgarchon; print(json.dumps({'tree': mfgarchon.__file__}))"],
+        cwd=REPO,
+        env=_PROBE_ENV,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"the instrument check never ran:\n{proc.stderr[-1500:]}"
+    line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
+    assert line, f"no verdict:\n{proc.stdout[-600:]}\n{proc.stderr[-600:]}"
+    tree = json.loads(line[-1])["tree"]
+    # `resolve().is_relative_to`, not `startswith`: on macOS TMPDIR is a symlink, so a worktree's
+    # logical and physical spellings differ and a string prefix compares False on a correct tree.
+    assert Path(tree).resolve().is_relative_to(REPO.resolve()), (
+        f"the probes import {tree}, not the tree under test at {REPO}. Every subprocess result in "
+        f"this file is therefore about a different checkout. Check PYTHONSAFEPATH/PYTHONPATH."
+    )
 
 
 def test_importing_the_package_does_not_import_torch():
@@ -198,11 +250,13 @@ def test_dir_lists_each_deferred_name_once():
     """
     import mfgarchon.utils.acceleration as acceleration
 
-    # `to_tensor`, not `TORCH_UTILS_AVAILABLE`. Both are in `_LAZY_TORCH`, but the flag's
-    # membership is what THIS PR adds, so binding it would make this test's precondition depend on
-    # a decision the same PR is still revising -- review measured that: with the flag reverted to
-    # eager AND the `sorted([...])` defect restored, this test alone goes green again. `to_tensor`
-    # was lazy before this branch and stays lazy after it.
+    # `to_tensor`, not `TORCH_UTILS_AVAILABLE`. Not because one predates the branch -- neither
+    # does; `git show 7ac9df18:mfgarchon/utils/acceleration/__init__.py | grep -c _LAZY_TORCH` is 0
+    # and the whole map is new here. The distinction is that the flag's COMPUTATION was revised
+    # twice inside this PR while `to_tensor` was not, so binding the flag would rest this test's
+    # precondition on a decision the same PR is still moving. Measured: with the flag reverted to
+    # eager AND the `sorted([...])` defect restored, the old form of this test goes green when run
+    # alone; the `to_tensor` form reddens under the dir defect alone, torch-present and torch-free.
     acceleration.to_tensor  # noqa: B018 - bind one lazy name, which is the precondition
     listing = dir(acceleration)
     duplicated = sorted({n for n in listing if listing.count(n) > 1})
@@ -219,12 +273,16 @@ def test_the_introspection_helper_still_works():
     """
     import mfgarchon.utils.acceleration as acceleration
 
-    # The precondition here is UNBOUND, and it is the exact opposite of the one
-    # `test_dir_lists_each_deferred_name_once` establishes. They share one module global and run in
-    # declaration order, so while that test bound THIS name the bare lookup below found it in
-    # `__dict__`, no `NameError` could fire, and the defect survived the whole file (review
-    # measured 59 passed with both call sites reverted). `vars(...).pop`, not `del`: `del` raises
-    # `AttributeError` when this test runs first and nothing has bound the name yet.
+    # The precondition here is UNBOUND, and something else in the suite binds it. Not the dir test
+    # above -- that binds `to_tensor`. The binder is
+    # `tests/integration/test_cross_backend_consistency.py:16`, whose module-level
+    # `from mfgarchon.utils.acceleration import ... TORCH_UTILS_AVAILABLE` triggers the PEP 562
+    # `__getattr__`, which caches via `globals()[name] = value`. That runs at COLLECTION, so it has
+    # already happened in every xdist worker before any test body starts, and then the bare lookup
+    # inside `get_acceleration_info` finds the name in `__dict__` and no `NameError` can fire.
+    # Measured with all three files under `-n 4`, 3 repeats: both call sites reverted -> 1 failed
+    # with this pop, 61 passed without it. `vars(...).pop`, not `del`: `del` raises
+    # `AttributeError` when nothing has bound the name yet.
     vars(acceleration).pop("TORCH_UTILS_AVAILABLE", None)
 
     info = acceleration.get_acceleration_info()
@@ -233,17 +291,25 @@ def test_the_introspection_helper_still_works():
     assert "jax_utils_available" in info
 
     # Pin the lookup ORDER, not just the value. `__getattr__("TORCH_UTILS_AVAILABLE")` reaches the
-    # module `__getattr__` directly and so skips `__dict__`, which means it reads PAST an explicit
+    # module `__getattr__` directly and so skips `__dict__`, i.e. it reads PAST an explicit
     # override; `sys.modules[__name__].TORCH_UTILS_AVAILABLE` is normal attribute lookup and does
-    # not. Nothing else in the tree overrides this module, so reverting that form was caught by
-    # nothing until this assertion.
-    acceleration.TORCH_UTILS_AVAILABLE = False
-    try:
-        assert acceleration.get_acceleration_info()["torch_utils_available"] is False, (
-            "the helper read past an explicit override, so it is not going through attribute lookup"
-        )
-    finally:
-        vars(acceleration).pop("TORCH_UTILS_AVAILABLE", None)
+    # not.
+    #
+    # BOTH directions, and that is the whole point. Overriding only to `False` is vacuous wherever
+    # torch does not import: `__getattr__` returns `bool(torch_utils.HAS_TORCH)` = False there, so
+    # the reverted form satisfies the assertion and the pin is silent on exactly the machines CI
+    # runs on (review measured 17 passed torch-free with both call sites reverted). Hardcoding the
+    # dict entry to `False` survives torch-PRESENT for the mirror reason. Looping catches both,
+    # because no single constant can equal both members of the loop.
+    for override in (True, False):
+        acceleration.TORCH_UTILS_AVAILABLE = override
+        try:
+            assert acceleration.get_acceleration_info()["torch_utils_available"] is override, (
+                f"the helper reported {acceleration.get_acceleration_info()['torch_utils_available']!r} "
+                f"under an explicit override of {override!r}: it is not going through attribute lookup"
+            )
+        finally:
+            vars(acceleration).pop("TORCH_UTILS_AVAILABLE", None)
 
 
 def test_the_availability_flag_reports_whether_torch_IMPORTS_not_whether_it_exists():
@@ -291,6 +357,7 @@ def test_the_availability_flag_reports_whether_torch_IMPORTS_not_whether_it_exis
     proc = subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         timeout=300,
