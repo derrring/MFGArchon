@@ -6,7 +6,6 @@ in MFG research projects, including differential operators, kernel functions,
 GFDM operators, particle interpolation, and signed distance functions.
 
 Submodules:
-- gfdm_strategies: Differential operators for scattered points (GFDM/RBF-FD)
 - kernels: Kernel functions (Gaussian, Wendland, B-spline) for GFDM, KDE, SPH
 - nonlinear_solvers: Newton, fixed-point, policy iteration solvers
 - particle: Particle-based methods (Monte Carlo, MCMC, interpolation)
@@ -111,7 +110,7 @@ from mfgarchon.utils.numerical.particle.interpolation import (
 # Public API: use mfgarchon.operators (LinearOperator classes) instead.
 
 __all__ = [
-    # GFDM operators (legacy, use gfdm_strategies)
+    # GFDM operators (legacy; canonical: alg.numerical.gfdm_components.gfdm_strategies)
     "GFDMOperator",
     # GFDM Strategy Pattern (scattered points)
     "DifferentialOperator",
