@@ -16,6 +16,8 @@ This replaces the old mfgarchon/accelerated/ directory with better organization.
 
 from __future__ import annotations
 
+import sys
+
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -132,7 +134,7 @@ def get_acceleration_info():
     """Get information about available acceleration utilities."""
     info = {
         "jax_utils_available": JAX_UTILS_AVAILABLE,
-        "torch_utils_available": __getattr__("TORCH_UTILS_AVAILABLE"),
+        "torch_utils_available": sys.modules[__name__].TORCH_UTILS_AVAILABLE,
     }
 
     if JAX_UTILS_AVAILABLE:
@@ -148,10 +150,14 @@ def get_acceleration_info():
         except ImportError as e:
             logger.debug(f"Could not retrieve JAX detailed info: {e}")
 
-    # `__getattr__(...)`, not the bare name: a module-level `__getattr__` is NOT consulted for
-    # a global lookup inside a function in the same module -- that goes straight to
-    # `module.__dict__` and raises NameError. ruff F821 caught this; the tests did not.
-    if __getattr__("TORCH_UTILS_AVAILABLE"):
+    # `sys.modules[__name__].NAME`, not the bare name and not `__getattr__(...)` directly.
+    # A bare global lookup inside a function does not consult the module `__getattr__` -- it goes to
+    # `module.__dict__` and raises NameError (ruff F821 caught that; the tests did not). Calling the
+    # dunder by hand fixes the NameError but skips `__dict__`, so it reads THROUGH an override:
+    # `m.TORCH_UTILS_AVAILABLE = False` then reported True here, and `monkeypatch.setattr` on this
+    # flag would have been silently ignored. A real attribute lookup checks `__dict__` first and
+    # falls through to `__getattr__` only when unbound. Found by review.
+    if sys.modules[__name__].TORCH_UTILS_AVAILABLE:
         try:
             from .torch_utils import HAS_CUDA, HAS_MPS, HAS_TORCH
 

@@ -83,9 +83,7 @@ def test_the_probe_would_notice_an_import():
     was VACUOUSLY satisfied there -- the guard discriminated only on a machine with `[all]`
     installed. Found by review; the control now uses a module the runners have.
     """
-    loaded = _modules_after(
-        "import sys, json, decimal\nprint(json.dumps({'decimal': 'decimal' in sys.modules}))\n"
-    )
+    loaded = _modules_after("import sys, json, decimal\nprint(json.dumps({'decimal': 'decimal' in sys.modules}))\n")
     assert loaded["decimal"], "the probe cannot see a module even when it is imported outright"
 
 
@@ -140,7 +138,6 @@ LAZY_TORCH_NAMES = (
 )
 
 
-@pytest.mark.optional_torch
 @pytest.mark.parametrize("name", LAZY_TORCH_NAMES)
 def test_each_deferred_name_still_resolves(name):
     """The deferral must not be a removal, per name.
@@ -151,7 +148,12 @@ def test_each_deferred_name_still_resolves(name):
     change introduced. The two mutation tests above pin that torch is not imported EAGERLY; they
     say nothing about whether it can be imported at all.
     """
-    pytest.importorskip("torch", reason="torch is optional and absent on CI runners")
+    # No `importorskip`: `torch_utils.py` wraps `import torch` in `try/except ImportError` and
+    # publishes `HAS_TORCH = False`, so it imports cleanly without torch and every name below
+    # resolves. Marking these `optional_torch` excluded them from every automated tier -- the gate,
+    # nightly and python-compat all deselect that marker -- so the machinery they exist to pin was
+    # covered by tests that never ran. Found by review, which also measured that they pass with
+    # torch genuinely absent. The torch-less user is what CI is; that is the case worth pinning.
     import mfgarchon.utils.acceleration as acceleration
 
     resolved = getattr(acceleration, name)
@@ -161,12 +163,10 @@ def test_each_deferred_name_still_resolves(name):
     assert getattr(acceleration, name) is resolved
 
 
-@pytest.mark.optional_torch
 def test_the_renamed_export_points_at_the_right_function():
     """`torch_tridiagonal_solve` is `torch_utils.tridiagonal_solve` under another name — the one
     entry in the lazy map whose source attribute differs from its exported one, and the only
     place a copy-paste error would be silent."""
-    pytest.importorskip("torch", reason="torch is optional and absent on CI runners")
     import mfgarchon.utils.acceleration as acceleration
     from mfgarchon.utils.acceleration import torch_utils
 
@@ -186,9 +186,19 @@ def test_an_unknown_name_raises_attribute_error_not_import_error():
 
 def test_dir_lists_each_deferred_name_once():
     """`__dir__` merges `globals()` with the lazy map, and a name bound by an earlier
-    `__getattr__` call is in both. Review measured three names listed twice."""
+    `__getattr__` call is in both.
+
+    **The binding happens inside this test.** Without it the two sets are disjoint and the buggy
+    `sorted([...])` form produces no duplicates -- so the test passed with the defect present when
+    run alone (1 passed) and under the gate's marker set (6 passed, 12 deselected), because the
+    `optional_torch` cases that would have bound the names are excluded there. Only an unfiltered
+    whole-file run caught it. That is the same failure mode as the registry test earlier in this
+    branch: an assertion about a module global satisfied by whatever ran first. Found by review;
+    order-independence is not something the surrounding suite can supply.
+    """
     import mfgarchon.utils.acceleration as acceleration
 
+    acceleration.TORCH_UTILS_AVAILABLE  # noqa: B018 - bind one lazy name, which is the precondition
     listing = dir(acceleration)
     duplicated = sorted({n for n in listing if listing.count(n) > 1})
     assert not duplicated, f"dir() lists these more than once: {duplicated}"
@@ -208,3 +218,66 @@ def test_the_introspection_helper_still_works():
     assert "torch_utils_available" in info
     assert isinstance(info["torch_utils_available"], bool)
     assert "jax_utils_available" in info
+
+
+def test_the_availability_flag_reports_whether_torch_IMPORTS_not_whether_it_exists():
+    """An installed-but-broken torch must give `False`.
+
+    The first version of this deferral used `importlib.util.find_spec("torch") is not None`, which
+    answers "is torch on disk". For a torch that is installed but raises on import, the eager form
+    it replaced gave `False` and that gives `True` — and `get_acceleration_info()` then reported the
+    self-contradictory `{"torch_utils_available": True, "torch_available": False}`.
+
+    The fix was unpinned: review reverted it and the whole suite stayed green, because nothing in
+    the tree simulates a broken torch. The guard that DID catch the other wrong fix — importing
+    `torch_utils` eagerly — only sees the eagerness failure, not the semantics.
+    """
+    import textwrap
+
+    code = textwrap.dedent(
+        """
+        import json, pathlib, sys, tempfile
+
+        tmp = tempfile.mkdtemp()
+        pkg = pathlib.Path(tmp) / "torch"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("raise ImportError('broken on purpose')\\n")
+        sys.path.insert(0, tmp)
+
+        import importlib.util
+        # control: the shadow must be BOTH findable and un-importable, or this proves nothing
+        assert importlib.util.find_spec("torch") is not None, "control: the shadow torch is not findable"
+        try:
+            import torch
+            print(json.dumps({"control": "FAILED - the shadow torch imported"}))
+            raise SystemExit(0)
+        except ImportError:
+            pass
+
+        import mfgarchon.utils.acceleration as acc
+        print(json.dumps({
+            "control": "ok",
+            "flag": bool(acc.TORCH_UTILS_AVAILABLE),
+            "info": bool(acc.get_acceleration_info()["torch_utils_available"]),
+        }))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"the probe never ran:\n{proc.stderr[-1500:]}"
+    line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
+    assert line, f"no verdict:\n{proc.stdout[-600:]}\n{proc.stderr[-600:]}"
+    import json as _json
+
+    got = _json.loads(line[-1])
+    assert got["control"] == "ok", got["control"]
+    assert got["flag"] is False, (
+        "TORCH_UTILS_AVAILABLE is True for a torch that does not import. The flag answers "
+        "'is torch on disk' rather than 'does importing it succeed'."
+    )
+    assert got["info"] is False, "get_acceleration_info() disagrees with the flag"
