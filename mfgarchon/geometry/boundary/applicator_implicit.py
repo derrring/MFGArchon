@@ -135,7 +135,7 @@ class ImplicitApplicator(MeshfreeApplicator):
 
         # Apply BC based on type (fails loud if default_bc unset; Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("ImplicitBoundaryApplicator.apply")
-        bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time)
+        bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time, bc_type)
 
         if bc_type == BCType.DIRICHLET:
             result[boundary_mask] = self._apply_dirichlet(result[boundary_mask], bc_value)
@@ -200,6 +200,7 @@ class ImplicitApplicator(MeshfreeApplicator):
         bc: BoundaryConditions,
         points: NDArray[np.floating],
         time: float,
+        bc_type: BCType,
     ) -> NDArray[np.floating] | float:
         """
         Resolve BC value (may be callable or constant).
@@ -216,10 +217,26 @@ class ImplicitApplicator(MeshfreeApplicator):
         # `.value` attribute, so the default fired on every call and every Dirichlet BC was applied
         # as 0.0 regardless of what the caller asked for. The value lives on the segments.
         #
-        # The segment, not `bc.default_value`: that field is a plain float and the factory writes
+        # Selected by TYPE, mirroring `_robin_alpha_beta`. ~~`next(s for s in bc.segments if
+        # s.value is not None)`~~ [CORRECTED 2026-08-15] was the first version and it was worse than
+        # what it replaced on one configuration: `BCSegment.value` defaults to `0.0`, not `None`, and
+        # nothing in the package passes `value=None`, so that filter never filtered and the
+        # expression was unconditionally `segments[0]`. Segments sort priority-descending, so the
+        # value came from whichever segment sorted first while `bc_type` came from
+        # `_resolve_default_bc` -- two segments feeding one condition. Measured on a Robin wall plus
+        # a higher-priority Dirichlet exit: alpha/beta = (2.0, 3.0) from the ROBIN segment and
+        # g = 7.0 from the DIRICHLET one, against a correct 1.0; and on no-flux walls plus a
+        # Dirichlet exit, where the pre-fix `0.0` had been RIGHT and this returned 7.0.
+        #
+        # NEUMANN and NO_FLUX are matched as one family because `apply()` dispatches them as one;
+        # without that, a NEUMANN segment under `default_bc=NO_FLUX` falls through to
+        # `bc.default_value`.
+        #
+        # Not `bc.default_value` as the primary source: it is a plain float and the factory writes
         # 0.0 into it whenever the value is callable (`conditions.py:929`), so routing through it
         # would fix the scalar case and silently break the callable one this method exists to serve.
-        segment = next((s for s in bc.segments if s.value is not None), None)
+        family = (BCType.NEUMANN, BCType.NO_FLUX) if bc_type in (BCType.NEUMANN, BCType.NO_FLUX) else (bc_type,)
+        segment = next((s for s in bc.segments if s.bc_type in family), None)
         value = segment.value if segment is not None else bc.default_value
 
         if callable(value):

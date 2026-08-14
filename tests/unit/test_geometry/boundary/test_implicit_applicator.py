@@ -348,6 +348,8 @@ class TestAgainstAPackageGeometry:
         points = self._on_sphere(geometry)
         on_boundary = applicator._detect_boundary_points(points)
 
+        assert on_boundary.any(), "no boundary points detected, so the assertion below is vacuous"
+
         bc = BoundaryConditions(
             segments=[BCSegment(name="d", bc_type=BCType.DIRICHLET, value=lambda p, t: 42.0)],
             dimension=2,
@@ -356,3 +358,60 @@ class TestAgainstAPackageGeometry:
         result = applicator.apply(np.ones(len(points)), bc, points)
 
         np.testing.assert_allclose(result[on_boundary], 42.0, atol=1e-12)
+
+    def test_the_value_follows_the_resolved_type_not_the_segment_order(self, package_applicator):
+        """The value and the type must come from the same segment.
+
+        The first version of this fix selected the value with
+        `next(s for s in bc.segments if s.value is not None)`. `BCSegment.value` defaults to `0.0`,
+        not `None`, and nothing in the package passes `value=None`, so that filter never filtered:
+        the expression was unconditionally `segments[0]`. Segments sort priority-descending
+        (`conditions.py:135`), so the value came from whichever segment sorted first while the type
+        came from `_resolve_default_bc` -- and `alpha`/`beta` came from a third place,
+        `_robin_alpha_beta`, which had always selected by type.
+
+        Case C below is the sharpest: `alpha, beta = (2.0, 3.0)` from the ROBIN segment and
+        `g = 7.0` from the DIRICHLET one, feeding one Robin condition. Case A is the one where the
+        old behaviour was worse than no fix at all: the pre-#1938 `0.0` was correct there and the
+        first version returned 7.0.
+
+        Case B is the control. It is the same physics as A with the priorities swapped, and it was
+        already right by accident of sort order -- so it passes in every version and is here to show
+        that a passing row proves nothing on its own.
+        """
+        applicator, geometry = package_applicator
+        points = self._on_sphere(geometry)
+        on_boundary = applicator._detect_boundary_points(points)
+        assert on_boundary.any(), "no boundary points detected, so the assertions below are vacuous"
+        boundary_points = points[on_boundary]
+
+        def bc_of(segments, default_bc):
+            return BoundaryConditions(segments=segments, dimension=2, default_bc=default_bc)
+
+        exit_hi = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
+        walls = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0)
+        walls_hi = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0, priority=5)
+        exit_lo = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)
+        robin_wall = BCSegment(name="wall", bc_type=BCType.ROBIN, alpha=2.0, beta=3.0, value=1.0)
+
+        cases = [
+            ("A exit sorts first, resolved NO_FLUX", bc_of([exit_hi, walls], BCType.NO_FLUX), 0.0),
+            ("B walls sort first (control)", bc_of([walls_hi, exit_lo], BCType.NO_FLUX), 0.0),
+            ("C Robin wall, Dirichlet sorts first", bc_of([exit_hi, robin_wall], BCType.ROBIN), 1.0),
+            (
+                "D NEUMANN segment, default NO_FLUX",
+                bc_of([BCSegment(name="w", bc_type=BCType.NEUMANN, value=2.5)], BCType.NO_FLUX),
+                2.5,
+            ),
+            ("E no segments, falls back to default_value", bc_of([], BCType.DIRICHLET), 0.0),
+        ]
+
+        for label, bc, expected in cases:
+            resolved = bc._resolve_default_bc("test")
+            value = applicator._resolve_bc_value(bc, boundary_points, 0.0, resolved)
+            np.testing.assert_allclose(
+                value,
+                expected,
+                atol=1e-12,
+                err_msg=f"{label}: resolved {resolved.name} but took the value from another segment",
+            )
