@@ -13,6 +13,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.applicator_implicit import ImplicitApplicator
 from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
@@ -246,3 +247,112 @@ class TestDispatch:
         assert type(applicator) is MeshfreeApplicator, (
             "GFDM must not pick up the MESHFREE branch's implicit-geometry specialisation"
         )
+
+
+class TestAgainstAPackageGeometry:
+    """The fixtures above supply `_CircleGeometry`, defined in this file.
+
+    That is what hid #1938. `_CircleGeometry.is_on_boundary` takes `tolerance=`, matching the
+    applicator's call; every `ImplicitDomain` the package ships -- Hyperrectangle, Hypersphere, the
+    three CSG domains, DifferenceDomain, and the base class -- takes `tol=`. So the suite exercised
+    a geometry written against the caller rather than against `GeometryProtocol`, and
+    `ImplicitApplicator.apply` raised `TypeError` for every real geometry, before any BC code ran.
+
+    These tests use `Hypersphere`, reached the way a user reaches it: through
+    `get_applicator_for_geometry(geometry, MESHFREE)`.
+    """
+
+    @staticmethod
+    def _on_sphere(app_geometry, n=12):
+        theta = np.linspace(0.0, 2.0 * np.pi, n + 1)[:-1]
+        return np.column_stack(
+            [
+                app_geometry.center[0] + app_geometry.radius * np.cos(theta),
+                app_geometry.center[1] + app_geometry.radius * np.sin(theta),
+            ]
+        )
+
+    @pytest.fixture
+    def package_applicator(self):
+        from mfgarchon.geometry.boundary.dispatch import DiscretizationType, get_applicator_for_geometry
+        from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+
+        geometry = Hypersphere(center=np.array([0.5, 0.5]), radius=0.4)
+        applicator = get_applicator_for_geometry(geometry, DiscretizationType.MESHFREE)
+        assert type(applicator).__name__ == "ImplicitApplicator", (
+            f"dispatch returned {type(applicator).__name__}; this test is about ImplicitApplicator "
+            f"and would otherwise pass by testing something else"
+        )
+        return applicator, geometry
+
+    @pytest.mark.parametrize("value", [3.0, -7.5, 0.0])
+    def test_dirichlet_applies_the_value_it_was_given(self, package_applicator, value):
+        """`getattr(bc, "value", 0.0)` read an attribute `BoundaryConditions` does not have, so the
+        default fired every time and every Dirichlet BC was applied as 0.0.
+
+        `value=0.0` is included deliberately: it is the case the pre-#1938 fixtures used, and it
+        passes either way. It is here as the positive control -- the parametrisation only
+        discriminates because the other two rows exist.
+        """
+        applicator, geometry = package_applicator
+        points = self._on_sphere(geometry)
+        on_boundary = applicator._detect_boundary_points(points)
+        assert on_boundary.any(), "no boundary points detected, so the assertion below is vacuous"
+
+        result = applicator.apply(np.ones(len(points)), dirichlet_bc(dimension=2, value=value), points)
+
+        np.testing.assert_allclose(result[on_boundary], value, atol=1e-12)
+
+    def test_robin_coefficients_reach_the_scheme(self, package_applicator):
+        """alpha/beta live on `BCSegment`; the pre-#1938 code read them off `BoundaryConditions`,
+        which carries neither, so every Robin BC collapsed onto one answer.
+
+        Asserting *disagreement*, not a value: any two parameter sets that produce the same field
+        would satisfy a value assertion computed from the same broken path.
+        """
+        applicator, geometry = package_applicator
+        points = self._on_sphere(geometry)
+        on_boundary = applicator._detect_boundary_points(points)
+
+        def robin(alpha, beta, g):
+            return BoundaryConditions(
+                segments=[BCSegment(name="r", bc_type=BCType.ROBIN, alpha=alpha, beta=beta, value=g)],
+                dimension=2,
+                default_bc=BCType.ROBIN,
+            )
+
+        # `g` is HELD FIXED across the three. Varying it too is what a natural fixture does, and it
+        # destroys the discrimination: `g` reaches the scheme through `bc_value`, which was never
+        # broken, so three rows differing in `g` differ even with alpha/beta pinned at the getattr
+        # defaults (1.0, 1.0). Measured: with `g` varied this test passes over the reverted code.
+        # Only alpha and beta move here, so nothing but the alpha/beta channel can explain a change.
+        field = np.ones(len(points))
+        g = 3.0
+        a = applicator.apply(field.copy(), robin(1.0, 1.0, g), points)[on_boundary]
+        b = applicator.apply(field.copy(), robin(5.0, 0.2, g), points)[on_boundary]
+        c = applicator.apply(field.copy(), robin(0.1, 9.0, g), points)[on_boundary]
+
+        assert not np.allclose(a, b), "changing (alpha, beta) at fixed g left the field unchanged"
+        assert not np.allclose(b, c), "changing (alpha, beta) at fixed g left the field unchanged"
+
+        same = applicator.apply(field.copy(), robin(1.0, 1.0, g), points)[on_boundary]
+        np.testing.assert_allclose(a, same, atol=1e-12)  # control: identical input, identical output
+
+    def test_a_callable_value_is_still_evaluated(self, package_applicator):
+        """Routing the value through `bc.default_value` -- the owner the parent class uses -- would
+        have fixed the scalar case and silently broken this one: that field is a plain float and the
+        factory writes 0.0 into it whenever the value is callable (`conditions.py:929`). The value is
+        read from the segment instead, which keeps the callable.
+        """
+        applicator, geometry = package_applicator
+        points = self._on_sphere(geometry)
+        on_boundary = applicator._detect_boundary_points(points)
+
+        bc = BoundaryConditions(
+            segments=[BCSegment(name="d", bc_type=BCType.DIRICHLET, value=lambda p, t: 42.0)],
+            dimension=2,
+            default_bc=BCType.DIRICHLET,
+        )
+        result = applicator.apply(np.ones(len(points)), bc, points)
+
+        np.testing.assert_allclose(result[on_boundary], 42.0, atol=1e-12)

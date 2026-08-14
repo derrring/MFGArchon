@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from .applicator_base import GridType
-from .applicator_meshfree import MeshfreeApplicator
+from .applicator_meshfree import MeshfreeApplicator, _robin_alpha_beta
 from .types import BCType
 
 if TYPE_CHECKING:
@@ -144,8 +144,11 @@ class ImplicitApplicator(MeshfreeApplicator):
                 result, boundary_mask, normals, bc_value, points, spacing
             )
         elif bc_type == BCType.ROBIN:
-            alpha = getattr(boundary_conditions, "alpha", 1.0)
-            beta = getattr(boundary_conditions, "beta", 1.0)
+            # `_robin_alpha_beta`, not `getattr(boundary_conditions, ...)`. alpha/beta live on the
+            # BCSegment; `BoundaryConditions` has no such attribute, so the previous form always
+            # took its own defaults and made every Robin BC identical. #1558 established this owner
+            # on the parent class and this subclass kept the pre-fix code. #1938
+            alpha, beta = _robin_alpha_beta(boundary_conditions)
             result[boundary_mask] = self._apply_robin_along_normal(
                 result, boundary_mask, normals, alpha, beta, bc_value, points, spacing
             )
@@ -167,8 +170,17 @@ class ImplicitApplicator(MeshfreeApplicator):
         Returns:
             Boolean mask of boundary points
         """
-        # is_on_boundary is GeometryProtocol-guaranteed (protocol.py:208)
-        return self.geometry.is_on_boundary(points, tolerance=self._boundary_tolerance)
+        # Positional, not `tolerance=`. `GeometryProtocol.is_on_boundary` names the parameter
+        # `tolerance` and 18 classes follow it, but all seven `ImplicitDomain` subclasses --
+        # Hyperrectangle, Hypersphere, Union/Intersection/Complement/DifferenceDomain and the base
+        # -- name it `tol`. Since this applicator exists FOR implicit geometries, the keyword form
+        # raised `TypeError` for every geometry the package ships, before any BC code ran.
+        #
+        # It looked exercised because `test_implicit_applicator.py` supplies its own `_CircleGeometry`
+        # whose signature matches this call rather than the protocol -- a fixture written against the
+        # caller instead of against the contract. Passing positionally works with both spellings; the
+        # underlying protocol divergence is filed separately. #1938
+        return self.geometry.is_on_boundary(points, self._boundary_tolerance)
 
     def _compute_boundary_normals(self, boundary_points: NDArray[np.floating]) -> NDArray[np.floating]:
         """
@@ -200,7 +212,15 @@ class ImplicitApplicator(MeshfreeApplicator):
         Returns:
             BC values (scalar or array matching points)
         """
-        value = getattr(bc, "value", 0.0)
+        # ~~`getattr(bc, "value", 0.0)`~~ [FIXED 2026-08-15, #1938] -- `BoundaryConditions` has no
+        # `.value` attribute, so the default fired on every call and every Dirichlet BC was applied
+        # as 0.0 regardless of what the caller asked for. The value lives on the segments.
+        #
+        # The segment, not `bc.default_value`: that field is a plain float and the factory writes
+        # 0.0 into it whenever the value is callable (`conditions.py:929`), so routing through it
+        # would fix the scalar case and silently break the callable one this method exists to serve.
+        segment = next((s for s in bc.segments if s.value is not None), None)
+        value = segment.value if segment is not None else bc.default_value
 
         if callable(value):
             # Time-dependent or space-dependent BC
