@@ -1,8 +1,10 @@
 """Importing this package writes nothing to the caller's working directory.
 
 #1917 measured 21,498 UUID-named directories accumulated in this repository in two weeks, 800
-sampled and all empty. (The issue text says 20,322 / 500; that was the count at filing, three
-days earlier. Both are real measurements at different times -- the later one is used throughout.) `import mfgarchon.workflow` ran an initialiser that built a manager
+sampled and all empty. (The issue text says 20,322 / 500 -- the count when it was filed
+at 2026-08-13T12:54Z, against 21,498 / 800 recounted at 17:19Z. ~~three days earlier~~ [CORRECTED
+2026-08-14]: the interval is about four and a half hours, and that is the more telling number --
+**+1,176 directories in under six hours of ordinary work.**) `import mfgarchon.workflow` ran an initialiser that built a manager
 anchored to `Path.cwd()`, created `.mfg_workflows/`, and persisted an example workflow -- with a
 step -- as a side effect of reading the module. The directories then multiplied through
 `_load_existing_workflows`, which constructs a `Workflow` per persisted metadata file and whose
@@ -87,8 +89,14 @@ def test_importing_writes_nothing_to_the_working_directory(module, tmp_path):
 
 
 def test_naming_a_workflow_writes_nothing():
-    """Constructing a `Workflow` used to `mkdir` and open a log file inside it, so the test
-    suite's own `Workflow(name="test")` calls were part of the 21,498."""
+    """Constructing a `Workflow` used to `mkdir`, so the test suite's own `Workflow(name="test")`
+    calls were part of the 21,498.
+
+    ~~and open a log file inside it~~ [CORRECTED 2026-08-14] -- it never opened one. No FileHandler
+    has been constructed for any caller since #621 (2026-02-06), because `setup_workflow_logging`
+    guards on `if not logger.handlers:` and `get_logger` always attaches a StreamHandler first.
+    The 21,498 directories being ALL EMPTY is the proof, and it was in hand when the claim was
+    written."""
     code = "from mfgarchon.workflow import Workflow\nw = Workflow(name='probe')\nassert w.name == 'probe'\n"
     import tempfile
 
@@ -149,9 +157,11 @@ def test_using_the_workflow_machinery_writes_no_log_into_the_working_directory()
     caller since #621 (2026-02-06). An earlier revision of #1917 lifted that guard while
     restructuring the helper, which revived the path. Because `mfg_workflow_manager`,
     `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger names, each new instance
-    appended another handler rather than replacing one: records from 126 distinct output
-    directories ended up in a single file at this repository's root, 298 KB of them written
-    during the gate run that was reviewing the change. Found by independent review.
+    appended another handler rather than replacing one: records from 37 distinct output
+    directories ended up in a single file at this repository's root, 298 KB written during the
+    gate run that was reviewing the change. (~~126~~ [CORRECTED 2026-08-14] -- that misread the
+    whole file's nine-month total of 128; 91 of those predate #621 disabling the logging, with
+    zero overlap, so attributing them to a 14-minute run overstated the mechanism 3.5x.)
 
     Reviving that logging is a separate decision and needs the shared-name loggers fixed first.
     Until then this asserts it stays off, because nothing else in the suite reacts to it.
@@ -160,9 +170,14 @@ def test_using_the_workflow_machinery_writes_no_log_into_the_working_directory()
         "from pathlib import Path\n"
         "from mfgarchon.workflow.parameter_sweep import ParameterSweep, SweepConfiguration\n"
         "from mfgarchon.workflow import WorkflowManager\n"
+        "from mfgarchon.workflow.experiment_tracker import ExperimentTracker\n"
         "cfg = SweepConfiguration({'a': [1, 2]}, output_dir=Path('out'))\n"
         "ParameterSweep({'a': [1, 2]}, cfg)\n"
         "WorkflowManager(workspace_path=Path('ws'))\n"
+        # ExperimentTracker has its own _setup_logging and its own fixed logger name, so a
+        # revival there bypasses the helper entirely. Re-review measured it: without this line
+        # the mutant writes exp/experiment_tracker.log and all 216 tests pass.
+        "ExperimentTracker(workspace_path=Path('exp')).create_experiment('p', 'd')\n"
     )
     import tempfile
 

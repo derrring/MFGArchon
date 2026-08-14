@@ -475,7 +475,7 @@ class Workflow:
         }
 
     def _materialise(self) -> Path:
-        """Create the workflow directory and attach its log file. Idempotent.
+        """Create the workflow directory. Idempotent. Attaches no log file -- see `_setup_logging`.
 
         Every path that writes calls this; no constructor does. That split is the whole fix
         for #1917 -- the directory now appears when a workflow is persisted, not when one is
@@ -487,8 +487,13 @@ class Workflow:
         return self.workflow_dir
 
     def _setup_logging(self) -> logging.Logger:
-        """Console only. The file handler is attached by `_materialise()`, because attaching
-        it here would create the directory this change exists to stop creating."""
+        """Console only, and no file handler is attached anywhere.
+
+        `setup_workflow_logging` builds its FileHandler inside `if not logger.handlers:`, and
+        `get_logger` always attaches a StreamHandler first -- so no FileHandler has been
+        constructed for any caller since #621 (2026-02-06). Passing a path here would not create
+        a directory either; it would simply be discarded, which is what main did. Reviving
+        workflow file logging needs the fixed-name loggers dealt with first: #1929."""
         return setup_workflow_logging(f"mfg_workflow.{self.id}", console=True)
 
 
@@ -624,16 +629,15 @@ class WorkflowManager:
             json.dump(metadata, f, indent=2)
 
     def _materialise(self) -> Path:
-        """Create the workspace and attach its log file. Idempotent; never called by
-        `__init__`. #1917"""
+        """Create the workspace. Idempotent; never called by `__init__`. Attaches no log file --
+        see `Workflow._setup_logging` for why none is attached anywhere. #1917"""
         if not self._materialised:
             self.workspace_path.mkdir(parents=True, exist_ok=True)
             self._materialised = True
         return self.workspace_path
 
     def _setup_logging(self) -> logging.Logger:
-        """Console only until `_materialise()` runs -- naming the log file here would
-        require the directory that this change exists to stop creating."""
+        """Console only. `_materialise()` does not change logging; see `Workflow._setup_logging`."""
         return setup_workflow_logging("mfg_workflow_manager")
 
 

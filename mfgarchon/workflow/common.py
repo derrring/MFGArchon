@@ -83,8 +83,11 @@ def setup_workflow_logging(
     moved the file handler outside the guard; the result wrote `parameter_sweep.log` and
     `experiment.log` into the caller's working directory, and -- because `mfg_workflow_manager`,
     `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger names -- appended a new
-    handler per instance, so records from 126 distinct output directories landed in one file at
-    this repository's root, 298 KB of them during the gate run that reviewed the change.
+    handler per instance, so records from **37** distinct output directories landed in one file at
+    this repository's root during a single gate run -- 298 KB of it. (~~126~~ [CORRECTED] was the
+    whole file's 128 minus a bad extraction: 91 of those predate #621 disabling the logging and
+    have nothing to do with handler accumulation. Attributing a nine-month total to a 14-minute
+    run overstated the mechanism by 3.5x. Found by re-review.)
 
     Reviving workflow file logging is a separate decision from stopping import-time writes, and
     it needs the shared-name loggers fixed first. Tracked separately; not done here.
