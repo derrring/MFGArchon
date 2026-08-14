@@ -11,4 +11,8 @@ torch names through a module `__getattr__`, so `TORCH_UTILS_AVAILABLE` still ans
 it uses `importlib.util.find_spec`, which does not import anything.
 
 Measured: `import mfgarchon` 4.12s → 3.27s, with torch absent from `sys.modules`. NumPy stays
-eager: it is a hard dependency and costs 0.07s. (#1930)
+eager: it is a hard dependency and costs 0.07s.
+
+One observable consequence: `get_backend_info()["registered_backends"]` now reports
+`["numpy"]` at import rather than every installed backend. Asking for a backend still
+registers it, so the list grows as backends are used. (#1930)

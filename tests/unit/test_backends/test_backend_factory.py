@@ -5,6 +5,7 @@ Tests backend registration, discovery, creation, and auto-selection logic.
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -151,15 +152,21 @@ class TestCreateBackend:
         with pytest.raises(ValueError, match="Unknown backend"):
             create_backend("nonexistent_backend")
 
-    def test_create_backend_torch_when_unavailable(self, monkeypatch):
+    def test_create_backend_torch_when_unavailable(self, monkeypatch, clean_backend_registry):
         """A machine without PyTorch gets TorchBackend's own diagnostic.
 
         `torch_backend.py` imports fine without torch -- it degrades to `TORCH_AVAILABLE =
-        False` -- so `backends/__init__.py` registers "torch" into `_BACKENDS` whether or not
-        torch exists. The `if backend_name not in _BACKENDS` branch is therefore unreachable
-        for torch, and the error a real user sees comes from the constructor
-        (`torch_backend.py:109`). Clearing the flag is what reproduces that path; popping
-        `_BACKENDS` or blocking the import both exercise a branch no install can reach.
+        False` -- so the error a real user sees comes from the constructor
+        (`torch_backend.py:109`). Clearing the flag is what reproduces that path.
+
+        ~~`backends/__init__.py` registers "torch" into `_BACKENDS` whether or not torch
+        exists, so the `if backend_name not in _BACKENDS` branch is unreachable for torch~~
+        [CORRECTED 2026-08-14] -- it is reachable now: #1930 stopped registering torch and jax
+        eagerly, so `create_backend("torch")` imports and registers on demand. This test
+        therefore REGISTERS torch as a side effect, which is why it takes
+        `clean_backend_registry`. Without it, `test_optional_backends_registered_if_available`
+        reads the residue and passes for the wrong reason -- serially and under a lucky xdist
+        schedule -- while failing 3/3 on a directory-scoped `-n auto` run.
         """
         import mfgarchon.backends.torch_backend as torch_backend
 
@@ -168,11 +175,13 @@ class TestCreateBackend:
         with pytest.raises(ImportError, match="PyTorch is required for TorchBackend"):
             create_backend("torch")
 
-    def test_create_backend_jax_when_unavailable(self, monkeypatch):
+    def test_create_backend_jax_when_unavailable(self, monkeypatch, clean_backend_registry):
         """A machine without JAX gets JAXBackend's own diagnostic.
 
-        Same shape as the torch case: `jax_backend.py` imports without JAX, so "jax" is always
-        registered and the constructor raises (`jax_backend.py:66`).
+        Same shape as the torch case: `jax_backend.py` imports without JAX, so the constructor
+        raises (`jax_backend.py:66`). ~~so "jax" is always registered~~ [CORRECTED 2026-08-14]
+        -- jax is registered on demand since #1930, so this test registers it and needs the
+        cleanup fixture.
         """
         import mfgarchon.backends.jax_backend as jax_backend
 
@@ -182,15 +191,15 @@ class TestCreateBackend:
             create_backend("jax")
 
     def test_create_backend_numba_when_unavailable(self, monkeypatch):
-        """Numba is the one backend whose lazy-registration branch is live.
+        """Numba reaches the lazy-registration branch by a different route than torch and jax.
 
-        Unlike torch and jax, `numba_backend.py` raises `ImportError` at import time rather
-        than degrading to a flag, so it is never pre-registered and `create_backend` really
-        does take the `if backend_name not in _BACKENDS` path. Blocking the import is the
-        faithful simulation here.
+        ~~Numba is the one backend whose lazy-registration branch is live~~ [CORRECTED
+        2026-08-14] -- since #1930 all three are registered on demand. The difference that
+        remains is WHY: `numba_backend.py` raises `ImportError` at import time rather than
+        degrading to a flag, so blocking the import is the faithful simulation here, while
+        torch and jax degrade and their constructors raise instead.
 
-        This asymmetry is not by design as far as this test can tell -- it is recorded so the
-        next person does not "fix" the three to look alike (Issue #1663).
+        Recorded so the next person does not "fix" the three to look alike (Issue #1663).
         """
         import mfgarchon.backends as backends_module
 
@@ -370,19 +379,56 @@ class TestBackendInitialization:
 
         assert "numpy" in backends_module._BACKENDS
 
-    def test_optional_backends_registered_if_available(self):
-        """Test that optional backends are registered when available."""
-        import mfgarchon.backends as backends_module
+    def test_optional_backends_are_not_registered_until_asked_for(self):
+        """[SUPERSEDED 2026-08-14] Was `test_optional_backends_registered_if_available`, which
+        asserted the opposite: that touching the package registers torch and jax when installed.
 
-        available = get_available_backends()
+        #1930 stopped that, because registering them imported them -- 0.82s of a 4.12s
+        `import mfgarchon` for anyone who never asked for a backend. `create_backend` already
+        carried the on-demand path; eager registration was what made it unreachable.
 
-        # Torch should be registered if available
-        if available["torch"]:
-            assert "torch" in backends_module._BACKENDS
+        **In a subprocess, because `_BACKENDS` is a module global and this is an assertion about
+        its state at import.** Any test anywhere that asks for a backend registers one, so an
+        in-process check reads whatever the session happened to do first. The first attempt at
+        this test used `clean_backend_registry` and still failed in the full suite -- the fixture
+        restores the registry after the polluter, but not before this test, and under `-n auto`
+        the order is not fixed. Order-independence is not something a fixture can retrofit onto
+        a global; a fresh interpreter is the instrument.
+        """
+        import json
+        import subprocess
+        import sys
 
-        # JAX should be registered if available
-        if available["jax"]:
-            assert "jax" in backends_module._BACKENDS
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json\n"
+                "import mfgarchon.backends as b\n"
+                "at_import = sorted(b._BACKENDS)\n"
+                "asked = None\n"
+                "if b.get_available_backends()['jax']:\n"
+                "    b.create_backend('jax')\n"
+                "    asked = sorted(b._BACKENDS)\n"
+                "print(json.dumps({'at_import': at_import, 'after_asking': asked}))\n",
+            ],
+            cwd=Path(__file__).resolve().parents[3],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert proc.returncode == 0, f"the probe never ran:\n{proc.stderr[-1500:]}"
+        line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
+        assert line, f"no verdict:\n{proc.stdout[-600:]}\n{proc.stderr[-600:]}"
+        result = json.loads(line[-1])
+
+        assert result["at_import"] == ["numpy"], (
+            f"at import the registry holds {result['at_import']}, expected only numpy. Registering "
+            f"torch or jax imports it, which is what #1930 removed -- see "
+            f"tests/unit/test_optional_backends_are_not_imported_eagerly.py"
+        )
+        if result["after_asking"] is not None:
+            assert "jax" in result["after_asking"], "create_backend('jax') did not register it"
 
 
 class TestBackendCreationEdgeCases:

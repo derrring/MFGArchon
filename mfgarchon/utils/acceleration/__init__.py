@@ -16,8 +16,6 @@ This replaces the old mfgarchon/accelerated/ directory with better organization.
 
 from __future__ import annotations
 
-import importlib.util
-
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -72,14 +70,25 @@ except ImportError:
 # `adjoint_validation`, through `utils.geometry`, and through `backends` -- so torch was imported
 # unconditionally by anyone who touched the package, whichever route they arrived by. Measured on
 # 1aa71b98: deferring this and the eager registrations in `backends/__init__.py` together takes
-# `import mfgarchon` from 4.12s to 3.30s and removes torch from `sys.modules` entirely. Deferring
+# `import mfgarchon` from 4.12s to 3.27s and removes torch from `sys.modules` entirely. Deferring
 # either one alone changes nothing, because the other route still arrives. #1930.
 #
-# `TORCH_UTILS_AVAILABLE` stays eager and cheap: it answers "is torch installed", which
-# `importlib.util.find_spec` settles without importing anything.
-TORCH_UTILS_AVAILABLE = importlib.util.find_spec("torch") is not None
+# `TORCH_UTILS_AVAILABLE` is deferred too, for the same reason the names are.
+#
+# It must answer "did `import torch` succeed", which is what the old eager
+# `try: from .torch_utils import ...` measured. ~~`find_spec("torch") is not None`~~ [CORRECTED
+# 2026-08-14] answers "is torch on disk" instead: for an installed-but-broken torch the old form
+# gave False and that gives True, and `get_acceleration_info()` then reports the
+# self-contradictory `{"torch_utils_available": True, "torch_available": False}`. Found by review.
+#
+# Computing it eagerly and correctly is not available: the only authority is `torch_utils.HAS_TORCH`,
+# and importing that module imports torch whenever torch works -- which is the whole thing this
+# change removes. (An earlier attempt at this correction did exactly that and put torch back in
+# `sys.modules`; caught by the test below rather than by inspection.) So the flag joins the lazy
+# map: correct on first read, free until then.
 
 _LAZY_TORCH = {
+    "TORCH_UTILS_AVAILABLE": "torch_utils",
     "HAS_CUDA": "torch_utils",
     "HAS_MPS": "torch_utils",
     "HAS_TORCH": "torch_utils",
@@ -97,7 +106,17 @@ def __getattr__(name: str):
     if name in _LAZY_TORCH:
         from importlib import import_module
 
-        module = import_module(f".{_LAZY_TORCH[name]}", __name__)
+        try:
+            module = import_module(f".{_LAZY_TORCH[name]}", __name__)
+        except ImportError:
+            if name == "TORCH_UTILS_AVAILABLE":
+                globals()[name] = False
+                return False
+            raise
+        if name == "TORCH_UTILS_AVAILABLE":
+            value = bool(getattr(module, "HAS_TORCH", False))
+            globals()[name] = value
+            return value
         attr = "tridiagonal_solve" if name == "torch_tridiagonal_solve" else name
         value = getattr(module, attr)
         globals()[name] = value  # bind, so the next access does not re-enter here
@@ -106,14 +125,14 @@ def __getattr__(name: str):
 
 
 def __dir__():
-    return sorted([*globals(), *_LAZY_TORCH])
+    return sorted({*globals(), *_LAZY_TORCH})  # a set: a name bound by __getattr__ is in both
 
 
 def get_acceleration_info():
     """Get information about available acceleration utilities."""
     info = {
         "jax_utils_available": JAX_UTILS_AVAILABLE,
-        "torch_utils_available": TORCH_UTILS_AVAILABLE,
+        "torch_utils_available": __getattr__("TORCH_UTILS_AVAILABLE"),
     }
 
     if JAX_UTILS_AVAILABLE:
@@ -129,7 +148,10 @@ def get_acceleration_info():
         except ImportError as e:
             logger.debug(f"Could not retrieve JAX detailed info: {e}")
 
-    if TORCH_UTILS_AVAILABLE:
+    # `__getattr__(...)`, not the bare name: a module-level `__getattr__` is NOT consulted for
+    # a global lookup inside a function in the same module -- that goes straight to
+    # `module.__dict__` and raises NameError. ruff F821 caught this; the tests did not.
+    if __getattr__("TORCH_UTILS_AVAILABLE"):
         try:
             from .torch_utils import HAS_CUDA, HAS_MPS, HAS_TORCH
 

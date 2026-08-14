@@ -303,7 +303,9 @@ except ImportError:
 # consequence: "backends/__init__.py registers 'torch' into _BACKENDS whether or not torch exists.
 # The `if backend_name not in _BACKENDS` branch is therefore unreachable."
 #
-# `torch_backend.py:30` is a bare `import torch`, so registering it eagerly imported torch for
+# `torch_backend.py` imports torch (inside a `try/except ImportError`, so the module itself
+# loads fine without it -- but the import still runs when torch IS installed), so registering it
+# eagerly imported torch for
 # anyone who touched this package. Measured on 1aa71b98: deferring this together with the eager
 # `torch_utils` re-export in `utils/acceleration/__init__.py` takes `import mfgarchon` from 4.12s
 # to 3.30s and removes torch from `sys.modules`. Deferring either alone changes nothing -- three
