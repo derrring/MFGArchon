@@ -4,10 +4,18 @@ The inversion is what creates the cycle that blocks decoupling, and that is why 
 
 ~~Every heavy package enters through one line~~ and ~~`import mfgarchon` is 4.89s~~ [RETRACTED
 2026-08-14, see #1930] — both were refuted by measurement after this file was written. It is not
-a single entry point: with that line cut, torch arrives instead through `utils/__init__.py:65` →
-`utils/data/polars_integration.py:27`. `utils/__init__.py` is an 18-import, 106-name re-export
-hub, so cutting edges one at a time is a treadmill — all three planned cuts applied together
-moved the total 4.31s → 4.62s, which is to say not at all. The absolute figure is a property of
+a single entry point: with that line cut, torch arrives through `utils/__init__.py:92` →
+`utils/geometry.py:30` instead of `:30` → `adjoint_validation.py:55`. `utils/__init__.py` is an
+18-import, 106-name re-export hub, so cutting edges one at a time is a treadmill — all three
+planned cuts applied together moved the total 4.31s → 4.62s, which is to say not at all.
+
+~~torch arrives via `utils/data/polars_integration.py:27`~~ [CORRECTED 2026-08-14] — that named
+the wrong witness. The probe watched `find_spec("torch")`, and polars PROBES for torch for its
+`to_torch()` interop without importing it; `import polars` alone leaves `torch` out of
+`sys.modules`. Re-measured by intercepting the module's actual execution: both routes converge
+on the same leaf, `nonlinear_solvers.py:45` → `utils/acceleration/__init__.py:68` →
+`torch_utils.py:16`. That convergence is the more useful fact and neither the original analysis
+nor its first correction had it. The absolute figure is a property of
 one process anyway (4.89s here, 6.37s cold and 4.04s warm elsewhere); what reproduces is the
 decomposition, roughly half third-party and half the library importing itself.
 
@@ -104,9 +112,21 @@ def _runs_at_import(node: ast.AST, tree: ast.Module) -> bool:
     skipped it with the comment "a body that runs on call, not on import", which is true of
     `FunctionDef` and false of `ClassDef`.
 
-    Known limit, stated rather than implied absent: an import under `if False:` or any other
-    statically-dead branch is counted. Over-counting is the safe direction -- a false red a
-    contributor can act on by moving the import -- but it is a false red.
+    `if False:` (and any literal-falsy test) is treated as dead, its `orelse` walked. That was
+    documented as a known over-count first; review argued the stronger case for closing it --
+    not that the false red is costly, but that leaving the row in the table below makes the
+    eventual FIX fail a test whose message tells the contributor their fix is wrong.
+
+    Two limits remain, and they are inherent rather than deferred:
+
+    - **A nested `def` called at module level.** `def _boot(): import ...` followed by `_boot()`
+      executes at import, and deciding that needs call-graph analysis. It is also the shape the
+      failure message's own advice ("defer it into the function that uses it") can be misread
+      into, so it is named here.
+    - **`importlib.import_module(...)` / `__import__(...)`** are not `ast.Import` nodes and are
+      invisible to any version of this scanner. The two deleted paths are covered by
+      `test_a_lazy_shim_cannot_restore_a_deleted_import_path`, which resolves at runtime; a NEW
+      edge introduced that way would not be.
     """
     stack: list[ast.AST] = list(tree.body)
     while stack:
@@ -117,6 +137,9 @@ def _runs_at_import(node: ast.AST, tree: ast.Module) -> bool:
             continue
         if isinstance(current, ast.If) and _is_type_checking(current.test):
             stack.extend(current.orelse)  # the else branch runs; the body does not
+            continue
+        if isinstance(current, ast.If) and isinstance(current.test, ast.Constant) and not current.test.value:
+            stack.extend(current.orelse)  # `if False:` -- the body is dead, the else runs
             continue
         stack.extend(c for c in ast.iter_child_nodes(current) if isinstance(c, _CONTAINERS_THAT_RUN))
     return False
@@ -247,6 +270,13 @@ def test_a_lazy_shim_cannot_restore_a_deleted_import_path():
 # happened to pick a shape the code got right: first a module-level `try/except` scored as
 # deferred, then a relative import resolved one level too deep everywhere except `__init__.py`.
 # One mutation cannot establish a classifier; a table can.
+#
+# Thirteen rows, but NOT thirteen independent guarantees: `try body`, `try finally`, `with`,
+# `module-level for`, `if not TYPE_CHECKING` and `version guard` all rest on the single
+# `_CONTAINERS_THAT_RUN` line, and no mutation reddens one without the other five. Their value
+# is the record of which shapes were considered. The rows carrying independent discrimination
+# are `except handler`, `match case`, `class body`, `else of TYPE_CHECKING`, `if TYPE_CHECKING`
+# and `function body`. Stated because a thirteen-row table reads as thirteen checks.
 _IMPORT = "from mfgarchon.alg.base_solver import SchemeFamily"
 RUNS_AT_IMPORT = [
     ("try body", f"try:\n    {_IMPORT}\nexcept ImportError:\n    pass\n", True),
@@ -269,9 +299,10 @@ RUNS_AT_IMPORT = [
     ("class body", f"class C:\n    {_IMPORT}\n", True),
     ("if TYPE_CHECKING", f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    {_IMPORT}\n", False),
     ("function body", f"def f():\n    {_IMPORT}\n", False),
-    # Known limit, over-counting: statically dead but scored as running. The safe direction --
-    # a false red a contributor can act on by moving the import -- but still a false red.
-    ("if False (known limit)", f"if False:\n    {_IMPORT}\n", True),
+    # Statically dead: closed rather than documented, see `_runs_at_import`.
+    ("if False", f"if False:\n    {_IMPORT}\n", False),
+    # ... but its `else` still runs.
+    ("else of if False", f"if False:\n    pass\nelse:\n    {_IMPORT}\n", True),
 ]
 
 
