@@ -14,18 +14,24 @@ Submodules:
 
 # Flux diagnostics for mass conservation analysis
 # GFDMOperator: deprecated, moved to _compat. Import without triggering warning.
-# GFDM Strategy Pattern (canonical location: alg/numerical/gfdm_components/)
-from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import (
-    BoundaryHandler,
-    DifferentialOperator,
-    DirectCollocationHandler,
-    GhostNodeHandler,
-    LocalRBFOperator,
-    TaylorOperator,
-    UpwindOperator,
-    create_bc_handler,
-    create_operator,
-)
+# GFDM strategies are NOT re-exported here. They live in
+# `mfgarchon.alg.numerical.gfdm_components.gfdm_strategies`; import them from there.
+#
+# This block was the back-edge of an import cycle. `mfgarchon.utils` sits BELOW `mfgarchon.alg`,
+# so importing upward from here reached `alg/__init__` -> fp_solvers -> network_solvers ->
+# `fp_network.py:36`, which needs a name from `utils.numerical` while this file is still stopped
+# at this line:
+#
+#     ImportError: cannot import name 'clip_nonnegative_or_raise' from partially initialized
+#     module 'mfgarchon.utils.numerical' (most likely due to a circular import)
+#
+# That error was invisible in normal use because `utils/__init__.py`'s eager
+# `from .adjoint_validation import (...)` completes `utils.numerical` by another route first --
+# so the cycle only surfaced when someone tried to make that import lazy, which is #1930 step 5.
+# Measured: with this block present, deferring it fails; with it gone, deferring it works.
+#
+# Zero files imported these nine names through `utils.numerical` -- verified by AST over
+# `mfgarchon/`, `tests/` and `examples/`, for both `from`-imports and attribute access. #1930
 
 # SDF utilities (canonical location: geometry/implicit/)
 from mfgarchon.geometry.implicit.sdf_utils import (
@@ -113,15 +119,6 @@ __all__ = [
     # GFDM operators (legacy; canonical: alg.numerical.gfdm_components.gfdm_strategies)
     "GFDMOperator",
     # GFDM Strategy Pattern (scattered points)
-    "DifferentialOperator",
-    "BoundaryHandler",
-    "TaylorOperator",
-    "UpwindOperator",
-    "LocalRBFOperator",
-    "DirectCollocationHandler",
-    "GhostNodeHandler",
-    "create_operator",
-    "create_bc_handler",
     # Monotonicity tracking
     "MonotonicityStats",
     "verify_m_matrix_property",

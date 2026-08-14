@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -50,9 +51,13 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 UTILS = REPO / "mfgarchon" / "utils"
 
-# The two that remain, each with what it would take to remove it:
-#   utils/numerical/__init__.py     re-exports `gfdm_strategies`, which lives in alg
+# The one that remains:
 #   utils/adjoint_validation.py     imports one enum, `SchemeFamily`, from alg.base_solver
+#
+# ~~utils/numerical/__init__.py re-exports `gfdm_strategies`~~ removed 2026-08-14 (#1930 step 3).
+# It was the cycle's back-edge and had zero consumers. Removing it is what makes deferring
+# `utils/__init__.py`'s eager import possible at all -- measured: with the re-export present that
+# deferral raises a circular ImportError, with it gone it succeeds.
 #
 # Pinned by EQUALITY, not by `<=`. That was the first form, and review named the reason it is
 # wrong: a bound cannot tell "an edge was removed" from "the scanner stopped seeing edges", and
@@ -60,7 +65,7 @@ UTILS = REPO / "mfgarchon" / "utils"
 # import -- both now fixed, both silently under a `<=`). It is also the house convention, for a
 # recorded reason: `scripts/check_single_source.py:47` records a change "which removes nothing"
 # dropping a count 6 -> 0 and printing SHRANK.
-EXPECTED_MODULE_LEVEL = 2
+EXPECTED_MODULE_LEVEL = 1
 
 
 def _absolute_target(node: ast.Import | ast.ImportFrom, path: Path) -> str:
@@ -341,3 +346,62 @@ def test_relative_imports_resolve_to_the_same_name_python_would_use(rel, level, 
     assert path.exists(), f"{rel} moved; this case is testing a file that is not there"
     node = ast.ImportFrom(module=module, names=[ast.alias(name="X")], level=level)
     assert _absolute_target(node, path) == expected
+
+
+def test_the_hub_can_be_deferred_without_a_circular_import():
+    """The cycle is broken, asserted as the thing that was blocked rather than as its cause.
+
+    `utils/__init__.py`'s eager `from .adjoint_validation import (...)` is what makes every heavy
+    package arrive on `import mfgarchon`, and #1930 step 5 is to defer it. Before the
+    `gfdm_strategies` re-export was removed from `utils/numerical/__init__.py`, that deferral
+    failed:
+
+        ImportError: cannot import name 'clip_nonnegative_or_raise' from partially initialized
+        module 'mfgarchon.utils.numerical' (most likely due to a circular import)
+
+    because `utils.numerical` imported `alg`, which reached `fp_network.py`, which needed a name
+    from `utils.numerical` while it was still executing that import. The eager hub import hid the
+    cycle by completing `utils.numerical` through another route first -- so the cycle was only
+    observable by attempting the very change it blocked.
+
+    This performs the attempt in a subprocess against a patched copy of the tree, so the property
+    is checked rather than remembered. If it ever fails again, an upward import has returned.
+    """
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+
+    hub = REPO / "mfgarchon" / "utils" / "__init__.py"
+    source = hub.read_text()
+    match = re.search(r"^# Adjoint duality validation \(Issue #580\)\nfrom \.adjoint_validation import \(([^)]*)\)\n", source, re.M)
+    assert match, "the eager hub import moved; this test is pinning something that is no longer there"
+    names = tuple(n.strip().rstrip(",") for n in match.group(1).split() if n.strip().rstrip(","))
+    assert names, "parsed no re-exported names; the deferral below would prove nothing"
+
+    lazy = (
+        f"_LAZY = {names!r}\n\n\n"
+        "def __getattr__(name):\n"
+        "    if name in _LAZY:\n"
+        "        from . import adjoint_validation as _m\n\n"
+        "        return getattr(_m, name)\n"
+        "    raise AttributeError(name)\n"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = Path(tmp) / "tree"
+        shutil.copytree(REPO / "mfgarchon", tree / "mfgarchon", ignore=shutil.ignore_patterns("__pycache__"))
+        (tree / "mfgarchon" / "utils" / "__init__.py").write_text(source.replace(match.group(0), lazy, 1))
+        proc = subprocess.run(
+            [sys.executable, "-c", "import mfgarchon; print('OK')"],
+            cwd=tree,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    assert proc.returncode == 0, (
+        "deferring `utils/__init__.py`'s eager import of `adjoint_validation` fails, which means "
+        "an upward `utils -> alg` import has reintroduced the cycle:\n" + proc.stderr[-2000:]
+    )
+    assert "OK" in proc.stdout
