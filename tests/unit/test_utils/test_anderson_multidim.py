@@ -21,7 +21,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.utils.numerical.anderson_acceleration import AndersonAccelerator
+from mfgarchon.alg.numerical.coupling.anderson_acceleration import AndersonAccelerator
 
 pytestmark = pytest.mark.experimental
 
