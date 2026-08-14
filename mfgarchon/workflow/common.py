@@ -78,16 +78,24 @@ def setup_workflow_logging(
 
     The `if not logger.handlers:` guard is deliberate and is restored here after a review found
     that lifting it revived a path dead since #621 (`d424be1d`, 2026-02-06). `get_logger` always
-    attaches a StreamHandler before returning, so this branch has been False for every caller
-    since then and no `FileHandler` has been constructed. An earlier revision of this change
-    moved the file handler outside the guard; the result wrote `parameter_sweep.log` and
-    `experiment.log` into the caller's working directory, and -- because `mfg_workflow_manager`,
-    `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger names -- appended a new
-    handler per instance, so records from **37** distinct output directories landed in one file at
-    this repository's root during a single gate run -- 298 KB of it. (~~126~~ [CORRECTED] was the
-    whole file's 128 minus a bad extraction: 91 of those predate #621 disabling the logging and
-    have nothing to do with handler accumulation. Attributing a nine-month total to a 14-minute
-    run overstated the mechanism by 3.5x. Found by re-review.)
+    attaches a StreamHandler before returning, so for any caller that obtains its logger through
+    `get_logger` this branch is False and no `FileHandler` is constructed. (~~for any caller~~
+    [CORRECTED 2026-08-14] -- `tests/unit/test_workflow/test_common.py` patches `get_logger` to
+    return a bare logger, so the guard is True there and a real FileHandler IS built. That is why
+    that test is the second one to redden when the guard is lifted. The operative claim is about
+    production callers; the universal was false.)
+
+    An earlier revision of this change moved the file handler outside the guard; the result wrote
+    `parameter_sweep.log` and `experiment.log` into the caller's working directory, and -- because
+    `mfg_workflow_manager`, `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger
+    names -- appended a new handler per instance, so records from **37** distinct output
+    directories landed in one file at this repository's root, 298,009 bytes of it. 37 counts the
+    directories named by the `Saved complete results to` records dated 2026-08-14; a figure that
+    moves with the extraction rule is not settled, so the rule is stated. (~~126~~ [CORRECTED
+    2026-08-14] -- the whole file holds 128 across 2025-10-09..2026-08-14, of which 91 predate
+    #621 disabling the logging, with zero overlap. Attributing that total to the 2026-08-14
+    window overstated the mechanism ~3.5x. The window spans 01:08:43..01:22:18 with gaps, so
+    whether it is one gate run or several is not established.)
 
     Reviving workflow file logging is a separate decision from stopping import-time writes, and
     it needs the shared-name loggers fixed first. Tracked separately; not done here.

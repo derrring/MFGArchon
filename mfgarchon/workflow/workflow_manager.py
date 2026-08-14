@@ -490,8 +490,10 @@ class Workflow:
         """Console only, and no file handler is attached anywhere.
 
         `setup_workflow_logging` builds its FileHandler inside `if not logger.handlers:`, and
-        `get_logger` always attaches a StreamHandler first -- so no FileHandler has been
-        constructed for any caller since #621 (2026-02-06). Passing a path here would not create
+        `get_logger` always attaches a StreamHandler first -- so for any caller that obtains
+        its logger through `get_logger`, no FileHandler has been constructed since #621
+        (2026-02-06). `test_common.py` patches `get_logger` and does build one, which is
+        why it reddens alongside this when the guard is lifted. Passing a path here would not create
         a directory either; it would simply be discarded, which is what main did. Reviving
         workflow file logging needs the fixed-name loggers dealt with first: #1929."""
         return setup_workflow_logging(f"mfg_workflow.{self.id}", console=True)

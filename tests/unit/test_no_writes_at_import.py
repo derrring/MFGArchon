@@ -153,8 +153,9 @@ def test_using_the_workflow_machinery_writes_no_log_into_the_working_directory()
     """A guard against reviving workflow file logging by accident.
 
     `setup_workflow_logging` has an `if not logger.handlers:` guard, and `get_logger` always
-    attaches a StreamHandler before returning -- so no `FileHandler` has been constructed for any
-    caller since #621 (2026-02-06). An earlier revision of #1917 lifted that guard while
+    attaches a StreamHandler before returning -- so for any caller that obtains its logger
+    through `get_logger`, no `FileHandler` has been constructed since #621 (2026-02-06).
+    (`test_workflow/test_common.py` patches `get_logger` and does build one.) An earlier revision of #1917 lifted that guard while
     restructuring the helper, which revived the path. Because `mfg_workflow_manager`,
     `mfg_experiment_tracker` and `mfg_parameter_sweep` are FIXED logger names, each new instance
     appended another handler rather than replacing one: records from 37 distinct output
@@ -173,7 +174,11 @@ def test_using_the_workflow_machinery_writes_no_log_into_the_working_directory()
         "from mfgarchon.workflow.experiment_tracker import ExperimentTracker\n"
         "cfg = SweepConfiguration({'a': [1, 2]}, output_dir=Path('out'))\n"
         "ParameterSweep({'a': [1, 2]}, cfg)\n"
-        "WorkflowManager(workspace_path=Path('ws'))\n"
+        # `.create_workflow(...)`, not a bare manager: without it `ws/` is never created,
+        # `_load_existing_workflows` returns early and `Workflow._materialise` is never
+        # reached -- so re-adding the file handler THERE, which is literally what 05ee9058
+        # did, passed all 216 tests. Measured by re-review.
+        "WorkflowManager(workspace_path=Path('ws')).create_workflow('w', '')\n"
         # ExperimentTracker has its own _setup_logging and its own fixed logger name, so a
         # revival there bypasses the helper entirely. Re-review measured it: without this line
         # the mutant writes exp/experiment_tracker.log and all 216 tests pass.

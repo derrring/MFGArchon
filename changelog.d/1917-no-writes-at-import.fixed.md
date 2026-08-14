@@ -8,6 +8,10 @@ module-level `PerformanceMonitor()` whose constructor called `mkdir`. Constructi
 or a `WorkflowManager` also created directories. 21,498 empty directories had accumulated in the
 development tree, and on a read-only working directory the import raised `PermissionError`.
 
-Paths are now computed at construction and the directory is created at the point of an actual
-write. `initialize_default_workspace()` and `_create_example_workflows()` are removed with the
-initialiser that was their only caller. (#1917, #1674)
+`Workflow`, `WorkflowManager` and `PerformanceMonitor` now compute their paths at construction
+and create the directory at the point of an actual write. `initialize_default_workspace()` and
+`_create_example_workflows()` are removed with the initialiser that was their only caller.
+
+The same constructor-time pattern survives in `Experiment`, `ExperimentTracker` and
+`SweepConfiguration`, which still create directories under the current working directory when
+they are constructed; those are tracked in #1929. (#1917, #1674)
