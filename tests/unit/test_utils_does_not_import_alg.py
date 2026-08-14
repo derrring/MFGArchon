@@ -403,7 +403,14 @@ def test_the_hub_can_be_deferred_without_a_circular_import():
         # resolved `mfgarchon` from the EDITABLE INSTALL, which imports fine, so this test passed
         # over a tree it never read. Measured: back-edge restored + PYTHONSAFEPATH=1 -> 1 passed,
         # same mutation without it -> 1 failed. Found by review.
-        env = {**os.environ, "PYTHONPATH": str(tree), "PYTHONSAFEPATH": ""}
+        env = {**os.environ}
+        # Prepend, do not overwrite: the previous form dropped the parent's PYTHONPATH, which
+        # nothing here needs but a future runner might.
+        env["PYTHONPATH"] = os.pathsep.join(x for x in (str(tree), os.environ.get("PYTHONPATH", "")) if x)
+        # `pop`, not `= ""`. The empty string does clear the flag (CPython treats empty env vars
+        # as unset), but it stays visible to anything checking presence rather than truth, and
+        # "0" and " " both ENABLE it -- a value worth not having to remember.
+        env.pop("PYTHONSAFEPATH", None)
         proc = subprocess.run(
             [
                 sys.executable,
@@ -425,7 +432,15 @@ def test_the_hub_can_be_deferred_without_a_circular_import():
     # the installed package, which is the whole failure mode above.
     reported = [line[len("TREE:") :] for line in proc.stdout.splitlines() if line.startswith("TREE:")]
     assert reported, f"the probe printed no tree token:\n{proc.stdout[-600:]}"
-    assert reported[0].startswith(str(tree)), (
+    # `resolve().is_relative_to`, not `startswith`. On macOS TMPDIR is a symlink, so the logical
+    # spelling (`/var/folders/...`) and the physical one `os.getcwd()` returns
+    # (`/private/var/folders/...`) differ, and a string prefix compares False on the correct
+    # tree. It passed only because `sys.path.insert` fed the import machinery the same string
+    # this line compares against -- a guard whose correctness depended on a co-located
+    # mechanism, which is the hazard this whole assertion exists to remove. Review measured it:
+    # with the insert taken away the CLEAN tree reddens too, and a check red in both states is
+    # stuck rather than discriminating.
+    assert Path(reported[0]).resolve().is_relative_to(tree.resolve()), (
         f"the subprocess imported {reported[0]}, not the patched copy at {tree}. The result says "
         f"nothing about the patch."
     )
