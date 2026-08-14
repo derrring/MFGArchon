@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
+import re
 from pathlib import Path
 
 import pytest
@@ -50,9 +52,13 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 UTILS = REPO / "mfgarchon" / "utils"
 
-# The two that remain, each with what it would take to remove it:
-#   utils/numerical/__init__.py     re-exports `gfdm_strategies`, which lives in alg
+# The one that remains:
 #   utils/adjoint_validation.py     imports one enum, `SchemeFamily`, from alg.base_solver
+#
+# ~~utils/numerical/__init__.py re-exports `gfdm_strategies`~~ removed 2026-08-14 (#1930 step 3).
+# It was the cycle's back-edge and had zero consumers. Removing it is what makes deferring
+# `utils/__init__.py`'s eager import possible at all -- measured: with the re-export present that
+# deferral raises a circular ImportError, with it gone it succeeds.
 #
 # Pinned by EQUALITY, not by `<=`. That was the first form, and review named the reason it is
 # wrong: a bound cannot tell "an edge was removed" from "the scanner stopped seeing edges", and
@@ -60,7 +66,7 @@ UTILS = REPO / "mfgarchon" / "utils"
 # import -- both now fixed, both silently under a `<=`). It is also the house convention, for a
 # recorded reason: `scripts/check_single_source.py:47` records a change "which removes nothing"
 # dropping a count 6 -> 0 and printing SHRANK.
-EXPECTED_MODULE_LEVEL = 2
+EXPECTED_MODULE_LEVEL = 1
 
 
 def _absolute_target(node: ast.Import | ast.ImportFrom, path: Path) -> str:
@@ -124,9 +130,12 @@ def _runs_at_import(node: ast.AST, tree: ast.Module) -> bool:
       failure message's own advice ("defer it into the function that uses it") can be misread
       into, so it is named here.
     - **`importlib.import_module(...)` / `__import__(...)`** are not `ast.Import` nodes and are
-      invisible to any version of this scanner. The two deleted paths are covered by
-      `test_a_lazy_shim_cannot_restore_a_deleted_import_path`, which resolves at runtime; a NEW
-      edge introduced that way would not be.
+      invisible to this SCANNER. They are not invisible to the file: review injected a
+      module-level `import_module("mfgarchon.alg...gfdm_strategies")` into
+      `utils/numerical/__init__.py` and `test_the_hub_can_be_deferred_without_a_circular_import`
+      caught it (`1 failed, 23 passed`) while the AST ratchet stayed green -- because such an edge
+      recreates the cycle, which that test measures directly. What remains uncovered is a dynamic
+      edge that does NOT recreate a cycle.
     """
     stack: list[ast.AST] = list(tree.body)
     while stack:
@@ -341,3 +350,97 @@ def test_relative_imports_resolve_to_the_same_name_python_would_use(rel, level, 
     assert path.exists(), f"{rel} moved; this case is testing a file that is not there"
     node = ast.ImportFrom(module=module, names=[ast.alias(name="X")], level=level)
     assert _absolute_target(node, path) == expected
+
+
+def test_the_hub_can_be_deferred_without_a_circular_import():
+    """The cycle is broken, asserted as the thing that was blocked rather than as its cause.
+
+    `utils/__init__.py`'s eager `from .adjoint_validation import (...)` is what makes every heavy
+    package arrive on `import mfgarchon`, and #1930 step 5 is to defer it. Before the
+    `gfdm_strategies` re-export was removed from `utils/numerical/__init__.py`, that deferral
+    failed:
+
+        ImportError: cannot import name 'clip_nonnegative_or_raise' from partially initialized
+        module 'mfgarchon.utils.numerical' (most likely due to a circular import)
+
+    because `utils.numerical` imported `alg`, which reached `fp_network.py`, which needed a name
+    from `utils.numerical` while it was still executing that import. The eager hub import hid the
+    cycle by completing `utils.numerical` through another route first -- so the cycle was only
+    observable by attempting the very change it blocked.
+
+    This performs the attempt in a subprocess against a patched copy of the tree, so the property
+    is checked rather than remembered. If it ever fails again, an upward import has returned.
+    """
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+
+    hub = REPO / "mfgarchon" / "utils" / "__init__.py"
+    source = hub.read_text()
+    match = re.search(
+        r"^# Adjoint duality validation \(Issue #580\)\nfrom \.adjoint_validation import \(([^)]*)\)\n", source, re.M
+    )
+    assert match, "the eager hub import moved; this test is pinning something that is no longer there"
+    names = tuple(n.strip().rstrip(",") for n in match.group(1).split() if n.strip().rstrip(","))
+    assert names, "parsed no re-exported names; the deferral below would prove nothing"
+
+    lazy = (
+        f"_LAZY = {names!r}\n\n\n"
+        "def __getattr__(name):\n"
+        "    if name in _LAZY:\n"
+        "        from . import adjoint_validation as _m\n\n"
+        "        return getattr(_m, name)\n"
+        "    raise AttributeError(name)\n"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = Path(tmp) / "tree"
+        shutil.copytree(REPO / "mfgarchon", tree / "mfgarchon", ignore=shutil.ignore_patterns("__pycache__"))
+        (tree / "mfgarchon" / "utils" / "__init__.py").write_text(source.replace(match.group(0), lazy, 1))
+        # `PYTHONPATH` and an explicit `sys.path` insert, not cwd: `local_ci.sh:311` runs pytest
+        # under `PYTHONSAFEPATH=1`, which drops cwd from `sys.path` -- and the subprocess then
+        # resolved `mfgarchon` from the EDITABLE INSTALL, which imports fine, so this test passed
+        # over a tree it never read. Measured: back-edge restored + PYTHONSAFEPATH=1 -> 1 passed,
+        # same mutation without it -> 1 failed. Found by review.
+        env = {**os.environ}
+        # Prepend, do not overwrite: the previous form dropped the parent's PYTHONPATH, which
+        # nothing here needs but a future runner might.
+        env["PYTHONPATH"] = os.pathsep.join(x for x in (str(tree), os.environ.get("PYTHONPATH", "")) if x)
+        # `pop`, not `= ""`. The empty string does clear the flag (CPython treats empty env vars
+        # as unset), but it stays visible to anything checking presence rather than truth, and
+        # "0" and " " both ENABLE it -- a value worth not having to remember.
+        env.pop("PYTHONSAFEPATH", None)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.path.insert(0, {str(tree)!r})\nimport mfgarchon; print('TREE:' + mfgarchon.__file__)",
+            ],
+            cwd=tree,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
+
+    assert proc.returncode == 0, (
+        "deferring `utils/__init__.py`'s eager import of `adjoint_validation` fails, which means "
+        "an upward `utils -> alg` import has reintroduced the cycle:\n" + proc.stderr[-2000:]
+    )
+    # The token identifies the tree, not just success. "OK" would be printed just as happily by
+    # the installed package, which is the whole failure mode above.
+    reported = [line[len("TREE:") :] for line in proc.stdout.splitlines() if line.startswith("TREE:")]
+    assert reported, f"the probe printed no tree token:\n{proc.stdout[-600:]}"
+    # `resolve().is_relative_to`, not `startswith`. On macOS TMPDIR is a symlink, so the logical
+    # spelling (`/var/folders/...`) and the physical one `os.getcwd()` returns
+    # (`/private/var/folders/...`) differ, and a string prefix compares False on the correct
+    # tree. It passed only because `sys.path.insert` fed the import machinery the same string
+    # this line compares against -- a guard whose correctness depended on a co-located
+    # mechanism, which is the hazard this whole assertion exists to remove. Review measured it:
+    # with the insert taken away the CLEAN tree reddens too, and a check red in both states is
+    # stuck rather than discriminating.
+    assert Path(reported[0]).resolve().is_relative_to(tree.resolve()), (
+        f"the subprocess imported {reported[0]}, not the patched copy at {tree}. The result says "
+        f"nothing about the patch."
+    )
