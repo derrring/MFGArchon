@@ -1513,10 +1513,25 @@ class PreallocatedGhostBuffer:
                 segment = self._find_segment_for_face(bc, target_face)
 
                 if segment is None:
-                    # No explicit segment - use default BC (first segment or Neumann)
-                    segment = bc.segments[0] if bc.segments else None
-                    if segment is None:
-                        continue  # No BC defined, skip
+                    # `default_bc`, not `bc.segments[0]`. Segments are sorted priority-DESCENDING
+                    # (`conditions.py:135`), so the old fallback handed every unclaimed wall the
+                    # highest-priority segment -- typically the exit. Measured on the mixed-BC idiom
+                    # from `BCSegment`'s own docstring (one DIRICHLET exit on x_min, default_bc
+                    # NO_FLUX): 4 of 4 walls received the Dirichlet ghost, and dropping the exit's
+                    # priority to -5 changed it to 1 of 4, which is the fingerprint of a sort-order
+                    # fallback rather than of any BC semantics. `default_bc` exists, is documented,
+                    # and `get_bc_type_at_boundary` already answers correctly on the same object.
+                    #
+                    # `_resolve_default_bc` raises when `default_bc` is unset (#1100) rather than
+                    # guessing -- that is deliberate and it is why this is not a silent change: a BC
+                    # whose segments do not cover every face and which names no default was
+                    # previously given one by accident of sort order.
+                    default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
+                    segment = BCSegment(
+                        name="__default__",
+                        bc_type=default_type,
+                        value=bc.default_value,
+                    )
 
                 # Apply ghost cell formula for this face
                 self._apply_ghost_for_face(buf, axis, side, segment, time, g)
@@ -1632,9 +1647,22 @@ class PreallocatedGhostBuffer:
             buf[tuple(ghost_slices)] = 2 * v - buf[tuple(interior_slices)]
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-            # Zero-gradient Neumann: ghost = adjacent interior (simple reflection).
-            # For cell-centered grids: du/dn = (u_interior - u_ghost)/dx = 0
-            # => u_ghost = u_interior (adjacent)
+            # ghost = adjacent interior, PLUS dx*v for an inhomogeneous Neumann flux.
+            #
+            # The flux term was missing here while `_apply_linear_reflection` (the uniform-BC path,
+            # :1151) has carried it since #1262. Both paths are live and which one runs is decided
+            # by `bc.is_uniform` -- i.e. by whether the caller wrote one unrestricted segment or one
+            # per face, which the docs present as equivalent ways of saying the same thing. Measured
+            # on du/dn = 2, dx = 0.25: uniform gave an implied du/dn of +/-2.0, per-face gave 0.0,
+            # differing by exactly dx*v. A caller stating a per-face Neumann flux silently got
+            # zero-flux. #1937
+            #
+            # Same sign at both walls, matching the uniform path: at the low wall the outward normal
+            # is -x, so ghost = u_i + dx*v gives du/dx = -v and du/dn = +v; at the high wall
+            # du/dx = +v and du/dn = +v. That is the du/dn convention #1262 established, and the
+            # agreement between the two paths is what the pin asserts.
+            apply_flux = bc_type == BCType.NEUMANN and v != 0.0
+            dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
             for k in range(g):
                 single_ghost = [slice(None)] * d
                 single_interior = [slice(None)] * d
@@ -1645,6 +1673,8 @@ class PreallocatedGhostBuffer:
                     single_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
                     single_interior[axis] = -(g + k + 1)  # Adjacent interior cells
                 buf[tuple(single_ghost)] = buf[tuple(single_interior)]
+                if apply_flux:
+                    buf[tuple(single_ghost)] += dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g
