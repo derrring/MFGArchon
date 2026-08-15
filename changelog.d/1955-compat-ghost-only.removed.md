@@ -9,10 +9,11 @@ one name still reachable as an attribute of `mfgarchon.geometry.boundary`, so it
 deprecation contract the module published. Its output is pinned byte-identical across this
 change over five cases (uniform Dirichlet / Neumann / periodic, a mixed BC, and 1D).
 
-This removes **six of the package's nineteen `BCType` dispatch chains** (19 -> 13). Every one
-of the nineteen ends in a silent `else` or no `else` at all, so an unhandled BC type produced
-a wrong answer rather than an error; the six deleted here are the largest block that could go
-without a design decision.
+This removes **six of the package's nineteen `BCType` dispatch chains** (19 -> 13). Fourteen of
+the nineteen end in a silent `else` or no `else` at all, so an unhandled BC type produces a
+wrong answer rather than an error; five do raise, three of them in this module. The six deleted
+here are the largest block that could go without a design decision, not a block of uniformly
+silent ones.
 
 **Coverage this removes and does not replace:** no test now asserts that
 `BCType.EXTRAPOLATION_LINEAR` or `EXTRAPOLATION_QUADRATIC` routes to its ghost formula. The
