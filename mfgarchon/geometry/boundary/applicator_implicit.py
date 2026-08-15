@@ -179,6 +179,12 @@ class ImplicitApplicator(MeshfreeApplicator):
         # Since this applicator exists FOR implicit geometries, the keyword form raised `TypeError`
         # for every geometry the package ships, before any BC code ran.
         #
+        # This workaround is safe HERE and must not be generalised: slot 2 is a tolerance in all
+        # seven definitions of `is_on_boundary`, but the sibling protocol methods disagree on what
+        # slot 2 even means -- `project_to_boundary` takes `max_iterations` in `ImplicitDomain` and
+        # `boundary_name` in `TensorProductGrid`, and `get_boundary_normal` takes `eps` versus
+        # `corner_strategy`. A positional call there would bind a different concept, silently.
+        #
         # It looked exercised because `test_implicit_applicator.py` supplies its own `_CircleGeometry`
         # whose signature matches this call rather than the protocol -- a fixture written against the
         # caller instead of against the contract. Passing positionally works with both spellings; the
@@ -254,6 +260,25 @@ class ImplicitApplicator(MeshfreeApplicator):
         # writes 0.0 into it whenever the value is callable (`conditions.py:929`), so routing
         # everything through it would fix the scalar case and silently break the callable one this
         # method exists to serve. Hence the uniform gate rather than a blanket substitution.
+        # NO_FLUX and REFLECTING are definitionally zero-flux: no value they carry can be a normal
+        # derivative. This is an INVARIANT, asserted before any selection, not another rule about
+        # which segment to read -- and that distinction is why it ends the escalation. Three earlier
+        # versions of the selection below were each wrong in a different way, because each still had
+        # a "which segment" degree of freedom to get wrong; a clamp has none.
+        #
+        # The package states this convention in three other places, so leaving it out was cross-path
+        # disagreement rather than a judgement call: `applicator_fdm.py:1149` ("NO_FLUX / REFLECTING,
+        # definitionally zero-flux"), the ghost path's `apply_flux = bc_type == BCType.NEUMANN and
+        # v != 0.0`, and `applicator_meshfree.py`'s NO_FLUX branch, which is `pass`.
+        #
+        # It is not hypothetical: `with_resolved_providers` -- the documented pre-solve step --
+        # turns `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a
+        # number, which without this clamp is imposed as a flux. Measured on a 24-point sphere with
+        # `spacing=0.05`: `uniform_bc(NO_FLUX, value=2.5)` moved the boundary from 3.8 to 3.925,
+        # an implied du/dn of 2.5, where base returned the correct 3.8.
+        if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
+            return 0.0
+
         uniform_segment = bc.segments[0] if bc.is_uniform else None
         if uniform_segment is not None and uniform_segment.bc_type == bc_type:
             value = uniform_segment.value
