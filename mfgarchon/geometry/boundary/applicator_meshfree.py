@@ -82,6 +82,15 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         >>> u_with_bc = applicator.apply_field_bc(u, points, bc_type="dirichlet", bc_value=0.0)
     """
 
+    #: Measured over the (applicator x BCType) product, not read off the branches: DIRICHLET and
+    #: ROBIN apply; NO_FLUX has a branch that is a literal `pass`, so it is SILENT -- declared here
+    #: because the branch exists, and closing that silence is the next step; NEUMANN and PERIODIC
+    #: already raise `NotImplementedError` with a reason, and REFLECTING and the two extrapolations
+    #: raise `ValueError`. Those raises are the CORRECT behaviour and are what this gate generalises
+    #: -- they are why "four different behaviours for an unhandled type" understates the problem:
+    #: one of the four was already right. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset({BCType.DIRICHLET, BCType.ROBIN, BCType.NO_FLUX})
+
     def __init__(self, geometry: GeometryProtocol):
         """
         Initialize meshfree BC applicator.
@@ -369,6 +378,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
 
         if not np.any(on_boundary):
             return field
+
+        self._validate_bc_support(boundary_conditions)  # #1948
 
         # Get BC type (uniform BC for now; fails loud if default_bc unset, Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply")

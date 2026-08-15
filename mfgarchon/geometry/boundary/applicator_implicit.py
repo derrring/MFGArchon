@@ -67,6 +67,23 @@ class ImplicitApplicator(MeshfreeApplicator):
         ImplicitApplicator is specifically for hybrid/dual geometry scenarios.
     """
 
+    #: Overrides the parent's set: this subclass has its own `apply` with more branches. Measured on
+    #: a cloud WITH interior points -- a boundary-only ring makes every boundary point its own
+    #: nearest interior neighbour, the normal interpolation collapses to a no-op, and NO_FLUX reads
+    #: as silent when it is not. PERIODIC is genuinely SILENT here and is deliberately NOT declared,
+    #: so the gate refuses it rather than returning the field untouched. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
+        {
+            BCType.DIRICHLET,
+            BCType.NEUMANN,
+            BCType.ROBIN,
+            BCType.REFLECTING,
+            BCType.NO_FLUX,
+            BCType.EXTRAPOLATION_LINEAR,
+            BCType.EXTRAPOLATION_QUADRATIC,
+        }
+    )
+
     def __init__(
         self,
         geometry: GeometryProtocol,
@@ -119,6 +136,7 @@ class ImplicitApplicator(MeshfreeApplicator):
             Field with boundary conditions applied (same shape as input)
         """
         self._validate_bc(boundary_conditions)
+        self._validate_bc_support(boundary_conditions)  # #1948
 
         # Make a copy to avoid modifying input
         result = field.copy()
