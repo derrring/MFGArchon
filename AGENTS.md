@@ -107,12 +107,12 @@ Reflecting-boundary HJB couples to the FP density gradient for equilibrium consi
 from mfgarchon.geometry.boundary import AdjointConsistentProvider, BCSegment, BCType, BoundaryConditions
 bc = BoundaryConditions(segments=[
     BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-              value=AdjointConsistentProvider(side="left", sigma=sigma), boundary="x_min"),  # sigma=σ (#1512); diffusion= is the deprecated alias
+              value=AdjointConsistentProvider(side="left", sigma=sigma), boundary="x_min"),  # sigma is volatility (#1512); diffusion= is the deprecated alias
     BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
               value=AdjointConsistentProvider(side="right", sigma=sigma), boundary="x_max"),
 ], dimension=1)
 ```
-Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard step; the provider computes `g = -σ²/2 · ∂ln(m)/∂n`; the solver receives a resolved BC (no coupling knowledge). **Use for**: boundary-stall reflecting configs (>1000× improvement in some cases). **Not for**: interior stall or periodic BC. Implementation: `geometry/boundary/providers.py`, `geometry/boundary/bc_coupling.py`, `alg/numerical/coupling/fixed_point_iterator.py`. Ref: `mfg-research/docs/archon-notes/development/TOWEL_ON_BEACH_1D_PROTOCOL.md`.
+Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard step; the provider computes $g = -\sigma^2/2 \cdot \partial\ln(m)/\partial n$; the solver receives a resolved BC (no coupling knowledge). **Use for**: boundary-stall reflecting configs (>1000× improvement in some cases). **Not for**: interior stall or periodic BC. Implementation: `geometry/boundary/providers.py`, `geometry/boundary/bc_coupling.py`, `alg/numerical/coupling/fixed_point_iterator.py`. Ref: `mfg-research/docs/archon-notes/development/TOWEL_ON_BEACH_1D_PROTOCOL.md`.
 
 ---
 
