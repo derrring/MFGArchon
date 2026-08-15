@@ -170,11 +170,14 @@ class ImplicitApplicator(MeshfreeApplicator):
         Returns:
             Boolean mask of boundary points
         """
-        # Positional, not `tolerance=`. `GeometryProtocol.is_on_boundary` names the parameter
-        # `tolerance` and 18 classes follow it, but all seven `ImplicitDomain` subclasses --
-        # Hyperrectangle, Hypersphere, Union/Intersection/Complement/DifferenceDomain and the base
-        # -- name it `tol`. Since this applicator exists FOR implicit geometries, the keyword form
-        # raised `TypeError` for every geometry the package ships, before any BC code ran.
+        # Positional, not `tolerance=`. Seven classes define `is_on_boundary`; six name the
+        # tolerance `tolerance`, including `GeometryProtocol`, and exactly ONE names it `tol` --
+        # `ImplicitDomain`. Hyperrectangle, Hypersphere and the CSG domains do not define the method
+        # at all, they inherit it, which is why the whole implicit family carries `tol`.
+        # (~~"all seven subclasses name it"~~ [CORRECTED 2026-08-15] counted inheritors as
+        # definitions; the distinction matters because it makes #1943 a one-method rename.)
+        # Since this applicator exists FOR implicit geometries, the keyword form raised `TypeError`
+        # for every geometry the package ships, before any BC code ran.
         #
         # It looked exercised because `test_implicit_applicator.py` supplies its own `_CircleGeometry`
         # whose signature matches this call rather than the protocol -- a fixture written against the

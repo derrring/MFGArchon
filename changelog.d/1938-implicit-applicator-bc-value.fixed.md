@@ -4,7 +4,8 @@ coefficients: it read `getattr(bc, "value", 0.0)` and `getattr(bc, "alpha"/"beta
 the owners on the parent `MeshfreeApplicator`; this subclass kept the pre-fix code.
 
 The defect was unreachable in practice for a second reason, now also fixed: `_detect_boundary_points`
-called `is_on_boundary(points, tolerance=...)`, but all seven `ImplicitDomain` subclasses the package
-ships name that parameter `tol`, so `apply()` raised `TypeError` for every real geometry. The call is
-now positional. The suite missed both because its fixture supplied a geometry written against the
+called `is_on_boundary(points, tolerance=...)`, while `ImplicitDomain` names that parameter `tol` and
+the whole implicit family inherits it, so `apply()` raised `TypeError` for every real geometry. The
+call is now positional. (Seven classes are affected; exactly one, `ImplicitDomain` itself, defines
+the method -- `Hyperrectangle`, `Hypersphere` and the CSG domains inherit it.) The suite missed both because its fixture supplied a geometry written against the
 applicator's call rather than against `GeometryProtocol`.
