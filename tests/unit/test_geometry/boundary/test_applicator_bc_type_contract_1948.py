@@ -91,7 +91,7 @@ _APPLICATORS = [
 #: Refusing them instead is not free: `MeshfreeApplicator` is reachable from `base_solver.apply_bc`,
 #: so withdrawing the declaration would turn a silent no-op into a raise on a live path. That is a
 #: step-2 decision (#1948), not a side effect of writing the table.
-_KNOWN_SILENT = {("MeshfreeApplicator", BCType.NO_FLUX)}
+_KNOWN_SILENT: set[tuple[str, BCType]] = set()
 
 _CELLS = [(name, cls, call, field, bc_type) for name, cls, call, field in _APPLICATORS for bc_type in BCType]
 
@@ -178,3 +178,43 @@ def test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_clos
 
     assert _Undeclared(dimension=1).supported_bc_types is None
     _Undeclared(dimension=1).apply(_LINE.copy(), _uniform_bc(BCType.PERIODIC, 1))
+
+
+def test_the_gate_reads_default_bc_and_not_only_the_segments():
+    """`_validate_bc_support` adds `bc.default_bc` to the requested set.
+
+    Every cell above puts the same type in both the segment and `default_bc`, so dropping the
+    `default_bc` line changes nothing there -- measured, that mutation passes the whole table. Here
+    the segment is a type the applicator declares and the default is one it does not, so only a gate
+    that reads both can refuse it.
+    """
+    bc = BoundaryConditions(
+        segments=[BCSegment(name="s", bc_type=BCType.DIRICHLET, value=1.0)],
+        dimension=2,
+        default_bc=BCType.PERIODIC,  # ImplicitApplicator deliberately does not declare this
+    )
+    assert BCType.DIRICHLET in ImplicitApplicator._SUPPORTED_BC_TYPES
+    assert BCType.PERIODIC not in ImplicitApplicator._SUPPORTED_BC_TYPES
+
+    with pytest.raises(NotImplementedError, match="does not support"):
+        ImplicitApplicator(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)
+
+
+def test_the_refusing_branch_still_refuses_if_the_gate_is_bypassed():
+    """Defence in depth, pinned explicitly because the gate makes it unreachable.
+
+    `MeshfreeApplicator`'s NO_FLUX branch used to be a bare `pass` whose own comment said the
+    boundary values "should match nearby interior" and then did nothing. It now raises. With the
+    declaration withdrawn the gate refuses NO_FLUX first, so reverting the branch to `pass` passes
+    the whole table -- measured. A correct fix made an existing target unreachable, which is how a
+    pin quietly stops pinning.
+
+    This calls with a subclass that declares NO_FLUX while inheriting the parent's `apply`, which is
+    exactly the shape a future subclass would have.
+    """
+
+    class _DeclaresNoFlux(MeshfreeApplicator):
+        _SUPPORTED_BC_TYPES = frozenset({BCType.DIRICHLET, BCType.ROBIN, BCType.NO_FLUX})
+
+    with pytest.raises(NotImplementedError, match="derivative operators"):
+        _DeclaresNoFlux(_sphere()).apply(_RADIAL.copy(), _uniform_bc(BCType.NO_FLUX, 2), _CLOUD)
