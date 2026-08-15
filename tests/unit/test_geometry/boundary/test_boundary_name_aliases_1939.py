@@ -183,3 +183,53 @@ def test_matches_point_still_rejects_a_different_face():
     )
 
     assert bc.get_bc_at_point(np.array([1.0]), boundary_id="x_max").bc_type is BCType.NO_FLUX
+
+
+def test_a_faceless_segment_covers_every_face_and_is_not_the_default():
+    """The catch-all branch of `_segment_covers` -- `segment.boundary is None` -- must return True.
+
+    This is the consolidation's own new code: two inline copies became one method, and the rule for
+    that is a pin that outlives the fork. Mutating this branch to `return False` left **all 6215
+    tests green**, measured, because every other fixture here gives the catch-all `wall` segment the
+    same `NO_FLUX` that `default_bc` carries -- so the segment and the fall-through are
+    indistinguishable and either path produces the right answer.
+
+    Here the two differ on both axes: the wall is `NO_FLUX` with value 3.0, and the default is
+    `PERIODIC` with value 99.0. Only the segment can produce this answer.
+    """
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_max"),
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=3.0),
+        ],
+        dimension=1,
+        default_bc=BCType.PERIODIC,
+        default_value=99.0,
+        domain_bounds=np.array([[0.0, 1.0]]),
+    )
+
+    assert not bc.is_uniform, "a uniform BC would short-circuit before the branch under test"
+    assert bc.get_bc_type_at_boundary("x_min") is BCType.NO_FLUX
+    assert bc.get_bc_value_at_boundary("x_min") == pytest.approx(3.0)
+
+
+def test_matches_point_distinguishes_the_axis_and_not_only_the_side():
+    """`test_matches_point_still_rejects_a_different_face` varies only the SIDE -- `left` against
+    `x_max`, both axis 0 -- so it cannot separate "faces are equal" from "sides are equal".
+
+    Measured: mutating `matches_point`'s `mine != theirs` to `mine.side != theirs.side` survives that
+    test and all 1007 geometry tests; at full-suite scope exactly one pre-existing test in another
+    directory catches it. `y_min` is axis 1 and side "min", so only a comparison that looks at the
+    axis can reject it.
+    """
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="left"),
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0),
+        ],
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
+    )
+
+    assert bc.get_bc_at_point(np.array([0.0, 0.0]), boundary_id="y_min").bc_type is BCType.NO_FLUX

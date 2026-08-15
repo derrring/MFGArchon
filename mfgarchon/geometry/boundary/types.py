@@ -343,10 +343,18 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
         if boundary in _BOUNDARY_STRING_TO_FACE:
             return _BOUNDARY_STRING_TO_FACE[boundary]
         # Numeric-axis formats. Both spellings exist in the tree and mean the same thing:
-        # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and
-        # `applicator_particle._get_boundary_id` emits "dim{N}_{side}" for d >= 3. Accepting only
-        # the first meant a segment declared on "dim3_min" resolved to axis 0 -- see below. Both are
-        # accepted here so there is one resolver; that two emitters exist is a separate problem.
+        # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and `dim{N}_{side}` is
+        # emitted by THREE sites -- `applicator_particle._get_boundary_id`,
+        # `_compat._get_boundary_name_nd:755`, and `flux_diagnostics.py:161`. (~~two emitters~~
+        # [CORRECTED 2026-08-15] undercounted; review enumerated them.) Accepting only the first
+        # spelling meant a segment declared on "dim3_min" resolved to axis 0 -- see below.
+        #
+        # Two further spellings exist and are deliberately NOT accepted: `geometry/base.py:739`
+        # emits "v_min" for axis 4, and `adjoint/operators.py::_get_axis_name` emits "x_1_min" for
+        # dim > 3. Both resolved to axis 0 before and to None now, and neither reaches this function
+        # -- they are dict keys. `tensor_grid.py:1889` is a fifth, independent regex resolver that
+        # `mark_region` uses instead of this one. So "one resolver" is true of the path this
+        # function serves and not of the tree; the rest is #1936's ground.
         for prefix in ("axis", "dim"):
             if boundary.startswith(prefix) and "_" in boundary:
                 head, _, side = boundary.partition("_")

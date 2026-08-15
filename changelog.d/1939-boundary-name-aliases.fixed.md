@@ -11,3 +11,9 @@ so a condition declared on the fourth axis was applied to the first while its ow
 default. And an unrecognised prefix such as `"inlet_min"` now returns `None` instead of
 `BoundaryFace(0, side)`: a naming mismatch falls through to the caller's declared default rather than
 silently governing a boundary nobody named.
+
+**Existing numbers can change.** `applicator_particle._get_boundary_id` emits `"left"`/`"right"` in
+1-D, so a 1-D particle setup that declared `boundary="x_min"` matched nothing before and now matches:
+measured, absorbed particles go from `[0, 0, 0]` to `[1, 0, 0]`, and mass leaves the domain where it
+previously reflected. That is the correct behaviour and it is the point of the fix, but it is a
+behaviour change for anyone whose configuration relied on the mismatch.
