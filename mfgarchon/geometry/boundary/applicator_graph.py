@@ -284,13 +284,22 @@ class GraphApplicator(BaseGraphApplicator):
         used it, so on a path graph `0-1-2-3` with edge weight 0.5 they returned `[1, 2]`, the two
         NON-leaves, and the boundary condition was applied to the interior. #1940
 
-        The declared owner, `network_backend.node_degrees`, returns `graph.degree()` -- the
-        combinatorial degree -- so this agrees with it; it is not called here only because it needs
-        a backend graph object, which `network_data` may not carry.
+        ~~The declared owner, `network_backend.node_degrees`, returns the combinatorial degree, so
+        this agrees with it.~~ [CORRECTED 2026-08-15] The owner does not agree with ITSELF: of the
+        three backends, igraph (`:186`) and networkit (`:271`) return the combinatorial degree while
+        networkx (`:362`) returns `dict(graph.degree(weight="weight"))`, the strength. Measured on
+        the weighted path above: igraph gives [1 2 2 1], networkx gives [0.5 1. 1. 0.5]. So there is
+        no single owner to route through -- that is a pre-existing single-source violation, filed
+        separately. This computes the quantity a leaf detector needs and says which one it is.
 
-        The weighted sum is NOT wrong everywhere: `network_geometry.py:174` and
-        `network_backend.py:161/243` feed it to the graph Laplacian `D - A`, where the weighted
-        degree is exactly right. Those sites are deliberately untouched.
+        The weighted sum is NOT wrong everywhere, and the correct sites are more than I first listed:
+        `network_geometry.py:174`, `network_backend.py:161/243`, `alg/numerical/coupling/
+        graph_coupling.py:238` (another `D - A`), and `alg/numerical/network_solvers/
+        fp_network.py:240`, whose CFL bound needs it -- measured, lambda_max of the weighted
+        Laplacian is 12.55, so 2*max_weighted_degree = 17.0 bounds it and 2*max_combinatorial = 6.0
+        does not. All deliberately untouched. `network_geometry.py:217/218` are a third case:
+        `metadata["average_degree"]` and `["max_degree"]` are strengths under a degree name --
+        pre-existing, metadata only, not changed here.
         """
         # Issue #543: Use try/except instead of hasattr() for optional attribute
         try:
