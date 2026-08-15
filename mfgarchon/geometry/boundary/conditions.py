@@ -43,6 +43,7 @@ from .types import (
     BoundaryFace,
     PeriodicGridConvention,
     _compute_sdf_gradient,
+    parse_boundary_face,
     repeated_endpoint_count,
 )
 
@@ -389,6 +390,26 @@ class BoundaryConditions:
             priority=-1,
         )
 
+    def _segment_covers(self, segment: BCSegment, boundary: str) -> bool:
+        """Does `segment` govern the face named by `boundary`?
+
+        One resolver. `parse_boundary_face` already normalises aliases -- "left" and "x_min" are the
+        same face -- but these accessors compared the raw strings with `==`, while the FDM ghost path
+        went through the owner. The same `BoundaryConditions` object therefore answered differently
+        depending on which route asked, and an absorbing wall declared as "left" silently became
+        no-flux on the query path. #1939
+
+        Falls back to string equality only when a name resolves to no face at all, so an unrecognised
+        identifier still matches itself rather than matching nothing.
+        """
+        if segment.boundary is None:
+            return True
+        mine = parse_boundary_face(segment.boundary)
+        theirs = parse_boundary_face(boundary)
+        if mine is None or theirs is None:
+            return segment.boundary == boundary
+        return mine == theirs
+
     def get_bc_type_at_boundary(self, boundary: str) -> BCType:
         """
         Get the BC type at a specific boundary (safe accessor for mixed BCs).
@@ -422,10 +443,7 @@ class BoundaryConditions:
 
         # For mixed BCs, find the highest priority segment matching this boundary
         for segment in self.segments:  # Already sorted by priority
-            if segment.boundary is None:
-                # Default segment matches all boundaries
-                return segment.bc_type
-            if segment.boundary == boundary:
+            if self._segment_covers(segment, boundary):
                 return segment.bc_type
 
         # No match - return default BC type (fails loud if default_bc unset)
@@ -454,7 +472,7 @@ class BoundaryConditions:
 
         # For mixed BCs, find the highest priority segment
         for segment in self.segments:
-            if segment.boundary is None or segment.boundary == boundary:
+            if self._segment_covers(segment, boundary):
                 if callable(segment.value):
                     if point is not None:
                         return segment.value(point, time)

@@ -342,20 +342,26 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
         # Check alias table first
         if boundary in _BOUNDARY_STRING_TO_FACE:
             return _BOUNDARY_STRING_TO_FACE[boundary]
-        # Try "axis{N}_{side}" format
-        if boundary.startswith("axis") and "_" in boundary:
-            parts = boundary.split("_", 1)
-            try:
-                axis = int(parts[0][4:])  # "axis5" -> 5
-                side = parts[1]
+        # Numeric-axis formats. Both spellings exist in the tree and mean the same thing:
+        # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and
+        # `applicator_particle._get_boundary_id` emits "dim{N}_{side}" for d >= 3. Accepting only
+        # the first meant a segment declared on "dim3_min" resolved to axis 0 -- see below. Both are
+        # accepted here so there is one resolver; that two emitters exist is a separate problem.
+        for prefix in ("axis", "dim"):
+            if boundary.startswith(prefix) and "_" in boundary:
+                head, _, side = boundary.partition("_")
                 if side in ("min", "max"):
-                    return BoundaryFace(axis, side)
-            except (ValueError, IndexError):
-                pass
-        # Try "{letter}_{side}" for unknown letters
-        if len(boundary) > 2 and boundary[-4:] in ("_min", "_max"):
-            side = boundary[-3:]
-            return BoundaryFace(0, side)  # Default to axis 0 for unknown
+                    try:
+                        return BoundaryFace(int(head[len(prefix) :]), side)
+                    except ValueError:
+                        pass
+        # ~~"{letter}_{side}" for unknown letters -> BoundaryFace(0, side)~~ [REMOVED 2026-08-15]
+        # An unrecognised prefix now returns None rather than guessing axis 0. That branch turned a
+        # naming mismatch into a *dropped boundary condition*: "dim3_min" became axis 0, so a
+        # Dirichlet exit declared on the fourth axis was applied to the first, while the axis it was
+        # written for silently took the default. "inlet_min" resolved the same way. Returning None
+        # lets the caller fall through to its declared default, which is a wrong answer the caller
+        # asked for rather than one this function invented. #1939
     return None
 
 
@@ -598,8 +604,22 @@ class BCSegment:
                 )
 
         # Method 1: Check boundary identifier match (rectangular domains)
+        #
+        # Compared as FACES, not as strings. `parse_boundary_face` is the owner and it resolves
+        # aliases -- "left" and "x_min" are the same face -- but this site used `!=` on the raw
+        # strings, so the same `BoundaryConditions` object answered differently depending on which
+        # route asked. Measured end-to-end on a 1-D FP-FDM solve: with `boundary="x_min"` the
+        # absorbing wall gave `m[0] = 0.0`; with `boundary="left"`, the alias `BCSegment`'s own
+        # docstring lists first, it gave 3.9e-02 -- the wall had silently become no-flux. #1939
         if self.boundary is not None and self.boundary != "all":
-            if boundary_id is None or self.boundary != boundary_id:
+            if boundary_id is None:
+                return False
+            mine = parse_boundary_face(self.boundary)
+            theirs = parse_boundary_face(boundary_id)
+            if mine is None or theirs is None:
+                if self.boundary != boundary_id:
+                    return False
+            elif mine != theirs:
                 return False
 
         # Method 2: Check coordinate range constraints (rectangular domains)
