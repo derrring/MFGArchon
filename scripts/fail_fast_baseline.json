@@ -2,5 +2,5 @@
   "bare_except": 0,
   "broad_except": 108,
   "hasattr": 109,
-  "silent_pass": 88
+  "silent_pass": 85
 }
