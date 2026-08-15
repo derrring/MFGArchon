@@ -270,32 +270,47 @@ class GraphApplicator(BaseGraphApplicator):
     @staticmethod
     def _detect_leaf_nodes(geometry) -> list[int]:
         """Detect leaf nodes (degree 1) in the graph."""
+        degrees = GraphApplicator._node_degrees(geometry)
+        if degrees is None:
+            return []
+        return [int(i) for i in np.where(degrees == 1)[0]]
+
+    @staticmethod
+    def _node_degrees(geometry) -> np.ndarray | None:
+        """Combinatorial degree: how many neighbours each node has.
+
+        `(adj != 0).sum(axis=1)`, not `adj.sum(axis=1)`. The latter is the weighted degree -- the
+        node STRENGTH -- and on a weighted graph it is not the degree at all. Both detectors below
+        used it, so on a path graph `0-1-2-3` with edge weight 0.5 they returned `[1, 2]`, the two
+        NON-leaves, and the boundary condition was applied to the interior. #1940
+
+        The declared owner, `network_backend.node_degrees`, returns `graph.degree()` -- the
+        combinatorial degree -- so this agrees with it; it is not called here only because it needs
+        a backend graph object, which `network_data` may not carry.
+
+        The weighted sum is NOT wrong everywhere: `network_geometry.py:174` and
+        `network_backend.py:161/243` feed it to the graph Laplacian `D - A`, where the weighted
+        degree is exactly right. Those sites are deliberately untouched.
+        """
         # Issue #543: Use try/except instead of hasattr() for optional attribute
         try:
             network_data = geometry.network_data
-            if network_data is not None:
-                adj = network_data.adjacency_matrix
-                if adj is not None:
-                    degrees = np.array(adj.sum(axis=1)).flatten()
-                    return list(np.where(degrees == 1)[0])
         except AttributeError:
-            pass
-        return []
+            return None
+        if network_data is None:
+            return None
+        adj = network_data.adjacency_matrix
+        if adj is None:
+            return None
+        return np.asarray((adj != 0).sum(axis=1)).flatten()
 
     @staticmethod
     def _detect_low_degree_nodes(geometry, threshold: int) -> list[int]:
         """Detect nodes with degree <= threshold."""
-        # Issue #543: Use try/except instead of hasattr() for optional attribute
-        try:
-            network_data = geometry.network_data
-            if network_data is not None:
-                adj = network_data.adjacency_matrix
-                if adj is not None:
-                    degrees = np.array(adj.sum(axis=1)).flatten()
-                    return list(np.where(degrees <= threshold)[0])
-        except AttributeError:
-            pass
-        return []
+        degrees = GraphApplicator._node_degrees(geometry)
+        if degrees is None:
+            return []
+        return [int(i) for i in np.where(degrees <= threshold)[0]]
 
     @staticmethod
     def _detect_spatial_boundary_nodes(geometry, tolerance: float = 1e-6) -> list[int]:
@@ -478,7 +493,23 @@ class GraphApplicator(BaseGraphApplicator):
         Example:
             >>> u = np.ones(100)
             >>> u_bc = applicator.apply(u, t=0.5, field_type="value")
+
+        Raises:
+            ValueError: If `field_type` is not "value" or "density".
         """
+        # `Literal` is a type annotation, not a runtime check. Every branch below tests
+        # `field_type == "value"` or `== "density"`, so any other string -- including "VALUE",
+        # "hjb", or a typo -- matched nothing and the field came back unmodified with no error.
+        # The failure mode was silence, which is what makes it worth a guard rather than a
+        # docstring line. #1940
+        if field_type not in ("value", "density"):
+            raise ValueError(
+                f"field_type must be 'value' or 'density', got {field_type!r}. "
+                f"'value' is the HJB value function u; 'density' is the FP density m. "
+                f"They receive different boundary conditions by adjoint duality, so there is no "
+                f"safe default and an unrecognised name is not applied to either."
+            )
+
         result = field.copy()
         is_2d = result.ndim == 2
 
