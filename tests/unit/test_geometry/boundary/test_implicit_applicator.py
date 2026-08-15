@@ -359,25 +359,28 @@ class TestAgainstAPackageGeometry:
 
         np.testing.assert_allclose(result[on_boundary], 42.0, atol=1e-12)
 
-    def test_the_value_follows_the_resolved_type_not_the_segment_order(self, package_applicator):
-        """The value and the type must come from the same segment.
+    def test_the_value_follows_the_resolved_type_and_not_the_segment_order(self, package_applicator):
+        """A segment's value is read only for a *uniform* BC whose type is the one resolved.
 
-        The first version of this fix selected the value with
-        `next(s for s in bc.segments if s.value is not None)`. `BCSegment.value` defaults to `0.0`,
-        not `None`, and nothing in the package passes `value=None`, so that filter never filtered:
-        the expression was unconditionally `segments[0]`. Segments sort priority-descending
-        (`conditions.py:135`), so the value came from whichever segment sorted first while the type
-        came from `_resolve_default_bc` -- and `alpha`/`beta` came from a third place,
-        `_robin_alpha_beta`, which had always selected by type.
+        `apply()` resolves ONE `bc_type` for the whole boundary and this applicator has no spatial
+        dispatch -- review measured that moving a segment's `normal_direction` to a different arc,
+        or deleting its region spec, gives byte-identical output, on base as well. So for a mixed BC
+        no segment's value is the right one: whichever is chosen gets imposed everywhere, including
+        where that segment was never meant to act. `default_value` is the field that means "where no
+        segment governs".
 
-        Case C below is the sharpest: `alpha, beta = (2.0, 3.0)` from the ROBIN segment and
-        `g = 7.0` from the DIRICHLET one, feeding one Robin condition. Case A is the one where the
-        old behaviour was worse than no fix at all: the pre-#1938 `0.0` was correct there and the
-        first version returned 7.0.
+        Three versions of this selector have been wrong, and each row below killed one of them:
 
-        Case B is the control. It is the same physics as A with the priorities swapped, and it was
-        already right by accident of sort order -- so it passes in every version and is here to show
-        that a passing row proves nothing on its own.
+        * D killed the `NEUMANN`/`NO_FLUX` family clause, which let a NO_FLUX resolution impose
+          `du/dn = 2.5`. NO_FLUX means zero flux by definition.
+        * A and C killed the sort-order form (`segments[0]` in disguise).
+        * F and G kill any within-type selection among several matches, which the by-type form still
+          had: review showed that taking the *last* match instead of the first passed all 6027 tests
+          while changing behaviour on a real configuration.
+
+        E carries a non-zero `default_value` deliberately. With `default_value=0.0` it returned 0.0
+        in every version of this code and discriminated nothing -- review measured that, and that a
+        mutation replacing the fallback with a literal `0.0` passed the entire suite.
         """
         applicator, geometry = package_applicator
         points = self._on_sphere(geometry)
@@ -385,25 +388,31 @@ class TestAgainstAPackageGeometry:
         assert on_boundary.any(), "no boundary points detected, so the assertions below are vacuous"
         boundary_points = points[on_boundary]
 
-        def bc_of(segments, default_bc):
-            return BoundaryConditions(segments=segments, dimension=2, default_bc=default_bc)
+        def bc_of(segments, default_bc, default_value=0.0):
+            return BoundaryConditions(
+                segments=segments,
+                dimension=2,
+                default_bc=default_bc,
+                default_value=default_value,
+            )
 
         exit_hi = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
         walls = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0)
         walls_hi = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0, priority=5)
         exit_lo = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)
         robin_wall = BCSegment(name="wall", bc_type=BCType.ROBIN, alpha=2.0, beta=3.0, value=1.0)
+        neumann_only = BCSegment(name="n", bc_type=BCType.NEUMANN, value=2.5)
+        dir_a = BCSegment(name="a", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
+        dir_b = BCSegment(name="b", bc_type=BCType.DIRICHLET, value=0.0)
 
         cases = [
-            ("A exit sorts first, resolved NO_FLUX", bc_of([exit_hi, walls], BCType.NO_FLUX), 0.0),
-            ("B walls sort first (control)", bc_of([walls_hi, exit_lo], BCType.NO_FLUX), 0.0),
-            ("C Robin wall, Dirichlet sorts first", bc_of([exit_hi, robin_wall], BCType.ROBIN), 1.0),
-            (
-                "D NEUMANN segment, default NO_FLUX",
-                bc_of([BCSegment(name="w", bc_type=BCType.NEUMANN, value=2.5)], BCType.NO_FLUX),
-                2.5,
-            ),
-            ("E no segments, falls back to default_value", bc_of([], BCType.DIRICHLET), 0.0),
+            ("A mixed, exit sorts first, resolved NO_FLUX", bc_of([exit_hi, walls], BCType.NO_FLUX), 0.0),
+            ("B mixed, walls sort first (control)", bc_of([walls_hi, exit_lo], BCType.NO_FLUX), 0.0),
+            ("C mixed, Robin resolved, Dirichlet sorts first", bc_of([exit_hi, robin_wall], BCType.ROBIN, 4.0), 4.0),
+            ("D NEUMANN segment under default NO_FLUX", bc_of([neumann_only], BCType.NO_FLUX), 0.0),
+            ("E no segments, non-zero default_value", bc_of([], BCType.DIRICHLET, 9.0), 9.0),
+            ("F two DIRICHLET, high priority first", bc_of([dir_a, dir_b], BCType.DIRICHLET, 9.0), 9.0),
+            ("G two DIRICHLET, order swapped", bc_of([dir_b, dir_a], BCType.DIRICHLET, 9.0), 9.0),
         ]
 
         for label, bc, expected in cases:
@@ -413,5 +422,25 @@ class TestAgainstAPackageGeometry:
                 value,
                 expected,
                 atol=1e-12,
-                err_msg=f"{label}: resolved {resolved.name} but took the value from another segment",
+                err_msg=f"{label}: resolved {resolved.name} but took the value from somewhere else",
             )
+
+    def test_a_uniform_bc_still_reads_its_own_segment(self, package_applicator):
+        """The gate above must not throw away the case this PR exists to fix.
+
+        Without this, `_resolve_bc_value` returning `bc.default_value` unconditionally would satisfy
+        every row of the previous test -- review measured exactly that mutation passing the whole
+        suite when the fallback had nothing non-zero to distinguish it.
+        """
+        applicator, geometry = package_applicator
+        points = self._on_sphere(geometry)
+        on_boundary = applicator._detect_boundary_points(points)
+        assert on_boundary.any(), "no boundary points detected, so the assertions below are vacuous"
+        boundary_points = points[on_boundary]
+
+        for value in (3.0, -7.5):
+            bc = dirichlet_bc(dimension=2, value=value)
+            assert bc.is_uniform, "this test is about the uniform path and the fixture is not uniform"
+            resolved = bc._resolve_default_bc("test")
+            got = applicator._resolve_bc_value(bc, boundary_points, 0.0, resolved)
+            np.testing.assert_allclose(got, value, atol=1e-12)
