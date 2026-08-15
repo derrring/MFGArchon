@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from .applicator_base import GridType
-from .applicator_meshfree import MeshfreeApplicator
+from .applicator_meshfree import MeshfreeApplicator, _robin_alpha_beta
 from .types import BCType
 
 if TYPE_CHECKING:
@@ -135,7 +135,7 @@ class ImplicitApplicator(MeshfreeApplicator):
 
         # Apply BC based on type (fails loud if default_bc unset; Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("ImplicitBoundaryApplicator.apply")
-        bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time)
+        bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time, bc_type)
 
         if bc_type == BCType.DIRICHLET:
             result[boundary_mask] = self._apply_dirichlet(result[boundary_mask], bc_value)
@@ -144,8 +144,11 @@ class ImplicitApplicator(MeshfreeApplicator):
                 result, boundary_mask, normals, bc_value, points, spacing
             )
         elif bc_type == BCType.ROBIN:
-            alpha = getattr(boundary_conditions, "alpha", 1.0)
-            beta = getattr(boundary_conditions, "beta", 1.0)
+            # `_robin_alpha_beta`, not `getattr(boundary_conditions, ...)`. alpha/beta live on the
+            # BCSegment; `BoundaryConditions` has no such attribute, so the previous form always
+            # took its own defaults and made every Robin BC identical. #1558 established this owner
+            # on the parent class and this subclass kept the pre-fix code. #1938
+            alpha, beta = _robin_alpha_beta(boundary_conditions)
             result[boundary_mask] = self._apply_robin_along_normal(
                 result, boundary_mask, normals, alpha, beta, bc_value, points, spacing
             )
@@ -167,8 +170,26 @@ class ImplicitApplicator(MeshfreeApplicator):
         Returns:
             Boolean mask of boundary points
         """
-        # is_on_boundary is GeometryProtocol-guaranteed (protocol.py:208)
-        return self.geometry.is_on_boundary(points, tolerance=self._boundary_tolerance)
+        # Positional, not `tolerance=`. Seven classes define `is_on_boundary`; six name the
+        # tolerance `tolerance`, including `GeometryProtocol`, and exactly ONE names it `tol` --
+        # `ImplicitDomain`. Hyperrectangle, Hypersphere and the CSG domains do not define the method
+        # at all, they inherit it, which is why the whole implicit family carries `tol`.
+        # (~~"all seven subclasses name it"~~ [CORRECTED 2026-08-15] counted inheritors as
+        # definitions; the distinction matters because it makes #1943 a one-method rename.)
+        # Since this applicator exists FOR implicit geometries, the keyword form raised `TypeError`
+        # for every geometry the package ships, before any BC code ran.
+        #
+        # This workaround is safe HERE and must not be generalised: slot 2 is a tolerance in all
+        # seven definitions of `is_on_boundary`, but the sibling protocol methods disagree on what
+        # slot 2 even means -- `project_to_boundary` takes `max_iterations` in `ImplicitDomain` and
+        # `boundary_name` in `TensorProductGrid`, and `get_boundary_normal` takes `eps` versus
+        # `corner_strategy`. A positional call there would bind a different concept, silently.
+        #
+        # It looked exercised because `test_implicit_applicator.py` supplies its own `_CircleGeometry`
+        # whose signature matches this call rather than the protocol -- a fixture written against the
+        # caller instead of against the contract. Passing positionally works with both spellings; the
+        # underlying protocol divergence is filed separately. #1938
+        return self.geometry.is_on_boundary(points, self._boundary_tolerance)
 
     def _compute_boundary_normals(self, boundary_points: NDArray[np.floating]) -> NDArray[np.floating]:
         """
@@ -188,6 +209,7 @@ class ImplicitApplicator(MeshfreeApplicator):
         bc: BoundaryConditions,
         points: NDArray[np.floating],
         time: float,
+        bc_type: BCType,
     ) -> NDArray[np.floating] | float:
         """
         Resolve BC value (may be callable or constant).
@@ -200,7 +222,68 @@ class ImplicitApplicator(MeshfreeApplicator):
         Returns:
             BC values (scalar or array matching points)
         """
-        value = getattr(bc, "value", 0.0)
+        # ~~`getattr(bc, "value", 0.0)`~~ [FIXED 2026-08-15, #1938] -- `BoundaryConditions` has no
+        # `.value` attribute, so the default fired on every call and every Dirichlet BC was applied
+        # as 0.0 regardless of what the caller asked for. The value lives on the segments.
+        #
+        # A segment's value is read ONLY for a uniform BC, and only when its type is the one that
+        # was resolved. Otherwise `bc.default_value`.
+        #
+        # `apply()` resolves ONE `bc_type` through `_resolve_default_bc` and applies it to every
+        # boundary point; this applicator has no spatial dispatch at all -- moving a segment's
+        # `normal_direction` from one arc to another, or deleting its region spec entirely, gives
+        # byte-identical output. So for a genuinely mixed BC, taking the value from *any* segment is
+        # meaningless: whichever it is, it gets imposed everywhere, including where that segment was
+        # never meant to act. `default_value` is the field that means "the value where no segment
+        # governs", which is the honest answer here. (That the applicator silently flattens a mixed
+        # BC at all is a separate, pre-existing defect, filed on its own.)
+        #
+        # Two earlier versions of this line, both measured wrong:
+        #
+        # ~~`next(s for s in bc.segments if s.value is not None)`~~ [CORRECTED 2026-08-15] --
+        # `BCSegment.value` defaults to `0.0`, not `None`, and nothing in the package passes
+        # `value=None`, so that filter never filtered and the expression was unconditionally
+        # `segments[0]`. Segments sort priority-descending, so the value came from whichever segment
+        # sorted first while `bc_type` came from `_resolve_default_bc` and alpha/beta from
+        # `_robin_alpha_beta`. Three sources, one condition.
+        #
+        # ~~a NEUMANN/NO_FLUX family clause~~ [CORRECTED 2026-08-15] -- it made a NO_FLUX resolution
+        # impose a non-zero flux: `[BCSegment(NEUMANN, value=2.5)]` under `default_bc=NO_FLUX` gave
+        # an implied `du/dn` of 2.5, where NO_FLUX means 0 by definition, and reordering the segments
+        # changed the answer. Its stated justification -- "without that, a NEUMANN segment under
+        # `default_bc=NO_FLUX` falls through to `bc.default_value`" -- described the CORRECT
+        # behaviour as the bug: `default_value` is 0.0 there, which is exactly what NO_FLUX requires.
+        # Review measured that the clause's only support was one case of the test written to justify
+        # it, in the same commit.
+        #
+        # Not `bc.default_value` as the primary source either: it is a plain float and the factory
+        # writes 0.0 into it whenever the value is callable (`conditions.py:929`), so routing
+        # everything through it would fix the scalar case and silently break the callable one this
+        # method exists to serve. Hence the uniform gate rather than a blanket substitution.
+        # NO_FLUX and REFLECTING are definitionally zero-flux: no value they carry can be a normal
+        # derivative. This is an INVARIANT, asserted before any selection, not another rule about
+        # which segment to read -- and that distinction is why it ends the escalation. Three earlier
+        # versions of the selection below were each wrong in a different way, because each still had
+        # a "which segment" degree of freedom to get wrong; a clamp has none.
+        #
+        # The package states this convention in three other places, so leaving it out was cross-path
+        # disagreement rather than a judgement call: `applicator_fdm.py:1149` ("NO_FLUX / REFLECTING,
+        # definitionally zero-flux"), the ghost path's `apply_flux = bc_type == BCType.NEUMANN and
+        # v != 0.0`, and `applicator_meshfree.py`'s NO_FLUX branch, which is `pass`.
+        #
+        # It is not hypothetical: `with_resolved_providers` -- the documented pre-solve step --
+        # turns `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a
+        # number, which without this clamp is imposed as a flux. Measured on a 24-point sphere with
+        # `spacing=0.05`: `uniform_bc(NO_FLUX, value=2.5)` moved the boundary from 3.8 to 3.925,
+        # an implied du/dn of 2.5, where base returned the correct 3.8.
+        if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
+            return 0.0
+
+        uniform_segment = bc.segments[0] if bc.is_uniform else None
+        if uniform_segment is not None and uniform_segment.bc_type == bc_type:
+            value = uniform_segment.value
+        else:
+            value = bc.default_value
 
         if callable(value):
             # Time-dependent or space-dependent BC
