@@ -92,7 +92,12 @@ from .applicator_base import (
 from .conditions import BoundaryConditions
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
-from .ghost_cells import GhostCellConfig, ghost_cell_robin
+from .ghost_cells import (
+    GhostCellConfig,
+    ghost_cell_linear_extrapolation,
+    ghost_cell_quadratic_extrapolation,
+    ghost_cell_robin,
+)
 from .types import (
     BCSegment,
     BCType,
@@ -1205,6 +1210,44 @@ class PreallocatedGhostBuffer:
                     hi_ghost[axis] = -(g - k)
                     buf[tuple(hi_ghost)] = ghost_cell_robin(u_hi_interior, v, alpha, beta, dx)
 
+        elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
+            # #1958: this chain had no branch for either member AND no terminal `else`, so the
+            # ghost cells kept the buffer's zero-initialised contents -- not a wrong condition,
+            # no condition. Measured on u = [2.5, 3.1, 4.0, 5.2, 6.6]: ghosts 0.0 / 0.0 where
+            # linear wants 1.9 / 8.0 and quadratic 2.2 / 8.2.
+            #
+            # The formulas were already written and directly tested; nothing reached them from
+            # here. Both are one-sided stencils reading INWARD from the wall, so the low side
+            # walks forward from the first interior cell and the high side walks backward from
+            # the last.
+            n_pts = 2 if bc_type == BCType.EXTRAPOLATION_LINEAR else 3
+            formula = (
+                ghost_cell_linear_extrapolation
+                if bc_type == BCType.EXTRAPOLATION_LINEAR
+                else ghost_cell_quadratic_extrapolation
+            )
+            for axis in range(d):
+                if buf.shape[axis] - 2 * g < n_pts:
+                    raise ValueError(
+                        f"{bc_type.name} needs {n_pts} interior cells along axis {axis} to build "
+                        f"its one-sided stencil; this grid has {buf.shape[axis] - 2 * g}. "
+                        "Refuse rather than silently dropping to a lower order."
+                    )
+
+                def _slice(idx: int, ax: int = axis) -> tuple:
+                    sl = [slice(None)] * d
+                    sl[ax] = idx
+                    return tuple(sl)
+
+                lo_stencil = tuple(buf[_slice(g + j)] for j in range(n_pts))
+                hi_stencil = tuple(buf[_slice(-g - 1 - j)] for j in range(n_pts))
+                lo_value = formula(lo_stencil)
+                hi_value = formula(hi_stencil)
+
+                for k in range(g):
+                    buf[_slice(g - 1 - k)] = lo_value
+                    buf[_slice(-(g - k))] = hi_value
+
     def _apply_poly_extrapolation(
         self,
         bc_type: BCType,
@@ -1694,6 +1737,40 @@ class PreallocatedGhostBuffer:
                     single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
                 u_interior = buf[tuple(single_interior)]
                 buf[tuple(single_ghost)] = ghost_cell_robin(u_interior, v, alpha, beta, dx)
+
+        elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
+            # #1958: this chain had no branch for either member, so both fell to the reflection
+            # fallback below. `fp_semi_lagrangian` builds an EXTRAPOLATION_QUADRATIC BC every
+            # timestep and got a boundary Laplacian 2000% wrong -- measured on U = 0.5x^2, where
+            # the true Laplacian is 1 everywhere, the wall row came back -19.
+            #
+            # Only the high wall showed it. The parabola is symmetric about x = 0, so the
+            # reflection ghost and the quadratic ghost coincide at the low wall -- which is why
+            # a symmetric fixture cannot see this and why the defect survived.
+            n_pts = 2 if bc_type == BCType.EXTRAPOLATION_LINEAR else 3
+            formula = (
+                ghost_cell_linear_extrapolation
+                if bc_type == BCType.EXTRAPOLATION_LINEAR
+                else ghost_cell_quadratic_extrapolation
+            )
+            if buf.shape[axis] - 2 * g < n_pts:
+                raise ValueError(
+                    f"{bc_type.name} needs {n_pts} interior cells along axis {axis} to build its "
+                    f"one-sided stencil; this grid has {buf.shape[axis] - 2 * g}. Refuse rather "
+                    "than silently dropping to a lower order."
+                )
+
+            def _slice(idx: int) -> tuple:
+                sl = [slice(None)] * d
+                sl[axis] = idx
+                return tuple(sl)
+
+            # The stencil reads INWARD from this wall: forward from the first interior cell at a
+            # min face, backward from the last at a max face.
+            stencil = tuple(buf[_slice(g + j if side == "min" else -g - 1 - j)] for j in range(n_pts))
+            ghost_value = formula(stencil)
+            for k in range(g):
+                buf[_slice(g - 1 - k if side == "min" else -(g - k))] = ghost_value
 
         else:
             # Fallback for unknown BC types: use reflection
