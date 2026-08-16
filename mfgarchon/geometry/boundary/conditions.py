@@ -233,15 +233,24 @@ class BoundaryConditions:
         before passing to solvers.
 
         Returns:
-            True if any segment.value is a BCValueProvider
+            True if any segment carries a BCValueProvider in ``value``, ``alpha`` or ``beta``.
 
         Example:
             >>> if bc.has_providers():
             ...     bc = bc.with_resolved_providers(state)
+
+        Note:
+            This is the gate in front of ``with_resolved_providers``, whose fast path returns
+            ``self`` unchanged when this is False. It must therefore cover exactly the fields
+            that method resolves. ~~``seg.value`` only~~ [CORRECTED 2026-08-16]: widening the
+            resolver without widening the gate would leave a provider on ``alpha`` silently
+            unresolved -- the caller would receive the provider object itself where a number was
+            expected, and the failure would surface far downstream as a type error in a ghost
+            formula rather than here.
         """
         from .providers import is_provider
 
-        return any(is_provider(seg.value) for seg in self.segments)
+        return any(is_provider(getattr(seg, f)) for seg in self.segments for f in ("value", "alpha", "beta"))
 
     def with_resolved_providers(
         self,
@@ -276,13 +285,17 @@ class BoundaryConditions:
 
         resolved_segments = []
         for seg in self.segments:
-            if is_provider(seg.value):
-                # Resolve provider to concrete value
-                resolved_value = seg.value.compute(state)
-                resolved_seg = replace(seg, value=float(resolved_value))
-            else:
-                resolved_seg = seg
-            resolved_segments.append(resolved_seg)
+            # `value`, `alpha` and `beta` may each carry a provider. The impermeable wall of a
+            # Fokker-Planck equation is Robin with `alpha` the outward normal drift,
+            # `D_pH(x, grad u) . n` -- a quantity that is only knowable from the current
+            # iterate, which is what a provider is for, and which lives on `alpha`, not on
+            # `value`. ~~only `value` was resolved~~ [CORRECTED 2026-08-16]
+            updates = {
+                field: getattr(seg, field).compute(state)
+                for field in ("value", "alpha", "beta")
+                if is_provider(getattr(seg, field))
+            }
+            resolved_segments.append(replace(seg, **updates) if updates else seg)
 
         return replace(self, segments=resolved_segments)
 
