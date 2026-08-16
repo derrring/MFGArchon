@@ -1133,6 +1133,25 @@ def robin_bc(
     """
     Create Robin boundary conditions (alpha*u + beta*du/dn = value).
 
+    Which solvers honour it (#1975):
+
+    - ``FPFEMSolver`` / ``HJBFEMSolver`` -- weak form, the coefficients are read
+      (``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, load ``D*(1/beta)*int_dOmega g phi_i``).
+      Only a **constant** ``g`` is implemented; ``beta == 0`` fails loud; a provider-valued
+      ``alpha`` currently raises a bare ``TypeError`` from ``float()``. These solvers declare no
+      ``_SUPPORTED_BC_TYPES``, so none of that is checked at construction (#1977).
+    - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case; general-Robin sub-cases
+      fail loud in the row builder.
+    - **Every grid FP solver refuses it**, and the refusal is load-bearing rather than an
+      oversight: the FDM boundary assembly reads none of ``alpha``/``beta``/``value``, so a ROBIN
+      wall that got past the gate would be a no-flux wall wearing a label (measured byte-identical
+      at alpha=3.2 and alpha=999).
+
+    Why this matters for MFG: the FP reflecting wall *is* Robin in ``m``, with
+    ``alpha = D_pH(x, grad u) . n`` recomputed each Picard iterate, while the HJB side is true
+    Neumann. So a reflecting wall with wall-normal drift is expressible on the FEM path and not on
+    the grid paths.
+
     Args:
         value: RHS value g in alpha*u + beta*du/dn = g
         alpha: Coefficient of u
