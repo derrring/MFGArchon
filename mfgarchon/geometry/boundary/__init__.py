@@ -70,6 +70,7 @@ from .providers import (
     BaseBCValueProvider,
     BCValueProvider,
     ConstantProvider,
+    NormalDriftProvider,
     is_provider,
     resolve_provider,
 )
@@ -128,6 +129,7 @@ __all__ = [
     "BCValueProvider",
     "BaseBCValueProvider",
     "AdjointConsistentProvider",
+    "NormalDriftProvider",
     "ConstantProvider",
     "is_provider",
     "resolve_provider",

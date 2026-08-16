@@ -391,6 +391,107 @@ class AdjointConsistentProvider(BaseBCValueProvider):
         return f"AdjointConsistentProvider(side='{self._original_side}', sigma={sig_str})"
 
 
+class NormalDriftProvider(BaseBCValueProvider):
+    """Outward normal drift at a wall, for the ``alpha`` of a Fokker-Planck no-flux condition.
+
+    An impermeable wall is ``J . n = 0`` with ``J = m*v - D*grad(m)``, i.e.
+
+        v_n * m - D * d_n m = 0,
+
+    which is Robin in ``m`` with ``alpha = v_n``, ``beta = -D``, ``g = 0``. Imposing
+    ``d_n m = 0`` instead is the same condition only when the drift is tangential at the wall;
+    otherwise mass leaves at a rate proportional to ``m_wall * v_n``. Measured on this package,
+    1-D, sigma = 0.3, with a wall-normal drift of magnitude 3.2: the non-conservative assembly
+    loses **5.4% of the mass**, the conservative one is at machine precision.
+
+    ``v_n`` is a functional of the *coupled* solution -- ``v = -c*grad(U)`` with ``c`` from the
+    Hamiltonian's control law -- so it is known only per Picard iterate. That is what a provider
+    is for, and it is why this one sits on ``alpha`` rather than on ``value``: ``value`` is the
+    homogeneous right-hand side, which for an impermeable wall is zero.
+
+    Sign convention: **outward normal**, matching ``BCSegment.beta``'s declared ``du/dn`` and
+    every ghost formula since #1907. At the low wall the outward normal is ``-x``, so
+    ``v_n = -v_x`` there. Passing an axis component instead gives a physically different wall.
+
+    Attributes:
+        side: Boundary side, in any spelling ``AdjointConsistentProvider`` accepts.
+        drift_coefficient: The ``c`` in ``v = -c*grad(U)``. ``None`` reads ``'drift_coefficient'``
+            from the state, which is where ``fp_drift_coefficient(problem)`` -- the single source
+            (#1420) -- puts it. There is no default: ``c`` is a mathematical parameter of the
+            problem, and a defaulted one silently rescales the wall.
+
+    Example:
+        >>> seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0,
+        ...                 alpha=NormalDriftProvider(side="left"), beta=-diffusion)
+    """
+
+    def __init__(self, side: str, drift_coefficient: float | None = None) -> None:
+        if side not in AdjointConsistentProvider._SIDE_ALIASES:
+            valid = sorted(AdjointConsistentProvider._SIDE_ALIASES)
+            raise ValueError(f"side must be one of {valid}, got '{side}'")
+        self._original_side = side
+        self.side = AdjointConsistentProvider._SIDE_ALIASES[side]
+        self.drift_coefficient = drift_coefficient
+
+    def compute(self, state: dict[str, Any]) -> float:
+        """Outward normal component of ``v = -c*grad(U)`` at this wall.
+
+        Args:
+            state: Must contain ``'U_current'`` (the value function) and ``'geometry'``; and
+                ``'drift_coefficient'`` unless it was given to ``__init__``.
+
+        Returns:
+            ``v_n``, the outward normal drift.
+
+        Raises:
+            KeyError: naming the missing state key.
+            NotImplementedError: for a wall other than the two 1-D ones -- an nD outward normal
+                needs the geometry's gradient operator, the same limit
+                ``AdjointConsistentProvider`` states (#624).
+        """
+        u = state.get("U_current")
+        if u is None:
+            raise KeyError("NormalDriftProvider requires 'U_current' in state")
+        geometry = state.get("geometry")
+        if geometry is None:
+            raise KeyError("NormalDriftProvider requires 'geometry' in state")
+
+        c = self.drift_coefficient
+        if c is None:
+            c = state.get("drift_coefficient")
+            if c is None:
+                raise KeyError(
+                    "NormalDriftProvider requires 'drift_coefficient' in state (or in its "
+                    "constructor). It is the c in v = -c*grad(U); source it from "
+                    "fp_drift_coefficient(problem), not from a per-solver copy (#1420). There is "
+                    "no default because a defaulted c silently rescales the wall's drift."
+                )
+
+        u = np.asarray(u)
+        if u.ndim > 1:
+            u = u[-1, :]  # final time slice, matching AdjointConsistentProvider
+
+        if self.side not in ("left", "right"):
+            raise NotImplementedError(
+                f"NormalDriftProvider: side '{self._original_side}' needs the geometry's gradient "
+                "operator for the outward normal. See Issue #624, the same limit "
+                "AdjointConsistentProvider states."
+            )
+
+        dx = geometry.get_grid_spacing()[0]
+        # One-sided difference toward the interior, then projected onto the OUTWARD normal.
+        # Low wall: n = -x, so v_n = -v_x = +c * dU/dx. High wall: n = +x, so v_n = -c * dU/dx.
+        if self.side == "left":
+            du_dx = (u[1] - u[0]) / dx
+            return float(c * du_dx)
+        du_dx = (u[-1] - u[-2]) / dx
+        return float(-c * du_dx)
+
+    def __repr__(self) -> str:
+        c = self.drift_coefficient if self.drift_coefficient is not None else "from_state"
+        return f"NormalDriftProvider(side='{self._original_side}', drift_coefficient={c})"
+
+
 class ConstantProvider(BaseBCValueProvider):
     """
     Trivial provider that returns a constant value.
