@@ -12,10 +12,10 @@ The canonical way to apply boundary conditions is `FDMApplicator` or
 The array-padding entry points that used to live here -- ``apply_boundary_conditions``
 in its 1D/2D/3D/nD forms, ``create_boundary_mask_2d``, and their twelve helpers --
 were deleted 2026-08-15. Their public export had already been withdrawn (#577
-Phase 3), no library module imported them, and the only remaining importers were
-two test files reaching into this private module by name. They carried six of the
-package's nineteen ``BCType`` dispatch chains, each terminating in a silent
-fall-through.
+Phase 3), no library module imported them, and the only remaining importer was one
+test file reaching into this private module by name. They carried six of the
+package's nineteen ``BCType`` dispatch chains -- three of which raised on an
+unrecognised type and three of which fell through silently.
 
 .. deprecated:: v0.17.0
     `get_ghost_values_nd` will be removed in v0.25.0.
