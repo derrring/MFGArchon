@@ -1164,17 +1164,38 @@ class PreallocatedGhostBuffer:
                     lo_interior[axis] = g + k  # Adjacent interior cells from g up
                     buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
                     if apply_flux:
-                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)
+                        # #1967: the offset is the mirror SEPARATION times the flux, and that
+                        # separation grows with the layer. Ghost layer k and its mirror interior
+                        # are (2k-1)*dx apart on a cell-centred grid -- 1*dx for the pair adjacent
+                        # to the wall, 3*dx for the next, and so on. `dx * v` on every layer is the
+                        # k=1 value applied throughout, so g=1 was exact and g>=2 drifted by
+                        # (2k-2)*dx*v. Measured on f = -2x+1 with du/dn = 2: 0 at g=1, 5.0e-01 at
+                        # g=2, 1.0e+00 at g=3. v == 0 leaves the pure mirror, byte-identical.
+                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v
 
-                # High boundary: ghost mirrors adjacent interior
+                # High boundary: ghost mirrors adjacent interior.
+                #
+                # #1967: both indices must walk in the SAME direction, and they did not. The low
+                # loop above pairs `g-1-k` with `g+k` -- ghost nearest the wall with interior
+                # nearest the wall, k advancing outward on both sides. This loop paired `-(k+1)`,
+                # which also starts nearest the wall, with `-(g+k+1)`, which starts at the
+                # FARTHEST interior cell of the stencil and moves further in. At g=1 the two
+                # expressions coincide, which is why every caller in the library saw the right
+                # answer; at g>=2 the layers arrive reversed.
+                #
+                # Measured on u = cos(2*pi*x), even about both walls so Neumann(0) is exact at
+                # both: low wall machine-zero at g=1,2,3 while the high wall was 5.4e-01 at g=2
+                # and 1.3e+00 at g=3, with reversed(got) == want at every depth -- the values were
+                # right and the slots were wrong.
                 for k in range(g):
                     hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall.
+                    hi_ghost[axis] = -(g - k)  # -g, -(g-1), ... -1  : nearest the wall first
                     hi_interior = [slice(None)] * d
-                    hi_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    hi_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first too
                     buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
                     if apply_flux:
-                        buf[tuple(hi_ghost)] += dx * v
+                        buf[tuple(hi_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g, du/dn the OUTWARD normal derivative, which is
@@ -1691,18 +1712,24 @@ class PreallocatedGhostBuffer:
             # agreement between the two paths is what the pin asserts.
             apply_flux = bc_type == BCType.NEUMANN and v != 0.0
             dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+            # #1967, both halves, the same two as the uniform path above -- this is the second
+            # copy of that arithmetic and it carried the same errors.
             for k in range(g):
                 single_ghost = [slice(None)] * d
                 single_interior = [slice(None)] * d
                 if side == "min":
-                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    single_interior[axis] = g + k  # Adjacent interior cells from g up
+                    single_ghost[axis] = g - 1 - k  # g-1 .. 0    : nearest the wall first
+                    single_interior[axis] = g + k  # g, g+1, ...  : nearest first
                 else:
-                    single_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
-                    single_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall,
+                    # so both walks must start there. `-(k+1)` started at the far end while the
+                    # interior walk started near, which pairs the layers backwards for g >= 2.
+                    single_ghost[axis] = -(g - k)  # -g .. -1     : nearest the wall first
+                    single_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first
                 buf[tuple(single_ghost)] = buf[tuple(single_interior)]
                 if apply_flux:
-                    buf[tuple(single_ghost)] += dx * v
+                    # Layer k sits (2k-1)*dx from its mirror, so the offset grows with the layer.
+                    buf[tuple(single_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g

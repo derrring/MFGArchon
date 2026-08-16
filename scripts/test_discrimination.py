@@ -263,8 +263,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="neumann_low_wall_flux_sign",
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
-        old="                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)",
-        new="                        buf[tuple(lo_ghost)] -= dx * v  # MUTATED: low wall reads du/dx instead of du/dn",
+        old="                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v",
+        new="                        buf[tuple(lo_ghost)] -= (2 * (k + 1) - 1) * dx * v  # MUTATED: low wall reads du/dx instead of du/dn",
         owner='inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and ghost = interior + dx*v, the same expression as the high wall (#1262). The line\'s own comment states the convention it replaced: "Issue #1262: was -= (du/dx sign), now += (du/dn sign)".',
         verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9",
     ),
