@@ -462,11 +462,13 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         # reflected there, and a Robin BC left at its default coefficients absorbed here and
         # reflected there -- the same object building an absorbing wall on one path and an
         # impermeable one on the other.
-        alpha = beta = None
+        beta = None
         if bc_type == BCType.ROBIN:
-            alpha, beta = _robin_alpha_beta(boundary_conditions)
+            # alpha is read here only to keep `_robin_alpha_beta`'s single-owner contract; the
+            # particle mapping dispatches on beta alone (#1960).
+            _alpha, beta = _robin_alpha_beta(boundary_conditions)
 
-        return self.apply_particle_bc(particles, particle_action_for_bc_type(bc_type, alpha, beta))
+        return self.apply_particle_bc(particles, particle_action_for_bc_type(bc_type, beta))
 
 
 class SDFParticleBCHandler:
