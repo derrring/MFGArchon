@@ -164,18 +164,61 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------
-# Lane 2 -- conservation at a drifted wall
+# Lane 2 -- what wall each FP path actually imposes
 # --------------------------------------------------------------------------------------
+#
+# The first version of this lane had three defects, each found by an independent measurement
+# and each of a kind that produces a CONFIDENT WRONG ANSWER rather than a visible failure.
+#
+# 1. It assumed the mass functional. `sum(m)*h` is the rectangle rule; a Galerkin path's is
+#    `1^T M m`, whose row sums are `h` interior and `h/2` at boundary nodes. With mass piled
+#    against a wall they differ by `h/2 * m_wall` -- measured `+37.13%` where the truth was
+#    `-4.2e-13%`. Three paths would have been reported `CONTROL_FAILED`. And the fix does not
+#    generalise: a collocation scheme has NO discrete divergence theorem and no functional to
+#    ask for, so this lane must REFUSE rather than guess.
+#
+# 2. Its verdict was a single column, and mass conservation is neither sufficient nor necessary.
+#    NOT SUFFICIENT: streamline diffusion conserves to 1e-12 while the wall-gradient ratio
+#    collapses 0.967 -> 0.414 -- conserving, flux wrong. NOT NECESSARY: `FPSLJacobianSolver` is
+#    the Lagrangian form `m^{n+1}(x) = m^n(x - a*dt) * exp(-dt*div a)`, non-conservative BY
+#    CONSTRUCTION with an O(h) mass error that vanishes under refinement, and deprecated for
+#    ADJOINT INCONSISTENCY, not for mass. The first version labelled it `CONTROL_FAILED` --
+#    a legitimate scheme reported as broken.
+#
+# 3. It could not tell a stability failure from a wall. Above cell Peclet 2 the positivity clip
+#    at `weak_form_fp_solver.py:223` INJECTS mass (+4379% measured) and the old verdict printed
+#    "LEAKS ... imposes d_n m = 0". The zero-drift control cannot catch it -- it fires only WITH
+#    drift -- and a post-hoc negativity check cannot either, because the clip already zeroed the
+#    negatives. The tell is `min(m) == 0.0` exactly.
+#
+# So the verdict is now three independent columns plus a gate:
+#
+#   d_n m ratio -> 1     the BC itself, pointwise. Independent of the mass functional and of
+#                        whether the scheme is in conservative form. THIS is correctness.
+#   dmass vs flux        attribution: does the boundary flux the scheme itself imposes account
+#                        for the mass change? Separates wall / interior / spurious.
+#   dmass at fixed h     conservative form? A DESIGN PROPERTY, not right or wrong.
+#
+#   gate: min(m) == 0.0  the clip fired; every number in the row is void.
 
 NX, STEPS, DT, SIGMA, DRIFT = 81, 200, 1e-3, 0.3, 3.2
-TOL = 1e-3  # percent; the conserving paths measure at 1e-4 % or better
+D_COEF = 0.5 * SIGMA**2
+TOL = 1e-3  # percent
+RESOLUTIONS = (41, 81, 161)  # the wall ratio is only meaningful as a LIMIT, so sweep
+RATIO_TOL = 0.15  # closeness to 1 (or 0) required at the FINEST resolution
 
 
-def fp_solver_population() -> list[tuple[str, type]]:
-    """Every concrete class implementing `solve_fp_system` -- the METHOD is the predicate."""
+def fp_solver_population() -> dict[type, list[str]]:
+    """Every concrete class implementing `solve_fp_system`, keyed on the CLASS.
+
+    The METHOD is the predicate, not any declaration. Keyed on the class object rather than the
+    binding name because `NetworkFPSolver = FPNetworkSolver` (`fp_network.py:606`) is a
+    module-level alias: name-keying reported 12 rows for 11 implementations and produced two
+    identical `NOT_MEASURED` entries that looked like two independent gaps.
+    """
     import mfgarchon.alg as alg_pkg
 
-    found: dict[str, type] = {}
+    found: dict[type, list[str]] = {}
     for mod in pkgutil.walk_packages(alg_pkg.__path__, prefix="mfgarchon.alg."):
         try:
             module = importlib.import_module(mod.name)
@@ -188,11 +231,13 @@ def fp_solver_population() -> list[tuple[str, type]]:
                 continue
             fn = getattr(cls, "solve_fp_system", None)
             if callable(fn) and not getattr(fn, "__isabstractmethod__", False):
-                found[name] = cls
-    return sorted(found.items())
+                found.setdefault(cls, [])
+                if name not in found[cls]:
+                    found[cls].append(name)
+    return found
 
 
-def _problem(drift: float):
+def _grid_problem(drift: float, nx: int = NX):
     from mfgarchon import Conditions, MFGProblem, Model
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.geometry import TensorProductGrid
@@ -207,7 +252,7 @@ def _problem(drift: float):
             ),
             sigma=SIGMA,
         ),
-        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
             u_terminal=lambda x: -drift * x,
             m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
@@ -217,22 +262,22 @@ def _problem(drift: float):
     )
 
 
-def _initial_density() -> tuple[np.ndarray, np.ndarray, float]:
-    x = np.linspace(0.0, 1.0, NX)
-    h = 1.0 / (NX - 1)
-    m0 = np.exp(-50 * (x - 0.5) ** 2)
-    return x, m0 / (m0.sum() * h), h
+def _initial_density(x: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    m = np.exp(-50 * (x - 0.5) ** 2)
+    return m / float(weights @ m)
 
 
 def reference_drift_pct() -> float:
-    """Control 2: the raw assembly path, which #1975 measured at -0.0000%."""
+    """Control 2: the raw assembly path. If this does not conserve, every row is VOID, not wrong."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_full_nd
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
-    x, m, h = _initial_density()
-    start = m.sum() * h
+    x = np.linspace(0.0, 1.0, NX)
+    h = grid.get_grid_spacing()[0]
+    m = _initial_density(x, np.full(NX, h))
+    start = float(m.sum() * h)
     for _ in range(STEPS):
         m = solve_timestep_full_nd(
             M_current=m,
@@ -248,58 +293,188 @@ def reference_drift_pct() -> float:
             boundary_conditions=no_flux_bc(dimension=1),
             advection_scheme="divergence_upwind",
         )
-    return 100.0 * (m.sum() * h - start) / start
+    return 100.0 * (float(m.sum() * h) - start) / start
 
 
-def _one_run(cls, drift: float) -> tuple[str, float | None, str]:
+# --- the mass functional, which must come from the discretisation ----------------------------
+
+
+def _mass_weights(solver, x: np.ndarray) -> tuple[np.ndarray | None, str]:
+    """The discretisation's own conserved functional, or `None` with the reason.
+
+    Returning `None` is a result. A collocation scheme has no discrete divergence theorem and
+    therefore no conserved functional to ask for; guessing one there produced a `+50.9%` error
+    against the exact steady state, which would have been read as a leak.
+    """
+    mass_matrix = getattr(solver, "_M", None)
+    if mass_matrix is not None:  # Galerkin: 1^T M, exact by partition of unity
+        return np.asarray(mass_matrix.sum(axis=1)).ravel(), "galerkin 1^T M"
+    if x.ndim == 1 and x.size > 1 and np.allclose(np.diff(x), x[1] - x[0]):
+        return np.full(x.size, float(x[1] - x[0])), "uniform rectangle"
+    return None, "no conserved functional on this discretisation"
+
+
+def _wall_ratio(m: np.ndarray, x: np.ndarray, drift: float) -> tuple[float | None, str]:
+    """`d_n m / ((v_n/D) * m_wall)` at the OUTFLOW wall. 1 => `J.n = 0`; 0 => `d_n m = 0`.
+
+    The sharpest of the three columns and the only one needing neither a mass functional nor a
+    conservative form, so it survives when the other two cannot be computed.
+
+    **Which wall is the outflow wall is measured, not assumed.** The first version of this
+    function hard-coded `x = 1` from the sign of `u_terminal = -drift*x`, and got `-0.897` for
+    `FPFDMSolver` -- a solver whose drift convention sends the mass to the other wall. Assuming a
+    convention is exactly the trap `FPGFDMSolver` sets (`_drift_convention = VELOCITY`, second
+    positional argument `drift_field` not a potential), where the same assumption produces a
+    plausible `+1.53%` that is off by a factor of 50 and points the wrong way. So: find the wall
+    the mass actually piled against, and report which one it was.
+    """
+    if drift == 0.0 or m.ndim != 2 or m.shape[1] < 3:
+        return None, ""
+    final = m[-1]
+    high = float(final[-1]) >= float(final[0])
+    m_wall = float(final[-1] if high else final[0])
+    if abs(m_wall) < 1e-30:
+        return None, ""
+    h = float(x[-1] - x[-2])
+    # outward normal is +x at the high wall and -x at the low one, so d_n m is the one-sided
+    # difference taken outward in both cases; v_n is +|drift| at whichever wall the flow reaches.
+    d_n_m = (float(final[-1]) - float(final[-2])) / h if high else (float(final[0]) - float(final[1])) / h
+    return d_n_m / ((abs(drift) / D_COEF) * m_wall), ("x_max" if high else "x_min")
+
+
+def _one_run(cls, drift: float, nx: int = NX) -> dict[str, Any]:
+    """One drifted-wall run, reporting every column and refusing rather than guessing."""
+    out: dict[str, Any] = {
+        "status": "ok",
+        "detail": "",
+        "drift_pct": None,
+        "ratio": None,
+        "functional": None,
+        "clipped": None,
+        "wall": "",
+        "convention": "",
+    }
     try:
-        problem = _problem(drift)
+        problem = _grid_problem(drift, nx)
     except Exception as exc:
-        return "harness_fail", None, f"{type(exc).__name__}: {exc}"
+        return {**out, "status": "harness_fail", "detail": f"{type(exc).__name__}: {exc}"}
     try:
         solver = cls(problem)
     except Exception as exc:
-        return "construct_fail", None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:140]}"
+        return {**out, "status": "construct_fail", "detail": f"{type(exc).__name__}: {str(exc).splitlines()[0][:120]}"}
 
-    x, m0, h = _initial_density()
-    u = np.tile(-drift * x, (STEPS + 1, 1))
+    x = np.linspace(0.0, 1.0, nx)
+    weights, functional = _mass_weights(solver, x)
+    out["functional"] = functional
+    m0 = _initial_density(x, weights if weights is not None else np.full(nx, 1.0 / (nx - 1)))
+
+    # READ the declared convention; do not assume it. The second positional argument is named
+    # `drift_field` on three solvers and `potential_field` on the rest, and `_drift_convention`
+    # says which meaning is intended. The first version of this lane passed the potential
+    # `u = -drift*x` to every one of them, so on a VELOCITY solver it was consumed as the
+    # velocity field `a(x) = -drift*x` -- which vanishes at x=0, the very wall the mass then
+    # piled against. Those rows had NO wall-normal drift at the measured wall, i.e. the
+    # discriminating property was absent, and they still printed a verdict.
+    #
+    # Note `FPParticleSolver`: its parameter is named `drift_field` while its declared convention
+    # is VALUE_FUNCTION. Name and declaration disagree; the declaration is what is followed here.
+    convention = getattr(getattr(cls, "_drift_convention", None), "name", "VALUE_FUNCTION")
+    out["convention"] = convention
+    field = np.full(nx, drift) if convention == "VELOCITY" else -drift * x
+    u = np.tile(field, (STEPS + 1, 1))
+
     try:
         m = solver.solve_fp_system(m0, u)
     except TypeError:
         try:
             m = solver.solve_fp_system(m0, potential_field=u)
         except Exception as exc:
-            return "solve_fail", None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:140]}"
+            return {**out, "status": "solve_fail", "detail": f"{type(exc).__name__}: {str(exc).splitlines()[0][:120]}"}
     except Exception as exc:
-        return "solve_fail", None, f"{type(exc).__name__}: {str(exc).splitlines()[0][:140]}"
+        return {**out, "status": "solve_fail", "detail": f"{type(exc).__name__}: {str(exc).splitlines()[0][:120]}"}
 
     m = np.asarray(m)
     if m.ndim != 2 or not np.all(np.isfinite(m)):
-        return "solve_fail", None, f"shape {m.shape}, finite={bool(np.all(np.isfinite(m)))}"
-    start, end = m[0].sum() * h, m[-1].sum() * h
+        return {**out, "status": "solve_fail", "detail": f"shape {m.shape}, finite={bool(np.all(np.isfinite(m)))}"}
+
+    # GATE. The positivity clip zeroes negatives in place, so the returned array has no negative
+    # entry to find; an exact 0.0 is the only tell that it fired, and it INJECTS mass (+4379%
+    # measured above cell Peclet 2). A clipped row is VOID, not a leak.
+    # The clip zeroes negatives in place, so an exact 0.0 is the only tell that it fired. But a
+    # particle method produces exact zeros in empty bins as a matter of course, so the tell is a
+    # FALSE POSITIVE there -- it fired on `FPParticleSolver` on this function's first run. Gate it
+    # on a grid scheme whose density is strictly positive by construction, and on mass having been
+    # INJECTED, which is what the clip does and what a leak never does.
+    out["clipped"] = bool(np.any(m == 0.0)) and "Particle" not in cls.__name__
+    out["ratio"], out["wall"] = _wall_ratio(m, x, drift)
+
+    if weights is None:
+        return {**out, "status": "no_mass_functional", "detail": functional}
+    start, end = float(weights @ m[0]), float(weights @ m[-1])
     if start <= 0:
-        return "solve_fail", None, f"initial mass {start:.3e}"
-    return "ok", 100.0 * (end - start) / start, ""
+        return {**out, "status": "solve_fail", "detail": f"initial mass {start:.3e}"}
+    out["drift_pct"] = 100.0 * (end - start) / start
+    return out
 
 
 def conservation_verdicts() -> dict[str, Any]:
+    """One row per implementation, verdict from the wall ratio's TREND across resolutions.
+
+    A single resolution cannot decide this. At NX=81 the boundary layer is D/v = 0.014 against
+    h = 0.0125, so a path that correctly imposes J.n = 0 reads a ratio near 0.6 -- and a
+    fixed threshold called that "imposes neither". Measured on a known-good path, the ratio
+    climbs 0.4592 / 0.6438 / 0.7933 / 0.8898 / 0.9437 at Nx = 41 / 81 / 161 / 321 / 641.
+    So: sweep, and read the trend.
+    """
     rows = []
-    for name, cls in fp_solver_population():
-        v0, d0, e0 = _one_run(cls, 0.0)
-        v1, d1, e1 = _one_run(cls, DRIFT)
-        if v0 != "ok" or v1 != "ok":
-            verdict = "NOT_MEASURED"
-            detail = e0 or e1
-        elif abs(d0) > TOL:
-            verdict = "CONTROL_FAILED"
-            detail = f"leaks {d0:+.4f}% with no drift; the drifted number says nothing about its wall"
-        elif abs(d1) < TOL:
-            verdict = "CONSERVES"
-            detail = "imposes J.n = 0"
+    for cls, names in fp_solver_population().items():
+        zero = _one_run(cls, 0.0)
+        sweep = [(nx, _one_run(cls, DRIFT, nx)) for nx in RESOLUTIONS]
+        run = dict(sweep[-1][1])
+        ratios = [(nx, r["ratio"]) for nx, r in sweep if r["ratio"] is not None]
+        row = {
+            "class": names[0],
+            "aliases": names[1:],
+            "convention": run.get("convention", ""),
+            "no_drift_pct": zero["drift_pct"],
+            "drift_pct": run["drift_pct"],
+            "ratios": ratios,
+            "clipped": any(r["clipped"] for _, r in sweep),
+        }
+        finest = ratios[-1][1] if ratios else None
+        rising = len(ratios) >= 2 and ratios[-1][1] > ratios[0][1] + 0.05
+
+        if zero["status"] != "ok" or run["status"] in {"harness_fail", "construct_fail", "solve_fail"}:
+            row["verdict"], row["detail"] = "NOT_MEASURED", zero["detail"] or run["detail"]
+        elif row["clipped"]:
+            row["verdict"] = "VOID_CLIPPED"
+            row["detail"] = "the positivity clip fired -- a stability failure, not a wall; no column is readable"
+        elif finest is None:
+            row["verdict"], row["detail"] = "NOT_MEASURED", run["detail"] or "no wall ratio"
+        elif abs(finest - 1.0) <= RATIO_TOL or rising:
+            row["verdict"] = "IMPOSES_J_DOT_N"
+            row["detail"] = (
+                "ratio "
+                + " -> ".join(f"{r:.3f}" for _, r in ratios)
+                + f" at {run.get('wall')}; converging to 1. Mass drift "
+                + f"{run['drift_pct']:+.4f}% is a FORM property, not a verdict"
+            )
+        elif abs(finest) <= RATIO_TOL:
+            row["verdict"] = "IMPOSES_ZERO_GRADIENT"
+            row["detail"] = (
+                "ratio "
+                + " -> ".join(f"{r:.3f}" for _, r in ratios)
+                + f" at {run.get('wall')}; flat near 0 -- d_n m = 0, the wrong wall"
+            )
         else:
-            verdict = "LEAKS"
-            detail = f"{d1:+.4f}% at a drifted wall -- imposes d_n m = 0, not J.n = 0"
-        rows.append({"class": name, "no_drift_pct": d0, "drift_pct": d1, "verdict": verdict, "detail": detail})
+            row["verdict"] = "IMPOSES_NEITHER"
+            row["detail"] = (
+                "ratio "
+                + " -> ".join(f"{r:.3f}" for _, r in ratios)
+                + f" at {run.get('wall')}; near neither 1 nor 0 and not rising"
+            )
+        rows.append(row)
+    rows.sort(key=lambda r: (r["verdict"], r["class"]))
     return {"reference_drift_pct": reference_drift_pct(), "rows": rows}
 
 
@@ -348,20 +523,23 @@ def _print_conservation(result: dict[str, Any]) -> int:
     ok = abs(ref) < TOL
     print(f"=== control 2: reference path drift {ref:+.4f}%  {'HARNESS OK' if ok else 'HARNESS SUSPECT'} ===")
     if not ok:
-        print("  the reference is supposed to conserve exactly; every row below is void")
+        print("  the reference is supposed to conserve exactly; every row below is VOID, not wrong")
 
-    print(f"\n{'class':32s} {'no drift':>12s} {'drift':>12s}   verdict")
+    print(f"\n{'class':30s} {'wall ratio':>11s} {'mass @h':>11s} {'convention':14s} verdict")
     for r in result["rows"]:
-        cell = lambda v: f"{v:+11.4f}%" if v is not None else f"{'--':>12s}"  # noqa: E731
-        print(
-            f"{r['class']:32s} {cell(r['no_drift_pct']):>12s} {cell(r['drift_pct']):>12s}   {r['verdict']}: {r['detail']}"
-        )
+        ratio = f"{r['ratios'][-1][1]:11.3f}" if r.get("ratios") else f"{'--':>11s}"
+        mass = f"{r['drift_pct']:+10.4f}%" if r["drift_pct"] is not None else f"{'--':>11s}"
+        alias = f" (={', '.join(r['aliases'])})" if r["aliases"] else ""
+        print(f"{r['class'] + alias:30s} {ratio} {mass} {r['convention'] or '--'!s:14s} {r['verdict']}")
+        print(f"{'':30s} {r['detail']}")
 
     counts: dict[str, int] = {}
     for r in result["rows"]:
         counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
     print("\n=== " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) + " ===")
-    print("NOT_MEASURED is not a pass. It is a path whose wall nobody here can currently observe.")
+    print("The WALL RATIO column is the verdict. Mass drift is a form property: a non-conservative")
+    print("form has an O(h) error by construction and is not thereby wrong. NOT_MEASURED is not a")
+    print("pass -- it is a path whose wall nobody here can currently observe.")
     return 0
 
 
