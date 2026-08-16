@@ -31,9 +31,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from mfgarchon.utils.mfg_logging import get_logger
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 from .conditions import (
     BoundaryConditions,
@@ -58,13 +62,19 @@ class MathBCType(Enum):
     Unlike ``BCType`` (Layer 1), this enum contains no physical intent types
     (NO_FLUX, REFLECTING) or ambiguous types. Those are resolved into one of
     these mathematical types by a ``BCResolver``.
+
+    ~~``ZERO_FLUX``~~ was a member and broke that rule [REMOVED 2026-08-16]: ``J.n = 0`` is a
+    physical intent, its own comment read "needs drift+diffusion for calculator", and Layer 3
+    therefore had to dispatch on it a second time. ``FPResolver`` now resolves the impermeable
+    wall to ``ROBIN`` with ``alpha = v_n``, ``beta = -D``, ``g = 0``, so nothing produces it.
+    ``ZeroFluxCalculator`` itself stays; it is still reached through
+    ``bc_to_topology_calculator(use_zero_flux=True)``.
     """
 
     DIRICHLET = "dirichlet"  # u = g
     NEUMANN = "neumann"  # du/dn = g
     ROBIN = "robin"  # alpha*u + beta*du/dn = g
     PERIODIC = "periodic"  # u(x_min) = u(x_max)
-    ZERO_FLUX = "zero_flux"  # J*n = 0, needs drift+diffusion for calculator
     EXTRAPOLATION_LINEAR = "extrapolation_linear"  # d^2u/dx^2 = 0 at boundary
     EXTRAPOLATION_QUADRATIC = "extrapolation_quadratic"  # d^3u/dx^3 = 0
 
@@ -82,12 +92,24 @@ class ResolvedBC:
     concrete coefficient values, and traceability to the original segment.
 
     Produced by a ``BCResolver`` from a ``BCSegment``.
+
+    **The coefficients may be fields, not only scalars.** The reflecting wall of a
+    Fokker-Planck equation is ``(sigma^2/2) d_n m + m (D_pH(x, grad u) . n) = 0`` -- a Robin
+    condition whose ``alpha`` is the outward normal drift, which varies along the boundary and
+    is recomputed every Picard iterate. Declaring these ``float`` is what stopped ``FPResolver``
+    from resolving ``NO_FLUX``: it had to pass the intent through as a ``ZERO_FLUX`` tag and let
+    Layer 3 dispatch on it again, which is the restatement this layer exists to remove.
+
+    ``alpha`` and ``beta`` carry the **outward normal** convention, the one ``BCSegment.beta``
+    declares and the one every ghost formula uses since #1907. A caller supplying a drift must
+    give its outward normal component, not its axis component; the two differ in sign at a low
+    wall and produce a physically different condition there.
     """
 
     math_type: MathBCType
-    value: float = 0.0
-    alpha: float = 1.0  # Robin: weight on u
-    beta: float = 0.0  # Robin: weight on du/dn
+    value: float | NDArray[np.floating] = 0.0
+    alpha: float | NDArray[np.floating] = 1.0  # Robin: weight on u
+    beta: float | NDArray[np.floating] = 0.0  # Robin: weight on du/dn (OUTWARD normal)
     segment_name: str = ""
     original_bc_type: BCType | None = None
 
@@ -230,16 +252,46 @@ class HJBResolver:
         )
 
 
+def _require_coefficient(solver_state: dict[str, Any], key: str, segment: BCSegment) -> float | NDArray[np.floating]:
+    """Read a PDE coefficient the resolution genuinely needs, or fail naming what is missing.
+
+    Separate from a ``.get(key, default)`` on purpose. The defaults that would be natural here
+    -- zero drift, unit diffusion -- are each a *different physical wall*, and both produce a
+    solve that runs to convergence.
+    """
+    if key not in solver_state or solver_state[key] is None:
+        raise ValueError(
+            f"FPResolver: segment '{segment.name}' is {segment.bc_type.name}, whose condition is "
+            f"J.n = 0 = v_n*m - D*d_n m, so it needs '{key}' in solver_state. "
+            f"Present keys: {sorted(solver_state)}. "
+            "'drift' is the OUTWARD normal velocity component at the wall (a scalar, or one "
+            "value per boundary point); 'diffusion' is D = sigma^2/2."
+        )
+    return solver_state[key]
+
+
 class FPResolver:
     """Resolves BC intent for Fokker-Planck equations.
 
     Resolution rules:
-        - NO_FLUX, REFLECTING -> ZERO_FLUX: mass-conserving impermeable wall.
-          The zero-flux condition J*n = 0 where J = v*m - D*grad(m) requires
-          the ``ZeroFluxCalculator`` with drift and diffusion coefficients.
-          Pure Neumann (dm/dn = 0) is incorrect when drift != 0 at boundary
-          and violates the Lopatinski-Shapiro condition in the
-          advection-dominated regime.
+        - NO_FLUX, REFLECTING -> **ROBIN** with the coefficients of the flux condition.
+          ``J . n = 0`` with ``J = v*m - D*grad(m)`` is ``v_n*m - D*d_n m = 0``, i.e.
+          ``alpha = v_n``, ``beta = -D``, ``g = 0`` in the Robin form
+          ``alpha*u + beta*d_n u = g``. Pure Neumann (``dm/dn = 0``) is the special case
+          ``v_n = 0``; imposing it when the drift is non-tangential at the wall leaks mass at
+          a rate proportional to ``m_wall * v_n`` and violates the Lopatinski-Shapiro
+          condition in the advection-dominated regime.
+
+          ``v_n`` is the **outward normal** component, matching the convention
+          ``BCSegment.beta`` declares and every ghost formula uses since #1907. It is read
+          from ``solver_state``; there is no default, because a defaulted drift silently turns
+          the wall into pure Neumann, which is exactly the failure this resolution exists to
+          prevent, and the wrong answer would still converge.
+
+          ~~-> ZERO_FLUX~~ [CORRECTED 2026-08-16] passed the physical intent through as a
+          second tag whose own comment read "needs drift+diffusion for calculator", so Layer 3
+          had to dispatch on it again. The blocker was that ``ResolvedBC`` declared its
+          coefficients ``float`` and ``v_n`` is a field.
         - All other types: passthrough.
 
     References:
@@ -252,32 +304,41 @@ class FPResolver:
         segment: BCSegment,
         solver_state: dict[str, Any],
     ) -> ResolvedBC:
-        """Resolve a BCSegment for Fokker-Planck equation."""
+        """Resolve a BCSegment for Fokker-Planck equation.
+
+        Args:
+            segment: Physical boundary specification.
+            solver_state: Must carry ``'drift'`` and ``'diffusion'`` when the segment is
+                ``NO_FLUX`` or ``REFLECTING``. ``'drift'`` is the **outward normal** component
+                of the velocity at the wall, scalar or one value per boundary point;
+                ``'diffusion'`` is ``D = sigma^2/2``.
+
+        Raises:
+            ValueError: if an impermeable wall is resolved without them. A defaulted drift
+                turns the condition into pure Neumann, which conserves mass at a tangential
+                wall and leaks at every other one -- the wrong answer still converges, so it
+                cannot be allowed to be the silent option.
+        """
         # Check passthrough types first
         result = _resolve_passthrough(segment)
         if result is not None:
             return result
 
-        # Equation-specific: NO_FLUX and REFLECTING
+        # Equation-specific: the impermeable wall is J.n = 0, which is Robin in m.
         if segment.bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
             return ResolvedBC(
-                math_type=MathBCType.ZERO_FLUX,
-                value=0.0,
+                math_type=MathBCType.ROBIN,
+                value=0.0,  # the flux condition is homogeneous
+                alpha=_require_coefficient(solver_state, "drift", segment),
+                beta=-_require_coefficient(solver_state, "diffusion", segment),
                 segment_name=segment.name,
                 original_bc_type=segment.bc_type,
             )
 
-        # Unknown BCType: default to zero flux with warning
-        logger.warning(
-            "FPResolver: unrecognized BCType %s on segment '%s', defaulting to ZERO_FLUX",
-            segment.bc_type,
-            segment.name,
-        )
-        return ResolvedBC(
-            math_type=MathBCType.ZERO_FLUX,
-            value=0.0,
-            segment_name=segment.name,
-            original_bc_type=segment.bc_type,
+        raise ValueError(
+            f"FPResolver: unrecognized BCType {segment.bc_type} on segment '{segment.name}'. "
+            "It used to default to a zero-flux wall, which is an impermeable boundary imposed "
+            "on a condition nobody wrote -- mass-conserving, plausible, and not what was asked."
         )
 
 
@@ -333,8 +394,9 @@ def resolved_bc_to_calculator(
         resolved: A resolved BC from a BCResolver.
         shape: Grid shape (interior points).
         grid_type: Grid type for ghost cell formulas. Defaults to CELL_CENTERED.
-        drift_velocity: Normal drift component (for ZERO_FLUX calculator).
-        diffusion_coeff: Diffusion coefficient D = sigma^2/2 (for ZERO_FLUX).
+        drift_velocity: Unused since the impermeable wall resolves to ROBIN carrying its own
+            coefficients. Kept so existing call sites do not break; slated for removal.
+        diffusion_coeff: Unused, as above.
 
     Returns:
         Tuple of (Topology, Calculator | None). Calculator is None for periodic.
@@ -347,7 +409,6 @@ def resolved_bc_to_calculator(
         PeriodicTopology,
         QuadraticExtrapolationCalculator,
         RobinCalculator,
-        ZeroFluxCalculator,
     )
     from .protocols import GridType as GridTypeEnum
 
@@ -363,8 +424,6 @@ def resolved_bc_to_calculator(
             return BoundedTopology(dimension, shape), NeumannCalculator(resolved.value, gt)
         case MathBCType.ROBIN:
             return BoundedTopology(dimension, shape), RobinCalculator(resolved.alpha, resolved.beta, resolved.value, gt)
-        case MathBCType.ZERO_FLUX:
-            return BoundedTopology(dimension, shape), ZeroFluxCalculator(drift_velocity, diffusion_coeff, gt)
         case MathBCType.EXTRAPOLATION_LINEAR:
             return BoundedTopology(dimension, shape), LinearExtrapolationCalculator()
         case MathBCType.EXTRAPOLATION_QUADRATIC:
@@ -386,10 +445,31 @@ _MATH_TO_BC_TYPE: dict[MathBCType, BCType] = {
     MathBCType.NEUMANN: BCType.NEUMANN,
     MathBCType.ROBIN: BCType.ROBIN,
     MathBCType.PERIODIC: BCType.PERIODIC,
-    MathBCType.ZERO_FLUX: BCType.NO_FLUX,
     MathBCType.EXTRAPOLATION_LINEAR: BCType.EXTRAPOLATION_LINEAR,
     MathBCType.EXTRAPOLATION_QUADRATIC: BCType.EXTRAPOLATION_QUADRATIC,
 }
+
+
+def _refuse_field_coefficients(rbc: ResolvedBC) -> None:
+    """A ``BCSegment`` declares its coefficients ``float`` and this bridge builds segments.
+
+    ``ResolvedBC`` may carry fields; ``BCSegment`` may not. Copying an array through produced a
+    segment that looked well-formed and died two calls later inside the ghost formula with
+    ``operands could not be broadcast together with shapes (6,) (4,)`` -- an error naming the
+    padded array rather than the coefficient that caused it. Refuse here, where the fact is
+    still legible, and name the other bridge, which does support fields.
+    """
+    import numpy as _np
+
+    for name in ("alpha", "beta", "value"):
+        v = getattr(rbc, name)
+        if isinstance(v, _np.ndarray) and v.ndim > 0:
+            raise ValueError(
+                f"to_boundary_conditions: segment '{rbc.segment_name}' has a field-valued "
+                f"'{name}' of shape {v.shape}, and BCSegment.{name} is a float. This bridge "
+                "cannot carry it. Use resolved_bc_to_calculator(), which consumes the "
+                "coefficients directly and does support fields."
+            )
 
 
 def to_boundary_conditions(
@@ -403,9 +483,15 @@ def to_boundary_conditions(
     mapping MathBCType back to BCType.
 
     Note:
-        ZERO_FLUX maps to BCType.NO_FLUX. The equation-awareness is lost in
-        the round-trip, so callers needing full fidelity should use
-        ``resolved_bc_to_calculator()`` instead.
+        Lossless for scalar coefficients -- ``alpha`` and ``beta`` are copied verbatim -- and
+        **impossible** for field-valued ones, which this function now refuses by name rather
+        than letting them die in a broadcast error two calls downstream. An impermeable wall
+        resolved with a per-point drift is exactly that case. Use
+        ``resolved_bc_to_calculator()`` there; it consumes the coefficients directly.
+
+        ~~"BCType.ROBIN carries only the segment's own scalar alpha/beta"~~ was written here
+        and is false about the function twelve lines below it, which copies ``rbc.alpha`` and
+        ``rbc.beta`` straight through [CORRECTED 2026-08-16, found by independent review].
 
     Args:
         resolved: List of ResolvedBC from a resolver.
@@ -419,6 +505,7 @@ def to_boundary_conditions(
 
     segments = []
     for rbc in resolved:
+        _refuse_field_coefficients(rbc)
         bc_type = _MATH_TO_BC_TYPE.get(rbc.math_type, BCType.NEUMANN)
         seg = BCSegment(
             name=rbc.segment_name or f"resolved_{rbc.math_type.value}",
@@ -476,12 +563,12 @@ if __name__ == "__main__":
     fp = FPResolver()
 
     print("\nFP Resolver:")
-    # NO_FLUX -> ZERO_FLUX
+    # NO_FLUX -> ROBIN carrying the flux condition's coefficients
     bc = no_flux_bc(dimension=1)
-    results = resolve_bc(bc, fp, state)
+    results = resolve_bc(bc, fp, {**state, "drift": 0.6, "diffusion": 0.35})
     for r in results:
-        print(f"  NO_FLUX -> {r.math_type.value}")
-    assert results[0].math_type == MathBCType.ZERO_FLUX
+        print(f"  NO_FLUX -> {r.math_type.value}(alpha={r.alpha}, beta={r.beta})")
+    assert results[0].math_type == MathBCType.ROBIN
 
     # DIRICHLET -> DIRICHLET (passthrough)
     bc = dirichlet_bc(0.0, dimension=1)
@@ -494,7 +581,7 @@ if __name__ == "__main__":
     print("\nLayer 2->3 bridge (resolved_bc_to_calculator):")
     for rbc in [
         ResolvedBC(MathBCType.NEUMANN, 0.0, segment_name="test_neum"),
-        ResolvedBC(MathBCType.ZERO_FLUX, 0.0, segment_name="test_flux"),
+        ResolvedBC(MathBCType.ROBIN, 0.0, alpha=0.6, beta=-0.35, segment_name="test_flux"),
         ResolvedBC(MathBCType.DIRICHLET, 1.0, segment_name="test_dir"),
     ]:
         topo, calc = resolved_bc_to_calculator(rbc, shape=(100,))

@@ -92,7 +92,7 @@ from .applicator_base import (
 from .conditions import BoundaryConditions
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
-from .ghost_cells import GhostCellConfig
+from .ghost_cells import GhostCellConfig, ghost_cell_robin
 from .types import (
     BCSegment,
     BCType,
@@ -1172,29 +1172,22 @@ class PreallocatedGhostBuffer:
                         buf[tuple(hi_ghost)] += dx * v
 
         elif bc_type == BCType.ROBIN:
-            # Robin: alpha*u + beta*du/dn = g (cell-centered ghost formula).
-            # Issue #1255 (C), 2026-06-10 audit: use the same general formula as
-            # _apply_ghost_for_face (mixed-segment path, lines 1549-1582) instead of
-            # the prior hardcoded alpha=0/beta=1 (pure-Neumann special case).
+            # Robin: alpha*u + beta*du/dn = g, du/dn the OUTWARD normal derivative, which is
+            # what `BCSegment.beta` and `BCType.ROBIN` both declare.
             #
-            # Cell-centred derivation (boundary at x_b midway between ghost x_g and
-            # interior x_i; spacing dx between cell centres):
-            #   u_b   = (u_g + u_i)/2
-            #   du/dn = (u_g - u_i)/dx * outward_sign
-            # Robin BC: alpha*(u_g+u_i)/2 + beta*(u_g-u_i)/dx*sign = g
-            # => u_g * (alpha/2 + beta*sign/dx) = g - u_i*(alpha/2 - beta*sign/dx)
+            # This used to carry its own arithmetic with an `outward_sign` factor on beta,
+            # which is the axis convention alpha*u + beta*du/dx = g -- a physically different
+            # condition at the low wall. Measured before the fix, on alpha=1, beta=0.3, g=0.7:
+            # the declared condition's residual was 6.17 at the min wall and 0 at the max.
+            # The sibling NEUMANN branch above already carries the outward convention, fixed
+            # for exactly this reason in #1262; this branch kept the pre-fix sign.
+            #
+            # For a cell-centred grid the ghost sits outside at both walls, so the quotient
+            # toward the ghost IS the outward derivative and the formula is side-free. That
+            # derivation lives in `ghost_cell_robin`, which now owns it.
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
 
-                # Precompute per-wall (min/max) coefficients.
-                # Low wall: outward_sign = -1
-                coeff_ghost_lo = alpha / 2.0 - beta / dx
-                coeff_int_lo = alpha / 2.0 + beta / dx
-                # High wall: outward_sign = +1
-                coeff_ghost_hi = alpha / 2.0 + beta / dx
-                coeff_int_hi = alpha / 2.0 - beta / dx
-
-                # Get adjacent interior values (first/last interior cell).
                 lo_int_sl = [slice(None)] * d
                 lo_int_sl[axis] = g
                 u_lo_interior = buf[tuple(lo_int_sl)]
@@ -1204,21 +1197,13 @@ class PreallocatedGhostBuffer:
                 u_hi_interior = buf[tuple(hi_int_sl)]
 
                 for k in range(g):
-                    # Low ghost (outward normal = -1)
                     lo_ghost = [slice(None)] * d
                     lo_ghost[axis] = g - 1 - k
-                    if abs(coeff_ghost_lo) < 1e-12:
-                        buf[tuple(lo_ghost)] = u_lo_interior  # Degenerate: mirror
-                    else:
-                        buf[tuple(lo_ghost)] = (v - u_lo_interior * coeff_int_lo) / coeff_ghost_lo
+                    buf[tuple(lo_ghost)] = ghost_cell_robin(u_lo_interior, v, alpha, beta, dx)
 
-                    # High ghost (outward normal = +1)
                     hi_ghost = [slice(None)] * d
                     hi_ghost[axis] = -(g - k)
-                    if abs(coeff_ghost_hi) < 1e-12:
-                        buf[tuple(hi_ghost)] = u_hi_interior  # Degenerate: mirror
-                    else:
-                        buf[tuple(hi_ghost)] = (v - u_hi_interior * coeff_int_hi) / coeff_ghost_hi
+                    buf[tuple(hi_ghost)] = ghost_cell_robin(u_hi_interior, v, alpha, beta, dx)
 
     def _apply_poly_extrapolation(
         self,
@@ -1688,47 +1673,27 @@ class PreallocatedGhostBuffer:
             else:
                 dx = 1.0  # Fallback (may give incorrect results without proper dx)
 
-            # Outward normal sign: +1 for max, -1 for min
-            outward_sign = 1.0 if side == "max" else -1.0
-
-            # Ghost cell formula (cell-centered):
-            # For cell-centered grids, ghost and interior cell centers are dx apart.
-            # Boundary value: u_b = (u_g + u_i)/2 (midpoint between ghost and interior)
-            # Normal derivative: du/dn = (u_g - u_i)/dx * sign (not 2*dx!)
-            # Robin BC: alpha * u_b + beta * du/dn = g
-            # => alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/dx * sign = g
-            # Solving for u_g:
-            # u_g * (alpha/2 + beta*sign/dx) = g - u_i * (alpha/2 - beta*sign/dx)
-            coeff_ghost = alpha / 2.0 + beta * outward_sign / dx
-            coeff_interior = alpha / 2.0 - beta * outward_sign / dx
-
-            if abs(coeff_ghost) < 1e-12:
-                # Degenerate case: fall back to reflection
-                for k in range(g):
-                    single_ghost = [slice(None)] * d
-                    single_interior = [slice(None)] * d
-                    if side == "min":
-                        single_ghost[axis] = k
-                        single_interior[axis] = 2 * g - k
-                    else:
-                        single_ghost[axis] = -(k + 1)
-                        single_interior[axis] = -(2 * g + k + 1)
-                    buf[tuple(single_ghost)] = buf[tuple(single_interior)]
-            else:
-                # Apply proper Robin formula using adjacent interior cell
-                # For min boundary: ghost[k] uses interior[g] (first interior cell)
-                # For max boundary: ghost[-k-1] uses interior[-g-1] (last interior cell)
-                for k in range(g):
-                    single_ghost = [slice(None)] * d
-                    single_interior = [slice(None)] * d
-                    if side == "min":
-                        single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                        single_interior[axis] = g  # Adjacent interior at index g
-                    else:
-                        single_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
-                        single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
-                    u_interior = buf[tuple(single_interior)]
-                    buf[tuple(single_ghost)] = (v - u_interior * coeff_interior) / coeff_ghost
+            # `du/dn` is the OUTWARD normal derivative, as `BCSegment.beta` declares. The
+            # arithmetic that stood here multiplied beta by an outward sign, which imposes
+            # alpha*u + beta*du/dx = g instead -- a different physical condition at the low
+            # wall. `ghost_cell_robin` owns the derivation, including why the cell-centred
+            # formula is side-free: the ghost is outside at both walls, so the quotient
+            # toward it is already the outward derivative.
+            #
+            # The degenerate branch went with it. A singular coefficient means the condition
+            # does not determine the ghost, and mirroring invents an answer the caller never
+            # asked for; the owner raises instead.
+            for k in range(g):
+                single_ghost = [slice(None)] * d
+                single_interior = [slice(None)] * d
+                if side == "min":
+                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
+                    single_interior[axis] = g  # Adjacent interior at index g
+                else:
+                    single_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
+                    single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
+                u_interior = buf[tuple(single_interior)]
+                buf[tuple(single_ghost)] = ghost_cell_robin(u_interior, v, alpha, beta, dx)
 
         else:
             # Fallback for unknown BC types: use reflection
