@@ -187,3 +187,59 @@ def test_the_three_actions_are_distinguishable_on_this_probe():
 
     assert not np.allclose(reflected, wrapped), "reflect and wrap must differ on this fixture"
     assert len(absorbed) != len(reflected), "absorb must differ from reflect on this fixture"
+
+
+# =============================================================================
+# The fall-through cannot fabricate Robin coefficients
+# =============================================================================
+
+
+def test_a_robin_default_refuses_rather_than_fabricating_its_coefficients():
+    """`BoundaryConditions` has `default_bc` and `default_value` and no default alpha/beta, so a
+    fall-through segment took `BCSegment`'s dataclass defaults `alpha=1.0, beta=0.0` -- the
+    Dirichlet corner of the Robin family.
+
+    Found by independent review of this PR. The hole predates it and was inert: nothing read
+    those coefficients off the returned segment. Routing the particle path through
+    `particle_action_for_bc_type` makes them load-bearing, and a user's pure-flux wall
+    (`alpha=0, beta=1`) then became **absorbing** on any uncovered face -- measured, 3 particles
+    in and 1 out, mass destroyed with nothing raised.
+
+    `test_robin_without_coefficients_refuses_rather_than_assuming` above asserts the owner must
+    refuse rather than assume, and could not fire here: its guard tests `alpha is None`, while
+    `BCSegment` hands over `1.0` and `0.0`. The refusal therefore belongs at the point of
+    fabrication, not at the point of use.
+    """
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="flux", bc_type=BCType.ROBIN, value=0.0, alpha=0.0, beta=1.0, boundary="x_min"),
+            BCSegment(name="flux2", bc_type=BCType.ROBIN, value=0.0, alpha=0.0, beta=1.0, boundary="x_max"),
+        ],
+        dimension=2,
+        default_bc=BCType.ROBIN,
+        default_value=0.0,
+        domain_bounds=np.array(_BOUNDS),
+    )
+    particles = np.array([[0.5, 0.5], [0.5, 1.05], [0.5, -0.05]])  # two leave through uncovered y faces
+
+    with pytest.raises(ValueError, match="cannot carry"):
+        ParticleApplicator().apply(particles, bc, _BOUNDS)
+
+
+def test_a_fully_covered_robin_wall_still_reflects():
+    """Control. The refusal must be narrow: a Robin condition whose segments cover every face
+    carries its own coefficients and is unaffected. Without this, raising on every Robin BC would
+    pass the test above."""
+    bc = BoundaryConditions(
+        segments=[BCSegment(name="flux", bc_type=BCType.ROBIN, value=0.0, alpha=0.0, beta=1.0)],
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        default_value=0.0,
+        domain_bounds=np.array(_BOUNDS),
+    )
+    particles = np.array([[0.5, 0.5], [0.5, 1.05], [0.5, -0.05]])
+
+    remaining, absorbed, _ = ParticleApplicator().apply(particles, bc, _BOUNDS)
+
+    assert len(remaining) == 3, "a pure-flux wall absorbs nothing"
+    assert not absorbed.any()

@@ -383,9 +383,27 @@ class BoundaryConditions:
                 return segment
 
         # No match - return default BC as a segment (fails loud if default_bc unset)
+        default_type = self._resolve_default_bc("get_bc_at_point")
+
+        # A Robin default is inexpressible: this class carries `default_bc` and `default_value`
+        # and no default alpha/beta, so the segment below would take `BCSegment`'s dataclass
+        # defaults, alpha=1.0 and beta=0.0 -- which is the Dirichlet corner of the Robin family.
+        # Consumers that read those coefficients then act on a condition nobody wrote: a user's
+        # pure-flux wall (alpha=0, beta=1) becomes absorbing on an uncovered face, destroying
+        # mass with nothing raised. Measured on a 2-D BC whose Robin segments cover only the x
+        # faces: 3 particles in, 1 out.
+        if default_type == BCType.ROBIN:
+            raise ValueError(
+                "BoundaryConditions: default_bc is ROBIN, but a fall-through point cannot carry "
+                "Robin coefficients -- this class has default_bc and default_value and no "
+                "default alpha/beta, so alpha=1.0, beta=0.0 would be fabricated, which is a "
+                "Dirichlet wall. Give every face an explicit BCSegment carrying its own alpha "
+                "and beta, or choose a default_bc whose condition needs no coefficients."
+            )
+
         return BCSegment(
             name="default",
-            bc_type=self._resolve_default_bc("get_bc_at_point"),
+            bc_type=default_type,
             value=self.default_value,
             priority=-1,
         )
