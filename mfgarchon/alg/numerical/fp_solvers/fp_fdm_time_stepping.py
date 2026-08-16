@@ -1308,7 +1308,7 @@ def solve_timestep_full_nd(
             # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
             # ~~robin_bc was recommended here too~~ [CORRECTED 2026-08-16, #1975] -- switching to
             # the canonical BC does not make a Robin wall work ON THIS PATH. The dispatch below
-            # routes any non-Dirichlet boundary point to the no-flux handler, so a ROBIN segment
+            # routes a boundary point of a MIXED bc to the no-flux handler, so a ROBIN segment
             # assembles byte-identically to no-flux (measured at alpha=3.2 and alpha=999).
             # Recommending it here sent users from a loud failure to a silent one. It IS honoured
             # by FPFEMSolver, which reads the coefficients in weak form -- hence the pointer below

@@ -1144,9 +1144,11 @@ def robin_bc(
       fail loud in the row builder.
     - **Every grid FP solver refuses it**, and the refusal is load-bearing rather than an
       oversight: the FDM boundary handlers are not passed ``boundary_conditions`` at all, so they
-      read none of ``alpha``/``beta``/``value`` and a ROBIN wall that got past the gate would be
-      a no-flux wall wearing a label (byte-identical at alpha=3.2 and alpha=999 across 768
-      configurations). A provider-valued coefficient is worse -- silently accepted (#1979).
+      read none of ``alpha``/``beta``/``value``. **A uniform ROBIN is refused loudly** -- twice,
+      by the #1250 assembly guard and by ``LaplacianOperator`` (#1071). The silent hole is a ROBIN
+      **segment inside a mixed BC**, which routes to the no-flux handler and is byte-identical to
+      it (alpha=3.2 and alpha=999, 768 configurations). A provider-valued coefficient there is
+      worse still -- silently accepted (#1979).
 
     **You probably do not need this for a reflecting wall.** The FP reflecting condition
     ``J.n = 0`` is Robin in ``m`` with ``alpha = D_pH(x, grad u) . n``, but the conservative
@@ -1156,9 +1158,17 @@ def robin_bc(
     precision with ``d_n m`` nonzero at the wall and converging to ``(v/D)*m`` at first order,
     while the ``gradient_*`` family imposes ``d_n m = 0`` and loses 75-78% of the mass
     (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
-    reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and handing
-    the FEM path ``alpha = v_n`` explicitly **double-counts** it -- the weak form's natural BC is
-    already ``J.n = 0``, so the implied wall becomes ``D d_n m = 2 v_n m`` and mass drifts -79.5%.
+    reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and adding a
+    Robin segment on top of it **destroys** that wall rather than restating it. The weak form's
+    natural BC is already ``J.n = 0``, so ``A_robin`` adds a residual outflux on top of it:
+
+        J.n = D*(alpha/beta)*m          i.e.   D d_n m = (v_n - D*alpha/beta) * m
+
+    ~~the implied wall becomes ``D d_n m = 2 v_n m``~~ [CORRECTED] -- that is one row of the law,
+    not the law. `A_robin`'s boundary column sums are exactly ``D*alpha`` (measured 0.144 / 1.6 /
+    3.2 at D = 0.045 / 0.125 / 1.0), so the perturbation scales with ``D``, not with ``v_n``. The
+    operational test: if the wall were ``2 v_n m`` then ``alpha = v_n/2`` would restore
+    ``J.n = 0``; it does not (-50.08% mass), and only dropping the segment does (+5e-11%).
 
     Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one: ``alpha != v_n``,
     or an inhomogeneous ``g``. See #1975.
