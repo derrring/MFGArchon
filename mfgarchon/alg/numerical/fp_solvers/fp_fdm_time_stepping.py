@@ -1321,8 +1321,9 @@ def solve_timestep_full_nd(
                     f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / no_flux_bc) "
                     f"with the modern BoundaryConditions instead (Issue #1559). robin_bc is NOT in "
                     f"that list on purpose: this assembly reads none of a ROBIN segment's "
-                    f"coefficients, so it would be a no-flux wall wearing a label. A Robin wall "
-                    f"needs FPFEMSolver, which assembles it in weak form (Issue #1975)."
+                    f"coefficients, so it would be a no-flux wall wearing a label. For a "
+                    f"reflecting wall you want no_flux_bc on a conservative scheme, which imposes "
+                    f"J.n = 0 structurally; a GENERAL Robin needs FPFEMSolver (Issue #1975)."
                 ) from None
             is_no_flux = True
             is_uniform = False

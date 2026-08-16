@@ -1143,14 +1143,25 @@ def robin_bc(
     - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case; general-Robin sub-cases
       fail loud in the row builder.
     - **Every grid FP solver refuses it**, and the refusal is load-bearing rather than an
-      oversight: the FDM boundary assembly reads none of ``alpha``/``beta``/``value``, so a ROBIN
-      wall that got past the gate would be a no-flux wall wearing a label (measured byte-identical
-      at alpha=3.2 and alpha=999).
+      oversight: the FDM boundary handlers are not passed ``boundary_conditions`` at all, so they
+      read none of ``alpha``/``beta``/``value`` and a ROBIN wall that got past the gate would be
+      a no-flux wall wearing a label (byte-identical at alpha=3.2 and alpha=999 across 768
+      configurations). A provider-valued coefficient is worse -- silently accepted (#1979).
 
-    Why this matters for MFG: the FP reflecting wall *is* Robin in ``m``, with
-    ``alpha = D_pH(x, grad u) . n`` recomputed each Picard iterate, while the HJB side is true
-    Neumann. So a reflecting wall with wall-normal drift is expressible on the FEM path and not on
-    the grid paths.
+    **You probably do not need this for a reflecting wall.** The FP reflecting condition
+    ``J.n = 0`` is Robin in ``m`` with ``alpha = D_pH(x, grad u) . n``, but the conservative
+    schemes already impose it *structurally*, by zeroing the total face flux, without any
+    BC-type branch naming it. Measured, sigma=0.3 with a wall-normal drift of 3.2:
+    ``divergence_upwind`` (the default) and ``divergence_centered`` conserve mass to machine
+    precision with ``d_n m`` nonzero at the wall and converging to ``(v/D)*m`` at first order,
+    while the ``gradient_*`` family imposes ``d_n m = 0`` and loses 75-78% of the mass
+    (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
+    reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and handing
+    the FEM path ``alpha = v_n`` explicitly **double-counts** it -- the weak form's natural BC is
+    already ``J.n = 0``, so the implied wall becomes ``D d_n m = 2 v_n m`` and mass drifts -79.5%.
+
+    Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one: ``alpha != v_n``,
+    or an inhomogeneous ``g``. See #1975.
 
     Args:
         value: RHS value g in alpha*u + beta*du/dn = g
