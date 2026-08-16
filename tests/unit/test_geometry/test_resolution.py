@@ -300,3 +300,42 @@ class TestResolvedBC:
         assert rbc.beta == 0.0
         assert rbc.segment_name == ""
         assert rbc.original_bc_type is None
+
+
+class TestFieldCoefficientsAcrossTheTwoBridges:
+    """`ResolvedBC` may carry fields; `BCSegment` may not. The two Layer-2 -> Layer-3 bridges
+    therefore differ, and the difference has to be legible at the boundary rather than two calls
+    downstream. Found by independent review of this PR."""
+
+    @staticmethod
+    def _field_resolved():
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=2)
+        return resolve_bc(bc, FPResolver(), {"drift": np.array([0.0, 0.6, -0.6, 2.5]), "diffusion": 0.35})
+
+    def test_the_segment_bridge_refuses_a_field_and_names_it(self):
+        """It used to copy the array into `BCSegment.alpha`, declared `float`, producing a
+        segment that looked well-formed and died inside the ghost formula with
+        `operands could not be broadcast together with shapes (6,) (4,)` -- an error naming the
+        padded array rather than the coefficient responsible."""
+        with pytest.raises(ValueError, match="field-valued 'alpha'"):
+            to_boundary_conditions(self._field_resolved(), dimension=2)
+
+    def test_the_calculator_bridge_carries_the_field(self):
+        """Control, and the reason the refusal above is not a capability loss: the other bridge
+        consumes the coefficients directly and never builds a segment."""
+        _topo, calc = resolved_bc_to_calculator(self._field_resolved()[0], shape=(4, 4))
+
+        np.testing.assert_allclose(calc._alpha, np.array([0.0, 0.6, -0.6, 2.5]))
+
+    def test_a_scalar_still_round_trips_through_the_segment_bridge(self):
+        """Scope control. The refusal must be narrow -- a scalar coefficient is unaffected, and a
+        fix that rejected every Robin would pass the test above."""
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=1)
+        resolved = resolve_bc(bc, FPResolver(), {"drift": 0.6, "diffusion": 0.35})
+
+        out = to_boundary_conditions(resolved, dimension=1)
+
+        assert out.segments[0].alpha == pytest.approx(0.6)
+        assert out.segments[0].beta == pytest.approx(-0.35)

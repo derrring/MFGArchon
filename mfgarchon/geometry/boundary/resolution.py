@@ -450,6 +450,28 @@ _MATH_TO_BC_TYPE: dict[MathBCType, BCType] = {
 }
 
 
+def _refuse_field_coefficients(rbc: ResolvedBC) -> None:
+    """A ``BCSegment`` declares its coefficients ``float`` and this bridge builds segments.
+
+    ``ResolvedBC`` may carry fields; ``BCSegment`` may not. Copying an array through produced a
+    segment that looked well-formed and died two calls later inside the ghost formula with
+    ``operands could not be broadcast together with shapes (6,) (4,)`` -- an error naming the
+    padded array rather than the coefficient that caused it. Refuse here, where the fact is
+    still legible, and name the other bridge, which does support fields.
+    """
+    import numpy as _np
+
+    for name in ("alpha", "beta", "value"):
+        v = getattr(rbc, name)
+        if isinstance(v, _np.ndarray) and v.ndim > 0:
+            raise ValueError(
+                f"to_boundary_conditions: segment '{rbc.segment_name}' has a field-valued "
+                f"'{name}' of shape {v.shape}, and BCSegment.{name} is a float. This bridge "
+                "cannot carry it. Use resolved_bc_to_calculator(), which consumes the "
+                "coefficients directly and does support fields."
+            )
+
+
 def to_boundary_conditions(
     resolved: list[ResolvedBC],
     dimension: int | None = None,
@@ -461,10 +483,15 @@ def to_boundary_conditions(
     mapping MathBCType back to BCType.
 
     Note:
-        The round-trip is lossy in the other direction now: an impermeable wall resolves to
-        ROBIN carrying the drift and diffusion of the flux condition, and ``BCType.ROBIN``
-        carries only the segment's own scalar alpha/beta. Callers needing full fidelity should
-        use ``resolved_bc_to_calculator()``.
+        Lossless for scalar coefficients -- ``alpha`` and ``beta`` are copied verbatim -- and
+        **impossible** for field-valued ones, which this function now refuses by name rather
+        than letting them die in a broadcast error two calls downstream. An impermeable wall
+        resolved with a per-point drift is exactly that case. Use
+        ``resolved_bc_to_calculator()`` there; it consumes the coefficients directly.
+
+        ~~"BCType.ROBIN carries only the segment's own scalar alpha/beta"~~ was written here
+        and is false about the function twelve lines below it, which copies ``rbc.alpha`` and
+        ``rbc.beta`` straight through [CORRECTED 2026-08-16, found by independent review].
 
     Args:
         resolved: List of ResolvedBC from a resolver.
@@ -478,6 +505,7 @@ def to_boundary_conditions(
 
     segments = []
     for rbc in resolved:
+        _refuse_field_coefficients(rbc)
         bc_type = _MATH_TO_BC_TYPE.get(rbc.math_type, BCType.NEUMANN)
         seg = BCSegment(
             name=rbc.segment_name or f"resolved_{rbc.math_type.value}",
