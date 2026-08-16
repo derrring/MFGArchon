@@ -760,12 +760,20 @@ class GhostBuffer:
             lo_ghost = [slice(None)] * d
             lo_ghost[axis] = slice(0, g)
             lo_interior = [slice(None)] * d
-            lo_interior[axis] = slice(g, 2 * g)
+            # #1971: the ghost slice [0:g] runs OUTERMOST-first (index g-1 is the one adjacent to
+            # the wall) while [g:2g] runs nearest-first, and the assignment pairs them
+            # element-wise -- so ghost layer 1 received the value computed for the FARTHEST
+            # interior cell. Stepping the interior slice backwards makes both run wall-outward,
+            # which is the pairing a mirror means. Reversing the calculator's OUTPUT instead
+            # would have to be done along `axis`, and the obvious `[::-1]` reverses axis 0.
+            lo_interior[axis] = slice(2 * g - 1, g - 1, -1)
 
             hi_ghost = [slice(None)] * d
             hi_ghost[axis] = slice(-g, None)
             hi_interior = [slice(None)] * d
-            hi_interior[axis] = slice(-2 * g, -g)
+            # Mirror problem on this side: the ghost slice runs nearest-first, the interior
+            # [-2g:-g] runs farthest-first.
+            hi_interior[axis] = slice(-g - 1, -2 * g - 1, -1)
 
             # Get interior arrays (views, not copies)
             interior_lo = buf[tuple(lo_interior)]
@@ -786,6 +794,10 @@ class GhostBuffer:
                 **kwargs,
             )
 
+            # At g=1 a one-element slice is its own reverse, which is why every caller saw the
+            # right answer. Measured at g=2 and g=3 on u = cos(2*pi*x), even about both walls so
+            # Neumann(0) is exact there: 5.4e-01 and 1.3e+00 at BOTH walls, with
+            # reversed(got) == want -- every value correct, every slot wrong. (#1971)
             buf[tuple(lo_ghost)] = ghost_lo
             buf[tuple(hi_ghost)] = ghost_hi
 
