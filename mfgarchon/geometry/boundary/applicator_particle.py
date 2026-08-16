@@ -6,15 +6,21 @@ BoundaryConditions segment matching. Unlike MeshfreeApplicator which uses
 geometry-based boundary detection, this applicator queries BCSegments to
 determine the appropriate action at each boundary point.
 
-BC Type Interpretation for Particles:
+BC Type Interpretation for Particles -- owned by `particle_action_for_bc_type` in this
+module, and shared with `MeshfreeApplicator.apply_particles`, which used to write it out
+again and had drifted from it on four of BCType's eight members (#1956):
+
 - DIRICHLET: Absorb particle (remove from simulation) - exits/sinks
 - NEUMANN: Reflect particle (elastic bounce)
 - REFLECTING / NO_FLUX: Reflect particle (elastic bounce)
 - PERIODIC: Wrap particle to opposite boundary
+- ROBIN: by coefficient -- `beta = 0` is Dirichlet, so absorb; otherwise reflect
+- EXTRAPOLATION_LINEAR / _QUADRATIC: refused, they are field-truncation rules
 
 Architecture:
     BoundaryConditions provides segment matching via get_bc_at_point()
-    ParticleApplicator interprets BCType for particle dynamics
+    particle_action_for_bc_type interprets BCType for particle dynamics
+    ParticleApplicator executes the action, per matched segment
 
 Created: 2025-01-03
 Part of: Unified Boundary Condition Architecture (Issue #536)
@@ -22,14 +28,95 @@ Part of: Unified Boundary Condition Architecture (Issue #536)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+
+from .types import BCType
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from .conditions import BoundaryConditions
+
+ParticleAction = Literal["reflecting", "absorbing", "periodic"]
+
+
+def particle_action_for_bc_type(
+    bc_type: BCType,
+    alpha: float | None = None,
+    beta: float | None = None,
+) -> ParticleAction:
+    """Map a ``BCType`` to what a particle does when it reaches the boundary.
+
+    One owner for a mapping that used to be written twice -- here and in
+    ``MeshfreeApplicator.apply_particles`` -- and had drifted on **four of BCType's
+    eight members**, measured on the same five particles and the same domain:
+
+    ===========================  ===================  ==================
+    BCType                       MeshfreeApplicator   ParticleApplicator
+    ===========================  ===================  ==================
+    ``DIRICHLET``                absorbing            absorbing
+    ``NEUMANN`` / ``NO_FLUX``    reflecting           reflecting
+    ``PERIODIC``                 periodic             periodic
+    ``REFLECTING``               **ValueError**       reflecting
+    ``ROBIN`` (alpha=1, beta=0)  **absorbing**        **reflecting**
+    ``EXTRAPOLATION_*``          ValueError           **reflecting**
+    ===========================  ===================  ==================
+
+    The `ROBIN` row is the one that mattered: the *same* specification made one path
+    build an impermeable wall and the other an absorbing one. Each divergence is
+    resolved toward whichever path was right, so this function is not either previous
+    behaviour:
+
+    - `REFLECTING` reflects. It is `BCType`'s own documented particle spelling of an
+      impermeable wall; refusing it was the defect.
+    - `ROBIN` dispatches on the coefficients. With `beta = 0` the condition reads
+      `alpha*u = g`, which is Dirichlet, so the particle is absorbed. With `alpha = 0`
+      it reads `beta*du/dn = g`, a flux condition, so the particle reflects. A genuinely
+      mixed Robin reflects, which conserves mass and is the conservative reading.
+    - `EXTRAPOLATION_LINEAR` / `EXTRAPOLATION_QUADRATIC` raise. They are not boundary
+      conditions on a particle at all -- they are a statement about how to continue a
+      *field* past a truncated domain, and carry no boundary datum. Silently reflecting
+      them, which is what the segment-aware path's ``else`` branch did, answers a
+      question that was never asked.
+
+    Args:
+        bc_type: The condition to interpret.
+        alpha: Robin coefficient on ``u``. Required when ``bc_type`` is ``ROBIN``.
+        beta: Robin coefficient on ``du/dn``. Required when ``bc_type`` is ``ROBIN``.
+
+    Returns:
+        The particle action, in the vocabulary ``MeshfreeApplicator.apply_particle_bc``
+        already accepted.
+
+    Raises:
+        ValueError: for a type with no particle interpretation, naming it.
+    """
+    if bc_type == BCType.DIRICHLET:
+        return "absorbing"
+
+    if bc_type in (BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING):
+        return "reflecting"
+
+    if bc_type == BCType.PERIODIC:
+        return "periodic"
+
+    if bc_type == BCType.ROBIN:
+        if alpha is None or beta is None:
+            raise ValueError(
+                "particle_action_for_bc_type: BCType.ROBIN needs alpha and beta; "
+                "they live on the BCSegment, not on BoundaryConditions."
+            )
+        if np.isclose(beta, 0.0):
+            return "absorbing"
+        return "reflecting"
+
+    raise ValueError(
+        f"particle_action_for_bc_type: {bc_type} has no particle interpretation. "
+        "EXTRAPOLATION_LINEAR and EXTRAPOLATION_QUADRATIC describe how to continue a "
+        "field past a truncated domain and say nothing about a particle that reaches it."
+    )
 
 
 class ParticleApplicator:
@@ -87,7 +174,6 @@ class ParticleApplicator:
             - absorbed_mask: Boolean mask of absorbed particles, shape (N,)
             - exit_positions: Positions where particles were absorbed, shape (K, d)
         """
-        from .types import BCType
 
         particles = np.atleast_2d(particles)
         n_particles = len(particles)
@@ -136,23 +222,19 @@ class ParticleApplicator:
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
                 continue
 
-            # Apply BC based on type
-            if segment.bc_type == BCType.DIRICHLET:
-                # Absorbing BC - mark for removal
+            # alpha/beta come off the matched segment, so a mixed BC with a different
+            # Robin coefficient per wall is read per wall. The uniform path's
+            # `_robin_alpha_beta` cannot do that -- it takes the first Robin segment in
+            # the whole specification, whichever face is being processed.
+            action = particle_action_for_bc_type(segment.bc_type, segment.alpha, segment.beta)
+
+            if action == "absorbing":
                 absorbed_mask[idx] = True
                 exit_positions_list.append(particle.copy())
-
-            elif segment.bc_type in (BCType.REFLECTING, BCType.NO_FLUX, BCType.NEUMANN):
-                # Reflecting BC - bounce particle back
+            elif action == "reflecting":
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-
-            elif segment.bc_type == BCType.PERIODIC:
-                # Periodic BC - wrap to opposite boundary
-                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
-
             else:
-                # Unknown BC type - default to reflecting
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
+                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
 
         # Build exit positions array
         if exit_positions_list:
@@ -192,7 +274,6 @@ class ParticleApplicator:
             - exit_positions: Positions where absorbed, shape (K, d)
             - absorbed_per_segment: Dict mapping segment name to absorbed count
         """
-        from .types import BCType
 
         particles = np.atleast_2d(particles)
         n_particles = len(particles)
@@ -234,7 +315,9 @@ class ParticleApplicator:
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
                 continue
 
-            if segment.bc_type == BCType.DIRICHLET:
+            action = particle_action_for_bc_type(segment.bc_type, segment.alpha, segment.beta)
+
+            if action == "absorbing":
                 seg_name = segment.name
 
                 # Check flux capacity
@@ -255,14 +338,11 @@ class ParticleApplicator:
                     absorbed_mask[idx] = True
                     exit_positions_list.append(particle.copy())
 
-            elif segment.bc_type in (BCType.REFLECTING, BCType.NO_FLUX, BCType.NEUMANN):
+            elif action == "reflecting":
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-
-            elif segment.bc_type == BCType.PERIODIC:
-                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
 
             else:
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
+                result_particles[idx] = self._wrap_particle(particle, domain_min, domain_size)
 
         if exit_positions_list:
             exit_positions = np.array(exit_positions_list)

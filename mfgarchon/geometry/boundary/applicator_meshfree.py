@@ -38,6 +38,7 @@ from mfgarchon.geometry.protocol import GeometryProtocol
 
 # Import base class for inheritance
 from .applicator_base import BaseMeshfreeApplicator
+from .applicator_particle import particle_action_for_bc_type
 from .types import BCType
 
 
@@ -456,38 +457,16 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         # Fails loud if default_bc unset (Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply_particles")
 
-        if bc_type == BCType.NEUMANN:
-            # Zero-flux Neumann → reflecting BC for particles
-            return self.apply_particle_bc(particles, "reflecting")
-
-        elif bc_type == BCType.NO_FLUX:
-            # Explicit no-flux → reflecting BC
-            return self.apply_particle_bc(particles, "reflecting")
-
-        elif bc_type == BCType.DIRICHLET:
-            # Dirichlet → absorbing BC (particles "exit" at boundary)
-            return self.apply_particle_bc(particles, "absorbing")
-
-        elif bc_type == BCType.PERIODIC:
-            # Periodic → wrap-around
-            return self.apply_particle_bc(particles, "periodic")
-
-        elif bc_type == BCType.ROBIN:
-            # Robin: behavior depends on α/β ratio
+        # One owner for BCType -> particle action, shared with ParticleApplicator. The two
+        # copies had drifted on four of BCType's eight members; REFLECTING raised here and
+        # reflected there, and a Robin BC left at its default coefficients absorbed here and
+        # reflected there -- the same object building an absorbing wall on one path and an
+        # impermeable one on the other.
+        alpha = beta = None
+        if bc_type == BCType.ROBIN:
             alpha, beta = _robin_alpha_beta(boundary_conditions)
 
-            if np.isclose(beta, 0.0):
-                # Pure Dirichlet-like → absorbing
-                return self.apply_particle_bc(particles, "absorbing")
-            elif np.isclose(alpha, 0.0):
-                # Pure Neumann-like → reflecting
-                return self.apply_particle_bc(particles, "reflecting")
-            else:
-                # Mixed Robin → default to reflecting (mass conservation)
-                return self.apply_particle_bc(particles, "reflecting")
-
-        else:
-            raise ValueError(f"Unsupported BC type for particles: {bc_type}")
+        return self.apply_particle_bc(particles, particle_action_for_bc_type(bc_type, alpha, beta))
 
 
 class SDFParticleBCHandler:
