@@ -85,6 +85,25 @@ def _mirror_expectation(interior: np.ndarray, axis: int, g: int) -> tuple[np.nda
     return lo, hi
 
 
+def _mirror_index_map(n: int, g: int) -> np.ndarray:
+    """Padded index -> the interior index a zero-gradient mirror puts there, one axis.
+
+    Ghost layer `k` (1-based, counting outward from the wall) mirrors interior layer `k`. The map
+    is SEPARABLE, so the expected padded array in n-D is `interior[np.ix_(*maps)]` -- which covers
+    the corner blocks by construction rather than by a separate argument. The previous version
+    built an expected array and never asserted against it; the corners were guarded only by
+    `np.all(np.isfinite(padded))`, and since `GhostBuffer._buffer` is `np.zeros`, an unwritten
+    corner is `0.0` and finite. That assertion could not fail for the reason its message gave:
+    filling the corners with 7.0, or never writing them, left the whole file green.
+    """
+    idx = np.empty(n + 2 * g, dtype=int)
+    idx[g : g + n] = np.arange(n)
+    for k in range(1, g + 1):
+        idx[g - k] = k - 1  # low ghost layer k mirrors interior layer k
+        idx[g + n + k - 1] = n - k  # high ghost layer k likewise
+    return idx
+
+
 def _ghost_blocks(padded: np.ndarray, axis: int, g: int) -> tuple[np.ndarray, np.ndarray]:
     lo = [slice(None)] * padded.ndim
     hi = [slice(None)] * padded.ndim
@@ -177,30 +196,10 @@ def test_every_axis_and_every_corner_mirrors_correctly_in_2d(ghost_depth):
     interior = _interior((nx, ny))
     padded = _filled(_bc("no_flux", 2, [[0, nx * hx], [0, ny * hy]]), (nx, ny), (hx, hy), g, interior)
 
-    # Build the expected padded array by applying the same geometric mirror on each axis in turn,
-    # which is what makes the corner blocks predicted rather than merely asserted non-NaN.
-    want = np.empty_like(padded)
-    want[(slice(g, -g),) * 2] = interior
-    for axis in (0, 1):
-        core = [slice(g, -g)] * 2
-        core[axis] = slice(None)
-        block = want[tuple(core)]
-        lo, hi = _mirror_expectation(interior, axis, g)
-        sl_lo, sl_hi = [slice(None)] * 2, [slice(None)] * 2
-        sl_lo[axis], sl_hi[axis] = slice(0, g), slice(-g, None)
-        block[tuple(sl_lo)] = np.take(lo, range(lo.shape[1 - axis]), axis=1 - axis)
-        block[tuple(sl_hi)] = np.take(hi, range(hi.shape[1 - axis]), axis=1 - axis)
-
-    np.testing.assert_array_equal(padded[g:-g, g:-g], interior)
-    for axis in (0, 1):
-        core = [slice(g, -g)] * 2
-        core[axis] = slice(None)
-        got_lo, got_hi = _ghost_blocks(padded[tuple(core)], axis, g)
-        want_lo, want_hi = _mirror_expectation(interior, axis, g)
-        np.testing.assert_array_equal(got_lo, want_lo)
-        np.testing.assert_array_equal(got_hi, want_hi)
-
-    assert np.all(np.isfinite(padded)), "corner blocks were left unwritten"
+    # The whole padded array at once, corners included. Separable, so no corner argument is
+    # needed: if either axis sweep skips or double-writes a corner block, this fails.
+    maps = [_mirror_index_map(n, g) for n, g in ((nx, g), (ny, g))]
+    np.testing.assert_array_equal(padded, interior[np.ix_(*maps)])
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])
