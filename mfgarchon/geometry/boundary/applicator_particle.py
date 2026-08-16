@@ -44,7 +44,6 @@ ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
 def particle_action_for_bc_type(
     bc_type: BCType,
-    alpha: float | None = None,
     beta: float | None = None,
 ) -> ParticleAction:
     """Map a ``BCType`` to what a particle does when it reaches the boundary.
@@ -71,10 +70,24 @@ def particle_action_for_bc_type(
 
     - `REFLECTING` reflects. It is `BCType`'s own documented particle spelling of an
       impermeable wall; refusing it was the defect.
-    - `ROBIN` dispatches on the coefficients. With `beta = 0` the condition reads
-      `alpha*u = g`, which is Dirichlet, so the particle is absorbed. With `alpha = 0`
-      it reads `beta*du/dn = g`, a flux condition, so the particle reflects. A genuinely
-      mixed Robin reflects, which conserves mass and is the conservative reading.
+    - `ROBIN` dispatches on `beta`, and on `beta` alone. With `beta = 0` the condition
+      reads `alpha*u = g`, which is Dirichlet, so the particle is absorbed. Every other
+      `beta` reflects.
+
+      **This is two cases, not three, and the vocabulary is why.** A genuinely mixed
+      Robin -- `alpha` and `beta` both nonzero -- is a *partially absorbing* wall: the
+      particle counterpart of `alpha*m + beta*d_n m = g` is a diffusion that reflects with
+      a probability set by `alpha/beta` (Feller's elastic boundary). `ParticleAction` has
+      three members and none of them is that, so this function returns `"reflecting"`,
+      which conserves mass and is the conservative reading of a wall it cannot express.
+      ~~"With `alpha = 0` it reads `beta*du/dn = g` ... A genuinely mixed Robin reflects"~~
+      was written as though those were separate branches [CORRECTED 2026-08-16, #1960]:
+      they share one, so the `alpha = 0` case was undiscriminated and `test_robin_
+      dispatches_on_its_coefficients` had two rows passing through the same `return`.
+
+      `alpha` is therefore **not a parameter of this function**. It was required and never
+      read. It comes back the day `ParticleAction` grows a partially-absorbing member,
+      because that member's probability is exactly what `alpha/beta` sets.
     - `EXTRAPOLATION_LINEAR` / `EXTRAPOLATION_QUADRATIC` raise. They are not boundary
       conditions on a particle at all -- they are a statement about how to continue a
       *field* past a truncated domain, and carry no boundary datum. Silently reflecting
@@ -83,8 +96,8 @@ def particle_action_for_bc_type(
 
     Args:
         bc_type: The condition to interpret.
-        alpha: Robin coefficient on ``u``. Required when ``bc_type`` is ``ROBIN``.
-        beta: Robin coefficient on ``du/dn``. Required when ``bc_type`` is ``ROBIN``.
+        beta: Robin coefficient on ``du/dn``. Required when ``bc_type`` is ``ROBIN``, and
+            the only coefficient this mapping reads -- see the ROBIN note above.
 
     Returns:
         The particle action, in the vocabulary ``MeshfreeApplicator.apply_particle_bc``
@@ -103,10 +116,12 @@ def particle_action_for_bc_type(
         return "periodic"
 
     if bc_type == BCType.ROBIN:
-        if alpha is None or beta is None:
+        if beta is None:
             raise ValueError(
-                "particle_action_for_bc_type: BCType.ROBIN needs alpha and beta; "
-                "they live on the BCSegment, not on BoundaryConditions."
+                "particle_action_for_bc_type: BCType.ROBIN needs beta; it lives on the "
+                "BCSegment, not on BoundaryConditions. A default would be the #1558 failure "
+                "a third time -- beta=0 is Dirichlet, so an unspecified Robin wall would "
+                "silently become absorbing."
             )
         if np.isclose(beta, 0.0):
             return "absorbing"
@@ -226,7 +241,7 @@ class ParticleApplicator:
             # Robin coefficient per wall is read per wall. The uniform path's
             # `_robin_alpha_beta` cannot do that -- it takes the first Robin segment in
             # the whole specification, whichever face is being processed.
-            action = particle_action_for_bc_type(segment.bc_type, segment.alpha, segment.beta)
+            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
 
             if action == "absorbing":
                 absorbed_mask[idx] = True
@@ -315,7 +330,7 @@ class ParticleApplicator:
                 result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
                 continue
 
-            action = particle_action_for_bc_type(segment.bc_type, segment.alpha, segment.beta)
+            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
 
             if action == "absorbing":
                 seg_name = segment.name

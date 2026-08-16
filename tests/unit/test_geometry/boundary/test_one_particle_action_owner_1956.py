@@ -82,7 +82,7 @@ def test_the_table_covers_every_bctype_member():
 
 @pytest.mark.parametrize(("bc_type", "expected"), sorted(_EXPECTED.items(), key=lambda kv: kv[0].name))
 def test_each_bc_type_maps_to_its_particle_action(bc_type, expected):
-    assert particle_action_for_bc_type(bc_type, alpha=1.0, beta=0.0) == expected
+    assert particle_action_for_bc_type(bc_type, beta=0.0) == expected
 
 
 @pytest.mark.parametrize("bc_type", sorted(_NO_PARTICLE_MEANING, key=lambda t: t.name))
@@ -101,22 +101,29 @@ def test_a_field_truncation_rule_is_refused_and_named(bc_type):
 
 
 @pytest.mark.parametrize(
-    ("alpha", "beta", "expected"),
+    ("beta", "expected"),
     [
-        (1.0, 0.0, "absorbing"),  # alpha*u = g is Dirichlet
-        (0.0, 1.0, "reflecting"),  # beta*du/dn = g is a flux condition
-        (1.0, 1.0, "reflecting"),  # genuinely mixed: conserve mass
-        (3.0, 0.0, "absorbing"),  # the scale of alpha does not enter; only beta == 0 does
+        (0.0, "absorbing"),  # beta = 0 leaves alpha*u = g, which is Dirichlet
+        (1.0, "reflecting"),  # any flux term at all
+        (-2.5, "reflecting"),  # sign does not enter
     ],
 )
-def test_robin_dispatches_on_its_coefficients(alpha, beta, expected):
-    assert particle_action_for_bc_type(BCType.ROBIN, alpha, beta) == expected
+def test_robin_dispatches_on_beta(beta, expected):
+    """RE-POINTED 2026-08-16 (#1960). This passed `alpha` as well and parametrised four rows,
+    two of which -- `(0.0, 1.0)` and `(1.0, 1.0)` -- went through the same `return`. It looked
+    like it discriminated the pure-flux case from the genuinely mixed one and did not, because
+    `alpha` was required and never read.
+
+    Two cases is what the three-valued `ParticleAction` can express. A genuinely mixed Robin is a
+    *partially absorbing* wall -- reflection with a probability set by `alpha/beta`, Feller's
+    elastic boundary -- and none of the three members is that."""
+    assert particle_action_for_bc_type(BCType.ROBIN, beta) == expected
 
 
-def test_robin_without_coefficients_refuses_rather_than_assuming():
-    """A default here would be the #1558 failure a third time. `alpha=1, beta=0` is Dirichlet, so
-    any implicit default silently turns an unspecified Robin wall into an absorbing one."""
-    with pytest.raises(ValueError, match="needs alpha and beta"):
+def test_robin_without_beta_refuses_rather_than_assuming():
+    """A default here would be the #1558 failure a third time: `beta = 0` is Dirichlet, so an
+    unspecified Robin wall would silently become absorbing."""
+    with pytest.raises(ValueError, match="needs beta"):
         particle_action_for_bc_type(BCType.ROBIN)
 
 
