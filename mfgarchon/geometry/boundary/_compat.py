@@ -36,7 +36,7 @@ from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 
 # GhostCellConfig moved to ghost_cells.py (canonical location).
 # Re-exported here for backward compatibility.
-from .ghost_cells import GhostCellConfig
+from .ghost_cells import GhostCellConfig, ghost_cell_robin
 from .types import BCType
 
 logger = get_logger(__name__)
@@ -176,8 +176,19 @@ def get_ghost_values_nd(
             slices_prev_right[axis] = -2 if shape_axis > 1 else -1
             u_prev_right = field[tuple(slices_prev_right)]
 
+            alpha, beta = _robin_coefficients(boundary_conditions) if bc_type == BCType.ROBIN else (1.0, 0.0)
             ghosts[(axis, 0)], ghosts[(axis, 1)] = _compute_ghost_pair(
-                bc_type, bc_value, u_int_left, u_int_right, u_next_left, u_prev_right, dx, time, config
+                bc_type,
+                bc_value,
+                u_int_left,
+                u_int_right,
+                u_next_left,
+                u_prev_right,
+                dx,
+                time,
+                config,
+                alpha,
+                beta,
             )
 
     else:
@@ -219,16 +230,61 @@ def get_ghost_values_nd(
             bc_value_right = _get_bc_value_at_boundary(boundary_conditions, boundary_max, time)
 
             # Compute ghost for left boundary
+            alpha_l, beta_l = (
+                _robin_coefficients(boundary_conditions, boundary_min) if bc_type_left == BCType.ROBIN else (1.0, 0.0)
+            )
             ghosts[(axis, 0)] = _compute_single_ghost(
-                bc_type_left, bc_value_left, u_int_left, u_next_left, dx, time, config, "left"
+                bc_type_left,
+                bc_value_left,
+                u_int_left,
+                u_next_left,
+                dx,
+                time,
+                config,
+                "left",
+                alpha_l,
+                beta_l,
             )
 
             # Compute ghost for right boundary
+            alpha_r, beta_r = (
+                _robin_coefficients(boundary_conditions, boundary_max) if bc_type_right == BCType.ROBIN else (1.0, 0.0)
+            )
             ghosts[(axis, 1)] = _compute_single_ghost(
-                bc_type_right, bc_value_right, u_int_right, u_prev_right, dx, time, config, "right"
+                bc_type_right,
+                bc_value_right,
+                u_int_right,
+                u_prev_right,
+                dx,
+                time,
+                config,
+                "right",
+                alpha_r,
+                beta_r,
             )
 
     return ghosts
+
+
+def _robin_coefficients(boundary_conditions, boundary: str | None = None) -> tuple[float, float]:
+    """Read Robin (alpha, beta) for a boundary, or the defaults if no Robin segment governs it.
+
+    #1961: this module's two ghost helpers took only (bc_type, bc_value), so a Robin condition
+    arrived with its coefficients already discarded and both branches returned the adjacent
+    interior cell -- the impermeable-wall mirror. Measured on three coefficient sets, the ghost
+    was 3.10000 every time, and the residual of the condition the caller wrote ranged over
+    1.7 to 5.2.
+    """
+    segments = getattr(boundary_conditions, "segments", None) or []
+    for seg in segments:
+        if seg.bc_type != BCType.ROBIN:
+            continue
+        if boundary is None or seg.boundary is None or boundary_conditions._segment_covers(seg, boundary):
+            return float(seg.alpha), float(seg.beta)
+    raise ValueError(
+        f"get_ghost_values_nd: a ROBIN condition governs {boundary or 'this boundary'} but no "
+        "BCSegment carries its alpha/beta. They live on the segment, not on BoundaryConditions."
+    )
 
 
 def _compute_ghost_pair(
@@ -241,6 +297,8 @@ def _compute_ghost_pair(
     dx: float,
     time: float,
     config: GhostCellConfig,
+    alpha: float = 1.0,
+    beta: float = 0.0,
 ) -> tuple[NDArray, NDArray]:
     """Compute ghost values for both boundaries with same BC type."""
     g = bc_value if bc_value is not None else 0.0
@@ -261,7 +319,13 @@ def _compute_ghost_pair(
         return u_next_left - 2 * dx * g, u_prev_right + 2 * dx * g
 
     elif bc_type == BCType.ROBIN:
-        return u_next_left.copy(), u_prev_right.copy()
+        # #1961: this returned the adjacent interior cell -- the impermeable-wall mirror -- for
+        # every coefficient pair, so a Robin wall was not a Robin wall. `ghost_cell_robin` owns
+        # the formula and is side-free on a cell-centred grid (#1907).
+        return (
+            ghost_cell_robin(u_int_left, g, alpha, beta, dx, grid_type=config.grid_type),
+            ghost_cell_robin(u_int_right, g, alpha, beta, dx, grid_type=config.grid_type),
+        )
 
     else:
         return u_next_left.copy(), u_prev_right.copy()
@@ -276,6 +340,8 @@ def _compute_single_ghost(
     time: float,
     config: GhostCellConfig,
     side: str,
+    alpha: float = 1.0,
+    beta: float = 0.0,
 ) -> NDArray:
     """Compute ghost value for a single boundary.
 
@@ -315,7 +381,9 @@ def _compute_single_ghost(
             return u_neighbor + 2 * dx * g
 
     elif bc_type == BCType.ROBIN:
-        return u_neighbor.copy()
+        # #1961: this returned the adjacent interior cell for every coefficient pair. See the
+        # sibling branch in `_compute_ghost_pair`.
+        return ghost_cell_robin(u_int, g, alpha, beta, dx, grid_type=config.grid_type)
 
     else:
         return u_neighbor.copy()
