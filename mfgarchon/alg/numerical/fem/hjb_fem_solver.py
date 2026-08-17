@@ -19,6 +19,7 @@ from scipy.sparse.linalg import factorized
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
+from mfgarchon.geometry.boundary import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .discretization import FEMDiscretization
@@ -48,6 +49,22 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
     _scheme_family = SchemeFamily.FEM
 
+    #: What `fem/bc_adapter.py:apply_bc_to_fem_system` actually branches on: DIRICHLET condenses,
+    #: NEUMANN/NO_FLUX/REFLECTING are the natural BC, ROBIN augments the operator. PERIODIC and the
+    #: EXTRAPOLATION_* pair fall to explicit `NotImplementedError`s there. Declaring the set moves
+    #: that refusal from assembly time to construction, which is what the #1456 gate is for (#1977).
+    _SUPPORTED_BC_TYPES: frozenset = frozenset(
+        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
+    )
+
+    @property
+    def supported_bc_types(self) -> frozenset:
+        """What the #1456 gate reads. The private attribute alone is inert: `_validate_bc_support`
+        returns early on `supported is None`, and `supported` comes from this property, so a solver
+        that declares `_SUPPORTED_BC_TYPES` without it is exactly as ungated as one that declares
+        nothing. Measured 2026-08-17 -- that is the state this pair was in."""
+        return self._SUPPORTED_BC_TYPES
+
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
         # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
         # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
@@ -69,6 +86,11 @@ class HJBFEMSolver(WeakFormHJBSolver):
         self._use_consistent_mass: bool = False
         self._M_lu: Any | None = None  # scipy factorized(M) callable, P2+ only (#1252)
         super().__init__(problem, FEMDiscretization(self._basis))
+        # Issue #1456 / #1977: the declaration above is inert unless the gate is CALLED. Measured
+        # 2026-08-17: with `_SUPPORTED_BC_TYPES` declared and no call, PERIODIC and
+        # EXTRAPOLATION_LINEAR both constructed. The FEM path had zero of the 14 call sites, so its
+        # refusal only fired later, inside `apply_bc_to_fem_system`, mid-assembly.
+        self._validate_bc_support(self.get_boundary_conditions())
         self.hjb_method_name = "FEM"
         self.order = order
         logger.info(

@@ -7,8 +7,10 @@ not redundant -- one is vectorised over points and the other is not, which is a 
 distinction, not duplication. What IS restated is the difference quotient itself, and numerical
 code does not crash when two copies of that drift: it converges to a self-consistent wrong answer.
 
-A path-A-vs-path-B comparison is the right pin **while the fork is open** -- it goes tautological
-only after a consolidation routes both through one owner, which is not what happened here.
+The quotient now has one owner, `_central_difference`, called from all seven sites. So the
+agreement half of this test no longer covers the quotient -- both paths reach the same expression
+and could only disagree in their loop structure, which is what it still pins. The half that covers
+the quotient is the external oracle below, and it is the one that survives consolidation.
 
 Measured at c98a9c5f: the two paths agree to `0.000e+00` on this fixture, and both sit `2.7e-10`
 from the analytic derivative. Positive control: tripling `eps` in the loop path alone moves the

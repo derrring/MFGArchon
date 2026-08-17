@@ -45,10 +45,8 @@ def declarations(census):
 
 _DECLARES_NOTHING = {
     "solver": {
-        "FPFEMSolver",
         "FPNetworkSolver",
         "FPSLAdjointSolver",
-        "HJBFEMSolver",
         "MeshlessGalerkinFPSolver",
         "MeshlessGalerkinHJBSolver",
         "NetworkHJBSolver",
