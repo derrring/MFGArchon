@@ -361,22 +361,46 @@ class TestCalculatorClasses:
         # Zero flux: ghost = interior
         assert np.isclose(ghost, 3.0)
 
-    def test_neumann_calculator_nonzero_flux(self):
-        """Test NeumannCalculator with non-zero flux."""
+    def test_neumann_calculator_reproduces_a_linear_field(self):
+        """An external oracle, not the formula restated. #1972
+
+        The version here asserted `expected_min = 5.0 - 2*dx*g` with the comment
+        `# For min side (outward_sign = -1): ghost = interior - 2*dx*g` -- `expected` copied from
+        the implementation, so it could only check that the code equals itself. It protected two
+        defects at once: a factor of 2 (the ghost-to-interior separation is `dx`, not `2*dx`, on
+        both centrings) and a sign (`flux_value` is du/dn, which already carries the direction, so
+        the wrapper's `outward_sign` inverted the min wall). Measured before the fix, u0=1, dx=0.25,
+        value=2: this calculator gave 0.0/2.0 where the live applicator path gave 1.5/1.5.
+
+        `u = a*x` is reproduced exactly by any consistent first-order ghost rule, so it decides the
+        question without reference to any implementation.
+        """
         from mfgarchon.geometry.boundary import NeumannCalculator
 
-        calc = NeumannCalculator(flux_value=1.0)
-        dx = 0.1
+        dx, slope = 0.1, 3.0
 
-        # For min side (outward_sign = -1): ghost = interior - 2*dx*g
-        ghost_min = calc.compute(interior_value=5.0, dx=dx, side="min")
-        expected_min = 5.0 - 2 * dx * 1.0  # = 4.8
-        assert np.isclose(ghost_min, expected_min)
+        for side, x_interior, x_ghost in (("min", dx / 2, -dx / 2), ("max", 1.0 - dx / 2, 1.0 + dx / 2)):
+            g = -slope if side == "min" else +slope  # du/dn: the outward normal flips at the min wall
+            got = NeumannCalculator(flux_value=g).compute(interior_value=slope * x_interior, dx=dx, side=side)
+            assert np.isclose(got, slope * x_ghost), f"{side}: {got} != {slope * x_ghost} for u = {slope}x"
 
-        # For max side (outward_sign = +1): ghost = interior + 2*dx*g
-        ghost_max = calc.compute(interior_value=5.0, dx=dx, side="max")
-        expected_max = 5.0 + 2 * dx * 1.0  # = 5.2
-        assert np.isclose(ghost_max, expected_max)
+    def test_neumann_calculator_agrees_with_the_live_applicator_path(self):
+        """The two implementations of this ghost disagreed by a factor of 2 and a sign until #1972.
+
+        Not a tautology: they are still separate call paths -- `pad_array_with_ghosts` reaches
+        `ghost_cell_neumann` through the applicator, this reaches it through the calculator -- and
+        nothing but this test compares them.
+        """
+        from mfgarchon.geometry.boundary import NeumannCalculator, neumann_bc
+        from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
+
+        u = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        for g in (0.0, 2.0, -7.0):
+            for dx in (0.05, 0.25):
+                padded = pad_array_with_ghosts(u, neumann_bc(g, dimension=1), ghost_depth=1, spacing=dx)
+                calc = NeumannCalculator(flux_value=g)
+                assert np.isclose(padded[0], calc.compute(interior_value=u[0], dx=dx, side="min"))
+                assert np.isclose(padded[-1], calc.compute(interior_value=u[-1], dx=dx, side="max"))
 
     def test_robin_calculator(self):
         """Test RobinCalculator for mixed boundary conditions."""

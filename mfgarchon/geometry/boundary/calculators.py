@@ -207,9 +207,12 @@ class NeumannCalculator:
         **kwargs,
     ) -> T:
         """Compute ghost value for Neumann BC (vectorized)."""
-        # Outward normal sign: +1 for max boundary, -1 for min boundary
-        outward_sign = 1.0 if side == "max" else -1.0
-        return ghost_cell_neumann(interior_value, self._flux_value, dx, outward_sign, self._grid_type)
+        # No `side` and no centring: `_flux_value` is du/dn, which carries the direction, and the
+        # ghost-to-interior separation is `dx` for both centrings (#1972). This wrapper previously
+        # multiplied by an outward sign and reached the `2*dx` branch, so it disagreed with the live
+        # applicator path by a factor of 2 AND by a sign at the min wall -- 0.0 against 1.5 for
+        # u0=1, dx=0.25, value=2.
+        return ghost_cell_neumann(interior_value, self._flux_value, dx)
 
     def __repr__(self) -> str:
         return f"NeumannCalculator(flux_value={self._flux_value})"
@@ -590,9 +593,11 @@ def calculator_to_constraint(
     # Tier 2: Gradient constraints (Neumann/ZeroGradient)
     if isinstance(calculator, (NeumannCalculator, ZeroGradientCalculator)):
         flux_value = calculator._flux_value if isinstance(calculator, NeumannCalculator) else 0.0
-        # For cell-centered: u_ghost = u_inner +/- dx * g (sign depends on side)
-        sign = 1.0 if side == "max" else -1.0
-        return LinearConstraint(weights={0: 1.0}, bias=sign * dx * flux_value)
+        # u_ghost = u_inner + dx*g, both walls: `g` is du/dn and carries the direction. The
+        # `sign * dx * flux_value` form here was the third implementation of this one quantity and
+        # the second convention (#1972); it agreed with the live path at the max wall and inverted
+        # at the min.
+        return LinearConstraint(weights={0: 1.0}, bias=dx * flux_value)
 
     # Tier 3: Flux constraints (Robin/ZeroFlux)
     if isinstance(calculator, (RobinCalculator, ZeroFluxCalculator)):

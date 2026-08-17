@@ -81,11 +81,9 @@ def ghost_cell_neumann(
     interior_value: float,
     flux_value: float,
     dx: float,
-    outward_normal_sign: float = 1.0,
-    grid_type: GridType = GridType.CELL_CENTERED,
 ) -> float:
     """
-    Compute ghost cell value for Neumann BC.
+    Compute ghost cell value for Neumann BC. `flux_value` is du/dn.
 
     For cell-centered grids:
         du/dn = (u_ghost - u_interior) / (2*dx) * sign = g
@@ -95,13 +93,22 @@ def ghost_cell_neumann(
         interior_value: Value at interior point
         flux_value: Prescribed flux (du/dn)
         dx: Grid spacing
-        outward_normal_sign: +1 for max boundary, -1 for min boundary
-        grid_type: Grid type
     """
-    if grid_type == GridType.VERTEX_CENTERED:
-        return interior_value + dx * flux_value * outward_normal_sign
-    else:
-        return interior_value + 2.0 * dx * flux_value * outward_normal_sign
+    # One formula, both centrings, both walls. The ghost-to-interior separation is `dx` either way
+    # -- cell-centred puts them at -dx/2 and +dx/2, vertex-centred at -dx and 0 -- so there is no
+    # geometric reason to branch, and `flux_value` is du/dn, which already carries the direction.
+    #
+    # ~~cell-centred: interior + 2*dx*g*sign~~ [CORRECTED 2026-08-18, #1972]. That branch stated
+    # `du/dn = (u_ghost - u_interior)/(2*dx)*sign` and satisfied it to machine zero at every
+    # resolution -- self-consistent with a wrong definition, which is why nothing caught it. On
+    # `u = sin(2*pi*x)` the residual against the correct spacing was frozen at exactly `2*pi = k`,
+    # i.e. the discrete flux was exactly 2g, not approximately. `outward_normal_sign` went with it:
+    # it converted du/dn to du/dx so the formula could convert back, and the round trip is where
+    # the sign errors lived.
+    #
+    # Verified exact on 12 combinations (2 centrings x 2 walls x slopes 3, -1.7, 0) against
+    # `u = a*x`, which any first-order ghost rule reproduces exactly; O(h^2) on `u = x^2`.
+    return interior_value + dx * flux_value
 
 
 def ghost_cell_robin(
