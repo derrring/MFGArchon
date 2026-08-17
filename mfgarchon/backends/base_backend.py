@@ -91,10 +91,6 @@ class BaseBackend(ABC):
 
     # Mathematical Operations
     @abstractmethod
-    def grad(self, func, argnum=0):
-        """Compute gradient of function."""
-
-    @abstractmethod
     def trapezoid(self, y, x=None, dx=1.0, axis=-1):
         """Trapezoidal integration."""
 
@@ -145,22 +141,14 @@ class BaseBackend(ABC):
         """Minimum values along axis."""
 
     # MFG-Specific Operations
-    @abstractmethod
-    def compute_hamiltonian(self, x, p, m, problem_params):
-        """Compute Hamiltonian H(x, p, m)."""
-
-    @abstractmethod
-    def compute_optimal_control(self, x, p, m, problem_params):
-        """Compute optimal control a*(x, p, m)."""
-
-    def compile_function(self, func, *args, **kwargs):
-        """
-        Compile function for performance (JIT compilation for JAX).
-        Default implementation returns the function unchanged.
-        """
-        return func
-
     def vectorize(self, func, signature=None):
+        """A concept the author intends and has not yet studied. Kept deliberately.
+
+        It has no production caller today, so a sweep that judges a mechanism by invocation
+        would delete it. That rule is for mechanisms that WERE built and went unused; this one
+        has not been built yet, and the two look identical from a call count. Delete it only
+        after deciding the idea itself is wrong, not because nothing calls it.
+        """
         """
         Vectorize function for element-wise operations.
         Default implementation uses numpy's vectorize.

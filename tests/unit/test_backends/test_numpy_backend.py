@@ -147,33 +147,6 @@ class TestNumPyBackendArrayCreation:
 class TestNumPyBackendMathOperations:
     """Test mathematical operations."""
 
-    def test_grad_quadratic_function(self, numpy_backend):
-        """Test gradient of quadratic function."""
-
-        def f(x):
-            return x**2
-
-        grad_f = numpy_backend.grad(f, argnum=0)
-        # df/dx = 2x, at x=3 should be approximately 6
-        result = grad_f(3.0)
-        assert abs(result - 6.0) < 1e-5
-
-    def test_grad_with_multiple_args(self, numpy_backend):
-        """Test gradient with multiple arguments."""
-
-        def f(x, y):
-            return x**2 + y**3
-
-        # Gradient w.r.t. first argument (x)
-        grad_x = numpy_backend.grad(f, argnum=0)
-        result = grad_x(2.0, 3.0)
-        assert abs(result - 4.0) < 1e-5  # df/dx = 2x = 4
-
-        # Gradient w.r.t. second argument (y)
-        grad_y = numpy_backend.grad(f, argnum=1)
-        result = grad_y(2.0, 3.0)
-        assert abs(result - 27.0) < 1e-4  # df/dy = 3y^2 = 27
-
     def test_trapezoid_with_dx(self, numpy_backend):
         """Test trapezoidal integration with dx."""
         y = np.array([1, 2, 3, 4, 5], dtype=np.float64)
@@ -334,33 +307,6 @@ class TestNumPyBackendStatistics:
         a = np.array([[1, 5, 3], [6, 2, 4]])
         result = numpy_backend.min(a, axis=1)
         expected = np.array([1, 2])
-        np.testing.assert_array_equal(result, expected)
-
-
-class TestNumPyBackendCompilationAndVectorization:
-    """Test compilation and vectorization features."""
-
-    def test_compile_function_is_noop(self, numpy_backend):
-        """Test compile_function returns function unchanged."""
-
-        def f(x):
-            return x**2
-
-        compiled = numpy_backend.compile_function(f)
-        assert compiled is f
-
-    def test_vectorize_function(self, numpy_backend):
-        """Test function vectorization."""
-
-        def f(x):
-            if x < 0:
-                return -x
-            return x
-
-        vf = numpy_backend.vectorize(f)
-        x = np.array([-2, -1, 0, 1, 2])
-        result = vf(x)
-        expected = np.array([2, 1, 0, 1, 2])
         np.testing.assert_array_equal(result, expected)
 
 

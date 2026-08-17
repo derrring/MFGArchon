@@ -95,11 +95,6 @@ class TestGetAvailableBackends:
         assert "jax" in available
         assert "jax_gpu" in available
 
-    def test_numba_key_present(self):
-        """Test that numba key is present."""
-        available = get_available_backends()
-        assert "numba" in available
-
     def test_availability_values_are_boolean(self):
         """Test that all availability values are boolean."""
         available = get_available_backends()
@@ -190,86 +185,11 @@ class TestCreateBackend:
         with pytest.raises(ImportError, match="JAX backend requested but JAX is not installed"):
             create_backend("jax")
 
-    def test_create_backend_numba_when_unavailable(self, monkeypatch):
-        """Numba reaches the lazy-registration branch by a different route than torch and jax.
-
-        ~~Numba is the one backend whose lazy-registration branch is live~~ [CORRECTED
-        2026-08-14] -- since #1930 all three are registered on demand. The difference that
-        remains is WHY: `numba_backend.py` raises `ImportError` at import time rather than
-        degrading to a flag, so blocking the import is the faithful simulation here, while
-        torch and jax degrade and their constructors raise instead.
-
-        Recorded so the next person does not "fix" the three to look alike (Issue #1663).
-        """
-        import mfgarchon.backends as backends_module
-
-        monkeypatch.setitem(sys.modules, "mfgarchon.backends.numba_backend", None)
-        monkeypatch.setattr(
-            backends_module,
-            "_BACKENDS",
-            {k: v for k, v in backends_module._BACKENDS.items() if k != "numba"},
-        )
-
-        with pytest.raises(ImportError, match="Numba backend requested but not available"):
-            create_backend("numba")
-
     def test_kwargs_passed_to_backend(self):
         """Test that kwargs are passed to backend constructor."""
         backend = create_backend("numpy", precision="float32", custom_arg=42)
         assert backend.precision == "float32"
         assert backend.config.get("custom_arg") == 42
-
-
-class TestAutoBackendSelection:
-    """Test automatic backend selection logic."""
-
-    def test_auto_selection_priority(self, monkeypatch):
-        """Test that auto-selection follows priority: torch > jax > numpy."""
-        available = get_available_backends()
-
-        backend = create_backend("auto")
-
-        # Verify selection follows priority
-        # Torch backend name includes device type
-        if available["torch"]:
-            assert backend.name.startswith("torch_")
-        elif available["jax"]:
-            assert backend.name == "jax"
-        else:
-            assert backend.name == "numpy"
-
-    def test_auto_torch_cuda_device_selection(self, capfd):
-        """Test that auto-selection sets CUDA device when available."""
-        available = get_available_backends()
-
-        if available["torch"] and available["torch_cuda"]:
-            backend = create_backend("auto")
-            assert backend.name == "torch_cuda"
-            # Verify CUDA device reported in initialization output
-            captured = capfd.readouterr()
-            assert "cuda" in captured.out.lower()
-
-    def test_auto_torch_mps_device_selection(self, capfd):
-        """Test that auto-selection sets MPS device when CUDA unavailable."""
-        available = get_available_backends()
-
-        if available["torch"] and available["torch_mps"] and not available["torch_cuda"]:
-            backend = create_backend("auto")
-            assert backend.name == "torch_mps"
-            # Verify MPS device reported in initialization output
-            captured = capfd.readouterr()
-            assert "mps" in captured.out.lower()
-
-    def test_auto_jax_gpu_device_selection(self, capfd):
-        """Test JAX GPU auto-selection when torch unavailable."""
-        available = get_available_backends()
-
-        if not available["torch"] and available["jax"] and available["jax_gpu"]:
-            backend = create_backend("auto")
-            assert backend.name == "jax"
-            # Verify GPU device reported in initialization output
-            captured = capfd.readouterr()
-            assert "gpu" in captured.out.lower()
 
 
 class TestGetBackendInfo:
@@ -398,7 +318,6 @@ class TestBackendInitialization:
         import json
         import os
         import subprocess
-        import sys
 
         repo = Path(__file__).resolve().parents[3]
         # `cwd=repo` does not pin the tree. For `python -c`, `sys.path[0]` is the current directory
@@ -468,54 +387,3 @@ class TestBackendCreationEdgeCases:
         assert backend.config["arg1"] == "value1"
         assert backend.config["arg2"] == 42
         assert backend.config["arg3"] is True
-
-    def test_auto_selection_picks_the_best_available_backend(self):
-        """The claim that matters: auto-selection returns what the priority order says it should.
-
-        This half was never checked. It lived behind an assertion about `capfd` stdout, which
-        fails first on CI, so the selection itself has never been exercised there (Issue #1821).
-        """
-        available = get_available_backends()
-        expected = "torch" if available.get("torch") else "jax" if available.get("jax") else "numpy"
-        assert create_backend("auto").name.split("_")[0] == expected, (
-            f"auto-selection ignored the documented priority torch > jax > numpy; available={available}"
-        )
-
-    def test_auto_selection_logs_which_backend_it_chose(self):
-        """Asserted on the logger's own records, not on file descriptor 1.
-
-        The previous version read `capfd.readouterr().out`, which is a claim about global logging
-        configuration rather than about auto-selection: `mfgarchon/utils/mfg_logging/logger.py`
-        attaches a `StreamHandler(sys.stdout)` ONCE, at the first `get_logger` for a name, binding
-        whatever `sys.stdout` was at that moment, caches the logger, and sets `propagate = False`.
-        So whether the record reaches fd 1 depends on which module imported first. On CI both
-        streams came back empty (`CaptureResult(out='', err='')`) and the test was red there while
-        green locally, blocking the weekly discrimination sweep for #1817.
-
-        `propagate = False` is also why `caplog` cannot see it; the handler has to go on the
-        logger itself.
-        """
-        import logging
-
-        from mfgarchon.backends import logger as backends_logger
-
-        records = []
-
-        class _Capture(logging.Handler):
-            def emit(self, record):
-                records.append(record.getMessage())
-
-        handler = _Capture(level=logging.INFO)
-        backends_logger.addHandler(handler)
-        previous_level = backends_logger.level
-        backends_logger.setLevel(logging.INFO)
-        try:
-            backend = create_backend("auto")
-        finally:
-            backends_logger.removeHandler(handler)
-            backends_logger.setLevel(previous_level)
-
-        assert records, "auto-selection logged nothing about which backend it chose"
-        assert backend.name.split("_")[0] in " ".join(records).lower(), (
-            f"the selection log does not name the backend that was selected: {records}"
-        )

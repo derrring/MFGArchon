@@ -153,10 +153,6 @@ class JAXBackend(BaseBackend):
         return [device_put(grid, self.target_device) for grid in grids]
 
     # Mathematical Operations
-    def grad(self, func, argnum=0):
-        """Automatic differentiation using JAX."""
-        return grad(func, argnums=argnum)
-
     def trapezoid(self, y, x=None, dx=1.0, axis=-1):
         return jax_trapezoid(y, x=x, dx=dx, axis=axis)
 
@@ -194,25 +190,6 @@ class JAXBackend(BaseBackend):
     def _optimal_control_impl(self, x, p, m, problem_params):
         """Default optimal control implementation."""
         return -p
-
-    def compute_hamiltonian(self, x, p, m, problem_params):
-        if self.jit_compile and self._jit_hamiltonian is not None:
-            return self._jit_hamiltonian(x, p, m, problem_params)
-        else:
-            return self._hamiltonian_impl(x, p, m, problem_params)
-
-    def compute_optimal_control(self, x, p, m, problem_params):
-        if self.jit_compile and self._jit_optimal_control is not None:
-            return self._jit_optimal_control(x, p, m, problem_params)
-        else:
-            return self._optimal_control_impl(x, p, m, problem_params)
-
-    def compile_function(self, func, *args, **kwargs):
-        """JIT compile function for performance."""
-        if self.jit_compile:
-            return jit(func, *args, **kwargs)
-        else:
-            return func
 
     def vectorize(self, func, signature=None):
         """Vectorize function using JAX vmap."""

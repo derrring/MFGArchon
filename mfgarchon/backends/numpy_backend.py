@@ -65,33 +65,6 @@ class NumPyBackend(BaseBackend):
         return np.meshgrid(*arrays, indexing=valid_indexing)
 
     # Mathematical Operations
-    def grad(self, func, argnum=0):
-        """
-        Numerical gradient using finite differences.
-        For NumPy backend, this is a simple finite difference approximation.
-        """
-
-        def gradient_func(*args):
-            # Simple finite difference gradient
-            # Get machine epsilon for the current dtype
-            # Ensure dtype is properly converted for np.finfo
-            dtype_for_finfo = np.dtype(self.dtype) if not isinstance(self.dtype, np.dtype) else self.dtype
-            finfo = np.finfo(dtype_for_finfo)
-            eps = float(np.sqrt(finfo.eps))
-            args_list = list(args)
-            x = args_list[argnum]
-
-            # Forward difference
-            args_list[argnum] = x + eps
-            f_plus = func(*args_list)
-
-            args_list[argnum] = x - eps
-            f_minus = func(*args_list)
-
-            return (f_plus - f_minus) / (2 * eps)
-
-        return gradient_func
-
     def trapezoid(self, y, x=None, dx=1.0, axis=-1):
         return trapezoid(y, x=x, dx=dx, axis=axis)
 
@@ -122,23 +95,6 @@ class NumPyBackend(BaseBackend):
         return np.min(a, axis=axis)
 
     # MFG-Specific Operations
-    def compute_hamiltonian(self, x, p, m, problem_params):
-        """
-        Default Hamiltonian: H(x, p, m) = 0.5 * p^2
-        Override in specific problems.
-        """
-        return 0.5 * p**2
-
-    def compute_optimal_control(self, x, p, m, problem_params):
-        """
-        Default optimal control: a*(x, p, m) = -p
-        Override in specific problems.
-        """
-        return -p
-
-    def compile_function(self, func, *args, **kwargs):
-        return func
-
     def vectorize(self, func, signature=None):
         return np.vectorize(func, signature=signature)
 

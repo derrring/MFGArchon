@@ -260,33 +260,6 @@ class TorchBackend(BaseBackend):
         return torch.meshgrid(*torch_arrays, indexing=indexing)
 
     # Mathematical Operations
-    def grad(self, func, argnum=0):
-        """Compute gradient of function using torch.autograd."""
-
-        def grad_func(*args):
-            # Convert inputs to tensors with gradients
-            tensor_args = []
-            for i, arg in enumerate(args):
-                tensor = self._to_torch(arg)
-                tensor.requires_grad_(i == argnum)
-                tensor_args.append(tensor)
-
-            # Compute function output
-            output = func(*tensor_args)
-
-            # Compute gradient
-            if tensor_args[argnum].grad is not None:
-                tensor_args[argnum].grad.zero_()
-
-            grad_outputs = torch.ones_like(output)
-            grads = torch.autograd.grad(
-                output, tensor_args[argnum], grad_outputs=grad_outputs, create_graph=True, retain_graph=True
-            )[0]
-
-            return grads
-
-        return grad_func
-
     def trapezoid(self, y, x=None, dx=1.0, axis=-1):
         """Trapezoidal integration."""
         y_tensor = self._to_torch(y)
@@ -365,52 +338,6 @@ class TorchBackend(BaseBackend):
             return torch.min(a_tensor, dim=axis)[0]
 
     # MFG-Specific Operations
-    def compute_hamiltonian(self, x, p, m, problem_params):
-        """
-        Compute Hamiltonian H(x, p, m) optimized for PyTorch.
-
-        Default implementation for quadratic Hamiltonian:
-        H(x, p, m) = (1/2)|p|² + V(x) + interaction(x, m)
-        """
-        x_tensor = self._to_torch(x)
-        p_tensor = self._to_torch(p)
-        m_tensor = self._to_torch(m)
-
-        # Kinetic energy term: (1/2)|p|²
-        kinetic_term = 0.5 * torch.sum(p_tensor**2, dim=-1)
-
-        # Potential energy (can be customized based on problem_params)
-        potential_term = problem_params.get("potential_strength", 0.0) * torch.sum(x_tensor**2, dim=-1)
-
-        # Interaction term: logarithmic interaction
-        epsilon = problem_params.get("interaction_epsilon", 1e-8)
-        interaction_term = problem_params.get("interaction_strength", 1.0) * torch.log(m_tensor + epsilon)
-
-        return kinetic_term + potential_term + interaction_term
-
-    def compute_optimal_control(self, x, p, m, problem_params):
-        """
-        Compute optimal control a*(x, p, m) = -Hp(x, p, m).
-
-        For quadratic Hamiltonian: a* = -p
-        """
-        p_tensor = self._to_torch(p)
-        return -p_tensor
-
-    def compile_function(self, func, *args, **kwargs):
-        """
-        Compile function using torch.compile for performance.
-
-        Only available in PyTorch 2.0+ with compatible hardware.
-        """
-        if self.compile_mode and hasattr(torch, "compile"):
-            try:
-                return torch.compile(func, **kwargs)
-            except Exception as e:
-                warnings.warn(f"Failed to compile function: {e}")
-                return func
-        return func
-
     def vectorize(self, func, signature=None):
         """
         Vectorize function using torch.vmap when available.
