@@ -107,6 +107,12 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
         labels = sorted(lbl for lbl, base in roots.items() if issubclass(cls, base))
         if not labels or inspect.isabstract(cls) or name.startswith(("Base", "_")):
             continue
+        # Same class bound twice in its own module (`NetworkFPSolver = FPNetworkSolver`,
+        # fp_network.py:606) yields two rows unless collapsed. The removed conservation lane
+        # carried that knowledge; lane 1 inherited the bug when it went.
+        if any(r["cls_id"] == id(cls) for r in rows):
+            next(r for r in rows if r["cls_id"] == id(cls))["names"].append(name)
+            continue
         own, inherited = {}, {}
         for decl in DECLARATIONS:
             owner = next((k.__name__ for k in cls.__mro__ if decl in k.__dict__), None)
@@ -117,6 +123,8 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
         rows.append(
             {
                 "name": name,
+                "names": [name],
+                "cls_id": id(cls),
                 "module": cls.__module__,
                 "roles": labels,
                 "own": sorted(own),

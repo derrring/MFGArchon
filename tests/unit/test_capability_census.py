@@ -51,7 +51,6 @@ _DECLARES_NOTHING = {
         "HJBFEMSolver",
         "MeshlessGalerkinFPSolver",
         "MeshlessGalerkinHJBSolver",
-        "NetworkFPSolver",
         "NetworkHJBSolver",
         "NetworkPolicyIterationHJBSolver",
         "PenaltyHJBSolver",
@@ -90,9 +89,14 @@ def test_the_set_of_classes_declaring_nothing_is_unchanged(declarations, role):
 
     **This pins WHETHER a class declares, not WHAT it declares.** Measured: widening a gated
     solver's `_SUPPORTED_BC_TYPES` to include `ROBIN` leaves this file green. The declared VALUES
-    are pinned per solver in `tests/unit/test_alg/test_solver_bc_support_census_1975.py`; keeping
-    a second copy of those sets here would give two frozen copies of one measurement, which is the
-    divergence this census exists to find.
+    will be pinned per solver by PR #1976, which is OPEN and not yet on `main`. Until it lands the
+    hole has no cover, so **#1976 must merge first**; a second frozen copy here would give two
+    copies of one measurement, the divergence this census exists to find.
+
+    An unwritten sibling of the same hole: a declaration set on the INSTANCE
+    (`self._SUPPORTED_BC_TYPES = ...` in `__init__`) is invisible here while the runtime gate
+    would honour it -- `_validate_bc_support` reads `getattr(self, "supported_bc_types")` and
+    `fp_fdm.py:121` returns `self._SUPPORTED_BC_TYPES`. No class does this today.
     """
     got = {r["name"] for r in declarations["rows"] if role in r["roles"] and r["declares_nothing"]}
     want = _DECLARES_NOTHING[role]
@@ -151,6 +155,6 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
     }
 
     assert len(owners) == 6, f"solvers stating it themselves: {sorted(owners)}"
-    assert len(from_base) == 19, f"solvers claiming True by the permissive default: {sorted(from_base)}"
+    assert len(from_base) == 18, f"solvers claiming True by the permissive default: {sorted(from_base)}"
     assert set(from_base.values()) == {"True"}
     assert from_sibling == {"FPSLAdjointSolver": ("FPSLSolver", "False")}
