@@ -83,15 +83,47 @@ _DECLARES_NOTHING = {
 }
 
 
+#: Every solver that OWNS `honors_inhomogeneous_neumann` refuses an inhomogeneous flux. A `True`
+#: here is a live claim the #1686 gate stops enforcing, and nothing else in the tree pins it.
+_HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
+    "FPFDMSolver": "False",
+    "FPFVMSolver": "False",
+    "FPGFDMSolver": "False",
+    "FPParticleSolver": "False",
+    "FPSLJacobianSolver": "False",
+    "FPSLSolver": "False",
+}
+
+
+def test_the_solvers_that_own_the_inhomogeneous_neumann_flag_all_refuse(declarations):
+    """A capability whose VALUE nothing else asserts. Joining or leaving this set is #1686 news."""
+    got = {
+        r["names"][0]: r["own_values"]["honors_inhomogeneous_neumann"]
+        for r in declarations["rows"]
+        if "honors_inhomogeneous_neumann" in r["own"]
+    }
+    assert got == _HONORS_INHOMOGENEOUS_NEUMANN_OWN, f"changed: {got}"
+
+
 @pytest.mark.parametrize("role", sorted(_DECLARES_NOTHING))
 def test_the_set_of_classes_declaring_nothing_is_unchanged(declarations, role):
     """Leaving this set is #1977 progress; joining it is a capability shipped undeclared.
 
     **This pins WHETHER a class declares, not WHAT it declares.** Measured: widening a gated
-    solver's `_SUPPORTED_BC_TYPES` to include `ROBIN` leaves this file green. The declared VALUES
-    will be pinned per solver by PR #1976, which is OPEN and not yet on `main`. Until it lands the
-    hole has no cover, so **#1976 must merge first**; a second frozen copy here would give two
-    copies of one measurement, the divergence this census exists to find.
+    solver's `_SUPPORTED_BC_TYPES` to include `ROBIN` leaves this file green.
+
+    ~~The declared VALUES will be pinned per solver by PR #1976.~~ [CORRECTED 2026-08-17] -- true
+    of ONE of the three declarations. #1976 pins `_SUPPORTED_BC_TYPES` per solver (verified: the
+    same ROBIN mutation fails 2 of its 29 tests), so that hole has a cover and **#1976 must merge
+    first**; a second frozen copy here would give two copies of one measurement, the divergence
+    this census exists to find.
+
+    `honors_inhomogeneous_neumann` had NO cover in either file -- flipping `FPFDMSolver`'s own
+    value `False -> True`, a solver silently claiming to honour a flux it does not honour, passed
+    8 of 8 here and 29 of 29 there. Since nothing else pins it, there is no duplication to create,
+    and the test below now does. `discretization_type`'s two owners declare it as a `property`
+    object whose `str()` carries a memory address, so its value is not pinnable this way and stays
+    uncovered.
 
     An unwritten sibling of the same hole: a declaration set on the INSTANCE
     (`self._SUPPORTED_BC_TYPES = ...` in `__init__`) is invisible here while the runtime gate
@@ -119,6 +151,10 @@ def test_no_module_in_the_package_fails_to_import(declarations):
 
 
 def test_the_roots_still_exist(declarations):
+    """The emptiness guard comes first: `roots_missing == []` is also true of a census with no
+    roots at all, and so is the outside-predicate test below. Measured with `ROOTS = {}`: 5 of the
+    8 tests went red and these two stayed green, each on a vacuous truth."""
+    assert len(declarations["rows"]) > 40, f"population collapsed to {len(declarations['rows'])} rows"
     assert declarations["roots_missing"] == [], f"unresolvable roots: {declarations['roots_missing']}"
 
 

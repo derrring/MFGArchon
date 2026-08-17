@@ -102,10 +102,20 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
             missing.append((label, f"{module_path}.{name}", f"{type(exc).__name__}: {exc}"))
 
     classes, import_failures = _walk(package)
-    rows = []
+    rows: list[dict] = []
+    excluded_by_name: list[str] = []
     for name, cls in classes:
         labels = sorted(lbl for lbl, base in roots.items() if issubclass(cls, base))
-        if not labels or inspect.isabstract(cls) or name.startswith(("Base", "_")):
+        if not labels:
+            continue
+        if inspect.isabstract(cls):
+            continue
+        if name.startswith(("Base", "_")):
+            # A NAME deciding the population, in a script whose other lane was deleted for
+            # exactly that. Kept because these are intended-abstract bases, but recorded:
+            # `inspect.isabstract` is False for them (empty `__abstractmethods__`), and three
+            # of them OWN `discretization_type` and appear as the `<-` owner below.
+            excluded_by_name.append(name)
             continue
         # Same class bound twice in its own module (`NetworkFPSolver = FPNetworkSolver`,
         # fp_network.py:606) yields two rows unless collapsed. The removed conservation lane
@@ -118,7 +128,10 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
             owner = next((k.__name__ for k in cls.__mro__ if decl in k.__dict__), None)
             if owner is None:
                 continue
-            target = own if owner == name else inherited
+            # `owner == cls.__name__`, not `owner == name`: `name` is whichever binding
+            # `inspect.getmembers` yielded first (alphabetical), so an alias sorting earlier
+            # would report the class as inheriting its own declaration.
+            target = own if owner == cls.__name__ else inherited
             target[decl] = {"value": str(getattr(cls, decl)), "from": owner}
         rows.append(
             {
@@ -128,10 +141,12 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
                 "module": cls.__module__,
                 "roles": labels,
                 "own": sorted(own),
+                "own_values": {k: v["value"] for k, v in own.items()},
                 "inherited": inherited,
                 "declares_nothing": not own,
             }
         )
+
     rows.sort(key=lambda r: (r["roles"], len(r["own"]), r["name"]))
 
     outside = {}
@@ -147,6 +162,7 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
         "roots_missing": missing,
         "import_failures": import_failures,
         "outside_every_predicate": outside,
+        "excluded_by_name_prefix": sorted(set(excluded_by_name)),
     }
 
 
@@ -174,13 +190,29 @@ def _print_declarations(result: dict[str, Any]) -> None:
     print("  Not evidence of no capability -- it is the case where capability cannot be read off")
     print("  the class at all, which is the blind spot #1975 fell into.")
 
-    print("\n=== claimed only by inheriting a permissive default ===")
+    print("\n=== declarations that arrive by inheritance, grouped by what is inherited ===")
     for decl in DECLARATIONS:
-        inheritors = [r["name"] for r in rows if decl in r["inherited"]]
+        inheritors = [r for r in rows if decl in r["inherited"]]
         owners = [r["name"] for r in rows if decl in r["own"]]
-        if inheritors or owners:
-            print(f"  {decl}: own {len(owners)}, INHERITED {len(inheritors)}")
-    print("  An inherited permissive default is a claim nobody made deliberately.")
+        if not (inheritors or owners):
+            continue
+        print(f"  {decl}: own {len(owners)}, inherited {len(inheritors)}")
+        groups: dict[tuple[str, str], list[str]] = {}
+        for r in inheritors:
+            e = r["inherited"][decl]
+            groups.setdefault((str(e["from"]), str(e["value"])), []).append(r["names"][0])
+        for (src, val), who in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            shown = val if not val.startswith("<property object") else "<property>"
+            print(f"      {len(who):3d}  <- {src:26s} = {shown[:46]}")
+    print("  A count alone cannot say whether an inherited declaration is permissive. Grouping")
+    print("  can: an inherited `True` on honors_inhomogeneous_neumann is a claim nobody made")
+    print("  deliberately; an inherited `False`, or a restrictive frozenset, or a `property`")
+    print("  object, is not -- and a bare count previously reported all four as the same thing.")
+
+    if result["excluded_by_name_prefix"]:
+        print(f"\n=== concrete, under a root, dropped by a NAME prefix: {len(result['excluded_by_name_prefix'])} ===")
+        for nm in result["excluded_by_name_prefix"]:
+            print(f"  {nm}")
 
     print("\n=== outside every population predicate (named, not discovered) ===")
     for name, reached in sorted(result["outside_every_predicate"].items()):
