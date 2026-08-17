@@ -1964,7 +1964,24 @@ class FPParticleSolver(BaseFPSolver):
         Note (Issue #535 Phase 1): Segment-aware absorbing BC not yet implemented
         for GPU solver. Use CPU solver for mixed BC with DIRICHLET segments.
         GPU solver currently supports uniform BC only (periodic/reflecting).
+
+        That limitation is now refused rather than delivered (#1910). It was true, documented, and
+        silent: `_needs_segment_aware_bc()` is consulted at :1605, :1794 and :2257 and nowhere in
+        this method, so the absorbing branch was unreachable here. Measured on a 2000-particle
+        run with `dirichlet_bc(0.0)` -- numpy absorbed 4 particles, torch absorbed 0, and both
+        returned a finite non-negative density of mass ~1. A caller asking for an absorbing wall
+        got a reflecting one and no indication.
         """
+        if self._needs_segment_aware_bc():
+            raise NotImplementedError(
+                "FPParticleSolver: the GPU path does not implement segment-aware absorbing "
+                "boundary conditions (Issue #535 Phase 1, #1910). This BC needs particles removed "
+                "at a DIRICHLET segment, and the GPU evolution loop never consults "
+                "`_needs_segment_aware_bc()`, so it would reflect them instead and report a "
+                "plausible density with nothing absorbed. Use backend='numpy' for this BC, or a "
+                "uniform periodic/reflecting BC on the GPU path."
+            )
+
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
         from mfgarchon.utils.particle_utils import (
             apply_boundary_conditions_gpu,
