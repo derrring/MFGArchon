@@ -1133,100 +1133,54 @@ def robin_bc(
     """
     Create Robin boundary conditions (alpha*u + beta*du/dn = value).
 
-    Which solvers honour it (#1975):
+    **You probably do not want this for a reflecting FP wall.** ``J.n = 0`` is Robin in ``m``, but
+    the conservative schemes already impose it structurally -- by zeroing the total face flux,
+    with no BC-type branch naming it -- and ``FPParticleSolver`` gets the same wall from Skorokhod
+    reflection. Adding a Robin segment on top of such a wall destroys it rather than restating it.
 
-    - ``FPFEMSolver`` / ``HJBFEMSolver`` -- weak form, the coefficients are read
-      (``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, load ``D*(1/beta)*int_dOmega g phi_i``).
-      Only a **constant** ``g`` is implemented; ``beta == 0`` fails loud; a provider-valued
-      ``alpha`` currently raises a bare ``TypeError`` from ``float()``. These solvers declare no
-      ``_SUPPORTED_BC_TYPES``, so none of that is checked at construction (#1977).
-    - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case; general-Robin sub-cases
-      fail loud in the row builder.
-    - **Every grid FP solver refuses it**, and the refusal is load-bearing rather than an
-      oversight: the FDM boundary handlers are not passed ``boundary_conditions`` at all, so they
-      read none of ``alpha``/``beta``/``value``. **Every ROBIN configuration is refused at
-      construction**: ``_validate_bc_support`` (#1456) iterates every segment, so uniform and
-      mixed alike raise from ``base_solver.py:324``; a uniform one is refused twice more (#1250,
-      #1071). The silent no-flux assembly is reachable only BELOW that gate -- calling
-      ``solve_timestep_full_nd`` directly, or mutating ``solver.boundary_conditions`` after
-      construction (the #1699 bypass class). There it is byte-identical to no-flux across
-      4 schemes x alpha in {3.2, 999, -7} x beta in {1, 2} x g in {0, 5}, and a provider-valued
-      coefficient is accepted without a word (#1979).
+    Which solvers read the coefficients (#1975):
 
-    **You probably do not need this for a reflecting wall.** The FP reflecting condition
-    ``J.n = 0`` is Robin in ``m`` with ``alpha = D_pH(x, grad u) . n``, but the conservative
-    schemes already impose it *structurally*, by zeroing the total face flux, without any
-    BC-type branch naming it. Measured, sigma=0.3 with a wall-normal drift of 3.2:
-    ``divergence_upwind`` (the default) and ``divergence_centered`` conserve mass to machine
-    precision with ``d_n m`` nonzero at the wall and converging to ``(v/D)*m`` at first order,
-    while the ``gradient_*`` family hard-codes the mirrored ghost
-    ``m_{N+1} = m_{N-1}`` (fp_fdm_alg_gradient_upwind.py:319), so its CENTERED wall derivative is
-    zero by construction rather than by convergence -- the one-sided estimate used for the
-    conservative row above is not zero there -- and therefore leaks badly. How badly is a
-    property of the configuration, not of the family: at sigma=0.3, 81 points on [0,1], dt=1e-3,
-    and a Gaussian initial density of width s0 at 0.5, through the potential channel
-    (``_INTERFACE_VELOCITY_SCHEMES`` is ``{"divergence_upwind"}``, so the other three never read a
-    caller-supplied face velocity; #1632. ~~"the only scheme that reads ``drift_field``"~~
-    [CORRECTED] -- that generalised the issue's ``interface_velocity`` to a different kwarg, and
-    a callable ``drift_field`` reaches all four through ``_DriftDispatcher``):
+    - ``FPFEMSolver`` / ``HJBFEMSolver`` -- weak form, coefficients read:
+      ``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, load ``D*(1/beta)*int_dOmega g phi_i``.
+      Constant ``g`` only; ``beta == 0`` fails loud; a provider-valued ``alpha`` raises a bare
+      ``TypeError`` from ``float()``. Neither declares ``_SUPPORTED_BC_TYPES``, so none of that is
+      checked at construction (#1977).
+    - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case only.
+    - **Every grid FP solver refuses ROBIN at construction** (``_validate_bc_support``, #1456,
+      raising from ``base_solver.py:324``), uniform and mixed alike. The refusal is load-bearing:
+      the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of
+      ``alpha``/``beta``/``value``. Below the gate -- calling ``solve_timestep_full_nd`` directly,
+      or mutating ``solver.boundary_conditions`` after construction (#1699) -- a ROBIN segment is
+      byte-identical to no-flux, and a provider-valued coefficient is accepted silently (#1979).
 
-        scheme               s0     T=0.20    T=0.30    T=0.50
-        gradient_centered    0.1     -78.1%    -99.0%    -100.0%
-        gradient_upwind      0.1     -75.5%    -97.9%    -100.0%
-        gradient_centered    0.3     -42.0%    -57.6%     -60.0%
-
-    So "loses essentially all the mass" is true at s0=0.1 and false at s0=0.3, and the two
-    schemes differ by 2.6 points. The ``d_n m = 0`` mechanism behind the leak is not
-    configuration-dependent (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
-    reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and adding a
-    Robin segment on top of it **destroys** that wall rather than restating it. The weak form's
-    natural BC is already ``J.n = 0``, so ``A_robin`` adds a residual outflux on top of it:
+    The perturbation a Robin segment adds to an already-reflecting wall:
 
         J.n = D*(alpha/beta)*m          i.e.   D d_n m = (v_n - D*alpha/beta) * m
 
-    ~~the implied wall becomes ``D d_n m = 2 v_n m``~~ [CORRECTED] -- that is one row of the law,
-    and not the row it was attributed to: at ``D*alpha/beta = v_n`` the law gives ``d_n m = 0``,
-    while the row that DOUBLES is ``D*alpha/beta = -v_n``, an influx.
-
-    ``A_robin``'s boundary column sums are exactly ``D*alpha/beta``. Measured at beta = 1:
-    0.1440 / 0.4000 / 1.6000 / 3.2000 for D = 0.045 / 0.125 / 0.5 / 1.0; and 0.0360 at
-    (D, alpha, beta) = (0.045, 3.2, 4), where ``D*alpha`` would be 0.1440. So the perturbation
-    scales with ``D`` and inversely with ``beta``, never with ``v_n``.
+    ``A_robin``'s boundary column sums are exactly ``D*alpha/beta``: measured 0.1440 / 0.4000 /
+    1.6000 / 3.2000 at beta=1 for D = 0.045 / 0.125 / 0.5 / 1.0, and 0.0360 at
+    (D, alpha, beta) = (0.045, 3.2, 4) where ``D*alpha`` would be 0.1440. **It scales with ``D``
+    and inversely with ``beta``, never with ``v_n``** -- so the invariant is the ratio, and any
+    test written on ``alpha`` alone passes a whole equivalence class of identical walls.
+    Measured: ``(-2*v_n, 2*D)`` is bit-identical to ``(-v_n, D)`` (``max|m - m_ref| = 0``), while
+    ``(-v_n, 2*D)`` differs by ``6.2e+46``.
 
     **The trap.** The reflecting condition's own coefficients are
-    ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the
-    FP transport velocity is ``v = -D_pH``.
+    ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the FP
+    transport velocity is ``v = -D_pH``. That also follows from the library's own
+    ``J = v*m - D grad m`` without mentioning ``D_pH``, which is the sense-free route to it.
 
-    That antecedent is a MINIMIZE fact, not a library-wide one, and it is decided in two places.
-    ``HamiltonianBase.optimal_control`` (core/hamiltonian.py:1284) returns ``-self._sign * dH_dp``
-    with ``_sign = -1`` under MAXIMIZE (:838). ``SeparableHamiltonian`` overrides it (:2524) and
-    delegates to ``control_cost.optimal_control(p)``, because in the separable case the control
-    enters only through the control cost -- so its sign comes from ``QuadraticControlCost.sign``
-    (:403), a second and independent sense field. **The two routes agree on every consistent
-    configuration**: measured, MINIMIZE/MINIMIZE gives ``-D_pH`` and MAXIMIZE/MAXIMIZE gives
-    ``+D_pH``, the same as the base class.
+    ``D*alpha/beta = -v_n`` is by the law above the row that DOUBLES -- an influx. So encoding the
+    reflecting condition as a Robin segment on a conservative assembly is unbounded, not merely
+    leaky. (Magnitudes are not quotable: over mesh 50-400, T 0.05-0.4, Nt 50-800 and IC width
+    0.05-0.3 the growth spans well over ninety orders of magnitude and flips sign at coarse
+    ``Nt``, where the positivity clip dominates -- ``weak_form_fp_solver.py:225-230`` reports its
+    cumulative injection at solve end.)
 
-    They can be set to disagree, and nothing checks. All four (cost sense, Hamiltonian sense)
-    pairs construct without complaint, and on the two mismatched ones the control cost decides
-    while ``_sign`` is never read. That is a silent-acceptance gap, not a counterexample to the
-    line above; it is filed separately.
-
-    Every path that forms the drift itself is gated to quadratic-MINIMIZE by
-    ``assert_quadratic_minimize_drift`` (utils/pde_coefficients.py:24) -- note it reads
-    ``control_cost.sign``, not the Hamiltonian's sense -- so the antecedent holds on all of them.
-    The caller-supplied-``alpha*`` velocity channel (``compute_fp_velocity_field``) is not gated.
-    No solver reachable through it declares ROBIN, and ``FPFEMSolver`` -- the only FP solver that
-    reads Robin coefficients -- rejects MAXIMIZE, so the conclusion below is safe by two gates
-    rather than by the antecedent being universal.
-
-    ``alpha = -v_n`` also follows from the library's own ``J = v*m - D grad m`` without
-    mentioning ``D_pH`` at all, which is the sense-free route to the same place.
-
-    The measured wall, at ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045`` (so ``v_n/D = 71.111``),
-    ``FPFDMSolver`` / ``divergence_upwind`` on [0,1], Gaussian initial density of width 0.1 at
-    0.5, T=0.2, Nt=200, ``drift_field=+3.2``. Columns 3 and 4 are ``alpha*m + beta*d_n m``
-    evaluated on that profile and normalised by ``|alpha|*m`` -- they are column 2 rearranged,
-    not a second measurement:
+    Measured wall, ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045`` (so ``v_n/D = 71.111``), ``FPFDMSolver``
+    / ``divergence_upwind`` on [0,1], Gaussian initial density of width 0.1 at 0.5, T=0.2, Nt=200,
+    ``drift_field=+3.2``. Columns 3 and 4 are ``alpha*m + beta*d_n m`` normalised by ``|alpha|*m``,
+    i.e. column 2 rearranged rather than a second measurement:
 
         Nx      d_n m / m     (+v_n, D)     (-v_n, D)
         161        56.41        1.7933       -0.2067
@@ -1234,37 +1188,34 @@ def robin_bc(
         641        67.10        1.9437       -0.0563
        1281        69.09        1.9716       -0.0284
 
-    Column 2 converges to 71.111 at first order. ``(-v_n, D)`` goes to zero; ``(+v_n, D)`` goes
-    to 2, i.e. off by ``2*alpha*m``.
+    Column 2 converges to 71.111 at first order; ``(-v_n, D)`` goes to zero and ``(+v_n, D)`` to 2.
 
-    So ``D*alpha/beta = -v_n``, which by the law above is the row that DOUBLES -- an influx, and
-    the wall that diverges. On ``FPFEMSolver``: no segment conserves to machine precision;
-    ``robin_bc(alpha=+v_n, beta=D)`` leaks; ``robin_bc(alpha=-v_n, beta=D)`` -- the correct
-    encoding of the reflecting condition -- grows without bound. ~~+0.0000% / -48% / +1.7e31%~~
-    [CORRECTED] -- that trio is not quotable: over mesh 50-400, T 0.05-0.4, Nt 50-800 and IC
-    width 0.05-0.3 the third column spans well over ninety orders of magnitude, and at coarse
-    ``Nt`` it comes out NEGATIVE, so even its sign is a property of the configuration.
+    The ``v = -D_pH`` antecedent is a MINIMIZE fact decided in two places.
+    ``HamiltonianBase.optimal_control`` (``core/hamiltonian.py:1284``) returns ``-self._sign *
+    dH_dp`` with ``_sign`` set at ``:838``. ``SeparableHamiltonian`` overrides it (``:2524``) and
+    delegates to ``control_cost.optimal_control(p)``, since in the separable case the control
+    enters only through the control cost -- its sign comes from ``QuadraticControlCost.sign``
+    (``:403``), an independent sense field. The two routes agree on every consistent
+    configuration: MINIMIZE/MINIMIZE gives ``-D_pH``, MAXIMIZE/MAXIMIZE gives ``+D_pH``. They can
+    be set to disagree and nothing checks; that gap is filed separately. Paths that form the drift
+    themselves are gated to quadratic-MINIMIZE by ``assert_quadratic_minimize_drift``
+    (``utils/pde_coefficients.py:24``, which reads ``control_cost.sign``); the caller-supplied
+    velocity channel is not, but no solver reachable through it declares ROBIN and ``FPFEMSolver``
+    rejects MAXIMIZE.
 
-    ~~The growth is influx, not a clip artifact (cumulative clip injection 0.0, min density
-    +2e-11).~~ [CORRECTED 2026-08-17] -- those two numbers are from the 200-element / Nt=200 run
-    and were placed against the coarse-``Nt`` sign flip, which they do not cover: review measured
-    the negative configurations to be clip-dominated. This path clips
-    (weak_form_fp_solver.py:225-230 reports a CUMULATIVE injection at solve end), so any figure
-    taken from it owes that warning's value alongside. No claim is made here about which regime a
-    given configuration is in. **Encoding the reflecting condition as a Robin segment
-    on top of a wall that already imposes it is unbounded, not merely leaky.**
+    For contrast, the ``gradient_*`` family imposes ``d_n m = 0`` by hard-coding the mirrored ghost
+    ``m_{N+1} = m_{N-1}`` (``fp_fdm_alg_gradient_upwind.py:318``,
+    ``fp_fdm_alg_gradient_centered.py:243``) and is non-conservative by design (#1075). How much it
+    leaks is a property of the configuration, not of the family -- at sigma=0.3, 81 points on
+    [0,1], dt=1e-3, Gaussian initial density of width s0 at 0.5, potential channel:
 
-    Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one:
-    ``D*alpha/beta != -v_n``, or an inhomogeneous ``g``.
+        scheme               s0     T=0.20    T=0.30    T=0.50
+        gradient_centered    0.1     -78.1%    -99.0%    -100.0%
+        gradient_upwind      0.1     -75.5%    -97.9%    -100.0%
+        gradient_centered    0.3     -42.0%    -57.6%     -60.0%
 
-    ~~``alpha != D_pH.n`` (i.e. ``alpha != -v_n``)~~ [CORRECTED] -- the law two paragraphs up
-    depends only on the RATIO, so that test passes a whole equivalence class of segments that
-    produce the identical diverging wall. Measured: ``(alpha, beta) = (-2*v_n, 2*D)`` satisfies
-    ``alpha != -v_n`` and is bit-identical to ``(-v_n, D)`` (``max|m - m_ref| = 0.000e+00``);
-    positive control ``(-v_n, 2*D)`` differs (``6.2e+46``). The wrong test also contradicted the
-    sentence above it, which already said the perturbation scales inversely with ``beta``.
-
-    See #1975.
+    **Reach for ``robin_bc`` when you want a wall that is not the reflecting one:
+    ``D*alpha/beta != -v_n``, or an inhomogeneous ``g``.** See #1975.
 
     Args:
         value: RHS value g in alpha*u + beta*du/dn = g
