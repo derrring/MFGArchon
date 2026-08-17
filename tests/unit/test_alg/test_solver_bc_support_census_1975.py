@@ -145,6 +145,91 @@ def test_the_permissive_default_is_claimed_by_inheritance():
     assert all(getattr(cls, field) is True for cls, n in _population().items() if n[0] in inherited["BaseMFGSolver"])
 
 
+# The external oracle -- which wall is actually imposed
+# =============================================================================
+
+_SIGMA, _DRIFT, _NX, _STEPS = 0.3, 3.2, 81, 200
+
+
+def _run(scheme: str) -> tuple[float, float]:
+    """One drifted-wall run. Returns (mass drift in %, d_n m at the high wall).
+
+    `u = -drift*x` gives a constant wall-normal velocity, the case where `J.n = 0` and
+    `d_n m = 0` are DIFFERENT conditions. A scheme imposing `J.n = 0` conserves mass and has
+    `d_n m != 0`; one imposing `d_n m = 0` leaks.
+    """
+    from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_full_nd
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1))
+    h = grid.get_grid_spacing()[0]
+    x = np.linspace(0.0, 1.0, _NX)
+    m = np.exp(-50 * (x - 0.5) ** 2)
+    m /= m.sum() * h
+    m0 = m.sum() * h
+
+    for _ in range(_STEPS):
+        m = solve_timestep_full_nd(
+            M_current=m,
+            U_current=-_DRIFT * x,
+            problem=object(),
+            dt=1e-3,
+            sigma=_SIGMA,
+            coupling_coefficient=1.0,
+            spacing=(h,),
+            grid=grid,
+            ndim=1,
+            shape=(_NX,),
+            boundary_conditions=no_flux_bc(dimension=1),
+            advection_scheme=scheme,
+        )
+    return 100.0 * (m.sum() * h - m0) / m0, (m[-1] - m[-2]) / h
+
+
+@pytest.mark.parametrize("scheme", ["divergence_upwind", "divergence_centered"])
+def test_the_conservative_schemes_conserve_mass_at_a_drifted_wall(scheme):
+    """`J.n = 0`, imposed structurally by zeroing the total face flux -- no BC-type branch.
+
+    **This is the test whose absence let #1975 be filed on a false premise.** It is an external
+    oracle: mass conservation is a law of the equation, computed here without reference to any
+    scheme's internals, so it cannot go tautological the way a declaration census can.
+
+    `divergence_upwind` is the default. Measured: -0.0000% and -0.0000%.
+    """
+    drift_pct, dmdx = _run(scheme)
+    assert abs(drift_pct) < 1e-6, f"{scheme} leaked {drift_pct:.4f}% at a wall with normal drift"
+    assert abs(dmdx) > 1.0, (
+        f"{scheme} has d_n m = {dmdx:.4g} at the wall. J.n = 0 requires d_n m = (v/D)*m, which is "
+        "large here; a near-zero gradient means the wall became d_n m = 0."
+    )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_upwind", "gradient_centered"])
+def test_the_gradient_schemes_impose_a_zero_gradient_wall_and_leak(scheme):
+    """The counterpart, pinned so the distinction cannot quietly collapse in either direction.
+
+    These impose `d_n m = 0`, which is the wrong condition when the drift is not tangential, and
+    they are documented non-conservative (#1075). Measured: -78.05% and -75.47%.
+    """
+    drift_pct, _ = _run(scheme)
+    assert drift_pct < -10.0, (
+        f"{scheme} conserved mass ({drift_pct:.4f}%) at a drifted wall. If it now imposes "
+        "J.n = 0 that is a fix worth recording -- see #1075 and #1975 before updating this."
+    )
+
+
+def test_the_two_families_disagree_by_a_large_margin():
+    """A control on the pair above: if the fixture stopped driving mass into the wall, both
+    families would conserve trivially and both tests would still pass in the wrong way."""
+    conservative, _ = _run("divergence_upwind")
+    gradient, _ = _run("gradient_upwind")
+    assert gradient - conservative < -50.0, (
+        "the two schemes no longer separate; the fixture may have stopped exercising the wall"
+    )
+
+
+# =============================================================================
+
+
 # --------------------------------------------------------------------------------------
 # What the FDM boundary assembly reads
 # --------------------------------------------------------------------------------------
@@ -240,34 +325,20 @@ def test_an_unsupported_bc_raises_at_construction():
         problem.solve(max_iterations=1)
 
 
-def test_the_gate_reads_what_this_file_reads():
-    """The gate reads `supported_bc_types`; every assertion here reads `_SUPPORTED_BC_TYPES`.
-
-    Those are the same thing only while every property just forwards. Measured: all 11 gated
-    solvers have a property whose body is exactly `return self._SUPPORTED_BC_TYPES`, and the 11
-    ungated ones have no property at all. If either stops being true, this file is measuring
-    something the gate does not use -- which is how a solver could widen its live support with
-    every assertion here still green.
-    """
-    import textwrap
-
-    for cls, names in _population().items():
-        prop = inspect.getattr_static(cls, "supported_bc_types", None)
-        fget = getattr(prop, "fget", None)
-        declares = getattr(cls, "_SUPPORTED_BC_TYPES", None) is not None
-        if not declares:
-            assert fget is None, f"{names[0]} declares nothing but defines the property"
-            continue
-        assert fget is not None, f"{names[0]} declares but has no supported_bc_types property"
-        body = textwrap.dedent(inspect.getsource(fget)).strip().splitlines()[-1].strip()
-        assert body == "return self._SUPPORTED_BC_TYPES", (
-            f"{names[0]}'s property no longer just forwards ({body!r}); the gate and this file "
-            "now read different things"
-        )
-
-
 def test_no_fp_solver_declares_robin_while_the_assembly_ignores_the_coefficient():
-    """Justified by the test above: the private attribute is what the gate ends up reading."""
+    """Reads `_SUPPORTED_BC_TYPES`; the #1456 gate reads `supported_bc_types`.
+
+    Today every declaring solver's property is exactly `return self._SUPPORTED_BC_TYPES`, so the
+    two coincide -- but that premise is NOT asserted here. A previous revision asserted it by
+    comparing `inspect.getsource(...).splitlines()[-1]`, and review measured that open in three
+    of five shapes (a multi-line body ending in the forward; a `functools.wraps`-decorated
+    property, since `getsource` unwraps; an ungated class gaining a non-`property` attribute,
+    which `assert fget is None` accepts while the gate goes live) and closed falsely on one
+    (a behaviour-preserving `frozenset(...)` copy). It is the instrument an earlier revision
+    deleted for being wrong in both directions, and it was wrong in both directions again, so it
+    is gone rather than repaired. **The hole is: a solver can widen its live support through the
+    property alone and every assertion here stays green.**
+    """
     declaring = {
         n[0]
         for c, n in _population().items()
