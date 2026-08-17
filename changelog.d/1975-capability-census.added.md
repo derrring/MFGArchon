@@ -1,26 +1,23 @@
-`scripts/capability_census.py` and its ratchet `tests/unit/test_capability_census.py`: what each
-class **declares**, and which wall each FP path actually **imposes**.
+`scripts/capability_census.py` and its ratchet: what each class **declares**, and the wall-ratio
+**sequence** each FP path produces.
 
-Both lanes answer a question the 2026-08-13 design census could not. All four of its lanes look for
-reality falling *short* of a claim, and it found 77 over-claims; nobody counted the other
-direction, and the other direction made #1975 wrong twice. Over-claiming makes a user's code fail
-loudly; under-claiming makes a maintainer "fix" something that works.
+Lane 1 discovers its population with `walk_packages` + `issubclass` + `inspect.isabstract`, keyed
+on class identity -- a predicate independent of the declaration it audits -- so "declares nothing"
+is a recorded row rather than an absence, and own declarations are separated from inherited ones by
+walking the MRO.
 
-Lane 1 discovers its population with `walk_packages` + `issubclass` — a predicate independent of
-every declaration it audits — so "declares nothing" is a recorded row rather than an absence. Own
-declarations are separated from inherited ones by walking the MRO: `honors_inhomogeneous_neumann`
-defaults to `True` on `BaseMFGSolver`, so 19 solvers claim to honour an inhomogeneous Neumann flux
-by a default nobody chose.
+**Lane 2 renders no verdict.** An earlier version classified each path from the ratio's trend
+across three resolutions; independent review showed the rule cannot do that. `FPFVMSolver` reads
+0.392 / 0.649 / 1.106 and keeps going to 12.699 at nx=1281, so a "within tolerance of 1" clause
+fires on a value the sequence merely transits, and `FPSLSolver` reads 0.998 at nx=201 then 1.926
+and 3.500. Three resolutions cannot separate approach from transit, and neither can six. The
+sequence is reported and the reading is left to a person.
 
-Lane 2's verdict is the wall ratio `d_n m / ((v_n/D) m_wall)` and its **trend under refinement**,
-not mass conservation. Mass conservation is neither sufficient (streamline diffusion conserves to
-1e-12 while the ratio collapses 0.967 -> 0.414) nor necessary (`FPSLJacobianSolver` is the
-Lagrangian form, non-conservative by construction, deprecated for adjoint inconsistency rather than
-for mass). Mass drift is reported as a form property beside the verdict, never as it.
+Mass drift is reported beside it as a **form property**: neither sufficient (streamline diffusion
+conserves to 1e-12 while the ratio collapses) nor necessary (`FPSLJacobianSolver` is the Lagrangian
+form, non-conservative by construction, deprecated for adjoint inconsistency rather than for mass).
 
-The instrument was rebuilt after eight defects, each of which produced a confident verdict rather
-than a failure — four found by independently measuring the paths it could not construct, four more
-only by re-running it against a path whose answer was already known. The sharpest: it passed a
-potential to the three solvers whose declared `_drift_convention` is `VELOCITY`, so the
-wall-normal drift vanished at the wall the mass reached and the discriminating property was absent
-while a verdict printed anyway. (#1975, #1977)
+Also folded: the empty deprecated subclass `FPSLAdjointSolver(FPSLSolver)`, via its own
+`_deprecation_meta["alias_for"]` -- class-keying collapses `X = Y` but not `class X(Y): pass`, and
+two identical rows read as two independent confirmations. The clip exemption is keyed on the
+declared `kde_boundary_smoothing` flag rather than a substring of the class name. (#1975, #1977)

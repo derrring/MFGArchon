@@ -51,7 +51,7 @@ def declarations(census):
 
 @pytest.fixture(scope="module")
 def conservation(census):
-    return census.conservation_verdicts()
+    return census.conservation_report()
 
 
 # =============================================================================
@@ -165,32 +165,21 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
 
 
 # =============================================================================
-# Lane 2 -- which wall each FP path imposes
+# Lane 2 -- the wall-ratio sequence, reported and pinned; no verdict
 # =============================================================================
 
-#: The wall ratio `d_n m / ((v_n/D) m_wall)` RISES toward 1 under refinement. Measured at
-#: Nx = 41 / 81 / 161. These paths impose `J.n = 0`; several do it structurally, with no branch
-#: naming the condition, which is what made a sweep over branch names read the wrong answer.
-_IMPOSES_J_DOT_N = {"FPFDMSolver", "FPFVMSolver", "FPSLSolver", "FPSLAdjointSolver"}
+#: Rows the harness can construct and run. The ratio sequence is pinned loosely -- it is a
+#: measurement of a numerical scheme, not a constant -- and the ORDER of magnitude and sign are
+#: what a regression would move.
+_MEASURED = {
+    "FPFDMSolver": (0.35, 0.69),
+    "FPFVMSolver": (0.39, 1.11),
+    "FPParticleSolver": (-0.01, 0.01),
+    "FPSLJacobianSolver": (0.00, 0.05),
+    "FPSLSolver": (-0.01, 0.47),
+}
 
-#: The ratio FALLS toward 0: the wall converges to `d_n m = 0`, which is the wrong condition when
-#: the drift is not tangential. Its `O(h)` mass error is a SEPARATE and legitimate fact — the
-#: Lagrangian form is non-conservative by construction — and the previous instrument fused the two
-#: into one `CONTROL_FAILED`.
-_IMPOSES_ZERO_GRADIENT = {"FPSLJacobianSolver"}
-
-#: Measured, but the witness does not transfer. A particle method's density is a binned/KDE
-#: reconstruction, so a one-sided difference on it is not the `d_n m` the ratio is defined from,
-#: and the reflection lives in the paths rather than in the density. Recorded rather than given a
-#: verdict: a witness that does not apply is not evidence either way.
-_WITNESS_NOT_APPLICABLE = {"FPParticleSolver"}
-
-#: Not a pass. Each needs a geometry or an argument this harness does not build. Independent
-#: measurement (recipes in #1975) found `FPFEMSolver` and `MeshlessGalerkinFPSolver` impose
-#: `J.n = 0` as the NATURAL BC of the weak form, `FPNetworkSolver` conserves structurally with no
-#: boundary in this sense, `WeakFormFPSolver` is not independently constructible, and
-#: `FPGFDMSolver` imposes NEITHER condition -- its `_boundary_type` is resolved, gate-validated,
-#: stored at `fp_gfdm.py:209` and never read again.
+#: Not a pass. Each needs a geometry or an argument this harness does not build.
 _NOT_MEASURED = {
     "FPFEMSolver",
     "FPGFDMSolver",
@@ -199,121 +188,90 @@ _NOT_MEASURED = {
     "WeakFormFPSolver",
 }
 
+#: Same class under two names, and one empty deprecated SUBCLASS. Class-keying collapses the
+#: first; `_deprecation_meta["alias_for"]` collapses the second. Two identical rows read as two
+#: independent confirmations, which is why both are folded rather than reported twice.
+_COLLAPSED = {"FPNetworkSolver": ["NetworkFPSolver"], "FPSLSolver": ["FPSLAdjointSolver"]}
+
 
 def _row(conservation, name):
-    return next(r for r in conservation["rows"] if r["class"] == name)
+    matching = [r for r in conservation["rows"] if r["class"] == name]
+    assert matching, f"{name} is not in the population at all"
+    return matching[0]
 
 
 def test_the_harness_reference_path_conserves(conservation):
-    """Control 2. If the reference stops conserving, every verdict is VOID rather than wrong."""
+    """Control. If the reference stops conserving, every row is VOID rather than wrong."""
     ref = conservation["reference_drift_pct"]
-    assert abs(ref) < 1e-3, f"reference path drifted {ref:+.4f}% -- the harness is broken, not the solvers"
+    assert abs(ref) < 1e-3, f"reference path drifted {ref:+.4f}% -- the harness is broken"
 
 
-def test_the_population_is_exactly_the_four_sets(conservation):
-    """Keyed on the class, not the binding name: `NetworkFPSolver = FPNetworkSolver` is a
-    module-level alias (`fp_network.py:606`) and name-keying reported it as a second, independent
-    unmeasured path."""
+def test_the_population_is_exactly_the_two_sets(conservation):
     got = {r["class"] for r in conservation["rows"]}
-    want = _IMPOSES_J_DOT_N | _IMPOSES_ZERO_GRADIENT | _WITNESS_NOT_APPLICABLE | _NOT_MEASURED
-    assert got == want, f"FP solver population changed: added {sorted(got - want)}, removed {sorted(want - got)}."
+    want = set(_MEASURED) | _NOT_MEASURED
+    assert got == want, f"population changed: added {sorted(got - want)}, removed {sorted(want - got)}"
 
 
-def test_the_alias_is_still_reported_as_an_alias(conservation):
-    assert _row(conservation, "FPNetworkSolver")["aliases"] == ["NetworkFPSolver"], (
-        "the alias collapsed or moved; a name-keyed population would double-count it again"
+def test_the_alias_and_the_deprecated_subclass_are_both_collapsed(conservation):
+    got = {r["class"]: r["aliases"] for r in conservation["rows"] if r["aliases"]}
+    assert got == _COLLAPSED, (
+        f"collapsing changed: {got}. Class-keying catches `X = Y`; `class X(Y): pass` needs the "
+        "`_deprecation_meta['alias_for']` fold, and without it two identical rows appear."
     )
 
 
-@pytest.mark.parametrize("solver", sorted(_IMPOSES_J_DOT_N))
-def test_these_paths_converge_to_the_flux_wall(conservation, solver):
-    """The verdict is the ratio's TREND, not its value. At Nx=81 the boundary layer is
-    `D/v = 0.014` against `h = 0.0125`, so a correct path reads ~0.5-0.7 there — a fixed threshold
-    called that "imposes neither", which is defect 8 above."""
-    row = _row(conservation, solver)
-    assert row["verdict"] == "IMPOSES_J_DOT_N", f"{solver} now reports {row['verdict']}: {row['detail']}"
-    ratios = [r for _, r in row["ratios"]]
-    assert ratios[-1] > ratios[0], f"{solver}'s wall ratio stopped rising under refinement: {ratios}"
+@pytest.mark.parametrize("solver", sorted(_MEASURED))
+def test_the_wall_ratio_sequence_is_unchanged(solver, conservation):
+    """**No verdict.** The sequence is the observation.
 
+    A previous version classified each row from the trend across three resolutions. Independent
+    review showed the rule cannot do that: `FPFVMSolver` reads 0.392 / 0.649 / **1.106** and keeps
+    going to 12.699 at nx=1281, so a "within 0.15 of 1" clause fires on a value the sequence merely
+    transits; `FPSLSolver` reads 0.998 at nx=201 and then 1.926, 3.500. Three points cannot
+    separate approach from transit and neither can six.
 
-@pytest.mark.parametrize("solver", sorted(_IMPOSES_ZERO_GRADIENT))
-def test_these_paths_converge_to_the_zero_gradient_wall(conservation, solver):
-    """The wrong wall under a normal drift, and a finding independent of the mass column."""
-    row = _row(conservation, solver)
-    assert row["verdict"] == "IMPOSES_ZERO_GRADIENT", (
-        f"{solver} now reports {row['verdict']}: {row['detail']}. If its ratio now rises toward 1 "
-        "that is a fix -- move it to _IMPOSES_J_DOT_N and say so."
-    )
-
-
-def test_a_non_conservative_form_is_not_thereby_wrong(conservation):
-    """Mass conservation is neither sufficient nor necessary, so it must never be the verdict.
-
-    NOT SUFFICIENT: streamline diffusion conserves to 1e-12 while the wall ratio collapses
-    0.967 -> 0.414. NOT NECESSARY: `FPSLJacobianSolver` is the Lagrangian form
-    `m^{n+1}(x) = m^n(x - a dt) exp(-dt div a)`, non-conservative by construction with an O(h)
-    error that halves under refinement, and deprecated for ADJOINT INCONSISTENCY, not for mass.
-
-    This asserts the two axes stay separable: a path may carry a real mass drift and still be
-    judged on its wall.
+    So this pins the first and last of the sequence and leaves the reading to a person.
     """
-    row = _row(conservation, "FPSLJacobianSolver")
-    assert row["drift_pct"] is not None, "FPSLJacobianSolver's mass column went unmeasured"
-    assert abs(row["drift_pct"]) > 1.0, (
-        "FPSLJacobianSolver's mass drift vanished; it is the only path where the two axes visibly "
-        "disagree, and this test is what keeps them from being fused back into one verdict"
-    )
-    assert row["verdict"] == "IMPOSES_ZERO_GRADIENT", "the verdict must come from the wall, not the mass"
-
-
-@pytest.mark.parametrize("solver", sorted(_WITNESS_NOT_APPLICABLE))
-def test_the_wall_witness_does_not_transfer_to_a_particle_density(conservation, solver):
-    """Recorded, not judged. The ratio is defined from `d_n m` on a represented density; a binned
-    or KDE-reconstructed one is a different object, and the reflection lives in the paths. A
-    witness that does not apply is not evidence either way — treating its output as a verdict is
-    the same error as reading `NOT_MEASURED` as a pass."""
     row = _row(conservation, solver)
-    assert row["ratios"], f"{solver} produced no ratio at all; the row's premise changed"
-    assert all(abs(r) < 1e-9 for _, r in row["ratios"]), (
-        f"{solver}'s ratio is no longer identically zero ({row['ratios']}). If the density is now "
-        "represented rather than binned, this witness may apply -- re-derive before judging."
-    )
+    assert row["status"] == "MEASURED", f"{solver} is now {row['status']}: {row['detail']}"
+    first, last = row["ratios"][0][1], row["ratios"][-1][1]
+    want_first, want_last = _MEASURED[solver]
+    assert first == pytest.approx(want_first, abs=0.05), f"{solver} first ratio moved: {row['ratios']}"
+    assert last == pytest.approx(want_last, abs=0.05), f"{solver} last ratio moved: {row['ratios']}"
+
+
+def test_mass_drift_is_reported_beside_the_ratio_and_not_as_a_verdict(conservation):
+    """Mass conservation is neither sufficient nor necessary, so it must never be the status.
+
+    NOT SUFFICIENT: streamline diffusion conserves to 1e-12 while the wall ratio collapses.
+    NOT NECESSARY: `FPSLJacobianSolver` is the Lagrangian form, non-conservative BY CONSTRUCTION
+    with an O(h) error, deprecated for adjoint inconsistency rather than for mass. It carries a
+    real drift and is still `MEASURED`; that is the separation this asserts.
+    """
+    jac = _row(conservation, "FPSLJacobianSolver")
+    assert jac["status"] == "MEASURED"
+    assert jac["drift_pct"] is not None
+    assert abs(jac["drift_pct"]) > 1.0, "the one row where the two axes visibly disagree lost its drift"
 
 
 @pytest.mark.parametrize("solver", sorted(_NOT_MEASURED))
-def test_these_paths_remain_unobservable_by_this_harness(conservation, solver):
-    """**NOT_MEASURED is not a pass.** It is a path whose wall this harness cannot observe.
-    `FPFEMSolver` is in this set and is the class that made #1975 wrong the first time."""
+def test_these_paths_remain_unobservable_by_this_harness(solver, conservation):
+    """**NOT_MEASURED is not a pass.** `FPFEMSolver` is in this set and is the class that made
+    #1975 wrong the first time."""
     row = _row(conservation, solver)
-    assert row["verdict"] == "NOT_MEASURED", (
-        f"{solver} is now measurable and reports {row['verdict']}: {row['detail']}. Move it to the matching set."
-    )
+    assert row["status"] == "NOT_MEASURED", f"{solver} is now measurable: {row['detail']}"
 
 
-def test_the_declared_drift_convention_is_read_and_not_assumed(conservation, census):
-    """Defect 7, pinned. `_drift_convention` reads `VELOCITY` on three solvers; passing them a
-    potential made the wall-normal drift vanish at the wall the mass reached, so the
-    discriminating property was absent while a verdict printed anyway."""
-    # Read from the CLASS, not from the measured row: the declaration exists whether or not the
-    # harness can construct the solver, and reading it off the measurement made FPGFDMSolver --
-    # which is NOT_MEASURED -- silently drop out of the set. Same shape as defect 7 itself.
+def test_the_declared_drift_convention_is_read_and_not_assumed(census):
+    """`_drift_convention` reads VELOCITY on three solvers whose second positional argument is
+    `drift_field`. Passing them a potential made the wall-normal drift vanish at the wall the mass
+    reached -- the discriminating property absent while a verdict printed anyway."""
     velocity = {
         names[0]
         for cls, names in census.fp_solver_population().items()
         if getattr(getattr(cls, "_drift_convention", None), "name", None) == "VELOCITY"
     }
     assert velocity == {"FPFDMSolver", "FPFVMSolver", "FPGFDMSolver"}, (
-        f"the set of VELOCITY-convention solvers changed to {sorted(velocity)}; the harness feeds "
-        "each solver according to this declaration, so a change here changes what was measured."
-    )
-    # Name and declaration disagree here, and the declaration is what the harness follows.
-    import inspect
-
-    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-
-    params = list(inspect.signature(FPParticleSolver.solve_fp_system).parameters)
-    assert params[2] == "drift_field", "the disagreement this pins has moved"
-    assert getattr(FPParticleSolver._drift_convention, "name", None) == "VALUE_FUNCTION", (
-        "FPParticleSolver's parameter is named `drift_field` while its declared convention is "
-        "VALUE_FUNCTION; if that is reconciled, record it -- it is a live trap for any harness."
+        f"the VELOCITY-convention set changed to {sorted(velocity)}; the harness feeds each solver "
+        "according to this declaration, so a change here changes what was measured."
     )

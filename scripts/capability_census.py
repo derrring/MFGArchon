@@ -234,6 +234,20 @@ def fp_solver_population() -> dict[type, list[str]]:
                 found.setdefault(cls, [])
                 if name not in found[cls]:
                     found[cls].append(name)
+
+    # Class-keying collapses `X = Y`. It does NOT collapse `class X(Y): pass`, and
+    # `FPSLAdjointSolver(FPSLSolver)` is exactly that -- an empty deprecated subclass that says so
+    # in machine-readable form. Left as its own row would give two identical rows that read as two
+    # independent confirmations.
+    for cls in list(found):
+        meta = getattr(cls, "_deprecation_meta", None)
+        target = meta.get("alias_for") if isinstance(meta, dict) else None
+        if not target:
+            continue
+        for other, names in found.items():
+            if other is not cls and target in names:
+                found[other].extend(n for n in found.pop(cls) if n not in found[other])
+                break
     return found
 
 
@@ -405,7 +419,11 @@ def _one_run(cls, drift: float, nx: int = NX) -> dict[str, Any]:
     # FALSE POSITIVE there -- it fired on `FPParticleSolver` on this function's first run. Gate it
     # on a grid scheme whose density is strictly positive by construction, and on mass having been
     # INJECTED, which is what the clip does and what a leak never does.
-    out["clipped"] = bool(np.any(m == 0.0)) and "Particle" not in cls.__name__
+    # An exact 0.0 is the only tell the clip leaves, since it zeroes negatives in place. The
+    # exemption is a declared flag, not a substring of the class name -- a name carries no
+    # capability, which is this script's own lane-1 thesis.
+    smooths = bool(getattr(solver, "kde_boundary_smoothing", False))
+    out["clipped"] = bool(np.any(m == 0.0)) and not smooths
     out["ratio"], out["wall"] = _wall_ratio(m, x, drift)
 
     if weights is None:
@@ -417,14 +435,29 @@ def _one_run(cls, drift: float, nx: int = NX) -> dict[str, Any]:
     return out
 
 
-def conservation_verdicts() -> dict[str, Any]:
-    """One row per implementation, verdict from the wall ratio's TREND across resolutions.
+def conservation_report() -> dict[str, Any]:
+    """One row per implementation: the wall-ratio SEQUENCE, the mass drift, and the status.
 
-    A single resolution cannot decide this. At NX=81 the boundary layer is D/v = 0.014 against
-    h = 0.0125, so a path that correctly imposes J.n = 0 reads a ratio near 0.6 -- and a
-    fixed threshold called that "imposes neither". Measured on a known-good path, the ratio
-    climbs 0.4592 / 0.6438 / 0.7933 / 0.8898 / 0.9437 at Nx = 41 / 81 / 161 / 321 / 641.
-    So: sweep, and read the trend.
+    **This function renders no verdict, and that is deliberate.** A previous version classified
+    each row as IMPOSES_J_DOT_N / IMPOSES_ZERO_GRADIENT / IMPOSES_NEITHER from the ratio's trend
+    across three resolutions. Independent review showed the rule cannot do that:
+
+        solver        41     81    161    321    641   1281
+        FPFDMSolver  0.346  0.519  0.685  0.814  0.898  0.946     converging
+        FPFVMSolver  0.392  0.649  1.106  2.203  5.216 12.699     DIVERGING
+        FPSLSolver  -0.007  0.041  0.465  ... 0.998 (201) ... 1.926, 3.500
+
+    The `abs(finest - 1) <= tol` clause fired for FVM on 1.106 -- a value the sequence merely
+    passes through on the way up -- and the `rising` clause is satisfied by unbounded growth. Three
+    points cannot separate approach from transit, and neither can six: FPSLSolver reads 0.998 at
+    nx = 201 and keeps doubling. So the sequence is reported and the reading is left to whoever
+    reads it.
+
+    What IS asserted here is only what this function computes: whether the solver constructs,
+    whether the clip fired, the mass drift under its own conserved functional, and the ratio at
+    each resolution. Every interpretive figure that used to live in this docstring came from
+    measurements taken elsewhere and is gone -- one of them, a calibration series quoted as this
+    harness's own, did not reproduce (0.4592/0.6438/0.7933 stated; 0.3464/0.5191/0.6855 measured).
     """
     rows = []
     for cls, names in fp_solver_population().items():
@@ -432,49 +465,30 @@ def conservation_verdicts() -> dict[str, Any]:
         sweep = [(nx, _one_run(cls, DRIFT, nx)) for nx in RESOLUTIONS]
         run = dict(sweep[-1][1])
         ratios = [(nx, r["ratio"]) for nx, r in sweep if r["ratio"] is not None]
-        row = {
-            "class": names[0],
-            "aliases": names[1:],
-            "convention": run.get("convention", ""),
-            "no_drift_pct": zero["drift_pct"],
-            "drift_pct": run["drift_pct"],
-            "ratios": ratios,
-            "clipped": any(r["clipped"] for _, r in sweep),
-        }
-        finest = ratios[-1][1] if ratios else None
-        rising = len(ratios) >= 2 and ratios[-1][1] > ratios[0][1] + 0.05
 
         if zero["status"] != "ok" or run["status"] in {"harness_fail", "construct_fail", "solve_fail"}:
-            row["verdict"], row["detail"] = "NOT_MEASURED", zero["detail"] or run["detail"]
-        elif row["clipped"]:
-            row["verdict"] = "VOID_CLIPPED"
-            row["detail"] = "the positivity clip fired -- a stability failure, not a wall; no column is readable"
-        elif finest is None:
-            row["verdict"], row["detail"] = "NOT_MEASURED", run["detail"] or "no wall ratio"
-        elif abs(finest - 1.0) <= RATIO_TOL or rising:
-            row["verdict"] = "IMPOSES_J_DOT_N"
-            row["detail"] = (
-                "ratio "
-                + " -> ".join(f"{r:.3f}" for _, r in ratios)
-                + f" at {run.get('wall')}; converging to 1. Mass drift "
-                + f"{run['drift_pct']:+.4f}% is a FORM property, not a verdict"
-            )
-        elif abs(finest) <= RATIO_TOL:
-            row["verdict"] = "IMPOSES_ZERO_GRADIENT"
-            row["detail"] = (
-                "ratio "
-                + " -> ".join(f"{r:.3f}" for _, r in ratios)
-                + f" at {run.get('wall')}; flat near 0 -- d_n m = 0, the wrong wall"
-            )
+            status, detail = "NOT_MEASURED", (zero["detail"] or run["detail"])
+        elif any(r["clipped"] for _, r in sweep):
+            status = "VOID_CLIPPED"
+            detail = "the positivity clip fired -- a stability failure, not a wall; no column is readable"
         else:
-            row["verdict"] = "IMPOSES_NEITHER"
-            row["detail"] = (
-                "ratio "
-                + " -> ".join(f"{r:.3f}" for _, r in ratios)
-                + f" at {run.get('wall')}; near neither 1 nor 0 and not rising"
-            )
-        rows.append(row)
-    rows.sort(key=lambda r: (r["verdict"], r["class"]))
+            status = "MEASURED"
+            detail = "ratio " + " -> ".join(f"{r:.3f}" for _, r in ratios) + f" at {run.get('wall')}"
+
+        rows.append(
+            {
+                "class": names[0],
+                "aliases": names[1:],
+                "convention": run.get("convention", ""),
+                "no_drift_pct": zero["drift_pct"],
+                "drift_pct": run["drift_pct"],
+                "ratios": ratios,
+                "clipped": any(r["clipped"] for _, r in sweep),
+                "status": status,
+                "detail": detail,
+            }
+        )
+    rows.sort(key=lambda r: (r["status"], r["class"]))
     return {"reference_drift_pct": reference_drift_pct(), "rows": rows}
 
 
@@ -525,21 +539,22 @@ def _print_conservation(result: dict[str, Any]) -> int:
     if not ok:
         print("  the reference is supposed to conserve exactly; every row below is VOID, not wrong")
 
-    print(f"\n{'class':30s} {'wall ratio':>11s} {'mass @h':>11s} {'convention':14s} verdict")
+    print(f"\n{'class':30s} {'wall ratio':>11s} {'mass @h':>11s} {'convention':14s} status")
     for r in result["rows"]:
         ratio = f"{r['ratios'][-1][1]:11.3f}" if r.get("ratios") else f"{'--':>11s}"
         mass = f"{r['drift_pct']:+10.4f}%" if r["drift_pct"] is not None else f"{'--':>11s}"
         alias = f" (={', '.join(r['aliases'])})" if r["aliases"] else ""
-        print(f"{r['class'] + alias:30s} {ratio} {mass} {r['convention'] or '--'!s:14s} {r['verdict']}")
+        print(f"{r['class'] + alias:30s} {ratio} {mass} {r['convention'] or '--'!s:14s} {r['status']}")
         print(f"{'':30s} {r['detail']}")
 
     counts: dict[str, int] = {}
     for r in result["rows"]:
-        counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
     print("\n=== " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) + " ===")
-    print("The WALL RATIO column is the verdict. Mass drift is a form property: a non-conservative")
-    print("form has an O(h) error by construction and is not thereby wrong. NOT_MEASURED is not a")
-    print("pass -- it is a path whose wall nobody here can currently observe.")
+    print("No verdict is rendered. The ratio sequence is the observation; three resolutions cannot")
+    print("separate converging-to-1 from transiting-1 (FPFVMSolver reaches 12.7 at nx=1281), and")
+    print("mass drift is a FORM property -- a non-conservative form has an O(h) error by")
+    print("construction. NOT_MEASURED is not a pass: it is a path nobody here can observe.")
     return 0
 
 
@@ -559,7 +574,7 @@ def main() -> int:
     if args.lane in ("conservation", "both"):
         if out:
             print()
-        out["conservation"] = conservation_verdicts()
+        out["conservation"] = conservation_report()
         _print_conservation(out["conservation"])
 
     if args.json:
