@@ -805,7 +805,9 @@ class FPFDMSolver(BaseFPSolver):
               an inhomogeneous Neumann (#1686). `_BOUNDARY_HANDLERS` is keyed on the
               advection scheme and all four entries are `add_boundary_no_flux_entries_*`,
               so a ROBIN segment assembles byte-identically to no-flux -- measured at
-              alpha=3.2 and alpha=999, max|difference| = 0. `_SUPPORTED_BC_TYPES` refuses
+              alpha=3.2 and alpha=999, max|difference| = 0 -- reachable only BELOW the
+              `_validate_bc_support` gate, which refuses every ROBIN segment at construction.
+              `_SUPPORTED_BC_TYPES` refuses
               ROBIN for that reason and the refusal is load-bearing. A *general* Robin wall
               needs `FPFEMSolver`, which assembles it in weak form and reads the coefficients.
               The **reflecting** wall is a different matter and does not need a ROBIN segment

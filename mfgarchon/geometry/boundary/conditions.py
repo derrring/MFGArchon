@@ -1144,11 +1144,14 @@ def robin_bc(
       fail loud in the row builder.
     - **Every grid FP solver refuses it**, and the refusal is load-bearing rather than an
       oversight: the FDM boundary handlers are not passed ``boundary_conditions`` at all, so they
-      read none of ``alpha``/``beta``/``value``. **A uniform ROBIN is refused loudly** -- twice,
-      by the #1250 assembly guard and by ``LaplacianOperator`` (#1071). The silent hole is a ROBIN
-      **segment inside a mixed BC**, which routes to the no-flux handler and is byte-identical to
-      it (alpha=3.2 and alpha=999, 768 configurations). A provider-valued coefficient there is
-      worse still -- silently accepted (#1979).
+      read none of ``alpha``/``beta``/``value``. **Every ROBIN configuration is refused at
+      construction**: ``_validate_bc_support`` (#1456) iterates every segment, so uniform and
+      mixed alike raise from ``base_solver.py:324``; a uniform one is refused twice more (#1250,
+      #1071). The silent no-flux assembly is reachable only BELOW that gate -- calling
+      ``solve_timestep_full_nd`` directly, or mutating ``solver.boundary_conditions`` after
+      construction (the #1699 bypass class). There it is byte-identical to no-flux across
+      4 schemes x alpha in {3.2, 999, -7} x beta in {1, 2} x g in {0, 5}, and a provider-valued
+      coefficient is accepted without a word (#1979).
 
     **You probably do not need this for a reflecting wall.** The FP reflecting condition
     ``J.n = 0`` is Robin in ``m`` with ``alpha = D_pH(x, grad u) . n``, but the conservative
@@ -1156,8 +1159,10 @@ def robin_bc(
     BC-type branch naming it. Measured, sigma=0.3 with a wall-normal drift of 3.2:
     ``divergence_upwind`` (the default) and ``divergence_centered`` conserve mass to machine
     precision with ``d_n m`` nonzero at the wall and converging to ``(v/D)*m`` at first order,
-    while the ``gradient_*`` family imposes ``d_n m = 0`` and loses 75-78% of the mass
-    (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
+    while the ``gradient_*`` family imposes ``d_n m = 0`` -- exactly, at every T and every Nx
+    measured -- and therefore loses essentially all the mass: -78% at T = 0.20, -98.98% at 0.30,
+    -99.996% by 0.50 (sigma=0.3, Nx=81). The percentage is a function of T and is quoted with one;
+    the ``d_n m = 0`` mechanism behind it is not (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
     reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and adding a
     Robin segment on top of it **destroys** that wall rather than restating it. The weak form's
     natural BC is already ``J.n = 0``, so ``A_robin`` adds a residual outflux on top of it:
@@ -1165,10 +1170,18 @@ def robin_bc(
         J.n = D*(alpha/beta)*m          i.e.   D d_n m = (v_n - D*alpha/beta) * m
 
     ~~the implied wall becomes ``D d_n m = 2 v_n m``~~ [CORRECTED] -- that is one row of the law,
-    not the law. `A_robin`'s boundary column sums are exactly ``D*alpha`` (measured 0.144 / 1.6 /
-    3.2 at D = 0.045 / 0.125 / 1.0), so the perturbation scales with ``D``, not with ``v_n``. The
-    operational test: if the wall were ``2 v_n m`` then ``alpha = v_n/2`` would restore
-    ``J.n = 0``; it does not (-50.08% mass), and only dropping the segment does (+5e-11%).
+    and not the row it was attributed to: at ``D*alpha/beta = v_n`` the law gives ``d_n m = 0``,
+    while the row that DOUBLES is ``D*alpha/beta = -v_n``, an influx.
+
+    ``A_robin``'s boundary column sums are exactly ``D*alpha/beta``. Measured at beta = 1:
+    0.1440 / 0.4000 / 1.6000 / 3.2000 for D = 0.045 / 0.125 / 0.5 / 1.0; and 0.0360 at
+    (D, alpha, beta) = (0.045, 3.2, 4), where ``D*alpha`` would be 0.1440. So the perturbation
+    scales with ``D`` and inversely with ``beta``, never with ``v_n``.
+
+    **The trap.** The reflecting condition's own coefficients are ``(alpha, beta) = (v_n, D)``,
+    giving ``D*alpha/beta = v_n`` and therefore ``d_n m = 0`` -- the non-conservative wall.
+    Encoding the first sentence of this paragraph as a ``robin_bc`` lands on exactly the wall the
+    paragraph warns against.
 
     Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one: ``alpha != v_n``,
     or an inhomogeneous ``g``. See #1975.
