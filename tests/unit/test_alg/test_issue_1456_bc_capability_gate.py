@@ -27,7 +27,16 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc, robin_bc, uniform_bc
+from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BoundaryConditions,
+    dirichlet_bc,
+    neumann_bc,
+    no_flux_bc,
+    periodic_bc,
+    robin_bc,
+    uniform_bc,
+)
 from mfgarchon.geometry.boundary.types import BCType
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -85,6 +94,27 @@ def test_fp_gfdm_fails_loud_on_periodic():
     """
     with pytest.raises(NotImplementedError, match="does not support"):
         FPGFDMSolver(_problem(periodic_bc(dimension=1)), collocation_points=_pts(), delta=0.25)
+
+
+def test_fp_gfdm_fails_loud_on_a_segments_only_bc_with_no_default():
+    """A construction-time refusal on the same path as the gate above, from a different mechanism.
+
+    `_resolve_default_bc` (#1100) raises when a `BoundaryConditions` carries segments but no
+    default and a point matches none of them. On this path it is reached only through
+    `FPGFDMSolver._resolve_boundary_type`, whose return value is discarded -- so the call looks
+    dead and is not. Measured 2026-08-17: stubbing it out left 755 gfdm/boundary tests green.
+
+    `_validate_bc_support` does NOT cover this: it never calls `_resolve_default_bc`.
+    """
+    segments_only = BoundaryConditions(
+        segments=[
+            BCSegment(name="lo", bc_type=BCType.NO_FLUX, boundary="x_min"),
+            BCSegment(name="hi", bc_type=BCType.NO_FLUX, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    with pytest.raises(ValueError, match="default_bc was not"):
+        FPGFDMSolver(_problem(segments_only), collocation_points=_pts(), delta=0.25)
 
 
 @pytest.mark.parametrize("bc_factory", [no_flux_bc, dirichlet_bc, periodic_bc, robin_bc])
