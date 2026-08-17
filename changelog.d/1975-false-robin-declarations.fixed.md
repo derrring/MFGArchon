@@ -12,11 +12,16 @@ need a ROBIN segment for a reflecting wall.** The conservative schemes -- `diver
 default) and `divergence_centered` -- impose `J.n = 0` structurally by zeroing the total face flux,
 conserving mass to machine precision at a wall with wall-normal drift. The `gradient_*` family
 imposes `d_n m = 0` exactly, at every T and Nx measured, and therefore loses essentially all the
-mass: -78.05% at T = 0.20, -98.98% at 0.30, -99.996% by 0.50 (sigma = 0.3, Nx = 81, drift 3.2).
-The percentage is a function of T and is now quoted with one; the mechanism behind it is not.
+mass: about -78% at T = 0.20, -99% at 0.30, -99.99% by 0.50 (sigma = 0.3, 81 points on [0,1],
+dt = 1e-3, Gaussian initial density centred at 0.5, drift 3.2). The percentage is a function of T
+and of the initial condition, so it is quoted to the precision the stated configuration supports;
+the `d_n m = 0` mechanism behind it is not T-dependent.
 
 Adding a Robin segment on top of the conservative wall **destroys** it rather than restating it:
 `A_robin` contributes a residual outflux `J.n = D*(alpha/beta)*m`, so the implied wall is
-`D d_n m = (v_n - D*alpha/beta) m`. The reflecting condition's own coefficients
-`(alpha, beta) = (v_n, D)` give `D*alpha/beta = v_n` and hence `d_n m = 0` -- the non-conservative
-wall -- so encoding the condition as a `robin_bc` lands on exactly what it warns against. (#1975)
+`D d_n m = (v_n - D*alpha/beta) m`. The reflecting condition's own coefficients are
+`(alpha, beta) = (D_pH.n, D)`, and since this library's FP velocity is `v = -D_pH`, that is
+`alpha = -v_n` -- verified by residual on the structurally reflecting solution rather than by
+substitution. So `D*alpha/beta = -v_n`, the row that DOUBLES: encoding the reflecting condition as
+a Robin segment on a wall that already imposes it is unbounded (+1.7e31% measured), not merely
+leaky. (#1975)

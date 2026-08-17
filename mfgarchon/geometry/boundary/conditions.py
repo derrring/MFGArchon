@@ -1159,9 +1159,13 @@ def robin_bc(
     BC-type branch naming it. Measured, sigma=0.3 with a wall-normal drift of 3.2:
     ``divergence_upwind`` (the default) and ``divergence_centered`` conserve mass to machine
     precision with ``d_n m`` nonzero at the wall and converging to ``(v/D)*m`` at first order,
-    while the ``gradient_*`` family imposes ``d_n m = 0`` -- exactly, at every T and every Nx
-    measured -- and therefore loses essentially all the mass: -78% at T = 0.20, -98.98% at 0.30,
-    -99.996% by 0.50 (sigma=0.3, Nx=81). The percentage is a function of T and is quoted with one;
+    while the ``gradient_*`` family hard-codes the mirrored ghost
+    ``m_{N+1} = m_{N-1}`` (fp_fdm_alg_gradient_upwind.py:319), so its CENTERED wall derivative is
+    zero by construction rather than by convergence -- the one-sided estimate used for the
+    conservative row above is not zero there -- and therefore loses essentially all the mass: about -78% at T = 0.20, -99% at 0.30,
+    -99.99% by 0.50 (sigma=0.3, 81 points on [0,1], dt=1e-3, Gaussian initial density at 0.5).
+    Quoted to the precision that configuration supports -- the trio moves with the initial
+    condition and the step, which four significant figures would imply it does not. The percentage is a function of T and is quoted with one;
     the ``d_n m = 0`` mechanism behind it is not (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
     reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and adding a
     Robin segment on top of it **destroys** that wall rather than restating it. The weak form's
@@ -1178,13 +1182,30 @@ def robin_bc(
     (D, alpha, beta) = (0.045, 3.2, 4), where ``D*alpha`` would be 0.1440. So the perturbation
     scales with ``D`` and inversely with ``beta``, never with ``v_n``.
 
-    **The trap.** The reflecting condition's own coefficients are ``(alpha, beta) = (v_n, D)``,
-    giving ``D*alpha/beta = v_n`` and therefore ``d_n m = 0`` -- the non-conservative wall.
-    Encoding the first sentence of this paragraph as a ``robin_bc`` lands on exactly the wall the
-    paragraph warns against.
+    **The trap.** The reflecting condition's own coefficients are
+    ``(alpha, beta) = (D_pH(x, grad u).n, D)``, and in this library the FP transport velocity is
+    ``v = -D_pH`` (``H.optimal_control`` returns ``-D_pH``; ``fp_fdm_advection`` transports with
+    it), so ``alpha = -v_n``, NOT ``+v_n``. Verified by residual rather than by substitution:
+    evaluating ``alpha*m + beta*d_n m`` on the structurally reflecting solution, normalised by
+    ``|alpha|*m`` at ``x_max``, ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045``, 200 steps:
 
-    Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one: ``alpha != v_n``,
-    or an inhomogeneous ``g``. See #1975.
+        Nx      d_n m / m     (+v_n, D)     (-v_n, D)
+        161        56.41        1.7933       -0.2067
+        321        63.27        1.8898       -0.1102
+        641        67.10        1.9437       -0.0563
+       1281        69.10        1.9716       -0.0284
+
+    ``(-v_n, D)`` goes to zero at first order; ``(+v_n, D)`` goes to 2, i.e. off by ``2*alpha*m``.
+
+    So ``D*alpha/beta = -v_n``, which by the law above is the row that DOUBLES -- an influx, and
+    the wall that diverges. Measured on ``FPFEMSolver``: no segment conserves to +0.0000%;
+    ``robin_bc(alpha=+v_n, beta=D)`` loses 48%; ``robin_bc(alpha=-v_n, beta=D)`` -- the correct
+    encoding of the reflecting condition -- blows up to +1.7e31%. **Encoding the reflecting
+    condition as a Robin segment on top of a wall that already imposes it is unbounded, not
+    merely leaky.**
+
+    Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one:
+    ``alpha != D_pH.n`` (i.e. ``alpha != -v_n``), or an inhomogeneous ``g``. See #1975.
 
     Args:
         value: RHS value g in alpha*u + beta*du/dn = g
