@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
+from mfgarchon.geometry.boundary import BCType
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
 
@@ -49,6 +50,14 @@ class FPFEMSolver(WeakFormFPSolver):
 
     _scheme_family = SchemeFamily.FEM
 
+    #: What `fem/bc_adapter.py:apply_bc_to_fem_system` actually branches on: DIRICHLET condenses,
+    #: NEUMANN/NO_FLUX/REFLECTING are the natural BC, ROBIN augments the operator. PERIODIC and the
+    #: EXTRAPOLATION_* pair fall to explicit `NotImplementedError`s there. Declaring the set moves
+    #: that refusal from assembly time to construction, which is what the #1456 gate is for (#1977).
+    _SUPPORTED_BC_TYPES: frozenset = frozenset(
+        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
+    )
+
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
         # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
         # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
@@ -66,6 +75,11 @@ class FPFEMSolver(WeakFormFPSolver):
 
         self._basis = create_basis(self._skfem_mesh, order=order)
         super().__init__(problem, FEMDiscretization(self._basis))
+        # Issue #1456 / #1977: the declaration above is inert unless the gate is CALLED. Measured
+        # 2026-08-17: with `_SUPPORTED_BC_TYPES` declared and no call, PERIODIC and
+        # EXTRAPOLATION_LINEAR both constructed. The FEM path had zero of the 14 call sites, so its
+        # refusal only fired later, inside `apply_bc_to_fem_system`, mid-assembly.
+        self._validate_bc_support(self.get_boundary_conditions())
         self.order = order
         logger.info(f"FPFEMSolver initialized: {self._n_dof} DOFs, {self._skfem_mesh.t.shape[1]} elements")
 

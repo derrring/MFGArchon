@@ -45,10 +45,8 @@ def declarations(census):
 
 _DECLARES_NOTHING = {
     "solver": {
-        "FPFEMSolver",
         "FPNetworkSolver",
         "FPSLAdjointSolver",
-        "HJBFEMSolver",
         "MeshlessGalerkinFPSolver",
         "MeshlessGalerkinHJBSolver",
         "NetworkHJBSolver",
@@ -65,7 +63,9 @@ _DECLARES_NOTHING = {
     # giving them a real `_SUPPORTED_BC_TYPES`. Leaving the set is the #1977 progress this ratchet
     # exists to record; `GraphApplicator` has not moved.
     "applicator": {"GraphApplicator"},
-    "backend": {"JAXBackend", "NumPyBackend", "NumbaBackend", "TorchBackend"},
+    # NumbaBackend removed 2026-08-17: 410 lines, zero `@njit`, returning `np.array`/`np.zeros`
+    # like the numpy backend. A compiled-kernel tool wearing a backend's interface.
+    "backend": {"JAXBackend", "NumPyBackend", "TorchBackend"},
     "geometry": {
         "ComplementDomain",
         "CustomNetwork",

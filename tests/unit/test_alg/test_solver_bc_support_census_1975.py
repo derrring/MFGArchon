@@ -51,6 +51,11 @@ def _population() -> dict[type, list[str]]:
 
 
 _GATED = {
+    # #1977: the FEM pair joined on 2026-08-17. Declaring was not enough -- the gate reads the
+    # `supported_bc_types` property and had to be CALLED; both were added with the declaration.
+    # Behavioural cover: tests/unit/test_alg/test_bc_gate_fires_behaviourally_1977.py
+    "FPFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
+    "HJBFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
     "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPGFDMSolver": {"NEUMANN", "NO_FLUX"},
@@ -66,9 +71,7 @@ _GATED = {
 
 #: Declares nothing, so `_validate_bc_support` no-ops on it (`base_solver.py:282`). #1977.
 _UNGATED = {
-    "FPFEMSolver",
     "FPNetworkSolver",
-    "HJBFEMSolver",
     "MeshlessGalerkinFPSolver",
     "MeshlessGalerkinHJBSolver",
     "NetworkHJBSolver",
@@ -375,10 +378,16 @@ def test_no_fp_solver_declares_robin_while_the_assembly_ignores_the_coefficient(
     is gone rather than repaired. **The hole is: a solver can widen its live support through the
     property alone and every assertion here stays green.**
     """
+    # Scoped to the solvers that ROUTE THROUGH the FDM assembly. `FPFEMSolver` declares ROBIN
+    # (#1977, 2026-08-17) and reads the coefficients itself via `fem/bc_adapter.assemble_robin_terms`
+    # -- it never reaches `solve_timestep_full_nd`, so its declaration says nothing about the
+    # blindness measured below. Before that declaration existed the two sets coincided and the
+    # narrower predicate was invisible.
+    _FDM_ASSEMBLY = {"FPFDMSolver"}
     declaring = {
         n[0]
         for c, n in _population().items()
-        if n[0].startswith("FP") and any(t.name == "ROBIN" for t in (getattr(c, "_SUPPORTED_BC_TYPES", None) or ()))
+        if n[0] in _FDM_ASSEMBLY and any(t.name == "ROBIN" for t in (getattr(c, "_SUPPORTED_BC_TYPES", None) or ()))
     }
     ignored = np.array_equal(
         _step(_mixed(BCType.ROBIN, alpha=999.0, beta=-0.045, value=0.0)),

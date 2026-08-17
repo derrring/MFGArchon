@@ -30,7 +30,11 @@ from mfgarchon.backends import create_backend
 # because numba_backend is imported lazily -- so deriving from it would silently reproduce the
 # very undercount this file exists to catch. test_candidates_covers_every_backend_module below
 # guards the tuple against the filesystem instead, which is independent of both.
-_CANDIDATES = ("numpy", "torch", "jax", "numba")
+_CANDIDATES = (
+    "numpy",
+    "torch",
+    "jax",
+)
 
 REDUCTIONS = ("mean", "std", "max", "min")
 

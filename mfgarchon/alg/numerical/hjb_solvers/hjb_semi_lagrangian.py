@@ -134,11 +134,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     def __init__(
         self,
         problem: MFGProblem,
