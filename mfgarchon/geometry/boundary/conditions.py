@@ -1162,11 +1162,19 @@ def robin_bc(
     while the ``gradient_*`` family hard-codes the mirrored ghost
     ``m_{N+1} = m_{N-1}`` (fp_fdm_alg_gradient_upwind.py:319), so its CENTERED wall derivative is
     zero by construction rather than by convergence -- the one-sided estimate used for the
-    conservative row above is not zero there -- and therefore loses essentially all the mass: about -78% at T = 0.20, -99% at 0.30,
-    -99.99% by 0.50 (sigma=0.3, 81 points on [0,1], dt=1e-3, Gaussian initial density at 0.5).
-    Quoted to the precision that configuration supports -- the trio moves with the initial
-    condition and the step, which four significant figures would imply it does not. The percentage is a function of T and is quoted with one;
-    the ``d_n m = 0`` mechanism behind it is not (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
+    conservative row above is not zero there -- and therefore leaks badly. How badly is a
+    property of the configuration, not of the family: at sigma=0.3, 81 points on [0,1], dt=1e-3,
+    and a Gaussian initial density of width s0 at 0.5, through the potential channel
+    (``divergence_upwind`` is the only scheme that reads ``drift_field``, #1632):
+
+        scheme               s0     T=0.20    T=0.30    T=0.50
+        gradient_centered    0.1     -78.1%    -99.0%    -100.0%
+        gradient_upwind      0.1     -75.5%    -97.9%    -100.0%
+        gradient_centered    0.3     -42.0%    -57.6%     -60.0%
+
+    So "loses essentially all the mass" is true at s0=0.1 and false at s0=0.3, and the two
+    schemes differ by 2.6 points. The ``d_n m = 0`` mechanism behind the leak is not
+    configuration-dependent (non-conservative by design, #1075). ``FPParticleSolver`` gets the same wall from Skorokhod
     reflection. So ``no_flux_bc()`` on a conservative scheme is the reflecting wall, and adding a
     Robin segment on top of it **destroys** that wall rather than restating it. The weak form's
     natural BC is already ``J.n = 0``, so ``A_robin`` adds a residual outflux on top of it:
@@ -1183,11 +1191,27 @@ def robin_bc(
     scales with ``D`` and inversely with ``beta``, never with ``v_n``.
 
     **The trap.** The reflecting condition's own coefficients are
-    ``(alpha, beta) = (D_pH(x, grad u).n, D)``, and in this library the FP transport velocity is
-    ``v = -D_pH`` (``H.optimal_control`` returns ``-D_pH``; ``fp_fdm_advection`` transports with
-    it), so ``alpha = -v_n``, NOT ``+v_n``. Verified by residual rather than by substitution:
-    evaluating ``alpha*m + beta*d_n m`` on the structurally reflecting solution, normalised by
-    ``|alpha|*m`` at ``x_max``, ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045``, 200 steps:
+    ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the
+    FP transport velocity is ``v = -D_pH``.
+
+    That antecedent is a MINIMIZE fact, not a library-wide one. ``H.optimal_control`` returns
+    ``-self._sign * dH_dp`` (core/hamiltonian.py:1315) with ``_sign = -1`` under MAXIMIZE
+    (:838), so it yields ``+D_pH`` there. Every path that forms the drift itself is gated to
+    quadratic-MINIMIZE by ``assert_quadratic_minimize_drift`` (utils/pde_coefficients.py:24), so
+    the antecedent holds on all of them; the caller-supplied-``alpha*`` velocity channel
+    (``compute_fp_velocity_field``) is not gated and reaches ``+D_pH`` under MAXIMIZE. That
+    channel is FDM, which refuses ROBIN at construction, and ``FPFEMSolver`` -- the only FP
+    solver that reads Robin coefficients -- rejects MAXIMIZE, so the conclusion below is safe
+    today. It is safe by two gates, not by the antecedent being universal.
+
+    ``alpha = -v_n`` also follows from the library's own ``J = v*m - D grad m`` without
+    mentioning ``D_pH`` at all, which is the sense-free route to the same place.
+
+    The measured wall, at ``sigma=0.3``, ``v_n=+3.2``, ``D=0.045`` (so ``v_n/D = 71.111``),
+    ``FPFDMSolver`` / ``divergence_upwind`` on [0,1], Gaussian initial density of width 0.1 at
+    0.5, T=0.2, Nt=200, ``drift_field=+3.2``. Columns 3 and 4 are ``alpha*m + beta*d_n m``
+    evaluated on that profile and normalised by ``|alpha|*m`` -- they are column 2 rearranged,
+    not a second measurement:
 
         Nx      d_n m / m     (+v_n, D)     (-v_n, D)
         161        56.41        1.7933       -0.2067
@@ -1195,17 +1219,31 @@ def robin_bc(
         641        67.10        1.9437       -0.0563
        1281        69.10        1.9716       -0.0284
 
-    ``(-v_n, D)`` goes to zero at first order; ``(+v_n, D)`` goes to 2, i.e. off by ``2*alpha*m``.
+    Column 2 converges to 71.111 at first order. ``(-v_n, D)`` goes to zero; ``(+v_n, D)`` goes
+    to 2, i.e. off by ``2*alpha*m``.
 
     So ``D*alpha/beta = -v_n``, which by the law above is the row that DOUBLES -- an influx, and
-    the wall that diverges. Measured on ``FPFEMSolver``: no segment conserves to +0.0000%;
-    ``robin_bc(alpha=+v_n, beta=D)`` loses 48%; ``robin_bc(alpha=-v_n, beta=D)`` -- the correct
-    encoding of the reflecting condition -- blows up to +1.7e31%. **Encoding the reflecting
-    condition as a Robin segment on top of a wall that already imposes it is unbounded, not
-    merely leaky.**
+    the wall that diverges. On ``FPFEMSolver``: no segment conserves to machine precision;
+    ``robin_bc(alpha=+v_n, beta=D)`` leaks; ``robin_bc(alpha=-v_n, beta=D)`` -- the correct
+    encoding of the reflecting condition -- grows without bound. ~~+0.0000% / -48% / +1.7e31%~~
+    [CORRECTED] -- that trio is not quotable: over mesh 50-400, T 0.05-0.4, Nt 50-800 and IC
+    width 0.05-0.3 the third column spans about 90 orders of magnitude and at (400 elements,
+    T=0.2, Nt=50) it comes out NEGATIVE, so even its sign is a property of the configuration.
+    The growth itself is real (cumulative positivity-clip injection 0.0, min density +2e-11 --
+    it is influx, not a clip artifact). **Encoding the reflecting condition as a Robin segment
+    on top of a wall that already imposes it is unbounded, not merely leaky.**
 
     Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one:
-    ``alpha != D_pH.n`` (i.e. ``alpha != -v_n``), or an inhomogeneous ``g``. See #1975.
+    ``D*alpha/beta != -v_n``, or an inhomogeneous ``g``.
+
+    ~~``alpha != D_pH.n`` (i.e. ``alpha != -v_n``)~~ [CORRECTED] -- the law two paragraphs up
+    depends only on the RATIO, so that test passes a whole equivalence class of segments that
+    produce the identical diverging wall. Measured: ``(alpha, beta) = (-2*v_n, 2*D)`` satisfies
+    ``alpha != -v_n`` and is bit-identical to ``(-v_n, D)`` (``max|m - m_ref| = 0.000e+00``);
+    positive control ``(-v_n, 2*D)`` differs (``6.2e+46``). The wrong test also contradicted the
+    sentence above it, which already said the perturbation scales inversely with ``beta``.
+
+    See #1975.
 
     Args:
         value: RHS value g in alpha*u + beta*du/dn = g
