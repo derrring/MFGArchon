@@ -206,12 +206,16 @@ Both approaches can be mixed in the same BC specification.
 For finite difference methods, BCs are enforced via ghost cells:
 
 ```python
-from mfgarchon.geometry.boundary import apply_boundary_conditions_2d
+from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-# field has shape (Ny, Nx) - interior points only
-padded = apply_boundary_conditions_2d(field, bc, domain_bounds)
+# field has shape (Ny, Nx) - interior points only.
+# The domain bounds travel on `bc`; they are not a separate argument.
+padded = pad_array_with_ghosts(field, bc, spacing=(dy, dx))
 # padded has shape (Ny+2, Nx+2) - includes ghost cells
 ```
+
+For a time-stepping loop, allocate once with `PreallocatedGhostBuffer` instead;
+`pad_array_with_ghosts` allocates a new array per call.
 
 ### Ghost Cell Formulas
 
@@ -259,7 +263,7 @@ def inlet_profile(t):
 bc = dirichlet_bc(dimension=2, value=inlet_profile)
 
 # Apply at specific time
-padded = apply_boundary_conditions_2d(field, bc, bounds, time=0.5)
+padded = pad_array_with_ghosts(field, bc, time=0.5, spacing=(dy, dx))
 ```
 
 For spatially-varying BCs:
@@ -363,34 +367,26 @@ V_periodic = lambda x: C/2 * (1 + np.cos(2 * np.pi * x / L))
 
 ## Performance Tips
 
-1. **Pre-compute masks**: For mixed BCs, use `create_boundary_mask_2d()` to identify segments once
+1. **Reuse the buffer**: in a time-stepping loop use `PreallocatedGhostBuffer`, not `pad_array_with_ghosts` -- the latter allocates a padded array on every call
 2. **Avoid callable BCs when possible**: Constant values are faster
 3. **Use uniform BCs**: Simpler path, less overhead than mixed BCs
 
 ## Common Issues
 
-### "BC dimension not set"
+Two entries that stood here documented errors of the removed
+`apply_boundary_conditions_2d`, which took `domain_bounds` as a call argument.
+Neither reproduces on the canonical path, measured:
 
-```python
-# Wrong: using unbound BC
-bc = neumann_bc()  # dimension=None
-apply_boundary_conditions_2d(field, bc, bounds)  # Error!
-
-# Correct: bind dimension first
-bc = bc.bind_dimension(2)
-apply_boundary_conditions_2d(field, bc, bounds)  # Works
-```
-
-### "domain_bounds required for mixed BC"
-
-```python
-# Wrong: mixed BC without bounds
-bc = mixed_bc([seg1, seg2], dimension=2)
-apply_boundary_conditions_2d(field, bc)  # Error!
-
-# Correct: provide bounds
-apply_boundary_conditions_2d(field, bc, domain_bounds=bounds)
-```
+- **An unbound BC does not raise.** `pad_array_with_ghosts` reads the dimension
+  off the array it is padding, so `neumann_bc()` with `dimension=None` pads
+  identically to `neumann_bc(dimension=2)`. `bind_dimension` still matters for
+  code that queries the BC itself -- `bc._require_dimension` does raise -- but
+  not for padding.
+- **A mixed BC without `domain_bounds` does not raise.** Segments carrying a
+  `boundary=` face name are matched symbolically through `parse_boundary_face`,
+  so the bounds are never consulted; with and without them the padded array is
+  element-wise identical. Bounds are needed only by segments that select a
+  region by coordinate range (`region=`) or by SDF.
 
 ## See Also
 

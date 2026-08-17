@@ -1306,13 +1306,24 @@ def solve_timestep_full_nd(
             # NO wrap here -- it is byte-identical to legacy no_flux and differs from canonical
             # periodic_bc by O(1) once mass reaches the wall (verified with an off-center bump).
             # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
+            # ~~robin_bc was recommended here too~~ [CORRECTED 2026-08-16, #1975] -- switching to
+            # the canonical BC does not make a Robin wall work ON THIS PATH. The dispatch below
+            # routes a boundary point of a MIXED bc to the no-flux handler, so a ROBIN segment
+            # assembles byte-identically to no-flux (measured at alpha=3.2 and alpha=999).
+            # Recommending it here sent users from a loud failure to a silent one. It IS honoured
+            # by FPFEMSolver, which reads the coefficients in weak form -- hence the pointer below
+            # rather than a bare removal.
             if legacy_type not in ("neumann", "no_flux"):
                 raise NotImplementedError(
                     f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not honored by the "
                     f"FP-FDM time-stepping assembly (only neumann/no_flux are); it would be silently "
                     f"assembled as no-flux (a legacy 'periodic' does NOT wrap). Use "
-                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / robin_bc / no_flux_bc) "
-                    f"with the modern BoundaryConditions instead (Issue #1559)."
+                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / no_flux_bc) "
+                    f"with the modern BoundaryConditions instead (Issue #1559). robin_bc is NOT in "
+                    f"that list on purpose: this assembly reads none of a ROBIN segment's "
+                    f"coefficients, so it would be a no-flux wall wearing a label. For a "
+                    f"reflecting wall you want no_flux_bc on a conservative scheme, which imposes "
+                    f"J.n = 0 structurally; a GENERAL Robin needs FPFEMSolver (Issue #1975)."
                 ) from None
             is_no_flux = True
             is_uniform = False

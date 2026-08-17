@@ -456,8 +456,12 @@ class BCSegment:
     value: float | Callable | BCValueProvider = 0.0
 
     # Robin BC coefficients: alpha*u + beta*du/dn = g
-    alpha: float = 1.0  # Weight on u (Dirichlet term)
-    beta: float = 0.0  # Weight on du/dn (Neumann term)
+    # `float | BCValueProvider | NDArray` for the same reason `value` is: a provider may sit
+    # here and resolve to a field. `ResolvedBC` was widened for this in #1957; this class was
+    # the one left behind. The declared type is what a reader checks against, and it said
+    # `float` while the resolver stored an array.
+    alpha: float | Any = 1.0  # Weight on u (Dirichlet term)
+    beta: float | Any = 0.0  # Weight on du/dn (Neumann term)
 
     # Boundary matching: str for named boundaries ("x_min", "left"),
     # int for Gmsh physical group tags (Issue #732 Tier 1)

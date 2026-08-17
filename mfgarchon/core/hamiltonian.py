@@ -838,6 +838,18 @@ class MFGOperatorBase(ABC):
         self._sign = 1 if sense == OptimizationSense.MINIMIZE else -1
 
     @property
+    def sense_sign(self) -> float:
+        """Orientation of the MINIMIZE<->MAXIMIZE mirror: ``+1`` for MINIMIZE (cost-to-go, agents
+        move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL).
+        Every sense-dependent piece is ``s * (MINIMIZE form)``.
+
+        This is the public reading of ``_sign``, set once above. `NetworkHamiltonian` computed the
+        same expression a second time from the same `self.sense` while inheriting `_sign` from here
+        (#1986); that copy is gone, and this is the one owner.
+        """
+        return float(self._sign)
+
+    @property
     @abstractmethod
     def is_hamiltonian(self) -> bool:
         """Return True if this is a Hamiltonian operator."""

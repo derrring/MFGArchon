@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.backends.backend_protocol import BaseBackend
+    from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.geometry.base import BaseGeometry
 
 

@@ -128,17 +128,24 @@ def test_robin_reads_the_same_spacing(dx: float):
     found by independent review of #1906]: two spacings give different ghosts under any
     denominator whatever, and it probed only index 0.
 
-    NOTE the sign convention this asserts is the applicator's own, `outward_sign = -1` at the
-    low wall, which #1907 reports is one factor too many there. This test pins the ghost against
-    the equation the code currently writes; it is deliberately NOT the oracle for that defect,
-    and it will need re-pointing when #1907 lands.
+    RE-POINTED 2026-08-16, when #1907 landed. This previously asserted the residual of the
+    equation the applicator then wrote, `... /dx*outward_sign = g` with `outward_sign = -1` at
+    the low wall, and said so in this note: "deliberately NOT the oracle for that defect, and it
+    will need re-pointing when #1907 lands". The applicator now writes the condition
+    `BCSegment.beta` declares -- `du/dn` the OUTWARD normal derivative -- and on a cell-centred
+    grid the ghost lies outside at both walls, so `(u_g - u_i)/dx` IS that derivative and no
+    further sign is due. The two `outward_sign` factors are therefore gone from the oracle, and
+    with them the last place in the suite that asserted the low wall's old convention.
+
+    The spacing property this test exists for is untouched: the residual is machine-zero when
+    the spacing is threaded and O(1/dx) when the buffer substitutes 1.0.
     """
     u = np.random.default_rng(7).normal(size=7)
     alpha, beta, g = 1.0, 1.0, 0.5
     bc = robin_bc(dimension=1, alpha=alpha, beta=beta, value=g)
     p = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=dx)
-    low = alpha * (p[0] + p[1]) / 2 + beta * (p[0] - p[1]) / dx * (-1.0) - g
-    high = alpha * (p[-1] + p[-2]) / 2 + beta * (p[-1] - p[-2]) / dx * (+1.0) - g
+    low = alpha * (p[0] + p[1]) / 2 + beta * (p[0] - p[1]) / dx - g
+    high = alpha * (p[-1] + p[-2]) / 2 + beta * (p[-1] - p[-2]) / dx - g
     assert low == pytest.approx(0.0, abs=1e-12), f"dx={dx}: Robin low wall residual {low:.3e}"
     assert high == pytest.approx(0.0, abs=1e-12), f"dx={dx}: Robin high wall residual {high:.3e}"
 

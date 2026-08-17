@@ -566,18 +566,18 @@ class BaseStructuredApplicator(BaseBCApplicator):
             This formula is shared across 1D/2D/3D/nD to eliminate duplication.
             Fix (commit 0ae5515a): Changed from /(2*dx) to /dx.
         """
+        from .ghost_cells import ghost_cell_robin
+
         # Evaluate callable BC values
         if callable(g):
             g_val = g(time)
         else:
             g_val = g
 
-        # Robin formula (valid for both left and right boundaries)
-        # Cell centers are dx apart, not 2*dx
-        coeff_ghost = alpha / 2.0 + beta / dx
-        coeff_interior = alpha / 2.0 - beta / dx
-
-        return (g_val - u_interior * coeff_interior) / coeff_ghost
+        # The arithmetic that stood here was correct and was the third copy of it. `side` is
+        # accepted and unused for the same reason `ghost_cell_robin` documents: on a
+        # cell-centred grid the ghost lies outside at both walls, so the formula is side-free.
+        return ghost_cell_robin(u_interior, g_val, alpha, beta, dx)
 
     # =========================================================================
     # Shared Validation and Utility Methods (Issue #598)

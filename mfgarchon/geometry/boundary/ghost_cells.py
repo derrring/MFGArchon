@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from .protocols import GridType
 
 
@@ -146,8 +148,21 @@ def ghost_cell_robin(
     coeff_ghost = alpha / 2.0 + beta / dx
     coeff_interior = alpha / 2.0 - beta / dx
 
-    if abs(coeff_ghost) < 1e-12:
-        raise ValueError("Robin BC coefficients lead to singular ghost cell formula")
+    # alpha, beta and rhs_value may be FIELDS -- one value per boundary point. The impermeable
+    # wall of a Fokker-Planck equation is this condition with alpha = the outward normal drift,
+    # which varies along the boundary and is recomputed each Picard iterate. The arithmetic
+    # above is already elementwise; only this guard needed to stop assuming a scalar.
+    singular = np.abs(coeff_ghost) < 1e-12
+    if np.any(singular):
+        where = (
+            ""
+            if np.isscalar(singular) or singular.ndim == 0
+            else f" at {int(np.count_nonzero(singular))} of {singular.size} boundary points"
+        )
+        raise ValueError(
+            f"Robin BC coefficients lead to singular ghost cell formula{where}: "
+            f"alpha/2 + beta/dx = 0, so the condition does not determine the ghost value."
+        )
 
     return (rhs_value - interior_value * coeff_interior) / coeff_ghost
 
