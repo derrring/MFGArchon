@@ -72,18 +72,41 @@ def test_the_configuration_still_exercises_the_non_converged_path():
     assert residuals, "no inner solve failed to converge; this file no longer tests anything"
 
 
-def test_the_returned_value_function_is_finite_and_bounded():
+def test_the_returned_value_function_is_finite_and_does_not_diverge():
     """The returned U is not required to be a root -- the warning says it is not.
 
-    It is required not to be a blow-up, which is what a non-decrease guard that never fires
-    would eventually produce.
+    It is required not to be a blow-up, which is what a non-decrease guard that never fires would
+    eventually produce. A blow-up keeps growing with the sweep count; a large-but-settled answer
+    stops. That is what is asserted, because it is what "diverged" means.
+
+    ~~``abs(U).max() < 1e3``~~ [CHANGED 2026-08-12] was a magnitude threshold, and it was calibrated
+    to one fixture rather than bounding anything. Measured on `main` at the time it was replaced, it
+    is already violated by configurations it was never run on -- ``2.945e+03`` at Nx=41/10 sweeps and
+    ``1.652e+03`` at this very Nx with 10 sweeps instead of 3 -- so it passed by choice of sweep
+    count, not because 1e3 held.
+
+    What moved it here: #1900 removed a post-solve overwrite that forced ``u[0] = u[1]`` at both
+    walls on every timestep, artificially flattening the solution there. Without that clamp the value
+    function is legitimately larger on this stiff fixture -- and it still settles
+    (``1.625e+04 -> 1.622e+04 -> 1.624e+04`` at Nx=81 over 5/10/15 sweeps), while the outer
+    iteration converges better than before (``err_U`` 4.5e-03 -> 2.15e-04 at 15 sweeps).
     """
     result, residuals = _solve_capturing_warnings()
     U = np.asarray(result.U, dtype=float)
     assert np.isfinite(U).all(), "the returned value function contains non-finite entries"
-    assert np.abs(U).max() < 1e3, (
-        f"||U||_inf = {np.abs(U).max():.3e}: the loop returned a diverged iterate rather than the "
-        f"best one it saw, while reporting a residual of at most {max(residuals):.3e}"
+
+    # Divergence, not magnitude: run the same fixture for 4x the sweeps and require the norm to
+    # settle rather than grow with the iteration count.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        longer = _stiff_problem().solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=12, verbose=False)
+    short_norm = float(np.abs(U).max())
+    long_norm = float(np.abs(np.asarray(longer.U, dtype=float)).max())
+    assert np.isfinite(long_norm), "the value function is non-finite after 12 sweeps"
+    assert long_norm < 8.0 * max(short_norm, 1.0), (
+        f"||U||_inf grew from {short_norm:.3e} at 3 sweeps to {long_norm:.3e} at 12: the loop is "
+        f"returning a diverging iterate rather than a settled one, while reporting a residual of at "
+        f"most {max(residuals):.3e}"
     )
 
 
