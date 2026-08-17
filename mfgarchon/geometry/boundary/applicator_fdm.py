@@ -141,9 +141,6 @@ class FDMApplicator(BaseStructuredApplicator):
         # Apply BCs to a field
         padded = applicator.apply(field, bc, dx)
 
-        # Or use static methods directly
-        padded = FDMApplicator.apply_1d(field, bc)
-        padded = FDMApplicator.apply_2d(field, bc)
     """
 
     #: All eight. Measured over the (applicator x BCType) product: every type produces a result
@@ -204,9 +201,20 @@ class FDMApplicator(BaseStructuredApplicator):
         geometry=None,  # Type: SupportsRegionMarking | None (Issue #596 Phase 2.5)
     ) -> NDArray[np.floating]:
         """
-        Apply boundary conditions to a field.
+        Apply boundary conditions to a field, in any dimension.
 
-        Automatically dispatches to dimension-specific implementation.
+        ~~Automatically dispatches to dimension-specific implementation.~~ [CORRECTED 2026-08-17]
+        There was nothing to dispatch to. `apply_1d`, `apply_2d`, `apply_3d` and `apply_nd` were
+        four names over one body -- the same single line, `pad_array_with_ghosts(field,
+        boundary_conditions, ghost_depth=1, time=time)`, none of them reading the dimension,
+        `domain_bounds` or `config`. All four are deleted; their only appearance outside their own
+        definitions was this class's usage example.
+
+        A boundary condition is a statement about the normal derivative at a face: the dimension
+        selects which axis and which side and changes nothing else. Splitting the ENTRY POINT by
+        dimension is what made #1912 expressible -- a 2-D Robin that dropped `alpha` and `value`
+        and returned the Neumann mirror while the 1-D path computed it correctly. One entry point
+        cannot hold that defect.
 
         Args:
             field: Interior field values
@@ -231,54 +239,6 @@ class FDMApplicator(BaseStructuredApplicator):
         # Issue #577 Phase 3: Use pad_array_with_ghosts() for all BCs
         # Geometry parameter enables region_name resolution for mixed BCs
         return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry)
-
-    @staticmethod
-    def apply_1d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 1D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_2d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 2D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_3d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 3D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_nd(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for nD BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
 
     def enforce_values(
         self,
