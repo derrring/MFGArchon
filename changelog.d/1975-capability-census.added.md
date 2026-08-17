@@ -28,5 +28,6 @@ the same sweep. The surviving test set is a strict subset of the one that scored
 tests turns kills into survivals, never the reverse; 13 survivors cannot become 6 against a smaller
 suite over an identical mutation set. The second sweep is a different 32 mutations, retargeted at
 lane 1 because lane 2's code no longer exists to mutate, so the two percentages are not comparable
-and neither is auditable from this branch -- no mutation harness is committed. What IS reproducible
+and neither is auditable from this branch -- the harness for THESE 32 mutations is not
+committed. (`scripts/test_discrimination.py` is a committed mutation harness, for a different set.) What IS reproducible
 is stated per-mutation in the PR body, each with its liveness check.

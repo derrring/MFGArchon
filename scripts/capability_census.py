@@ -113,8 +113,9 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
         if name.startswith(("Base", "_")):
             # A NAME deciding the population, in a script whose other lane was deleted for
             # exactly that. Kept because these are intended-abstract bases, but recorded:
-            # `inspect.isabstract` is False for them (empty `__abstractmethods__`), and three
-            # of them OWN `discretization_type` and appear as the `<-` owner below.
+            # `inspect.isabstract` is False for them (empty `__abstractmethods__`), and all four
+            # OWN `discretization_type` (protocols.py:338/625/653/682); three appear as the `<-`
+            # owner below, the fourth having no surviving subclass in the population.
             excluded_by_name.append(name)
             continue
         # Same class bound twice in its own module (`NetworkFPSolver = FPNetworkSolver`,

@@ -152,8 +152,9 @@ def test_no_module_in_the_package_fails_to_import(declarations):
 
 def test_the_roots_still_exist(declarations):
     """The emptiness guard comes first: `roots_missing == []` is also true of a census with no
-    roots at all, and so is the outside-predicate test below. Measured with `ROOTS = {}`: 5 of the
-    8 tests went red and these two stayed green, each on a vacuous truth."""
+    roots at all, and so is the outside-predicate test below. Measured with `ROOTS = {}` at this
+    commit: 6 of the 9 tests went red without the guard, and these two stayed green on a vacuous
+    truth."""
     assert len(declarations["rows"]) > 40, f"population collapsed to {len(declarations['rows'])} rows"
     assert declarations["roots_missing"] == [], f"unresolvable roots: {declarations['roots_missing']}"
 
