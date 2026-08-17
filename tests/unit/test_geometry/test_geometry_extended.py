@@ -111,15 +111,6 @@ class TestEdgeCases:
         test_points = np.array([[0.5, 0.5], [2.5, 2.5], [1.5, 1.5]])
         assert not np.any(intersection.contains(test_points))
 
-    def test_very_small_domain(self):
-        """Test sampling from very small domain."""
-        small_rect = Hyperrectangle(np.array([[0, 0.001], [0, 0.001]]))
-
-        particles = small_rect.sample_uniform(100, seed=42)
-        assert particles.shape == (100, 2)
-        assert np.all(particles >= 0)
-        assert np.all(particles <= 0.001)
-
     def test_thin_domain(self):
         """Test domain with very different aspect ratios."""
         thin_rect = Hyperrectangle(np.array([[0, 10], [0, 0.01]]))
@@ -136,7 +127,16 @@ class TestBoundaryConditions:
     """Test boundary condition handling."""
 
     def test_reflecting_bc_hyperrectangle(self):
-        """Test reflecting boundary conditions."""
+        """Reflecting BC must reflect, not merely land the particle inside the box.
+
+        ``contains()`` cannot tell a reflection from a clamp: projecting 1.2 to the wall at 1.0
+        satisfies it exactly as well as reflecting it to 0.8, and measured, ``contains()``
+        returns True on all four points of the clamped answer. So pin the reflected position,
+        ``2*bound - x``, which is what the operation means.
+
+        Measured deviation from the exact reflections below: 8.3e-17, so atol=1e-12 is four
+        orders above the floating-point floor. A clamp lands 0.3 away -- eleven orders above it.
+        """
         domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
 
         # Particles outside domain
@@ -151,8 +151,12 @@ class TestBoundaryConditions:
 
         particles_reflected = domain.apply_boundary_conditions(particles_outside, bc_type="reflecting")
 
-        # All should now be inside
-        assert np.all(domain.contains(particles_reflected))
+        np.testing.assert_allclose(
+            particles_reflected,
+            np.array([[0.8, 0.5], [0.1, 0.5], [0.5, 0.7], [0.5, 0.2]]),
+            atol=1e-12,
+            err_msg="reflecting BC must map x to 2*bound - x, not clamp it to the wall",
+        )
 
     def test_absorbing_bc(self):
         """Test absorbing boundary conditions."""
@@ -170,9 +174,10 @@ class TestBoundaryConditions:
 
         particles_absorbed = domain.apply_boundary_conditions(particles, bc_type="absorbing")
 
-        # Should only have 2 particles left
-        assert particles_absorbed.shape == (2, 2)
-        assert np.all(domain.contains(particles_absorbed))
+        # The survivor count alone does not say WHICH particles survived, nor that input order is
+        # kept -- "keep the first two rows" and an inverted mask both give a (2, 2) array whose
+        # rows are inside. Measured, the surviving rows are copied verbatim, so pin them exactly.
+        np.testing.assert_array_equal(particles_absorbed, np.array([[0.5, 0.5], [0.3, 0.3]]))
 
 
 class TestCSGComplexity:

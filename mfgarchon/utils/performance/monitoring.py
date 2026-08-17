@@ -110,8 +110,12 @@ class PerformanceMonitor:
         Args:
             storage_path: Path to store performance data (default: ./performance_data)
         """
+        # No mkdir here. `global_performance_monitor = PerformanceMonitor()` runs at module
+        # level, so this constructor created `performance_data/` in the CALLER's working
+        # directory as a side effect of `import mfgarchon`. `_load_stored_data` below only
+        # reads, and guards on `.exists()`; `_save_data` is the one path that needs the
+        # directory, and it creates it. #1674, same shape as #1917.
         self.storage_path = storage_path or Path("performance_data")
-        self.storage_path.mkdir(exist_ok=True)
 
         self.metrics_history: dict[str, list[PerformanceMetrics]] = {}
         self.baselines: dict[str, PerformanceBaseline] = {}
@@ -144,6 +148,7 @@ class PerformanceMonitor:
     def _save_data(self) -> None:
         """Save performance data to storage."""
         try:
+            self.storage_path.mkdir(parents=True, exist_ok=True)
             # Save baselines
             baseline_file = self.storage_path / "baselines.json"
             baseline_data = {}

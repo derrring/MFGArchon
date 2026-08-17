@@ -84,6 +84,8 @@ class TestCommonNoiseMFGResultDataclass:
             mc_error_m=0.01,
         )
 
+        from scipy import stats
+
         lower, upper = result.get_confidence_interval_u(confidence=0.95)
 
         assert lower.shape == u_mean.shape
@@ -91,6 +93,15 @@ class TestCommonNoiseMFGResultDataclass:
         assert np.all(lower < u_mean)
         assert np.all(upper > u_mean)
         assert np.all(upper - lower > 0)
+
+        # The bracket above admits any half-width whatever. Pin the closed form: it fixes the
+        # z-quantile, the 1/sqrt(K) Monte Carlo scaling, and the symmetry of the interval, none of
+        # which anything else in this file asserts. Measured half-width 0.019599639845400540
+        # against 0.019599639845400585 expected -- relative deviation 2.3e-15, so rtol=1e-12
+        # leaves ~430x margin.
+        half = stats.norm.ppf(0.975) * 0.1 / np.sqrt(100)
+        np.testing.assert_allclose(u_mean - lower, half, rtol=1e-12)
+        np.testing.assert_allclose(upper - u_mean, half, rtol=1e-12)
 
     def test_confidence_interval_m(self):
         """Test confidence interval computation for m."""
@@ -110,12 +121,21 @@ class TestCommonNoiseMFGResultDataclass:
             mc_error_m=0.01,
         )
 
+        from scipy import stats
+
         lower, upper = result.get_confidence_interval_m(confidence=0.95)
 
         assert lower.shape == m_mean.shape
         assert upper.shape == m_mean.shape
         assert np.all(lower < m_mean)
         assert np.all(upper > m_mean)
+
+        # get_confidence_interval_m is a hand-copied duplicate of get_confidence_interval_u, so the
+        # sibling test does not cover it and the two halves can drift apart independently. Same
+        # closed form, measured to the same 2.3e-15 relative deviation.
+        half = stats.norm.ppf(0.975) * 0.1 / np.sqrt(100)
+        np.testing.assert_allclose(m_mean - lower, half, rtol=1e-12)
+        np.testing.assert_allclose(upper - m_mean, half, rtol=1e-12)
 
     def test_confidence_interval_different_levels(self):
         """Test confidence intervals with different confidence levels."""
@@ -222,8 +242,11 @@ class TestCommonNoiseSolverInitialization:
 
         solver = CommonNoiseMFGSolver(problem, num_noise_samples=10, conditional_solver_factory=custom_factory)
 
-        assert solver.conditional_solver_factory is not None
-        assert callable(solver.conditional_solver_factory)
+        # Identity, not callability: a constructor that ignored the kwarg and installed the default
+        # lambda passes `is not None` and `callable`. custom_factory is written as a copy of the
+        # default body, so even a value comparison would not discriminate -- identity is the only
+        # assertion that separates the non-default branch from the default one.
+        assert solver.conditional_solver_factory is custom_factory
 
     def test_raises_error_for_non_stochastic_problem(self):
         """Test that solver raises error for problem without common noise."""
@@ -269,6 +292,21 @@ class TestCommonNoiseSolverNoiseSampling:
         assert all(path.shape == (12,) for path in paths)  # Nt+1 = 12
         assert all(isinstance(path, np.ndarray) for path in paths)
 
+        # This branch owns a seeding contract nothing else pins: it seeds the GLOBAL np.random
+        # (common_noise_solver.py:349), so reproducibility here doubles as the pin on that side
+        # effect. Measured bitwise identical across two constructions at seed=42.
+        repeat = CommonNoiseMFGSolver(problem, num_noise_samples=20, variance_reduction=False, seed=42)
+        for a, b in zip(paths, repeat._sample_noise_paths(), strict=True):
+            np.testing.assert_array_equal(a, b)
+
+        # The two arms of the variance_reduction dispatch are otherwise indistinguishable: the
+        # assertions above hold identically for the QMC twin. Measured at the same seed: all 20
+        # paths differ.
+        qmc = CommonNoiseMFGSolver(problem, num_noise_samples=20, variance_reduction=True, seed=42)
+        assert not all(np.array_equal(a, b) for a, b in zip(paths, qmc._sample_noise_paths(), strict=True)), (
+            "variance_reduction=False produced the same paths as the QMC branch"
+        )
+
     def test_sample_noise_paths_quasi_mc(self):
         """Test quasi-Monte Carlo noise path sampling with variance reduction."""
         problem = self._create_simple_problem()
@@ -278,6 +316,17 @@ class TestCommonNoiseSolverNoiseSampling:
 
         assert len(paths) == 20
         assert all(path.shape == (12,) for path in paths)
+
+        # As written this test was indistinguishable from its standard-MC sibling. Require that
+        # variance_reduction is actually live: the MC twin at the SAME seed must not reproduce
+        # these paths. Measured at seed=42: all 20 differ.
+        mc = CommonNoiseMFGSolver(problem, num_noise_samples=20, variance_reduction=False, seed=42)
+        assert not all(np.array_equal(a, b) for a, b in zip(paths, mc._sample_noise_paths(), strict=True)), (
+            "variance_reduction=True did not change the sampler"
+        )
+
+        # OU initial condition: every path starts at theta_initial. Measured exactly 0.0 for all 20.
+        assert all(path[0] == 0.0 for path in paths)
 
     def test_noise_paths_reproducible_with_seed(self):
         """Test that noise paths are reproducible with fixed seed."""
@@ -487,24 +536,18 @@ class TestCommonNoiseSolverEdgeCases:
 
         assert len(paths) == 1
         assert paths[0].shape == (12,)
+        assert paths[0][0] == 0.0  # OU paths start at theta_initial
 
-    def test_large_number_of_noise_samples(self):
-        """Test solver can handle large K (doesn't run solve, just checks setup)."""
-        noise_process = OrnsteinUhlenbeckProcess(kappa=1.0, mu=0.0, sigma=0.1)
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[22], boundary_conditions=no_flux_bc(dimension=1))
-        problem = StochasticMFGProblem(
-            geometry=geometry,
-            T=0.5,
-            Nt=11,
-            noise_process=noise_process,
-            conditional_hamiltonian=lambda x, p, m, theta: 0.5 * p**2,
-            components=_default_components(),
-        )
-
-        solver = CommonNoiseMFGSolver(problem, num_noise_samples=1000)
-        paths = solver._sample_noise_paths()
-
-        assert len(paths) == 1000
+        # K=1 is the ddof=1 boundary, and the test stopped one call short of the edge it is named
+        # for. RECORDED DEFECT, not a contract: the aggregation divides by K-1 = 0 and returns a
+        # silently NaN spread rather than failing loud or falling back to ddof=0. Measured at HEAD:
+        # mc_error_u = nan, u_std all-NaN, and the resulting confidence interval entirely NaN.
+        # Asserted so that fixing it (ddof=0 at K=1, or a raise) trips this test rather than
+        # passing unnoticed. The repo's fail-fast rule says the silent NaN is the defect.
+        result = solver._aggregate_solutions([(np.ones((12, 21)), np.ones((12, 21)), True)], [paths[0]])
+        assert np.isnan(result.mc_error_u), "K=1 aggregation no longer returns a NaN MC error -- update this pin"
+        assert np.all(np.isnan(result.u_std))
+        assert np.all(np.isnan(result.get_confidence_interval_u()[0]))
 
 
 class TestCommonNoiseSolverConfiguration:
@@ -527,6 +570,19 @@ class TestCommonNoiseSolverConfiguration:
 
         assert solver.conditional_solver_factory is not None
         assert callable(solver.conditional_solver_factory)
+
+        # `callable` is satisfied by any function at all, including the custom-factory branch this
+        # test exists to distinguish itself from. Assert what the default factory DOES -- the
+        # documented "uses problem.solve() API" contract and its verbose suppression -- without
+        # running a solve.
+        class _Recorder:
+            def solve(self, **kwargs):
+                self.kwargs = kwargs
+                return "sentinel"
+
+        recorder = _Recorder()
+        assert solver.conditional_solver_factory(recorder) == "sentinel"
+        assert recorder.kwargs == {"verbose": False}
 
     def test_mc_config_created_when_not_provided(self):
         """Test that MCConfig is created with appropriate defaults."""

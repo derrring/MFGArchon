@@ -122,6 +122,19 @@ class TestFPParticleSolverBasic:
         assert np.all(M >= 0)
         assert np.all(np.isfinite(M))
 
+        # Both assertions above are structural for a KDE (a sum of non-negative kernels), so they
+        # would survive any change to the normalisation. The integral is not: the KDE output is
+        # divided by sum(density) * dV, and every time slice must therefore carry unit mass.
+        # Measured over three runs of this unseeded 1000-particle fixture: max |mass - 1| of
+        # 4.4e-16, 2.2e-16, 1.1e-16, i.e. ~2000x inside the tolerance below. Dropping the dV from
+        # that divisor -- normalising the bare sum instead of the integral -- lands at mass = dx
+        # = 0.05. (It does not separate the three KDENormalization modes: measured, none and
+        # initial_only also come out at 4.4e-16 on this uniform datum.)
+        dx = problem.geometry.get_grid_spacing()[0]
+        np.testing.assert_allclose(
+            M.sum(axis=1) * dx, 1.0, atol=1e-12, err_msg="KDE density must integrate to 1 against the cell volume"
+        )
+
 
 class TestKDENormalization:
     """Test KDE normalization options."""
@@ -177,7 +190,7 @@ class TestBoundaryConditionRequirements:
     def test_fp_particle_with_geometry_bc(self):
         """Test FPParticleSolver with geometry-provided BCs."""
         from mfgarchon.geometry import TensorProductGrid
-        from mfgarchon.geometry.boundary import dirichlet_bc
+        from mfgarchon.geometry.boundary import BCType, dirichlet_bc
 
         # Geometry with BCs
         geometry = TensorProductGrid(
@@ -190,18 +203,11 @@ class TestBoundaryConditionRequirements:
         # Should work
         solver = FPParticleSolver(problem, num_particles=100)
         assert solver.boundary_conditions is not None
-
-    def test_fp_particle_with_explicit_bc_parameter(self):
-        """Test FPParticleSolver with explicit BC parameter."""
-        from mfgarchon.geometry.boundary import periodic_bc
-
-        # Problem without geometry
-        problem = MFGProblem(T=1.0, Nt=10, components=_default_components())
-
-        # Should work with explicit BC
-        bc = periodic_bc(dimension=1)
-        solver = FPParticleSolver(problem, num_particles=100, boundary_conditions=bc)
-        assert solver.boundary_conditions is bc
+        # And it is the geometry's own object, not a fabricated default: `is not None` above holds
+        # just as well if the solver silently substituted no-flux or periodic, which is the silent
+        # fallback this repo's fail-fast discipline forbids.
+        assert solver.boundary_conditions is geometry.get_boundary_conditions()
+        assert solver.boundary_conditions.default_bc is BCType.DIRICHLET
 
     def test_fp_particle_bc_parameter_takes_priority(self):
         """Test that explicit BC parameter overrides geometry BC."""

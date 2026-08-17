@@ -39,28 +39,6 @@ class TestHJBSolverTraits:
         assert hasattr(HJBWENOSolver, "_scheme_family")
         assert HJBWENOSolver._scheme_family == SchemeFamily.FDM
 
-    def test_all_hjb_solvers_have_trait(self):
-        """Test that all HJB solvers have _scheme_family trait."""
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
-            HJBSemiLagrangianSolver,
-        )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
-
-        hjb_solvers = [
-            HJBFDMSolver,
-            HJBSemiLagrangianSolver,
-            HJBGFDMSolver,
-            HJBWENOSolver,
-        ]
-
-        for solver_class in hjb_solvers:
-            assert hasattr(solver_class, "_scheme_family"), f"{solver_class.__name__} missing _scheme_family"
-            assert isinstance(solver_class._scheme_family, SchemeFamily), (
-                f"{solver_class.__name__}._scheme_family is not SchemeFamily enum"
-            )
-
     def test_hjb_fdm_variants_both_fdm(self):
         """Test that both FDM and WENO solvers have FDM family."""
         from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
@@ -232,22 +210,6 @@ class TestDualityValidationPreparation:
 class TestTraitImportability:
     """Test that traits don't cause circular imports or other issues."""
 
-    def test_hjb_solvers_import_cleanly(self):
-        """Test that all HJB solvers can be imported without errors."""
-        # Should not raise ImportError
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import (
-            HJBSemiLagrangianSolver,
-        )
-        from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
-
-        # All should have trait
-        assert HJBFDMSolver._scheme_family is not None
-        assert HJBSemiLagrangianSolver._scheme_family is not None
-        assert HJBGFDMSolver._scheme_family is not None
-        assert HJBWENOSolver._scheme_family is not None
-
     def test_no_circular_import_with_scheme_family(self):
         """Test that importing solvers doesn't cause circular import."""
         # Import SchemeFamily first
@@ -297,28 +259,6 @@ class TestFPSolverTraits:
 
         assert hasattr(FPParticleSolver, "_scheme_family")
         assert FPParticleSolver._scheme_family == SchemeFamily.GENERIC
-
-    def test_all_fp_solvers_have_trait(self):
-        """Test that all FP solvers have _scheme_family trait."""
-        from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
-        from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
-        from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-        from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
-        from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
-
-        fp_solvers = [
-            FPFDMSolver,
-            FPSLSolver,
-            FPSLJacobianSolver,
-            FPGFDMSolver,
-            FPParticleSolver,
-        ]
-
-        for solver_class in fp_solvers:
-            assert hasattr(solver_class, "_scheme_family"), f"{solver_class.__name__} missing _scheme_family"
-            assert isinstance(solver_class._scheme_family, SchemeFamily), (
-                f"{solver_class.__name__}._scheme_family is not SchemeFamily enum"
-            )
 
     def test_fp_sl_variants_both_sl(self):
         """Test that both forward SL and backward SL (Jacobian) solvers have SL family."""

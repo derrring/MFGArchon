@@ -34,7 +34,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 from .convergence_metrics import DistributionComparator
 
 if TYPE_CHECKING:
-    from mfgarchon.alg.base_mfg_solver import MFGSolver  # type: ignore[import-not-found]
+    from mfgarchon.types.protocols import MFGSolver
 
 logger = get_logger(__name__)
 # =============================================================================

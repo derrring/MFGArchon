@@ -858,8 +858,23 @@ def test_gfdm_refresh_noop_when_bc_unchanged():
     """No provider / no swap: refresh leaves the snapshot object identity intact (no churn)."""
     gfdm, _geom, _pts, _bdry = _make_geom_sourced_gfdm_1d(_neumann_per_face_1d(0.3))
     snapshot = gfdm.boundary_conditions
+    # The BC identity alone cannot fail: with the `live_bc is self.boundary_conditions` early
+    # return removed, the next line assigns the very same object back (hjb_gfdm.py:1341).
+    # The churn the docstring forbids is the rebuild below it, so pin that instead --
+    # _preclassify_boundary_points rebinds all three dicts to fresh objects (hjb_gfdm.py:1367-1369)
+    # and _bc_config is reassigned at hjb_gfdm.py:1343. Verified by running the refresh body
+    # unconditionally: the BC identity still holds while all three of these break (and they stay
+    # equal by value, so only identity discriminates).
+    config = gfdm._bc_config
+    segments = gfdm._bc_segment_per_point
+    normals = gfdm._bc_normal_per_point
+
     gfdm._refresh_boundary_conditions_if_changed()
+
     assert gfdm.boundary_conditions is snapshot
+    assert gfdm._bc_config is config
+    assert gfdm._bc_segment_per_point is segments
+    assert gfdm._bc_normal_per_point is normals
 
 
 # ---------------------------------------------------------------------------

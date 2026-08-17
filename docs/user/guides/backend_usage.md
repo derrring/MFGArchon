@@ -23,7 +23,6 @@ backend = create_backend("numba")      # CPU optimization
 ```python
 # BEST: PyTorch with automatic device selection
 from mfgarchon.backends import create_backend
-from mfgarchon.alg.neural_solvers import PINNSolver
 
 backend = create_backend("torch")  # Auto-selects CUDA/MPS/CPU
 solver = PINNSolver(problem, backend=backend)

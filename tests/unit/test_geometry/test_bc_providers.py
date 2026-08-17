@@ -104,6 +104,14 @@ class TestAdjointConsistentProvider:
         provider = AdjointConsistentProvider(side="left", sigma=None)
         assert provider.sigma is None
 
+        # The sentinel is only meaningful through the dispatch it controls (providers.py:329-341).
+        # Both sibling tests of that state lookup construct with the DEPRECATED `diffusion=` kwarg,
+        # so this is the only exercise of it from a canonically-constructed provider.
+        # For m(x) = exp(-x): d(ln m)/dx = -1, outward normal at the left is -x, so d(ln m)/dn = +1
+        # and g = -sigma^2/2 * 1 = -0.045. Measured deviation 4.7e-12; 1e-9 leaves ~200x margin.
+        state = {"m_current": np.exp(-np.linspace(0, 1, 11)), "geometry": MockGeometry(dx=0.1), "sigma": 0.3}
+        assert abs(provider.compute(state) - (-(0.3**2) / 2 * 1.0)) < 1e-9
+
     def test_compute_with_exponential_density(self):
         """Test computation with exponential density m(x) = exp(-x).
 

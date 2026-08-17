@@ -270,32 +270,56 @@ class GraphApplicator(BaseGraphApplicator):
     @staticmethod
     def _detect_leaf_nodes(geometry) -> list[int]:
         """Detect leaf nodes (degree 1) in the graph."""
+        degrees = GraphApplicator._node_degrees(geometry)
+        if degrees is None:
+            return []
+        return [int(i) for i in np.where(degrees == 1)[0]]
+
+    @staticmethod
+    def _node_degrees(geometry) -> np.ndarray | None:
+        """Combinatorial degree: how many neighbours each node has.
+
+        `(adj != 0).sum(axis=1)`, not `adj.sum(axis=1)`. The latter is the weighted degree -- the
+        node STRENGTH -- and on a weighted graph it is not the degree at all. Both detectors below
+        used it, so on a path graph `0-1-2-3` with edge weight 0.5 they returned `[1, 2]`, the two
+        NON-leaves, and the boundary condition was applied to the interior. #1940
+
+        ~~The declared owner, `network_backend.node_degrees`, returns the combinatorial degree, so
+        this agrees with it.~~ [CORRECTED 2026-08-15] The owner does not agree with ITSELF: of the
+        three backends, igraph (`:186`) and networkit (`:271`) return the combinatorial degree while
+        networkx (`:362`) returns `dict(graph.degree(weight="weight"))`, the strength. Measured on
+        the weighted path above: igraph gives [1 2 2 1], networkx gives [0.5 1. 1. 0.5]. So there is
+        no single owner to route through -- that is a pre-existing single-source violation, filed
+        separately. This computes the quantity a leaf detector needs and says which one it is.
+
+        The weighted sum is NOT wrong everywhere, and the correct sites are more than I first listed:
+        `network_geometry.py:174`, `network_backend.py:161/243`, `alg/numerical/coupling/
+        graph_coupling.py:238` (another `D - A`), and `alg/numerical/network_solvers/
+        fp_network.py:240`, whose CFL bound needs it -- measured, lambda_max of the weighted
+        Laplacian is 12.55, so 2*max_weighted_degree = 17.0 bounds it and 2*max_combinatorial = 6.0
+        does not. All deliberately untouched. `network_geometry.py:217/218` are a third case:
+        `metadata["average_degree"]` and `["max_degree"]` are strengths under a degree name --
+        pre-existing, metadata only, not changed here.
+        """
         # Issue #543: Use try/except instead of hasattr() for optional attribute
         try:
             network_data = geometry.network_data
-            if network_data is not None:
-                adj = network_data.adjacency_matrix
-                if adj is not None:
-                    degrees = np.array(adj.sum(axis=1)).flatten()
-                    return list(np.where(degrees == 1)[0])
         except AttributeError:
-            pass
-        return []
+            return None
+        if network_data is None:
+            return None
+        adj = network_data.adjacency_matrix
+        if adj is None:
+            return None
+        return np.asarray((adj != 0).sum(axis=1)).flatten()
 
     @staticmethod
     def _detect_low_degree_nodes(geometry, threshold: int) -> list[int]:
         """Detect nodes with degree <= threshold."""
-        # Issue #543: Use try/except instead of hasattr() for optional attribute
-        try:
-            network_data = geometry.network_data
-            if network_data is not None:
-                adj = network_data.adjacency_matrix
-                if adj is not None:
-                    degrees = np.array(adj.sum(axis=1)).flatten()
-                    return list(np.where(degrees <= threshold)[0])
-        except AttributeError:
-            pass
-        return []
+        degrees = GraphApplicator._node_degrees(geometry)
+        if degrees is None:
+            return []
+        return [int(i) for i in np.where(degrees <= threshold)[0]]
 
     @staticmethod
     def _detect_spatial_boundary_nodes(geometry, tolerance: float = 1e-6) -> list[int]:
@@ -478,7 +502,23 @@ class GraphApplicator(BaseGraphApplicator):
         Example:
             >>> u = np.ones(100)
             >>> u_bc = applicator.apply(u, t=0.5, field_type="value")
+
+        Raises:
+            ValueError: If `field_type` is not "value" or "density".
         """
+        # `Literal` is a type annotation, not a runtime check. Every branch below tests
+        # `field_type == "value"` or `== "density"`, so any other string -- including "VALUE",
+        # "hjb", or a typo -- matched nothing and the field came back unmodified with no error.
+        # The failure mode was silence, which is what makes it worth a guard rather than a
+        # docstring line. #1940
+        if field_type not in ("value", "density"):
+            raise ValueError(
+                f"field_type must be 'value' or 'density', got {field_type!r}. "
+                f"'value' is the HJB value function u; 'density' is the FP density m. "
+                f"They receive different boundary conditions by adjoint duality, so there is no "
+                f"safe default and an unrecognised name is not applied to either."
+            )
+
         result = field.copy()
         is_2d = result.ndim == 2
 

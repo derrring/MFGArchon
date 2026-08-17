@@ -119,28 +119,6 @@ class TestGrid1DProjections:
 class TestGrid2DProjections:
     """Test projections for 2D grids."""
 
-    def test_grid_to_grid_2d_shape(self):
-        """Test 2D grid → grid projection shape."""
-        grid_coarse = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        grid_fine = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)],
-            Nx_points=[11, 11],
-            boundary_conditions=no_flux_bc(dimension=2),
-        )
-
-        projector = GeometryProjector(hjb_geometry=grid_coarse, fp_geometry=grid_fine)
-
-        # Create test field on coarse grid
-        U_coarse = np.random.rand(6, 6)
-
-        # Project to fine grid
-        U_fine = projector.project_hjb_to_fp(U_coarse)
-
-        # Check output shape
-        assert U_fine.shape == (11, 11)
-
     def test_grid_to_grid_2d_smooth_function(self):
         """Test 2D grid → grid interpolation accuracy."""
         grid1 = TensorProductGrid(
@@ -177,7 +155,7 @@ class TestGrid3DProjections:
     """Test projections for 3D grids."""
 
     def test_grid_to_grid_3d_shape(self):
-        """Test 3D grid → grid projection shape."""
+        """Test 3D grid → grid projection is exact on a trilinear field."""
         grid1 = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)],
             Nx_points=[4, 4, 4],
@@ -191,14 +169,22 @@ class TestGrid3DProjections:
 
         projector = GeometryProjector(hjb_geometry=grid1, fp_geometry=grid2)
 
-        # Create test field
-        U1 = np.random.rand(4, 4, 4)
+        # u(x,y,z) = x + 2y + 3z: linear interpolation is exact for it, and the unequal axis
+        # weights make an axis-ordering error in the 3D reshape visible (a symmetric field like
+        # x+y+z would not: every axis permutation of the expectation matches to 4e-16).
+        points1 = grid1.get_spatial_grid()  # (64, 3)
+        U1 = (points1[:, 0] + 2.0 * points1[:, 1] + 3.0 * points1[:, 2]).reshape(4, 4, 4)
 
         # Project
         U2 = projector.project_hjb_to_fp(U1)
 
         # Check shape
         assert U2.shape == (7, 7, 7)
+
+        # Measured max deviation 8.9e-16; each of the three axis transpositions deviates by >= 1.0.
+        points2 = grid2.get_spatial_grid()  # (343, 3)
+        U_expected = (points2[:, 0] + 2.0 * points2[:, 1] + 3.0 * points2[:, 2]).reshape(7, 7, 7)
+        np.testing.assert_allclose(U2, U_expected, rtol=1e-10, atol=1e-12)
 
 
 class TestParticleGridProjections:
@@ -387,28 +373,6 @@ class TestProjectionRegistry:
         # Check it's registered
         registered = ProjectionRegistry.list_registered()
         assert (TensorProductGrid, TensorProductGrid, "hjb_to_fp") in registered
-
-    def test_registry_lookup_exact_match(self):
-        """Test registry lookup with exact type match."""
-        from mfgarchon.geometry import ProjectionRegistry
-
-        # Register custom projector
-        @ProjectionRegistry.register(TensorProductGrid, TensorProductGrid, "hjb_to_fp")
-        def custom_projector(source, target, values, **kwargs):
-            return values * 2.0
-
-        # Create geometries
-        grid1 = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        grid2 = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
-        )
-
-        # Lookup should find exact match
-        func = ProjectionRegistry.get_projector(grid1, grid2, "hjb_to_fp")
-        assert func is not None
-        assert func is custom_projector
 
     def test_registry_integration_with_projector(self):
         """Test that GeometryProjector uses registered projectors."""

@@ -102,6 +102,19 @@ class TestNonQuadraticHamiltonians:
         assert not np.any(np.isnan(M_legacy)), "No NaN values"
         assert not np.any(np.isinf(M_legacy)), "No Inf values"
 
+        # Drift-direction oracle, external to the discretisation: it is the sign of dH/dp.
+        # With U = x^2 the optimal control is alpha* = -grad_U = -2x < 0 on (0, 1], so mass must
+        # transport LEFT at every step.  A sign inversion in the potential-to-drift conversion --
+        # the most consequential defect on this path -- passes all four assertions above.
+        # (coupling_coefficient=0.0 does not make this inert post-#1442: the FP drift comes from
+        # the Hamiltonian, 1/control_cost = 1.0, so this is a genuine advection-dominated solve.)
+        com = (M_legacy * x).sum(axis=1) / M_legacy.sum(axis=1)
+        assert np.all(np.diff(com) < 0), f"U = x^2 gives alpha* < 0, so mass must move left; com = {com}"
+
+        # Anti-vacuity: without this the direction check could pass on a solve that barely moved,
+        # where the sign of diff(com) is numerical noise.  Measured total shift 0.413.
+        assert com[0] - com[-1] > 0.3, "the solve barely moved; the direction check is within noise"
+
     def test_equivalence_quadratic_explicit(self, initial_density_1d):
         """Test that drift_field and potential_field give same result for quadratic H.
 
@@ -282,6 +295,21 @@ class TestNonQuadraticHamiltonians:
         assert M_custom.shape == (Nt, Nx)
         assert np.all(M_custom >= -1e-10), "Density should be non-negative"
         assert not np.any(np.isnan(M_custom)), "No NaN values"
+
+        # Transport signature: the drift points away from x = 0.5 everywhere, so the centre must
+        # empty and mass must pile against the no-flux walls.  Without these the test passes on a
+        # solver that ignored drift_field entirely.  Measured ratios 9.1e-5 and 8.0e5.
+        ctr = Nx // 2
+        assert M_custom[-1, ctr] < 1e-2 * M_custom[0, ctr], "an outward drift must evacuate the centre"
+        assert M_custom[-1, 0] > 100 * M_custom[0, 0], "mass must pile against the no-flux wall"
+
+        # Symmetry invariant of the continuous problem: m0 is symmetric about x = 0.5 and the
+        # drift is antisymmetric there (the single centre node is a measure-zero artefact of the
+        # x >= 0.5 tie-break), so m(T, .) must be symmetric.  This is what a one-sided upwind
+        # flux -- a stencil that ignores the sign of the velocity -- would break, and it is the
+        # reason this discontinuous drift is worth testing at all.  Measured deviation 7.1e-15
+        # on values of order 11.9, so 1e-10 is ~1e4 margin above round-off.
+        np.testing.assert_allclose(M_custom[-1], M_custom[-1][::-1], atol=1e-10)
 
     def test_mass_conservation_with_drift_field(self, solver_1d, initial_density_1d, problem_1d):
         """Test that mass is conserved with drift_field."""

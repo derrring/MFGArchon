@@ -54,13 +54,34 @@ def test_the_centroid_is_translation_equivariant():
 
 
 def test_the_centroid_lies_inside_the_bounding_box():
-    """A weaker property than the closed form, and it is here for the shapes the closed form does
-    not cover: every clipped Voronoi cell produced by the public path."""
+    """The 7x7 tiling's cells are known rectangles, so the whole path has a closed form.
+
+    The bounding-box containment below is kept as the cheap catch-all, but it is a one-sided bound.
+    The Voronoi cell of a grid node is the rectangle cut by the perpendicular bisectors, clipped to
+    the domain -- edges at the midpoints between neighbouring nodes -- so its centroid and area are
+    known without evaluating any of this package's code. That is what makes this an oracle rather
+    than an agreement check: comparing `cell.centroid` against `_polygon_centroid(cell.polygon)`
+    would move both sides together under the halving mutation this file was written for, and pass.
+
+    Measured at HEAD: max centroid deviation 2.8e-15, max area deviation 8.7e-17. atol=1e-12 leaves
+    ~360x margin on the centroids. Under the halving mutation the deviation is 0.25.
+    """
     from mfgarchon.alg.numerical.meshless_galerkin.voronoi_cells import clipped_voronoi_cells
 
     xs = np.linspace(0.0, 1.0, 7)
     nodes = np.array([[x, y] for x in xs for y in xs])
     cells = clipped_voronoi_cells(nodes, bounds=[(0.0, 1.0), (0.0, 1.0)])
+    assert len(cells) == len(nodes)
+
+    edges = np.concatenate([[0.0], (xs[:-1] + xs[1:]) / 2.0, [1.0]])
+    centres = (edges[:-1] + edges[1:]) / 2.0
+    widths = edges[1:] - edges[:-1]
+    expected_centroids = np.array([[centres[i], centres[j]] for i in range(len(xs)) for j in range(len(xs))])
+    expected_areas = np.array([widths[i] * widths[j] for i in range(len(xs)) for j in range(len(xs))])
+
+    np.testing.assert_allclose([c.centroid for c in cells], expected_centroids, rtol=0, atol=1e-12)
+    np.testing.assert_allclose([c.area for c in cells], expected_areas, rtol=0, atol=1e-14)
+
     for cell in cells:
         lo, hi = cell.polygon.min(axis=0), cell.polygon.max(axis=0)
         where = f"centroid {cell.centroid} outside its own polygon's bounding box [{lo}, {hi}]"

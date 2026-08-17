@@ -21,7 +21,6 @@ python examples/basic/geometry/2d_crowd_motion_fdm.py
 ### [core_infrastructure/](core_infrastructure/)
 Core API usage and basic MFG setups:
 - **`solve_mfg_demo.py`** - Basic `solve_mfg()` function usage
-- **`lq_mfg_demo.py`** - Linear-Quadratic MFG problem
 - **`custom_hamiltonian_derivs_demo.py`** - Custom Hamiltonian derivatives
 
 ### [geometry/](geometry/)
@@ -50,7 +49,6 @@ Tools and utilities:
 
 **Recommended order for exploring basic examples**:
 
-1. **Start**: `core_infrastructure/lq_mfg_demo.py` - Simplest MFG setup
 2. **API**: `core_infrastructure/solve_mfg_demo.py` - Main solver interface
 3. **2D**: `geometry/2d_crowd_motion_fdm.py` - Multi-dimensional problems
 4. **Customize**: `core_infrastructure/custom_hamiltonian_derivs_demo.py` - Custom Hamiltonians

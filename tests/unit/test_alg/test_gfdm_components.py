@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 import numpy as np
+from scipy.spatial import Delaunay
 
 from mfgarchon.alg.numerical.gfdm_components import (
     BoundaryHandler,
@@ -96,10 +97,26 @@ class TestGridCollocationMapper:
         # Check shape
         assert u_grid.shape == (121,)  # 11*11
 
-        # Grid reconstruction should approximate the function
-        # (not exact due to triangulation interpolation)
-        u_grid_reshaped = u_grid.reshape(11, 11)
-        assert u_grid_reshaped.shape == (11, 11)
+        # Partition of unity, which holds at every grid node including the ones outside the
+        # cloud's convex hull: a constant field must come back as that constant. Measured 4.4e-16,
+        # and it is what fails if the reconstruction returns zeros or NaN off the hull.
+        np.testing.assert_allclose(mapper_2d.map_collocation_to_grid(np.full(100, 3.0)), 3.0, atol=1e-12)
+
+        # "Grid reconstruction should approximate the function", asserted. A linear interpolant
+        # reproduces linear data exactly, so this is an oracle rather than a tolerance: measured
+        # 4.4e-16 at the 80 of 121 nodes inside the hull. Outside it the reconstruction is
+        # extrapolated and genuinely bad (measured 3.1e-01 for this same linear field), which is
+        # why the check is hull-restricted. An i/j transposition scores 8.0e-01 inside the hull
+        # and returning zeros scores 2.7, both far outside the tolerance.
+        u_linear = mapper_2d.map_collocation_to_grid(x_coll + 2 * y_coll)
+        grid_axis = np.linspace(0.0, 1.0, 11)
+        GX, GY = np.meshgrid(grid_axis, grid_axis, indexing="ij")
+        grid_points = np.column_stack([GX.ravel(), GY.ravel()])
+        inside_hull = Delaunay(mapper_2d.collocation_points).find_simplex(grid_points) >= 0
+        assert inside_hull.sum() == 80
+        np.testing.assert_allclose(
+            u_linear[inside_hull], (grid_points[:, 0] + 2 * grid_points[:, 1])[inside_hull], atol=1e-12
+        )
 
     def test_batch_mapping_consistency(self, mapper_2d):
         """Test batch vs sequential mapping gives same result."""
@@ -125,7 +142,7 @@ class TestNeighborhoodBuilder:
     @pytest.fixture
     def builder_1d(self):
         """Create 1D neighborhood builder for testing."""
-        from mfgarchon.utils.numerical.gfdm_strategies import TaylorOperator
+        from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 
         collocation_points = np.linspace(0, 1, 20).reshape(-1, 1)
         gfdm_operator = TaylorOperator(
@@ -173,7 +190,7 @@ class TestNeighborhoodBuilder:
 
     def test_compute_weights_gaussian(self):
         """Test Gaussian weight function computation."""
-        from mfgarchon.utils.numerical.gfdm_strategies import TaylorOperator
+        from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 
         collocation_points = np.linspace(0, 1, 20).reshape(-1, 1)
         gfdm_operator = TaylorOperator(points=collocation_points, delta=0.15, taylor_order=2)
@@ -252,6 +269,21 @@ class TestNeighborhoodBuilder:
         for j in range(20):
             reverse_neighbors = builder_1d._reverse_neighborhoods[j]
             assert isinstance(reverse_neighbors, np.ndarray)
+
+        # The relation that defines a reverse map: j is in the neighborhood of i exactly when i is
+        # in the reverse neighborhood of j. This is the transpose consistency the GFDM adjoint
+        # operator rests on, and it fails for an off-by-one, an omitted self-index, or a reverse
+        # map built from the wrong stencil. Measured: holds for all 400 pairs, 120 edges each way.
+        forward = np.zeros((20, 20), dtype=bool)
+        reverse = np.zeros((20, 20), dtype=bool)
+        for i in range(20):
+            forward[i, builder_1d.neighborhoods[i]["indices"]] = True
+            reverse[i, builder_1d._reverse_neighborhoods[i]] = True
+        np.testing.assert_array_equal(reverse, forward.T)
+
+        # And closing the "possibly empty" loophole above: with these stencils no point is
+        # unreachable. Measured reverse sizes range 3 to 9.
+        assert reverse.any(axis=1).all()
 
 
 class TestBoundaryHandler:
@@ -339,7 +371,7 @@ if __name__ == "__main__":
 
     # Test NeighborhoodBuilder
     print("\n2. Testing NeighborhoodBuilder...")
-    from mfgarchon.utils.numerical.gfdm_strategies import TaylorOperator
+    from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 
     points = np.linspace(0, 1, 20).reshape(-1, 1)
     operator = TaylorOperator(points, delta=0.15, taylor_order=2)

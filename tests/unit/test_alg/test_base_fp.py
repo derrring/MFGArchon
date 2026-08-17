@@ -135,17 +135,6 @@ def test_concrete_fp_solver_instantiation():
     assert isinstance(solver, ConcreteFPSolver)
 
 
-@pytest.mark.unit
-def test_concrete_fp_solver_inherits_base_methods():
-    """Test concrete solver inherits base class methods."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    # Has solve_fp_system method
-    assert hasattr(solver, "solve_fp_system")
-    assert callable(solver.solve_fp_system)
-
-
 # ===================================================================
 # Test Initialization
 # ===================================================================
@@ -182,47 +171,6 @@ def test_base_fp_solver_init_default_attributes():
 # ===================================================================
 # Test solve_fp_system Method Signature
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_solve_fp_system_signature():
-    """Test solve_fp_system has correct signature."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    # Should accept two arrays
-    m_init = np.ones(10)
-    U_solution = np.ones((20, 10))
-
-    result = solver.solve_fp_system(m_init, U_solution)
-    assert isinstance(result, np.ndarray)
-
-
-@pytest.mark.unit
-def test_solve_fp_system_returns_ndarray():
-    """Test solve_fp_system returns numpy array."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    m_init = np.ones(5)
-    U_solution = np.ones((10, 5))
-
-    result = solver.solve_fp_system(m_init, U_solution)
-    assert isinstance(result, np.ndarray)
-
-
-@pytest.mark.unit
-def test_solve_fp_system_shape_matches_input():
-    """Test solve_fp_system returns array with correct shape."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    Nt, Nx = 20, 10
-    m_init = np.ones(Nx)
-    U_solution = np.ones((Nt, Nx))
-
-    result = solver.solve_fp_system(m_init, U_solution)
-    assert result.shape == (Nt, Nx)
 
 
 # ===================================================================
@@ -297,6 +245,12 @@ def test_backend_default_none():
 
     assert solver.backend is None
 
+    # The line above only reads BackendTestSolver's own keyword default, which it assigns AFTER
+    # super().__init__ and so overwrites whatever the base class set. ConcreteFPSolver never
+    # touches the attribute, so this is the read that actually reaches BaseFPSolver.__init__
+    # (base_fp.py:103) -- the sentinel every backend dispatch downstream branches on.
+    assert ConcreteFPSolver(problem).backend is None
+
 
 @pytest.mark.unit
 def test_backend_can_be_modified():
@@ -322,15 +276,6 @@ def test_solver_accesses_problem_attributes():
     assert solver.problem.dim == 1
     assert solver.problem.T == 1.0
     assert solver.problem.dt == 0.01
-
-
-@pytest.mark.unit
-def test_solver_problem_is_same_instance():
-    """Test solver stores same problem instance."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    assert solver.problem is problem
 
 
 # ===================================================================
@@ -387,30 +332,3 @@ def test_multiple_inheritance_with_base_fp():
 # ===================================================================
 # Test Edge Cases
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_solve_fp_system_with_empty_arrays():
-    """Test solve_fp_system handles empty arrays."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    m_init = np.array([])
-    U_solution = np.empty((0, 0))
-
-    result = solver.solve_fp_system(m_init, U_solution)
-    assert result.shape == (0, 0)
-
-
-@pytest.mark.unit
-def test_solve_fp_system_with_large_arrays():
-    """Test solve_fp_system handles large arrays."""
-    problem = MockMFGProblem()
-    solver = ConcreteFPSolver(problem)
-
-    Nt, Nx = 1000, 500
-    m_init = np.ones(Nx)
-    U_solution = np.ones((Nt, Nx))
-
-    result = solver.solve_fp_system(m_init, U_solution)
-    assert result.shape == (Nt, Nx)

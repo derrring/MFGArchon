@@ -10,6 +10,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.network_mfg_solver import (
     create_network_mfg_solver,
     create_simple_network_solver,
@@ -43,6 +44,14 @@ class TestNetworkMFGSolverCreation:
 
         assert solver is not None
 
+        # `is not None` makes this test byte-identical to its implicit sibling apart from the
+        # string, i.e. the one parameter that separates them goes unobserved. The factory
+        # forwards hjb_solver_type/fp_solver_type as scheme= to the two network solvers, so
+        # that is where the dispatch becomes visible.
+        assert isinstance(solver, FixedPointIterator)
+        assert solver.hjb_solver.scheme == "explicit"
+        assert solver.fp_solver.scheme == "explicit"
+
     def test_create_network_solver_implicit(self):
         """Test network solver with implicit schemes."""
         network = GridNetwork(width=4, height=4)
@@ -61,6 +70,13 @@ class TestNetworkMFGSolverCreation:
         )
 
         assert solver is not None
+
+        # The implicit half of the dispatch. Without these three lines this test and
+        # test_create_network_solver_explicit differ only in a string neither of them reads,
+        # which is what makes them look like duplicates when they are actually two branches.
+        assert isinstance(solver, FixedPointIterator)
+        assert solver.hjb_solver.scheme == "implicit"
+        assert solver.fp_solver.scheme == "implicit"
 
     def test_create_solver_with_custom_damping(self):
         """Test solver creation with custom damping factor."""
@@ -140,98 +156,6 @@ class TestNetworkMFGProblemSetup:
         assert problem.density_coupling(2, m, 0.0) == pytest.approx(0.3 * m[2] ** 2)
 
 
-@pytest.mark.skip(
-    reason="NetworkGraph geometry is incompatible with GFDM/FDM solvers "
-    "(requires CartesianGrid). These tests will be enabled when network-specific "
-    "solvers are implemented. See Issue #833."
-)
-class TestNetworkMFGSolverExecution:
-    """Test network MFG solver execution.
-
-    NOTE: All tests in this class are skipped because the current FDM/GFDM
-    solvers require CartesianGrid, not NetworkGraph. This is a design limitation,
-    not a bug. Network MFG solving needs dedicated graph-based solvers.
-    """
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_solve_small_grid_network(self):
-        """Test solving MFG on small grid network."""
-        # Create 3x3 grid
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        # Create problem
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        # Create solver
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        # Solve
-        result = solver.solve(max_iterations=10, tolerance=1e-4)
-
-        # Verify result structure
-        assert result is not None
-        U, M = result[:2]
-
-        # Check shapes (Nt+1 time steps, num_nodes spatial points)
-        expected_shape = (problem.Nt + 1, problem.num_nodes)
-        assert U.shape == expected_shape
-        assert M.shape == expected_shape
-
-        # Check values are finite
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_solve_with_explicit_scheme(self):
-        """Test solving with explicit time-stepping."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.2,
-            Nt=20,
-        )
-
-        solver = create_simple_network_solver(
-            problem,
-            scheme="RK45",
-        )
-
-        result = solver.solve(max_iterations=5, tolerance=1e-3)
-
-        assert result is not None
-        U, M = result[:2]
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_solve_with_implicit_scheme(self):
-        """Test solving with implicit time-stepping."""
-        network = GridNetwork(width=4, height=4)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=1.0,
-            Nt=15,
-        )
-
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
-
-        assert result is not None
-        U, M = result[:2]
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
-
-
 class TestNetworkSolutionProperties:
     """Test mathematical properties of network MFG solutions."""
 
@@ -260,26 +184,6 @@ class TestNetworkSolutionProperties:
             assert np.isclose(current_mass, initial_mass, rtol=0.2)
 
     @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_density_non_negativity(self):
-        """Test that density remains non-negative."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        result = solver.solve(max_iterations=10, tolerance=1e-4)
-        _U, M = result[:2]
-
-        # Density should be non-negative (with small tolerance for numerical errors)
-        assert np.all(M >= -1e-10)
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
     def test_solution_evolution(self):
         """Test that solution evolves over time."""
         network = GridNetwork(width=4, height=4)
@@ -305,27 +209,6 @@ class TestNetworkGeometryVariations:
     """Test different network geometries."""
 
     @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_periodic_grid_network(self):
-        """Test MFG on periodic grid network."""
-        network = GridNetwork(width=4, height=4, periodic=True)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        result = solver.solve(max_iterations=8, tolerance=1e-4)
-
-        assert result is not None
-        U, M = result[:2]
-        assert np.all(np.isfinite(U))
-        assert np.all(np.isfinite(M))
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
     def test_rectangular_grid_network(self):
         """Test MFG on non-square grid."""
         network = GridNetwork(width=6, height=3)
@@ -345,87 +228,8 @@ class TestNetworkGeometryVariations:
         assert problem.num_nodes == 18
 
 
-class TestSolverConvergence:
-    """Test solver convergence behavior."""
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_convergence_with_tight_tolerance(self):
-        """Test convergence with tight tolerance."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.3,
-            Nt=10,
-        )
-
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        result = solver.solve(max_iterations=20, tolerance=1e-6)
-
-        # Should converge or reach max iterations
-        assert result is not None
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_convergence_with_relaxed_tolerance(self):
-        """Test convergence with relaxed tolerance."""
-        network = GridNetwork(width=4, height=4)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = create_simple_network_solver(problem, scheme="implicit")
-
-        result = solver.solve(max_iterations=5, tolerance=1e-3)
-
-        assert result is not None
-
-
 class TestSolverRobustness:
     """Test solver robustness to various configurations."""
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_different_damping_factors(self):
-        """Test solver with various damping factors."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        for damping in [0.3, 0.5, 0.7]:
-            solver = create_simple_network_solver(problem, damping=damping)
-
-            result = solver.solve(max_iterations=10, tolerance=1e-4)
-
-            assert result is not None
-
-    @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
-    def test_different_time_horizons(self):
-        """Test solver with different time horizons."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        for T_val in [0.3, 0.5, 1.0]:
-            problem = NetworkMFGProblem(
-                geometry=network,
-                T=T_val,
-                Nt=10,
-            )
-
-            solver = create_simple_network_solver(problem, scheme="implicit")
-
-            result = solver.solve(max_iterations=10, tolerance=1e-4)
-
-            assert result is not None
 
     @pytest.mark.skip(reason="Architecture gap: NetworkGraph incompatible with GFDM solver (requires CartesianGrid)")
     def test_different_network_sizes(self):

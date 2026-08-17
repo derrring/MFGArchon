@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 72
+**Total deprecated items**: 59
 **Versions covered**: v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.7, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -167,17 +167,10 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.17.0
 
-*39 items*
+*26 items*
 
 ### Parameters
 
-- **`enable_curriculum`** in `AdaptiveTrainingConfig.__init__()` — use `training_mode` instead (remove by v0.25.0)
-- **`enable_multiscale`** in `AdaptiveTrainingConfig.__init__()` — use `training_mode` instead (remove by v0.25.0)
-- **`enable_refinement`** in `AdaptiveTrainingConfig.__init__()` — use `training_mode` instead (remove by v0.25.0)
-- **`use_control_variates`** in `DGMConfig.__init__()` — use `variance_reduction` instead (remove by v0.25.0)
-- **`use_importance_sampling`** in `DGMConfig.__init__()` — use `variance_reduction` instead (remove by v0.25.0)
-- **`use_batch_norm`** in `DeepONetConfig.__init__()` — use `normalization` instead (remove by v0.25.0)
-- **`use_layer_norm`** in `DeepONetConfig.__init__()` — use `normalization` instead (remove by v0.25.0)
 - **`tensor_diffusion_field`** in `FPFDMSolver.solve_fp_system()` — use `volatility_field` instead (remove by v0.25.0)
 - **`volatility_matrix`** in `FPFDMSolver.solve_fp_system()` — use `volatility_field` instead (remove by v0.25.0)
 - **`m_initial_condition`** in `FPNetworkSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
@@ -188,8 +181,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 - **`show_edges`** in `Mesh3D.visualize_mesh()` — use `mode` instead (remove by v0.25.0)
 - **`show_quality`** in `Mesh3D.visualize_mesh()` — use `mode` instead (remove by v0.25.0)
 - **`m_initial_condition`** in `NetworkFPSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
-- **`use_batch_norm`** in `PINNConfig.__init__()` — use `normalization` instead (remove by v0.25.0)
-- **`use_layer_norm`** in `PINNConfig.__init__()` — use `normalization` instead (remove by v0.25.0)
 - **`dimension`** in `TensorProductGrid.__init__()` — use `len(bounds) (dimension is inferred from bounds)` instead (remove by v0.25.0)
 - **`num_points`** in `TensorProductGrid.__init__()` — use `Nx_points` instead (remove by v0.25.0)
 - **`show_edges`** in `UnstructuredMesh.visualize_mesh()` — use `mode` instead (remove by v0.25.0)
@@ -201,10 +192,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 - **`__init__()`** — use `Use TaylorOperator from gfdm_strategies instead: from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator` instead (remove by v0.25.0)
 - **`_deprecated_xp_zeros()`** — use `Use backend.zeros() instead for device consistency.` instead (remove by v0.25.0)
-- **`apply_boundary_conditions_1d()`** — use `Use pad_array_with_ghosts() or PreallocatedGhostBuffer instead. See issue #577.` instead (remove by v0.25.0)
-- **`apply_boundary_conditions_2d()`** — use `Use pad_array_with_ghosts() or PreallocatedGhostBuffer instead. See issue #577.` instead (remove by v0.25.0)
-- **`apply_boundary_conditions_3d()`** — use `Use pad_array_with_ghosts() or PreallocatedGhostBuffer instead. See issue #577.` instead (remove by v0.25.0)
-- **`apply_boundary_conditions_nd()`** — use `Use pad_array_with_ghosts() or PreallocatedGhostBuffer instead. See issue #577.` instead (remove by v0.25.0)
 - **`compute_adjoint_consistent_bc_values()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_adjoint_consistent_bc_values instead.` instead (remove by v0.25.0)
 - **`compute_boundary_log_density_gradient_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_boundary_log_density_gradient_1d instead.` instead (remove by v0.25.0)
 - **`create_adjoint_consistent_bc_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.create_adjoint_consistent_bc_1d instead.` instead (remove by v0.25.0)

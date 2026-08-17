@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.config import MFGSolverConfig
-    from mfgarchon.problem.base_mfg_problem import MFGProblem
+    from mfgarchon.core.mfg_problem import MFGProblem
 
 # Type alias for iteration callback (Issue #614)
 # Signature: callback(iteration, U, M, error_U, error_M) -> bool
@@ -777,7 +777,15 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Calculate convergence metrics
                 from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
-                metrics = calculate_l2_convergence_metrics(self.U, U_old, self.M, M_old, grid_spacing, time_step)
+                # The Picard residual is between the MAP'S OUTPUT and its input, U_new vs U_old.
+                # `self.U` is that output after damping or Anderson, so measuring it conflates
+                # "we stopped moving" with "we reached the fixed point" -- and at theta -> 0 the
+                # first happens without the second (Issue #1684 item 7, the same shape as item 6
+                # one level up). Measured on a 21-point no-flux fixture, iteration 2: the reported
+                # l2distu_abs fell 5.825e-01 -> 7.944e-02 as relaxation went 1.0 -> 0.1, a factor
+                # of 7.3 bought by the damping factor rather than by progress toward the fixed
+                # point. Convergence is a property of the map; damping is a property of the path.
+                metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, grid_spacing, time_step)
                 self.l2distu_abs[iiter] = metrics["l2distu_abs"]
                 self.l2distu_rel[iiter] = metrics["l2distu_rel"]
                 self.l2distm_abs[iiter] = metrics["l2distm_abs"]
@@ -838,8 +846,23 @@ class FixedPointIterator(BaseCouplingIterator):
                         self.l2distm_rel[iiter],
                     )
                     if should_continue is False:
-                        converged = True
-                        convergence_reason = "callback_stopped"
+                        # A user abort is not evidence of convergence, and it is not evidence
+                        # against it either -- so evaluate the real criteria at this iterate and
+                        # report what they say. Setting `converged = True` here (Issue #1684 item
+                        # 2) made an abort at iteration 1 report success at l2distu_rel 1.000e+00
+                        # while the same problem run to 3 iterations reported FAILURE at
+                        # 3.259e-01: the aborted run claimed convergence at three times the error
+                        # of the run that admitted it had not converged.
+                        converged, _criteria_reason = check_convergence_criteria(
+                            self.l2distu_rel[iiter],
+                            self.l2distm_rel[iiter],
+                            self.l2distu_abs[iiter],
+                            self.l2distm_abs[iiter],
+                            final_tolerance,
+                        )
+                        convergence_reason = (
+                            f"callback_stopped ({_criteria_reason})" if converged else "callback_stopped"
+                        )
                         break
 
                 # Check convergence

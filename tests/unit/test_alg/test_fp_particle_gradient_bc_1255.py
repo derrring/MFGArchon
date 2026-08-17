@@ -286,10 +286,21 @@ class TestUniformRobinGhostAlphaBeta:
         """
         Low-wall ghost must use the general Robin formula, not pure Neumann.
         Buggy value: -4.0 (pure Neumann, alpha=0, beta=1).
-        Fixed value: (5 - 1*2.5)/(-1.5) = -2.5/-1.5 ≈ 1.6667.
+
+        RE-POINTED 2026-08-16 (#1907). This asserted `(5 - 1*2.5)/(-1.5)`, i.e. the low-wall
+        coefficients `alpha/2 -+ beta/dx`, which is the AXIS condition `alpha*u + beta*du/dx = g`.
+        `BCSegment.beta` declares `du/dn`, the outward normal derivative, and the sibling test
+        for the high wall two functions down already asserts the outward form -- so this file
+        pinned BOTH conventions, one per wall, because it recorded what the code did rather than
+        what the condition says. #1255 was fixing a different defect (a hardcoded pure-Neumann
+        special case) and carried the low-wall sign along untouched.
+
+        The outward condition is side-free on a cell-centred grid, so the expected value is now
+        the same expression as the high wall's, and the two walls agree because this fixture's
+        adjacent interior cell is 1.0 at both ends.
         """
         u_ghost_lo = ghost_buffer.padded[0]  # index 0 = low ghost
-        expected = (5.0 - 1.0 * 2.5) / (-1.5)  # ≈ 1.6667
+        expected = (5.0 - 1.0 * (-1.5)) / 2.5  # = 2.6, identical to the high wall
         assert abs(u_ghost_lo - expected) < 1e-9, (
             f"Low ghost: expected {expected:.4f} (general Robin), "
             f"got {u_ghost_lo:.4f}. "

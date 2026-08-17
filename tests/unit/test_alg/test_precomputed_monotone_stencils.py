@@ -244,9 +244,25 @@ def test_solver_constructs_with_adaptive_neighborhoods_and_qp_m_matrix():
 
     precomp = s._precomputed_stencils
     assert precomp is not None, "qp_m_matrix + precompute should build stencils"
+    # The length loop below is vacuous if nothing was built: pin that one stencil was
+    # constructed per buffer point (measured 28 == 28 on this cloud).
+    assert len(precomp.stencils) == len(bdry_idx), (
+        f"built {len(precomp.stencils)} stencils for {len(bdry_idx)} boundary points; "
+        f"the #1102 length loop below would be vacuous"
+    )
     for i, sd in precomp.stencils.items():
         runtime_nh = s.neighborhoods[i]["indices"]
         assert len(sd.weights) == len(runtime_nh), (
             f"point {i}: precomp L_w length {len(sd.weights)} != runtime "
             f"neighborhood length {len(runtime_nh)}. #1102 invariant violated."
         )
+        # The weights the solver actually built must satisfy the M-matrix property that
+        # monotonicity_scheme="qp_m_matrix" exists to enforce -- off-diagonals non-negative and
+        # rows summing to zero (the discrete maximum principle). The two hand-constructed tests
+        # above assert this; the solver-driven path did not. Measured over all 28 stencils:
+        # worst off-diagonal -2.2e-07 and worst |row sum| 1.7e-08, against the 1e-6 tolerance
+        # this file already uses (margins 4.6x and 58x).
+        if sd.center_in_neighbors is not None:
+            off = np.delete(sd.weights, sd.center_in_neighbors)
+            assert np.all(off >= -1e-6), f"point {i}: off-diagonal weights negative"
+            assert abs(np.sum(sd.weights)) < 1e-6, f"point {i}: weights do not sum to zero"

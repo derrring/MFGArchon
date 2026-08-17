@@ -118,12 +118,6 @@ jobs:
         echo "Checking that fenced doc examples resolve against the package..."
         python scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 
-    - name: Frozen prototype areas (no new tests against alg/neural or alg/reinforcement)
-      timeout-minutes: 1
-      run: |
-        echo "Checking that no test was added against a frozen prototype paradigm..."
-        python scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
-
     # 3 s, pure text over the package. Here rather than nightly for the same reason as the
     # doc-API ratchet: the local gate is authoritative, but this is the only mechanical
     # backstop if someone pushes with --no-verify. Exit 2 (its own patterns no longer match

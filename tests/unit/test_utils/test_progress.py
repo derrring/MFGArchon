@@ -130,11 +130,21 @@ class TestIterationProgress:
             assert progress.current_iteration == 0
 
     def test_iteration_progress_update(self):
-        """Test IterationProgress update method."""
-        with patch("sys.stdout", new=StringIO()), IterationProgress(max_iterations=10, disable=True) as progress:
+        """update() accumulates iterations and formats the error into the postfix.
+
+        Previously run with ``disable=True``, where ``update`` returns at its first line
+        (``if self.disable or not self.pbar: return``) -- so neither call reached any update
+        logic and the assertion only re-stated the context manager's return. The disabled
+        early-return is covered by ``test_iteration_progress_disabled``; this drives the
+        enabled path, where both observables are real: the accumulator advances by n, and the
+        error is formatted as ``f"{error:.2e}"`` into the postfix the bar stores.
+        """
+        with patch("sys.stdout", new=StringIO()), IterationProgress(max_iterations=10) as progress:
             progress.update(1)
             progress.update(2, error=0.01)
-            assert progress is not None  # Smoke: update completes without error
+
+            assert progress.current_iteration == 3
+            assert progress.pbar.postfix_data["err"] == "1.00e-02"
 
     def test_iteration_progress_set_description(self):
         """Test IterationProgress set_description method."""
@@ -197,10 +207,26 @@ class TestRichProgressBar:
         assert collected == items
 
     def test_rich_progress_close(self):
-        """Test RichProgressBar close method."""
-        pbar = RichProgressBar(total=10, disable=True)
-        pbar.close()
-        assert pbar.disable is True
+        """close() stops a started bar, clears _started, and is idempotent.
+
+        Previously the bar was never entered, so ``self.progress`` was None and ``_started``
+        False: ``close()`` -- ``if self.progress and self._started:`` -- took no branch at all,
+        and the assertion re-read the constructor argument. No other test in this file calls
+        close() (the iteration tests exit through ``__exit__``), so this is the only place the
+        state transition close() owns can be pinned.
+        """
+        with patch("sys.stdout", new=StringIO()):
+            pbar = RichProgressBar(total=10)
+            assert pbar._started is False
+
+            pbar.__enter__()
+            assert pbar._started is True
+
+            pbar.close()
+            assert pbar._started is False
+
+            pbar.close()  # idempotent: must not raise on an already-closed bar
+            assert pbar._started is False
 
 
 class TestTimedOperation:
@@ -266,16 +292,6 @@ class TestProgressContext:
         with patch("sys.stdout", new=StringIO()), progress_context(range(10), description="Test", disable=True) as pbar:
             total = sum(x for x in pbar)
             assert total == 45  # sum(0..9)
-
-
-class TestRichRequirement:
-    """Test that rich is required."""
-
-    def test_rich_is_available(self):
-        """Test that rich module is available (required dependency)."""
-        import rich
-
-        assert rich is not None
 
 
 class TestSolverProgress:

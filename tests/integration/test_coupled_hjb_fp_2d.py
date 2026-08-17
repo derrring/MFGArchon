@@ -189,7 +189,13 @@ class TestCoupledHJBFP2DBasic:
         assert np.all(M >= -1e-10), "Density contains negative values"
 
     def test_2d_output_shapes(self):
-        """Verify U and M shapes match (Nt+1, Nx, Ny) from geometry."""
+        """Verify U and M shapes, and the three oracles that hold without convergence.
+
+        This is the only non-@slow 2D coupled test, so it is the sole 2D coupling coverage in
+        ``scripts/local_ci.sh`` (which deselects ``slow``).  The 3-iteration solve is deliberately
+        unconverged, so the assertions below are restricted to laws that hold at every iterate:
+        the imposed terminal/initial data, and no-flux mass conservation.
+        """
         N = 10
         problem = _create_2d_problem(N=N, T=0.2, Nt=6)
         solver = _create_2d_mfg_solver(problem)
@@ -200,6 +206,27 @@ class TestCoupledHJBFP2DBasic:
         Nx, Ny = problem.geometry.get_grid_shape()
         assert U.shape == (problem.Nt + 1, Nx, Ny)
         assert M.shape == (problem.Nt + 1, Nx, Ny)
+
+        # Imposed data, independent of the solve: U[-1] is the terminal cost 0.5|x|^2 and M[0]
+        # is the (normalised) initial density.  Measured max diff 0.0 for both.
+        xg = np.linspace(-1, 1, N + 1)
+        X, Y = np.meshgrid(xg, xg, indexing="ij")
+        np.testing.assert_allclose(U[-1], 0.5 * (X**2 + Y**2), atol=1e-12)
+        np.testing.assert_allclose(M[0], problem.get_m_initial(), atol=1e-12)
+
+        # External oracle: no-flux walls conserve the discrete total mass sum(M)*dx*dy, which is
+        # what the FP scheme actually conserves (the trapezoidal integral is not conserved -- it
+        # drifts 2.1e-4 here purely from the half-weighted boundary rows).  The FP step does not
+        # renormalise (#1683), so this measures physics.  Measured 3.33e-16; the same fixture with
+        # Dirichlet walls leaks 1.33e-2.
+        dx = xg[1] - xg[0]
+        mass = M.sum(axis=(1, 2)) * dx * dx
+        assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, f"no-flux mass leak: {mass}"
+
+        # Picard is contracting on this fixture even inside a 3-iteration budget.
+        assert np.all(np.diff(result.error_history_U) < 0), (
+            f"Picard residual on U is not decreasing: {result.error_history_U}"
+        )
 
     @pytest.mark.slow
     def test_2d_terminal_condition_preserved(self):

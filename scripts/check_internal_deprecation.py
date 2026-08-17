@@ -37,7 +37,11 @@ reason that said nothing about the tree. Two things fixed that, and both are nee
   ``alg/reinforcement/multi_population`` raises ``AttributeError``, which ``pkgutil.walk_packages``
   re-raises, and the walk stopped at **160 of 428** modules -- so 29 of the 31 missing deprecations
   were not torch's, they were in ``geometry/``, ``utils/`` and ``operators/``, never reached.
-- The census is scoped to the **live** library. ``alg/neural`` and ``alg/reinforcement`` are frozen
+- The census is scoped to the **live** library. [The two packages named in this paragraph and
+  the two above it were DELETED on 2026-08-13; the passages are kept because they are why
+  ``FROZEN`` and ``is_frozen`` exist, and that mechanism is still the right shape for whatever
+  is frozen next. ``FROZEN`` is now empty, so nothing is excluded today.]
+  ``alg/neural`` and ``alg/reinforcement`` are frozen
   prototypes and out of scope for repo-wide campaigns (CLAUDE.md), and measured, they are also
   exactly where every torch-dependent module lives. Scoped that way the count is **63 with torch
   and 63 without**, which is what makes a committed baseline meaningful.
@@ -76,7 +80,10 @@ BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"
 # The two frozen prototype paradigms (CLAUDE.md): out of scope for repo-wide campaigns, and the
 # only place in the package where a module needs torch to import. Excluding them is what makes the
 # count identical with and without it.
-FROZEN = ("mfgarchon.alg.neural", "mfgarchon.alg.reinforcement")
+# The frozen paradigms this excluded were deleted (see the changelog for this change), so the
+# tuple is empty rather than removed: the exclusion mechanism is still the right shape if a
+# package is ever frozen again, and an empty tuple keeps `startswith(FROZEN)` well defined.
+FROZEN: tuple[str, ...] = ()
 
 
 def is_frozen(module: str) -> bool:

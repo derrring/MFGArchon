@@ -146,18 +146,48 @@ class TestHJBResolver:
 
 
 class TestFPResolver:
-    def test_no_flux_resolves_to_zero_flux(self, fp_resolver, empty_state):
-        bc = no_flux_bc(dimension=1)
-        results = resolve_bc(bc, fp_resolver, empty_state)
-        for r in results:
-            assert r.math_type == MathBCType.ZERO_FLUX
-            assert r.original_bc_type == BCType.NO_FLUX
+    @pytest.mark.parametrize("bc_type", [BCType.NO_FLUX, BCType.REFLECTING])
+    def test_an_impermeable_wall_resolves_to_the_robin_coefficients_of_the_flux_condition(self, fp_resolver, bc_type):
+        """RE-POINTED 2026-08-16. This asserted ``MathBCType.ZERO_FLUX``, which was the intent
+        passed through under a second name -- its own enum comment read "needs drift+diffusion
+        for calculator", so Layer 3 had to dispatch on it again.
 
-    def test_reflecting_resolves_to_zero_flux(self, fp_resolver, empty_state):
-        seg = BCSegment(name="wall", bc_type=BCType.REFLECTING, value=0.0)
+        ``J.n = 0`` with ``J = v*m - D*grad(m)`` is ``v_n*m - D*d_n m = 0``, i.e. Robin with
+        ``alpha = v_n``, ``beta = -D``, ``g = 0``. The resolution is now that arithmetic.
+        """
+        seg = BCSegment(name="wall", bc_type=bc_type, value=0.0)
         bc = BoundaryConditions(segments=[seg], dimension=1)
-        results = resolve_bc(bc, fp_resolver, empty_state)
-        assert results[0].math_type == MathBCType.ZERO_FLUX
+
+        r = resolve_bc(bc, fp_resolver, {"drift": 0.6, "diffusion": 0.35})[0]
+
+        assert r.math_type == MathBCType.ROBIN
+        assert r.original_bc_type == bc_type
+        assert r.alpha == pytest.approx(0.6), "alpha is the outward normal drift"
+        assert r.beta == pytest.approx(-0.35), "beta is -D"
+        assert r.value == pytest.approx(0.0), "the flux condition is homogeneous"
+
+    def test_an_impermeable_wall_without_the_coefficients_refuses(self, fp_resolver, empty_state):
+        """A defaulted drift makes the wall pure Neumann, which conserves mass at a tangential
+        wall and leaks at every other one -- a wrong answer that still converges. The message
+        must name the missing key, since the caller has two to supply."""
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=1)
+
+        with pytest.raises(ValueError, match="drift"):
+            resolve_bc(bc, fp_resolver, empty_state)
+        with pytest.raises(ValueError, match="diffusion"):
+            resolve_bc(bc, fp_resolver, {"drift": 0.6})
+
+    def test_the_drift_may_be_a_field(self, fp_resolver):
+        """The reason ``ResolvedBC`` stopped declaring its coefficients ``float``: the outward
+        normal drift varies along the wall and is recomputed each Picard iterate."""
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=2)
+        drift = np.array([0.0, 0.6, -0.6, 2.5])
+
+        r = resolve_bc(bc, fp_resolver, {"drift": drift, "diffusion": 0.35})[0]
+
+        np.testing.assert_allclose(r.alpha, drift)
 
     def test_dirichlet_passthrough(self, fp_resolver, empty_state):
         bc = dirichlet_bc(0.0, dimension=1)
@@ -213,7 +243,7 @@ class TestResolveBC:
     def test_segment_names_preserved(self, fp_resolver, empty_state):
         seg = BCSegment(name="my_wall", bc_type=BCType.NO_FLUX, value=0.0)
         bc = BoundaryConditions(segments=[seg], dimension=1)
-        results = resolve_bc(bc, fp_resolver, empty_state)
+        results = resolve_bc(bc, fp_resolver, {"drift": 0.0, "diffusion": 1.0})
         assert results[0].segment_name == "my_wall"
 
 
@@ -246,11 +276,6 @@ class TestToBoundaryConditions:
         assert bc.segments[1].bc_type == BCType.DIRICHLET
         assert bc.segments[1].value == 1.0
 
-    def test_zero_flux_maps_to_no_flux(self):
-        resolved = [ResolvedBC(MathBCType.ZERO_FLUX, 0.0, segment_name="wall")]
-        bc = to_boundary_conditions(resolved, dimension=1)
-        assert bc.segments[0].bc_type == BCType.NO_FLUX
-
     def test_empty_resolved_returns_default(self):
         bc = to_boundary_conditions([], dimension=1)
         assert bc.dimension == 1
@@ -275,3 +300,42 @@ class TestResolvedBC:
         assert rbc.beta == 0.0
         assert rbc.segment_name == ""
         assert rbc.original_bc_type is None
+
+
+class TestFieldCoefficientsAcrossTheTwoBridges:
+    """`ResolvedBC` may carry fields; `BCSegment` may not. The two Layer-2 -> Layer-3 bridges
+    therefore differ, and the difference has to be legible at the boundary rather than two calls
+    downstream. Found by independent review of this PR."""
+
+    @staticmethod
+    def _field_resolved():
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=2)
+        return resolve_bc(bc, FPResolver(), {"drift": np.array([0.0, 0.6, -0.6, 2.5]), "diffusion": 0.35})
+
+    def test_the_segment_bridge_refuses_a_field_and_names_it(self):
+        """It used to copy the array into `BCSegment.alpha`, declared `float`, producing a
+        segment that looked well-formed and died inside the ghost formula with
+        `operands could not be broadcast together with shapes (6,) (4,)` -- an error naming the
+        padded array rather than the coefficient responsible."""
+        with pytest.raises(ValueError, match="field-valued 'alpha'"):
+            to_boundary_conditions(self._field_resolved(), dimension=2)
+
+    def test_the_calculator_bridge_carries_the_field(self):
+        """Control, and the reason the refusal above is not a capability loss: the other bridge
+        consumes the coefficients directly and never builds a segment."""
+        _topo, calc = resolved_bc_to_calculator(self._field_resolved()[0], shape=(4, 4))
+
+        np.testing.assert_allclose(calc._alpha, np.array([0.0, 0.6, -0.6, 2.5]))
+
+    def test_a_scalar_still_round_trips_through_the_segment_bridge(self):
+        """Scope control. The refusal must be narrow -- a scalar coefficient is unaffected, and a
+        fix that rejected every Robin would pass the test above."""
+        seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0)
+        bc = BoundaryConditions(segments=[seg], dimension=1)
+        resolved = resolve_bc(bc, FPResolver(), {"drift": 0.6, "diffusion": 0.35})
+
+        out = to_boundary_conditions(resolved, dimension=1)
+
+        assert out.segments[0].alpha == pytest.approx(0.6)
+        assert out.segments[0].beta == pytest.approx(-0.35)

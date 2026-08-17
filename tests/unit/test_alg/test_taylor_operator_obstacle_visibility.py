@@ -192,16 +192,23 @@ def test_visibility_margin_blocks_grazing_edges():
 
 
 def test_periodic_geometry_compatible():
-    """Visibility filter applies after periodic ghost expansion.
-    Verifies no crash with the periodic-domain code path. Reaching
-    here is the invariant; obstacle-in-periodic is a niche combination
-    and we just check the wiring doesn't blow up.
+    """Visibility filter applies after periodic ghost expansion (#1124 x #711).
+
+    The geometry was ``Hyperrectangle``, which is not periodic: measured, ``op._is_periodic``
+    came out False, so ``_get_augmented_points_for_tree`` took its ``if not self._is_periodic``
+    early return and ``create_periodic_ghost_points`` was never called -- the code path this
+    test is named for. ``TensorProductGrid`` with a periodic BC satisfies ``SupportsPeriodic``
+    with ``periodic_dimensions == (0, 1)`` (see the #1841 note at gfdm_strategies.py:503-511),
+    so it enters the path for real.
     """
-    from mfgarchon.geometry import Hyperrectangle
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import periodic_bc
 
     rng = np.random.default_rng(7)
     pts = rng.uniform(0, 1, size=(40, 2))
-    geom = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))  # non-periodic
+    geom = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=periodic_bc(dimension=2)
+    )
     pillar = Hypersphere(center=[0.5, 0.5], radius=0.15)
     pts = pts[pillar.signed_distance(pts) > 0.02]
     with warnings.catch_warnings():
@@ -214,4 +221,40 @@ def test_periodic_geometry_compatible():
             geometry=geom,
             obstacle_sdf=pillar.signed_distance,
         )
+
+    assert op._is_periodic is True
+
+    # ``_n_points`` alone is unfalsifiable -- gfdm_strategies.py:386 sets it straight from the
+    # constructor argument, before any neighborhood is built -- so it stays only as a shape guard
+    # next to the invariants below.
     assert op._n_points == len(pts)
+
+    # The wrap must actually reach the stencils: 131 of the stored neighbour positions are ghost
+    # copies lying outside the base cloud (measured), and the largest stencil grows from 13 points
+    # to 17. Without the ghost expansion every stored position equals its base-cloud point.
+    ghost_edges = sum(
+        1
+        for i in range(len(pts))
+        for k, j in enumerate(op.neighborhoods[i]["indices"])
+        if not np.allclose(op.neighborhoods[i]["points"][k], pts[j])
+    )
+    assert ghost_edges > 0, "periodic ghost points never entered a stencil"
+
+    # The #1124 invariant under the wrap. The midpoint has to be taken against the STORED
+    # neighbour position, which is the minimum image the filter itself used: taking it against
+    # the base-cloud point instead reports 67 spurious crossings on this fixture, because a
+    # neighbour reached across the seam is nowhere near its unwrapped coordinate.
+    n_cross = 0
+    for i in range(len(pts)):
+        neighborhood = op.neighborhoods[i]
+        for k, j in enumerate(neighborhood["indices"]):
+            if j == i:
+                continue
+            mid = 0.5 * (pts[i] + neighborhood["points"][k])
+            if pillar.signed_distance(np.array([mid]))[0] < 0:
+                n_cross += 1
+    assert n_cross == 0, f"periodic op has {n_cross} cross-wall stencil edges"
+
+    # And the filter is shown to have had work to do: measured 1 blocked edge here, which is also
+    # the one cross-wall edge the unfiltered operator on this fixture retains.
+    assert op._visibility_filtered_count > 0

@@ -76,17 +76,6 @@ class TestPartialDerivOperator:
         assert error < 1e-2
 
     @pytest.mark.unit
-    def test_1d_preserves_shape(self):
-        """Output shape should match input field_shape."""
-        x, dx = _1d_grid(80)
-        u = np.sin(x)
-
-        d_dx = PartialDerivOperator(direction=0, spacings=[dx], field_shape=(80,))
-        du_dx = d_dx(u)
-
-        assert du_dx.shape == (80,)
-
-    @pytest.mark.unit
     def test_scipy_linear_operator_interface(self):
         """Should implement scipy LinearOperator and give consistent results."""
         x, dx = _1d_grid(50)
@@ -131,12 +120,20 @@ class TestPartialDerivOperator:
 
     @pytest.mark.unit
     def test_2d_shape_preserved(self):
-        """2D output shape should match field_shape."""
+        """2D output shape should match field_shape, with the right values in it."""
         X, Y, dx, dy = _2d_grid(40, 30)
-        u = X + Y
+        # x^2 + y rather than x + y: a constant d/dx cannot distinguish the x axis from the y
+        # axis, and this is the file's only non-square PartialDerivOperator fixture -- the only
+        # one that can catch a field_shape[::-1] reshape.
+        u = X**2 + Y
 
         d_dx = PartialDerivOperator(direction=0, spacings=[dx, dy], field_shape=(40, 30))
-        assert d_dx(u).shape == (40, 30)
+        du_dx = d_dx(u)
+
+        assert du_dx.shape == (40, 30)
+        # Central differences are exact for a quadratic (the oracle test_2d_quadratic_exact_x
+        # uses on the square grid).  Measured 6.00e-15 against a 1e-10 bound.
+        assert np.max(np.abs(du_dx[2:-2, 2:-2] - 2.0 * X[2:-2, 2:-2])) < 1e-10
 
     @pytest.mark.unit
     def test_with_neumann_bc(self):
@@ -214,7 +211,7 @@ class TestGradientOperator:
 
     @pytest.mark.unit
     def test_1d_output_shape(self):
-        """1D gradient should return shape (N, 1)."""
+        """1D gradient should return shape (N, 1), and that component should be the derivative."""
         x, dx = _1d_grid(80)
         u = np.sin(x)
 
@@ -223,16 +220,31 @@ class TestGradientOperator:
 
         assert grad_u.shape == (80, 1)
 
+        # The (N, 1) trailing-component convention is only worth anything if the single component
+        # holds d/dx.  Analytic oracle: central differences of sin approximate cos to O(h^2).
+        # Measured 1.05e-3 at h = 0.0795, against the 1e-2 bound test_1d_sin_accuracy uses for
+        # PartialDerivOperator at n=200 -- a 9.5x margin here.  An all-zeros return of the right
+        # shape fails this.
+        assert np.max(np.abs(grad_u[5:-5, 0] - np.cos(x)[5:-5])) < 1e-2
+
     @pytest.mark.unit
     def test_2d_output_shape(self):
-        """2D gradient should return shape (Nx, Ny, 2)."""
+        """2D gradient on a NON-SQUARE grid: shape (Nx, Ny, 2) and separable components."""
         X, Y, dx, dy = _2d_grid(40, 30)
-        u = X + Y
+        # 3x + 2y, not x + y: the symmetric field cannot distinguish the two components, so an
+        # axis swap would survive even a value check.  This is the file's only non-square
+        # gradient fixture, i.e. the only one that can catch a transposed reshape at all.
+        u = 3.0 * X + 2.0 * Y
 
         grad = GradientOperator(spacings=[dx, dy], field_shape=(40, 30))
         grad_u = grad(u)
 
         assert grad_u.shape == (40, 30, 2)
+
+        # Linear field: central differences are exact.  Measured 1.07e-14 and 8.88e-15 against
+        # the 1e-10 bound test_2d_linear_gradient uses on the square grid.
+        assert np.max(np.abs(grad_u[2:-2, 2:-2, 0] - 3.0)) < 1e-10
+        assert np.max(np.abs(grad_u[2:-2, 2:-2, 1] - 2.0)) < 1e-10
 
     @pytest.mark.unit
     def test_2d_linear_gradient(self):
@@ -321,14 +333,26 @@ class TestGradientOperator:
 
     @pytest.mark.unit
     def test_flattened_input(self):
-        """Should accept flattened (1D) input and reshape internally."""
-        X, Y, dx, dy = _2d_grid(30, 30)
-        u = X + Y
+        """Should accept flattened (1D) input and reshape internally, with the same answer."""
+        # Non-square grid and an asymmetric field: on a square grid with u = X + Y, a C-vs-Fortran
+        # order mix-up in the internal reshape produces a correctly-shaped, wrong-valued result
+        # that a shape assertion cannot see.  The reshape is this test's entire subject.
+        X, Y, dx, dy = _2d_grid(30, 40)
+        u = 3.0 * X + 2.0 * Y
 
-        grad = GradientOperator(spacings=[dx, dy], field_shape=(30, 30))
+        grad = GradientOperator(spacings=[dx, dy], field_shape=(30, 40))
         grad_u = grad(u.ravel())
 
-        assert grad_u.shape == (30, 30, 2)
+        assert grad_u.shape == (30, 40, 2)
+
+        # Analytic oracle: linear field, so central differences are exact.  Measured 1.33e-14
+        # and 1.02e-14.
+        assert np.max(np.abs(grad_u[2:-2, 2:-2, 0] - 3.0)) < 1e-10
+        assert np.max(np.abs(grad_u[2:-2, 2:-2, 1] - 2.0)) < 1e-10
+
+        # The `u.reshape(field_shape)` on the flattened branch is the ONLY step that separates the
+        # two entry points -- everything downstream is shared -- so byte-identity pins exactly it.
+        np.testing.assert_array_equal(grad_u, grad(u))
 
     @pytest.mark.unit
     def test_with_bc(self):

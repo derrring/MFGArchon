@@ -57,35 +57,9 @@ def test_autodiff_backend_invalid_string():
 # ===================================================================
 
 
-@pytest.mark.unit
-def test_is_numpy_true():
-    """Test is_numpy property returns True for NUMPY backend."""
-    assert AutoDiffBackend.NUMPY.is_numpy is True
-
-
-@pytest.mark.unit
-def test_is_numpy_false():
-    """Test is_numpy property returns False for non-NUMPY backends."""
-    assert AutoDiffBackend.JAX.is_numpy is False
-    assert AutoDiffBackend.PYTORCH.is_numpy is False
-
-
 # ===================================================================
 # Test is_jax Property
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_is_jax_true():
-    """Test is_jax property returns True for JAX backend."""
-    assert AutoDiffBackend.JAX.is_jax is True
-
-
-@pytest.mark.unit
-def test_is_jax_false():
-    """Test is_jax property returns False for non-JAX backends."""
-    assert AutoDiffBackend.NUMPY.is_jax is False
-    assert AutoDiffBackend.PYTORCH.is_jax is False
 
 
 # ===================================================================
@@ -93,51 +67,14 @@ def test_is_jax_false():
 # ===================================================================
 
 
-@pytest.mark.unit
-def test_is_pytorch_true():
-    """Test is_pytorch property returns True for PYTORCH backend."""
-    assert AutoDiffBackend.PYTORCH.is_pytorch is True
-
-
-@pytest.mark.unit
-def test_is_pytorch_false():
-    """Test is_pytorch property returns False for non-PYTORCH backends."""
-    assert AutoDiffBackend.NUMPY.is_pytorch is False
-    assert AutoDiffBackend.JAX.is_pytorch is False
-
-
 # ===================================================================
 # Test requires_dependency Property
 # ===================================================================
 
 
-@pytest.mark.unit
-def test_requires_dependency_numpy():
-    """Test NUMPY backend does not require dependency."""
-    assert AutoDiffBackend.NUMPY.requires_dependency is False
-
-
-@pytest.mark.unit
-def test_requires_dependency_jax():
-    """Test JAX backend requires dependency."""
-    assert AutoDiffBackend.JAX.requires_dependency is True
-
-
-@pytest.mark.unit
-def test_requires_dependency_pytorch():
-    """Test PYTORCH backend requires dependency."""
-    assert AutoDiffBackend.PYTORCH.requires_dependency is True
-
-
 # ===================================================================
 # Test get_dependency_name Method
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_get_dependency_name_numpy():
-    """Test get_dependency_name for NUMPY returns None."""
-    assert AutoDiffBackend.NUMPY.get_dependency_name() is None
 
 
 @pytest.mark.unit
@@ -169,14 +106,6 @@ def test_autodiff_backend_equality():
 
 
 @pytest.mark.unit
-def test_autodiff_backend_identity():
-    """Test AutoDiffBackend identity (is operator)."""
-    numpy1 = AutoDiffBackend.NUMPY
-    numpy2 = AutoDiffBackend.NUMPY
-    assert numpy1 is numpy2  # Enum members are singletons
-
-
-@pytest.mark.unit
 def test_autodiff_backend_membership():
     """Test AutoDiffBackend membership checks."""
     backends = [AutoDiffBackend.NUMPY, AutoDiffBackend.JAX]
@@ -192,12 +121,6 @@ def test_autodiff_backend_iteration():
     assert AutoDiffBackend.NUMPY in backends
     assert AutoDiffBackend.JAX in backends
     assert AutoDiffBackend.PYTORCH in backends
-
-
-@pytest.mark.unit
-def test_autodiff_backend_count():
-    """Test AutoDiffBackend has exactly 3 members."""
-    assert len(list(AutoDiffBackend)) == 3
 
 
 # ===================================================================

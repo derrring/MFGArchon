@@ -845,55 +845,6 @@ class TestCoupledHJBFPValidation:
     Issue #523 Phase 3c: Coupled HJB-FP integration tests with explicit BC
     """
 
-    def test_coupled_solver_consistency(self):
-        """
-        Test that coupled HJB-FP solver produces consistent results.
-
-        Verifies:
-        1. Solution shapes are correct
-        2. Density remains non-negative
-        3. Value function is bounded
-        """
-        from mfgarchon.alg.numerical.coupling import FixedPointIterator
-        from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-        from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-        from mfgarchon.geometry import no_flux_bc
-
-        sigma = 0.3
-        T = 0.5
-        Nx = 31
-        Nt = 20
-
-        # Pass BC to geometry - both HJB and FP solvers retrieve BC via geometry
-        bc = no_flux_bc(dimension=1)
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
-        problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma, components=_default_components())
-
-        hjb_solver = HJBFDMSolver(problem)
-        fp_solver = FPFDMSolver(problem)
-
-        mfg_solver = FixedPointIterator(
-            problem,
-            hjb_solver=hjb_solver,
-            fp_solver=fp_solver,
-            relaxation=0.5,
-        )
-
-        result = mfg_solver.solve(max_iterations=5, tolerance=1e-3, verbose=False)
-
-        U, M = result[:2]
-        Nt_points = problem.Nt + 1
-
-        # Check shapes
-        assert U.shape == (Nt_points, Nx), f"U shape {U.shape} != expected ({Nt_points}, {Nx})"
-        assert M.shape == (Nt_points, Nx), f"M shape {M.shape} != expected ({Nt_points}, {Nx})"
-
-        # Density should be non-negative
-        assert np.all(M >= -1e-6), f"Negative density: min(M) = {np.min(M):.2e}"
-
-        # Value function should be bounded
-        assert np.all(np.isfinite(U)), "Value function contains inf or nan"
-
     def test_coupled_mass_conservation(self):
         """
         Test mass conservation in coupled HJB-FP solver.

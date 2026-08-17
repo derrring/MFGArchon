@@ -71,7 +71,17 @@ class TestTrueAdjointMFGSolve:
         return HJBFDMSolver(problem), FPFDMSolver(problem)
 
     def test_jacobian_transpose_converges(self, problem, solvers):
-        """MFG solve with adjoint_mode='jacobian_transpose' should converge."""
+        """MFG solve with adjoint_mode='jacobian_transpose' runs end to end and preserves
+        both end conditions.
+
+        The name is inherited and overstates what is checked: on this configuration the solve
+        does NOT converge. Measured, `result.converged` is False at max_iterations=20, and
+        still False at 60 and at 150 with tolerance=1e-3 -- the U error history flattens out
+        around 5e-3 to 1.2e-2 and oscillates rather than descending. Nothing here asserts
+        convergence, and asserting its absence would pin the shortfall in place, so the fact is
+        recorded rather than encoded. What IS asserted below are the two end conditions the
+        block iteration must not damage whatever it does in between.
+        """
         hjb_solver, fp_solver = solvers
 
         solver = BlockIterator(
@@ -91,6 +101,20 @@ class TestTrueAdjointMFGSolve:
         assert result.M.shape[0] == problem.Nt + 1
         assert not np.any(np.isnan(result.U)), "U contains NaN"
         assert not np.any(np.isnan(result.M)), "M contains NaN"
+
+        # HJB terminal condition: u(T, .) = 0 must survive the iteration untouched. Measured
+        # max|U[-1]| = 0.0 exactly, so this is pinned exactly.
+        np.testing.assert_array_equal(result.U[-1], 0.0)
+
+        # FP initial condition: m(0, .) must still be the normalised Gaussian, reconstructed
+        # here from the problem definition rather than read back off the result.
+        x = np.linspace(0.0, 1.0, result.M.shape[1])
+        dx = problem.geometry.get_grid_spacing()[0]
+        m0 = np.exp(-10 * (x - 0.5) ** 2)
+        m0 /= np.sum(m0) * dx
+        # Measured max deviation exactly 0.0; atol 1e-15 on O(1) values leaves a hair of room
+        # for a reassociated normalisation without admitting a changed convention.
+        np.testing.assert_allclose(result.M[0], m0, rtol=0, atol=1e-15)
 
     def test_mass_conservation(self, problem, solvers):
         """Density should conserve total mass under jacobian_transpose mode."""

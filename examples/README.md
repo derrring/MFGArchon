@@ -44,7 +44,6 @@ Focused examples demonstrating one concept at a time.
 #### [core_infrastructure/](basic/core_infrastructure/)
 Core MFGArchon API usage:
 - `solve_mfg_demo.py` - Basic `solve_mfg()` usage
-- `lq_mfg_demo.py` - Linear-Quadratic MFG problems
 - `custom_hamiltonian_derivs_demo.py` - Custom Hamiltonian derivatives
 
 #### [geometry/](basic/geometry/)
@@ -76,7 +75,6 @@ Complex examples combining multiple features and advanced techniques.
 
 #### [comprehensive/](advanced/comprehensive/)
 Full-featured demonstrations:
-- `mfg_rl_comprehensive_demo.py` - Complete RL workflow
 - `all_maze_algorithms_visualization.py` - Maze generation algorithms
 - `pydantic_validation_example.py` - Configuration validation
 
@@ -102,30 +100,12 @@ Constrained optimization:
 - `primal_dual_constrained_example.py` - Primal-dual methods
 - `lagrangian_constrained_optimization.py` - Lagrangian optimization
 
-#### [machine_learning/](advanced/machine_learning/)
-Neural network and RL solvers. ⛔ These exercise `alg/neural` and `alg/reinforcement`, which are
-**frozen design prototypes** and not under development — see `CLAUDE.md`. They run, but nothing
-here is a pinned contract.
-- `pinn_mfg_example.py` - Physics-Informed Neural Networks
-- `pinn_bayesian_mfg_demo.py` - Bayesian PINN with uncertainty
-- `adaptive_pinn_demo.py` - Adaptive training strategies
-- `dgm_simple_validation.py` - Deep Galerkin Method
-- `neural_operator_mfg_demo.py` - Neural operators for MFG
-
-##### [rl_algorithms/](advanced/machine_learning/rl_algorithms/)
-Reinforcement learning methods (⛔ frozen prototype, as above):
-- `rl_intro_comparison.py` - RL algorithms overview
-- `nash_q_learning_demo.py` - Nash Q-Learning
-- `continuous_action_ddpg_demo.py` - Deep Deterministic Policy Gradient
-- `continuous_control_comparison.py` - Continuous control methods
-
 #### [applications/](advanced/applications/)
 Real-world applications:
 - `traffic_flow_2d_demo.py` - Traffic flow modeling
 - `portfolio_optimization_2d_demo.py` - Financial portfolio optimization
 - `epidemic_modeling_2d_demo.py` - Epidemic spread dynamics
 - `predator_prey_mfg.py` - Predator-prey systems
-- `heterogeneous_traffic_multi_pop.py` - Multi-population traffic
 - `network_mfg_comparison_example.py` - Network MFG
 - `el_farol_bar_demo.py` - El Farol Bar problem
 - `santa_fe_bar_demo.py` - Santa Fe Bar problem
@@ -154,13 +134,11 @@ Generated outputs and visualizations (gitignored, auto-regenerated).
 | I want to... | Go to... |
 |--------------|----------|
 | **Learn MFGArchon from scratch** | [tutorials/](tutorials/) (start with 01) |
-| **See a basic LQ problem** | [basic/core_infrastructure/lq_mfg_demo.py](basic/core_infrastructure/lq_mfg_demo.py) |
 | **Work with 2D problems** | [tutorials/03_2d_geometry.py](tutorials/03_2d_geometry.py) or [basic/geometry/2d_crowd_motion_fdm.py](basic/geometry/2d_crowd_motion_fdm.py) |
 | **Use particle methods** | [tutorials/04_particle_methods.py](tutorials/04_particle_methods.py) |
 | **Configure solvers** | [tutorials/05_config_system.py](tutorials/05_config_system.py) |
 | **Try advanced solvers** | [advanced/solvers_advanced/](advanced/solvers_advanced/) |
 | **Apply MFG to real problems** | [advanced/applications/](advanced/applications/) |
-| **Use neural networks** (⛔ frozen prototype) | [advanced/machine_learning/](advanced/machine_learning/) |
 | **Work with complex geometry** | [advanced/geometry_advanced/](advanced/geometry_advanced/) |
 
 ---

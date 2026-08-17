@@ -242,20 +242,6 @@ class TestFictitiousPlayFPDriftConvention:
                 f"to FPFDMSolver for smooth separable H.  Got kwargs keys: {list(call_kw.keys())}."
             )
 
-    def test_fictitious_play_runs_without_error(self, problem):
-        """Smoke test: FictitiousPlay still runs end-to-end without error after fix."""
-        solver = FictitiousPlayIterator(
-            problem,
-            hjb_solver=HJBFDMSolver(problem),
-            fp_solver=FPFDMSolver(problem),
-            learning_rate_schedule="harmonic",
-        )
-        result = solver.solve(max_iterations=10, tolerance=1e-10, verbose=False)
-        assert result.U is not None
-        assert result.M is not None
-        assert np.all(np.isfinite(result.U))
-        assert np.all(np.isfinite(result.M))
-
     def test_fictitious_play_density_is_non_negative(self, problem):
         """Density must remain non-negative after the fix."""
         solver = FictitiousPlayIterator(
@@ -265,6 +251,14 @@ class TestFictitiousPlayFPDriftConvention:
         )
         result = solver.solve(max_iterations=10, tolerance=1e-10, verbose=False)
         assert np.all(result.M >= -1e-6)
+
+        # External oracle: no-flux walls conserve total mass, and get_m_init() is normalised to
+        # sum*dx == 1, so every time row must still integrate to 1.  Independent of the scheme:
+        # the FP step does NOT renormalise (#1683 removed that repair), so this measures physics.
+        # Measured here: 8.88e-16.  The same configuration with Dirichlet walls leaks 1.58e-2.
+        dx = problem.geometry.get_grid_spacing()[0]
+        mass = result.M.sum(axis=1) * dx
+        assert np.max(np.abs(mass - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +283,14 @@ class TestBlockIteratorFPDriftConvention:
         assert result.M is not None
         assert np.all(np.isfinite(result.M))
         assert np.all(result.M >= -1e-6)
+
+        # External oracle: no-flux walls conserve total mass, and get_m_init() is normalised to
+        # sum*dx == 1, so every time row must still integrate to 1.  Independent of the scheme:
+        # the FP step does NOT renormalise (#1683 removed that repair), so this measures physics.
+        # Measured here: 1.55e-15.  The same configuration with Dirichlet walls leaks 1.58e-2.
+        dx = problem.geometry.get_grid_spacing()[0]
+        mass = result.M.sum(axis=1) * dx
+        assert np.max(np.abs(mass - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
 
     def test_block_heuristic_vs_resolve_for_nonsmooth_h_and_driftfield_only_solver(self):
         """CORE PINNING TEST for BlockIterator bug: heuristic vs resolve_fp_drift_kwargs diverge.

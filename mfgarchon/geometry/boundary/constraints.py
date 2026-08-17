@@ -303,8 +303,24 @@ class ObstacleConstraint:
         if u.shape != self.obstacle.shape:
             raise ValueError(f"Field shape {u.shape} doesn't match obstacle shape {self.obstacle.shape}")
 
-        # Detect binding: |u - ψ| < tol
-        active = np.abs(u - self.obstacle) < tol
+        # Binding means "at the bound OR past it", derived from the SAME inequality `is_feasible`
+        # tests, so the two predicates cannot disagree about what "at the bound" means.
+        #
+        # ~~`np.abs(u - psi) < tol`~~ [FIXED 2026-08-15, #1941] was two-sided while `is_feasible` is
+        # one-sided, so a point that VIOLATES the constraint was reported INACTIVE. Measured with
+        # `lower = -1` and `u = [-2, -1, 0, 1, 2]`: `is_feasible` False, active set
+        # `[False, True, False, False, False]` -- `u[0]` violates by 1.0 and is inactive, while
+        # `u[1]`, exactly on the bound, is active. At `tol = 1e-10` a violation of 1e-9 was both
+        # infeasible and inactive.
+        #
+        # That matters beyond the inconsistency: an active-set method iterates on the constraints it
+        # believes are binding, and it runs on infeasible iterates by construction -- that is the
+        # state before projection. The old form returned an empty active set on exactly the points
+        # that needed attention.
+        if self.constraint_type == "lower":
+            active = u <= self.obstacle + tol
+        else:  # upper
+            active = u >= self.obstacle - tol
 
         # Apply regional mask if provided
         if self.region is not None:
@@ -506,9 +522,12 @@ class BilateralConstraint:
         if u.shape != self.lower_bound.shape:
             raise ValueError(f"Field shape {u.shape} doesn't match bounds shape {self.lower_bound.shape}")
 
-        # Active if touching either bound
-        active_lower = np.abs(u - self.lower_bound) < tol
-        active_upper = np.abs(u - self.upper_bound) < tol
+        # Active if AT or PAST either bound, derived from the same inequalities `is_feasible` tests.
+        # A third copy of the two-sided form lived here (`|u - bound| < tol`) and had the same
+        # defect as `ObstacleConstraint.get_active_set`: a point below the lower bound or above the
+        # upper one was reported inactive. Found by the test written for the obstacle case. #1941
+        active_lower = u <= self.lower_bound + tol
+        active_upper = u >= self.upper_bound - tol
         active = active_lower | active_upper
 
         # Apply regional mask if provided

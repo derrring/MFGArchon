@@ -273,7 +273,23 @@ class TestVaryingTensorDiffusion:
 
     @pytest.mark.unit
     def test_no_nan_in_output(self):
-        """Spatially varying tensor should produce finite results."""
+        """Genuinely varying 2D tensor reproduces its closed form, and pins the axis convention.
+
+        This is the only test that feeds a tensor that actually varies in space
+        (``test_constant_tensor_broadcast_consistency`` broadcasts a CONSTANT tensor through the
+        varying path, so its coefficient-gradient terms are zero), and finiteness cannot see a
+        dropped coefficient gradient or a swapped axis.
+
+        Note which closed form holds. Measured with an asymmetric probe on a rectangular grid:
+        the kernel pairs ``Sigma[..., 0, 0]`` with ``spacings[0]`` and array axis **1**, and
+        ``Sigma[..., 1, 1]`` with ``spacings[1]`` and array axis **0** -- tensor index and
+        spacing travel together, so this is the "xy" (matrix/image) axis order, the reverse of
+        the ``indexing="ij"`` ordering these fixtures build their meshgrids with. Reading X as
+        the first tensor axis instead gives 0.3 + 0.4X + 0.2Y, which is off by 0.27 here. Both
+        the constant-tensor and varying-tensor paths agree on this ordering. Nothing else in the
+        file pins it: the diagonal test sums 2a + 2b, the identity test uses the identity, and
+        the broadcast test compares two paths -- all three are invariant under an axis swap.
+        """
         X, Y, dx, dy = _2d_grid(30, 30)
         u = X**2 + Y**2
 
@@ -287,6 +303,10 @@ class TestVaryingTensorDiffusion:
 
         assert Du.shape == (30, 30)
         assert np.all(np.isfinite(Du))
+
+        # Measured interior error 1.25e-13 at n=30 (and 5.9e-13 at n=60); margin ~800x.
+        expected = 0.3 + 0.2 * X + 0.1 * Y
+        np.testing.assert_allclose(Du[3:-3, 3:-3], expected[3:-3, 3:-3], atol=1e-10)
 
     @pytest.mark.unit
     def test_constant_tensor_broadcast_consistency(self):
@@ -324,7 +344,14 @@ class TestVaryingTensorDiffusion:
 
     @pytest.mark.unit
     def test_1d_varying(self):
-        """1D varying coefficient: d/dx(sigma(x) * du/dx)."""
+        """1D varying coefficient reproduces the closed form d/dx((1+x) * 2x) = 2 + 4x.
+
+        The coefficient-gradient term is what distinguishes the varying path from the constant
+        one, and it is exactly what a finiteness check cannot see: dropping it leaves a finite,
+        smooth, wrong answer. Sliced to the interior as ``test_1d_quadratic_exact`` does -- the
+        Neumann boundary rows are O(1/dx^2) large (full-array error 319), so the closed form
+        holds only away from them.
+        """
         x, dx = _1d_grid(80)
         u = x**2
 
@@ -338,6 +365,10 @@ class TestVaryingTensorDiffusion:
 
         assert Du.shape == (80,)
         assert np.all(np.isfinite(Du))
+
+        # Measured interior error 3.6e-12; margin ~2800x to the tolerance.
+        expected = 2.0 + 4.0 * x
+        np.testing.assert_allclose(Du[5:-5], expected[5:-5], atol=1e-8)
 
 
 # =============================================================================

@@ -439,7 +439,10 @@ def laplacian_with_bc(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time)
+        # spacing threaded: without it the buffer falls back to dx = 1.0 and an inhomogeneous
+        # Neumann value is applied as g/h rather than g (#1904). `spacings` is already a
+        # parameter of this function -- it was simply not passed on.
+        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=spacings)
     else:
         u_work = u
 
@@ -483,7 +486,10 @@ def weighted_laplacian_with_bc(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time)
+        # spacing threaded: without it the buffer falls back to dx = 1.0 and an inhomogeneous
+        # Neumann value is applied as g/h rather than g (#1904). `spacings` is already a
+        # parameter of this function -- it was simply not passed on.
+        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=spacings)
     else:
         u_work = u
 

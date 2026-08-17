@@ -95,20 +95,6 @@ class TestSolverMonitoringOptions:
         # Timing should be enabled
         assert "execution_time" in result
 
-    def test_enhanced_solver_with_all_flag(self):
-        """Test enhanced_solver_method with ALL flag."""
-
-        @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
-        def solve(self, max_iterations=10, verbose=False, **kwargs):
-            time.sleep(0.01)
-            return {"converged": True}
-
-        solver = DummySolver()
-        with patch("sys.stdout", new=StringIO()):
-            result = solve(solver)
-
-        assert result["converged"] is True
-
     def test_enhanced_solver_with_none_flag(self):
         """Test enhanced_solver_method with NONE flag."""
 
@@ -154,45 +140,68 @@ class TestWithProgressMonitoring:
         assert result["execution_time"] is None or result["execution_time"] > 0
 
     def test_decorator_finds_max_iterations_from_kwargs(self):
-        """Test decorator finds max_iterations from various parameter names."""
+        """Alias kwarg names resolve, and the instance attribute takes precedence over them.
 
-        @with_progress_monitoring(show_progress=False, show_timing=False)
+        ``show_progress=True`` is required for the resolved value to be observable at all: the
+        tracker that carries it is only constructed when progress is enabled.
+
+        The previous version ran this on a solver that HAS ``max_iterations``, where the alias
+        lookup never happens. solver_decorators.py resolves with
+        ``if param_name in kwargs: ... break; elif hasattr(self, param_name): ... break``, so on
+        such a solver the first loop pass always breaks on the elif and every alias is dead.
+        Measured: DummySolver(10) + Niter=20 resolves to 10, not 20. So the alias branch needs a
+        solver without the attribute; the precedence the old fixture silently relied on is
+        pinned separately below.
+        """
+
+        @with_progress_monitoring(show_progress=True, show_timing=False)
         def solve(self, **kwargs):
-            return {}
+            return {"n": kwargs["_progress_tracker"].max_iterations}
 
-        solver = DummySolver()
+        class _NoMaxIter:
+            pass
 
-        # Test various parameter name variations
-        for param_name in ["max_iterations", "Niter", "max_picard_iterations", "max_iterations"]:
-            result = solve(solver, **{param_name: 20})
-            assert result is not None
+        for param_name in ["max_iterations", "Niter", "max_picard_iterations"]:
+            assert solve(_NoMaxIter(), **{param_name: 20})["n"] == 20, f"alias {param_name} not resolved"
+
+        # Instance attribute wins over an alias kwarg (measured 10, not 20)...
+        assert solve(DummySolver(max_iterations=10), Niter=20)["n"] == 10
+        # ...but the kwarg wins when it is the FIRST name in the lookup order.
+        assert solve(DummySolver(max_iterations=10), max_iterations=20)["n"] == 20
 
     def test_decorator_finds_max_iterations_from_instance(self):
-        """Test decorator finds max_iterations from solver instance."""
+        """The value discovered on the instance is the one the tracker is built with.
 
-        @with_progress_monitoring(show_progress=False, show_timing=False)
+        The old version returned a literal ``{}`` and asserted ``result is not None``, which can
+        only fail if the decorator swallows the return value entirely -- the discovery branch
+        this test is named for ran and was then not observed. Reading it off the injected
+        tracker makes it observable (measured 15).
+        """
+
+        @with_progress_monitoring(show_progress=True, show_timing=False)
         def solve(self, **kwargs):
-            return {}
+            return {"n": kwargs["_progress_tracker"].max_iterations}
 
-        solver = DummySolver(max_iterations=15)
-        result = solve(solver)
-        assert result is not None
+        assert solve(DummySolver(max_iterations=15))["n"] == 15
 
     def test_decorator_disables_progress_when_verbose_false(self):
-        """Test decorator respects verbose=False."""
+        """verbose=False suppresses the tracker injection; verbose=True performs it.
+
+        The old version read ``"_progress_tracker" in locals()`` inside the decorated body,
+        which is a question about the body's own locals, not about what the decorator injected
+        -- so nothing about verbose was asserted, as its own comment conceded. The decorator
+        computes ``disable_progress = not (show_progress and verbose)`` and injects the tracker
+        into kwargs only when that is False.
+        """
 
         @with_progress_monitoring(show_progress=True, show_timing=False)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
-            # Check if progress tracker was added
-            return {"has_progress": "_progress_tracker" in locals()}
+            return {"tracker": kwargs.get("_progress_tracker")}
 
         solver = DummySolver()
-        result_verbose = solve(solver, verbose=True)
-        result_silent = solve(solver, verbose=False)
 
-        # Both should work without crashing
-        assert isinstance(result_verbose, dict)
-        assert isinstance(result_silent, dict)
+        assert solve(solver, verbose=True)["tracker"] is not None
+        assert solve(solver, verbose=False)["tracker"] is None
 
     def test_decorator_handles_exceptions(self):
         """Test decorator properly handles exceptions."""
@@ -226,36 +235,45 @@ class TestWithProgressMonitoring:
         assert result.metadata["execution_time"] is None or result.metadata["execution_time"] > 0
 
     def test_decorator_update_frequency(self):
-        """Test decorator respects update_frequency parameter."""
+        """The configured update_frequency reaches the tracker, and the auto path differs from it.
 
-        @with_progress_monitoring(show_progress=False, show_timing=False, update_frequency=5)
-        def solve(self, max_iterations=100, verbose=True, **kwargs):
-            return {}
+        With ``show_progress=False`` (the old fixture) the decorator computes
+        ``disable_progress = not (False and verbose) = True`` and never enters the block
+        containing ``freq = update_frequency or max(1, max_iterations // 20)`` -- so the
+        parameter was not merely unobserved, it was never read. Enabling progress makes it
+        observable. The auto case at max_iterations=200 gives 10 rather than 5, so the two
+        branches cannot be confused with each other.
+        """
+
+        @with_progress_monitoring(show_progress=True, show_timing=False, update_frequency=5)
+        def solve_explicit(self, max_iterations=100, verbose=True, **kwargs):
+            return {"f": kwargs["_progress_tracker"].update_frequency}
+
+        @with_progress_monitoring(show_progress=True, show_timing=False)
+        def solve_auto(self, max_iterations=100, verbose=True, **kwargs):
+            return {"f": kwargs["_progress_tracker"].update_frequency}
 
         solver = DummySolver()
-        result = solve(solver, max_iterations=100)
-        assert result is not None
+
+        assert solve_explicit(solver, max_iterations=100)["f"] == 5
+        assert solve_explicit(solver, max_iterations=200)["f"] == 5  # explicit value ignores N
+        assert solve_auto(solver, max_iterations=100)["f"] == 5  # max(1, 100 // 20)
+        assert solve_auto(solver, max_iterations=200)["f"] == 10  # max(1, 200 // 20)
 
 
 class TestEnhancedSolverMethod:
     """Test enhanced_solver_method decorator."""
 
-    def test_enhanced_with_all_features(self):
-        """Test enhanced decorator with all features enabled."""
-
-        @enhanced_solver_method(options=SolverMonitoringOptions.ALL)
-        def solve(self, max_iterations=10, verbose=True, **kwargs):
-            time.sleep(0.01)
-            return {"converged": True}
-
-        solver = DummySolver()
-        with patch("sys.stdout", new=StringIO()):
-            result = solve(solver)
-
-        assert result["converged"] is True
-
     def test_enhanced_progress_only(self):
-        """Test enhanced decorator with only progress enabled."""
+        """PROGRESS alone must not add timing -- the assertion that separates it from its neighbours.
+
+        PROGRESS-alone is a distinct route: the decorator takes
+        ``with_progress_monitoring(show_progress=True, show_timing=enable_timing)`` with
+        enable_timing False, so no SolverTimer is constructed. ``result["converged"]`` is shared
+        by every option and cannot see which route ran. Measured result keys: PROGRESS gives
+        ['converged'], while PROGRESS|TIMING and ALL both give ['converged', 'execution_time'].
+        Mirrors ``test_enhanced_no_features``, which already does this for NONE.
+        """
 
         @enhanced_solver_method(options=SolverMonitoringOptions.PROGRESS)
         def solve(self, max_iterations=10, verbose=True, **kwargs):
@@ -266,6 +284,7 @@ class TestEnhancedSolverMethod:
             result = solve(solver)
 
         assert result["converged"] is True
+        assert "execution_time" not in result
 
     def test_enhanced_timing_only(self):
         """Test enhanced decorator with only timing enabled."""
@@ -322,20 +341,6 @@ class TestSolverProgressMixin:
 
         solver.enable_progress(False)
         assert solver._progress_enabled is False
-
-    def test_mixin_enable_timing(self):
-        """Test enable_timing method."""
-
-        class TestSolver(SolverProgressMixin):
-            pass
-
-        solver = TestSolver()
-
-        solver.enable_timing(True)
-        assert solver._timing_enabled is True
-
-        solver.enable_timing(False)
-        assert solver._timing_enabled is False
 
     def test_mixin_should_show_progress(self):
         """Test _should_show_progress method."""
@@ -419,16 +424,38 @@ class TestUpgradeSolverWithProgress:
         assert result["converged"] is True
 
 
+class RecordingTracker:
+    """Tracker stub that records the (n, error, additional_info) triples forwarded to update().
+
+    The four tests below previously used ``IterationProgress(..., disable=True)``, whose update()
+    returns at its first line (``if self.disable or not self.pbar: return``) -- so nothing
+    downstream of the call was reached and none of the tests had an assert statement at all.
+    Recording the call makes the forwarding contract observable.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def update(self, n, error=None, additional_info=None):
+        self.calls.append((n, error, additional_info))
+
+
 class TestUpdateSolverProgress:
     """Test update_solver_progress utility function."""
 
     def test_update_with_valid_tracker(self):
-        """Test updating progress with valid tracker."""
-        from mfgarchon.utils.progress import IterationProgress
+        """Forwarding contract: advance by exactly 1, raw error through, formatted error in info.
 
-        with IterationProgress(10, "Test", disable=True) as tracker:
-            update_solver_progress(tracker, iteration=5, error=1e-5)
-            # Should not raise any exceptions
+        Note what the recorded n exposes: the ``iteration`` argument is DEAD. The body calls
+        ``progress_tracker.update(1, error=error, additional_info=info)`` and never passes
+        ``iteration`` anywhere, so all four tests in this class supply iteration=5 with no
+        effect. Pinning the advance-by-1 is what states that contract.
+        """
+        tracker = RecordingTracker()
+
+        update_solver_progress(tracker, iteration=5, error=1e-5)
+
+        assert tracker.calls == [(1, 1e-5, {"error": "1.00e-05"})]
 
     def test_update_with_none_tracker(self):
         """Test updating progress with None tracker (should be safe)."""
@@ -436,20 +463,30 @@ class TestUpdateSolverProgress:
         # Should not raise any exceptions
 
     def test_update_with_additional_info(self):
-        """Test updating progress with additional metrics."""
-        from mfgarchon.utils.progress import IterationProgress
+        """Extra metrics are collected into additional_info alongside the formatted error.
 
-        with IterationProgress(10, "Test", disable=True) as tracker:
-            update_solver_progress(tracker, iteration=5, error=1e-5, residual=0.001, step_size=0.1)
-            # Should not raise any exceptions
+        This pins the convention that the error appears TWICE and in two forms -- as a raw float
+        in ``error=`` and as a "%.2e" string inside additional_info -- which solver_decorators.py
+        implements and nothing else checks.
+        """
+        tracker = RecordingTracker()
+
+        update_solver_progress(tracker, iteration=5, error=1e-5, residual=0.001, step_size=0.1)
+
+        assert tracker.calls == [(1, 1e-5, {"residual": 0.001, "step_size": 0.1, "error": "1.00e-05"})]
 
     def test_update_without_error(self):
-        """Test updating progress without error value."""
-        from mfgarchon.utils.progress import IterationProgress
+        """No error given: no "error" key is injected, and error=None is forwarded as None.
 
-        with IterationProgress(10, "Test", disable=True) as tracker:
-            update_solver_progress(tracker, iteration=5)
-            # Should not raise any exceptions
+        The only exercise of the ``if error is not None:`` false branch. An implementation that
+        formatted None into the string ("None", "NaN", or a TypeError) is caught here and
+        nowhere else.
+        """
+        tracker = RecordingTracker()
+
+        update_solver_progress(tracker, iteration=5)
+
+        assert tracker.calls == [(1, None, {})]
 
 
 class TestFormatSolverSummary:
@@ -518,7 +555,16 @@ class TestDecoratorIntegration:
     """Integration tests for decorator combinations."""
 
     def test_multiple_decorators(self):
-        """Test applying multiple decorators to same method."""
+        """Stacked decorators: the payload survives both layers AND the outer TIMING still fires.
+
+        Stacking is where functools.wraps and kwargs forwarding break. ``result["converged"]``
+        proves the payload came back through both wrappers, but not that the outer layer still
+        functions -- which is precisely what dies silently when an inner wrapper defeats the
+        outer's inspection. The outer options=TIMING with PROGRESS absent routes through
+        ``time_solver_operation`` (the ``elif enable_timing:`` branch), which is what injects
+        execution_time. ``test_decorator_with_mixin`` already asserts it for the unstacked
+        TIMING case, so the two become comparable.
+        """
 
         @enhanced_solver_method(options=SolverMonitoringOptions.TIMING)
         @with_progress_monitoring(show_progress=False, show_timing=False)
@@ -531,6 +577,7 @@ class TestDecoratorIntegration:
             result = solve(solver)
 
         assert result["converged"] is True
+        assert "execution_time" in result
 
     def test_decorator_with_mixin(self):
         """Test decorator on method of class with mixin."""

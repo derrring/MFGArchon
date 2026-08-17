@@ -11,7 +11,6 @@ from mfgarchon.alg.numerical.coupling.graph_coupling import (
     LaplacianCoupling,
 )
 from mfgarchon.alg.numerical.coupling.graph_mfg_solver import (
-    GraphMFGResult,
     GraphMFGSolver,
 )
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
@@ -94,18 +93,6 @@ class TestGraphMFGSolverInstantiation:
 
 @pytest.mark.slow
 class TestGraphMFGSolverSolve:
-    def test_returns_result(self):
-        problems, coupling, hjbs, fps = _make_3node_system()
-        solver = GraphMFGSolver(
-            problems=problems,
-            coupling=coupling,
-            hjb_solvers=hjbs,
-            fp_solvers=fps,
-            max_iterations=3,
-        )
-        result = solver.solve()
-        assert isinstance(result, GraphMFGResult)
-
     def test_result_shapes(self):
         problems, coupling, hjbs, fps = _make_3node_system()
         solver = GraphMFGSolver(
@@ -137,6 +124,19 @@ class TestGraphMFGSolverSolve:
         for k in range(3):
             assert np.all(np.isfinite(result.values[k]))
             assert np.all(np.isfinite(result.densities[k]))
+
+        # Finiteness on the densities is standing in for the law that actually constrains them:
+        # under no-flux walls the FP step conserves mass at every node, whatever the coupling
+        # strength (1.0 / 0.5 / 0.8 here). This is a genuine invariant, not a repair artefact --
+        # since Issue #1683 the FP step raises on a negative solve instead of clipping and
+        # renormalising, so mass is not restored behind the caller's back.
+        dx = problems[0].geometry.get_grid_spacing()[0]
+        for k in range(3):
+            mass = result.densities[k].sum(axis=1) * dx
+            # Measured max|mass - mass[0]| = 4.4e-16 on all three nodes; 1e-12 is a ~2000x margin.
+            assert np.max(np.abs(mass - mass[0])) < 1e-12, f"node {k} leaked mass under no-flux walls"
+            # ...and the initial density is normalised to unit mass under the rectangle rule.
+            assert mass[0] == pytest.approx(1.0, abs=1e-12)
 
     def test_error_history(self):
         problems, coupling, hjbs, fps = _make_3node_system()
@@ -221,6 +221,24 @@ class TestGraphMFGSolverCouplingEffect:
         result = solver.solve()
         assert np.all(np.isfinite(result.values[0]))
 
+        # The three problems are identical (_make_node_problem(1.0) each), so the state is
+        # constant across nodes and the graph Laplacian must annihilate it: L @ 1 = 0 for any
+        # adjacency, by construction of L = D - A. The three nodes therefore have to evolve
+        # identically. Measured max|v0 - v1| = max|v1 - v2| = exactly 0.0, so this is pinned
+        # exactly rather than to a tolerance. A sign error or a row/column-normalisation error
+        # in LaplacianCoupling injects a non-zero row sum and breaks it -- which isfinite on a
+        # single node cannot see.
+        np.testing.assert_array_equal(result.values[0], result.values[1])
+        np.testing.assert_array_equal(result.values[1], result.values[2])
+
+        # Per-node mass conservation under the no-flux walls (the coupling moves value between
+        # nodes; it must not create or destroy density at any of them).
+        dx = problems[0].geometry.get_grid_spacing()[0]
+        for k in range(3):
+            mass = result.densities[k].sum(axis=1) * dx
+            # Measured max|mass - 1| = 4.4e-16; 1e-12 is a ~2000x margin.
+            assert np.max(np.abs(mass - 1.0)) < 1e-12, f"node {k} leaked mass under LaplacianCoupling"
+
 
 class TestGraphMFGSolverGetResults:
     def test_get_results_after_solve(self):
@@ -232,9 +250,17 @@ class TestGraphMFGSolverGetResults:
             fp_solvers=fps,
             max_iterations=3,
         )
-        solver.solve()
-        U, _M = solver.get_results()
+        result = solver.solve()
+        U, M = solver.get_results()
         assert U.shape[0] == problems[0].Nt + 1
+
+        # All three nodes share a shape, so the shape check cannot see WHICH node came back.
+        # get_results is documented to expose node 0; pin that identity exactly. The three
+        # problems here are heterogeneous (coupling strengths 1.0 / 0.5 / 0.8), so values[1]
+        # genuinely differs from values[0] -- verified: array_equal(U, result.values[1]) is
+        # False on this fixture, i.e. a change to a different node index would be caught.
+        np.testing.assert_array_equal(U, result.values[0])
+        np.testing.assert_array_equal(M, result.densities[0])
 
     def test_get_results_before_solve_raises(self):
         problems, coupling, hjbs, fps = _make_3node_system()

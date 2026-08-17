@@ -38,6 +38,8 @@ class TestMeshAdapter:
 
         assert mesh2.p.shape == mesh.p.shape
         assert mesh2.t.shape == mesh.t.shape
+        np.testing.assert_allclose(mesh2.p, mesh.p)
+        np.testing.assert_array_equal(mesh2.t, mesh.t, err_msg="Refined connectivity renumbered by round-trip")
 
 
 @pytest.mark.integration
@@ -59,6 +61,12 @@ class TestFEMAssembly:
 
         # Mass matrix should have positive diagonal
         assert np.all(M.diagonal() > 0)
+
+        # Positive diagonal is necessary, not sufficient: assert the property the test is named for.
+        # Measured lambda_min = 7.13e-3 against lambda_max = 5.82e-2, i.e. 14 orders above the
+        # eigensolver noise floor eps*lambda_max ~ 1.3e-17.
+        ev = np.linalg.eigvalsh(M.toarray())
+        assert ev.min() > 0, f"mass matrix not positive definite: lambda_min={ev.min():.3e}"
 
     def test_mass_integrates_to_area(self):
         mesh = skfem.MeshTri.init_sqsymmetric().refined(1)

@@ -295,10 +295,21 @@ class TestRegionBasedBCEdgeCases:
             domain_bounds=np.array([[0, 1]]),
         )
 
-        # Apply without geometry (should work fine)
-        field = np.ones(51)
+        # Apply without geometry (should work fine).
+        # A uniform field cannot see this path: it makes the Dirichlet ghost 2*1.0 - 1.0 and the
+        # Neumann ghost 1.0 the same number, so the two branches are indistinguishable. A ramp
+        # separates them (measured left 2.0 vs right 1.0) and also separates field[-1] from
+        # field[-2] (1.0 vs 0.98), which a uniform field cannot.
+        field = np.linspace(0.0, 1.0, 51)
         applicator = FDMApplicator(dimension=1)
         padded = applicator.apply(field, bc, domain_bounds=np.array([[0, 1]]))
 
         # Should work without errors
         assert padded.shape == (53,)
+        assert np.allclose(padded[1:-1], field)
+
+        # Same ghost formulas the geometry-passing twin (test_basic_inlet_outlet_1d) asserts:
+        # Dirichlet g=1.0 at x_min gives u_ghost = 2*g - u_interior; Neumann du/dx=0 at x_max
+        # mirrors the last interior value.
+        assert np.isclose(padded[0], 2 * 1.0 - field[0], atol=1e-10)
+        assert np.isclose(padded[-1], field[-1], atol=1e-10)

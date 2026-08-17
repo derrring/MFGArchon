@@ -27,9 +27,9 @@ jobs:
       # check refuses when a module IN SCOPE cannot be imported, so the question is which optional
       # distributions the live library needs to be readable end to end. Blocking each in turn:
       # numba is the only one -- `backends/numba_backend.py` raises a deliberate ImportError
-      # without it. gymnasium costs one module and torch eighteen, but every one of those lives
-      # under alg/neural or alg/reinforcement, which the census excludes as frozen (CLAUDE.md).
-      # Hence 63 with torch and 63 without, and no 2 GB wheel on the critical path of a PR.
+      # without it. The eighteen modules torch used to cost lived under alg/neural and
+      # alg/reinforcement, which are deleted, so the count no longer depends on the wheel at all
+      # and there is still no 2 GB download on the critical path of a PR.
       - name: Install package
         run: |
           python -m pip install --upgrade pip

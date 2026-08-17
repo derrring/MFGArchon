@@ -196,75 +196,6 @@ class TestNetworkHJBSolverSolveHJBSystem:
         # Final time step should match final condition
         assert np.allclose(U_solution[-1, :], U_final)
 
-    def test_solve_with_explicit_scheme(self):
-        """Test solving with explicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.1,  # Short time for stability
-            Nt=20,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="RK45")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
-    def test_solve_with_implicit_scheme(self):
-        """Test solving with implicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="BDF")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
-    def test_solve_with_semi_implicit_scheme(self):
-        """Test solving with semi-implicit scheme."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="Radau")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert np.all(np.isfinite(U_solution))
-
     def test_solve_with_varying_density(self):
         """Test solving with non-uniform density."""
         network = GridNetwork(width=3, height=3)
@@ -290,6 +221,14 @@ class TestNetworkHJBSolverSolveHJBSystem:
         U_solution = solver.solve_hjb_system(M_density, U_final)
 
         assert np.all(np.isfinite(U_solution))
+
+        # The density coupling must actually reach U.  With the uniform M every other test in
+        # this file feeds, the per-time spatial spread is exactly 0.0; a non-uniform M is what
+        # makes the coupling observable, and this is the only test that supplies one.  Measured
+        # spread over 30 unseeded draws: min 2.4e-3, median 4.0e-3 -- so 1e-4 sits 24x below the
+        # minimum observed, while a solver ignoring M_density would give exactly 0.0.
+        spatial_spread = np.max(U_solution.max(axis=1) - U_solution.min(axis=1))
+        assert spatial_spread > 1e-4, "non-uniform density did not reach U; the coupling is not wired"
 
     def test_invalid_scheme_raises_error(self):
         """Test that invalid scheme raises error."""
@@ -342,6 +281,17 @@ class TestNetworkHJBSolverNumericalProperties:
         # All values should be finite
         assert np.all(np.isfinite(U_solution))
 
+        # Cross-integrator agreement is a genuine external oracle here: RK45, BDF and Radau are
+        # independent scipy integrators of the same backward ODE, so agreement is evidence about
+        # the ODE right-hand side rather than about any one integrator.  U_final is unseeded, so
+        # the threshold is set from the tail: over 150 random draws the worst RK45-BDF gap was
+        # 9.8e-6 and the worst RK45-Radau gap 6.5e-6, against a solution spread of ~0.9.  1e-3
+        # is 100x above the observed worst case and ~1000x below a real disagreement.
+        U_rk = NetworkHJBSolver(problem, scheme="RK45").solve_hjb_system(M_density, U_final)
+        U_radau = NetworkHJBSolver(problem, scheme="Radau").solve_hjb_system(M_density, U_final)
+        assert np.max(np.abs(U_rk - U_solution)) < 1e-3
+        assert np.max(np.abs(U_rk - U_radau)) < 1e-3
+
     def test_backward_time_propagation(self):
         """Test that solution propagates backward in time."""
         network = GridNetwork(width=3, height=3)
@@ -370,30 +320,6 @@ class TestNetworkHJBSolverNumericalProperties:
 class TestNetworkHJBSolverDifferentNetworks:
     """Test solver with different network geometries."""
 
-    def test_small_grid_network(self):
-        """Test solver on small grid network."""
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        solver = NetworkHJBSolver(problem, scheme="BDF")
-
-        Nt = problem.Nt + 1
-        num_nodes = problem.num_nodes
-
-        M_density = np.ones((Nt, num_nodes))
-        U_final = np.zeros(num_nodes)
-
-        U_solution = solver.solve_hjb_system(M_density, U_final)
-
-        assert U_solution.shape == (Nt, num_nodes)
-        assert np.all(np.isfinite(U_solution))
-
     def test_rectangular_grid_network(self):
         """Test solver on non-square grid."""
         network = GridNetwork(width=4, height=3)
@@ -419,7 +345,13 @@ class TestNetworkHJBSolverDifferentNetworks:
         assert U_solution.shape == (Nt, 12)
 
     def test_periodic_grid_network(self):
-        """Test solver on periodic grid."""
+        """Test solver on periodic grid: the wrap edges must change the answer.
+
+        A uniform terminal condition makes this test vacuous -- with U_final = 0 and M = 1 the
+        value function is spatially constant on both the torus (all degrees 4) and the open grid
+        (degrees 2, 3, 4), spread exactly 0.0 in both, so the wrap edges never enter the answer.
+        A spike terminal makes the graph topology observable.
+        """
         network = GridNetwork(width=4, height=4, periodic=True)
         network.create_network()
 
@@ -436,37 +368,33 @@ class TestNetworkHJBSolverDifferentNetworks:
 
         M_density = np.ones((Nt, num_nodes))
         U_final = np.zeros(num_nodes)
+        U_final[0] = 1.0
 
         U_solution = solver.solve_hjb_system(M_density, U_final)
 
         assert np.all(np.isfinite(U_solution))
 
+        # The same terminal spike on the open 4x4 grid must give a different value function,
+        # since node 0 is a degree-2 corner there and a degree-4 interior node on the torus.
+        # Measured separation 0.167 (and exactly 0.0 under the uniform terminal above).
+        open_network = GridNetwork(width=4, height=4, periodic=False)
+        open_network.create_network()
+        open_problem = NetworkMFGProblem(geometry=open_network, T=0.5, Nt=10)
+        U_open = NetworkHJBSolver(open_problem, scheme="BDF").solve_hjb_system(M_density, U_final)
+
+        assert np.max(np.abs(U_solution - U_open)) > 0.1, "periodic wrap edges did not affect the solution"
+
 
 class TestNetworkHJBSolverIntegration:
     """Integration tests with actual MFG problems."""
 
-    def test_solver_not_abstract(self):
-        """Test that NetworkHJBSolver can be instantiated."""
-        import inspect
-
-        network = GridNetwork(width=3, height=3)
-        network.create_network()
-
-        problem = NetworkMFGProblem(
-            geometry=network,
-            T=0.5,
-            Nt=10,
-        )
-
-        # Should not raise TypeError about abstract methods
-        solver = NetworkHJBSolver(problem)
-        assert isinstance(solver, NetworkHJBSolver)
-
-        # Should not have abstract methods
-        assert not inspect.isabstract(NetworkHJBSolver)
-
     def test_solver_with_different_parameters(self):
-        """Test solver with various parameter configurations."""
+        """The three integrators must agree on the same backward ODE.
+
+        Under the zero terminal condition this file usually feeds, U is spatially constant
+        (spread exactly 0.0) and the graph is irrelevant, so the three schemes agree trivially.
+        A spike terminal makes the answer depend on the network.
+        """
         network = GridNetwork(width=3, height=3)
         network.create_network()
 
@@ -476,6 +404,7 @@ class TestNetworkHJBSolverIntegration:
             {"scheme": "Radau"},
         ]
 
+        solutions = {}
         for config in configs:
             problem = NetworkMFGProblem(
                 geometry=network,
@@ -490,10 +419,19 @@ class TestNetworkHJBSolverIntegration:
 
             M_density = np.ones((Nt, num_nodes))
             U_final = np.zeros(num_nodes)
+            U_final[0] = 1.0
 
             U_solution = solver.solve_hjb_system(M_density, U_final)
 
             assert np.all(np.isfinite(U_solution))
+            solutions[config["scheme"]] = U_solution
+
+        # The spike is what makes this non-trivial: measured spatial spread 1.0, versus exactly
+        # 0.0 under the previous zero terminal.  Measured integrator gaps 2.0e-6 for both pairs,
+        # so 1e-4 is a 50x margin and still ~1e4 below a genuine dispatch error.
+        assert np.max(solutions["RK45"].max(axis=1) - solutions["RK45"].min(axis=1)) > 0.1
+        np.testing.assert_allclose(solutions["RK45"], solutions["BDF"], atol=1e-4)
+        np.testing.assert_allclose(solutions["RK45"], solutions["Radau"], atol=1e-4)
 
 
 class TestNetworkHJBIssue1468NodeBCGate:

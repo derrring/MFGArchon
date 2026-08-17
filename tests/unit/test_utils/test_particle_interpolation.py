@@ -101,6 +101,23 @@ class TestParticlesToGrid1D:
         assert np.all(np.isfinite(u_grid))
         assert len(u_grid) == 51
 
+        grid_x = np.linspace(0, 1, 51)
+
+        # Polynomial reproduction: an RBF with linear polynomial augmentation reproduces an
+        # affine function exactly, whatever the particle positions.  Measured 1.3e-15, so 1e-10
+        # is ~1e5 margin.  This also pins the particle -> grid coordinate mapping, since the
+        # right values at the wrong abscissae would not match 3x + 1.
+        u_affine = interpolate_particles_to_grid(
+            3.0 * particles + 1.0, particles, grid_shape=(51,), grid_bounds=(0, 1), method="rbf"
+        )
+        np.testing.assert_allclose(u_affine, 3.0 * grid_x + 1.0, atol=1e-10)
+
+        # Accuracy on the smooth function the fixture actually builds, restricted to the convex
+        # hull of the particles -- outside it the RBF extrapolates and no oracle governs it.
+        # Measured max error 4.2e-3 inside the hull (median 5.6e-4), so 2e-2 is ~5x margin.
+        inside_hull = (grid_x >= particles.min()) & (grid_x <= particles.max())
+        np.testing.assert_allclose(u_grid[inside_hull], np.sin(2 * np.pi * grid_x)[inside_hull], atol=2e-2)
+
     def test_nearest_method(self):
         """Test nearest neighbor interpolation."""
         particles = np.array([0.2, 0.5, 0.8])

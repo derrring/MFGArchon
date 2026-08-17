@@ -39,6 +39,21 @@ class TestRadialKernelInterface:
         out = kernel(r)
         assert out.shape == r.shape
 
+        # For WendlandKernel, DipoleKernel and PowerLawKernel this is the only multi-element
+        # call in the file (their per-kernel tests all pass length-1 arrays), so this is where
+        # the vectorization contract has to be stated: the batched call must agree elementwise
+        # with the scalar call. That is where a compact-support mask (`np.where(r < ell, ...)`)
+        # or an accidental array-wide normalization diverges -- shape preservation alone is
+        # satisfied by any wrong value at any radius.
+        per_element = np.array([kernel(np.array([ri]))[0] for ri in r])
+        # Measured max difference exactly 0.0 for all five kernels; atol 1e-14 leaves room for
+        # a legitimately reassociated vectorized expression without admitting a masking bug.
+        np.testing.assert_allclose(out, per_element, rtol=0, atol=1e-14)
+
+        # The one property all five share on this radius range: interaction decays away from
+        # the origin. (Dipole is sign-changing, hence the absolute values.)
+        assert abs(out[-1]) < abs(out[0])
+
     @pytest.mark.parametrize("kernel", ALL_KERNELS)
     def test_matrix_symmetric(self, kernel):
         """W_ij = K(|x_i - x_j|) is symmetric (radial kernel)."""

@@ -92,7 +92,12 @@ from .applicator_base import (
 from .conditions import BoundaryConditions
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
-from .ghost_cells import GhostCellConfig
+from .ghost_cells import (
+    GhostCellConfig,
+    ghost_cell_linear_extrapolation,
+    ghost_cell_quadratic_extrapolation,
+    ghost_cell_robin,
+)
 from .types import (
     BCSegment,
     BCType,
@@ -108,6 +113,8 @@ logger = get_logger(__name__)
 LegacyBoundaryConditions1D = BoundaryConditions1DFDM
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
 
 
@@ -138,6 +145,23 @@ class FDMApplicator(BaseStructuredApplicator):
         padded = FDMApplicator.apply_1d(field, bc)
         padded = FDMApplicator.apply_2d(field, bc)
     """
+
+    #: All eight. Measured over the (applicator x BCType) product: every type produces a result
+    #: that differs from the input on both the uniform and the mixed ghost path. Declaring a type
+    #: asserts a branch exists, not that it is correct -- `EXTRAPOLATION_*` on the uniform path
+    #: writes unset memory (#1946), which this gate cannot see and is not meant to. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
+        {
+            BCType.DIRICHLET,
+            BCType.NEUMANN,
+            BCType.ROBIN,
+            BCType.PERIODIC,
+            BCType.REFLECTING,
+            BCType.NO_FLUX,
+            BCType.EXTRAPOLATION_LINEAR,
+            BCType.EXTRAPOLATION_QUADRATIC,
+        }
+    )
 
     def __init__(
         self,
@@ -187,8 +211,15 @@ class FDMApplicator(BaseStructuredApplicator):
         Args:
             field: Interior field values
             boundary_conditions: BC specification
-            grid_spacing: Grid spacing (not used for ghost cells, but kept for API consistency)
-            domain_bounds: Domain bounds (required for mixed BCs)
+            grid_spacing: ACCEPTED AND DISCARDED. Since #1904 the ghost formulas do use the
+                     spacing -- `pad_array_with_ghosts` takes it as `spacing=` -- and this method
+                     does not forward it, so an inhomogeneous Neumann or Robin condition applied
+                     through here still falls back to dx = 1.0. Threading it changes the values
+                     this public entry point returns, so it is deferred to #1904 with the other
+                     un-threaded call sites rather than done here.
+            domain_bounds: ACCEPTED AND DISCARDED, same as above and for the same reason: the
+                     buffer would honour it (`elif domain_bounds is not None`), and this method
+                     does not pass it on.
             time: Current time for time-dependent BCs
             geometry: Geometry object with marked regions (Issue #596 Phase 2.5).
                      Required if boundary_conditions uses region_name.
@@ -196,6 +227,7 @@ class FDMApplicator(BaseStructuredApplicator):
         Returns:
             Padded field with ghost cells
         """
+        self._validate_bc_support(boundary_conditions)  # #1948
         # Issue #577 Phase 3: Use pad_array_with_ghosts() for all BCs
         # Geometry parameter enables region_name resolution for mixed BCs
         return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry)
@@ -746,12 +778,20 @@ class GhostBuffer:
             lo_ghost = [slice(None)] * d
             lo_ghost[axis] = slice(0, g)
             lo_interior = [slice(None)] * d
-            lo_interior[axis] = slice(g, 2 * g)
+            # #1971: the ghost slice [0:g] runs OUTERMOST-first (index g-1 is the one adjacent to
+            # the wall) while [g:2g] runs nearest-first, and the assignment pairs them
+            # element-wise -- so ghost layer 1 received the value computed for the FARTHEST
+            # interior cell. Stepping the interior slice backwards makes both run wall-outward,
+            # which is the pairing a mirror means. Reversing the calculator's OUTPUT instead
+            # would have to be done along `axis`, and the obvious `[::-1]` reverses axis 0.
+            lo_interior[axis] = slice(2 * g - 1, g - 1, -1)
 
             hi_ghost = [slice(None)] * d
             hi_ghost[axis] = slice(-g, None)
             hi_interior = [slice(None)] * d
-            hi_interior[axis] = slice(-2 * g, -g)
+            # Mirror problem on this side: the ghost slice runs nearest-first, the interior
+            # [-2g:-g] runs farthest-first.
+            hi_interior[axis] = slice(-g - 1, -2 * g - 1, -1)
 
             # Get interior arrays (views, not copies)
             interior_lo = buf[tuple(lo_interior)]
@@ -772,6 +812,10 @@ class GhostBuffer:
                 **kwargs,
             )
 
+            # At g=1 a one-element slice is its own reverse, which is why every caller saw the
+            # right answer. Measured at g=2 and g=3 on u = cos(2*pi*x), even about both walls so
+            # Neumann(0) is exact there: 5.4e-01 and 1.3e+00 at BOTH walls, with
+            # reversed(got) == want -- every value correct, every slot wrong. (#1971)
             buf[tuple(lo_ghost)] = ghost_lo
             buf[tuple(hi_ghost)] = ghost_hi
 
@@ -887,6 +931,7 @@ class PreallocatedGhostBuffer:
         config: GhostCellConfig | None = None,
         geometry: object | None = None,
         periodic_convention: PeriodicGridConvention | None = None,
+        spacing: float | Sequence[float] | None = None,
     ):
         """
         Initialize pre-allocated ghost buffer.
@@ -934,8 +979,21 @@ class PreallocatedGhostBuffer:
         self._interior_slices = tuple(slice(ghost_depth, -ghost_depth) for _ in range(self._dimension))
 
         # Pre-compute grid spacing if domain_bounds provided
+        # Explicit spacing wins, because most callers have it and no `domain_bounds`. Without it
+        # `_grid_spacing` stayed None and every consumer below silently used dx = 1.0 -- so an
+        # inhomogeneous Neumann condition was applied as g/h instead of g. Reading the flux back off
+        # the ghost, -(padded[1] - padded[0])/dx, returned exactly g/h -- 40 / 80 / 160 / 320 at
+        # Nx = 21 / 41 / 81 / 161 for a requested g = 2, independent of the state -- and returns
+        # exactly g once the spacing is threaded. #1904
         self._grid_spacing: tuple[float, ...] | None = None
-        if domain_bounds is not None:
+        if spacing is not None:
+            values = (float(spacing),) * self._dimension if np.isscalar(spacing) else tuple(float(v) for v in spacing)
+            if len(values) != self._dimension:
+                raise ValueError(
+                    f"spacing has {len(values)} entries for a {self._dimension}-D array; pass one per axis or a scalar"
+                )
+            self._grid_spacing = values
+        elif domain_bounds is not None:
             domain_bounds = np.atleast_2d(domain_bounds)
             spacing = []
             for d in range(self._dimension):
@@ -1136,42 +1194,56 @@ class PreallocatedGhostBuffer:
                     lo_interior[axis] = g + k  # Adjacent interior cells from g up
                     buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
                     if apply_flux:
-                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)
+                        # #1967: the offset is the mirror SEPARATION times the flux, and that
+                        # separation grows with the layer. Ghost layer k and its mirror interior
+                        # are (2k-1)*dx apart on a cell-centred grid -- 1*dx for the pair adjacent
+                        # to the wall, 3*dx for the next, and so on. `dx * v` on every layer is the
+                        # k=1 value applied throughout, so g=1 was exact and g>=2 drifted by
+                        # (2k-2)*dx*v. Measured on f = -2x+1 with du/dn = 2: 0 at g=1, 5.0e-01 at
+                        # g=2, 1.0e+00 at g=3. v == 0 leaves the pure mirror, byte-identical.
+                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v
 
-                # High boundary: ghost mirrors adjacent interior
+                # High boundary: ghost mirrors adjacent interior.
+                #
+                # #1967: both indices must walk in the SAME direction, and they did not. The low
+                # loop above pairs `g-1-k` with `g+k` -- ghost nearest the wall with interior
+                # nearest the wall, k advancing outward on both sides. This loop paired `-(k+1)`,
+                # which also starts nearest the wall, with `-(g+k+1)`, which starts at the
+                # FARTHEST interior cell of the stencil and moves further in. At g=1 the two
+                # expressions coincide, which is why every caller in the library saw the right
+                # answer; at g>=2 the layers arrive reversed.
+                #
+                # Measured on u = cos(2*pi*x), even about both walls so Neumann(0) is exact at
+                # both: low wall machine-zero at g=1,2,3 while the high wall was 5.4e-01 at g=2
+                # and 1.3e+00 at g=3, with reversed(got) == want at every depth -- the values were
+                # right and the slots were wrong.
                 for k in range(g):
                     hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall.
+                    hi_ghost[axis] = -(g - k)  # -g, -(g-1), ... -1  : nearest the wall first
                     hi_interior = [slice(None)] * d
-                    hi_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    hi_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first too
                     buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
                     if apply_flux:
-                        buf[tuple(hi_ghost)] += dx * v
+                        buf[tuple(hi_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
-            # Robin: alpha*u + beta*du/dn = g (cell-centered ghost formula).
-            # Issue #1255 (C), 2026-06-10 audit: use the same general formula as
-            # _apply_ghost_for_face (mixed-segment path, lines 1549-1582) instead of
-            # the prior hardcoded alpha=0/beta=1 (pure-Neumann special case).
+            # Robin: alpha*u + beta*du/dn = g, du/dn the OUTWARD normal derivative, which is
+            # what `BCSegment.beta` and `BCType.ROBIN` both declare.
             #
-            # Cell-centred derivation (boundary at x_b midway between ghost x_g and
-            # interior x_i; spacing dx between cell centres):
-            #   u_b   = (u_g + u_i)/2
-            #   du/dn = (u_g - u_i)/dx * outward_sign
-            # Robin BC: alpha*(u_g+u_i)/2 + beta*(u_g-u_i)/dx*sign = g
-            # => u_g * (alpha/2 + beta*sign/dx) = g - u_i*(alpha/2 - beta*sign/dx)
+            # This used to carry its own arithmetic with an `outward_sign` factor on beta,
+            # which is the axis convention alpha*u + beta*du/dx = g -- a physically different
+            # condition at the low wall. Measured before the fix, on alpha=1, beta=0.3, g=0.7:
+            # the declared condition's residual was 6.17 at the min wall and 0 at the max.
+            # The sibling NEUMANN branch above already carries the outward convention, fixed
+            # for exactly this reason in #1262; this branch kept the pre-fix sign.
+            #
+            # For a cell-centred grid the ghost sits outside at both walls, so the quotient
+            # toward the ghost IS the outward derivative and the formula is side-free. That
+            # derivation lives in `ghost_cell_robin`, which now owns it.
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
 
-                # Precompute per-wall (min/max) coefficients.
-                # Low wall: outward_sign = -1
-                coeff_ghost_lo = alpha / 2.0 - beta / dx
-                coeff_int_lo = alpha / 2.0 + beta / dx
-                # High wall: outward_sign = +1
-                coeff_ghost_hi = alpha / 2.0 + beta / dx
-                coeff_int_hi = alpha / 2.0 - beta / dx
-
-                # Get adjacent interior values (first/last interior cell).
                 lo_int_sl = [slice(None)] * d
                 lo_int_sl[axis] = g
                 u_lo_interior = buf[tuple(lo_int_sl)]
@@ -1181,21 +1253,51 @@ class PreallocatedGhostBuffer:
                 u_hi_interior = buf[tuple(hi_int_sl)]
 
                 for k in range(g):
-                    # Low ghost (outward normal = -1)
                     lo_ghost = [slice(None)] * d
                     lo_ghost[axis] = g - 1 - k
-                    if abs(coeff_ghost_lo) < 1e-12:
-                        buf[tuple(lo_ghost)] = u_lo_interior  # Degenerate: mirror
-                    else:
-                        buf[tuple(lo_ghost)] = (v - u_lo_interior * coeff_int_lo) / coeff_ghost_lo
+                    buf[tuple(lo_ghost)] = ghost_cell_robin(u_lo_interior, v, alpha, beta, dx)
 
-                    # High ghost (outward normal = +1)
                     hi_ghost = [slice(None)] * d
                     hi_ghost[axis] = -(g - k)
-                    if abs(coeff_ghost_hi) < 1e-12:
-                        buf[tuple(hi_ghost)] = u_hi_interior  # Degenerate: mirror
-                    else:
-                        buf[tuple(hi_ghost)] = (v - u_hi_interior * coeff_int_hi) / coeff_ghost_hi
+                    buf[tuple(hi_ghost)] = ghost_cell_robin(u_hi_interior, v, alpha, beta, dx)
+
+        elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
+            # #1958: this chain had no branch for either member AND no terminal `else`, so the
+            # ghost cells kept the buffer's zero-initialised contents -- not a wrong condition,
+            # no condition. Measured on u = [2.5, 3.1, 4.0, 5.2, 6.6]: ghosts 0.0 / 0.0 where
+            # linear wants 1.9 / 8.0 and quadratic 2.2 / 8.2.
+            #
+            # The formulas were already written and directly tested; nothing reached them from
+            # here. Both are one-sided stencils reading INWARD from the wall, so the low side
+            # walks forward from the first interior cell and the high side walks backward from
+            # the last.
+            n_pts = 2 if bc_type == BCType.EXTRAPOLATION_LINEAR else 3
+            formula = (
+                ghost_cell_linear_extrapolation
+                if bc_type == BCType.EXTRAPOLATION_LINEAR
+                else ghost_cell_quadratic_extrapolation
+            )
+            for axis in range(d):
+                if buf.shape[axis] - 2 * g < n_pts:
+                    raise ValueError(
+                        f"{bc_type.name} needs {n_pts} interior cells along axis {axis} to build "
+                        f"its one-sided stencil; this grid has {buf.shape[axis] - 2 * g}. "
+                        "Refuse rather than silently dropping to a lower order."
+                    )
+
+                def _slice(idx: int, ax: int = axis) -> tuple:
+                    sl = [slice(None)] * d
+                    sl[ax] = idx
+                    return tuple(sl)
+
+                lo_stencil = tuple(buf[_slice(g + j)] for j in range(n_pts))
+                hi_stencil = tuple(buf[_slice(-g - 1 - j)] for j in range(n_pts))
+                lo_value = formula(lo_stencil)
+                hi_value = formula(hi_stencil)
+
+                for k in range(g):
+                    buf[_slice(g - 1 - k)] = lo_value
+                    buf[_slice(-(g - k))] = hi_value
 
     def _apply_poly_extrapolation(
         self,
@@ -1490,10 +1592,25 @@ class PreallocatedGhostBuffer:
                 segment = self._find_segment_for_face(bc, target_face)
 
                 if segment is None:
-                    # No explicit segment - use default BC (first segment or Neumann)
-                    segment = bc.segments[0] if bc.segments else None
-                    if segment is None:
-                        continue  # No BC defined, skip
+                    # `default_bc`, not `bc.segments[0]`. Segments are sorted priority-DESCENDING
+                    # (`conditions.py:135`), so the old fallback handed every unclaimed wall the
+                    # highest-priority segment -- typically the exit. Measured on the mixed-BC idiom
+                    # from `BCSegment`'s own docstring (one DIRICHLET exit on x_min, default_bc
+                    # NO_FLUX): 4 of 4 walls received the Dirichlet ghost, and dropping the exit's
+                    # priority to -5 changed it to 1 of 4, which is the fingerprint of a sort-order
+                    # fallback rather than of any BC semantics. `default_bc` exists, is documented,
+                    # and `get_bc_type_at_boundary` already answers correctly on the same object.
+                    #
+                    # `_resolve_default_bc` raises when `default_bc` is unset (#1100) rather than
+                    # guessing -- that is deliberate and it is why this is not a silent change: a BC
+                    # whose segments do not cover every face and which names no default was
+                    # previously given one by accident of sort order.
+                    default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
+                    segment = BCSegment(
+                        name="__default__",
+                        bc_type=default_type,
+                        value=bc.default_value,
+                    )
 
                 # Apply ghost cell formula for this face
                 self._apply_ghost_for_face(buf, axis, side, segment, time, g)
@@ -1609,19 +1726,40 @@ class PreallocatedGhostBuffer:
             buf[tuple(ghost_slices)] = 2 * v - buf[tuple(interior_slices)]
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-            # Zero-gradient Neumann: ghost = adjacent interior (simple reflection).
-            # For cell-centered grids: du/dn = (u_interior - u_ghost)/dx = 0
-            # => u_ghost = u_interior (adjacent)
+            # ghost = adjacent interior, PLUS dx*v for an inhomogeneous Neumann flux.
+            #
+            # The flux term was missing here while `_apply_linear_reflection` (the uniform-BC path,
+            # :1151) has carried it since #1262. Both paths are live and which one runs is decided
+            # by `bc.is_uniform` -- i.e. by whether the caller wrote one unrestricted segment or one
+            # per face, which the docs present as equivalent ways of saying the same thing. Measured
+            # on du/dn = 2, dx = 0.25: uniform gave an implied du/dn of +/-2.0, per-face gave 0.0,
+            # differing by exactly dx*v. A caller stating a per-face Neumann flux silently got
+            # zero-flux. #1937
+            #
+            # Same sign at both walls, matching the uniform path: at the low wall the outward normal
+            # is -x, so ghost = u_i + dx*v gives du/dx = -v and du/dn = +v; at the high wall
+            # du/dx = +v and du/dn = +v. That is the du/dn convention #1262 established, and the
+            # agreement between the two paths is what the pin asserts.
+            apply_flux = bc_type == BCType.NEUMANN and v != 0.0
+            dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+            # #1967, both halves, the same two as the uniform path above -- this is the second
+            # copy of that arithmetic and it carried the same errors.
             for k in range(g):
                 single_ghost = [slice(None)] * d
                 single_interior = [slice(None)] * d
                 if side == "min":
-                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    single_interior[axis] = g + k  # Adjacent interior cells from g up
+                    single_ghost[axis] = g - 1 - k  # g-1 .. 0    : nearest the wall first
+                    single_interior[axis] = g + k  # g, g+1, ...  : nearest first
                 else:
-                    single_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
-                    single_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall,
+                    # so both walks must start there. `-(k+1)` started at the far end while the
+                    # interior walk started near, which pairs the layers backwards for g >= 2.
+                    single_ghost[axis] = -(g - k)  # -g .. -1     : nearest the wall first
+                    single_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first
                 buf[tuple(single_ghost)] = buf[tuple(single_interior)]
+                if apply_flux:
+                    # Layer k sits (2k-1)*dx from its mirror, so the offset grows with the layer.
+                    buf[tuple(single_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g
@@ -1635,47 +1773,61 @@ class PreallocatedGhostBuffer:
             else:
                 dx = 1.0  # Fallback (may give incorrect results without proper dx)
 
-            # Outward normal sign: +1 for max, -1 for min
-            outward_sign = 1.0 if side == "max" else -1.0
+            # `du/dn` is the OUTWARD normal derivative, as `BCSegment.beta` declares. The
+            # arithmetic that stood here multiplied beta by an outward sign, which imposes
+            # alpha*u + beta*du/dx = g instead -- a different physical condition at the low
+            # wall. `ghost_cell_robin` owns the derivation, including why the cell-centred
+            # formula is side-free: the ghost is outside at both walls, so the quotient
+            # toward it is already the outward derivative.
+            #
+            # The degenerate branch went with it. A singular coefficient means the condition
+            # does not determine the ghost, and mirroring invents an answer the caller never
+            # asked for; the owner raises instead.
+            for k in range(g):
+                single_ghost = [slice(None)] * d
+                single_interior = [slice(None)] * d
+                if side == "min":
+                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
+                    single_interior[axis] = g  # Adjacent interior at index g
+                else:
+                    single_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
+                    single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
+                u_interior = buf[tuple(single_interior)]
+                buf[tuple(single_ghost)] = ghost_cell_robin(u_interior, v, alpha, beta, dx)
 
-            # Ghost cell formula (cell-centered):
-            # For cell-centered grids, ghost and interior cell centers are dx apart.
-            # Boundary value: u_b = (u_g + u_i)/2 (midpoint between ghost and interior)
-            # Normal derivative: du/dn = (u_g - u_i)/dx * sign (not 2*dx!)
-            # Robin BC: alpha * u_b + beta * du/dn = g
-            # => alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/dx * sign = g
-            # Solving for u_g:
-            # u_g * (alpha/2 + beta*sign/dx) = g - u_i * (alpha/2 - beta*sign/dx)
-            coeff_ghost = alpha / 2.0 + beta * outward_sign / dx
-            coeff_interior = alpha / 2.0 - beta * outward_sign / dx
+        elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
+            # #1958: this chain had no branch for either member, so both fell to the reflection
+            # fallback below. `fp_semi_lagrangian` builds an EXTRAPOLATION_QUADRATIC BC every
+            # timestep and got a boundary Laplacian 2000% wrong -- measured on U = 0.5x^2, where
+            # the true Laplacian is 1 everywhere, the wall row came back -19.
+            #
+            # Only the high wall showed it. The parabola is symmetric about x = 0, so the
+            # reflection ghost and the quadratic ghost coincide at the low wall -- which is why
+            # a symmetric fixture cannot see this and why the defect survived.
+            n_pts = 2 if bc_type == BCType.EXTRAPOLATION_LINEAR else 3
+            formula = (
+                ghost_cell_linear_extrapolation
+                if bc_type == BCType.EXTRAPOLATION_LINEAR
+                else ghost_cell_quadratic_extrapolation
+            )
+            if buf.shape[axis] - 2 * g < n_pts:
+                raise ValueError(
+                    f"{bc_type.name} needs {n_pts} interior cells along axis {axis} to build its "
+                    f"one-sided stencil; this grid has {buf.shape[axis] - 2 * g}. Refuse rather "
+                    "than silently dropping to a lower order."
+                )
 
-            if abs(coeff_ghost) < 1e-12:
-                # Degenerate case: fall back to reflection
-                for k in range(g):
-                    single_ghost = [slice(None)] * d
-                    single_interior = [slice(None)] * d
-                    if side == "min":
-                        single_ghost[axis] = k
-                        single_interior[axis] = 2 * g - k
-                    else:
-                        single_ghost[axis] = -(k + 1)
-                        single_interior[axis] = -(2 * g + k + 1)
-                    buf[tuple(single_ghost)] = buf[tuple(single_interior)]
-            else:
-                # Apply proper Robin formula using adjacent interior cell
-                # For min boundary: ghost[k] uses interior[g] (first interior cell)
-                # For max boundary: ghost[-k-1] uses interior[-g-1] (last interior cell)
-                for k in range(g):
-                    single_ghost = [slice(None)] * d
-                    single_interior = [slice(None)] * d
-                    if side == "min":
-                        single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                        single_interior[axis] = g  # Adjacent interior at index g
-                    else:
-                        single_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
-                        single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
-                    u_interior = buf[tuple(single_interior)]
-                    buf[tuple(single_ghost)] = (v - u_interior * coeff_interior) / coeff_ghost
+            def _slice(idx: int) -> tuple:
+                sl = [slice(None)] * d
+                sl[axis] = idx
+                return tuple(sl)
+
+            # The stencil reads INWARD from this wall: forward from the first interior cell at a
+            # min face, backward from the last at a max face.
+            stencil = tuple(buf[_slice(g + j if side == "min" else -g - 1 - j)] for j in range(n_pts))
+            ghost_value = formula(stencil)
+            for k in range(g):
+                buf[_slice(g - 1 - k if side == "min" else -(g - k))] = ghost_value
 
         else:
             # Fallback for unknown BC types: use reflection
@@ -1761,6 +1913,7 @@ def pad_array_with_ghosts(
     time: float = 0.0,
     geometry: object | None = None,
     periodic_convention: PeriodicGridConvention | None = None,
+    spacing: float | Sequence[float] | None = None,
 ) -> NDArray[np.floating]:
     """
     Pad array with ghost cells based on boundary conditions.
@@ -1801,6 +1954,7 @@ def pad_array_with_ghosts(
         ghost_depth=ghost_depth,
         geometry=geometry,
         periodic_convention=periodic_convention,
+        spacing=spacing,
     )
     # Copy array into interior view and update ghosts
     buffer.interior[:] = array

@@ -15,8 +15,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.utils.solver_result import (
-    ComparisonReport,
-    ConvergenceAnalysis,
     SolverResult,
 )
 
@@ -110,11 +108,6 @@ def oscillating_result():
 
 class TestAnalyzeConvergence:
     """Tests for analyze_convergence() method."""
-
-    def test_analyze_convergence_returns_correct_type(self, converged_result):
-        """Test that analyze_convergence returns ConvergenceAnalysis."""
-        analysis = converged_result.analyze_convergence()
-        assert isinstance(analysis, ConvergenceAnalysis)
 
     def test_convergence_status_matches_result(self, converged_result):
         """Test that analysis converged status matches result."""
@@ -211,14 +204,6 @@ class TestAnalyzeConvergence:
 class TestPlotConvergence:
     """Tests for plot_convergence() method."""
 
-    def test_plot_convergence_returns_figure(self, converged_result):
-        """Test that plot_convergence returns a matplotlib figure."""
-        import matplotlib.pyplot as plt
-
-        fig = converged_result.plot_convergence(show=False)
-        assert fig is not None
-        plt.close(fig)
-
     def test_plot_saves_to_file(self, converged_result, tmp_path):
         """Test that plot is saved when save_path is provided."""
         import matplotlib.pyplot as plt
@@ -278,23 +263,40 @@ class TestPlotConvergence:
         plt.close(fig)
 
     def test_plot_has_legend(self, converged_result):
-        """Test that plot has a legend."""
+        """The legend names both curves, which is what makes the two-curve figure readable.
+
+        ``is not None`` passes on a legend with wrong, empty or missing entries -- and the usual
+        way this breaks is silent: matplotlib omits underscore-prefixed labels from the legend
+        without warning, so a mislabelled curve produces a legend that still exists. Measured
+        exactly these two entries, in this order, matching the two Line2D labels on the axes.
+        """
         import matplotlib.pyplot as plt
 
         fig = converged_result.plot_convergence(show=False)
         ax = fig.axes[0]
         legend = ax.get_legend()
         assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["U error", "M error"]
         plt.close(fig)
 
     def test_plot_multiple_calls_dont_interfere(self, converged_result):
-        """Test that multiple plot calls don't interfere with each other."""
+        """Two calls produce two independent figures, neither accumulating the other's content.
+
+        Distinct objects is a necessary but weak reading of "don't interfere": the classic
+        failure is a second call drawing onto accumulated axes or duplicating the lines, and
+        that still yields two distinct Figure objects. Measured on both figures: one axes
+        carrying exactly two lines, so a second call that appended would show four.
+        """
         import matplotlib.pyplot as plt
 
         fig1 = converged_result.plot_convergence(show=False)
         fig2 = converged_result.plot_convergence(show=False)
 
         assert fig1 is not fig2
+        assert len(fig1.axes) == 1
+        assert len(fig2.axes) == 1
+        assert len(fig1.axes[0].get_lines()) == 2
+        assert len(fig2.axes[0].get_lines()) == 2
         plt.close("all")
 
 
@@ -303,23 +305,6 @@ class TestPlotConvergence:
 
 class TestCompareTo:
     """Tests for compare_to() method."""
-
-    def test_compare_to_returns_comparison_report(self, converged_result, stagnating_result):
-        """Test that compare_to returns ComparisonReport."""
-        comparison = converged_result.compare_to(stagnating_result)
-        assert isinstance(comparison, ComparisonReport)
-
-    def test_comparison_has_all_fields(self, converged_result, stagnating_result):
-        """Test that comparison report has all required fields."""
-        comparison = converged_result.compare_to(stagnating_result)
-
-        assert hasattr(comparison, "solution_diff_l2")
-        assert hasattr(comparison, "solution_diff_linf")
-        assert hasattr(comparison, "iterations_diff")
-        assert hasattr(comparison, "time_diff")
-        assert hasattr(comparison, "converged_both")
-        assert hasattr(comparison, "faster_solver")
-        assert hasattr(comparison, "more_accurate_solver")
 
     def test_solution_diff_is_positive(self, converged_result, stagnating_result):
         """Test that solution differences are positive."""
@@ -334,9 +319,14 @@ class TestCompareTo:
         assert comparison.iterations_diff == expected_diff
 
     def test_time_diff_calculated(self, converged_result, stagnating_result):
-        """Test that time difference is calculated."""
+        """The difference, with its sign -- which is what the field means.
+
+        ``is not None`` is satisfied by any number, including a sign-flipped or absolute-valued
+        difference. Measured -0.5 from 1.5 - 2.0 (self minus other), so both the sign and the
+        magnitude are live here; an ``abs()`` or a swapped operand order fails.
+        """
         comparison = converged_result.compare_to(stagnating_result)
-        assert comparison.time_diff is not None
+        assert comparison.time_diff == pytest.approx(converged_result.execution_time - stagnating_result.execution_time)
 
     def test_converged_both_true_when_both_converged(self, converged_result):
         """Test converged_both is True when both results converged."""

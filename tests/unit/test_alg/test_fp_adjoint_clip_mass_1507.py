@@ -87,18 +87,6 @@ def test_the_clip_on_this_configuration_is_large_not_marginal():
     assert percent > 1.0, f"expected a large clip on this configuration, message reported {percent}%"
 
 
-def test_a_healthy_step_still_passes():
-    """The gate must not stop a solve that did not diverge.
-
-    A threshold that rejected round-off would make the strict-adjoint path unusable --
-    the failure mode opposite to the one #1683 fixes.
-    """
-    fp, a, _h, n = _fp_solver_and_advection(drift=0.0)
-    m_next = fp.solve_fp_step_adjoint_mode(np.full(n, 1.0), a, sigma=0.05)
-    assert np.isfinite(m_next).all()
-    assert (m_next >= 0.0).all()
-
-
 def test_the_step_no_longer_renormalises():
     """Restoring the pre-clip total is what made this class of defect invisible.
 

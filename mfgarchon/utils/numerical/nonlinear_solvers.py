@@ -223,8 +223,14 @@ class FixedPointSolver(NonlinearSolver):
             # Apply under-relaxation
             x_updated = (1 - self.relaxation) * x_current + self.relaxation * x_new
 
-            # Compute residual: ||x_updated - x_current||
-            diff = x_updated - x_current
+            # The residual of `x = G(x)` is ||G(x) - x||, and it does not depend on how far
+            # along that direction the iterate is moved. Measuring ||x_updated - x_current||
+            # instead multiplies it by `relaxation` (Issue #1684 item 6), so turning damping down
+            # made anything converge. Measured on G(x) = 0.9x + 1 (fixed point 10) from x0 = 0 at
+            # tolerance 1e-2: relaxation 0.001 reported CONVERGED after one iteration at
+            # x = 0.001, while relaxation 0.1 reported FAILURE at x = 8.66 -- success at the
+            # worse answer, on the same problem.
+            diff = x_new - x_current
             residual_abs = np.linalg.norm(diff.flatten())
 
             if self.norm_type == "relative":

@@ -92,16 +92,6 @@ class NetworkHamiltonian(HamiltonianBase):
             self._num_nodes = self.network_data.num_nodes
         return self._num_nodes
 
-    @property
-    def sense_sign(self) -> float:
-        """Orientation sign of the finite-state control (Issue #1476): ``+1`` for MINIMIZE (cost-to-go,
-        agents move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL
-        toward higher value). Every sense-dependent piece — the control cost in ``_default_hamiltonian``,
-        ``optimal_control``, ``dp``, and the HJB integration sign in ``hjb_network`` — is ``s * (MINIMIZE
-        form)``, so this one property is the single source of the MINIMIZE<->MAXIMIZE mirror.
-        """
-        return 1.0 if self.sense == OptimizationSense.MINIMIZE else -1.0
-
     def _extract_own_density(self, m: np.ndarray) -> np.ndarray:
         """Extract this population's density from stacked m_all.
 

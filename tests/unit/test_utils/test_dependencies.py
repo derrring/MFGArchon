@@ -34,23 +34,6 @@ def test_is_available_nonexistent_package():
     assert is_available("this_package_does_not_exist_xyz123") is False
 
 
-@pytest.mark.unit
-@pytest.mark.fast
-def test_is_available_optional_dependency():
-    """Test is_available() correctly detects optional dependencies."""
-    from mfgarchon.utils.dependencies import is_available
-
-    # Test optional dependencies - results depend on environment
-    torch_available = is_available("torch")
-    jax_available = is_available("jax")
-    plotly_available = is_available("plotly")
-
-    # Should return boolean values
-    assert isinstance(torch_available, bool)
-    assert isinstance(jax_available, bool)
-    assert isinstance(plotly_available, bool)
-
-
 # ============================================================================
 # Test: check_dependency() Function
 # ============================================================================

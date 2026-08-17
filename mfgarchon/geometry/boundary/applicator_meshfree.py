@@ -38,6 +38,7 @@ from mfgarchon.geometry.protocol import GeometryProtocol
 
 # Import base class for inheritance
 from .applicator_base import BaseMeshfreeApplicator
+from .applicator_particle import particle_action_for_bc_type
 from .types import BCType
 
 
@@ -81,6 +82,15 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         >>> points = domain.sample_interior(100)
         >>> u_with_bc = applicator.apply_field_bc(u, points, bc_type="dirichlet", bc_value=0.0)
     """
+
+    #: Measured over the (applicator x BCType) product, not read off the branches: DIRICHLET and
+    #: ROBIN apply; NO_FLUX has a branch that is a literal `pass`, so it is SILENT -- declared here
+    #: because the branch exists, and closing that silence is the next step; NEUMANN and PERIODIC
+    #: already raise `NotImplementedError` with a reason, and REFLECTING and the two extrapolations
+    #: raise `ValueError`. Those raises are the CORRECT behaviour and are what this gate generalises
+    #: -- they are why "four different behaviours for an unhandled type" understates the problem:
+    #: one of the four was already right. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset({BCType.DIRICHLET, BCType.ROBIN})
 
     def __init__(self, geometry: GeometryProtocol):
         """
@@ -370,6 +380,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         if not np.any(on_boundary):
             return field
 
+        self._validate_bc_support(boundary_conditions)  # #1948
+
         # Get BC type (uniform BC for now; fails loud if default_bc unset, Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply")
 
@@ -404,10 +416,24 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
                 field[on_boundary] = (field[on_boundary] + penalty_weight * bc_value) / (1 + penalty_weight)
 
         elif bc_type == BCType.NO_FLUX:
-            # Zero flux: du/dn = 0
-            # For meshfree, this means boundary values should match nearby interior
-            # We approximate by keeping current values (no modification)
-            pass
+            # NO_FLUX is homogeneous Neumann, and this class already decided that case one branch
+            # above: a meshfree method has no ghost layer, so enforcing a normal derivative needs
+            # the solver's own derivative operators.
+            #
+            # ~~"We approximate by keeping current values (no modification)"~~ [FIXED 2026-08-15,
+            # #1948] -- the comment stated the right answer ("boundary values should match nearby
+            # interior") and then did something else. Keeping the current values does not make
+            # du/dn = 0; it makes no claim at all, and the caller cannot distinguish that from a
+            # condition that was applied and happened to change nothing. Measured over
+            # tests/unit/test_geometry and tests/unit/test_alg (2857 tests): `apply` is reached 8
+            # times, all from the conformance table, and never with NO_FLUX -- so refusing costs
+            # nothing that was working.
+            raise NotImplementedError(
+                "NO_FLUX (homogeneous Neumann) for meshfree methods requires solver-specific "
+                "derivative operators, for the same reason NEUMANN does. Use the solver's "
+                "infrastructure; ImplicitApplicator enforces it along the boundary normal when the "
+                "geometry is implicit."
+            )
 
         elif bc_type == BCType.PERIODIC:
             # Periodic BC doesn't apply directly to field values at points
@@ -456,38 +482,18 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         # Fails loud if default_bc unset (Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply_particles")
 
-        if bc_type == BCType.NEUMANN:
-            # Zero-flux Neumann → reflecting BC for particles
-            return self.apply_particle_bc(particles, "reflecting")
+        # One owner for BCType -> particle action, shared with ParticleApplicator. The two
+        # copies had drifted on four of BCType's eight members; REFLECTING raised here and
+        # reflected there, and a Robin BC left at its default coefficients absorbed here and
+        # reflected there -- the same object building an absorbing wall on one path and an
+        # impermeable one on the other.
+        beta = None
+        if bc_type == BCType.ROBIN:
+            # alpha is read here only to keep `_robin_alpha_beta`'s single-owner contract; the
+            # particle mapping dispatches on beta alone (#1960).
+            _alpha, beta = _robin_alpha_beta(boundary_conditions)
 
-        elif bc_type == BCType.NO_FLUX:
-            # Explicit no-flux → reflecting BC
-            return self.apply_particle_bc(particles, "reflecting")
-
-        elif bc_type == BCType.DIRICHLET:
-            # Dirichlet → absorbing BC (particles "exit" at boundary)
-            return self.apply_particle_bc(particles, "absorbing")
-
-        elif bc_type == BCType.PERIODIC:
-            # Periodic → wrap-around
-            return self.apply_particle_bc(particles, "periodic")
-
-        elif bc_type == BCType.ROBIN:
-            # Robin: behavior depends on α/β ratio
-            alpha, beta = _robin_alpha_beta(boundary_conditions)
-
-            if np.isclose(beta, 0.0):
-                # Pure Dirichlet-like → absorbing
-                return self.apply_particle_bc(particles, "absorbing")
-            elif np.isclose(alpha, 0.0):
-                # Pure Neumann-like → reflecting
-                return self.apply_particle_bc(particles, "reflecting")
-            else:
-                # Mixed Robin → default to reflecting (mass conservation)
-                return self.apply_particle_bc(particles, "reflecting")
-
-        else:
-            raise ValueError(f"Unsupported BC type for particles: {bc_type}")
+        return self.apply_particle_bc(particles, particle_action_for_bc_type(bc_type, beta))
 
 
 class SDFParticleBCHandler:

@@ -196,7 +196,7 @@ class TestGFDMHJBSolver:
         assert u_modified[9] == 1.0
 
     def test_solve_hjb_system_shape(self):
-        """solve_hjb_system on a REAL problem returns U of shape (Nt, Nx).
+        """solve_hjb_system on a REAL problem: shape, terminal row, and reflection symmetry.
 
         Issue #1567: the previous version drove ``solve_hjb_system`` through the hand-rolled
         ``MockMFGProblem`` and wrapped it in ``try/except -> pytest.skip``. The mock lacks the
@@ -204,12 +204,19 @@ class TestGFDMHJBSolver:
         the skip swallowed it -- the integration-tier solve-shape contract was never verified.
         Rebuilt on a real ``MFGProblem`` (the mock is kept for the unit-surface tests in this
         file that only exercise neighborhoods / Taylor stencils). No ``try/except -> skip``: a
-        solver raise is a real failure now."""
+        solver raise is a real failure now.
+
+        The terminal cost is a non-trivial symmetric profile rather than the previous ``x * 0.0``.
+        With a flat terminal the exact solution here is U == 0 and a solver that returned its
+        zero input untouched passed the shape check; now the sweep has to move the field
+        (asserted below), keep it symmetric about x = 0.5 as the data and the no-flux walls
+        require, and hand back the terminal row unchanged.
+        """
         n = 21
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
         components = MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
-            u_terminal=lambda x: np.asarray(x) * 0.0,
+            u_terminal=lambda x: 0.5 * (np.asarray(x) - 0.5) ** 2,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         )
         problem = MFGProblem(geometry=domain, T=1.0, Nt=5, sigma=0.3, components=components)
@@ -217,13 +224,22 @@ class TestGFDMHJBSolver:
         solver = GFDMHJBSolver(problem, collocation_points, delta=0.3, monotonicity_scheme="none")
 
         Nt, Nx = problem.Nt, n
+        x_coords = collocation_points[:, 0]
+        U_T = 0.5 * (x_coords - 0.5) ** 2
         M_density = np.ones((Nt, Nx)) * 0.1
-        U_final = np.zeros(Nx)
         U_prev = np.zeros((Nt, Nx))
 
-        # Solve (may not converge perfectly, but must return the correct shape).
-        U_solution = solver.solve_hjb_system(M_density, U_final, U_prev)
+        U_solution = solver.solve_hjb_system(M_density, U_T, U_prev)
         assert U_solution.shape == (Nt, Nx)
+
+        # The backward sweep hands back the terminal condition bit-for-bit (measured exactly 0.0).
+        np.testing.assert_array_equal(U_solution[-1], U_T)
+        # Uniform M and a terminal symmetric about x = 0.5 on a symmetric no-flux domain force a
+        # symmetric value function (measured 4.2e-17, margin ~240x to the tolerance).
+        assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-14
+        # ...and the sweep actually transported it: the array is not the untouched input
+        # (measured 6.75e-02, margin ~67x).
+        assert np.max(np.abs(U_solution[0] - U_solution[-1])) > 1e-3
 
     def test_weight_functions(self):
         """Test different weight functions for GFDM weighting (integration test)."""

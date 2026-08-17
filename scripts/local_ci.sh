@@ -186,6 +186,27 @@ RUFF=("$PY" -P -m ruff)
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 
+# A discrimination sweep mutates production source in place and restores it in a `finally`.
+# That survives an exception and SIGINT; it does not survive SIGKILL or a harness timeout, and
+# what a killed sweep leaves behind is a silently wrong solver -- `bc_type_to_geometric_operation`
+# answering "clamp" for no_flux, or `hjb_residual_norm` with its load-bearing sqrt(dx) deleted.
+# Both observed (#1849, and again 2026-08-13 in the MAIN checkout).
+#
+# The script's own `_assert_clean_tree()` runs at ITS startup, so it protects the next SWEEP and
+# nothing else. This is the guard at the point of CONSUMPTION: whatever killed the sweep, the gate
+# refuses to report on a mutated tree. Verified complete rather than assumed -- all 24 mutations
+# in scripts/test_discrimination.py carry the marker (`0 without a MUTATED marker`), so grepping
+# for it cannot miss one.
+#
+# GATE CANNOT RUN, not FAIL: nothing was measured about the code you meant to test, and a red
+# gate here would read as a defect in the working tree's content rather than in its state.
+if MUTATED_LEFTOVER=$(grep -rn '# MUTATED' mfgarchon/ 2>/dev/null) && [[ -n "$MUTATED_LEFTOVER" ]]; then
+  cannot_run "a mutation marker is still in the source tree -- a discrimination sweep was killed
+before it could restore. Recover with \`git checkout -- mfgarchon/\` and re-run.
+
+$MUTATED_LEFTOVER"
+fi
+
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 check() {
@@ -262,15 +283,6 @@ step "Doc-API ratchet"
 "$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 check $? "docs teach no more missing API than the baseline records"
 
-step "Frozen prototype areas"
-# alg/neural and alg/reinforcement are prototypes, not under development (CLAUDE.md). The
-# counter-intuitive half of that freeze is that ADDING TESTS is also out: coverage reads as a
-# promise the behaviour is intended, and on a placeholder that promise is false. Prose alone does
-# not hold this line -- hasattr is banned by the same conventions and was written into a test on
-# 2026-07-30 because the fail-fast ratchet does not scan tests/ (#1780).
-"$PY" scripts/check_frozen_areas.py --check-baseline scripts/frozen_areas_baseline.json
-check $? "no new tests against a frozen prototype paradigm"
-
 # CLAUDE.md names three quantities that must have exactly one owner (diffusion_from_volatility,
 # fp_drift_coefficient, hjb_residual_norm) and nothing measured whether the restatements were
 # growing. Bidirectional, like the capability matrix: a consolidation fails until the baseline
@@ -297,11 +309,20 @@ if [[ $FAST -eq 0 ]]; then
   # `-P` alone under `-n` crashes every worker (no tests ran); with PYTHONSAFEPATH=1 the real
   # pytest runs and correctly reports it. Anything that forks needs the env var, not just the flag.
   PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
-    -m "not slow and not benchmark and not experimental and not optional_torch and not environment" \
+    -m "$(cat "$(dirname "$0")/ci_markers.txt")" \
     -q --durations=10
   check $? "full suite"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'
+fi
+
+# Printed beside the suite result on purpose. "N passed" has never been the quantity worth
+# growing, and printing it alone invites growing it; this is the one that says whether green
+# means anything. Reports, does not gate -- measuring it costs a full suite run per mutation,
+# so the gating lives in the weekly `test_discrimination.py --check-baseline` tier. (#1901)
+if [[ $FAST -eq 0 ]]; then
+  "$PY" scripts/report_discrimination.py || true
+  "$PY" scripts/check_assertion_strength.py || true
 fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"

@@ -143,8 +143,22 @@ class TestHJBWithLowerObstacle:
         # Assertions
         assert U_solution.shape == (Nt_points, *shape), "2D solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "2D solution is finite"
-        u_final = U_solution[-1, :, :]
-        assert np.all(u_final >= psi - 1e-7), "2D solution must respect obstacle"
+        # Over the whole sweep, not the terminal slice alone -- that slice is the array the
+        # test just built, and the obstacle does not bind there. Measured min(U - psi) = 0.0.
+        assert np.all(U_solution >= psi - 1e-12), "2D solution must respect obstacle"
+
+        # The obstacle genuinely binds here: the unconstrained solve on the same inputs dips
+        # 3.95e-03 below psi at t = 0, and the constrained one is lifted by exactly that much.
+        solver_free = HJBFDMSolver(problem, newton_tolerance=1e-5, max_newton_iterations=80)
+        U_free = solver_free.solve_hjb_system(M_density, U_terminal, U_prev)
+        u0 = U_solution[0]
+        assert np.all(u0 >= U_free[0] - 1e-12), "obstacle must raise the solution, never lower it"
+        assert np.max(u0 - U_free[0]) > 1e-3, "obstacle never binds; a broken projection would go unnoticed"
+
+        # Square domain, symmetric terminal cost, radially symmetric obstacle: the solution
+        # must be exactly transpose-symmetric. Measured max|u0 - u0.T| = 3.7e-15, which an
+        # x/y axis swap anywhere in the 2D assembly would destroy.
+        assert np.max(np.abs(u0 - u0.T)) < 1e-12, "isotropic setup must give an x<->y symmetric solution"
 
     def test_obstacle_without_constraint_comparison(self):
         """Compare solution with and without obstacle constraint."""
@@ -182,19 +196,23 @@ class TestHJBWithLowerObstacle:
         solver_constrained = HJBFDMSolver(problem, constraint=obstacle)
         U_constrained = solver_constrained.solve_hjb_system(M_density, U_terminal, U_prev)
 
-        # Compare at terminal time
-        u_free = U_free[-1, :]
-        u_constrained = U_constrained[-1, :]
+        # Compare at t = 0. At the terminal index both arrays are the terminal datum the two
+        # solvers were handed -- the obstacle does not bind there -- so comparing that slice
+        # compares an array with itself.
+        u_free = U_free[0, :]
+        u_constrained = U_constrained[0, :]
 
         # Constrained solution should be ≥ free solution (obstacle raises floor)
-        assert np.all(u_constrained >= u_free - 1e-6), "Obstacle should raise solution"
+        assert np.all(u_constrained >= u_free - 1e-12), "Obstacle should raise solution"
 
-        # Both should satisfy constraint
-        assert np.all(u_constrained >= psi - 1e-6), "Constrained solution respects obstacle"
+        # Positive control, without which the line above is vacuous: the obstacle does bind
+        # on this configuration. Measured max(U_constrained[0] - U_free[0]) = 6.59e-03, and
+        # the free solution dips 6.59e-03 below psi at t = 0.
+        assert np.max(u_constrained - u_free) > 1e-3, "obstacle never binds; a broken projection would go unnoticed"
+        assert np.min(u_free - psi) < -1e-3, "free solution already satisfies the obstacle"
 
-        # Note: With this problem setup, the unconstrained solution may already satisfy
-        # the obstacle constraint naturally (smooth quadratic terminal condition stays above obstacle).
-        # The test still validates that the constraint mechanism works correctly.
+        # Constraint satisfaction over the whole sweep, not one slice. Measured min = 0.0.
+        assert np.all(U_constrained >= psi - 1e-12), "Constrained solution respects obstacle"
 
 
 @pytest.mark.slow
@@ -217,9 +235,11 @@ class TestHJBWithUpperObstacle:
         # Create MFGProblem with minimal parameters
         problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
 
-        # Upper obstacle: ceiling at ψ_upper = 0.3
+        # Upper obstacle: a ceiling low enough to bind. The free solution reaches 0.0733 at
+        # t = 0, so the original 0.3 ceiling was never touched and the constrained output was
+        # byte-identical to the unconstrained one.
         x = grid.coordinates[0]
-        psi_upper = 0.3 + 0.0 * x  # Constant ceiling
+        psi_upper = 0.05 + 0.0 * x  # Constant ceiling
         obstacle = ObstacleConstraint(psi_upper, constraint_type="upper")
 
         # Solve
@@ -237,12 +257,20 @@ class TestHJBWithUpperObstacle:
         # Assertions
         assert U_solution.shape == (Nt_points, Nx_points), "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
-        u_final = U_solution[-1, :]
-        assert np.all(u_final <= psi_upper + 1e-8), "Solution must satisfy u ≤ ψ_upper"
 
-        # Note: With quadratic terminal condition, the solution naturally stays below 0.3
-        # The test validates that the upper constraint mechanism works correctly,
-        # even if not actively binding for this particular problem.
+        # The ceiling holds at every time level, the terminal one included: the terminal
+        # datum reaches 0.25 and comes back projected to 0.05. Measured sweep max 0.05 exactly.
+        assert np.all(U_solution <= psi_upper + 1e-10), "Solution must satisfy u ≤ ψ_upper"
+
+        # The contact set must be non-empty, or the ceiling is decoration: measured 22 of the
+        # 101 nodes sitting exactly on it at t = 0.
+        u0 = U_solution[0, :]
+        assert np.sum(np.abs(u0 - psi_upper) < 1e-9) >= 10, "upper obstacle never binds"
+
+        # Positive control: the unconstrained solve on the same inputs exceeds the ceiling
+        # (measured max 0.0733 at t = 0), so this configuration can see a broken projection.
+        U_free = HJBFDMSolver(problem).solve_hjb_system(M_density, U_terminal, U_prev)
+        assert U_free[0, :].max() > 0.07, "free solution stays under the ceiling on its own"
 
 
 @pytest.mark.slow
@@ -265,10 +293,13 @@ class TestHJBWithBilateralObstacle:
         # Create MFGProblem with minimal parameters
         problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
 
-        # Bilateral obstacle: corridor between -0.2 and 0.3
+        # Bilateral obstacle: a corridor narrow enough to bind on BOTH faces. The free
+        # solution runs over [-0.0063, 0.125] on this configuration, so the original
+        # [-0.2, 0.3] corridor contained it entirely: the constrained output was
+        # byte-identical to the unconstrained one and the projection never fired.
         x = grid.coordinates[0]
-        psi_lower = -0.2 + 0.0 * x
-        psi_upper = 0.3 + 0.0 * x
+        psi_lower = -0.004 + 0.0 * x
+        psi_upper = 0.04 + 0.0 * x
         obstacle = BilateralConstraint(psi_lower, psi_upper)
 
         # Solve
@@ -286,14 +317,25 @@ class TestHJBWithBilateralObstacle:
         # Assertions
         assert U_solution.shape == (Nt_points, Nx_points), "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
-        u_final = U_solution[-1, :]
 
-        # Check both constraints
-        assert np.all(u_final >= psi_lower - 1e-8), "Must satisfy lower bound"
-        assert np.all(u_final <= psi_upper + 1e-8), "Must satisfy upper bound"
+        # The corridor is enforced at every time level, the terminal one included: the
+        # terminal datum reaches 0.125 and comes back projected. Measured violation 0.0 on
+        # both faces, sweep range exactly [-0.004, 0.04].
+        assert np.all(U_solution >= psi_lower - 1e-10), "Must satisfy lower bound"
+        assert np.all(U_solution <= psi_upper + 1e-10), "Must satisfy upper bound"
 
-        # Solution should be inside corridor
-        assert np.all((u_final >= psi_lower) & (u_final <= psi_upper)), "Solution in corridor"
+        # Both faces must carry an active set, or the corridor tests nothing.
+        # Measured at t = 0: 19 nodes on the floor, 16 on the ceiling.
+        u0 = U_solution[0, :]
+        assert np.sum(np.abs(u0 - psi_lower) < 1e-9) > 0, "lower obstacle never binds"
+        assert np.sum(np.abs(u0 - psi_upper) < 1e-9) > 0, "upper obstacle never binds"
+
+        # Positive control: on the same inputs without the constraint the solution leaves the
+        # corridor on both sides (19 nodes below the floor, 16 above the ceiling at t = 0),
+        # so the assertions above separate a working projection from a disabled one.
+        U_free = HJBFDMSolver(problem).solve_hjb_system(M_density, U_terminal, U_prev)
+        assert np.any(U_free[0, :] < psi_lower), "free solution never leaves the corridor below"
+        assert np.any(U_free[0, :] > psi_upper), "free solution never leaves the corridor above"
 
 
 class TestObstacleConvergenceProperties:
@@ -339,13 +381,17 @@ class TestObstacleConvergenceProperties:
         assert np.all(np.isfinite(U_loose)), "Loose tolerance should produce finite solution"
         assert np.all(np.isfinite(U_tight)), "Tight tolerance should produce finite solution"
 
-        # Both should satisfy constraint
-        assert np.all(U_loose[-1, :] >= psi - 1e-7), "Loose solution satisfies constraint"
-        assert np.all(U_tight[-1, :] >= psi - 1e-7), "Tight solution satisfies constraint"
+        # Both should satisfy constraint, over the whole sweep rather than at the terminal
+        # index (which is the terminal datum both solvers were handed). Measured min = 0.0.
+        assert np.all(U_loose >= psi - 1e-10), "Loose solution satisfies constraint"
+        assert np.all(U_tight >= psi - 1e-10), "Tight solution satisfies constraint"
 
-        # Note: With projection-based constraints, the final solutions may be identical
-        # even with different Newton tolerances, as the projection operator enforces
-        # the same feasible set. The test validates that both tolerances produce valid solutions.
+        # What the test is named for. The lower bound is the positive control that
+        # newton_tolerance is plumbed through at all -- a solver ignoring it returns d == 0 --
+        # and the upper bound is the convergence claim: loosening the tolerance by three
+        # decades must not move the solution by more than 1e-4. Measured d = 7.44e-07.
+        d = float(np.max(np.abs(U_loose - U_tight)))
+        assert 0.0 < d < 1e-4, f"loose/tight disagree by {d:.2e}"
 
     def test_complementarity_satisfaction(self):
         """Test complementarity condition: (u - ψ)·residual ≈ 0."""

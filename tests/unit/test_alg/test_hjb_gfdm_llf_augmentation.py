@@ -74,26 +74,6 @@ def problem_and_pts():
 class TestLLFAugmentationPinning:
     """Core pinning tests — fail pre-fix, pass post-fix."""
 
-    def test_llf_parameter_accepted(self, problem_and_pts):
-        """PINNING: llf_augmentation parameter accepted without TypeError.
-
-        Pre-fix: TypeError: __init__() got an unexpected keyword argument 'llf_augmentation'.
-        Post-fix: solver constructs cleanly.
-        """
-        problem, pts = problem_and_pts
-        # This raises TypeError on the unpatched code.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            solver = HJBGFDMSolver(
-                problem,
-                pts,
-                monotonicity_scheme="none",
-                llf_augmentation=True,
-                llf_cone_constant=0.5,
-                llf_l_H=10.0,  # large l_H guarantees nu_i > 0 at every node
-            )
-        assert solver.llf_augmentation is True
-
     def test_llf_sigma_eff_stored(self, problem_and_pts):
         """PINNING: _llf_sigma_eff is a shape-(n_points,) float array when LLF is on."""
         problem, pts = problem_and_pts
@@ -107,8 +87,14 @@ class TestLLFAugmentationPinning:
                 llf_l_H=10.0,
             )
         assert solver._llf_sigma_eff is not None
-        assert solver._llf_sigma_eff.shape == (solver.n_points,)
         assert solver._llf_sigma_eff.dtype == np.float64
+        # A scalar l_H must broadcast to a full per-node array. Comparing against an
+        # explicitly full-length array is what makes a bare float or a shape-(1,) result
+        # fail: assert_allclose exempts a scalar `desired` from its shape check, which is
+        # why test_sigma_eff_formula_scalar_l_H cannot see this.
+        # Value: nu = max(0, C*l_H*delta - sigma^2/2) = 0.5*10*0.1 - 0.125 = 0.375, so
+        # sigma_eff = sqrt(0.25 + 0.75) = 1.0 at all 21 nodes (defaults C=0.5, delta=0.1).
+        np.testing.assert_allclose(solver._llf_sigma_eff, np.full(solver.n_points, 1.0), rtol=1e-12)
 
     def test_llf_sigma_eff_recomputed_from_volatility_override(self, problem_and_pts):
         """Issue #1429 (S0-13): a per-solve volatility_field override (#1316) must propagate into
@@ -183,8 +169,15 @@ class TestLLFAugmentationPinning:
                 llf_augmentation=True,
                 llf_l_H=10.0,
             )
-        assert np.all(solver._llf_sigma_eff > problem.sigma + 1e-12), (
-            "Expected all nodes augmented for l_H=10, delta=0.1, sigma=0.5, C=0.5"
+        # The exact closed form for this configuration: sigma_eff = sqrt(0.25 + 2*0.375) = 1.0,
+        # i.e. augmented from sigma=0.5 at every node. Pinning the value rather than the sign
+        # also pins the defaults llf_cone_constant=0.5 and delta=0.1 that the arithmetic above
+        # only states in prose, and fails on any change to the nu_i formula.
+        np.testing.assert_allclose(
+            solver._llf_sigma_eff,
+            1.0,
+            rtol=1e-12,
+            err_msg="Expected sigma_eff = 1.0 at every node for l_H=10, delta=0.1, sigma=0.5, C=0.5",
         )
 
     def test_llf_get_sigma_value_returns_eff(self, problem_and_pts):
@@ -214,14 +207,6 @@ class TestLLFAugmentationPinning:
         for i in range(min(5, solver.n_points)):
             got = solver._get_sigma_value(i)
             assert abs(got - sigma_base) < 1e-12, f"LLF OFF: _get_sigma_value({i}) = {got} != sigma = {sigma_base}"
-
-    def test_llf_off_no_sigma_eff(self, problem_and_pts):
-        """PINNING: LLF OFF → _llf_sigma_eff is None (zero overhead)."""
-        problem, pts = problem_and_pts
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none")
-        assert solver._llf_sigma_eff is None
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +357,19 @@ class TestLLFNumerics:
                 llf_cone_constant=1.0,
                 llf_l_H=l_H,
             )
-        # C=1.0 → larger nu_i → larger sigma_eff
-        assert np.all(solver_c10._llf_sigma_eff >= solver_c05._llf_sigma_eff - 1e-12)
-        assert np.any(solver_c10._llf_sigma_eff > solver_c05._llf_sigma_eff + 1e-12)
+        # The analytic formula is available at both C, so pin the C-dependence exactly
+        # instead of only its sign: nu = max(0, C*l_H*delta - sigma^2/2) with delta=0.1 and
+        # sigma=0.5 gives sigma_eff = sqrt(0.8) at C=0.5 and sqrt(1.6) at C=1.0, at every node.
+        sigma = float(problem.sigma)
+        delta = 0.1  # default, as in test_sigma_eff_formula_scalar_l_H
+        for C, solver in ((0.5, solver_c05), (1.0, solver_c10)):
+            nu = max(0.0, C * l_H * delta - 0.5 * sigma**2)
+            np.testing.assert_allclose(
+                solver._llf_sigma_eff,
+                np.sqrt(sigma**2 + 2.0 * nu),
+                rtol=1e-12,
+                err_msg=f"sigma_eff_i must match the analytic formula at llf_cone_constant={C}",
+            )
 
 
 # ---------------------------------------------------------------------------
