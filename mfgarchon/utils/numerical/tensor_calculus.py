@@ -57,7 +57,7 @@ else:
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from mfgarchon.backends.backend_manager import ArrayBackend
+    from mfgarchon.backends.base_backend import BaseBackend as ArrayBackend
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 
 if TYPE_CHECKING:
-    from mfgarchon.backends.backend_protocol import BaseBackend
+    from mfgarchon.backends.base_backend import BaseBackend
 
 # Try importing scipy for fallback CPU KDE
 try:

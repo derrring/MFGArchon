@@ -34,7 +34,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from mfgarchon.backends.backend_protocol import BaseBackend
+    from mfgarchon.backends.base_backend import BaseBackend
 
 
 def apply_boundary_conditions_gpu(

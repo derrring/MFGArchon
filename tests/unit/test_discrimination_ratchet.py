@@ -476,7 +476,9 @@ def test_without_a_matrix_the_comparison_itself_is_silent(td):
         c
         for c in calls
         if (len(c.args) >= 3 and not (isinstance(c.args[2], ast.Constant) and c.args[2].value is None))
-        or any(k.arg == "matrix" and not (isinstance(k.value, ast.Constant) and k.value.value is None) for k in c.keywords)
+        or any(
+            k.arg == "matrix" and not (isinstance(k.value, ast.Constant) and k.value.value is None) for k in c.keywords
+        )
     ]
     assert wired, (
         "main() loads the matrix but no longer hands it to the comparison: "

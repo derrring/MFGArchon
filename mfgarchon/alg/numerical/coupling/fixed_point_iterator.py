@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.config import MFGSolverConfig
-    from mfgarchon.problem.base_mfg_problem import MFGProblem
+    from mfgarchon.core.mfg_problem import MFGProblem
 
 # Type alias for iteration callback (Issue #614)
 # Signature: callback(iteration, U, M, error_U, error_M) -> bool

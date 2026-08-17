@@ -142,7 +142,8 @@ def test_the_gate_reaches_four_classes_this_file_does_not():
 
     reached = set()
     for mod_name in ["mfgarchon.alg"] + [
-        m.name for m in pkgutil.walk_packages(importlib.import_module("mfgarchon.alg").__path__, prefix="mfgarchon.alg.")
+        m.name
+        for m in pkgutil.walk_packages(importlib.import_module("mfgarchon.alg").__path__, prefix="mfgarchon.alg.")
     ]:
         for _, cls in inspect.getmembers(importlib.import_module(mod_name), inspect.isclass):
             if issubclass(cls, BaseMFGSolver) and not inspect.isabstract(cls):
