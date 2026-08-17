@@ -1,5 +1,11 @@
 """
-Pinning tests for Issue #1284 config/factory bugs.
+Pinning tests for Issue #1284 config bugs.
+
+The three that exercised `GeneralMFGFactory` are gone with it (#1920): its
+`create_from_hamiltonian` built the geometry with a hardcoded `no_flux_bc` and discarded the
+caller's BoundaryConditions, so the class was deleted rather than repaired. What they asserted --
+that a config round-trips, that a periodic BC does not raise, that a missing solver does -- was
+about the config layer reaching a factory that no longer exists.
 
 Four bugs fixed (2026-06-11 survey):
   1. general_mfg_factory.py: create_template_config round-trip raises TypeError
@@ -16,57 +22,9 @@ Each test fails on the unfixed code and passes after the fix.
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
-import pytest
-
 # ---------------------------------------------------------------------------
 # Bug #1 — round-trip create_template_config -> create_from_config_dict
 # ---------------------------------------------------------------------------
-
-
-def test_template_config_round_trips_without_error():
-    """create_template_config output must round-trip through create_from_config_dict."""
-    from mfgarchon.factory.general_mfg_factory import GeneralMFGFactory
-
-    factory = GeneralMFGFactory()
-    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        factory.create_template_config(tmp_path)
-        # Must not raise TypeError: __init__() got an unexpected keyword argument 'type'
-        problem = factory.create_from_config_file(tmp_path)
-        assert problem is not None
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-def test_create_from_config_dict_periodic_bc_no_error():
-    """create_from_config_dict with boundary_conditions:{type:periodic} must not raise TypeError."""
-
-    from mfgarchon.factory.general_mfg_factory import GeneralMFGFactory
-    from mfgarchon.geometry import BoundaryConditions
-
-    factory = GeneralMFGFactory()
-    config = {
-        "hamiltonian": {"type": "separable", "control_cost": 1.0, "coupling_coefficient": 1.0},
-        "domain": {"xmin": 0.0, "xmax": 1.0, "Nx": 11},
-        "time": {"T": 0.1, "Nt": 5},
-        "solver": {"sigma": 0.5, "coupling_coefficient": 1.0},
-        "boundary_conditions": {"type": "periodic"},
-        "functions": {
-            "m_initial": "lambda x: np.exp(-10 * (x - 0.5)**2)",
-            "u_terminal": "lambda x: x**2",
-        },
-    }
-    # Must not raise TypeError: BoundaryConditions.__init__() got unexpected keyword argument 'type'
-    problem = factory.create_from_config_dict(config)
-    assert problem is not None
-    # Verify the BC was constructed properly (not a raw dict)
-    bc = problem.components.boundary_conditions
-    assert isinstance(bc, BoundaryConditions)
 
 
 # ---------------------------------------------------------------------------
@@ -126,18 +84,3 @@ def test_update_config_with_delta_kwarg_fdm_method_no_error():
 # ---------------------------------------------------------------------------
 # Bug #4 — missing 'solver' section must raise, not silently default sigma=1.0
 # ---------------------------------------------------------------------------
-
-
-def test_create_from_config_dict_missing_solver_raises():
-    """create_from_config_dict without 'solver' section must raise, not inject sigma=1.0."""
-    from mfgarchon.factory.general_mfg_factory import GeneralMFGFactory
-
-    factory = GeneralMFGFactory()
-    config = {
-        "hamiltonian": {"type": "separable", "control_cost": 1.0, "coupling_coefficient": 1.0},
-        "domain": {"xmin": 0.0, "xmax": 1.0, "Nx": 11},
-        "time": {"T": 0.1, "Nt": 5},
-        # 'solver' section deliberately absent
-    }
-    with pytest.raises((KeyError, ValueError)):
-        factory.create_from_config_dict(config)

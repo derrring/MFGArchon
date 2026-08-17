@@ -23,9 +23,6 @@ For most use cases, prefer problem.solve() over create_solver().
 # Backend support
 from .backend_factory import BackendFactory, create_backend_for_problem, print_backend_info
 
-# General purpose factory
-from .general_mfg_factory import GeneralMFGFactory, create_general_mfg_problem, get_general_factory
-
 # Problem factories
 from .problem_factories import (
     create_crowd_problem,
@@ -83,7 +80,5 @@ __all__ = [
     "create_backend_for_problem",
     "print_backend_info",
     # General purpose factory
-    "GeneralMFGFactory",
     "create_general_mfg_problem",
-    "get_general_factory",
 ]
