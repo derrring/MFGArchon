@@ -146,6 +146,23 @@ class FDMApplicator(BaseStructuredApplicator):
         padded = FDMApplicator.apply_2d(field, bc)
     """
 
+    #: All eight. Measured over the (applicator x BCType) product: every type produces a result
+    #: that differs from the input on both the uniform and the mixed ghost path. Declaring a type
+    #: asserts a branch exists, not that it is correct -- `EXTRAPOLATION_*` on the uniform path
+    #: writes unset memory (#1946), which this gate cannot see and is not meant to. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
+        {
+            BCType.DIRICHLET,
+            BCType.NEUMANN,
+            BCType.ROBIN,
+            BCType.PERIODIC,
+            BCType.REFLECTING,
+            BCType.NO_FLUX,
+            BCType.EXTRAPOLATION_LINEAR,
+            BCType.EXTRAPOLATION_QUADRATIC,
+        }
+    )
+
     def __init__(
         self,
         dimension: int,
@@ -210,6 +227,7 @@ class FDMApplicator(BaseStructuredApplicator):
         Returns:
             Padded field with ghost cells
         """
+        self._validate_bc_support(boundary_conditions)  # #1948
         # Issue #577 Phase 3: Use pad_array_with_ghosts() for all BCs
         # Geometry parameter enables region_name resolution for mixed BCs
         return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry)

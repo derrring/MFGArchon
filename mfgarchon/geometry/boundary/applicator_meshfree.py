@@ -83,6 +83,15 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         >>> u_with_bc = applicator.apply_field_bc(u, points, bc_type="dirichlet", bc_value=0.0)
     """
 
+    #: Measured over the (applicator x BCType) product, not read off the branches: DIRICHLET and
+    #: ROBIN apply; NO_FLUX has a branch that is a literal `pass`, so it is SILENT -- declared here
+    #: because the branch exists, and closing that silence is the next step; NEUMANN and PERIODIC
+    #: already raise `NotImplementedError` with a reason, and REFLECTING and the two extrapolations
+    #: raise `ValueError`. Those raises are the CORRECT behaviour and are what this gate generalises
+    #: -- they are why "four different behaviours for an unhandled type" understates the problem:
+    #: one of the four was already right. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset({BCType.DIRICHLET, BCType.ROBIN})
+
     def __init__(self, geometry: GeometryProtocol):
         """
         Initialize meshfree BC applicator.
@@ -371,6 +380,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         if not np.any(on_boundary):
             return field
 
+        self._validate_bc_support(boundary_conditions)  # #1948
+
         # Get BC type (uniform BC for now; fails loud if default_bc unset, Issue #1100)
         bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply")
 
@@ -405,10 +416,24 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
                 field[on_boundary] = (field[on_boundary] + penalty_weight * bc_value) / (1 + penalty_weight)
 
         elif bc_type == BCType.NO_FLUX:
-            # Zero flux: du/dn = 0
-            # For meshfree, this means boundary values should match nearby interior
-            # We approximate by keeping current values (no modification)
-            pass
+            # NO_FLUX is homogeneous Neumann, and this class already decided that case one branch
+            # above: a meshfree method has no ghost layer, so enforcing a normal derivative needs
+            # the solver's own derivative operators.
+            #
+            # ~~"We approximate by keeping current values (no modification)"~~ [FIXED 2026-08-15,
+            # #1948] -- the comment stated the right answer ("boundary values should match nearby
+            # interior") and then did something else. Keeping the current values does not make
+            # du/dn = 0; it makes no claim at all, and the caller cannot distinguish that from a
+            # condition that was applied and happened to change nothing. Measured over
+            # tests/unit/test_geometry and tests/unit/test_alg (2857 tests): `apply` is reached 8
+            # times, all from the conformance table, and never with NO_FLUX -- so refusing costs
+            # nothing that was working.
+            raise NotImplementedError(
+                "NO_FLUX (homogeneous Neumann) for meshfree methods requires solver-specific "
+                "derivative operators, for the same reason NEUMANN does. Use the solver's "
+                "infrastructure; ImplicitApplicator enforces it along the boundary normal when the "
+                "geometry is implicit."
+            )
 
         elif bc_type == BCType.PERIODIC:
             # Periodic BC doesn't apply directly to field values at points

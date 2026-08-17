@@ -61,7 +61,10 @@ _DECLARES_NOTHING = {
         "WeakFormFPSolver",
         "WeakFormHJBSolver",
     },
-    "applicator": {"FDMApplicator", "GraphApplicator", "ImplicitApplicator", "MeshfreeApplicator"},
+    # #1954 removed FDMApplicator, ImplicitApplicator and MeshfreeApplicator from this set by
+    # giving them a real `_SUPPORTED_BC_TYPES`. Leaving the set is the #1977 progress this ratchet
+    # exists to record; `GraphApplicator` has not moved.
+    "applicator": {"GraphApplicator"},
     "backend": {"JAXBackend", "NumPyBackend", "NumbaBackend", "TorchBackend"},
     "geometry": {
         "ComplementDomain",
