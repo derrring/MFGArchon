@@ -196,8 +196,15 @@ def test_every_axis_and_every_corner_mirrors_correctly_in_2d(ghost_depth):
     interior = _interior((nx, ny))
     padded = _filled(_bc("no_flux", 2, [[0, nx * hx], [0, ny * hy]]), (nx, ny), (hx, hy), g, interior)
 
-    # The whole padded array at once, corners included. Separable, so no corner argument is
-    # needed: if either axis sweep skips or double-writes a corner block, this fails.
+    # The whole padded array at once, corners included. What this catches is a corner value that
+    # differs from the separable mirror -- measured against six corner mutations (filled with a
+    # constant, never written, swapped with the opposite corner, left as the raw interior block,
+    # reversed along axis 0, transposed): 6 of 6 caught here, 0 of 6 on the file this replaced.
+    #
+    # It does NOT catch every way a sweep could mishandle a corner, and two such ways are not
+    # defects: the axis-0 sweep skipping the corner is byte-identical to the correct output
+    # because the axis-1 sweep's full-span write repairs it, and the correct code double-writes
+    # the corner by design for the same reason.
     maps = [_mirror_index_map(n, g) for n, g in ((nx, g), (ny, g))]
     np.testing.assert_array_equal(padded, interior[np.ix_(*maps)])
 
