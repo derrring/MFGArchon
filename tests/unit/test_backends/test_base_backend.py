@@ -312,22 +312,6 @@ class TestBaseBackendMFGOperations:
         expected = -2.0
         assert a == expected
 
-    def test_hjb_step_dummy(self, minimal_backend):
-        """Test HJB step (dummy implementation)."""
-        U = np.array([1.0, 2.0, 3.0])
-        M = np.array([0.3, 0.4, 0.3])
-        result = minimal_backend.hjb_step(U, M, 0.01, 0.1, {})
-        # Dummy implementation returns U unchanged
-        np.testing.assert_array_equal(result, U)
-
-    def test_fpk_step_dummy(self, minimal_backend):
-        """Test FPK step (dummy implementation)."""
-        M = np.array([0.3, 0.4, 0.3])
-        U = np.array([1.0, 2.0, 3.0])
-        result = minimal_backend.fpk_step(M, U, 0.01, 0.1, {})
-        # Dummy implementation returns M unchanged
-        np.testing.assert_array_equal(result, M)
-
 
 class TestBaseBackendPerformanceFeatures:
     """Test performance and compilation features."""

@@ -125,8 +125,6 @@ class NumbaBackend(BaseBackend):
 
         # Compile MFG-specific kernels
         self._hamiltonian_kernel = self._create_hamiltonian_kernel(jit_options)
-        self._hjb_step_kernel = self._create_hjb_step_kernel(jit_options)
-        self._fpk_step_kernel = self._create_fpk_step_kernel(jit_options)
 
     def _create_finite_diff_1d(self, jit_options):
         """Create JIT-compiled first derivative kernel."""
@@ -196,74 +194,6 @@ class NumbaBackend(BaseBackend):
             return kinetic + potential
 
         return hamiltonian_kernel
-
-    def _create_hjb_step_kernel(self, jit_options):
-        """Create JIT-compiled HJB time step."""
-
-        @jit(**jit_options)
-        def hjb_step_kernel(U, M, dt, dx, sigma):
-            nx = U.shape[0]
-            U_new = np.copy(U)
-
-            for i in range(1, nx - 1):
-                # Spatial derivatives
-                U_x = (U[i + 1] - U[i - 1]) / (2.0 * dx)
-                U_xx = (U[i + 1] - 2.0 * U[i] + U[i - 1]) / (dx * dx)
-
-                # HJB equation: -U_t = H(x, U_x, m) - sigma^2/2 * U_xx
-                hamiltonian = 0.5 * U_x * U_x + np.log(M[i] + 1e-8)
-                diffusion = 0.5 * sigma * sigma * U_xx
-
-                U_new[i] = U[i] - dt * (hamiltonian - diffusion)
-
-            return U_new
-
-        return hjb_step_kernel
-
-    def _create_fpk_step_kernel(self, jit_options):
-        """Create JIT-compiled Fokker-Planck time step."""
-
-        @jit(**jit_options)
-        def fpk_step_kernel(M, U, dt, dx, sigma):
-            # Issue #1282: pre-fix kernel reused U_x[i] for flux at i-1 and
-            # i+1, silently dropping the m*U_xx term.  Correct form builds
-            # F[j] = M[j] * (-U_x[j]) for all j first, then takes the
-            # central divergence (F[i+1] - F[i-1]) / (2*dx) — identical to
-            # the numpy/jax siblings.
-            nx = M.shape[0]
-            M_new = np.copy(M)
-
-            # Pass 1: build conservative flux F[j] = M[j] * a*(j)
-            # where a*(j) = -U_x[j] (quadratic cost).
-            # One-sided FD at boundaries; central FD in the interior.
-            flux = np.zeros(nx)
-            # boundary j=0
-            flux[0] = M[0] * (-(U[1] - U[0]) / dx)
-            # interior
-            for j in range(1, nx - 1):
-                U_x_j = (U[j + 1] - U[j - 1]) / (2.0 * dx)
-                flux[j] = M[j] * (-U_x_j)
-            # boundary j=nx-1
-            flux[nx - 1] = M[nx - 1] * (-(U[nx - 1] - U[nx - 2]) / dx)
-
-            # Pass 2: central divergence and diffusion
-            for i in range(1, nx - 1):
-                # Conservative flux divergence (F[i+1] - F[i-1]) / (2*dx)
-                flux_div = (flux[i + 1] - flux[i - 1]) / (2.0 * dx)
-
-                # Diffusion term
-                M_xx = (M[i + 1] - 2.0 * M[i] + M[i - 1]) / (dx * dx)
-                diffusion = 0.5 * sigma * sigma * M_xx
-
-                # FPK equation: M_t = -div(M * a) + sigma^2/2 * M_xx
-                M_new[i] = M[i] + dt * (-flux_div + diffusion)
-
-                # Ensure non-negativity
-                M_new[i] = max(M_new[i], 0.0)
-
-            return M_new
-
-        return fpk_step_kernel
 
     @property
     def name(self) -> str:
@@ -372,48 +302,6 @@ class NumbaBackend(BaseBackend):
         # For quadratic cost: a* = -p
         return -p
 
-    def hjb_step(self, U, M, dt, dx, problem_params):
-        """Single HJB time step — LQ-only toy stepper (hardcoded H = 0.5·p² + log m).
-
-        ⚠️ Does NOT honor ``problem.hamiltonian_class`` and has no caller in the solver fleet. Not
-        the production path — see :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
-        """
-        # Issue #1282: numba already uses the canonical "sigma" key; route through the
-        # single-source resolver (no legacy key) so all four backends share one lookup.
-        sigma = resolve_volatility(problem_params, default=1.0)
-
-        if NUMBA_AVAILABLE:
-            return self._hjb_step_kernel(U, M, dt, dx, sigma)
-        else:
-            # Fallback NumPy implementation
-            U_new = np.copy(U)
-            nx = len(U)
-
-            for i in range(1, nx - 1):
-                U_x = (U[i + 1] - U[i - 1]) / (2.0 * dx)
-                U_xx = (U[i + 1] - 2.0 * U[i] + U[i - 1]) / (dx * dx)
-
-                hamiltonian = 0.5 * U_x * U_x + np.log(M[i] + 1e-8)
-                diffusion = 0.5 * sigma * sigma * U_xx
-
-                U_new[i] = U[i] - dt * (hamiltonian - diffusion)
-
-            return U_new
-
-    def fpk_step(self, M, U, dt, dx, problem_params):
-        """Single Fokker-Planck-Kolmogorov time step."""
-        # Issue #1282: numba already uses the canonical "sigma" key; route through the
-        # single-source resolver (no legacy key) so all four backends share one lookup.
-        sigma = resolve_volatility(problem_params, default=1.0)
-
-        # No NUMBA_AVAILABLE branch: this module raises ImportError at import time when
-        # numba is missing, so the flag is only ever True and the former NumPy fallback
-        # was unreachable. It also dropped advection outright (`flux_div = 0.0`, a
-        # placeholder), so relaxing the import guard would have silently solved pure
-        # diffusion instead of the FP equation. Deleted rather than left as a trap.
-        return self._fpk_step_kernel(M, U, dt, dx, sigma)
-
-    # Performance and Compilation
     def compile_function(self, func, *args, **kwargs):
         """Compile function using Numba JIT."""
         if NUMBA_AVAILABLE:

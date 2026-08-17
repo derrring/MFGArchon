@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 
 from mfgarchon.utils.numerical.integration import trapezoid
-from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -137,80 +136,6 @@ class NumPyBackend(BaseBackend):
         """
         return -p
 
-    def hjb_step(self, U, M, dt, dx, problem_params):
-        """
-        Hamilton-Jacobi-Bellman time step using finite differences.
-
-        ∂U/∂t + H(x, ∇U, M) = 0
-
-        ⚠️ LQ-only toy stepper (hardcoded H = 0.5·p²); does NOT honor ``problem.hamiltonian_class``
-        and has no caller in the solver fleet. Not the production path — see
-        :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
-        """
-        # Compute spatial gradient of U using central differences
-        dU_dx = np.zeros_like(U)
-        dU_dx[1:-1] = (U[2:] - U[:-2]) / (2 * dx)
-        dU_dx[0] = (U[1] - U[0]) / dx  # Forward difference at boundary
-        dU_dx[-1] = (U[-1] - U[-2]) / dx  # Backward difference at boundary
-
-        # Compute Hamiltonian
-        x_grid = problem_params.get("x_grid", np.linspace(0, 1, len(U)))
-        H = self.compute_hamiltonian(x_grid, dU_dx, M, problem_params)
-
-        # Time step: U^{n+1} = U^n - dt * H
-        U_new = U - dt * H
-
-        return U_new
-
-    def fpk_step(self, M, U, dt, dx, problem_params):
-        """
-        Fokker-Planck-Kolmogorov time step using finite differences.
-
-        ∂M/∂t - ∇ · (M * a*(x, ∇U, M)) + (σ²/2) * ∇²M = 0
-        """
-        # Compute spatial gradient of U
-        dU_dx = np.zeros_like(U)
-        dU_dx[1:-1] = (U[2:] - U[:-2]) / (2 * dx)
-        dU_dx[0] = (U[1] - U[0]) / dx
-        dU_dx[-1] = (U[-1] - U[-2]) / dx
-
-        # Compute optimal control
-        x_grid = problem_params.get("x_grid", np.linspace(0, 1, len(M)))
-        a_opt = self.compute_optimal_control(x_grid, dU_dx, M, problem_params)
-
-        # Compute flux: J = M * a_opt
-        flux = M * a_opt
-
-        # Compute divergence of flux using central differences
-        div_flux = np.zeros_like(M)
-        div_flux[1:-1] = (flux[2:] - flux[:-2]) / (2 * dx)
-        div_flux[0] = (flux[1] - flux[0]) / dx
-        div_flux[-1] = (flux[-1] - flux[-2]) / dx
-
-        # Diffusion term: σ²/2 * ∇²M.  Issue #1282: read the volatility through the
-        # single-source resolver (canonical "sigma" key; legacy "sigma_sq" holds sigma**2,
-        # default preserves the prior sqrt(0.01)=0.1 no-key behavior), then D = sigma**2/2.
-        sigma = resolve_volatility(problem_params, legacy_key="sigma_sq", legacy_is_squared=True, default=0.1)
-        d2M_dx2 = np.zeros_like(M)
-        d2M_dx2[1:-1] = (M[2:] - 2 * M[1:-1] + M[:-2]) / (dx**2)
-        # Zero Neumann boundary conditions for diffusion
-        d2M_dx2[0] = d2M_dx2[1]
-        d2M_dx2[-1] = d2M_dx2[-2]
-
-        diffusion = 0.5 * sigma * sigma * d2M_dx2
-
-        # Time step: M^{n+1} = M^n + dt * (-∇·J + diffusion)
-        M_new = M + dt * (-div_flux + diffusion)
-
-        # Ensure non-negativity and conservation
-        M_new = np.maximum(M_new, 0)
-        total_mass = self.trapezoid(M_new, dx=dx)
-        if total_mass > 1e-12:  # Avoid division by zero
-            M_new = M_new / total_mass
-
-        return M_new
-
-    # Performance and Compilation (no-ops for NumPy)
     def compile_function(self, func, *args, **kwargs):
         return func
 

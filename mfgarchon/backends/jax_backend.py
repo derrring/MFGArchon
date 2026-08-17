@@ -43,7 +43,6 @@ else:
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -71,8 +70,6 @@ class JAXBackend(BaseBackend):
         # Issue #1068: explicit None-init for JIT cache slots — replaces hasattr
         # duck-typing per CLAUDE.md "Object Shape Stability". Also helps Numba/JAX
         # static analyzers track the Optional[Callable] type.
-        self._jit_hjb_step: Callable | None = None
-        self._jit_fpk_step: Callable | None = None
         self._jit_hamiltonian: Callable | None = None
         self._jit_optimal_control: Callable | None = None
         super().__init__(device=device, precision=precision, **kwargs)
@@ -117,8 +114,6 @@ class JAXBackend(BaseBackend):
     def _compile_core_functions(self):
         """Pre-compile frequently used functions."""
         # Create JIT-compiled versions of core operations
-        self._jit_hjb_step = jit(self._hjb_step_impl)
-        self._jit_fpk_step = jit(self._fpk_step_impl)
         self._jit_hamiltonian = jit(self._hamiltonian_impl)
         self._jit_optimal_control = jit(self._optimal_control_impl)
 
@@ -212,88 +207,6 @@ class JAXBackend(BaseBackend):
         else:
             return self._optimal_control_impl(x, p, m, problem_params)
 
-    def _hjb_step_impl(self, U, M, dt, dx, x_grid, problem_params):
-        """JIT-compiled HJB step implementation."""
-
-        # Compute spatial gradient using automatic differentiation
-        def U_interp(x_val):
-            return jnp.interp(x_val, x_grid, U)
-
-        # Vectorized gradient computation
-        dU_dx = vmap(grad(U_interp))(x_grid)
-
-        # Compute Hamiltonian
-        H = self._hamiltonian_impl(x_grid, dU_dx, M, problem_params)
-
-        # Time step
-        U_new = U - dt * H
-        return U_new
-
-    def _fpk_step_impl(self, M, U, dt, dx, x_grid, problem_params):
-        """JIT-compiled FPK step implementation."""
-
-        # Compute spatial gradient of U
-        def U_interp(x_val):
-            return jnp.interp(x_val, x_grid, U)
-
-        dU_dx = vmap(grad(U_interp))(x_grid)
-
-        # Compute optimal control
-        a_opt = self._optimal_control_impl(x_grid, dU_dx, M, problem_params)
-
-        # Compute flux and its divergence
-        flux = M * a_opt
-
-        # Finite difference for divergence (vectorized)
-        div_flux = jnp.zeros_like(M)
-        div_flux = div_flux.at[1:-1].set((flux[2:] - flux[:-2]) / (2 * dx))
-        div_flux = div_flux.at[0].set((flux[1] - flux[0]) / dx)
-        div_flux = div_flux.at[-1].set((flux[-1] - flux[-2]) / dx)
-
-        # Diffusion term.  Issue #1282: read the volatility through the single-source
-        # resolver (canonical "sigma" key; legacy "sigma_sq" holds sigma**2, default
-        # preserves the prior sqrt(0.01)=0.1 no-key behavior), then D = sigma**2/2.
-        sigma = resolve_volatility(problem_params, legacy_key="sigma_sq", legacy_is_squared=True, default=0.1)
-        d2M_dx2 = jnp.zeros_like(M)
-        d2M_dx2 = d2M_dx2.at[1:-1].set((M[2:] - 2 * M[1:-1] + M[:-2]) / (dx**2))
-        d2M_dx2 = d2M_dx2.at[0].set(d2M_dx2[1])
-        d2M_dx2 = d2M_dx2.at[-1].set(d2M_dx2[-2])
-
-        diffusion = 0.5 * sigma * sigma * d2M_dx2
-
-        # Time step
-        M_new = M + dt * (-div_flux + diffusion)
-
-        # Ensure non-negativity and conservation
-        M_new = jnp.maximum(M_new, 0)
-        total_mass = self.trapezoid(M_new, dx=dx)
-        M_new = jnp.where(total_mass > 1e-12, M_new / total_mass, M_new)
-
-        return M_new
-
-    def hjb_step(self, U, M, dt, dx, problem_params):
-        """Single HJB time step — LQ-only toy stepper (hardcoded H = 0.5·p², see ``_hamiltonian_impl``).
-
-        ⚠️ Does NOT honor ``problem.hamiltonian_class`` and has no caller in the solver fleet (only
-        tests + the jax_acceleration benchmark demo). Not the production path — see
-        :meth:`BaseBackend.hjb_step`. Teaching it ``hamiltonian_class`` by XLA-lowering the operator
-        tree + Hamiltonian is the deferred RFC #1072 ("Functional Operator Lowering", post-v1.0) —
-        this is the issue's named target; do NOT treat it as a quick patch.
-        """
-        x_grid = problem_params.get("x_grid", jnp.linspace(0, 1, len(U)))
-        if self.jit_compile and self._jit_hjb_step is not None:
-            return self._jit_hjb_step(U, M, dt, dx, x_grid, problem_params)
-        else:
-            return self._hjb_step_impl(U, M, dt, dx, x_grid, problem_params)
-
-    def fpk_step(self, M, U, dt, dx, problem_params):
-        x_grid = problem_params.get("x_grid", jnp.linspace(0, 1, len(M)))
-        if self.jit_compile and self._jit_fpk_step is not None:
-            return self._jit_fpk_step(M, U, dt, dx, x_grid, problem_params)
-        else:
-            return self._fpk_step_impl(M, U, dt, dx, x_grid, problem_params)
-
-    # Performance and Compilation
     def compile_function(self, func, *args, **kwargs):
         """JIT compile function for performance."""
         if self.jit_compile:

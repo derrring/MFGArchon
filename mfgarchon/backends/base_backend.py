@@ -1,7 +1,28 @@
-"""
-Base Backend Interface for MFGarchon
+"""Array dispatch. Arrays in, arrays out.
 
-Defines the abstract interface that all computational backends must implement.
+**What a backend is.** It decides what array type flows through a computation -- nothing else. It
+never sees a `BoundaryConditions`, never resolves a `BCType`, and holds no solver logic. A caller
+that needs a boundary condition applied is one layer too low.
+
+**What a backend is not.** Until 2026-08-17 this class also declared `hjb_step` and `fpk_step`,
+implemented in all five backends and called by **no solver in the package** -- a second, parallel
+solver family, alive only through its own tests and one example. They were what forced `dx: float`
+into the signature (3 of 29 methods), and `dx` is why the module read as unable to accept geometry
+"even in principle" (#1920). Removed; the question dissolves with them.
+
+**Compiled kernels are a different axis.** Replacing a hot function with a compiled one -- numba
+today, Rust later -- does not change the array type and needs no dispatch layer or user choice: the
+function is simply faster. That belongs beside the function it replaces, not here. `NumbaBackend`
+is the counterexample: registered as a backend, it returns `np.array`/`np.zeros` like the numpy one
+and, after the step kernels went, contains zero `@njit`. It is a numpy backend under another name,
+and it is where a Rust "backend" would land if the distinction were not written down.
+
+**Choosing a backend is not the user's problem.** scikit-learn and SciPy infer the namespace from
+the input array (Array API standard) rather than taking a name. This library still takes a name,
+which is a smaller interface than it looks: measured on this machine, torch is 9.2-361x slower than
+numpy and silently narrows float64 to float32 while the library asserts to 1e-10; jax's CPU sparse
+solve calls back into scipy; and there is no GPU target anywhere in `pyproject.toml` or `docs/`.
+Solvers pass `backend or "numpy"` for that reason.
 """
 
 from __future__ import annotations
@@ -132,37 +153,6 @@ class BaseBackend(ABC):
     def compute_optimal_control(self, x, p, m, problem_params):
         """Compute optimal control a*(x, p, m)."""
 
-    @abstractmethod
-    def hjb_step(self, U, M, dt, dx, problem_params):
-        """Single explicit HJB time step — LQ-only toy stepper, NOT the production solve path.
-
-        ⚠️ These backend ``*_step`` methods hardcode a fixed (Linear-Quadratic-flavoured)
-        Hamiltonian and do NOT honor ``problem.hamiltonian_class`` — and each backend hardcodes a
-        *different* default (numpy ``0.5 p²``; torch ``0.5|p|² + V + interaction·log m``; numba
-        ``0.5 p² + log m``; jax ``0.5 p²``). They are an experimental/benchmark surface with **no
-        caller in the HJB/FP solver fleet** (only ``tests/`` and one benchmark demo reach them).
-
-        The production solvers (``HJBFDMSolver``/``HJBGFDMSolver``/…) do NOT use this; they evaluate
-        the problem's actual Hamiltonian through the #1071 single source
-        (``base_hjb``/``h_eval.evaluate_H`` ← ``problem.hamiltonian_class``). So a custom-Hamiltonian
-        solve via ``problem.solve()`` is correct regardless of this hardcode.
-
-        Teaching these steppers ``hamiltonian_class`` (and XLA-lowering the operator tree) is the
-        deferred RFC #1072 ("Functional Operator Lowering", post-v1.0). Do NOT treat this as a quick
-        patch — see #1072 for the World-A-vs-World-B fork and the tracing/operator walls.
-        """
-
-    @abstractmethod
-    def fpk_step(self, M, U, dt, dx, problem_params):
-        """Single explicit FPK time step — LQ-only toy stepper, NOT the production solve path.
-
-        See :meth:`hjb_step`: this is the experimental backend stepper surface (hardcoded default
-        drift, not ``problem.hamiltonian_class``), with no caller in the solver fleet. The live FP
-        solvers single-source the drift from the problem (#1071/#1043), not from here. Honoring
-        ``hamiltonian_class`` here is the deferred RFC #1072.
-        """
-
-    # Performance and Compilation
     def compile_function(self, func, *args, **kwargs):
         """
         Compile function for performance (JIT compilation for JAX).
