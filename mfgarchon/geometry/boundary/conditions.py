@@ -1165,7 +1165,10 @@ def robin_bc(
     conservative row above is not zero there -- and therefore leaks badly. How badly is a
     property of the configuration, not of the family: at sigma=0.3, 81 points on [0,1], dt=1e-3,
     and a Gaussian initial density of width s0 at 0.5, through the potential channel
-    (``divergence_upwind`` is the only scheme that reads ``drift_field``, #1632):
+    (``_INTERFACE_VELOCITY_SCHEMES`` is ``{"divergence_upwind"}``, so the other three never read a
+    caller-supplied face velocity; #1632. ~~"the only scheme that reads ``drift_field``"~~
+    [CORRECTED] -- that generalised the issue's ``interface_velocity`` to a different kwarg, and
+    a callable ``drift_field`` reaches all four through ``_DriftDispatcher``):
 
         scheme               s0     T=0.20    T=0.30    T=0.50
         gradient_centered    0.1     -78.1%    -99.0%    -100.0%
@@ -1194,15 +1197,27 @@ def robin_bc(
     ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the
     FP transport velocity is ``v = -D_pH``.
 
-    That antecedent is a MINIMIZE fact, not a library-wide one. ``H.optimal_control`` returns
-    ``-self._sign * dH_dp`` (core/hamiltonian.py:1315) with ``_sign = -1`` under MAXIMIZE
-    (:838), so it yields ``+D_pH`` there. Every path that forms the drift itself is gated to
-    quadratic-MINIMIZE by ``assert_quadratic_minimize_drift`` (utils/pde_coefficients.py:24), so
-    the antecedent holds on all of them; the caller-supplied-``alpha*`` velocity channel
-    (``compute_fp_velocity_field``) is not gated and reaches ``+D_pH`` under MAXIMIZE. That
-    channel is FDM, which refuses ROBIN at construction, and ``FPFEMSolver`` -- the only FP
-    solver that reads Robin coefficients -- rejects MAXIMIZE, so the conclusion below is safe
-    today. It is safe by two gates, not by the antecedent being universal.
+    That antecedent is a MINIMIZE fact, not a library-wide one, and it is decided in two places.
+    ``HamiltonianBase.optimal_control`` (core/hamiltonian.py:1284) returns ``-self._sign * dH_dp``
+    with ``_sign = -1`` under MAXIMIZE (:838). ``SeparableHamiltonian`` overrides it (:2524) and
+    delegates to ``control_cost.optimal_control(p)``, because in the separable case the control
+    enters only through the control cost -- so its sign comes from ``QuadraticControlCost.sign``
+    (:403), a second and independent sense field. **The two routes agree on every consistent
+    configuration**: measured, MINIMIZE/MINIMIZE gives ``-D_pH`` and MAXIMIZE/MAXIMIZE gives
+    ``+D_pH``, the same as the base class.
+
+    They can be set to disagree, and nothing checks. All four (cost sense, Hamiltonian sense)
+    pairs construct without complaint, and on the two mismatched ones the control cost decides
+    while ``_sign`` is never read. That is a silent-acceptance gap, not a counterexample to the
+    line above; it is filed separately.
+
+    Every path that forms the drift itself is gated to quadratic-MINIMIZE by
+    ``assert_quadratic_minimize_drift`` (utils/pde_coefficients.py:24) -- note it reads
+    ``control_cost.sign``, not the Hamiltonian's sense -- so the antecedent holds on all of them.
+    The caller-supplied-``alpha*`` velocity channel (``compute_fp_velocity_field``) is not gated.
+    No solver reachable through it declares ROBIN, and ``FPFEMSolver`` -- the only FP solver that
+    reads Robin coefficients -- rejects MAXIMIZE, so the conclusion below is safe by two gates
+    rather than by the antecedent being universal.
 
     ``alpha = -v_n`` also follows from the library's own ``J = v*m - D grad m`` without
     mentioning ``D_pH`` at all, which is the sense-free route to the same place.
@@ -1217,7 +1232,7 @@ def robin_bc(
         161        56.41        1.7933       -0.2067
         321        63.27        1.8898       -0.1102
         641        67.10        1.9437       -0.0563
-       1281        69.10        1.9716       -0.0284
+       1281        69.09        1.9716       -0.0284
 
     Column 2 converges to 71.111 at first order. ``(-v_n, D)`` goes to zero; ``(+v_n, D)`` goes
     to 2, i.e. off by ``2*alpha*m``.
@@ -1227,10 +1242,16 @@ def robin_bc(
     ``robin_bc(alpha=+v_n, beta=D)`` leaks; ``robin_bc(alpha=-v_n, beta=D)`` -- the correct
     encoding of the reflecting condition -- grows without bound. ~~+0.0000% / -48% / +1.7e31%~~
     [CORRECTED] -- that trio is not quotable: over mesh 50-400, T 0.05-0.4, Nt 50-800 and IC
-    width 0.05-0.3 the third column spans about 90 orders of magnitude and at (400 elements,
-    T=0.2, Nt=50) it comes out NEGATIVE, so even its sign is a property of the configuration.
-    The growth itself is real (cumulative positivity-clip injection 0.0, min density +2e-11 --
-    it is influx, not a clip artifact). **Encoding the reflecting condition as a Robin segment
+    width 0.05-0.3 the third column spans well over ninety orders of magnitude, and at coarse
+    ``Nt`` it comes out NEGATIVE, so even its sign is a property of the configuration.
+
+    ~~The growth is influx, not a clip artifact (cumulative clip injection 0.0, min density
+    +2e-11).~~ [CORRECTED 2026-08-17] -- those two numbers are from the 200-element / Nt=200 run
+    and were placed against the coarse-``Nt`` sign flip, which they do not cover: review measured
+    the negative configurations to be clip-dominated. This path clips
+    (weak_form_fp_solver.py:225-230 reports a CUMULATIVE injection at solve end), so any figure
+    taken from it owes that warning's value alongside. No claim is made here about which regime a
+    given configuration is in. **Encoding the reflecting condition as a Robin segment
     on top of a wall that already imposes it is unbounded, not merely leaky.**
 
     Reach for ``robin_bc`` when you want a wall that is *not* the reflecting one:
