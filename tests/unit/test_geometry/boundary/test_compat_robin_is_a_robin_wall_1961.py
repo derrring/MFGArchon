@@ -78,9 +78,7 @@ def test_a_uniform_robin_wall_satisfies_its_own_condition(alpha, beta, g, wall):
     bc.domain_bounds = _BOUNDS
     ghosts = _ghosts(bc)
 
-    ghost, interior = (
-        (_scalar(ghosts[(0, 0)]), _U[0]) if wall == "min" else (_scalar(ghosts[(0, 1)]), _U[-1])
-    )
+    ghost, interior = (_scalar(ghosts[(0, 0)]), _U[0]) if wall == "min" else (_scalar(ghosts[(0, 1)]), _U[-1])
 
     assert _residual(ghost, interior, alpha, beta, g) == pytest.approx(0.0, abs=1e-12)
 

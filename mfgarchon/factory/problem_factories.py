@@ -58,8 +58,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.geometry import BoundaryConditions
-    from mfgarchon.geometry.domain import Domain
+    from mfgarchon.geometry import BoundaryConditions, GeometryProtocol
 
 logger = get_logger(__name__)
 
@@ -135,7 +134,7 @@ def create_mfg_problem(
     problem_type: ProblemType,
     components: MFGComponents,
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     time_horizon: float = 1.0,
     num_timesteps: int = 100,
     use_unified: Literal[True] = True,
@@ -148,7 +147,7 @@ def create_mfg_problem(
     problem_type: Literal["network"],
     components: MFGComponents,
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     time_horizon: float = 1.0,
     num_timesteps: int = 100,
     use_unified: Literal[False],
@@ -161,7 +160,7 @@ def create_mfg_problem(
     problem_type: Literal["stochastic"],
     components: MFGComponents,
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     time_horizon: float = 1.0,
     num_timesteps: int = 100,
     use_unified: Literal[False],
@@ -173,7 +172,7 @@ def create_mfg_problem(
     problem_type: ProblemType,
     components: MFGComponents,
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     time_horizon: float = 1.0,
     num_timesteps: int = 100,
     use_unified: bool = True,
@@ -327,7 +326,7 @@ def create_standard_problem(
     hamiltonian: Any,  # HamiltonianBase
     terminal_cost: Callable,
     initial_density: Callable,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     *,
     potential: Callable | None = None,
     boundary_conditions: BoundaryConditions | None = None,
@@ -409,7 +408,7 @@ def create_network_problem(
     node_interaction: Callable,
     edge_cost: Callable,
     initial_density: Callable | NDArray,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     *,
     edge_interaction: Callable | None = None,
     terminal_cost: Callable | None = None,
@@ -470,7 +469,7 @@ def create_variational_problem(
     lagrangian: Any,  # LagrangianBase
     terminal_cost: Callable,
     initial_density: Callable,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     *,
     boundary_conditions: BoundaryConditions | None = None,
     time_horizon: float = 1.0,
@@ -571,7 +570,7 @@ def create_stochastic_problem(
     hamiltonian: Any,  # HamiltonianBase
     terminal_cost: Callable,
     initial_density: Callable,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     *,
     noise_intensity: float = 0.0,
     common_noise: Callable | None = None,
@@ -652,7 +651,7 @@ def create_highdim_problem(
     hamiltonian: Any,  # HamiltonianBase
     terminal_cost: Callable,
     initial_density: Callable,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     *,
     dimension: int,
     potential: Callable | None = None,
@@ -723,7 +722,7 @@ def create_highdim_problem(
 
 def create_lq_problem(
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     terminal_cost: Callable,
     initial_density: Callable,
     running_cost_control: float = 1.0,
@@ -799,7 +798,7 @@ def create_lq_problem(
 
 def create_crowd_problem(
     *,
-    geometry: Domain,
+    geometry: GeometryProtocol,
     target_location: NDArray | Callable,
     initial_density: Callable,
     running_cost_control: float = 1.0,

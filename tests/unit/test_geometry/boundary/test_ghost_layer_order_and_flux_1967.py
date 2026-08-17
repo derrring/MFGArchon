@@ -269,8 +269,13 @@ def test_the_fix_holds_in_two_dimensions_including_the_corner(ghost_depth):
     padded = pad_array_with_ghosts(field, bc, ghost_depth=ghost_depth, spacing=(h, h))
 
     g = ghost_depth
-    gc = np.concatenate([np.array([-(k - 0.5) * h for k in range(1, g + 1)])[::-1], c,
-                         np.array([1.0 + (k - 0.5) * h for k in range(1, g + 1)])])
+    gc = np.concatenate(
+        [
+            np.array([-(k - 0.5) * h for k in range(1, g + 1)])[::-1],
+            c,
+            np.array([1.0 + (k - 0.5) * h for k in range(1, g + 1)]),
+        ]
+    )
     gx, gy = np.meshgrid(gc, gc, indexing="ij")
 
     np.testing.assert_allclose(padded, np.cos(2 * np.pi * gx) * np.cos(2 * np.pi * gy), atol=1e-12)
