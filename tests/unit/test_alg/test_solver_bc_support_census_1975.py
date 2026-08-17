@@ -1,15 +1,6 @@
 """Which solvers declare their BC support, and what the FDM boundary assembly reads. #1975 #1977
 
-Assertions only. The reasoning, the history and the physics live in #1975; five revisions of this
-file put them here as prose and five independent reviews found a false statement in that prose
-each time.
-
-~~Nothing below is stated that is not computed in this file.~~ [CORRECTED 2026-08-17] -- that was
-itself one of them. Eight statements below are traced-and-true rather than computed: the source
-references (`base_solver.py:282`, `fp_fdm_bc.py:349/387`, `fp_fdm.py:127`), "no BC-type branch",
-"`divergence_upwind` is the default", the `_BOUNDARY_HANDLERS` signature claim, and the
-`_NOT_REACHED` roster. Each names a file and a line so a reader can check it; none is asserted.
-The rule the file actually keeps is narrower: **no NUMBER appears that this file does not compute.**
+The reasoning, the history and the physics live in #1975.
 """
 
 from __future__ import annotations
@@ -36,13 +27,8 @@ def _population() -> dict[type, list[str]]:
     `mfgarchon.alg`. `walk_packages` never yields the root, so `mfgarchon.alg` is imported
     explicitly.
 
-    There is no `cls.__module__ != module.__name__` filter. A previous revision had one and
-    defended it on the grounds that dropping it would re-admit hundreds of foreign imports;
-    measured, that is false -- `issubclass(cls, BaseNumericalSolver)` on the next line rejects
-    every `typing`/`enum`/`abc`/`scipy` binding by itself. The filter's entire effect was to hide
-    ONE name: `HJBNetworkSolver`, a cross-module alias at `network_solvers/__init__.py:19`, which
-    `test_no_solver_is_bound_under_a_name_the_census_does_not_know` exists to catch and was blind
-    to. Population with the filter: 21 classes. Without: 21 classes, +1 name."""
+    Deliberately no `cls.__module__ != module.__name__` filter: it hid the cross-module alias at
+    `network_solvers/__init__.py:19` from the test written to catch that case (#1976 review)."""
     import mfgarchon.alg as alg_pkg
 
     found: dict[type, list[str]] = {}
@@ -97,17 +83,8 @@ _UNGATED = {
 #: (`network_solvers/__init__.py:19`) that only becomes visible without a defining-module filter.
 _ALIASES = {"FPNetworkSolver": ["NetworkFPSolver"], "NetworkHJBSolver": ["HJBNetworkSolver"]}
 
-#: The population predicate is `BaseNumericalSolver`; `_validate_bc_support` and
-#: `honors_inhomogeneous_neumann` are defined on `BaseMFGSolver`, a strict superclass. Measured:
-#: 21 concrete `BaseNumericalSolver` subclasses, 25 concrete `BaseMFGSolver` subclasses, so 4 are
-#: in the gate's reach and outside every assertion here -- PrimalDual, Sinkhorn, Variational and
-#: Wasserstein, all declaring nothing and all inheriting `honors_inhomogeneous_neumann = True`.
-#: None of the four mentions a boundary condition anywhere in its file, so the omission hides no
-#: live defect; it is disclosed because an undisclosed population predicate is a scope claim.
-#:
 #: Do a solver's boundary job without being solver subclasses, so no predicate here reaches them.
-#: Named, not discovered -- and known to be incomplete: a behaviour scan finds 36 non-subclass
-#: classes branching on a BC type, the applicator family among them.
+#: Named, not discovered, and incomplete: other non-subclass classes branch on a BC type too.
 #:
 #: ~~"Apply BC segments"~~ [CORRECTED 2026-08-17] -- true of one of the three. `HJBHowardSolver`
 #: reads `seg.bc_type` and branches on DIRICHLET (hjb_howard.py:363). `BoundaryHandler` probes
@@ -133,8 +110,6 @@ def test_the_alias_bindings_are_unchanged():
 
 
 def test_no_solver_is_bound_under_a_name_the_census_does_not_know():
-    """`names[0]` is whichever binding `inspect.getmembers` yields first, so a new alias that
-    sorts earlier would silently replace a canonical name in every set above."""
     known = _GATED.keys() | _UNGATED | {a for v in _ALIASES.values() for a in v}
     unknown = {n for names in _population().values() for n in names} - known
     assert not unknown, f"names not in any set: {sorted(unknown)}"
@@ -157,6 +132,29 @@ def test_exactly_these_solvers_declare_nothing():
 def test_the_named_unreached_classes_are_still_unreached(name, module):
     cls = getattr(importlib.import_module(module), name)
     assert not issubclass(cls, BaseNumericalSolver), f"{name} is now a solver subclass"
+
+
+def test_the_gate_reaches_four_classes_this_file_does_not():
+    """The population predicate is `BaseNumericalSolver`; `_validate_bc_support` and
+    `honors_inhomogeneous_neumann` live on `BaseMFGSolver`, a strict superclass. An undisclosed
+    population predicate is a scope claim, so the gap is computed rather than described."""
+    from mfgarchon.alg.base_solver import BaseMFGSolver
+
+    reached = set()
+    for mod_name in ["mfgarchon.alg"] + [
+        m.name for m in pkgutil.walk_packages(importlib.import_module("mfgarchon.alg").__path__, prefix="mfgarchon.alg.")
+    ]:
+        for _, cls in inspect.getmembers(importlib.import_module(mod_name), inspect.isclass):
+            if issubclass(cls, BaseMFGSolver) and not inspect.isabstract(cls):
+                reached.add(cls)
+    outside = {c.__name__ for c in reached} - {n[0] for n in _population().values()}
+    assert outside == {
+        "PrimalDualMFGSolver",
+        "SinkhornMFGSolver",
+        "VariationalMFGSolver",
+        "WassersteinMFGSolver",
+    }, f"changed: {sorted(outside)}"
+    assert all(getattr(c, "_SUPPORTED_BC_TYPES", None) is None for c in reached if c.__name__ in outside)
 
 
 def test_the_permissive_default_is_claimed_by_inheritance():
@@ -229,17 +227,15 @@ def test_the_conservative_schemes_conserve_mass_at_a_drifted_wall(scheme):
     oracle: mass conservation is a law of the equation, computed here without reference to any
     scheme's internals, so it cannot go tautological the way a declaration census can.
 
-    `divergence_upwind` is the default. Measured: -0.0000% and -0.0000%.
+    `divergence_upwind` is the default.
     """
     drift_pct, dmdx = _run(scheme)
     assert abs(drift_pct) < 1e-6, f"{scheme} leaked {drift_pct:.4f}% at a wall with normal drift"
     assert abs(dmdx) > 100.0, (
         f"{scheme} has d_n m = {dmdx:.4g} at the wall. J.n = 0 requires d_n m = (v/D)*m, which is "
         "large here; a small gradient means the wall became d_n m = 0."
-    )  # 1.0 until 2026-08-17, which could not fire: the gradient_* family gives 2.06 and 3.73 on
-    # this same fixture, both above it, while J.n = 0 gives 1138 and 1962. The threshold named a
-    # failure two orders of magnitude inside its own pass band. 100 separates the two families and
-    # still fires when the fixture stops driving the wall (drift=0 gives -0.179).
+    )  # 1.0 until 2026-08-17: the gradient_* wall this message says it detects sits ABOVE 1.0 on
+    # this fixture, so the threshold named a failure inside its own pass band. Figures in #1975.
 
 
 @pytest.mark.parametrize("scheme", ["gradient_upwind", "gradient_centered"])
@@ -247,7 +243,7 @@ def test_the_gradient_schemes_impose_a_zero_gradient_wall_and_leak(scheme):
     """The counterpart, pinned so the distinction cannot quietly collapse in either direction.
 
     These impose `d_n m = 0`, which is the wrong condition when the drift is not tangential, and
-    they are documented non-conservative (#1075). Measured: -78.05% and -75.47%.
+    they are documented non-conservative (#1075).
     """
     drift_pct, _ = _run(scheme)
     assert drift_pct < -10.0, (
