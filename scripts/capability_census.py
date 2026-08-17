@@ -167,75 +167,18 @@ def declaration_matrix(package: str = "mfgarchon") -> dict[str, Any]:
     }
 
 
-def _print_declarations(result: dict[str, Any]) -> None:
-    for label, path, err in result["roots_missing"]:
-        print(f"  ROOT UNAVAILABLE  {label}: {path} -> {err}")
-    if result["import_failures"]:
-        print(f"\n=== modules that would not import ({len(result['import_failures'])}) ===")
-        for name, err in result["import_failures"]:
-            print(f"  {name}: {err}")
-
-    rows = result["rows"]
-    print(f"\n=== population: {len(rows)} concrete classes ===")
-    print(f"{'role':11s} {'class':32s} {'own':>3s}  own declarations / [inherited]")
-    for r in rows:
-        own = ", ".join(r["own"]) or "-- DECLARES NOTHING --"
-        inh = ", ".join(f"{k}={v['value']}<-{v['from']}" for k, v in r["inherited"].items())
-        print(f"{','.join(r['roles']):11s} {r['name']:32s} {len(r['own']):3d}  {own}" + (f"   [{inh}]" if inh else ""))
-
-    print("\n=== declares nothing of its own ===")
-    for role in sorted({x for r in rows for x in r["roles"]}):
-        members = [r for r in rows if role in r["roles"]]
-        silent = [r for r in members if r["declares_nothing"]]
-        print(f"  {role:11s} {len(silent):3d} of {len(members):3d}  ({100 * len(silent) / len(members):.0f}%)")
-    print("  Not evidence of no capability -- it is the case where capability cannot be read off")
-    print("  the class at all, which is the blind spot #1975 fell into.")
-
-    print("\n=== declarations that arrive by inheritance, grouped by what is inherited ===")
-    for decl in DECLARATIONS:
-        inheritors = [r for r in rows if decl in r["inherited"]]
-        owners = [r["name"] for r in rows if decl in r["own"]]
-        if not (inheritors or owners):
-            continue
-        print(f"  {decl}: own {len(owners)}, inherited {len(inheritors)}")
-        groups: dict[tuple[str, str], list[str]] = {}
-        for r in inheritors:
-            e = r["inherited"][decl]
-            groups.setdefault((str(e["from"]), str(e["value"])), []).append(r["names"][0])
-        for (src, val), who in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-            shown = val if not val.startswith("<property object") else "<property>"
-            print(f"      {len(who):3d}  <- {src:26s} = {shown[:46]}")
-    print("  A count alone cannot say whether an inherited declaration is permissive. Grouping")
-    print("  can: an inherited `True` on honors_inhomogeneous_neumann is a claim nobody made")
-    print("  deliberately; an inherited `False`, or a restrictive frozenset, or a `property`")
-    print("  object, is not -- and a bare count previously reported all four as the same thing.")
-
-    if result["excluded_by_name_prefix"]:
-        print(f"\n=== concrete, under a root, dropped by a NAME prefix: {len(result['excluded_by_name_prefix'])} ===")
-        for nm in result["excluded_by_name_prefix"]:
-            print(f"  {nm}")
-
-    print("\n=== outside every population predicate (named, not discovered) ===")
-    for name, reached in sorted(result["outside_every_predicate"].items()):
-        print(f"  {name:22s} reached by: {reached or 'NOTHING'}")
-
-
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    """Dump the matrix as JSON. There is no prose report: the previous one restated what
+    tests/unit/test_capability_census.py asserts, with nothing keeping the restatement honest,
+    and a review round went to correcting its labels on output nothing ran."""
+
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--package", default="mfgarchon")
-    ap.add_argument("--json", metavar="FILE")
     args = ap.parse_args()
-
-    import mfgarchon
-
-    print(f"module root: {mfgarchon.__file__}\n")
     result = declaration_matrix(args.package)
-    _print_declarations(result)
-
-    if args.json:
-        with open(args.json, "w") as fh:
-            json.dump(result, fh, indent=2)
-        print(f"\nwrote {args.json}")
+    for row in result["rows"]:
+        row.pop("cls_id", None)
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
     return 0
 
 

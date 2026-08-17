@@ -31,3 +31,10 @@ lane 1 because lane 2's code no longer exists to mutate, so the two percentages 
 and neither is auditable from this branch -- the harness for THESE 32 mutations is not
 committed. (`scripts/test_discrimination.py` is a committed mutation harness, for a different set.) What IS reproducible
 is stated per-mutation in the PR body, each with its liveness check.
+
+The script emits JSON only. An earlier revision also printed a prose report; nothing invoked it
+(zero references outside this changelog), it restated what the test file asserts with nothing
+keeping the restatement honest, and a review round went to correcting its labels -- it had called
+an inherited `False` and a `property` object "permissive defaults". 53 lines removed rather than
+relabelled: a mechanism with no invocations is fairly judged by that, and a second surface saying
+what the assertions already say is the failure this census exists to find, committed by the census.
