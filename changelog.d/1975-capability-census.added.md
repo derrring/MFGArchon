@@ -1,23 +1,20 @@
-`scripts/capability_census.py` and its ratchet: what each class **declares**, and the wall-ratio
-**sequence** each FP path produces.
+`scripts/capability_census.py` and its ratchet: what each class **declares** about the boundary
+conditions it accepts.
 
-Lane 1 discovers its population with `walk_packages` + `issubclass` + `inspect.isabstract`, keyed
-on class identity -- a predicate independent of the declaration it audits -- so "declares nothing"
-is a recorded row rather than an absence, and own declarations are separated from inherited ones by
-walking the MRO.
+The 2026-08-13 design census had four lanes and every one looks for reality falling *short* of a
+claim; it found 77 over-claims. Nobody counted the other direction, and that is what made #1975
+wrong -- `FPFEMSolver` implements a general Robin wall and declares nothing, so a census keyed on
+`_SUPPORTED_BC_TYPES` reported the capability absent.
 
-**Lane 2 renders no verdict.** An earlier version classified each path from the ratio's trend
-across three resolutions; independent review showed the rule cannot do that. `FPFVMSolver` reads
-0.392 / 0.649 / 1.106 and keeps going to 12.699 at nx=1281, so a "within tolerance of 1" clause
-fires on a value the sequence merely transits, and `FPSLSolver` reads 0.998 at nx=201 then 1.926
-and 3.500. Three resolutions cannot separate approach from transit, and neither can six. The
-sequence is reported and the reading is left to a person.
+The population comes from `walk_packages` + `issubclass`, a predicate independent of the
+declaration audited, so "declares nothing" is a recorded row rather than an absence; own
+declarations are separated from inherited ones by walking the MRO. `honors_inhomogeneous_neumann`
+defaults to `True` on `BaseMFGSolver`, so 20 solvers claim to honour an inhomogeneous flux by a
+default nobody chose. Three classes apply BC segments without being subclasses of any root and are
+named rather than discovered; that list is stated to be incomplete.
 
-Mass drift is reported beside it as a **form property**: neither sufficient (streamline diffusion
-conserves to 1e-12 while the ratio collapses) nor necessary (`FPSLJacobianSolver` is the Lagrangian
-form, non-conservative by construction, deprecated for adjoint inconsistency rather than for mass).
-
-Also folded: the empty deprecated subclass `FPSLAdjointSolver(FPSLSolver)`, via its own
-`_deprecation_meta["alias_for"]` -- class-keying collapses `X = Y` but not `class X(Y): pass`, and
-two identical rows read as two independent confirmations. The clip exemption is keyed on the
-declared `kde_boundary_smoothing` flag rather than a substring of the class name. (#1975, #1977)
+A second lane measuring which wall each FP path imposes was removed. Its findings are recorded in
+#1975. It needed a discrimination rule for the LIMIT behaviour of a numerical scheme -- four
+attempts failed to state one, and 41% of a 32-mutation sweep survived the ratchet built over it,
+including the pins for three of the defects that ratchet claimed to have fixed. A ratchet over an
+unstated rule pins nothing.
