@@ -1,16 +1,14 @@
-A test file recording which wall each FP path actually imposes, and which solvers sit outside the
-BC capability gate (#1975, #1977, #1979).
+A test file recording which solvers sit outside the BC capability gate, and that the FDM boundary
+assembly reads none of a ROBIN segment's coefficients (#1975, #1977, #1979).
 
-Its load-bearing test is an external oracle the area was missing: **mass conservation at a wall
-with wall-normal drift.** The conservative schemes -- `divergence_upwind`, the default, and
-`divergence_centered` -- impose `J.n = 0` structurally by zeroing the total face flux, conserving
-mass to machine precision with `d_n m` nonzero at the wall; the `gradient_*` family imposes
-`d_n m = 0` and loses 75-78% (non-conservative by design, #1075). Neither behaviour was asserted
-anywhere, and that absence is what let this file's own first version read the right answer as a
-defect.
+The population is discovered by `walk_packages` + `issubclass` + `inspect.isabstract`, keyed on
+class identity: a predicate independent of the declaration it audits. Two same-module alias pairs
+(`NetworkFPSolver = FPNetworkSolver`, `NetworkHJBSolver = HJBNetworkSolver`) are collapsed and
+pinned separately, the root package is imported explicitly because `walk_packages` never yields it,
+and the `startswith("Base")` name heuristic is gone -- it excluded any concrete solver whose name
+began with "Base" and bought nothing `isabstract` did not already cover. Verified against four
+injected escapes: a solver in `alg/__init__.py`, one named `Baseline*`, a factory-built class, and
+the deletion of a dead alias.
 
-The census now discovers its population with `walk_packages` + `issubclass`, a predicate
-independent of the declaration it audits, and records the **ungated** solvers as a population
-rather than as an absence: 11 of 22 concrete solvers declare no `_SUPPORTED_BC_TYPES`, including
-`FPFEMSolver`, the one FP solver implementing a general Robin. Two further classes apply BCs
-without being solver subclasses at all and are named rather than discovered.
+No count is restated in prose. Three independent attempts at this file produced three different
+counts, each written down as a fact; the frozen sets are the measurement.

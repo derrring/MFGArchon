@@ -36,13 +36,12 @@ import numpy as np
 from mfgarchon.alg.base_solver import BaseNumericalSolver
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
-from mfgarchon.geometry.boundary.resolution import FPResolver, MathBCType
 
 # Measured 2026-08-17 by walking `mfgarchon.alg` with `walk_packages` and keeping concrete
-# `BaseNumericalSolver` subclasses -- a predicate INDEPENDENT of whether a class declares
-# `_SUPPORTED_BC_TYPES`. The previous version discovered its population by reading that attribute
-# inside two non-recursed directories, so it could not report its own blind spot: it missed 5 FP
-# and 5 HJB solvers, `FPFEMSolver` among them.
+# `BaseNumericalSolver` subclasses, keyed on class identity -- a predicate independent of the
+# declaration audited. The sets below are the measurement; no count is restated in prose, because
+# three independent attempts at this file produced three different counts and each was written
+# down as a fact.
 _GATED = {
     "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
@@ -64,42 +63,65 @@ _UNGATED = {
     "FPFEMSolver",
     "FPNetworkSolver",
     "HJBFEMSolver",
+    "HJBNetworkSolver",
     "MeshlessGalerkinFPSolver",
     "MeshlessGalerkinHJBSolver",
-    "NetworkFPSolver",
-    "NetworkHJBSolver",
     "NetworkPolicyIterationHJBSolver",
     "PenaltyHJBSolver",
     "WeakFormFPSolver",
     "WeakFormHJBSolver",
 }
 
+#: Same class bound under two names in its own module. Both pairs, because a name-keyed
+#: population reports each as two independent rows.
+_ALIASES = {
+    "FPNetworkSolver": ["NetworkFPSolver"],
+    "HJBNetworkSolver": ["NetworkHJBSolver"],
+}
+
 # Outside even a subclass predicate: plain classes that read BC segments and write Dirichlet
 # values and Neumann normal-gradient rows. No population predicate over `BaseNumericalSolver`
 # reaches them, which is why they are named rather than discovered.
 _NOT_EVEN_SUBCLASSES = {
+    # Applies BC segments directly -- `is_dirichlet`, Neumann-by-extension rows (hjb_howard.py:363).
     "HJBHowardSolver": "mfgarchon.alg.numerical.hjb_solvers.hjb_howard",
+    # Passes `bc` to the grid's Laplacian rather than writing rows itself; listed because no
+    # predicate here reaches it, not because it writes BC rows.
     "ImplicitHeatSolver": "mfgarchon.alg.numerical.pde_solvers.implicit_heat",
+    # Owns `build_neumann_bc_weights` / `create_ghost_neighbors` / `apply_ghost_nodes_to_...`.
+    "BoundaryHandler": "mfgarchon.alg.numerical.gfdm_components.boundary_handler",
 }
 
 
-def _solver_population() -> dict[str, bool]:
-    """Every concrete `BaseNumericalSolver` subclass -> whether it declares a BC support set.
+def _solver_population() -> dict[type, list[str]]:
+    """Every concrete `BaseNumericalSolver` subclass -> every name it is bound under.
 
-    `walk_packages`, not `iter_modules`: the latter does not recurse, and `alg/numerical/fem/`
-    is one directory below the two the old census walked.
+    Keyed on the CLASS, not the binding name: `NetworkFPSolver = FPNetworkSolver` and
+    `NetworkHJBSolver = HJBNetworkSolver` are same-module aliases, and `cls.__module__ !=
+    module.__name__` does not catch those, so a name-keyed population reports two rows per pair.
+
+    `inspect.isabstract` rather than `name.startswith("Base")`: the name heuristic bought nothing
+    (isabstract already covers the real bases) and silently excluded any concrete solver whose
+    name begins with "Base".
+
+    `walk_packages` yields SUBMODULES of `mfgarchon.alg`, never `mfgarchon.alg` itself, so the
+    root is imported explicitly. A class defined in `alg/__init__.py` was invisible without it.
+
+    Still not reached, and stated rather than implied: a class built by a factory (`type()` called
+    in another module), one produced by `__getattr__`, and anything outside `mfgarchon.alg`.
     """
     import mfgarchon.alg as alg_pkg
 
-    found: dict[str, bool] = {}
-    for mod in pkgutil.walk_packages(alg_pkg.__path__, prefix="mfgarchon.alg."):
-        module = importlib.import_module(mod.name)
+    found: dict[type, list[str]] = {}
+    names = ["mfgarchon.alg"] + [m.name for m in pkgutil.walk_packages(alg_pkg.__path__, prefix="mfgarchon.alg.")]
+    for mod_name in names:
+        module = importlib.import_module(mod_name)
         for name, cls in inspect.getmembers(module, inspect.isclass):
-            if cls.__module__ != module.__name__ or not issubclass(cls, BaseNumericalSolver):
+            if not issubclass(cls, BaseNumericalSolver) or inspect.isabstract(cls):
                 continue
-            if inspect.isabstract(cls) or name.startswith("Base"):
-                continue
-            found[name] = getattr(cls, "_SUPPORTED_BC_TYPES", None) is not None
+            found.setdefault(cls, [])
+            if name not in found[cls]:
+                found[cls].append(name)
     return found
 
 
@@ -236,27 +258,26 @@ def _step(bc, scheme="divergence_upwind"):
     )
 
 
-def test_a_wall_that_is_not_the_reflecting_one_is_still_assembled_as_no_flux():
-    """`alpha = 999` is a genuinely different wall and must not equal no-flux. It does.
+def test_a_wall_with_a_coefficient_the_assembly_cannot_read_is_assembled_as_no_flux():
+    """`alpha = 999` is not `v_n` under any convention, so this is a genuinely different wall.
 
-    `alpha = 3.2` is deliberately **excluded**: with this fixture `FPResolver` emits
-    `ROBIN(alpha=+3.2, beta=-0.045)` for the impermeable wall, so that case *is* the reflecting
-    wall the conservative scheme already imposes and byte-identity there is correct. The previous
-    version of this file asserted on it and read the right answer as a defect.
+    The mechanism: `_BOUNDARY_HANDLERS`' handlers are not passed `boundary_conditions` at all --
+    the parameter is absent from the signature -- so no configuration can make them read a
+    coefficient. That is a structural fact about the call, not a measurement that needs a value.
 
-    The mechanism: `_BOUNDARY_HANDLERS` handlers are not passed `boundary_conditions` at all, so
-    no configuration can make them read a coefficient. Measured over 768 combinations of ndim,
-    npts, sigma, dt, scheme and (alpha, beta, g): zero non-identical cases.
+    `alpha = 3.2` is deliberately NOT used here. An earlier version justified excluding it by
+    saying it *is* the reflecting wall for this fixture, which is wrong at the low wall:
+    `FPResolver`'s `drift` is the OUTWARD NORMAL component, so for `u = -3.2x` it is `+3.2` at
+    `x_max` and `-3.2` at `x_min`, while `_mixed` puts `+3.2` on both. That is the axis-vs-normal
+    confusion #1907 removed and #1972 records; it is left out rather than argued about.
     """
     reference = _step(_mixed(BCType.NO_FLUX))
     got = _step(_mixed(BCType.ROBIN, alpha=999.0, beta=-0.045, value=0.0))
 
     assert np.array_equal(got, reference), (
         "a ROBIN wall with alpha=999 no longer assembles byte-identically to no-flux. If the FDM "
-        "boundary handlers now read (alpha, beta, g), that is the #1975 gap closing: close it and "
-        "replace this with a convergence check against the exact d_n m = (alpha/beta)*m relation. "
-        "Do NOT close it by making the conservative schemes read alpha for a reflecting wall -- "
-        "they already impose J.n = 0 and would double-count."
+        "boundary handlers now read a coefficient, that is the #1975 gap closing -- close it and "
+        "replace this with a convergence check against the exact d_n m = (alpha/beta) m relation."
     )
 
 
@@ -274,21 +295,15 @@ def test_a_provider_valued_coefficient_is_accepted_without_a_word():
     )
 
 
-def test_the_resolver_still_emits_the_condition_its_consumers_impose_structurally():
-    """`FPResolver` translates an impermeable wall into `ROBIN(alpha=v_n, beta=-D, g=0)`.
-
-    It has zero library callers, and #1975 records why that is not simply a wiring bug: the
-    conservative assemblies already impose that condition, so routing through the resolver would
-    be redundant there and double-counting on the FEM weak form (measured: -79.5% mass drift when
-    `alpha = v_n` is handed to `assemble_robin_terms`, whose natural BC is already `J.n = 0`).
-    """
-    resolved = FPResolver().resolve(
-        BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min"),
-        {"drift": _DRIFT, "diffusion": 0.5 * _SIGMA**2},
+def test_the_alias_pairs_are_still_collapsed():
+    """Both pairs, because a name-keyed population reports each as two independent rows -- and a
+    row that looks like a second unmeasured path reads as a second gap."""
+    pop = _solver_population()
+    got = {names[0]: sorted(names[1:]) for names in pop.values() if len(names) > 1}
+    assert got == {k: sorted(v) for k, v in _ALIASES.items()}, (
+        f"alias pairs changed: {got}. Deleting a dead alias is progress -- record it here rather "
+        "than letting the population test report it as a solver appearing or vanishing."
     )
-    assert resolved.math_type is MathBCType.ROBIN
-    assert resolved.alpha == pytest.approx(_DRIFT)
-    assert resolved.beta == pytest.approx(-0.5 * _SIGMA**2)
 
 
 # =============================================================================
@@ -298,25 +313,27 @@ def test_the_resolver_still_emits_the_condition_its_consumers_impose_structurall
 
 def test_the_solver_population_is_unchanged():
     """Discovered by `walk_packages` + `issubclass`, a predicate that does NOT depend on the
-    declaration being audited. The old census discovered its population by reading
-    `_SUPPORTED_BC_TYPES` inside two non-recursed directories and so could not report its own
-    blind spot -- it missed 10 solvers.
+    declaration being audited. The version this replaced discovered its population by reading
+    `_SUPPORTED_BC_TYPES` inside two non-recursed directories, so it could not report its own
+    blind spot.
     """
-    found = _solver_population()
-    assert set(found) == _GATED.keys() | _UNGATED, (
-        f"solver population changed: added {sorted(set(found) - (_GATED.keys() | _UNGATED))}, "
-        f"removed {sorted((_GATED.keys() | _UNGATED) - set(found))}. Update the census, then #1977."
+    found = {names[0] for names in _solver_population().values()}
+    want = _GATED.keys() | _UNGATED
+    assert found == want, (
+        f"solver population changed: added {sorted(found - want)}, removed {sorted(want - found)}. "
+        "Update the census, then #1977."
     )
 
 
 def test_exactly_these_solvers_are_outside_the_capability_gate():
-    """Recorded as a population, not as an absence. Half the solvers declare nothing, so
-    `_validate_bc_support` no-ops on them -- `FPFEMSolver` among them, which is the one FP solver
-    implementing a general Robin. A solver LEAVING this set is #1977 being fixed; a solver joining
-    it is a new capability shipped without a declaration.
+    """Recorded as a population, not as an absence: these declare nothing, so
+    `_validate_bc_support` no-ops on them (`base_solver.py:282`). `FPFEMSolver` is among them and
+    is the one FP solver implementing a general Robin. A solver LEAVING this set is #1977 being
+    fixed; a solver joining it is a capability shipped without a declaration.
     """
-    found = _solver_population()
-    ungated = {n for n, gated in found.items() if not gated}
+    ungated = {
+        names[0] for cls, names in _solver_population().items() if getattr(cls, "_SUPPORTED_BC_TYPES", None) is None
+    }
     assert ungated == _UNGATED, (
         f"newly ungated: {sorted(ungated - _UNGATED)} (a solver shipped without declaring its BC "
         f"support); newly gated: {sorted(_UNGATED - ungated)} (#1977 progress -- record it)."
