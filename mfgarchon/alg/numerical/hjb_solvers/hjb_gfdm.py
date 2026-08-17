@@ -116,11 +116,6 @@ class HJBGFDMSolver(BaseHJBSolver):
     )
 
     @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
-    @property
     def discretization_type(self) -> DiscretizationType:
         """Discretization method (BoundaryCapable protocol)."""
         return DiscretizationType.GFDM

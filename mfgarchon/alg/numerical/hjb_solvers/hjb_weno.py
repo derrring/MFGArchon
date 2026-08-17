@@ -140,11 +140,6 @@ class HJBWENOSolver(BaseHJBSolver):
     # mis-enforcing. (Strong boundary-node enforcement is a follow-up before re-declaring Dirichlet.)
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     def __init__(
         self,
         problem: MFGProblem,

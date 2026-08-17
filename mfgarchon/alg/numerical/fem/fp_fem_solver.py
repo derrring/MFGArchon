@@ -58,14 +58,6 @@ class FPFEMSolver(WeakFormFPSolver):
         {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
     )
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """What the #1456 gate reads. The private attribute alone is inert: `_validate_bc_support`
-        returns early on `supported is None`, and `supported` comes from this property, so a solver
-        that declares `_SUPPORTED_BC_TYPES` without it is exactly as ungated as one that declares
-        nothing. Measured 2026-08-17 -- that is the state this pair was in."""
-        return self._SUPPORTED_BC_TYPES
-
     def __init__(self, problem: MFGProblem, order: int = 1) -> None:
         # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
         # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
