@@ -1,83 +1,108 @@
 #!/usr/bin/env bash
-# Classify local branches by whether their work reached main, and delete the ones that did.
+# Report what is known about each local branch's fate. This tool does not delete.
 #
-# Branch names do not record their fate, so this derives it three ways, cheapest first:
-#   1. the branch is the head ref of a MERGED pull request
-#   2. the branch's diff from its merge-base reverse-applies to main (content already there)
-#   3. the branch names a PR number that is MERGED, and is an iteration branch of it
-#      (CLOSED does not count: an issue closing says nothing about whether code landed)
+# Branch names record nothing about whether their work landed, and squash merges make
+# `git branch --merged` useless, so the evidence has to be derived. Deriving it costs a
+# full merged-PR fetch plus a per-branch content test; doing that once per invocation
+# rather than by hand each time is the whole value here. The judgement stays with you.
 #
-# Dry run by default. `--delete` writes a recovery manifest first: every deleted branch's
-# name and sha, so `git branch <name> <sha>` restores it without relying on the reflog --
-# which matters because tier-3 branches can be several commits ahead of main.
+# Each line reports what was OBSERVED, not what to do. The distinction is not cosmetic:
+# an earlier version printed DELETE under a column headed VERDICT, which `grep DELETE |
+# awk '{print "git branch -D " $1}'` turns into destructive commands with the caveats
+# forty lines out of band.
 set -euo pipefail
 
-if [[ -n "${1:-}" ]]; then
-  echo "This tool does not delete. It classifies and prints evidence; you delete." >&2
+# Sourcing this file defines `absorbed` and runs nothing, so a test can exercise the content
+# check itself. Re-implementing it in a test would pin a copy and pass over a broken original --
+# which is precisely the inversion that shipped here and went unnoticed.
+_PRUNE_SOURCED=0
+[[ "${BASH_SOURCE[0]}" != "${0}" ]] && _PRUNE_SOURCED=1
+
+if [[ "$_PRUNE_SOURCED" -eq 0 && -n "${1:-}" ]]; then
+  echo "This tool takes no arguments and does not delete. It prints evidence; you decide." >&2
   exit 2
 fi
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-STAMP=$(git log -1 --format=%cd --date=format:%Y-%m-%d)
-MANIFEST="${TMPDIR:-/tmp}/deleted_branches_${STAMP}.txt"
 
-# A branch held by a worktree cannot be deleted, and `git status` cannot see worktrees at all.
+# The content check below runs `git apply`, which SKIPS patch paths outside the current
+# directory -- silently, checking zero hunks and exiting 0. Run from `scripts/`, every
+# branch therefore looked absorbed. Anchor to the toplevel before anything else.
+if [[ "$_PRUNE_SOURCED" -eq 0 ]]; then
+  cd "$(git rev-parse --show-toplevel)"
+fi
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+# Reverse-apply against a temp index seeded from origin/main, NOT the working tree. Against
+# the tree the check is not merely noisy: measured on a fixture, it reports an UNMERGED branch
+# as absorbed and a MERGED one as not, simultaneously, whenever you are sitting on a third
+# branch -- anti-correlated with the property it claims to measure.
+absorbed() {
+  local mb idx; mb=$(git merge-base origin/main "$1" 2>/dev/null) || return 1
+  git diff "$mb".."$1" > "$TMP/p.diff" 2>/dev/null || return 1
+  [[ -s "$TMP/p.diff" ]] || return 2          # 2 = nothing to check, distinct from "checked and absorbed"
+  idx="$TMP/idx"; rm -f "$idx"
+  GIT_INDEX_FILE="$idx" git read-tree origin/main 2>/dev/null || return 1
+  GIT_INDEX_FILE="$idx" git apply --cached --check --reverse "$TMP/p.diff" 2>/dev/null
+}
+
+if [[ "$_PRUNE_SOURCED" -eq 1 ]]; then
+  return 0 2>/dev/null || true
+fi
+REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+
+# A branch held by a worktree is one `git status` will not report; `git worktree list` is
+# the observable. `--format='%(refname:lstrip=2)'` rather than `%(refname:short)`, which
+# emits `heads/v1.0` when a tag of the same name exists and would defeat the match below.
 git worktree list --porcelain | awk '/^branch /{sub("refs/heads/","",$2); print $2}' | sort -u > "$TMP/held.txt"
 
-# The merged-PR list MUST NOT be truncated: a short list silently reclassifies branches as
-# orphans. Compare against the repo's own total before trusting it.
 TOTAL=$(gh api "search/issues?q=repo:${REPO_SLUG}+is:pr+is:merged&per_page=1" -q .total_count)
-# `gh -q` exits 0 with EMPTY output when the key is missing, and an empty TOTAL makes the
-# guard below compare against 0 and always pass -- reproducing the incident it exists to catch.
+# `gh -q` exits 0 with EMPTY output when the key is missing, and an empty TOTAL would make
+# the guard below compare against 0 and always pass -- reproducing the incident it exists for.
 [[ "$TOTAL" =~ ^[0-9]+$ ]] || { echo "ABORT: could not read the merged-PR total." >&2; exit 1; }
 gh pr list --state merged --limit $((TOTAL + 50)) --json headRefName -q '.[].headRefName' | sort -u > "$TMP/merged.txt"
 GOT=$(wc -l < "$TMP/merged.txt")
 if [[ "$GOT" -lt $((TOTAL / 2)) ]]; then
-  echo "ABORT: fetched $GOT merged head refs against $TOTAL merged PRs -- the list looks truncated," >&2
-  echo "       and every classification below would rest on it. Refusing to guess." >&2
+  echo "ABORT: fetched $GOT merged head refs against $TOTAL merged PRs -- looks truncated." >&2
   exit 1
 fi
-gh pr list --state open --limit 200 --json headRefName -q '.[].headRefName' | sort -u > "$TMP/open.txt"
+# Truncating this list flips a keep into a disposable-looking label, so it is guarded too.
+OPEN_TOTAL=$(gh api "search/issues?q=repo:${REPO_SLUG}+is:pr+is:open&per_page=1" -q .total_count)
+[[ "$OPEN_TOTAL" =~ ^[0-9]+$ ]] || OPEN_TOTAL=0
+gh pr list --state open --limit $((OPEN_TOTAL + 50)) --json headRefName -q '.[].headRefName' | sort -u > "$TMP/open.txt"
 
-absorbed() {  # 0 if the branch's unique changes are already present in main
-  local mb; mb=$(git merge-base origin/main "$1" 2>/dev/null) || return 1
-  git diff "$mb".."$1" > "$TMP/p.diff" 2>/dev/null || return 1
-  [[ -s "$TMP/p.diff" ]] || return 0
-  git apply --check --reverse "$TMP/p.diff" 2>/dev/null
-}
 
-: > "$TMP/kill.txt"
-printf '%-46s %s\n' "BRANCH" "VERDICT"
+: > "$TMP/disposable.txt"
+printf '%-46s %s\n' "BRANCH" "OBSERVED"
 while read -r b; do
-  if grep -qxF "$b" "$TMP/held.txt";   then printf '%-46s %s\n' "$b" "keep  (held by a worktree)"; continue; fi
-  if grep -qxF "$b" "$TMP/open.txt";   then printf '%-46s %s\n' "$b" "keep  (open PR)";            continue; fi
-  if grep -qxF "$b" "$TMP/merged.txt"; then printf '%-46s %s\n' "$b" "DELETE (merged PR)"; echo "$b" >> "$TMP/kill.txt"; continue; fi
-  if absorbed "$b";                   then printf '%-46s %s\n' "$b" "DELETE (content in main)"; echo "$b" >> "$TMP/kill.txt"; continue; fi
-  # `|| true` throughout: under `set -e` a grep that matches nothing, or a gh lookup for a
-  # number that is neither issue nor PR, would abort the whole sweep mid-branch.
+  if grep -qxF "$b" "$TMP/held.txt";   then printf '%-46s %s\n' "$b" "held by a worktree"; continue; fi
+  if grep -qxF "$b" "$TMP/open.txt";   then printf '%-46s %s\n' "$b" "head ref of an OPEN pr"; continue; fi
+  if grep -qxF "$b" "$TMP/merged.txt"; then
+    printf '%-46s %s\n' "$b" "head ref of a merged pr (NAME match only; shas not compared)"
+    echo "$b" >> "$TMP/disposable.txt"; continue
+  fi
+  set +e; absorbed "$b"; rc=$?; set -e
+  case "$rc" in
+    0) printf '%-46s %s\n' "$b" "patch reverse-applies to origin/main"; echo "$b" >> "$TMP/disposable.txt"; continue ;;
+    2) printf '%-46s %s\n' "$b" "no content difference from its merge-base (empty commits only)"; continue ;;
+  esac
   n=$(grep -oE '[0-9]{3,4}' <<<"$b" | head -1 || true)
   st=""
   if [[ -n "$n" ]]; then
     st=$(gh issue view "$n" --json state -q .state 2>/dev/null || true)
     [[ -z "$st" ]] && st=$(gh pr view "$n" --json state -q .state 2>/dev/null || true)
   fi
-  # MERGED only. A CLOSED issue does not establish that the branch's work shipped -- an
-  # instrumentation or diagnostic branch outlives the issue that prompted it, and closing
-  # the issue says nothing about whether its code landed.
   case "$st" in
-    MERGED) printf '%-46s %s\n' "$b" "DELETE (iteration branch of #$n, merged)"; echo "$b" >> "$TMP/kill.txt" ;;
-    OPEN)   printf '%-46s %s\n' "$b" "keep  (#$n still open)" ;;
-    CLOSED) printf '%-46s %s\n' "$b" "keep  (#$n closed, but closed != work merged)" ;;
-    *)      printf '%-46s %s\n' "$b" "keep  (no issue ref; unverified work)" ;;
+    MERGED) printf '%-46s %s\n' "$b" "name contains $n, which is MERGED (no relation established)"
+            echo "$b" >> "$TMP/disposable.txt" ;;
+    OPEN)   printf '%-46s %s\n' "$b" "name contains $n, which is OPEN" ;;
+    CLOSED) printf '%-46s %s\n' "$b" "name contains $n, CLOSED -- closed does not mean merged" ;;
+    *)      printf '%-46s %s\n' "$b" "unmerged, no reference found" ;;
   esac
-done < <(git branch --format='%(refname:short)' | grep -vx main)
+done < <(git for-each-ref refs/heads/ --format='%(refname:lstrip=2)' | grep -vx main)
 
-COUNT=$(wc -l < "$TMP/kill.txt" | tr -d ' ')
 echo
-echo "$COUNT branch(es) look disposable. This tool does not delete them, deliberately:"
-echo "  - the content check ('git apply --check --reverse') is run against the WORKING TREE,"
-echo "    not against main, so its verdict depends on the checkout and on uncommitted edits;"
-echo "  - the merged-PR check matches head-ref NAMES, and names are reused after a merge;"
-echo "  - the number extracted from a branch name may be a grid size, not an issue."
-echo "Each of those turns a wrong label into destroyed work the moment deletion is automatic."
-echo "Read the branch, then: git branch -D <name>   (record the sha first)."
+echo "$(wc -l < "$TMP/disposable.txt" | tr -d ' ') branch(es) show evidence of having landed."
+echo "Read the branch before acting. Two of the three signals above are weak by construction:"
+echo "  - the merged-pr signal compares NAMES; names are reused after a merge."
+echo "  - a 3-4 digit run in a branch name may be a grid size, not an issue number."
+echo "Then: git branch -D <name>   (record the sha first -- -D discards the branch's reflog)."
