@@ -38,6 +38,8 @@ study to EOC 0.27/0.03/0.01 at fixed nt, because the temporal error then dominat
 manufactured solution changing, not a GFDM regression.
 """
 
+import pytest
+
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
@@ -103,8 +105,10 @@ def test_gfdm_accepts_the_package_wide_source_argument():
 def test_mms_reaches_gfdm_and_it_converges():
     """External oracle: an exact solution built independently of the scheme.
 
-    GFDM's second-order Taylor reconstruction makes the exact Laplacian moments on a uniform
-    cloud, so second order is the expected rate here, not a shortfall.
+    Second order is the expected rate here, not a shortfall. The mechanism is deliberately not
+    asserted: the obvious explanation -- that GFDM's second-order Taylor reconstruction makes the
+    Laplacian moments exact on a uniform cloud -- is under-determined, since the rate survives
+    jittering the interior points by 40% of h, so uniformity is not what carries it.
     """
     e_c, e_f = _linf(21), _linf(41)
     order = np.log(e_c / e_f) / np.log(2.0)
@@ -134,6 +138,85 @@ def test_the_howard_inner_solver_also_honours_the_source():
 
     flipped = _linf(41, sign=+1.0, **_HOWARD)
     assert flipped > 1.0, f"a flipped source should not converge on the Howard path, got {flipped:.3e}"
+
+
+def test_the_source_reaches_gfdm_in_2d():
+    """1D is not enough for a meshfree nD method, and the paper's manufactured pair is 2D.
+
+    Every MMS pin added today is 1D. GFDM exists to work on scattered clouds in n dimensions,
+    the source is flattened to the collocation ordering, and the shape guard above is about a
+    2D array's point order -- so a 1D-only pin leaves the dimension where the guard matters
+    entirely unexercised.
+
+    2D reduction of the same pair: `ubar = a1(t)(cos(c x1) + cos(c x2))`, whose normal
+    derivative vanishes on all four walls, so it stays no-flux compatible.
+    """
+    n1 = 9
+    xs = np.linspace(0.0, L, n1)
+    X, Y = np.meshgrid(xs, xs, indexing="ij")
+    pts = np.column_stack([X.ravel(), Y.ravel()])
+
+    def u_ex(t, p):
+        return _a1(t) * (np.cos(C * p[:, 0]) + np.cos(C * p[:, 1]))
+
+    def src(t, p, sigma=1.0):
+        a, da = _a1(t), -1.0 / (2.0 * T)
+        cos_sum = np.cos(C * p[:, 0]) + np.cos(C * p[:, 1])
+        u_t = da * cos_sum
+        lap = -a * C**2 * cos_sum
+        grad2 = (a * C) ** 2 * (np.sin(C * p[:, 0]) ** 2 + np.sin(C * p[:, 1]) ** 2)
+        return -u_t - 0.5 * sigma**2 * lap + 0.5 * grad2
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, L), (0.0, L)], Nx_points=[n1, n1], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    comps = MFGComponents(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        m_initial=lambda x, y: np.ones_like(np.asarray(x, dtype=float)) / (L * L),
+        u_terminal=lambda x, y: _a1(T) * (np.cos(C * np.asarray(x)) + np.cos(C * np.asarray(y))),
+    )
+    nt = 8
+    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, sigma=1.0)
+    solver = HJBGFDMSolver(problem, collocation_points=pts, delta=3.0 * L / (n1 - 1))
+    m = np.ones((nt + 1, pts.shape[0])) / (L * L)
+    u_T = u_ex(T, pts)
+
+    def solve(sign):
+        U = solver.solve_hjb_system(
+            M_density=m,
+            U_terminal=u_T,
+            U_coupling_prev=np.tile(u_T, (nt + 1, 1)),
+            source_term=lambda t, p: -sign * src(t, np.asarray(p).reshape(-1, 2)),
+        )
+        return float(np.abs(np.asarray(U)[0].reshape(-1) - u_ex(0.0, pts)).max())
+
+    forced, flipped = solve(-1.0), solve(+1.0)
+    assert flipped > 3.0 * forced, f"2D source is not discriminating: forced={forced:.3e} flipped={flipped:.3e}"
+
+
+@pytest.mark.slow
+def test_the_per_point_residual_path_also_honours_the_source():
+    """A THIRD arithmetic site, with its own sign, and nothing else reaches it.
+
+    `qp_optimization_level != "none"` switches off the batch residual and uses the per-point
+    loop, where the source enters at `hjb_gfdm.py:2332` as `H = H + running_cost[i]` -- separate
+    from `h_eval.assemble_hjb_residual` (Newton batch) and from `howard_running_cost`'s `-rc`.
+    Three sites, three conventions to keep straight. Flipping the sign at that one line leaves
+    every other test in this module green while the path sits at the flat-1.42 non-convergence
+    signature, so this is the failure nothing else discriminates.
+
+    One flipped-sign control, not an order study. Marked slow: the QP-per-point assembly costs
+    ~24s for the pair even at nx=11/nt=4, so the gate skips it and nightly runs it. Measured
+    separation at the shipped size: correct 1.275e-02 against flipped 1.429e+00, 112x.
+    """
+    # v0.25.0 (#1070) removed `qp_optimization_level=`; the axes are passed directly.
+    kw = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+    correct = _linf(21, nt=4, **kw)
+    flipped = _linf(21, nt=4, sign=+1.0, **kw)
+    assert flipped > 1.0, f"flipped source should not converge on the per-point path, got {flipped:.3e}"
+    assert flipped / correct > 10.0, (
+        f"per-point path barely distinguishes the sign: correct={correct:.3e} flipped={flipped:.3e}"
+    )
 
 
 def test_the_source_sign_is_not_free():

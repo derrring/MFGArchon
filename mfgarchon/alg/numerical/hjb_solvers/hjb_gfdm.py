@@ -3168,6 +3168,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # 6.6433e+00 to 4.6862e+00 with no diagnostic. `_normalize_running_cost` already
                 # validates its callable's output; this is the same contract.
                 if s_n.shape != (self.n_points,):
+                    # An (N,1) or (1,N) vector has an unambiguous ordering, and `base_hjb`
+                    # ravels, `hjb_fdm` reshapes, `hjb_weno` normalises nothing -- rejecting it
+                    # here would defeat this argument's own purpose, that one manufactured
+                    # solution runs against every solver. Reject only what is genuinely
+                    # ambiguous: a 2D array with both extents > 1, whose point order the caller
+                    # and the collocation cloud can disagree about silently.
+                    if s_n.size == self.n_points and s_n.ndim <= 2 and 1 in s_n.shape:
+                        s_n = s_n.reshape(-1)
+                if s_n.shape != (self.n_points,):
                     raise ValueError(
                         f"source_term must return shape ({self.n_points},) at the collocation "
                         f"points, got {s_n.shape}. A flattened grid array may be in the wrong "
