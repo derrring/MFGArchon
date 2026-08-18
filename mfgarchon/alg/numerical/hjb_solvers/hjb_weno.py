@@ -51,6 +51,8 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 from .base_hjb import BaseHJBSolver
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mfgarchon.core.mfg_problem import MFGProblem
 
 WenoVariant = Literal["weno5", "weno-z", "weno-m", "weno-js"]
@@ -622,7 +624,15 @@ class HJBWENOSolver(BaseHJBSolver):
         """
         return self._solve_hjb_step_axis(u_current, m_current, dt, axis=0)
 
-    def _solve_hjb_step_axis(self, u: np.ndarray, m: np.ndarray, dt: float, axis: int) -> np.ndarray:
+    def _solve_hjb_step_axis(
+        self,
+        u: np.ndarray,
+        m: np.ndarray,
+        dt: float,
+        axis: int,
+        source_fn: Callable | None = None,
+        t_now: float | None = None,
+    ) -> np.ndarray:
         """One backward time step of the 1D HJB operator along ``axis``.
 
         The spatial discretisation (HJ-WENO5 derivatives + Lax-Friedrichs
@@ -631,18 +641,34 @@ class HJBWENOSolver(BaseHJBSolver):
         the 1D solve (axis 0) and for every direction of the multi-D
         dimensional split.
         """
+
+        # Issue #1991: the MMS forcing must enter each SSP-RK3 stage at that stage's own time,
+        # not be added once after the step. Added afterwards it is explicit Euler for the source
+        # and caps the whole scheme at O(dt) -- measured: the error halved with dt at fixed dx
+        # (1.445e-3 -> 9.16e-5 over 16x refinement, EOC 1.00), hiding the spatial order the study
+        # exists to measure. Backward marching mirrors the forward SSP-RK3 stage times
+        # t, t + dt, t + dt/2 into t, t - dt, t - dt/2.
+        # Offsets rather than absolute stage times, so `t_now` is never arithmetic'd when there
+        # is no source. The previous form guarded each call site with `None if t_now is None`,
+        # which was dead on every reachable path and, had it fired, would only have handed `None`
+        # to the caller's source_fn.
+        def src(dt_offset):
+            if source_fn is None:
+                return 0.0
+            return np.asarray(source_fn(t_now + dt_offset), dtype=float).reshape(u.shape)
+
         if self.time_integration == "tvd_rk3":
             # Stage 1
-            k1 = self._compute_hjb_rhs_axis(u, m, axis)
+            k1 = self._compute_hjb_rhs_axis(u, m, axis) + src(0.0)
             u1 = u + dt * k1
             # Stage 2
-            k2 = self._compute_hjb_rhs_axis(u1, m, axis)
+            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(-dt)
             u2 = (3 / 4) * u + (1 / 4) * u1 + (1 / 4) * dt * k2
             # Stage 3
-            k3 = self._compute_hjb_rhs_axis(u2, m, axis)
+            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(-0.5 * dt)
             return (1 / 3) * u + (2 / 3) * u2 + (2 / 3) * dt * k3
         elif self.time_integration == "explicit_euler":
-            return u + dt * self._compute_hjb_rhs_axis(u, m, axis)
+            return u + dt * (self._compute_hjb_rhs_axis(u, m, axis) + src(0.0))
         else:
             raise ValueError(f"Unknown time integration: {self.time_integration}")
 
@@ -878,6 +904,7 @@ class HJBWENOSolver(BaseHJBSolver):
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
         """
         Solve the complete HJB system using WENO spatial discretization.
@@ -923,8 +950,16 @@ class HJBWENOSolver(BaseHJBSolver):
             raise ValueError("U_coupling_prev is required")
 
         # Dispatch to dimensional solvers (using internal variable names)
+        if source_term is not None and self.dimension != 1:
+            raise NotImplementedError(
+                f"HJBWENOSolver: source_term is threaded through the 1D path only; this problem is "
+                f"{self.dimension}D. The multi-D path is a dimensional split, so a source added in "
+                f"each axis sweep would be applied {self.dimension} times per step. Accepting it "
+                f"here would silently solve the wrong problem, which is the failure Issue #1424 "
+                f"names. Tracked in Issue #1991."
+            )
         if self.dimension == 1:
-            return self._solve_hjb_system_1d(M_density, U_terminal, U_coupling_prev)
+            return self._solve_hjb_system_1d(M_density, U_terminal, U_coupling_prev, source_term)
         elif self.dimension == 2:
             return self._solve_hjb_system_2d(M_density, U_terminal, U_coupling_prev)
         elif self.dimension == 3:
@@ -998,8 +1033,16 @@ class HJBWENOSolver(BaseHJBSolver):
         M_density_evolution_from_FP: np.ndarray,
         U_final_condition_at_T: np.ndarray,
         U_from_prev_picard: np.ndarray,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
-        """Solve 1D HJB system (original implementation)."""
+        """Solve 1D HJB system (original implementation).
+
+        ``source_term(t, x) -> array`` is the MMS forcing ``r_u`` of
+        ``-u_t - (sigma^2/2) u_xx + H(x, u_x, m) = r_u``, with ``x`` of shape ``(N, d)`` per the
+        contract in :mod:`base_hjb`. It enters as a *rate* in each RK stage and is multiplied by
+        the sub-step there, evaluated at that sub-step's own physical time, so the clock has to
+        advance with the sub-steps rather than per interval.
+        """
         # Extract dimensions from input
         # M_density has shape (n_time_points, Nx) where n_time_points = problem.Nt + 1
         n_time_points = M_density_evolution_from_FP.shape[0]
@@ -1011,6 +1054,13 @@ class HJBWENOSolver(BaseHJBSolver):
 
         # Set final condition (last time index)
         U_solved[-1, :] = U_final_condition_at_T
+        if source_term is not None:
+            # base_hjb.py documents the contract as `source_term(t, x)` with x of shape (N, d),
+            # and both existing implementations get it from the geometry. Building a bare (N,)
+            # linspace here would make one manufactured source unrunnable across two solvers,
+            # which defeats the point of a shared MMS channel.
+            x_grid = self.problem.geometry.get_spatial_grid()
+            forcing = lambda tt: source_term(tt, x_grid)  # noqa: E731
 
         # Backward time integration
         for t_idx in range(n_time_points - 2, -1, -1):
@@ -1021,8 +1071,22 @@ class HJBWENOSolver(BaseHJBSolver):
             u_current = U_solved[t_idx + 1, :].copy()
 
             # Sub-step over the full interval dt under the CFL/diffusion limit (Issue #1180)
+            if source_term is None:
+                step_fn = self.solve_hjb_step
+            else:
+                # `_advance_full_interval` marches backward from the later endpoint of this
+                # interval, so the clock starts at (t_idx + 1) * dt and decreases by each
+                # accepted sub-step. `solve_hjb_step` returns u + dt_sub * k with k = -u_t,
+                # so the forcing enters with the same sign as k.
+                clock = [(t_idx + 1) * dt]
+
+                def step_fn(u, m, dt_sub, _clock=clock):
+                    u_next = self._solve_hjb_step_axis(u, m, dt_sub, 0, source_fn=forcing, t_now=_clock[0])
+                    _clock[0] -= dt_sub
+                    return u_next
+
             U_solved[t_idx, :] = self._advance_full_interval(
-                u_current, m_current, dt, self._compute_dt_stable_1d, self.solve_hjb_step
+                u_current, m_current, dt, self._compute_dt_stable_1d, step_fn
             )
 
         return U_solved
