@@ -3063,6 +3063,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         show_progress: bool | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
         running_cost: np.ndarray | Callable[[int], np.ndarray] | None = None,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system using GFDM collocation method.
@@ -3076,6 +3077,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                 Static array: shape (n_points,) -- same cost at every backward step.
                 Time-dependent array: shape (n_time_points, n_points) -- L(t_n, x) per step.
                 Callable: f(time_index) -> (n_points,) array, evaluated per step.
+            source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
+                package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
+                (:mod:`base_hjb`). Distinct from ``running_cost``: a running cost is model data
+                and may depend on ``m``, a source is an artificial forcing for verification and
+                may not. They share an arithmetic slot with OPPOSITE sign -- ``h_eval`` assembles
+                ``-u_t + H(+running_cost) - D*lap_u`` while the source contract subtracts, so
+                ``running_cost = -source_term`` -- and this argument exists so one manufactured
+                solution runs against every solver rather than being rewritten per convention.
+                Supplying both adds them, since they are different quantities.
                 Added to Hamiltonian: H_total = H(x,p,m) + L(t,x).
             volatility_field: Optional SDE-volatility override. Accepts a scalar,
                 an inspectable one-argument space-only callable ``sigma(x)`` evaluated
@@ -3133,6 +3143,25 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Normalize running cost to callable f(n) -> (n_points,)
         # Accepts: None, 1D array, 2D array, or callable
         self._running_cost_fn = self._normalize_running_cost(running_cost, n_time_points)
+        # Kept SEPARATE from `_running_cost_fn` rather than folded into it. They occupy one
+        # arithmetic slot but are different quantities: a running cost is model data and may
+        # depend on `m` (Howard documents this slot as "the non-quadratic-in-alpha part of the
+        # Lagrangian -- potential V(x), congestion g(x, m)"), while an MMS source is artificial
+        # forcing that must not. Folding them would leave one opaque callable in which a
+        # congestion term and a verification forcing are indistinguishable after the fact.
+        self._mms_source_fn: Callable[[int], np.ndarray] | None = None
+        if source_term is not None:
+            _dt = self.problem.T / self.problem.Nt
+            _x = self.collocation_points
+
+            def _source_at(n: int, _dt: float = _dt, _x: np.ndarray = _x) -> np.ndarray:
+                # `running_cost = -source_term`: h_eval assembles `-u_t + H(+running_cost) -
+                # D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
+                # Getting this backwards is not subtle -- measured on the manufactured pair,
+                # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
+                return -np.asarray(source_term(n * _dt, _x), dtype=float).reshape(-1)
+
+            self._mms_source_fn = _source_at
 
         # Detect if input is already in collocation format (pure meshfree mode)
         # Grid format: M_density.shape = (Nt, Nx, Ny, ...)
@@ -3192,6 +3221,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             for n in timestep_range:
                 rc_n = self._running_cost_fn(n) if self._running_cost_fn is not None else None
+                if self._mms_source_fn is not None:
+                    s_n = self._mms_source_fn(n)
+                    rc_n = s_n if rc_n is None else np.asarray(rc_n, dtype=float).reshape(-1) + s_n
 
                 U_solution_collocation[n, :] = self._solve_timestep(
                     U_solution_collocation[n + 1, :],
