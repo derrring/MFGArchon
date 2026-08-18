@@ -146,7 +146,7 @@ def test_a_zero_velocity_is_not_an_error(scheme):
     assert np.isfinite(result).all()
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"])
 def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
     """The narrowing must not open the hole it was narrowing around.
 
@@ -155,6 +155,11 @@ def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
     pure-diffusion answer this guard exists to stop -- measured at 2.1e-2 from the correct
     answer, the same magnitude as the defect itself. Keying the guard on the velocity's
     magnitude alone would accept it.
+
+    `divergence_upwind` is in the list deliberately. Exempting the consuming scheme is the
+    mistake that was made once already, on the callable half of this clause; made here instead
+    it silently restores a 1.8e-2 pure-diffusion answer on the DEFAULT scheme, and the callable
+    twin below would not catch it.
     """
     u_solution = np.zeros((NT + 1, N, N))
     u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
@@ -173,7 +178,7 @@ def test_the_accept_list_does_not_apply_on_the_tensor_diffusion_path():
     stop, reachable through the public API with a tensor volatility.
     """
     tensor = np.eye(2) * 0.2
-    with pytest.raises(NotImplementedError, match="1632"):
+    with pytest.raises(NotImplementedError, match="tensor-diffusion path"):
         solve_fp_nd_full_system(
             _uniform_density(),
             None,
@@ -201,6 +206,26 @@ def test_a_zero_velocity_that_displaces_a_callable_drift_raises(scheme):
             velocity_field=_velocity(),
             drift_field=lambda t, x, m: np.zeros((2, N, N)),
             advection_scheme=scheme,
+        )
+
+
+def test_a_callable_drift_alongside_a_real_u_raises():
+    """The second arm has its own precedence, and guarding only the first left it open.
+
+    Inside `elif U_solution_for_drift is not None:` the dispatcher takes
+    `drift_field if use_callable_drift else U_solution_for_drift`, so a callable wins over U
+    with no velocity in play at all -- measured before the fix, the result was the callable's
+    answer with U discarded (|result - U-only| = 2.05e-02). The check is therefore on the
+    whole chain, not on the velocity arm.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            u_solution,
+            _problem(),
+            drift_field=lambda t, x, m: np.zeros((2, N, N)),
         )
 
 
