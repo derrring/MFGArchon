@@ -3085,7 +3085,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 ``-u_t + H(+running_cost) - D*lap_u`` while the source contract subtracts, so
                 ``running_cost = -source_term`` -- and this argument exists so one manufactured
                 solution runs against every solver rather than being rewritten per convention.
-                Supplying both adds them, since they are different quantities.
+                Supplying both adds them, since they are different quantities. (The
+                "Added to Hamiltonian: H_total = H + L(t,x)" line below belongs to
+                ``running_cost``, not to this argument, whose relation is the negation above.)
                 Added to Hamiltonian: H_total = H(x,p,m) + L(t,x).
             volatility_field: Optional SDE-volatility override. Accepts a scalar,
                 an inspectable one-argument space-only callable ``sigma(x)`` evaluated
@@ -3159,7 +3161,19 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
-                return -np.asarray(source_term(n * _dt, _x), dtype=float).reshape(-1)
+                s_n = np.asarray(source_term(n * _dt, _x), dtype=float)
+                # Shape-check rather than reshape. A 2D source handed back in the wrong point
+                # order has the right SIZE and silently yields a different value function --
+                # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
+                # 6.6433e+00 to 4.6862e+00 with no diagnostic. `_normalize_running_cost` already
+                # validates its callable's output; this is the same contract.
+                if s_n.shape != (self.n_points,):
+                    raise ValueError(
+                        f"source_term must return shape ({self.n_points},) at the collocation "
+                        f"points, got {s_n.shape}. A flattened grid array may be in the wrong "
+                        f"point order; index it by the solver's collocation_points."
+                    )
+                return -s_n
 
             self._mms_source_fn = _source_at
 
@@ -3390,10 +3404,17 @@ class HJBGFDMSolver(BaseHJBSolver):
         potential = getattr(H_class, "_potential", None)
         coupling = getattr(H_class, "_coupling", None)
         user_rc = self._running_cost_fn
+        # Issue #1991: the Howard branch must consume the MMS source too. It was read only in the
+        # Newton branch, so `solve_hjb_system(source_term=...)` on this path discarded it BITWISE
+        # -- measured, |U(source) - U(no source)| = 0.000e+00 at two resolutions, with the Newton
+        # path as a positive control at 7.13e-01. The capability gate keys on the parameter NAME,
+        # so accepting the name while dropping the argument converts the gate's false negative
+        # into a false positive: exactly the silent-wrong-answer #1424 exists to prevent.
+        mms_src = self._mms_source_fn
         has_H_extra = potential is not None or coupling is not None
 
         howard_running_cost = None
-        if has_H_extra or user_rc is not None:
+        if has_H_extra or user_rc is not None or mms_src is not None:
             colloc_pts = self.collocation_points
             p_zero = np.zeros((self.n_points, self.dimension))
 
@@ -3412,7 +3433,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                     )
                 if user_rc is not None:
                     rc = rc + np.asarray(user_rc(t_idx), dtype=float).ravel()
-                return -rc  # rc_t = -(V + f(m) + L_user); see SIGN note above.
+                if mms_src is not None:
+                    # `_mms_source_fn` already returns -S in the Newton slot's convention, and the
+                    # `-rc` below applies Howard's own flip, so it enters here un-negated exactly
+                    # like `user_rc`.
+                    rc = rc + np.asarray(mms_src(t_idx), dtype=float).ravel()
+                return -rc  # rc_t = -(V + f(m) + L_user + S_mms); see SIGN note above.
 
         # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The

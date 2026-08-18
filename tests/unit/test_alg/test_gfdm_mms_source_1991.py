@@ -25,6 +25,17 @@ Manufactured pair is the 1D reduction of the coupled MMS in the GFDM paper
     ubar(t,x) = a1(t) cos(c x),   a1(t) = 1 + (T - t)/(2T),   c = 2 pi / L
 
 exact for `-u_t - (sigma^2/2) u_xx + (1/2) u_x^2 = r_u`.
+
+WHAT THIS MEASURES, AND WHAT IT CANNOT. `a1(t)` is LINEAR in `t`, so for implicit backward
+Euler `(u(t_{n+1}) - u(t_n))/dt` equals `u_t` exactly and the temporal truncation error is
+identically zero. Measured at nx=161 refining nt only: 1.9624e-04 at nt=10 against 1.9307e-04
+at nt=80 -- 1% over an 8x refinement, EOC_t 0.01. With a quadratic or exponential `a1` the same
+refinement gives EOC_t 1.00. So the EOC 2 below is the order of the SPATIAL operator, with `nt`
+held fixed, and no number here establishes anything about the time discretisation.
+
+This matters for whoever strengthens the MMS next: making `a1` nonlinear collapses the space
+study to EOC 0.27/0.03/0.01 at fixed nt, because the temporal error then dominates. That is the
+manufactured solution changing, not a GFDM regression.
 """
 
 import numpy as np
@@ -58,7 +69,7 @@ def _source(t, x, sigma):
     return -u_t - 0.5 * sigma**2 * u_xx + 0.5 * u_x**2
 
 
-def _linf(nx, nt=20, sigma=1.0, sign=-1.0):
+def _linf(nx, nt=20, sigma=1.0, sign=-1.0, **solver_kw):
     """L-inf error at t=0. `sign=+1` flips the source, as a discrimination control."""
     x = np.linspace(0.0, L, nx)
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
@@ -68,7 +79,7 @@ def _linf(nx, nt=20, sigma=1.0, sign=-1.0):
         u_terminal=lambda xx: _u_exact(T, xx),
     )
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, sigma=sigma)
-    solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), delta=3.0 * L / (nx - 1))
+    solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), delta=3.0 * L / (nx - 1), **solver_kw)
     m = np.tile(np.ones(nx) / L, (nt + 1, 1))
     u_T = _u_exact(T, x)
     U = solver.solve_hjb_system(
@@ -98,6 +109,31 @@ def test_mms_reaches_gfdm_and_it_converges():
     e_c, e_f = _linf(21), _linf(41)
     order = np.log(e_c / e_f) / np.log(2.0)
     assert 1.7 < order < 2.3, f"expected ~2, measured {order:.2f} (errors {e_c:.3e} -> {e_f:.3e})"
+
+
+_HOWARD = {
+    "inner_solver": "howard",
+    "monotonicity_scheme": "joint_socp",
+    "monotonicity_application": "precompute",
+}
+
+
+def test_the_howard_inner_solver_also_honours_the_source():
+    """The source must reach BOTH inner solvers, or the capability gate lies.
+
+    `_mms_source_fn` was read only in the Newton branch, so this configuration accepted
+    `source_term` and discarded it bitwise -- measured, |U(source) - U(no source)| = 0.000e+00
+    at two resolutions. Since the gate at `coupling/base_mfg.py:215` keys on the parameter
+    NAME, accepting the name while dropping the argument turns that gate's false negative into
+    a false positive: it would certify GFDM as source-capable in a configuration that silently
+    solves the wrong problem, which is precisely what #1424 exists to prevent.
+    """
+    with_src = _linf(21, **_HOWARD)
+    order = np.log(with_src / _linf(41, **_HOWARD)) / np.log(2.0)
+    assert 1.7 < order < 2.3, f"Howard path expected ~2, measured {order:.2f}"
+
+    flipped = _linf(41, sign=+1.0, **_HOWARD)
+    assert flipped > 1.0, f"a flipped source should not converge on the Howard path, got {flipped:.3e}"
 
 
 def test_the_source_sign_is_not_free():
