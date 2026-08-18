@@ -9,10 +9,16 @@ resulting measurement shows.
 the same channel under the name `running_cost`, with a different convention -- `f(n) ->
 (n_points,)` rather than `f(t, x)`. The capability gate keys on the name `source_term`, so
 it rejects GFDM for lacking a capability GFDM has. Tracked on #1991; a divergent mechanism
-rather than a missing one, and not this PR's to fix. The match is established on name and
-signature only -- `hjb_gfdm.py:3354` negates the user running cost before it enters Howard's
-slot, so the SIGN relationship to `source_term` is still open, and a port that carries an FDM
-source into GFDM unchanged would converge on the wrong solution.)
+rather than a missing one, and not this PR's to fix.
+
+The relationship is a plain negation, `running_cost = -source_term`, fixed by two documented
+primitives: `h_eval.py:83` returns the residual `-u_t + H(+running_cost) - D*lap_u`, while the
+source contract at `base_hjb.py:435` is `F(u) = (u-u_next)/dt + H - S = 0`; setting both to
+zero gives the sign. `hjb_gfdm.py:3079` states it directly -- "Added to Hamiltonian:
+H_total = H(x,p,m) + L(t,x)". Measured by running this same manufactured pair through GFDM at
+sigma=1: `-r_u` gives 3.1621e-03 -> 7.9413e-04, EOC 2.0; `+r_u` sits flat at 1.4233 -> 1.4241
+and never converges. So a port carrying an FDM source into GFDM unchanged would converge on the
+wrong solution, and the unified channel #1991 wants can be built on a settled premise.)
 
 The oracle is external in AGENTS.md's sense: an exact solution constructed independently of
 the scheme, not a second code path. The manufactured pair is the 1D reduction of the coupled
