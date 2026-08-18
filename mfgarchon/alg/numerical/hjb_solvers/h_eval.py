@@ -77,11 +77,11 @@ def assemble_hjb_residual(
     sigma: float | NDArray,
     t: float,
     u_t: NDArray,
-    running_cost: NDArray | None = None,
+    additive_source: NDArray | None = None,
 ) -> NDArray:
     r"""Assemble the implicit-backward-Euler HJB residual (Layer B of #1071).
 
-    Returns ``-u_t + H(+running_cost) - D·lap_u`` with ``D = σ²/2``, so the diffusion-term
+    Returns ``-u_t + H(+additive_source) - D·lap_u`` with ``D = σ²/2``, so the diffusion-term
     convention (Issue #1073/#811) lives in one place. The caller supplies its own discrete
     operators (gradient ``p``, Laplacian ``lap_u``) and the time-derivative
     ``u_t = (u^{n+1}-u^n)/dt``; it owns its own framing -- this is the implicit residual
@@ -93,8 +93,8 @@ def assemble_hjb_residual(
     inline ``diffusion_from_volatility(sigma_eff, kind="field") * lap_u`` LLF expression it replaces.
     """
     H = eval_H_batch(H_class, x, m, p, t)
-    if running_cost is not None:
-        H = H + running_cost
+    if additive_source is not None:
+        H = H + additive_source
     return -u_t + H - _diffusion_coeff(sigma) * lap_u
 
 

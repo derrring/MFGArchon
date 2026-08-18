@@ -99,7 +99,13 @@ def test_gfdm_accepts_the_package_wide_source_argument():
 
     params = set(inspect.signature(HJBGFDMSolver.solve_hjb_system).parameters)
     assert "source_term" in params, "the capability gate at base_mfg.py:215 tests for this name"
-    assert "running_cost" in params, "the modelling concept must survive; it is not the same quantity"
+    # Issue #1999: and there is no second additive channel beside it. The alpha-independent part
+    # of the Lagrangian -- V(x,t) + f(m) -- is the Hamiltonian's, and a `running_cost=` parameter
+    # could only carry the same quantity a second time: supplied alongside a Hamiltonian that
+    # already held a potential, it double-counted silently (#2001).
+    assert "running_cost" not in params, (
+        "a caller must not be able to inject an alpha-free cost that bypasses the Hamiltonian"
+    )
 
 
 def test_mms_reaches_gfdm_and_it_converges():

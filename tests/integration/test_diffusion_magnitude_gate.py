@@ -237,16 +237,20 @@ def _gfdm_diffusion_field_relerr(
     solver = HJBGFDMSolver(
         prob, x.reshape(-1, 1), delta=delta, monotonicity_scheme="joint_socp", monotonicity_application="precompute"
     )
-    tspace = np.linspace(0.0, T, nt + 1)
 
-    def running_cost_fn(n):  # L^n[i] = -H(grad u*^n) on the analytic field
-        grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - tspace[n])) * _PI * np.sin(_PI * x)
-        return -(grad_u_star**2) / (2.0 * lam)
+    # Issue #1999: this was `running_cost=`, which was the only caller of that channel in the
+    # package and used it as an MMS source -- cancelling H so the solve reduces to the backward
+    # heat equation with an analytic solution. It now uses `source_term`, the channel that exists
+    # for exactly this. The sign flips because `running_cost = -source_term`.
+    def source_fn(t, pts):  # S = +H(grad u*) on the analytic field
+        xx = np.asarray(pts, dtype=float).reshape(-1)
+        grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - t)) * _PI * np.sin(_PI * xx)
+        return (grad_u_star**2) / (2.0 * lam)
 
     U = solver.solve_hjb_system(
         M_density=np.ones((nt + 1, n_x)),
         U_terminal=amp * np.cos(_PI * x),
-        running_cost=running_cost_fn,
+        source_term=source_fn,
         show_progress=False,
     )
     u0_star = amp * np.exp(-D_reference * _PI**2 * T) * np.cos(_PI * x)
