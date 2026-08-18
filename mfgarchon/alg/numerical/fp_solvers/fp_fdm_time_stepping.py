@@ -131,12 +131,16 @@ _SCHEME_ALIASES = {
 
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 
-# Schemes whose assembly handlers actually read `interface_velocity`. The other three
-# accept the parameter and ignore it, re-deriving the drift from U instead -- so they
-# still need the scalar coefficient. That silent discard of the caller's velocity is a
-# real defect (verified in 1D and 2D: velocity (2.5, -1.7) vs (0, 0) gives bit-identical
-# densities for all three), tracked separately in #1632; this set exists so the driver
-# knows which schemes leave the coefficient unread.
+# Schemes whose assembly handlers actually read `interface_velocity`. Supplying a velocity to
+# any other scheme now raises (Issue #1632): those handlers ignore the parameter, and the
+# `velocity_field is not None` branch below has already replaced U with a zero-U dispatcher, so
+# the drift would be identically zero rather than the -c*grad(U) an earlier comment here claimed.
+# Measured before the guard: `gradient_upwind` with a velocity was bit-identical to the
+# pure-diffusion reference (|B-C| = 0.000e+00) while differing from the U-driven run by 2.1e-2.
+# That is the reachable path for every non-separable Hamiltonian, since resolve_fp_drift_kwargs
+# routes those down the velocity channel precisely because -c*grad(U) cannot represent their drift.
+# This set is the accept-list the guard tests against, and it still tells the driver which schemes
+# leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 
 # Marker for "the scalar drift coefficient does not apply on this path": the consuming
@@ -727,6 +731,19 @@ def solve_fp_nd_full_system(
     _velocity_is_consumed = velocity_field is not None and (
         _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
     )
+    # Issue #1632: fire exactly when discarding the velocity would change the answer. A velocity
+    # that is identically zero is discarded harmlessly -- the drift is zero either way -- and
+    # zero-drift arrays are how the diffusion-only callers reach every scheme.
+    if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
+        raise NotImplementedError(
+            f"advection_scheme={advection_scheme!r} does not read 'interface_velocity', but a "
+            f"non-zero velocity_field was supplied. The velocity would be discarded AND the U "
+            f"channel is already disabled below, so the solve would run at zero drift and return "
+            f"a pure-diffusion density that looks converged and conserves mass (Issue #1632). "
+            f"Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)}, or drop velocity_field and pass "
+            f"U_solution_for_drift so the drift is derived as -c*grad(U) -- valid only for a "
+            f"smooth separable Hamiltonian."
+        )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
         # Create a zero-U dispatcher (U is unused when interface_velocity is set)
@@ -945,9 +962,11 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1631: skip resolving a coefficient the handler will not read.
-                # Only a scheme in _INTERFACE_VELOCITY_SCHEMES actually consumes the
-                # velocity; the others fall back to -c*grad(U) and still need it (#1632).
+                # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
+                # velocity carries alpha* per face, so the scalar coefficient is unused; every
+                # other path derives its drift from U and needs it. Since #1632 a supplied
+                # velocity on a non-consuming scheme raises above, so the else branch is now
+                # reached only when no velocity was given at all.
                 _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,

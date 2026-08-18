@@ -53,11 +53,17 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     _, fp = create_paired_solvers(prob, NumericalScheme.FDM_CENTERED)
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    drift = np.tile(4.0 * (x - 0.7) ** 2, (nt + 1, 1))  # pushes mass toward the left wall
+    # Issue #1632: `drift_field=<ndarray>` is the VELOCITY channel, and `divergence_centered`
+    # does not read it -- so the drift this test believed it was applying was discarded and the
+    # solve ran at zero drift. The boundary face flux the docstring describes was never
+    # exercised. Route the drift through `potential_field=U` instead, which this scheme does
+    # consume: for the smooth separable H above the solver forms alpha = -c*grad(U) internally.
+    # U increasing in x gives a leftward velocity, pushing the wall-adjacent bump into the wall.
+    potential = np.tile(x, (nt + 1, 1))
     m0 = np.exp(-200 * (x - 0.05) ** 2)  # bump AT the left wall (columns 0-2)
     m0 /= m0.sum() * dx
 
-    traj = fp.solve_fp_system(m0, drift_field=drift)
+    traj = fp.solve_fp_system(m0, potential_field=potential)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.all(np.isfinite(traj))
     assert np.max(np.abs(mass - mass[0])) < 1e-12, (
@@ -78,10 +84,12 @@ def test_gradient_centered_still_available_and_leaks():
     assert fp.advection_scheme == "gradient_centered"
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    drift = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
+    # Issue #1632: same correction as above -- `drift_field=<ndarray>` is the velocity channel
+    # and `gradient_centered` does not read it, so this drift was discarded too.
+    potential = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
     m0 = np.exp(-40 * (x - 0.35) ** 2)
     m0 /= m0.sum() * dx
-    traj = fp.solve_fp_system(m0, drift_field=drift)
+    traj = fp.solve_fp_system(m0, potential_field=potential)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.max(np.abs(mass - mass[0])) > 1e-3, "gradient_centered is expected to violate conservation"
 

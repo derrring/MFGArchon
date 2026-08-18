@@ -10,9 +10,19 @@ Two defects, both on `solve_fp_nd_full_system`:
    exists precisely to carry a precomputed alpha* for those Hamiltonians.
 
 Only ``divergence_upwind`` actually reads ``interface_velocity``, so only that
-scheme leaves the coefficient unread; the others still fall back to ``-c*grad(U)``
-and still resolve it. That they silently discard the caller's velocity is a
-separate defect, tracked in #1632.
+scheme leaves the coefficient unread; every other path derives its drift from U
+and still resolves it.
+
+2. Supplying a velocity to a scheme that cannot read it proceeded silently, and it did
+   **not** fall back to ``-c*grad(U)`` as this docstring and the code comments used to
+   claim. The ``velocity_field is not None`` branch replaces U with a zero-U dispatcher,
+   so *both* drift channels were discarded and the solve ran at zero drift -- returning a
+   pure-diffusion density that looks converged and conserves mass. Measured before the
+   guard: ``gradient_upwind`` with a velocity was bit-identical to the pure-diffusion
+   reference (``|B-C| = 0.000e+00``) while differing from the U-driven run by ``2.1e-2``.
+   That was the reachable path for every non-separable Hamiltonian, since
+   ``resolve_fp_drift_kwargs`` routes those down the velocity channel precisely because
+   ``-c*grad(U)`` cannot represent their drift. It now raises (#1632).
 
 Each test fails if the fix is reverted.
 """
@@ -104,20 +114,47 @@ def test_u_channel_unchanged_for_minimize():
 
 
 @pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
-def test_non_consuming_scheme_still_receives_a_real_coefficient(scheme):
-    """The skip must be scheme-aware, not merely velocity-aware.
+def test_velocity_on_a_non_consuming_scheme_raises(scheme):
+    """Issue #1632: a velocity these schemes cannot read must not be silently dropped.
 
-    Only `divergence_upwind` reads `interface_velocity`; the others still fall back
-    to -c*grad(U) and so still need the coefficient. Dropping the scheme test from
-    `_velocity_is_consumed` -- resolving nothing whenever a velocity is present --
-    hands them NaN and the density goes non-finite. That is the exact regression
-    that forced this PR to be narrowed, so pin it here rather than relying on
-    tests/integration/test_fdm_centered_conservation.py to catch it.
+    Catches the reappearance of a *silent* wrong answer, not a crash. Before the guard
+    this call returned a finite, mass-conserving, converged-looking density computed at
+    zero drift, because the `velocity_field is not None` branch had already swapped U for
+    a zero-U dispatcher. Nothing in the output distinguished it from a correct solve --
+    which is why an assertion on finiteness or mass cannot serve as the pin here.
+    """
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_a_zero_velocity_is_not_an_error(scheme):
+    """The guard fires on a wrong answer, not on the mere presence of the parameter.
+
+    A velocity of exactly zero is discarded harmlessly -- the drift is zero either way -- and
+    `FPFDMSolver` reaches every scheme with a zero drift array on its diffusion-only paths
+    (`_internal_velocity` is set whenever `drift_field` is an ndarray). Raising here would
+    break the torus and mass-leak suites, which is how this over-broad first cut was caught.
     """
     result = solve_fp_nd_full_system(
-        _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        _uniform_density(), None, _problem(), velocity_field=_velocity(), advection_scheme=scheme
     )
-    assert np.isfinite(result).all(), f"{scheme} received a non-applicable coefficient"
+    assert np.isfinite(result).all()
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_the_raise_names_the_scheme_and_the_way_out(scheme):
+    """The diagnostic must be actionable and greppable, not merely raised."""
+    with pytest.raises(NotImplementedError) as exc:
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        )
+    message = str(exc.value)
+    assert scheme in message, "the offending scheme must be named"
+    assert "divergence_upwind" in message, "the accept-list must be shown"
+    assert "U_solution_for_drift" in message, "the alternative channel must be named"
 
 
 def test_callable_drift_channel_also_runs_for_maximize():
