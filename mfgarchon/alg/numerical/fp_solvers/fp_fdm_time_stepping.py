@@ -817,8 +817,11 @@ def solve_fp_nd_full_system(
         # Use U_solution shape for timestep count (allows flexible input sizes)
         Nt = U_solution_for_drift.shape[0]
         # Issue #641: Create unified _DriftDispatcher for cleaner time loop
+        # `drift_field if use_callable_drift else ...` was unreachable once the count check
+        # landed: this arm needs `velocity_field is None` and `U_solution_for_drift is not None`,
+        # and the check then forces `drift_field is None`. Removing it is this change's own tail.
         drift = _DriftDispatcher(
-            drift_field=drift_field if use_callable_drift else U_solution_for_drift,
+            drift_field=U_solution_for_drift,
             Nt=Nt,
             spatial_shape=shape,
             dimension=ndim,

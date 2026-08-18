@@ -11,3 +11,4 @@ both wall stencils are exercised: reverting either wall to the pre-#1149 one-sid
 now fails that test, where a linear potential left the two stencils algebraically identical and a
 single-wall bump left the right wall carrying 5e-15 of density. Scheme-name resolution and its
 error string now have one owner.
+Scheme-name resolution and its error string now have one owner, and validation is no longer gated on a velocity being present: a bogus `advection_scheme` now raises on the tensor and callable-drift paths too, where it was previously ignored.

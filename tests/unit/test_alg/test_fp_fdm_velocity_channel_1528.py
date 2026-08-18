@@ -229,6 +229,20 @@ def test_a_callable_drift_alongside_a_real_u_raises():
         )
 
 
+def test_a_non_callable_drift_array_alongside_a_real_u_raises():
+    """The count check closed this; without a pin it comes back.
+
+    A non-callable ndarray `drift_field` was excluded from the old predicate because that keyed
+    on `use_callable_drift`, so `U + drift_field=<ndarray>` dropped the array without a word
+    (|result - U-only| = 0.000e+00). Reverting the count to the callable-only keying leaves the
+    rest of this file green, which is exactly why this needs its own assertion.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(_uniform_density(), u_solution, _problem(), drift_field=np.zeros((NT + 1, N, N)))
+
+
 def test_a_misspelled_scheme_reports_itself_as_such():
     """The velocity guard must not pre-empt scheme-name validation and mis-attribute a typo."""
     with pytest.raises(ValueError, match="Unknown advection_scheme"):
