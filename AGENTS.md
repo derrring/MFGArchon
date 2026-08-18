@@ -216,11 +216,27 @@ Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examp
 ### Pre-commit / pre-merge checks
 ```bash
 pytest tests/unit/test_affected_module.py            # iterate on the affected module
-./scripts/local_ci.sh                                # THE GATE: ruff + ratchets + capability matrix + full suite (~4 min)
-./scripts/local_ci.sh --fast                         # lint/format/ratchet only, while iterating
+./scripts/local_ci.sh --fast                         # lint/format/ratchet only — this is the one you run
+./scripts/local_ci.sh                                # THE GATE — the pre-push hook runs this; see the note below
 ruff check mfgarchon/affected_module.py && ruff format --check mfgarchon/affected_module.py
 mypy mfgarchon/affected_module.py
 ```
+⚠️ **Do not run the full gate by hand before pushing — the `pre-push` hook runs it.** Running it
+manually and then pushing pays for it twice, ~2.5 min each, and the second run is the one that
+decides. Measured 2026-08-18: a session that did this on every push spent about half its push time
+re-running a gate it had just watched go green. The ladder for this repo is:
+
+| step | command | cost |
+|---|---|---|
+| after every edit | `ruff check --fix … && ruff format …`, or `./scripts/local_ci.sh --fast` | seconds |
+| after every edit | the test files you touched, by path | seconds |
+| when behaviour could have changed | the blast radius **by path**, not by `-k` name match — a `-k "hjb or newton"` sweep measured 600 s+ and did not finish, while the whole gate is ~150 s | ~30 s |
+| at the boundary | **`git push`** — the hook runs the gate, once | ~150 s |
+
+The one case for running it by hand: you need to *read* its diagnostics (discrimination fraction,
+capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
+`--no-verify` only if the working tree has not moved since.
+
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
 **CI shape — the full suite runs LOCALLY, not on GitHub (2026-07-19):**

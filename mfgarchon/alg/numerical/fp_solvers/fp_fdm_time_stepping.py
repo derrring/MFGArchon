@@ -131,12 +131,21 @@ _SCHEME_ALIASES = {
 
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 
-# Schemes whose assembly handlers actually read `interface_velocity`. The other three
-# accept the parameter and ignore it, re-deriving the drift from U instead -- so they
-# still need the scalar coefficient. That silent discard of the caller's velocity is a
-# real defect (verified in 1D and 2D: velocity (2.5, -1.7) vs (0, 0) gives bit-identical
-# densities for all three), tracked separately in #1632; this set exists so the driver
-# knows which schemes leave the coefficient unread.
+# Schemes whose assembly handlers actually read `interface_velocity`. Supplying a velocity to
+# any other scheme now raises (Issue #1632): those handlers ignore the parameter, and the
+# `velocity_field is not None` branch below has already replaced U with a zero-U dispatcher, so
+# the drift would be identically zero rather than the -c*grad(U) an earlier comment here claimed.
+# Measured before the guard: `gradient_upwind` with a velocity was bit-identical to the
+# pure-diffusion reference (|B-C| = 0.000e+00) while differing from the U-driven run by 2.1e-2.
+# Reachable by an EXPLICIT velocity: `FPFDMSolver.solve_fp_system(m0, drift_field=<ndarray>)` on a
+# non-consuming scheme, or `FixedPointIterator(..., drift_field=<ndarray>)`, which is forwarded
+# verbatim and bypasses the smoothness dispatch. NOT reachable on the auto-routed coupling path: a
+# non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
+# quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
+# velocity. An earlier revision of this comment claimed the coupling path reached it; measurement
+# on both trees says it raises instead.
+# This set is the accept-list the guard tests against, and it still tells the driver which schemes
+# leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 
 # Marker for "the scalar drift coefficient does not apply on this path": the consuming
@@ -145,6 +154,19 @@ _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 # branch fails loudly through the per-timestep NaN guard (Issue #881) instead of silently
 # advecting at rate zero.
 _COEFFICIENT_NOT_APPLICABLE = float("nan")
+
+
+def _resolve_and_validate_scheme(advection_scheme: str) -> str:
+    """Resolve a legacy scheme alias and reject an unknown name.
+
+    One owner for both the alias table and the error string. ``solve_timestep_full_nd`` is a
+    standalone entry point with its own tests, so it validates its own input rather than
+    trusting a caller; this helper is what keeps that from meaning two copies of the message.
+    """
+    resolved = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
+    if resolved not in _VALID_SCHEMES:
+        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
+    return resolved
 
 
 # =============================================================================
@@ -626,7 +648,8 @@ def solve_fp_nd_full_system(
     U_solution_for_drift : np.ndarray | None
         Value function over time-space grid. Shape: (Nt+1, N1, N2, ..., Nd)
         Used to compute drift velocity v = -coupling_coefficient * grad(U)
-        Can be None if drift_field or velocity_field is provided.
+        Must be None when drift_field or velocity_field is provided:
+            supplying more than one drift input is ambiguous and raises (Issue #1632).
     velocity_field : np.ndarray | None
         Precomputed velocity field α*(t, x). Shape: (Nt+1, *spatial_shape)
         for 1D, or (Nt+1, ndim, *spatial_shape) for nD.
@@ -724,20 +747,81 @@ def solve_fp_nd_full_system(
     # Issue #919 Phase 2: velocity_field → pass to implicit solver directly
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
-    _velocity_is_consumed = velocity_field is not None and (
-        _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
+    # A misspelled scheme must report itself as such rather than as a velocity-channel problem:
+    # the per-timestep assembly validates the name too, but only after this guard would have fired.
+    _resolved_scheme = _resolve_and_validate_scheme(advection_scheme)
+    # A velocity is genuinely consumed only when the assembly it reaches has an
+    # `interface_velocity` parameter. `solve_timestep_tensor_explicit` has none, so on the
+    # tensor-diffusion path NO scheme reads it -- including `divergence_upwind`, the default and
+    # the sole member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone made
+    # the accept-list false exactly where it is most load-bearing.
+    _velocity_is_consumed = (
+        velocity_field is not None
+        and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
+        and tensor_diffusion_field is None
     )
+    # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
+    #
+    # AMBIGUITY: the chain is a precedence order, and every level of it silently discards the
+    # levels beneath. `velocity_field is not None` wins over both siblings; inside the second arm,
+    # `drift_field if use_callable_drift else U_solution_for_drift` makes a callable win over U.
+    # Guarding only the first arm left the second one open -- measured, U plus a callable drift
+    # returned the callable's answer with U discarded, |result - U-only| = 2.05e-02. So the check
+    # is on the chain: more than one drift input supplied is ambiguous, whichever pair it is.
+    _drift_inputs = [
+        name
+        for name, given in (
+            ("velocity_field", velocity_field is not None),
+            ("U_solution_for_drift", U_solution_for_drift is not None),
+            ("drift_field", drift_field is not None),
+        )
+        if given
+    ]
+    if len(_drift_inputs) > 1:
+        raise NotImplementedError(
+            f"{len(_drift_inputs)} drift inputs were supplied ({', '.join(_drift_inputs)}), and the "
+            f"dispatch below is a precedence order: the winner silently discards the rest, so the "
+            f"solve would run on one of them and report nothing about the others (Issue #1632). "
+            f"Supply exactly one drift input."
+        )
+    #
+    # CONSUMPTION: an unconsumed velocity is dropped outright. Harmless only when it is all zeros,
+    # because then the drift is zero either way. `Nt = velocity_field.shape[0]` is a further reason
+    # the arms are not interchangeable -- a velocity with fewer time slices than U shortens the
+    # solve -- but that is #919's contract for the velocity-only path, not this guard's to enforce.
+    if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
+        _where = (
+            "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
+            "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list "
+            "does not apply here"
+            if tensor_diffusion_field is not None
+            else f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
+        )
+        raise NotImplementedError(
+            f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped and "
+            f"the solve would run at zero drift, returning a pure-diffusion density that looks "
+            f"converged and conserves mass (Issue #1632). Supply the value function instead -- "
+            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so "
+            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian; "
+            f"or use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar "
+            f"diffusion."
+        )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
-        # Create a zero-U dispatcher (U is unused when interface_velocity is set)
+        # Zero-U dispatcher. This arm wins over both siblings, which is why supplying a
+        # velocity together with any other drift input now raises above (Issue #1632) --
+        # reaching here means a velocity is the only drift input, so there is no U to lose.
         drift = _DriftDispatcher(drift_field=None, Nt=Nt, spatial_shape=shape, dimension=ndim)
     elif U_solution_for_drift is not None:
         # Determine timestep count
         # Use U_solution shape for timestep count (allows flexible input sizes)
         Nt = U_solution_for_drift.shape[0]
         # Issue #641: Create unified _DriftDispatcher for cleaner time loop
+        # `drift_field if use_callable_drift else ...` was unreachable once the count check
+        # landed: this arm needs `velocity_field is None` and `U_solution_for_drift is not None`,
+        # and the check then forces `drift_field is None`. Removing it is this change's own tail.
         drift = _DriftDispatcher(
-            drift_field=drift_field if use_callable_drift else U_solution_for_drift,
+            drift_field=U_solution_for_drift,
             Nt=Nt,
             spatial_shape=shape,
             dimension=ndim,
@@ -945,9 +1029,11 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1631: skip resolving a coefficient the handler will not read.
-                # Only a scheme in _INTERFACE_VELOCITY_SCHEMES actually consumes the
-                # velocity; the others fall back to -c*grad(U) and still need it (#1632).
+                # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
+                # velocity carries alpha* per face, so the scalar coefficient is unused; every
+                # other path derives its drift from U and needs it. The else branch is still
+                # reached with a velocity present -- an all-zero one on a non-consuming scheme is
+                # accepted by the #1632 guard and lands here, resolving a real coefficient.
                 _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,
@@ -1219,9 +1305,8 @@ def solve_timestep_full_nd(
     """
     advection_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
 
-    # Validate scheme name
-    if advection_scheme not in _VALID_SCHEMES:
-        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
+    # Validate scheme name (standalone entry point: it does not trust its caller)
+    _resolve_and_validate_scheme(advection_scheme)
     # Total number of unknowns
     N_total = int(np.prod(shape))
 
