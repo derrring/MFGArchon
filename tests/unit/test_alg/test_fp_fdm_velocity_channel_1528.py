@@ -164,6 +164,46 @@ def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
         )
 
 
+def test_the_accept_list_does_not_apply_on_the_tensor_diffusion_path():
+    """`solve_timestep_tensor_explicit` has no `interface_velocity` parameter.
+
+    So on that path NO scheme reads the velocity -- including `divergence_upwind`, the default
+    and the only member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone
+    let the whitelisted scheme walk into the exact silent zero-drift solve the guard exists to
+    stop, reachable through the public API with a tensor volatility.
+    """
+    tensor = np.eye(2) * 0.2
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            None,
+            _problem(),
+            velocity_field=_velocity(vx=0.6),
+            advection_scheme="divergence_upwind",
+            tensor_diffusion_field=tensor,
+        )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_upwind"])
+def test_a_zero_velocity_that_displaces_a_callable_drift_raises(scheme):
+    """The velocity arm wins over the callable-drift arm too, not only over the U arm.
+
+    Enumerating inputs got this predicate wrong twice -- first on magnitude, then on U alone.
+    The invariant is about what the `velocity_field is not None` branch DISPLACES, and that
+    branch has two siblings. A zero velocity supplied with a callable drift discards the
+    callable and solves pure diffusion.
+    """
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            None,
+            _problem(),
+            velocity_field=_velocity(),
+            drift_field=lambda t, x, m: np.zeros((2, N, N)),
+            advection_scheme=scheme,
+        )
+
+
 def test_a_misspelled_scheme_reports_itself_as_such():
     """The velocity guard must not pre-empt scheme-name validation and mis-attribute a typo."""
     with pytest.raises(ValueError, match="Unknown advection_scheme"):

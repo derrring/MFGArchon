@@ -738,25 +738,60 @@ def solve_fp_nd_full_system(
     # the per-timestep assembly validates the name, but only after this guard would have fired.
     if velocity_field is not None and _resolved_scheme not in _VALID_SCHEMES:
         raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
-    _velocity_is_consumed = velocity_field is not None and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
-    # Issue #1632. The hazard is not that the velocity is dropped -- it is that the branch below
-    # replaces U with a zero-U dispatcher whenever `velocity_field is not None`, whatever its
-    # magnitude. So a zero velocity is harmless only when there is no U for it to displace; a zero
-    # velocity supplied *alongside* a real U produces exactly the silent wrong answer this guard
-    # exists to stop. `Nt = velocity_field.shape[0]` below is a second reason the two are not
-    # interchangeable: a velocity with fewer time slices than U silently shortens the solve.
-    if velocity_field is not None and not _velocity_is_consumed:
-        if np.any(velocity_field) or U_solution_for_drift is not None:
+    # A velocity is genuinely consumed only when the assembly it reaches has an
+    # `interface_velocity` parameter. `solve_timestep_tensor_explicit` has none, so on the
+    # tensor-diffusion path NO scheme reads it -- including `divergence_upwind`, the default and
+    # the sole member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone made
+    # the accept-list false exactly where it is most load-bearing.
+    _velocity_is_consumed = (
+        velocity_field is not None
+        and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
+        and tensor_diffusion_field is None
+    )
+    # Issue #1632. Two independent hazards, and conflating them got the predicate wrong twice.
+    #
+    # DISPLACEMENT: the `velocity_field is not None` arm below wins over BOTH of its siblings, so
+    # a velocity of any magnitude silently discards whatever `U_solution_for_drift` or a callable
+    # `drift_field` would have contributed. This bites even on the consuming scheme -- a zero
+    # velocity there is consumed as zero advection while the callable drift is thrown away, which
+    # is the same silent pure-diffusion answer.
+    #
+    # CONSUMPTION: an unconsumed velocity is simply dropped. Harmless only when it is all zeros,
+    # because then the drift is zero either way.
+    #
+    # `Nt = velocity_field.shape[0]` is a further reason the arms are not interchangeable -- a
+    # velocity with fewer time slices than U shortens the solve -- but that is #919's contract for
+    # the velocity-only path, not this guard's to enforce.
+    if velocity_field is not None:
+        _displaced = []
+        if U_solution_for_drift is not None:
+            _displaced.append("U_solution_for_drift")
+        if use_callable_drift:
+            _displaced.append("a callable drift_field")
+        if _displaced:
             raise NotImplementedError(
-                f"advection_scheme={advection_scheme!r} does not read 'interface_velocity', but a "
-                f"velocity_field was supplied that cannot be discarded safely. The velocity would be "
-                f"dropped AND the U channel is disabled below, so the solve would run at zero drift "
-                f"and return a pure-diffusion density that looks converged and conserves mass "
-                f"(Issue #1632). Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux'), or "
-                f"drop velocity_field and supply the value function instead -- 'potential_field' on "
-                f"FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so the drift is derived "
-                f"as -c*grad(U), which is valid only for a smooth separable Hamiltonian. Only an "
-                f"all-zero velocity with no U supplied is accepted, since it displaces nothing."
+                f"velocity_field was supplied together with {' and '.join(_displaced)}. The "
+                f"velocity branch wins, so that input is silently discarded and the solve runs on "
+                f"the velocity alone -- pure diffusion when the velocity is zero, and in every "
+                f"case not the problem the caller described (Issue #1632). Supply exactly one "
+                f"drift input."
+            )
+        if not _velocity_is_consumed and np.any(velocity_field):
+            _where = (
+                "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
+                "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list "
+                "does not apply here"
+                if tensor_diffusion_field is not None
+                else f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
+            )
+            raise NotImplementedError(
+                f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped "
+                f"and the solve would run at zero drift, returning a pure-diffusion density that "
+                f"looks converged and conserves mass (Issue #1632). Supply the value function "
+                f"instead -- 'potential_field' on FPFDMSolver.solve_fp_system, "
+                f"'U_solution_for_drift' here -- so the drift is derived as -c*grad(U), valid only "
+                f"for a smooth separable Hamiltonian; or use one of "
+                f"{sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar diffusion."
             )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]

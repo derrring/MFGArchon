@@ -64,8 +64,14 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     # one-sided (U[1]-U[0])/dx. Those are algebraically identical for a linear U, so a linear
     # potential leaves this test blind to the very defect it pins: reverting both walls to the
     # one-sided form keeps the mass drift at 3.9e-15 under `U = x`, and moves it to 3.0e-02 here.
-    potential = np.tile(x + 0.5 * x**2, (nt + 1, 1))
-    m0 = np.exp(-200 * (x - 0.05) ** 2)  # bump AT the left wall (columns 0-2)
+    potential = np.tile(0.3 * np.sin(np.pi * x), (nt + 1, 1))
+    # A bump at EACH wall: `U = x + x^2/2` gave a leftward drift everywhere, so the right wall
+    # carried ~5e-15 of density and every right-wall mutation was invisible. `0.3*sin(pi*x)` has
+    # an interior maximum, so the drift runs into both walls, and it is curved, so the central
+    # and one-sided face stencils differ there. Measured: reverting the LEFT wall to one-sided
+    # gives 3.390e-03 and the RIGHT wall 3.390e-03 -- symmetric, where before it was 3.001e-02
+    # and 3.664e-15 (blind).
+    m0 = np.exp(-200 * (x - 0.05) ** 2) + np.exp(-200 * (x - 0.95) ** 2)
     m0 /= m0.sum() * dx
 
     traj = fp.solve_fp_system(m0, potential_field=potential)
