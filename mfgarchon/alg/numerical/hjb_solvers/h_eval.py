@@ -81,7 +81,11 @@ def assemble_hjb_residual(
 ) -> NDArray:
     r"""Assemble the implicit-backward-Euler HJB residual (Layer B of #1071).
 
-    Returns ``-u_t + H(+additive_source) - D·lap_u`` with ``D = σ²/2``, so the diffusion-term
+    Returns ``-u_t + H(+additive_source) - D·lap_u``. **The sign is opposite to the
+    package-wide** ``source_term`` **contract**, which `base_hjb` states as
+    ``F(u) = (u-u_next)/dt + H - S``: a caller holding an MMS source ``S`` must pass
+    ``-S`` here. GFDM does that conversion once, in ``_source_at``. The name says
+    *additive*, not *source*, for exactly that reason with ``D = σ²/2``, so the diffusion-term
     convention (Issue #1073/#811) lives in one place. The caller supplies its own discrete
     operators (gradient ``p``, Laplacian ``lap_u``) and the time-derivative
     ``u_t = (u^{n+1}-u^n)/dt``; it owns its own framing -- this is the implicit residual

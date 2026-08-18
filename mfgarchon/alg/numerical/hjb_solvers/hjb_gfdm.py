@@ -2284,7 +2284,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             H = self.problem.H(i, m_n_plus_1[i], derivs=p_derivs, x_position=x_pos)
 
-            # Running cost L(x) at this timestep (passed explicitly from backward loop)
+            # Additive source at this timestep (passed explicitly from the backward loop)
             if additive_source is not None:
                 H = H + additive_source[i]
 
@@ -3036,8 +3036,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 source cannot be confused with a running cost: there is no longer a second slot
                 to confuse it with (Issue #1999). Internally the two still meet with OPPOSITE
                 signs, since ``h_eval`` assembles ``-u_t + H(+additive_source) - D*lap_u`` while
-                the source contract subtracts; the conversion happens once, in ``_source_at``.
-                Added to Hamiltonian: H_total = H(x,p,m) + L(t,x).
+                the source contract subtracts; the conversion happens once, in ``_source_at``,
+                which returns ``-S``. So the effective Hamiltonian is ``H_total = H - S``, NOT
+                ``H + S``: migrating a callable from the retired ``running_cost=`` channel
+                requires FLIPPING ITS SIGN, since ``running_cost = -source_term``.
             volatility_field: Optional SDE-volatility override. Accepts a scalar,
                 an inspectable one-argument space-only callable ``sigma(x)`` evaluated
                 at each collocation point, or a
@@ -3091,8 +3093,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Store original spatial shape for reshaping output
         self._output_spatial_shape = M_density.shape[1:]
 
-        # Normalize running cost to callable f(n) -> (n_points,)
-        # Accepts: None, 1D array, 2D array, or callable
         # Issue #1999: there is no user running-cost channel. The alpha-independent part of the
         # Lagrangian -- V(x,t) + f(m) -- is owned by the Hamiltonian and already enters through
         # `eval_H_batch` on the Newton path and `howard_running_cost` on the Howard path. A second
@@ -3116,7 +3116,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
-                # 6.6433e+00 to 4.6862e+00 with no diagnostic. the retired running-cost channel already
+                # 6.6433e+00 to 4.6862e+00 with no diagnostic, and nothing downstream
                 # validates its callable's output; this is the same contract.
                 if s_n.shape != (self.n_points,):
                     # An (N,1) or (1,N) vector has an unambiguous ordering, and `base_hjb`
@@ -3390,7 +3390,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if mms_src is not None:
                     # `_mms_source_fn` already returns -S in the Newton slot's convention, and the
                     # `-rc` below applies Howard's own flip, so it enters here un-negated exactly
-                    # like `user_rc`.
+                    # in the slot the retired user running cost used.
                     rc = rc + np.asarray(mms_src(t_idx), dtype=float).ravel()
                 return -rc  # rc_t = -(V + f(m) + S_mms); see SIGN note above.
 

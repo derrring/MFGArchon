@@ -6,7 +6,11 @@ that argument, so the capability gate at `coupling/base_mfg.py:215` rejected it 
 HJB solver", while GFDM in fact had the channel all along under the name `running_cost`. The gate
 keys on a parameter NAME, so it was measuring a proxy for the capability it was asked about.
 
-`source_term` and `running_cost` are NOT the same quantity and are deliberately not unified:
+`source_term` and `running_cost` were never the same quantity. #1999 then removed the
+`running_cost=` parameter from this solver entirely -- not because they are the same, but
+because that channel could only carry what `source_term` already carries, at the opposite
+sign. The distinction below is why a *rename* would have been wrong; the removal rests on
+`source_term`'s own contract being general enough, which was verified bitwise:
 
 - `running_cost` is model data. `HJBHowardSolver` documents this slot as "the non-quadratic-in-alpha
   part of the Lagrangian (potential V(x), congestion g(x, m), etc.)", so it MAY depend on `m`; the
@@ -15,9 +19,9 @@ keys on a parameter NAME, so it was measuring a proxy for the capability it was 
 - `source_term` is artificial forcing for verification and must not depend on `m`.
 
 They share one arithmetic slot with opposite signs -- `h_eval.assemble_hjb_residual` returns
-`-u_t + H(+running_cost) - D*lap_u` while the source contract in `base_hjb` is
-`F(u) = (u-u_next)/dt + H - S = 0`, hence `running_cost = -source_term` -- so the solver keeps them
-as separate attributes and adds them only at the call site.
+`-u_t + H(+additive_source) - D*lap_u` while the source contract in `base_hjb` is
+`F(u) = (u-u_next)/dt + H - S = 0`, hence `running_cost = -source_term`. That sign is why a
+migration is not a rename, and it is what `test_the_source_sign_is_not_free` pins.
 
 Manufactured pair is the 1D reduction of the coupled MMS in the GFDM paper
 (`chapters/appendix.tex`, eq:mms_reference / eq:mms_system):
@@ -205,7 +209,7 @@ def test_the_per_point_residual_path_also_honours_the_source():
     """A THIRD arithmetic site, with its own sign, and nothing else reaches it.
 
     `qp_optimization_level != "none"` switches off the batch residual and uses the per-point
-    loop, where the source enters at `hjb_gfdm.py:2332` as `H = H + running_cost[i]` -- separate
+    loop, where the source enters at `hjb_gfdm.py` as `H = H + additive_source[i]` -- separate
     from `h_eval.assemble_hjb_residual` (Newton batch) and from `howard_running_cost`'s `-rc`.
     Three sites, three conventions to keep straight. Flipping the sign at that one line leaves
     every other test in this module green while the path sits at the flat-1.42 non-convergence
