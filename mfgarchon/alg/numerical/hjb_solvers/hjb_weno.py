@@ -53,7 +53,6 @@ from .base_hjb import BaseHJBSolver
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 WenoVariant = Literal["weno5", "weno-z", "weno-m", "weno-js"]
@@ -659,10 +658,10 @@ class HJBWENOSolver(BaseHJBSolver):
             k1 = self._compute_hjb_rhs_axis(u, m, axis) + src(t_now)
             u1 = u + dt * k1
             # Stage 2
-            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(None if t_now is None else t_now - dt)
+            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(t_now if t_now is None else t_now - dt)
             u2 = (3 / 4) * u + (1 / 4) * u1 + (1 / 4) * dt * k2
             # Stage 3
-            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(None if t_now is None else t_now - 0.5 * dt)
+            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(t_now if t_now is None else t_now - 0.5 * dt)
             return (1 / 3) * u + (2 / 3) * u2 + (2 / 3) * dt * k3
         elif self.time_integration == "explicit_euler":
             return u + dt * (self._compute_hjb_rhs_axis(u, m, axis) + src(t_now))
@@ -1035,10 +1034,10 @@ class HJBWENOSolver(BaseHJBSolver):
         """Solve 1D HJB system (original implementation).
 
         ``source_term(t, x) -> array`` is the MMS forcing ``r_u`` of
-        ``-u_t - (sigma^2/2) u_xx + H(x, u_x, m) = r_u``. It is added once per CFL sub-step at
-        that sub-step's own physical time, not once per interval: ``_advance_full_interval``
-        may take many sub-steps per ``dt``, and forcing the whole interval at each of them
-        would scale the source by the sub-step count.
+        ``-u_t - (sigma^2/2) u_xx + H(x, u_x, m) = r_u``, with ``x`` of shape ``(N, d)`` per the
+        contract in :mod:`base_hjb`. It enters as a *rate* in each RK stage and is multiplied by
+        the sub-step there, evaluated at that sub-step's own physical time, so the clock has to
+        advance with the sub-steps rather than per interval.
         """
         # Extract dimensions from input
         # M_density has shape (n_time_points, Nx) where n_time_points = problem.Nt + 1
@@ -1052,8 +1051,11 @@ class HJBWENOSolver(BaseHJBSolver):
         # Set final condition (last time index)
         U_solved[-1, :] = U_final_condition_at_T
         if source_term is not None:
-            bounds_1d = self._get_domain_bounds()[0]
-            x_grid = np.linspace(bounds_1d[0], bounds_1d[1], Nx)
+            # base_hjb.py documents the contract as `source_term(t, x)` with x of shape (N, d),
+            # and both existing implementations get it from the geometry. Building a bare (N,)
+            # linspace here would make one manufactured source unrunnable across two solvers,
+            # which defeats the point of a shared MMS channel.
+            x_grid = self.problem.geometry.get_spatial_grid()
             forcing = lambda tt: source_term(tt, x_grid)  # noqa: E731
 
         # Backward time integration
