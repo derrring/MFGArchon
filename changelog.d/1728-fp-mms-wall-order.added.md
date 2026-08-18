@@ -13,9 +13,15 @@ Two instances, and the pair is what separates the two defects `gradient_upwind` 
 `phi = -A.x` the drift is a constant vector, so the divergence and gradient interior forms coincide
 and only the wall closure is under test; repointing `gradient_upwind`'s wall at the conservative
 routine repairs it there completely (6.69e-1 -> 2.23e-2, EOC 0.937). With the GFDM paper's published
-source-free instance `phi = A(cos K x1 + cos K x2)` the drift is not constant, `m div(alpha)` is
-non-zero, and the same repointing leaves the scheme non-convergent (5.81e-1 -> 8.02e-1, EOC 0.108).
-So the gradient form is not the FP operator with a bad wall; it is a different operator. Both
+source-free instance `phi = A(cos K x1 + cos K x2)` the drift is not constant and `m div(alpha)` is
+non-zero. There the failure is provably not the wall's, by two wall-free checks: the instance is
+exactly periodic-compatible, and under `periodic_bc` -- where no wall handler runs -- `gradient_upwind`
+returns the same errors as under no-flux to seven figures (5.811380e-01 / 5.839517e-01, EOC -0.007
+both ways) while `divergence_upwind` does move (5.503e-2 -> 5.257e-2); and the omitted term is
+analytic, `div(alpha m) - alpha.grad(m) = -m Lap(phi)`, max 31.76 here and identically zero on the
+linear instance. So the gradient form is not the FP operator with a bad wall; it is a different
+operator. (Repointing the wall and re-measuring would give a flux-form boundary on a gradient
+interior, a hybrid that is neither scheme, so its number is not cited.) Both
 defects are pinned, each with its own retirement condition, verified to trip on its own fix and not
 on the other's.
 

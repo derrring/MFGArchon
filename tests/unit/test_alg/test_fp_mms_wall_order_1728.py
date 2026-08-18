@@ -22,8 +22,8 @@ Two instances of that family are measured, and they are independent of each othe
 - **Gibbs** `phi = A(cos Kx₁ + cos Kx₂)` with K = 4π, D = 1/8, A = D ln5/4, T = 1 on (0,1)²: the
   published source-free exact reflected MFG of the GFDM paper (app:source_free_benchmark,
   def:source_free_benchmark), whose m* has contrast max/min = 5. Here ∂_ν phi = 0 on ∂Ω, so b*·n
-  vanishes **at the wall node** -- but not on the boundary cell's interior face, where
-  |∂₁phi| = A K sin(K dx) = 0.195 at dx = 1/40. A published oracle reaching the same verdicts as
+  vanishes **at the wall node** -- but not on the boundary cell's interior face, where the
+  velocity the scheme forms, −(phi(dx) − phi(0))/dx, is 0.0985 at dx = 1/40. A published oracle reaching the same verdicts as
   the linear one is worth more than either alone.
 
 Why the study runs over dimension and over sign
@@ -37,11 +37,15 @@ of the three separate in 2D.
 The sign is parametrized because A > 0 alone never exercises the upwind *selection*: every face
 velocity has one sign, so only one branch of each `if alpha >= 0 / else` is taken, and a mutant that
 always upwinds from the left reproduces the library's output to bitwise equality. The library's own
-numbers are unchanged by the flip -- the problem is mirror-symmetric under x -> L − x -- while such
-a mutant is not, so the coverage is free.
+numbers are unchanged by the flip to 9.3e-14 -- the problem is mirror-symmetric under x -> L − x
+-- while such a mutant is not, so the coverage is free.
 
 WHAT THIS STUDY CANNOT SEE
 --------------------------
+- **The two `gradient_upwind` pins assert that it is broken, so they cannot protect what still
+  works in it.** Deleting its advection term outright leaves all tests here green. That is
+  inherent to pinning non-convergence, and it is the honest answer to "what change trips
+  neither pin while breaking the scheme": read them as recording two defects, not as coverage.
 - **It cannot attribute the order to the wall alone.** The measured order is a *min* over the wall
   closure and the interior stencil: substituting a centered interior for `divergence_upwind` still
   gives EOC 0.89/0.94, and substituting a centered *wall* still gives 0.89/0.95 in 1D. That is why
@@ -51,17 +55,28 @@ WHAT THIS STUDY CANNOT SEE
   pair can, which is why both are here. With constant A, ∇·(αm) = α·∇m + m∇·α reduces to α·∇m, so
   `gradient_upwind`'s interior collapses to `divergence_upwind`'s flux difference, and repointing
   the former's *wall* at the conservative routine makes the two agree to 2.5e-14 there. The Gibbs
-  instance is the complement: its potential is non-linear, so m∇·α ≠ 0, and the SAME wall
-  repointing leaves `gradient_upwind` non-convergent (5.81e-1 -> 8.02e-1, EOC −0.007 -> 0.108)
-  while it fully repairs the linear instance (6.69e-1 -> 2.23e-2, EOC 0.937). So the wall defect
-  and the interior-form defect are separated here without any source term: a non-constant
-  SOURCE-FREE potential suffices, and a sourced MMS is not needed for this question.
+  instance is the complement: its potential is non-linear, so m∇·α ≠ 0, and there the failure is
+  provably not the wall's. Two wall-free checks, because repointing the wall and re-measuring
+  gives a flux-form boundary on a gradient interior -- a hybrid that is neither scheme, so its
+  number measures nothing:
+
+    * The Gibbs instance is exactly periodic-compatible (phi(0) = phi(1), ∇phi = 0 at both ends),
+      and under `periodic_bc` no wall handler is called at all. `gradient_upwind` returns
+      **5.811380e-01 / 5.839517e-01 under both** boundary conditions, identical to seven figures,
+      EOC −0.007 either way. `divergence_upwind` does move (5.503e-2 -> 5.257e-2), which is the
+      control showing the boundary swap is a change this measurement can see.
+    * The omitted term is analytic: ∇·(αm) − α·∇m = m∇·α = −m Δphi, whose max is **31.76** on this
+      instance and identically **zero** on the linear one.
+
+  So the wall defect and the interior-form defect are separated here without any source term: a
+  non-constant SOURCE-FREE potential suffices, and a sourced MMS is not needed for this question.
 - **It cannot see a dt error floor**, because the exact solution is stationary. `NT` is held fixed
   while Nx refines for that reason -- not because the schemes are implicit, which buys unconditional
   stability and nothing about accuracy. Measured: errors move < 2% from NT = 10 to NT = 640, and the
   orders are unchanged under NT ~ Nx and NT ~ Nx². For a *non-stationary* manufactured solution the
   same fixed-NT refinement would be confounded, and the explicit FP solvers are confounded by it
-  here (`fvm:upwind` reads EOC −1.34 at fixed NT and +0.81 once dt refines with dx).
+  here: `fvm:upwind` reads EOC −1.34 at fixed NT, still −0.26 at dt ∝ dx, and only +0.91 at
+  dt ∝ dx², which is the rule the diffusive number D dt/dx² actually fixes.
 """
 
 from __future__ import annotations
@@ -103,6 +118,9 @@ LEVELS = {1: (21, 41, 81), 2: (21, 41)}
 UPWIND_LEVEL_BOUND = {1: 2.3e-2, 2: 2.9e-2}
 # Same construction for the Gibbs instance: library 5.5032e-2, centered-interior mutant 1.6857e-1.
 GIBBS_LEVEL_BOUND = 1.1e-1
+# Those constants are levels, not ratios, so they are meaningless at a different coarsest grid:
+# at Nx = 41 the B1 mutant slips under the d=1 bound and at Nx = 11 the library itself exceeds it.
+assert all(v[0] == 21 for v in LEVELS.values()), "level bounds were measured at Nx = 21"
 
 
 def _build(nx: int, d: int, sigma: float, horizon: float) -> tuple[TensorProductGrid, MFGProblem]:
@@ -162,24 +180,41 @@ def _orders(errors: list[float]) -> list[float]:
     return [float(np.log(a / b) / np.log(2.0)) for a, b in pairwise(errors)]
 
 
+def _analytic_drift(grid: TensorProductGrid, instance: str, A: np.ndarray) -> list[np.ndarray]:
+    """b* = -grad(phi), per component, on the grid layout."""
+    shape = tuple(grid.Nx_points)
+    if instance == "linear":
+        return [np.full(shape, A[k]) for k in range(len(shape))]
+    points = grid.get_spatial_grid()
+    return [(GIBBS_A * GIBBS_K * np.sin(GIBBS_K * points[:, k])).reshape(shape) for k in range(len(shape))]
+
+
+@pytest.mark.parametrize("instance", ["linear", "gibbs"])
 @pytest.mark.parametrize("d", [1, 2])
-def test_manufactured_pair_carries_zero_flux(d: int) -> None:
+def test_manufactured_pair_carries_zero_flux(d: int, instance: str) -> None:
     """Positive control on the oracle itself, before any solver is measured against it.
 
     The construction claims J ≡ 0. If it is wrong -- or if the flat (N, d) point list is reshaped in
     the wrong order -- every order below is measured against a wrong reference. The finite difference
     used here is second order, so the residual must fall by ~4 per refinement; a scrambled field does
     not converge at all (measured on an F-order reshape: order 0.001).
+
+    The Gibbs field is EXACTLY transpose-symmetric, so it can never detect an axis swap; the linear
+    pair, whose components are distinct, is what carries that half for both instances.
     """
     A = A_FULL[:d]
+    diffusion = LIN_D if instance == "linear" else GIBBS_D
+    sigma, horizon = (LIN_SIGMA, LIN_T) if instance == "linear" else (GIBBS_SIGMA, GIBBS_T)
     residuals = []
     for nx in (21, 41):
-        grid, _ = _build(nx, d, LIN_SIGMA, LIN_T)
-        m, _ = _zero_flux_pair(grid, _linear_phi(grid, A), LIN_D)
+        grid, _ = _build(nx, d, sigma, horizon)
+        phi = _linear_phi(grid, A) if instance == "linear" else _gibbs_phi(grid)
+        m, _ = _zero_flux_pair(grid, phi, diffusion)
+        b = _analytic_drift(grid, instance, A)
         dx = L / (nx - 1)
         residuals.append(
             max(
-                float(np.abs(A[k] * m - LIN_D * np.gradient(m, dx, axis=k, edge_order=2)).max() / m.max())
+                float(np.abs(b[k] * m - diffusion * np.gradient(m, dx, axis=k, edge_order=2)).max() / m.max())
                 for k in range(d)
             )
         )
@@ -261,16 +296,24 @@ def test_gradient_upwind_is_wrong_on_a_non_linear_potential_for_a_second_reason(
     The linear instance has constant α, so ∇·(αm) = α·∇m there and the two interior forms coincide;
     fixing the wall repairs `gradient_upwind` completely on it (6.69e-1 -> 2.23e-2, EOC 0.937,
     matching `divergence_upwind`). On this instance α is not constant, m∇·α ≠ 0, and the gradient
-    form is therefore discretizing a different operator. The same wall repointing does NOT repair it
-    (5.81e-1 -> 8.02e-1, EOC −0.007 -> 0.108) -- which is the evidence that `gradient_upwind` is not
-    the FP operator with a bad wall, but a different operator.
+    form is therefore discretizing a different operator. The evidence is wall-free, because
+    repointing the wall and re-measuring would give a flux-form boundary on a gradient interior --
+    a hybrid that is neither scheme. Instead: this instance is exactly periodic-compatible, and
+    under `periodic_bc`, where no wall handler runs at all, `gradient_upwind` returns the SAME
+    errors as under no-flux to seven figures (5.811380e-01 / 5.839517e-01, EOC −0.007 both ways)
+    while `divergence_upwind` does move (5.503e-2 -> 5.257e-2). The omitted term is analytic:
+    ∇·(αm) − α·∇m = −m Δphi, max 31.76 here and identically zero on the linear instance.
 
     Retirement condition, and it is NOT the wall fix: this pin retires when the interior form is
     corrected to carry m∇·α, or when the scheme is removed. A wall-only change leaves it passing,
     correctly.
+
+    The assertion is on the ORDER rather than the error level, because the level does not separate
+    the states it must: library 0.5811, interior-fixed 0.5150, advection-deleted 0.5185, all within
+    13% of each other. The order does: −0.007, +1.340, −0.004.
     """
-    errors = [_solve_error("gradient_upwind", nx, "gibbs") for nx in LEVELS[2]]
-    assert all(e > 0.5 for e in errors), (
-        f"gradient_upwind is no longer grossly wrong on a non-linear potential (errors={errors}). "
-        f"If the interior form now carries m*div(alpha), delete this pin and assert a real order."
+    orders = _orders([_solve_error("gradient_upwind", nx, "gibbs") for nx in LEVELS[2]])
+    assert all(abs(o) < 0.2 for o in orders), (
+        f"gradient_upwind now converges on a non-linear potential (orders={orders}). If the interior "
+        f"form carries m*div(alpha), delete this pin and assert a real order."
     )
