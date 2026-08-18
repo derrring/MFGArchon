@@ -648,23 +648,27 @@ class HJBWENOSolver(BaseHJBSolver):
         # (1.445e-3 -> 9.16e-5 over 16x refinement, EOC 1.00), hiding the spatial order the study
         # exists to measure. Backward marching mirrors the forward SSP-RK3 stage times
         # t, t + dt, t + dt/2 into t, t - dt, t - dt/2.
-        def src(stage_t):
+        # Offsets rather than absolute stage times, so `t_now` is never arithmetic'd when there
+        # is no source. The previous form guarded each call site with `None if t_now is None`,
+        # which was dead on every reachable path and, had it fired, would only have handed `None`
+        # to the caller's source_fn.
+        def src(dt_offset):
             if source_fn is None:
                 return 0.0
-            return np.asarray(source_fn(stage_t), dtype=float).reshape(u.shape)
+            return np.asarray(source_fn(t_now + dt_offset), dtype=float).reshape(u.shape)
 
         if self.time_integration == "tvd_rk3":
             # Stage 1
-            k1 = self._compute_hjb_rhs_axis(u, m, axis) + src(t_now)
+            k1 = self._compute_hjb_rhs_axis(u, m, axis) + src(0.0)
             u1 = u + dt * k1
             # Stage 2
-            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(t_now if t_now is None else t_now - dt)
+            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(-dt)
             u2 = (3 / 4) * u + (1 / 4) * u1 + (1 / 4) * dt * k2
             # Stage 3
-            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(t_now if t_now is None else t_now - 0.5 * dt)
+            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(-0.5 * dt)
             return (1 / 3) * u + (2 / 3) * u2 + (2 / 3) * dt * k3
         elif self.time_integration == "explicit_euler":
-            return u + dt * (self._compute_hjb_rhs_axis(u, m, axis) + src(t_now))
+            return u + dt * (self._compute_hjb_rhs_axis(u, m, axis) + src(0.0))
         else:
             raise ValueError(f"Unknown time integration: {self.time_integration}")
 

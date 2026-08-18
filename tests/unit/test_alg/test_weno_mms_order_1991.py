@@ -9,7 +9,10 @@ resulting measurement shows.
 the same channel under the name `running_cost`, with a different convention -- `f(n) ->
 (n_points,)` rather than `f(t, x)`. The capability gate keys on the name `source_term`, so
 it rejects GFDM for lacking a capability GFDM has. Tracked on #1991; a divergent mechanism
-rather than a missing one, and not this PR's to fix.)
+rather than a missing one, and not this PR's to fix. The match is established on name and
+signature only -- `hjb_gfdm.py:3354` negates the user running cost before it enters Howard's
+slot, so the SIGN relationship to `source_term` is still open, and a port that carries an FDM
+source into GFDM unchanged would converge on the wrong solution.)
 
 The oracle is external in AGENTS.md's sense: an exact solution constructed independently of
 the scheme, not a second code path. The manufactured pair is the 1D reduction of the coupled
@@ -33,7 +36,8 @@ The error has two terms of OPPOSITE sign: the HJ-WENO5 reconstruction at O(h^5) 
 central second-difference diffusion at O(h^2), the latter scaling with sigma^2. They cancel,
 and an earlier version of this docstring asserted the same model with both terms positive --
 which confines the EOC to [2, 5] and so forbids the 0.86 sitting in its own table. Signed
-error at x = 0, sigma = 0.05:
+error at x = 0, sigma = 0.05, Nt = 40 (the EOC ladders above are Nt = 20; the sign change
+reproduces at either, but these magnitudes are the Nt = 40 ones):
 
     Nx= 21  -2.982166e-04
     Nx= 41  -5.751384e-06
@@ -48,8 +52,8 @@ the diffusion out of range at sigma = 0.0005 removes the cancellation and gives 
 by the second-order diffusion discretisation, which is a design property, not a defect.
 
 WHAT THIS STUDY CANNOT SEE. `a1` is linear in `t`, so the exact trajectory is a straight line
-and SSP-RK3 integrates it exactly: the L-infinity error is 5.7514e-06 at Nx=41 for EVERY Nt
-from 10 to 320, EOC 0.00 throughout. That is deliberate -- it isolates the spatial operator --
+and SSP-RK3 integrates it exactly: the L-infinity error is 5.7514e-06 at Nx=41, sigma=0.05,
+for EVERY Nt from 10 to 320, EOC 0.00 throughout. That is deliberate -- it isolates the spatial operator --
 but it means no number here establishes third-order-in-time. It cuts the useful way for the
 stage-time tests: because the correct assignment drives the temporal error to zero rather than
 merely small, a wrong stage time is not buried under it but stands out as a flat O(dt) floor.
@@ -188,5 +192,10 @@ def test_source_term_is_refused_rather_than_dropped_in_multi_d():
     u_T = np.zeros((11, 11))
     with pytest.raises(NotImplementedError, match="1991"):
         solver.solve_hjb_system(
-            M_density=m, U_terminal=u_T, U_coupling_prev=np.tile(u_T, (6, 1, 1)), source_term=lambda t, x: 0.0
+            M_density=m,
+            U_terminal=u_T,
+            U_coupling_prev=np.tile(u_T, (6, 1, 1)),
+            # Shape-correct even though it is never called: a scalar return is not a valid
+            # source under the base contract, and the test should not model an unsupported call.
+            source_term=lambda t, x: np.zeros(np.asarray(x).shape[0]),
         )
