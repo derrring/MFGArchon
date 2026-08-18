@@ -137,8 +137,13 @@ _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 # the drift would be identically zero rather than the -c*grad(U) an earlier comment here claimed.
 # Measured before the guard: `gradient_upwind` with a velocity was bit-identical to the
 # pure-diffusion reference (|B-C| = 0.000e+00) while differing from the U-driven run by 2.1e-2.
-# That is the reachable path for every non-separable Hamiltonian, since resolve_fp_drift_kwargs
-# routes those down the velocity channel precisely because -c*grad(U) cannot represent their drift.
+# Reachable by an EXPLICIT velocity: `FPFDMSolver.solve_fp_system(m0, drift_field=<ndarray>)` on a
+# non-consuming scheme, or `FixedPointIterator(..., drift_field=<ndarray>)`, which is forwarded
+# verbatim and bypasses the smoothness dispatch. NOT reachable on the auto-routed coupling path: a
+# non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
+# quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
+# velocity. An earlier revision of this comment claimed the coupling path reached it; measurement
+# on both trees says it raises instead.
 # This set is the accept-list the guard tests against, and it still tells the driver which schemes
 # leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
@@ -728,22 +733,31 @@ def solve_fp_nd_full_system(
     # Issue #919 Phase 2: velocity_field → pass to implicit solver directly
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
-    _velocity_is_consumed = velocity_field is not None and (
-        _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
-    )
-    # Issue #1632: fire exactly when discarding the velocity would change the answer. A velocity
-    # that is identically zero is discarded harmlessly -- the drift is zero either way -- and
-    # zero-drift arrays are how the diffusion-only callers reach every scheme.
-    if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
-        raise NotImplementedError(
-            f"advection_scheme={advection_scheme!r} does not read 'interface_velocity', but a "
-            f"non-zero velocity_field was supplied. The velocity would be discarded AND the U "
-            f"channel is already disabled below, so the solve would run at zero drift and return "
-            f"a pure-diffusion density that looks converged and conserves mass (Issue #1632). "
-            f"Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)}, or drop velocity_field and pass "
-            f"U_solution_for_drift so the drift is derived as -c*grad(U) -- valid only for a "
-            f"smooth separable Hamiltonian."
-        )
+    _resolved_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
+    # A misspelled scheme must report itself as such rather than as a velocity-channel problem:
+    # the per-timestep assembly validates the name, but only after this guard would have fired.
+    if velocity_field is not None and _resolved_scheme not in _VALID_SCHEMES:
+        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
+    _velocity_is_consumed = velocity_field is not None and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
+    # Issue #1632. The hazard is not that the velocity is dropped -- it is that the branch below
+    # replaces U with a zero-U dispatcher whenever `velocity_field is not None`, whatever its
+    # magnitude. So a zero velocity is harmless only when there is no U for it to displace; a zero
+    # velocity supplied *alongside* a real U produces exactly the silent wrong answer this guard
+    # exists to stop. `Nt = velocity_field.shape[0]` below is a second reason the two are not
+    # interchangeable: a velocity with fewer time slices than U silently shortens the solve.
+    if velocity_field is not None and not _velocity_is_consumed:
+        if np.any(velocity_field) or U_solution_for_drift is not None:
+            raise NotImplementedError(
+                f"advection_scheme={advection_scheme!r} does not read 'interface_velocity', but a "
+                f"velocity_field was supplied that cannot be discarded safely. The velocity would be "
+                f"dropped AND the U channel is disabled below, so the solve would run at zero drift "
+                f"and return a pure-diffusion density that looks converged and conserves mass "
+                f"(Issue #1632). Use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux'), or "
+                f"drop velocity_field and supply the value function instead -- 'potential_field' on "
+                f"FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so the drift is derived "
+                f"as -c*grad(U), which is valid only for a smooth separable Hamiltonian. Only an "
+                f"all-zero velocity with no U supplied is accepted, since it displaces nothing."
+            )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
         # Create a zero-U dispatcher (U is unused when interface_velocity is set)
@@ -964,9 +978,9 @@ def solve_fp_nd_full_system(
                 sigma_at_k,
                 # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
                 # velocity carries alpha* per face, so the scalar coefficient is unused; every
-                # other path derives its drift from U and needs it. Since #1632 a supplied
-                # velocity on a non-consuming scheme raises above, so the else branch is now
-                # reached only when no velocity was given at all.
+                # other path derives its drift from U and needs it. The else branch is still
+                # reached with a velocity present -- an all-zero one on a non-consuming scheme is
+                # accepted by the #1632 guard and lands here, resolving a real coefficient.
                 _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,

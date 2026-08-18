@@ -131,17 +131,45 @@ def test_velocity_on_a_non_consuming_scheme_raises(scheme):
 
 @pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
 def test_a_zero_velocity_is_not_an_error(scheme):
-    """The guard fires on a wrong answer, not on the mere presence of the parameter.
+    """A zero velocity with NO U to displace is the one accepted case.
 
-    A velocity of exactly zero is discarded harmlessly -- the drift is zero either way -- and
-    `FPFDMSolver` reaches every scheme with a zero drift array on its diffusion-only paths
-    (`_internal_velocity` is set whenever `drift_field` is an ndarray). Raising here would
-    break the torus and mass-leak suites, which is how this over-broad first cut was caught.
+    The ground is not "a zero velocity is harmless" -- it is not the velocity that gets
+    discarded. The `velocity_field is not None` branch replaces U with a zero-U dispatcher
+    whatever the velocity's magnitude, so the only safe case is one where there was no U to
+    lose. `FPFDMSolver` reaches every scheme this way on its diffusion-only paths
+    (`_internal_velocity` is set whenever `drift_field` is an ndarray), which is why raising
+    unconditionally broke the torus and mass-leak suites and had to be narrowed.
     """
     result = solve_fp_nd_full_system(
         _uniform_density(), None, _problem(), velocity_field=_velocity(), advection_scheme=scheme
     )
     assert np.isfinite(result).all()
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
+    """The narrowing must not open the hole it was narrowing around.
+
+    A zero velocity supplied *with* a value function is not harmless: the zero-U dispatcher
+    displaces that U, so the solve runs at zero drift and produces exactly the silent
+    pure-diffusion answer this guard exists to stop -- measured at 2.1e-2 from the correct
+    answer, the same magnitude as the defect itself. Keying the guard on the velocity's
+    magnitude alone would accept it.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(), u_solution, _problem(), velocity_field=_velocity(), advection_scheme=scheme
+        )
+
+
+def test_a_misspelled_scheme_reports_itself_as_such():
+    """The velocity guard must not pre-empt scheme-name validation and mis-attribute a typo."""
+    with pytest.raises(ValueError, match="Unknown advection_scheme"):
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme="not_a_scheme"
+        )
 
 
 @pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
@@ -154,7 +182,8 @@ def test_the_raise_names_the_scheme_and_the_way_out(scheme):
     message = str(exc.value)
     assert scheme in message, "the offending scheme must be named"
     assert "divergence_upwind" in message, "the accept-list must be shown"
-    assert "U_solution_for_drift" in message, "the alternative channel must be named"
+    assert "U_solution_for_drift" in message, "the internal parameter must be named"
+    assert "potential_field" in message, "the PUBLIC parameter a caller can actually type must be named"
 
 
 def test_callable_drift_channel_also_runs_for_maximize():

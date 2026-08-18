@@ -59,7 +59,12 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     # exercised. Route the drift through `potential_field=U` instead, which this scheme does
     # consume: for the smooth separable H above the solver forms alpha = -c*grad(U) internally.
     # U increasing in x gives a leftward velocity, pushing the wall-adjacent bump into the wall.
-    potential = np.tile(x, (nt + 1, 1))
+    # The potential must be NON-LINEAR. The #1149 fix makes the boundary handler evaluate the
+    # shared face velocity with the interior's central stencil, (U[2]-U[0])/(2*dx), instead of the
+    # one-sided (U[1]-U[0])/dx. Those are algebraically identical for a linear U, so a linear
+    # potential leaves this test blind to the very defect it pins: reverting both walls to the
+    # one-sided form keeps the mass drift at 3.9e-15 under `U = x`, and moves it to 3.0e-02 here.
+    potential = np.tile(x + 0.5 * x**2, (nt + 1, 1))
     m0 = np.exp(-200 * (x - 0.05) ** 2)  # bump AT the left wall (columns 0-2)
     m0 /= m0.sum() * dx
 
@@ -124,14 +129,14 @@ def test_gradient_leaks_even_with_zero_drift():
     U_zero = np.zeros((nt + 1, n))  # zero drift => pure diffusion at the wall
 
     _, fp_div = create_paired_solvers(_problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED)
-    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, drift_field=U_zero)])
+    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, potential_field=U_zero)])
     assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12
 
     with pytest.warns(UserWarning, match="Issue #1075"):
         _, fp_grad = create_paired_solvers(
             _problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
         )
-    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, drift_field=U_zero)])
+    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, potential_field=U_zero)])
     assert np.max(np.abs(mass_grad - mass_grad[0])) > 1e-3  # leaks under pure diffusion
 
 
