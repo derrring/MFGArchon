@@ -129,8 +129,8 @@ class MFGProblemProtocol(Protocol):
 
             - Only the FDM HJB solvers accept a ``source_term``. Setting ``source_term_hjb``
               with any of the others raises rather than dropping it silently.
-            - The source is bound to the PREVIOUS Picard iterate and the FP drift is derived
-              from the Hamiltonian alone, never consulting it. A coupling with no ``p`` in it --
+            - The FP drift is derived from the Hamiltonian alone and never consults the source.
+              A coupling with no ``p`` in it --
               the usual nonlocal case ``F(x, m)`` -- is fine there and is the canonical
               Lasry-Lions system. A ``p``-DEPENDENT coupling routed through the source is not:
               it changes the effective Hamiltonian's minimiser while the FP equation keeps
