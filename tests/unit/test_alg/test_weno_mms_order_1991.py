@@ -1,9 +1,15 @@
 """MMS order verification for HJBWENOSolver (Issue #1991).
 
-`source_term` is the slot MMS forcing enters through, and 8 of 11 HJB solvers did not
-accept it -- so no manufactured solution could reach WENO at all, and its order was not
-merely unverified but unmeasurable. This threads it through the 1D path and pins what the
+`source_term` is the slot MMS forcing enters through, and most HJB solvers do not accept it
+-- so no manufactured solution could reach WENO at all, and its order was not merely
+unverified but unmeasurable. This threads it through the 1D path and pins what the
 resulting measurement shows.
+
+(A census by parameter name gave 8 of 11 lacking it. That over-counts: `HJBGFDMSolver` has
+the same channel under the name `running_cost`, with a different convention -- `f(n) ->
+(n_points,)` rather than `f(t, x)`. The capability gate keys on the name `source_term`, so
+it rejects GFDM for lacking a capability GFDM has. Tracked on #1991; a divergent mechanism
+rather than a missing one, and not this PR's to fix.)
 
 The oracle is external in AGENTS.md's sense: an exact solution constructed independently of
 the scheme, not a second code path. The manufactured pair is the 1D reduction of the coupled
