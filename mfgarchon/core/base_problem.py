@@ -120,10 +120,21 @@ class MFGProblemProtocol(Protocol):
             Hamiltonian value H(x, m, p, t)
 
         Note:
-            ``m`` is the density AT ``x``, a scalar -- not the measure. A coupling that needs the
-            whole density, such as a convolution ``(k * m)(x)``, cannot be written here; use
-            ``source_term_hjb(x, m_t, v_t, t)``, which receives the full array but is additive and
-            therefore sits outside the optimal-control minimisation.
+            On the grid and mesh interface ``m`` is the density AT ``x``, a scalar -- not the
+            measure. (``NetworkMFGProblem.hamiltonian`` takes a different, 5-argument form and
+            does receive the full nodal array.) A coupling needing the whole density, such as a
+            convolution ``(k * m)(x)``, cannot be written here; route it through
+            ``source_term_hjb(x, m_t, v_t, t)``, which receives the full spatial array at the
+            time slice. Two caveats worth knowing before you do:
+
+            - Only the FDM HJB solvers accept a ``source_term``. Setting ``source_term_hjb``
+              with any of the others raises rather than dropping it silently.
+            - The source is bound to the PREVIOUS Picard iterate and the FP drift is derived
+              from the Hamiltonian alone, never consulting it. A coupling with no ``p`` in it --
+              the usual nonlocal case ``F(x, m)`` -- is fine there and is the canonical
+              Lasry-Lions system. A ``p``-DEPENDENT coupling routed through the source is not:
+              it changes the effective Hamiltonian's minimiser while the FP equation keeps
+              advecting with the original ``-D_p H``, silently breaking the HJB/FP adjoint pair.
 
         Example:
             >>> # Separable Hamiltonian with a LOCAL coupling: H_0(p) plus a term in m alone.
@@ -133,11 +144,17 @@ class MFGProblemProtocol(Protocol):
 
             This is NOT congestion, which this example previously claimed to be. Congestion means
             moving is costlier where the crowd is dense, so the density scales the MOMENTUM term:
-            ``H(x, p, m) = (m**alpha / gamma) * (|p| / m**alpha)**gamma``, i.e. ``0.5*|p|**2 /
-            m**alpha`` at ``gamma = 2`` (Gomes, Pimentel & Voskanyan, *Regularity Theory for
-            Mean-Field Game Systems*, p. 116). Above, ``m`` appears in a term with no ``p`` in it
-            at all. For congestion use :class:`~mfgarchon.core.hamiltonian.CongestionHamiltonian`,
-            which implements that form together with its analytic ``dH/dm``.
+            ``H(x, p, m) = (m**alpha / gamma) * (|p| / m**alpha)**gamma``, for ``1 <= gamma < 2``
+            and ``0 < alpha < 1`` (Gomes, Pimentel & Voskanyan, *Regularity Theory for Mean-Field
+            Game Systems*, p. 116). The quadratic specialisation ``0.5*|p|**2 / m**alpha`` is the
+            shape this library implements; note it sits at ``gamma = 2``, outside the hypotheses of
+            the section cited. Above, ``m`` appears in a term with no ``p`` in it at all.
+
+            For congestion see :class:`~mfgarchon.core.hamiltonian.CongestionHamiltonian`, which is
+            the FAMILY containing that form -- ``H = |p|**2 / (2*lam*c(m)) + V + f(m)`` with a
+            user-supplied ``c(m)``. Pass ``congestion_factor=lambda m: m**alpha`` to obtain the
+            form above, and ``congestion_factor_dm`` if you want ``dH/dm`` analytic rather than by
+            finite difference.
 
             The sign is ``-0.1 * m`` rather than ``+0.1 * m`` so the example is Lasry--Lions
             monotone under the convention pairing ``H`` with ``-u_t + H = 0``. With ``+``, the
