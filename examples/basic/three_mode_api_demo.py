@@ -98,15 +98,20 @@ def demo_expert_mode():
 
     problem = create_problem()
 
-    # Expert Mode: Create and configure solvers manually
+    # Expert Mode: Create and configure solvers manually.
+    # The advection scheme must be a conservative 'divergence_*' one: the gradient forms do not
+    # conserve mass at a no-flux wall (#1075, #2007), and this problem drove one to -98% (#2008).
     hjb = HJBFDMSolver(problem)
-    fp = FPFDMSolver(problem, advection_scheme="gradient_upwind")
+    fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
 
-    # Solve with custom solvers (duality automatically validated)
+    # Solve with custom solvers (duality automatically validated).
+    # 20 was never enough -- the old configuration reported converged=False too. What it did hide is
+    # the mass: err_M read 9.27e-07, three orders under tolerance, because a collapsing density has
+    # tiny increments. The conservative solve converges at 49.
     result = problem.solve(
         hjb_solver=hjb,
         fp_solver=fp,
-        max_iterations=20,
+        max_iterations=60,
         tolerance=1e-6,
         verbose=True,
     )
