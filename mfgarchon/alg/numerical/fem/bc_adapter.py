@@ -305,6 +305,19 @@ def assemble_robin_terms(
     rhs_robin = np.zeros(n_dof)
 
     for segment in robin_segments:
+        # Issue #1979: guard alpha and beta the way `g` is guarded below. Without this, a
+        # provider-valued coefficient reaches float() and raises a bare builtin TypeError --
+        # unnamed, ungreppable, and silent about what the caller should do instead.
+        for _name, _coeff in (("alpha", getattr(segment, "alpha", 1.0)), ("beta", getattr(segment, "beta", 0.0))):
+            if not isinstance(_coeff, (int, float)):
+                raise NotImplementedError(
+                    f"Robin segment '{segment.name}' has a non-constant {_name} "
+                    f"({type(_coeff).__name__}). Only a constant {_name} is implemented for the FEM "
+                    "Robin operator augmentation; callable / BCValueProvider coefficients are "
+                    "deferred (Issue #1237). For an adjoint-consistent (state-dependent) Robin BC, "
+                    "resolve the provider to a constant before the solve -- "
+                    "`bc.with_resolved_providers(state)`."
+                )
         alpha = float(getattr(segment, "alpha", 1.0))
         beta = float(getattr(segment, "beta", 0.0))
         if beta == 0.0:

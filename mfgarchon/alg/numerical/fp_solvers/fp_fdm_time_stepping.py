@@ -760,6 +760,54 @@ def solve_fp_nd_full_system(
         and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
         and tensor_diffusion_field is None
     )
+    # Issue #1979: a provider-valued wall coefficient is DROPPED here, silently.
+    #
+    # The reachable case is NOT a ROBIN segment -- every grid FP solver refuses ROBIN at
+    # construction (`_validate_bc_support`, #1456), so that route is already closed. It is a
+    # NO_FLUX or NEUMANN segment carrying a provider on `alpha`, which passes the capability gate.
+    # That is exactly what #1970's NormalDriftProvider produces: the impermeable wall IS Robin in
+    # m (alpha*m - D*d_n m = 0), so its coefficient lives on `alpha` of a no-flux segment, and it
+    # is a field recomputed each Picard iterate -- which is what a provider is for.
+    #
+    # `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers do not take
+    # `boundary_conditions` at all -- the parameter is absent from every signature -- so nothing
+    # reads `alpha` or `beta`, provider or float, and nothing is in a position to complain.
+    # Measured: a ROBIN segment carrying an AdjointConsistentProvider assembles byte-identically
+    # to no-flux, with no diagnostic. That is the wall a user wired a coupled coefficient to
+    # AVOID, returned as though it were their request.
+    #
+    # Refuse rather than read. The conservative schemes already impose J.n = 0 structurally
+    # (#1975), so teaching these handlers to add (alpha, beta, g) would count the drift twice --
+    # measured there at -79.5% mass against -7.4e-15. The fix for a general Robin wall on the grid
+    # paths is #1975; this guard only stops the silent one.
+    if boundary_conditions is not None:
+        from mfgarchon.geometry.boundary.providers import is_provider
+
+        _provider_coeffs = [
+            f"{getattr(seg, 'name', '<unnamed>')}.{field}"
+            for seg in getattr(boundary_conditions, "segments", ())
+            for field in ("alpha", "beta")
+            if is_provider(getattr(seg, field, None))
+        ]
+        _types = sorted(
+            {
+                getattr(getattr(seg, "bc_type", None), "name", "?")
+                for seg in getattr(boundary_conditions, "segments", ())
+                if any(is_provider(getattr(seg, f, None)) for f in ("alpha", "beta"))
+            }
+        )
+        if _provider_coeffs:
+            raise NotImplementedError(
+                f"A provider-valued wall coefficient was supplied ({', '.join(_provider_coeffs)}), "
+                f"on segment type(s) {_types}. The FDM boundary handlers do not read wall "
+                f"coefficients at all: they are "
+                f"keyed on advection_scheme and take no `boundary_conditions` argument, so the "
+                f"segment would assemble byte-identically to a no-flux wall with no diagnostic "
+                f"(Issue #1979). Resolve the provider to a constant before the solve -- "
+                f"`bc.with_resolved_providers(state)` -- or use a solver whose boundary assembly "
+                f"reads the coefficients. A general Robin wall on the grid paths is Issue #1975."
+            )
+
     # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
     #
     # AMBIGUITY: the chain is a precedence order, and every level of it silently discards the
