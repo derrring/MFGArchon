@@ -344,13 +344,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     H_values = np.asarray(
                         H_class(self._disc.dof_coordinates, M_density[n], p_prev, t=n * dt), dtype=float
                     ).ravel()
-                    # MINUS. The equation is -u_t + H - D*Lap(u) = 0, so backward Euler gives
-                    # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H -- H moves to the RHS with a sign
-                    # flip. This read `+=` from #1131 (675e0049) until #2023, which inverted the
-                    # whole Hamiltonian on the DEFAULT path (use_newton=False) while the Newton
-                    # branch twenty lines up had it right. Measured on H = c constant with u_T = 0,
-                    # where the analytic answer u(0) = -c*T is exact: picard returned +c*T for
-                    # c = 1, 2 and -3, against FDM and the Newton branch both returning -c*T.
+                    # MINUS. The canonical equation (mfg_problem.py:197) is
+                    # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives
+                    # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H: H moves to the RHS with a sign
+                    # flip. This read `+=` from the file's FIRST version (d9f66701, #773) until
+                    # #2023 -- and that version stated the correct algebra in a comment three lines
+                    # above the code, `M/dt*u^n = M/dt*u^{n+1} - D*K*u^n - H_rhs`, then "rearranged"
+                    # it to `+ source` on the very next line. #1131 (675e0049) only relocated it
+                    # here. The DEFAULT path (use_newton=False) was affected; the Newton branch
+                    # forty lines up always had it right, so one method solved two equations.
+                    # Measured on H = c constant with u_T = 0, where u(0) = -c*T is exact: picard
+                    # returned +c*T at c = 1, 2 and -3, against FDM and Newton both giving -c*T.
                     rhs -= self._M @ H_values
                 if rhs_robin is not None:
                     rhs = rhs + rhs_robin

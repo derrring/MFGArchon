@@ -191,7 +191,13 @@ class TestRobinSolveLoopWiring:
         ne = 48
         ham = SeparableHamiltonian(
             control_cost=QuadraticControlCost(lambda_=1.0),
-            potential=lambda x, t: 4.0 * D * np.sin(2.0 * x[:, 0]),
+            # NEGATED for #2023. `u_steady` below is built from `+_source`, which is the RHS the
+            # PLUS assembly produced -- the reference was the buggy right-hand side written
+            # twice (measured max|H(x,m,p=0) - _source| = 0.0). With H entering the corrected
+            # equation as -M@H, the potential that makes `u_steady` the true fixed point is the
+            # negative one. The manufactured solution, the Robin data and the oracle line are
+            # unchanged; measured max|U[0] - u_steady| = 1.010e-14 against the 1e-9 bound.
+            potential=lambda x, t: -4.0 * D * np.sin(2.0 * x[:, 0]),
             coupling=lambda m: 0.0,
         )
         problem = _robin_problem_1d(ne, sigma, g_left, g_right, hamiltonian=ham)
