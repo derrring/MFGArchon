@@ -3271,6 +3271,67 @@ class HJBGFDMSolver(BaseHJBSolver):
                     "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
                     "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
                 )
+        elif H_class is not None:
+            # Issue #2011. The gate above is keyed on `control_cost`, so a Hamiltonian that does not
+            # expose that attribute -- any HamiltonianBase subclass that is not a
+            # SeparableHamiltonian -- skipped the WHOLE gate. Two things then happen silently:
+            #
+            #   1. `control_lagrangian` is wired from `control_cost.lagrangian` below, so it stays
+            #      None and hjb_howard substitutes the UNIT quadratic L(alpha) = (1/2)|alpha|^2.
+            #      Measured against Newton on u_T = cos(2 pi x): a lambda = 2 subclass is 31.4%
+            #      wrong relative, against a 5.5% CONTROL from a unit quadratic on the same
+            #      problem -- the control being the two inner solvers' own discretisation
+            #      difference, so the signal is the gap, not the 31.4% alone.
+            #   2. `has_H_extra` below is keyed on `_potential` / `_coupling`, also
+            #      SeparableHamiltonian internals, so the alpha-free part is dropped BITWISE --
+            #      measured, |u(g=1) - u(g=0)| = 0.000e+00 for H = |p|^2/2 + g*x*m on Howard,
+            #      against 1.469e-01 for the SAME Hamiltonian on Newton.
+            #
+            # Gate on BEHAVIOUR, not on the attribute. Keying the refusal on "exposes no
+            # control_cost" is the same mistake one level down: it refuses `H = |p|^2/2` written as
+            # a bare subclass, for which Howard's substitution is EXACT. What matters is whether
+            # the two assumptions Howard is about to make actually hold, and both are probeable:
+            #
+            #   H(x, m, 0, t) == 0                  no alpha-free part to drop, and H_control(0)=0
+            #   H(x, m, p, t) - H(x, m, 0, t)       equals the unit quadratic Howard will substitute
+            #     == (1/2)|p|^2
+            #
+            # This PROBES; it does not extract. Reading the alpha-free part AS H(x, m, 0, t) is
+            # unsound -- it equals that part only when H_control(0) = 0, and H = sqrt(1+|p|^2)
+            # injects a spurious 1.0 -- but for a refusal that is irrelevant: a non-zero value there
+            # violates Howard's assumption whichever term produced it. Admitting such a Hamiltonian
+            # CORRECTLY still needs the extraction and is #2011's remaining work.
+            _pts = np.asarray(self.collocation_points, dtype=float)
+            _m_probe = np.ones(self.n_points)
+            _p0 = np.zeros((self.n_points, self.dimension))
+            try:
+                _h0 = np.asarray(H_class(_pts, _m_probe, _p0, 0.0), dtype=float)
+                _p1 = np.zeros((self.n_points, self.dimension))
+                _p1[:, 0] = 1.0
+                _h1 = np.asarray(H_class(_pts, _m_probe, _p1, 0.0), dtype=float)
+            except (TypeError, ValueError, AttributeError, IndexError) as _exc:
+                # Narrow deliberately: these are what a Hamiltonian that cannot take the batch
+                # convention raises. A bare `except Exception` would also swallow a genuine bug
+                # inside a working H() and report it as "cannot probe".
+                raise NotImplementedError(
+                    f"inner_solver='howard' could not probe {type(H_class).__name__} to verify its "
+                    f"policy-evaluation assumptions ({type(_exc).__name__}: {_exc}). Howard needs a "
+                    f"batch-callable H(x, m, p, t); use inner_solver='newton' (Issue #2011)."
+                ) from _exc
+            _alpha_free = float(np.abs(_h0).max())
+            _kinetic_err = float(np.abs((_h1 - _h0) - 0.5).max())
+            if _alpha_free > 1e-10 or _kinetic_err > 1e-10:
+                raise NotImplementedError(
+                    f"inner_solver='howard' cannot decompose {type(H_class).__name__}: it exposes no "
+                    f"`control_cost`, and probing shows Howard's substituted assumptions do not hold "
+                    f"(max|H(x,m,0)| = {_alpha_free:.3e}, and H(x,m,e_0) - H(x,m,0) departs from the "
+                    f"unit quadratic 1/2 by {_kinetic_err:.3e}; both must be ~0). Howard would "
+                    f"silently substitute L(alpha) = (1/2)|alpha|^2 and drop the alpha-free part "
+                    f"bitwise -- measured at 31.4% error against Newton for a lambda=2 cost, "
+                    f"against a 5.5% control from a unit quadratic (Issue #2011). Use "
+                    f"inner_solver='newton', which reads the Hamiltonian through H() and dp() and "
+                    f"needs no decomposition."
+                )
         # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
         # H = |p|^2/(2*lambda*c(m)) + V(x, t) + f(m). The control-cost gate above does NOT catch
         # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
