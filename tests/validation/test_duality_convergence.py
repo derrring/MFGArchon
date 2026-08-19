@@ -110,36 +110,54 @@ class TestDualityConvergence:
     # numbers. Genuine centered-scheme order verification belongs with the MMS convergence
     # suite, not as a single-grid smoke test named after a rate.
 
-    # test_mesh_refinement_improves_accuracy was removed 2026-08-19 rather than repaired. Same
-    # family as the removal above, and it is what #1998 -- "Nightly full test suite is failing" --
-    # actually was.
+    # test_mesh_refinement_improves_accuracy was removed 2026-08-19 rather than repaired. It is
+    # what #1998 -- "Nightly full test suite is failing" -- actually was: the validation shard
+    # reports `1 failed, 27 passed, 4 xfailed`, that one test, every other shard green.
     #
     # It recorded `result.max_error`, which is the final PICARD RESIDUAL, not a discretization
-    # error against a known solution, and then compared two of them across Nx = 20 / 40 under the
-    # name "h-convergence". Measured: with tolerance=1e-8 and max_iterations=30 BOTH legs run to
-    # the cap -- `converged=False, iterations=30/30` on either grid -- so the two numbers are
-    # residuals of unconverged iterations, and their ratio is a fact about how far each got in
-    # thirty steps, not about mesh resolution. This is the defect #1728 names in a different test
-    # ("it compared `result.max_error`, the final Picard residual -- so removing it lost nothing").
+    # error against a known solution, and compared two of them across Nx = 20 / 40 under the name
+    # "h-convergence". Measured: with tolerance=1e-8 and max_iterations=30 BOTH legs run to the cap
+    # -- `converged=False, iterations=30/30` on either grid. Worse, at max_iterations=300 neither
+    # converges either: the residual LIMIT-CYCLES between 5.9e-05 and 1.7e-03, and its final value
+    # is worse than its own best. So `max_error` here is a sample from a cycle, and no assertion
+    # over two samples can measure a rate.
     #
-    # That is also why it was platform-dependent and not a regression. Same code, same nightly
-    # invocation (`-n auto`, the nightly marker set, which does NOT exclude `slow`):
+    # The precedent is TestConvergenceRate::test_upwind_first_order_convergence, removed for this
+    # exact reason with its account at the bottom of this file -- "It measured the wrong quantity
+    # ... it compared `result.max_error` ... the final PICARD RESIDUAL". #1728 names that test. (The
+    # removal noted ABOVE, test_centered_fdm_higher_order, is a different defect: one grid and a
+    # tautological assertion. Same file, same cleanup, not the same reason.)
     #
-    #     darwin/arm64  Nx=20 5.935364e-04   Nx=40 4.237936e-04   assertion holds
-    #     linux (CI)    Nx=20 8.814973e-05   Nx=40 9.901234e-04   assertion fails, 11x
+    # WHAT THIS IS NOT: a clean window. A real numerical change landed inside it. c98a9c5f
+    # ("stop overwriting the root the inner Newton just found", #1902) deletes the hand-rolled
+    # `u[0] = u[1] - g*dx` no-flux enforcement -- the exact boundary treatment this test's
+    # `no_flux_bc(dimension=1)` runs through -- and it moves these numbers ~5x on darwin:
     #
-    # Both are deterministic on their platform -- CI produced identical digits on two different
-    # commits -- so bisecting the window was never going to find a culprit. It is one BLAS path
-    # through a non-converged iteration versus another.
+    #     179e55a7 (head of the last GREEN nightly)  Nx=20 1.185395e-04  Nx=40 5.550650e-04  FAILS
+    #     c98a9c5f and after                         Nx=20 5.935364e-04  Nx=40 4.237936e-04  passes
+    #     linux (CI), 4a50e27b and after             Nx=20 8.814973e-05  Nx=40 9.901234e-04  FAILS
     #
-    # Nothing is lost by the deletion. The Nx=40 leg's configuration is identical to
-    # TestNumericalStability::test_fdm_upwind_stable below -- Nx_points=[41], Nt=20, T=1.0,
-    # sigma=0.1, the same components, FDM_UPWIND -- and that test asserts U and M finite and the
-    # density positive, which is strictly stronger than this one's `e < 1000` on a residual.
+    # So the verdict flipped in OPPOSITE directions on the two platforms across the same change,
+    # which is what a limit-cycling residual does and is stronger grounds for deletion than a
+    # clean-window story would have been. No platform conditional is involved, and CI pins the BLAS
+    # thread counts to 1. Anyone tracing an FDM_UPWIND no-flux discrepancy to this window should
+    # start at #1902 and #1904, not conclude the window is computationally quiet.
     #
-    # Real h-convergence now has a home: tests/unit/test_alg/test_fp_mms_wall_order_1728.py
-    # measures observed order against a source-free exact solution with mutation-red level bounds
-    # (#1728, #2006). That is where a refinement claim belongs.
+    # What the deletion costs, stated rather than waved away. The Nx=40 leg duplicates
+    # TestNumericalStability::test_fdm_upwind_stable below on every listed parameter -- Nx_points=
+    # [41], Nt=20, T=1.0, sigma=0.1, same components, FDM_UPWIND -- differing only in
+    # max_iterations (30 vs 20) and tolerance, so iterations 21-30 there are now unexercised. That
+    # test's mass-conservation and `M.min() > 0` assertions dominate this one's `e < 1000`; its
+    # isfinite checks do not, since a finite oscillating iterate can carry a residual above 1000.
+    # The COARSE leg -- Nx_points=[21], Nt=10, sigma=0.1, coupled -- has no counterpart anywhere in
+    # the suite, so a raise or a NaN from that specific solve is now caught by nothing. Thin, and
+    # real.
+    #
+    # Coupled EOC through the production FixedPointIterator already exists:
+    # tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence. What remains uncovered
+    # is coupled EOC AT A NO-FLUX WALL -- that suite is periodic -- and the deleted test never
+    # measured it either. The standalone FP order study added by #2006
+    # (tests/unit/test_alg/test_fp_mms_wall_order_1728.py) covers the wall but not the coupling.
 
     def test_safe_mode_guarantees_duality(self):
         """Test that Safe Mode automatically creates dual pairs."""
