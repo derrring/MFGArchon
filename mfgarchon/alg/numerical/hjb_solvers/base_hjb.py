@@ -205,6 +205,46 @@ class BaseHJBSolver(BaseNumericalSolver):
     # Scheme family trait for duality validation (Issue #580)
     _scheme_family = SchemeFamily.GENERIC
 
+    # --- Signature gate (#2020) ------------------------------------------------------------
+    # An abstract method's signature is a DECLARATION, and Python does not enforce it: a subclass
+    # may override with `(*args, **kwargs)` and nothing checks. That is the structural reason six
+    # solvers silently discarded `source_term` for months -- `**kwargs` converts the loud TypeError
+    # a narrower signature would have raised into silence, and a signature-keyed census then reads
+    # the swallower as accepting the parameter.
+    #
+    # Scoped to the two parameters with an incident history rather than to every declared name:
+    # `source_term` (#1424, #2020) and `volatility_field` (#1316, #1783). A blanket "must name every
+    # declared parameter" rule is NOT satisfiable here -- the base declares `M_density` while
+    # implementations use other names for it, so it would fail almost every solver in the tree and
+    # would be a rename, not a gate.
+    #
+    # Fires at class-definition time, so an offending solver cannot be imported rather than failing
+    # at some caller far away. A solver that cannot support a parameter still NAMES it and raises
+    # inside -- that is what HJBWENOSolver does for multi-D `source_term`, and it is the honest
+    # shape: refusal is a behaviour, not an absent signature.
+    _GUARDED_PARAMETERS = ("source_term", "volatility_field")
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        import inspect as _inspect
+
+        own = cls.__dict__.get("solve_hjb_system")
+        if own is None:
+            return
+        params = _inspect.signature(own).parameters
+        if not any(p.kind is _inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            # No **kwargs: an unnamed parameter raises TypeError at the call site, which is loud.
+            return
+        missing = [p for p in cls._GUARDED_PARAMETERS if p not in params]
+        if missing:
+            raise TypeError(
+                f"{cls.__name__}.solve_hjb_system accepts **kwargs but does not name {missing}. "
+                f"**kwargs would swallow {'them' if len(missing) > 1 else 'it'} silently -- no "
+                f"error, no warning, and a solve that quietly ignores what the caller asked for "
+                f"(#2020). Name the parameter and either honour it or raise NotImplementedError "
+                f"inside; refusing is a behaviour, an absent signature is not."
+            )
+
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one
         if config is None:

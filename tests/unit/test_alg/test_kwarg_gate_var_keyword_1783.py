@@ -16,6 +16,7 @@ Three lines below, the same function already raised for exactly this situation w
 
 from __future__ import annotations
 
+import functools
 import inspect
 import pathlib
 from dataclasses import dataclass
@@ -176,17 +177,58 @@ def test_the_meshless_pair_is_refused_end_to_end():
         )
 
     hjb, _fp = pair()
-    assert "volatility_field" not in inspect.signature(hjb.solve_hjb_system).parameters, (
-        "this solver must be the **kwargs shape, or the test does not exercise the hole"
-    )
+    # #2020: MeshlessGalerkinHJBSolver now NAMES volatility_field, so it is no longer an example of
+    # the hole -- and it never was an example of a solver that cannot consume the field. Measured:
+    # passing 0.9 against problem.sigma = 0.3 moves the solve by 4.369684e-01, a (0.5..0.9) array by
+    # 2.846775e-01, and passing 0.3 itself by exactly 0.0. So the gate should now FORWARD to this
+    # pair, not refuse it, and the refusal below is exercised against a stub instead. Pinning the
+    # gate to a stub is also what stops this test being invalidated again the next time a production
+    # solver widens its signature.
+    assert "volatility_field" in inspect.signature(hjb.solve_hjb_system).parameters
 
-    # Without the field, nothing changes -- the refusal must not break ordinary use.
+    # Without the field, nothing changes.
     FixedPointIterator(problem, *pair()).solve(max_iterations=2, verbose=False)
 
+    # And WITH the field the pair now runs rather than refusing, with both sides receiving it.
+    seen: dict[str, object] = {}
+    hjb2, fp2 = pair()
+    for solver, name in ((hjb2, "solve_hjb_system"), (fp2, "solve_fp_system")):
+        inner = getattr(solver, name)
+
+        # functools.wraps is load-bearing, not tidiness: the gate reads `inspect.signature` of what
+        # it is about to call, so a bare wrapper presents (*args, **kwargs) and gets REFUSED -- the
+        # instrument would then be measuring itself. wraps sets __wrapped__ and signature follows it.
+        def spy(*args, _inner=inner, _name=name, **kwargs):
+            seen[_name] = kwargs.get("volatility_field")
+            return _inner(*args, **kwargs)
+
+        spy = functools.wraps(inner)(spy)
+        setattr(solver, name, spy)
+    field = np.linspace(0.5, 0.9, n)
+    FixedPointIterator(problem, hjb2, fp2, volatility_field=field).solve(max_iterations=2, verbose=False)
+    for name in ("solve_hjb_system", "solve_fp_system"):
+        assert seen.get(name) is not None, f"{name} did not receive volatility_field"
+        assert np.array_equal(seen[name], field), f"{name} received a different field"
+
+    # The refusal itself, against a solver that really does have the **kwargs shape. Deliberately
+    # NOT a BaseHJBSolver subclass: BaseHJBSolver.__init_subclass__ refuses that shape at class
+    # definition (#2020), and the coupling layer duck-types, so a plain object is the right fixture.
+    class _SwallowingHJB:
+        hjb_method_name = "SwallowingHJB"
+
+        def __init__(self, problem):
+            self.problem = problem
+
+        def solve_hjb_system(self, *args, **kwargs):  # names neither parameter
+            raise AssertionError("the gate must refuse before the solver is reached")
+
+    swallow = _SwallowingHJB(problem)
+    assert "volatility_field" not in inspect.signature(swallow.solve_hjb_system).parameters, (
+        "the stub must have the **kwargs shape, or this half tests nothing"
+    )
+    _hjb_unused, fp3 = pair()
     with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
-        FixedPointIterator(problem, *pair(), volatility_field=np.linspace(0.5, 0.9, n)).solve(
-            max_iterations=2, verbose=False
-        )
+        FixedPointIterator(problem, swallow, fp3, volatility_field=field).solve(max_iterations=2, verbose=False)
 
 
 def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
@@ -231,9 +273,11 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     delta = 2.6 / np.sqrt(n)
     hjb = MeshlessGalerkinHJBSolver(problem, points, delta=delta)
     fp = MeshlessGalerkinFPSolver(problem, points, delta=delta)
-    assert "volatility_field" not in inspect.signature(hjb.solve_hjb_system).parameters, (
-        "this solver must be the **kwargs shape, or the test does not exercise the hole"
-    )
+    # #2020: this solver now names the parameter, so the Newton path must FORWARD to it rather than
+    # refuse. The refusal half of the Newton gate is covered by the stub in the Picard test above;
+    # what this one still pins uniquely is that mfg_residual's two call sites route through the
+    # single owner rather than carrying inline copies.
+    assert "volatility_field" in inspect.signature(hjb.solve_hjb_system).parameters
 
     shape = (problem.Nt + 1, n)
     M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
@@ -242,8 +286,22 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     # A field the two sides would disagree about: mean 0.7 against problem.sigma = 0.3.
     hazard = np.linspace(0.5, 0.9, n)
     residual = MFGResidual(problem, hjb, fp, volatility_field=hazard)
-    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
+    seen_hjb: dict[str, object] = {}
+    inner_hjb = hjb.solve_hjb_system
+
+    @functools.wraps(inner_hjb)
+    def spy_hjb(*args, **kwargs):
+        seen_hjb.update(kwargs)
+        return inner_hjb(*args, **kwargs)
+
+    hjb.solve_hjb_system = spy_hjb
+    try:
         residual.compute_hjb_output(M0, U0)
+    finally:
+        hjb.solve_hjb_system = inner_hjb
+    assert np.array_equal(seen_hjb.get("volatility_field"), hazard), (
+        "the Newton path must forward the field to an HJB solver that names it"
+    )
 
     # And the FP side, which DOES name the parameter, must actually RECEIVE it. Asserting only
     # that the call returns a well-shaped array leaves the site pinned by nothing: replacing the
