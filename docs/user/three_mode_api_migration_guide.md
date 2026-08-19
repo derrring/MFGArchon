@@ -194,11 +194,31 @@ from mfgarchon.factory import create_solver
 problem = MFGProblem(Nx=[40], Nt=20, T=1.0)
 
 hjb = HJBFDMSolver(problem)
-fp = FPFDMSolver(problem, advection_scheme="gradient_centered")
+fp = FPFDMSolver(problem, advection_scheme="gradient_centered")  # non-conservative; see note below
 
 solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
+
+> **The FP advection scheme changes in both "After" blocks, and that is not part of the
+> migration.** The `gradient_*` family is non-conservative at a no-flux wall (#1075, #2007): on the
+> `examples/basic/three_mode_api_demo.py` problem `gradient_upwind` lost 98.17% of the probability
+> mass while the Picard residual stayed under tolerance (#2008), and `gradient_centered` aborts
+> there outright. Migrating the API shape is independent of which scheme you pass — but a guide
+> should not print a non-conservative one in the code it tells you to write, so these use
+> `divergence_upwind`. Check `result.mass_conservation_error` either way; it is on `SolverResult`
+> and nothing gates on it.
+>
+> Option 1 keeps `NumericalScheme.FDM_CENTERED` so that the `fp_config` override is a real
+> non-default rather than a restatement of the factory default — `FDM_UPWIND` is already paired
+> with `divergence_upwind`. Be aware of what that enum does and does not do: **`FDM_CENTERED`
+> selects the FP half only.** Measured, `HJBFDMSolver.advection_scheme` is `gradient_upwind` under
+> `FDM_UPWIND`, under `FDM_CENTERED`, and under `FDM_CENTERED` with this override alike — **within
+> the FDM pair** the HJB side does not vary (#1866). It does vary elsewhere in the same enum:
+> `SL_LINEAR` and `SL_CUBIC` build an `HJBSemiLagrangianSolver` and differ in
+> `interpolation_method` (`scheme_factory.py:264,269`), which is why the table below can advertise
+> "3rd order (HJB)" for one of them. So the pair Option 1 builds is the `FDM_UPWIND` pair; the enum
+> is kept here for the shape of the example, not because it buys HJB order.
 
 **After** (Option 1 - Safe Mode with config):
 ```python
@@ -208,7 +228,7 @@ from mfgarchon.types import NumericalScheme
 hjb, fp = create_paired_solvers(
     problem,
     NumericalScheme.FDM_CENTERED,
-    fp_config={"advection_scheme": "gradient_centered"},
+    fp_config={"advection_scheme": "divergence_upwind"},
 )
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
@@ -219,7 +239,7 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 from mfgarchon.alg.numerical import HJBFDMSolver, FPFDMSolver
 
 hjb = HJBFDMSolver(problem)
-fp = FPFDMSolver(problem, advection_scheme="gradient_centered")
+fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
 
 # Direct Expert Mode - validates automatically
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
@@ -274,9 +294,18 @@ These schemes satisfy $L_{FP} = L_{HJB}^T$ exactly at matrix level:
 | Scheme | Use Case | Order | Stability |
 |:-------|:---------|:------|:----------|
 | `FDM_UPWIND` | General purpose, monotone | 1st order | Excellent |
-| `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet) |
+| `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet)¹ |
 | `SL_LINEAR` | Large time steps, transport-dominated | 1st order | Excellent |
 | `SL_CUBIC` | High accuracy SL | 3rd order (HJB) | Good |
+
+¹ **`FDM_CENTERED` differs from `FDM_UPWIND` in the FP half only** — measured,
+`HJBFDMSolver.advection_scheme` is `gradient_upwind` under both (#1866). So the "2nd order" in this
+row is the FP discretisation, and it is the half that will not run: `divergence_centered` is not
+positivity-preserving, and when the density goes negative the mass-fabrication gate stops the solve
+rather than clip it — at timestep 3 of 20 on the `three_mode_api_demo` problem. Overriding the FP
+half to `divergence_upwind` therefore leaves you with exactly the `FDM_UPWIND` pair, not a
+second-order HJB. The HJB-side knob is `HJBFDMSolver(advection_scheme=...)`, which the factory does
+not set.
 
 ### Continuous Duality (Type B) - Asymptotic Adjoint
 
@@ -407,7 +436,9 @@ The system automatically validates:
 ### What's the difference between FDM_UPWIND and FDM_CENTERED?
 
 - **FDM_UPWIND**: First-order accurate, monotone (no oscillations), very stable
-- **FDM_CENTERED**: Second-order accurate, may oscillate for high Peclet numbers
+- **FDM_CENTERED**: differs from `FDM_UPWIND` in the **FP half only** (#1866), so the second order
+  is the FP discretisation — and that half may oscillate for high Peclet numbers and then refuse to
+  run rather than clip a negative density. See the footnote under the scheme table.
 
 For most problems, start with FDM_UPWIND.
 
