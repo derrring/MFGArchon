@@ -110,43 +110,36 @@ class TestDualityConvergence:
     # numbers. Genuine centered-scheme order verification belongs with the MMS convergence
     # suite, not as a single-grid smoke test named after a rate.
 
-    @pytest.mark.slow
-    def test_mesh_refinement_improves_accuracy(self):
-        """Test that finer meshes reduce errors (h-convergence)."""
-        mesh_sizes = [20, 40]
-        final_errors = []
-
-        for Nx in mesh_sizes:
-            problem = MFGProblem(
-                geometry=TensorProductGrid(
-                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
-                ),
-                Nt=Nx // 2,
-                T=1.0,
-                sigma=0.1,
-                components=_default_components(),
-            )
-
-            result = problem.solve(
-                scheme=NumericalScheme.FDM_UPWIND,
-                max_iterations=30,
-                tolerance=1e-8,
-                verbose=False,
-            )
-
-            # Record final error (max of U and M errors)
-            final_errors.append(result.max_error)
-
-        # Finer mesh should have smaller error
-        # We can't guarantee strict convergence in all cases (problem-dependent),
-        # but we can check that errors are reasonable
-        assert all(e < 1000 for e in final_errors), "Errors should be bounded"
-
-        # If both converged well, expect refinement to help
-        if all(e < 1.0 for e in final_errors):
-            # Coarse mesh error should be larger (or comparable)
-            # Allow some tolerance for numerical noise
-            assert final_errors[0] >= final_errors[1] * 0.5, "Refinement should improve or maintain accuracy"
+    # test_mesh_refinement_improves_accuracy was removed 2026-08-19 rather than repaired. Same
+    # family as the removal above, and it is what #1998 -- "Nightly full test suite is failing" --
+    # actually was.
+    #
+    # It recorded `result.max_error`, which is the final PICARD RESIDUAL, not a discretization
+    # error against a known solution, and then compared two of them across Nx = 20 / 40 under the
+    # name "h-convergence". Measured: with tolerance=1e-8 and max_iterations=30 BOTH legs run to
+    # the cap -- `converged=False, iterations=30/30` on either grid -- so the two numbers are
+    # residuals of unconverged iterations, and their ratio is a fact about how far each got in
+    # thirty steps, not about mesh resolution. This is the defect #1728 names in a different test
+    # ("it compared `result.max_error`, the final Picard residual -- so removing it lost nothing").
+    #
+    # That is also why it was platform-dependent and not a regression. Same code, same nightly
+    # invocation (`-n auto`, the nightly marker set, which does NOT exclude `slow`):
+    #
+    #     darwin/arm64  Nx=20 5.935364e-04   Nx=40 4.237936e-04   assertion holds
+    #     linux (CI)    Nx=20 8.814973e-05   Nx=40 9.901234e-04   assertion fails, 11x
+    #
+    # Both are deterministic on their platform -- CI produced identical digits on two different
+    # commits -- so bisecting the window was never going to find a culprit. It is one BLAS path
+    # through a non-converged iteration versus another.
+    #
+    # Nothing is lost by the deletion. The Nx=40 leg's configuration is identical to
+    # TestNumericalStability::test_fdm_upwind_stable below -- Nx_points=[41], Nt=20, T=1.0,
+    # sigma=0.1, the same components, FDM_UPWIND -- and that test asserts U and M finite and the
+    # density positive, which is strictly stronger than this one's `e < 1000` on a residual.
+    #
+    # Real h-convergence now has a home: tests/unit/test_alg/test_fp_mms_wall_order_1728.py
+    # measures observed order against a source-free exact solution with mutation-red level bounds
+    # (#1728, #2006). That is where a refinement claim belongs.
 
     def test_safe_mode_guarantees_duality(self):
         """Test that Safe Mode automatically creates dual pairs."""
