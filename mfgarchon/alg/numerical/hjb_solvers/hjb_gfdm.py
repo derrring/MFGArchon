@@ -3271,10 +3271,41 @@ class HJBGFDMSolver(BaseHJBSolver):
                     "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
                     "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
                 )
-        else:
-            # Issue #2011. The gate above is keyed on `control_cost`, so a Hamiltonian that does not
-            # expose it -- any HamiltonianBase subclass that is not a SeparableHamiltonian -- skipped
-            # the WHOLE gate, and two things then happened silently:
+        # Ordered BEFORE the probe deliberately: the widened probe DOES detect congestion
+        # (measured, it departs from the declared quadratic by 1.000e+02), but it would report
+        # the generic "assumptions do not hold" message. The specific one names the mechanism
+        # and the attribute, which is what a caller can act on.
+        # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
+        # H = |p|^2/(2*lambda*c(m)) + V(x, t) + f(m). The control-cost gate above does NOT catch
+        # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
+        # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
+        # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
+        # (hjb_howard.py _howard_step RHS) with no c(m) factor, so the value function silently
+        # decouples from the congestion. Gate on the factor directly. Fail loud.
+        if getattr(H_class, "_congestion_factor", None) is not None:
+            raise NotImplementedError(
+                "inner_solver='howard' does not support multiplicative kinetic congestion c(m) "
+                "(CongestionHamiltonian): Howard hardcodes the unit-quadratic Lagrangian "
+                "(1/2)|alpha|^2 with no c(m) factor, so the value function silently decouples from "
+                "the congestion. Use inner_solver='newton' (deferred, Issue #1071/#1118 PR2)."
+            )
+
+        # Issue #2011, and #2015's review. THE PROBE RUNS FOR EVERY HAMILTONIAN, not only for one
+        # that lacks `control_cost`. An earlier version put it in the `else:` of the branch above,
+        # which meant any Hamiltonian exposing a QuadraticControlCost -- the ordinary way to write
+        # one -- skipped the entire gate. Measured on that version: a SeparableHamiltonian subclass
+        # carrying an extra g*(m-1) term in __call__ was ACCEPTED, and #2011's original failure
+        # reproduced exactly, max|u(g=2) - u(g=0)| = 0.0000e+00 on Howard against 6.6083e-01 on
+        # Newton. That is the third version of this guard repeating the same structural mistake one
+        # branch over: v1 keyed the REFUSAL on the attribute, v3 keyed the PROBE'S SCOPE on it.
+        #
+        # The reason the probe can now run unconditionally is that its kinetic reference comes from
+        # the DECLARED control cost when there is one. Against a hard-coded (1/2)|p|^2 it would
+        # false-refuse lambda != 1: QuadraticControlCost(control_cost=2.0) gives H(p=1) - H(0) =
+        # 0.2500, which the unit quadratic calls a defect and which Howard handles exactly via
+        # control_lagrangian.
+        if True:
+            # Two things happen silently when a Hamiltonian's structure is not what Howard assumes:
             #
             #   1. `control_lagrangian` stays None below, so hjb_howard substitutes the UNIT
             #      quadratic L(alpha) = (1/2)|alpha|^2 whatever the Hamiltonian's actual control cost.
@@ -3304,24 +3335,55 @@ class HJBGFDMSolver(BaseHJBSolver):
             _pts = np.asarray(self.collocation_points, dtype=float)
             _rng = np.random.default_rng(0)
             _slices = np.unique(np.linspace(0, M_collocation.shape[0] - 1, 3).astype(int))
-            _dirs = [np.eye(self.dimension)[0]]
-            _dirs += [
-                v / np.linalg.norm(v) * s
-                for s in (0.5, 2.0)
-                for v in (_rng.normal(size=self.dimension), _rng.normal(size=self.dimension))
-            ]
+
+            # MAGNITUDES FROM THE PROBLEM, not hard-coded. The previous version sampled |p| in
+            # {0.5, 1, 2} while the solve visits max|grad u| = 6.18 on this PR's own fixture, so
+            # H(p) = (1/2)|p|^2 + C*max(0, |p|^2 - 4)^2 -- convex, C^1, and wrong for Howard exactly
+            # where the solve lives -- sat in the probe's null space and was accepted at every C.
+            #
+            # Derived from the terminal datum by a spacing bound rather than through
+            # `_compute_gradient_at_point`: that accessor raises KeyError('weights') at this point in
+            # the SOCP-precompute path, and an earlier draft of this guard wrapped it in a bare
+            # `except` and silently fell back to 1.0 -- so the widening never happened and the
+            # super-quadratic above stayed accepted. This form cannot fail, and OVERESTIMATING is the
+            # safe direction: the kinetic reference tracks a genuine quadratic exactly at every |p|,
+            # so a larger probe cannot produce a false refusal, only a stricter true one.
+            _uT = np.asarray(U_terminal_colloc, dtype=float).ravel()
+            _spread = float(np.ptp(_uT)) if _uT.size else 0.0
+            _dists = np.linalg.norm(_pts[:, None, :] - _pts[None, :, :], axis=-1)
+            np.fill_diagonal(_dists, np.inf)
+            _hmin = float(np.min(_dists)) if _pts.shape[0] > 1 else 1.0
+            _gT = _spread / _hmin if np.isfinite(_hmin) and _hmin > 0.0 else 0.0
+            _gT = _gT if np.isfinite(_gT) and _gT > 0.0 else 1.0
+            _mags = sorted({0.5, 1.0, 2.0, 0.5 * _gT, _gT, 2.0 * _gT})
+            _dirs = [np.eye(self.dimension)[0] * _m for _m in _mags]
+            _dirs += [v / np.linalg.norm(v) * _m for _m in _mags for v in (_rng.normal(size=self.dimension),)]
+
+            # The kinetic reference is what Howard will actually substitute: the DECLARED control
+            # cost's H_control(p) when the Hamiltonian exposes one (control_lagrangian is wired from
+            # the same object), and the unit quadratic only when nothing is declared.
+            def _kinetic_ref(_d):
+                if control_cost is not None:
+                    return float(np.asarray(control_cost.evaluate(np.asarray(_d, dtype=float))).ravel()[0])
+                return 0.5 * float(np.dot(_d, _d))
+
+            # np.maximum, NOT the builtin: `max(0.0, nan)` returns 0.0, because `nan > 0.0` is False.
+            # A single non-finite value anywhere in the probe would then zero the whole measurement
+            # and drop the tolerance to its floor -- a fail-silent inside the fail-loud guard.
+            # Demonstrated on this file's own refuse-case fixture: one NaN turned a correctly
+            # REFUSED Hamiltonian into an accepted one, _af 5.98 -> exactly 0.0.
             _af = _ke = _scale = 0.0
             try:
                 for _n in _slices:
                     _m_n = np.asarray(M_collocation[_n], dtype=float).ravel()
                     _t_n = float(_n) * _dt_probe
                     _h0 = np.asarray(H_class(_pts, _m_n, np.zeros((self.n_points, self.dimension)), _t_n), dtype=float)
-                    _af = max(_af, float(np.abs(_h0).max()))
+                    _af = np.maximum(_af, np.abs(_h0).max())
                     for _d in _dirs:
                         _P = np.tile(np.asarray(_d, dtype=float), (self.n_points, 1))
                         _h = np.asarray(H_class(_pts, _m_n, _P, _t_n), dtype=float)
-                        _scale = max(_scale, float(np.abs(_h).max()))
-                        _ke = max(_ke, float(np.abs((_h - _h0) - 0.5 * float(np.dot(_d, _d))).max()))
+                        _scale = np.maximum(_scale, np.abs(_h).max())
+                        _ke = np.maximum(_ke, np.abs((_h - _h0) - _kinetic_ref(_d)).max())
             except (TypeError, ValueError, AttributeError, IndexError) as _exc:
                 # Narrow deliberately: these are what a Hamiltonian that cannot take the batch
                 # convention raises. A bare `except Exception` would also swallow a genuine bug
@@ -3338,33 +3400,22 @@ class HJBGFDMSolver(BaseHJBSolver):
             _af_bad = (not _alpha_free_is_wired) and _af > _tol
             if _af_bad or _ke > _tol:
                 raise NotImplementedError(
-                    f"inner_solver='howard' cannot decompose {type(H_class).__name__}: it exposes no "
-                    f"`control_cost`, and probing it on this problem's own density and times shows "
-                    f"Howard's substituted assumptions do not hold "
+                    f"inner_solver='howard' cannot decompose {type(H_class).__name__}: "
+                    f"{'it exposes no `control_cost`, and probing' if control_cost is None else 'probing'} "
+                    f"it on this problem's own density, times and momentum scale shows Howard's "
+                    f"substituted assumptions do not hold "
                     f"(max|H(x,m,0,t)| = {_af:.3e}{' (unwired)' if _af_bad else ' (wired, not gated)'}, "
                     f"and H(x,m,p,t) - H(x,m,0,t) departs from (1/2)|p|^2 by {_ke:.3e}; "
                     f"tolerance {_tol:.1e}, relative to a probed |H| of {_scale:.3e}). Probed at "
                     f"M_collocation slices {list(_slices)}, times {[round(float(n) * _dt_probe, 4) for n in _slices]}, "
-                    f"and {len(_dirs)} momentum vectors. Howard would silently substitute "
-                    f"L(alpha) = (1/2)|alpha|^2 and drop the alpha-free part bitwise (Issue #2011). "
+                    f"and {len(_dirs)} momentum vectors at |p| in {[round(float(m), 4) for m in _mags]} "
+                    f"(scaled to a terminal-gradient bound of {_gT:.4g}). Howard would silently substitute "
+                    f"L(alpha) = {'its declared quadratic Lagrangian' if control_cost is not None else '(1/2)|alpha|^2'} "
+                    f"and drop the alpha-free part bitwise (Issue #2011). "
                     f"Use inner_solver='newton', which reads the Hamiltonian through H() and dp() "
                     f"and needs no decomposition."
                 )
 
-        # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
-        # H = |p|^2/(2*lambda*c(m)) + V(x, t) + f(m). The control-cost gate above does NOT catch
-        # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
-        # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
-        # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
-        # (hjb_howard.py _howard_step RHS) with no c(m) factor, so the value function silently
-        # decouples from the congestion. Gate on the factor directly. Fail loud.
-        if getattr(H_class, "_congestion_factor", None) is not None:
-            raise NotImplementedError(
-                "inner_solver='howard' does not support multiplicative kinetic congestion c(m) "
-                "(CongestionHamiltonian): Howard hardcodes the unit-quadratic Lagrangian "
-                "(1/2)|alpha|^2 with no c(m) factor, so the value function silently decouples from "
-                "the congestion. Use inner_solver='newton' (deferred, Issue #1071/#1118 PR2)."
-            )
         # BC parity (Issue #1118 PR2a): the howard path now consumes the provider's shared
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
