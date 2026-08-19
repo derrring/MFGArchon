@@ -36,6 +36,15 @@ def create_lq_model_and_conditions():
     return model, conditions
 
 
+def _fmt_mass_error(result) -> str:
+    """`mass_conservation_error` is None when the geometry has no volume element, or when the
+    coupling loop broke on iteration 1 with a non-finite U -- in which case `solve` returns
+    normally and formatting it would raise TypeError on the very line meant to make failure
+    visible."""
+    err = result.mass_conservation_error
+    return "not measured" if err is None else f"{err:.3e}"
+
+
 def create_problem():
     """Create a simple 1D problem for demos."""
     domain = TensorProductGrid(
@@ -79,7 +88,7 @@ def demo_safe_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
-    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
+    print(f"Mass conservation error: {_fmt_mass_error(result)}")
 
     return result
 
@@ -100,18 +109,24 @@ def demo_expert_mode():
     problem = create_problem()
 
     # Expert Mode: Create and configure solvers manually.
-    # 'divergence_upwind' is the only one of the four advection schemes that solves this problem:
-    # the two 'gradient_*' forms do not conserve mass at a no-flux wall and drove it to -98%
-    # (#1075, #2007, #2008), and 'divergence_centered' aborts here -- see compare_schemes below.
+    # 'divergence_upwind' is the only one of the four advection schemes that solves this problem.
+    # Measured here, cap 60, one outcome each -- the failures are NOT the same failure:
+    #   gradient_centered    aborts at timestep 5/20 (density -6.388e-06)
+    #   gradient_upwind      converges at 27, and loses 98.17% of the mass
+    #   divergence_centered  aborts at timestep 3/20 (density -6.319e-06)
+    #   divergence_upwind    converges at 49, mass conserved to 5.1e-15
+    # The gradient family is non-conservative at a no-flux wall (#1075, #2007, #2008), but HOW a
+    # given one fails is a property of the configuration, not of the family -- see the leak table
+    # in geometry/boundary/conditions.py, which says so and is measured at a different resolution.
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
 
     # Solve with custom solvers (duality automatically validated).
     # 49 iterations, against 27 for the leaking scheme: losing the mass made the problem easier.
-    # What hid the loss is that err_M measures an INCREMENT -- it read 9.27e-07, just under the
-    # 1e-6 tolerance, while 98% of the mass was gone. The loop did measure the mass
-    # (result.mass_conservation_error = 0.98), but nothing gates on it and nothing printed it,
-    # which is why the line below now does.
+    # What hid the loss is that err_M measures an INCREMENT. At this cap the leaking run reports
+    # converged=True at iteration 27 with err_M = 6.43e-09 and 98% of the mass gone, simultaneously.
+    # The loop did measure the mass (result.mass_conservation_error = 0.98), but nothing gates on
+    # it and nothing printed it, which is why the line below now does.
     result = problem.solve(
         hjb_solver=hjb,
         fp_solver=fp,
@@ -123,7 +138,7 @@ def demo_expert_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
-    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
+    print(f"Mass conservation error: {_fmt_mass_error(result)}")
 
     return result
 
@@ -154,7 +169,7 @@ def demo_auto_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
-    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
+    print(f"Mass conservation error: {_fmt_mass_error(result)}")
 
     return result
 
@@ -189,17 +204,22 @@ def compare_schemes():
                 verbose=False,
             )
         except ValueError as exc:
-            # Not a demo bug. FDM_CENTERED routes to the centered advection scheme, which is not
-            # positivity-preserving; when the density goes negative the library refuses to clip it
-            # rather than report a conserved density it did not compute. Refusing is the feature
-            # being demonstrated, so it is reported as a result instead of ending the script.
+            # Narrow deliberately. The mass-fabrication gate raises a bare ValueError
+            # (utils/numerical/mass_fabrication_gate.py), so its own wording is the only thing that
+            # distinguishes a principled refusal -- the centered schemes are not
+            # positivity-preserving, and the library declines to clip a negative density rather
+            # than report a conserved one it did not compute. Everything else on this path also
+            # raises ValueError (NaN/Inf blow-ups, unknown-scheme dispatch), and catching those
+            # here would print a library bug under the word "refused" and still exit 0.
+            if "fabricate" not in str(exc):
+                raise
             results[scheme.value] = None
-            print(f"Refused: {exc}")
+            print(f"Refused (mass-fabrication gate): {exc}")
             continue
         results[scheme.value] = result
         print(f"Converged: {result.converged} in {result.iterations} iterations")
         print(f"Final error (max): {result.max_error:.3e}")
-        print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
+        print(f"Mass conservation error: {_fmt_mass_error(result)}")
 
     return results
 
@@ -273,6 +293,10 @@ def main():
     print(f"  Safe Mode:   {result_safe.iterations} iterations, error={result_safe.max_error:.3e}")
     print(f"  Expert Mode: {result_expert.iterations} iterations, error={result_expert.max_error:.3e}")
     print(f"  Auto Mode:   {result_auto.iterations} iterations, error={result_auto.max_error:.3e}")
+
+    print("\nThe three are identical here to every printed digit, and that is the point: they are")
+    print("three routes to the SAME solver pair, not three algorithms. The mode decides how much")
+    print("you specify, not what gets solved.")
 
     print("\nRecommendation: Use Safe Mode for most applications.")
     print("                Use Expert Mode only when you need custom solver config.")

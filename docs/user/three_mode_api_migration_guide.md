@@ -194,18 +194,24 @@ from mfgarchon.factory import create_solver
 problem = MFGProblem(Nx=[40], Nt=20, T=1.0)
 
 hjb = HJBFDMSolver(problem)
-fp = FPFDMSolver(problem, advection_scheme="gradient_centered")
+fp = FPFDMSolver(problem, advection_scheme="gradient_centered")  # non-conservative; see note below
 
 solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
 
-> **The advection scheme changes in both "After" blocks, and that is not part of the migration.**
-> The `gradient_*` forms above are non-conservative at a no-flux wall (#1075, #2007): on the
-> `examples/basic/three_mode_api_demo.py` problem one of them lost 98.17% of the probability mass
-> while the Picard residual stayed under tolerance (#2008). Migrating the API shape is independent
-> of which scheme you pass — but a guide should not print a leaking one in the code it tells you to
-> write, so these use `divergence_upwind`. Check `result.mass_conservation_error` either way.
+> **The FP advection scheme changes in both "After" blocks, and that is not part of the
+> migration.** The `gradient_*` family is non-conservative at a no-flux wall (#1075, #2007): on the
+> `examples/basic/three_mode_api_demo.py` problem `gradient_upwind` lost 98.17% of the probability
+> mass while the Picard residual stayed under tolerance (#2008), and `gradient_centered` aborts
+> there outright. Migrating the API shape is independent of which scheme you pass — but a guide
+> should not print a non-conservative one in the code it tells you to write, so these use
+> `divergence_upwind`. Check `result.mass_conservation_error` either way; it is on `SolverResult`
+> and nothing gates on it.
+>
+> The **HJB** scheme is unchanged: Option 1 keeps `NumericalScheme.FDM_CENTERED`, so the
+> `fp_config` override below is a real non-default rather than a restatement of the constructor
+> default (`scheme_factory.py` already pairs `FDM_UPWIND` with `divergence_upwind`).
 
 **After** (Option 1 - Safe Mode with config):
 ```python
@@ -214,7 +220,7 @@ from mfgarchon.types import NumericalScheme
 
 hjb, fp = create_paired_solvers(
     problem,
-    NumericalScheme.FDM_UPWIND,
+    NumericalScheme.FDM_CENTERED,
     fp_config={"advection_scheme": "divergence_upwind"},
 )
 
@@ -281,9 +287,14 @@ These schemes satisfy $L_{FP} = L_{HJB}^T$ exactly at matrix level:
 | Scheme | Use Case | Order | Stability |
 |:-------|:---------|:------|:----------|
 | `FDM_UPWIND` | General purpose, monotone | 1st order | Excellent |
-| `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet) |
+| `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet)¹ |
 | `SL_LINEAR` | Large time steps, transport-dominated | 1st order | Excellent |
 | `SL_CUBIC` | High accuracy SL | 3rd order (HJB) | Good |
+
+¹ The FP half of `FDM_CENTERED` is `divergence_centered`, which is not positivity-preserving: when
+the density goes negative the mass-fabrication gate stops the solve rather than clip it. On the
+`three_mode_api_demo` problem that happens at timestep 3 of 20. Pair `FDM_CENTERED` with
+`fp_config={"advection_scheme": "divergence_upwind"}` if the HJB order is what you are after.
 
 ### Continuous Duality (Type B) - Asymptotic Adjoint
 
@@ -414,7 +425,8 @@ The system automatically validates:
 ### What's the difference between FDM_UPWIND and FDM_CENTERED?
 
 - **FDM_UPWIND**: First-order accurate, monotone (no oscillations), very stable
-- **FDM_CENTERED**: Second-order accurate, may oscillate for high Peclet numbers
+- **FDM_CENTERED**: Second-order accurate, may oscillate for high Peclet numbers. Its FP half
+  refuses to run rather than clip a negative density — see the footnote under the scheme table.
 
 For most problems, start with FDM_UPWIND.
 
