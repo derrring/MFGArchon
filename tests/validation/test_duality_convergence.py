@@ -123,9 +123,12 @@ class TestDualityConvergence:
     #     Nx=20  peak 1.264638e+03 @iter4   best 1.778986e-06 @iter194   @iter29 5.935364e-04
     #     Nx=40  peak 1.243941e+03 @iter4   best 7.116063e-06 @iter166   @iter29 4.237936e-04
     #
-    # A transient peaking above 1.2e+03 around iteration 4, then a settled 1e-4..2e-3 noise floor
-    # it never leaves -- final value far from its own best. So `max_error` at iteration 30 is a
-    # sample off that floor, and no assertion over two samples can measure a rate.
+    # A transient peaking above 1.2e+03 around iteration 4, then a noise floor -- over iterations
+    # 26..300 the residual ranges 1.78e-06..3.44e-03 (Nx=20) and 7.12e-06..3.40e-03 (Nx=40), and
+    # ends far from its own best. So `max_error` at iteration 30 is a sample off that floor, and no
+    # assertion over two samples can measure a rate. (Note also that `max_error = max(err_U, err_M)`
+    # is the U increment at iteration 29 but NOT early: err_M dominates at index 0, 1.9832 against
+    # 0.9445 at Nx=20.)
     #
     # The precedent is TestConvergenceRate::test_upwind_first_order_convergence, removed for this
     # exact reason with its account at the bottom of this file -- "It measured the wrong quantity
@@ -155,13 +158,18 @@ class TestDualityConvergence:
     # start at #1902 and #1904, not conclude the window is computationally quiet.
     #
     # What the deletion costs. `e < 1000` was NOT a vacuous bound -- the residual crosses it, in
-    # this very solve, by 26%: the peak above is 1.26e+03. So that assertion was a crude but LIVE
-    # guard on the TRANSIENT DECAY RATE. Anything costing roughly eight Picard iterations of
-    # convergence speed pushes iteration 30 back over 1000 and fires it. Nothing else in the suite
-    # bounds that, and no claim of domination survives: `max_error = max(err_U, err_M)` is here
-    # entirely the U increment (at Nx=40, iteration 29: err_U 4.238e-04 against err_M 4.807e-08),
-    # while test_fdm_upwind_stable's mass-conservation and `M.min() > 0` assertions constrain M's
-    # physics. The two sets are incomparable, not ordered. That test also stops at iteration 20.
+    # this very solve, by 26%: the peak above is 1.26e+03. So that assertion was a LIVE guard on
+    # the transient decay rate -- but a very coarse one, and the first draft of this note overstated
+    # how coarse. MEASURED: the assertion samples the FINAL residual, so to push iteration 30 back
+    # over 1000 the whole decay curve has to be delayed by 24-26 of the 30 iterations, or
+    # equivalently the per-iteration decay factor has to fall from its actual ~1.85 to <= 1.01. A
+    # solve that merely slowed down stays green; only one that has stopped converging trips it.
+    #
+    # Still real, and nothing else in the suite bounds it. No claim of domination survives either:
+    # `max_error` is the U increment at iteration 29 (Nx=40: err_U 4.238e-04 against err_M
+    # 4.807e-08), while test_fdm_upwind_stable's mass-conservation and `M.min() > 0` assertions
+    # constrain M's physics. The two sets are incomparable, not ordered -- and that test stops at
+    # iteration 20.
     #
     # The rest of the cost is smaller than it first looked. The Nx=40 leg duplicates
     # test_fdm_upwind_stable on every listed parameter -- Nx_points=[41], Nt=20, T=1.0, sigma=0.1,
@@ -172,9 +180,22 @@ class TestDualityConvergence:
     # and positivity -- strictly stronger, at comparable coarseness. What has no counterpart is the
     # LOW-SIGMA / high-Peclet coarse regime, and the transient guard above.
     #
-    # Deleting is still right: a threshold on an unconverged residual is a poor instrument even
-    # when live, and the RATE assertion beside it is indefensible at any threshold. But the
-    # transient goes unguarded, and that is recorded rather than claimed away.
+    # THE CASE FOR REPAIRING INSTEAD, which is stronger than "fix the two-grid rate test" and is
+    # what a reader should weigh: test_fdm_upwind_stable below already runs the identical Nx=41,
+    # Nt=20, sigma=0.1, FDM_UPWIND solve and already holds `result`. A transient bound there is one
+    # line at zero marginal runtime -- measured margin for `final < 1e-2 * peak` at its own
+    # 20-iteration budget: 73.5x at Nx=20, 31.9x at Nx=40.
+    #
+    # Deleting is still right, and the reason is not that the guard was worthless. It is that
+    # whatever the guard becomes belongs on the SURVIVING test, not on this one -- so this test goes
+    # either way, and the two questions are independent. It also wants a DECAY bound rather than a
+    # magnitude one: a threshold on a residual is scale- and configuration-dependent, while
+    # `final < 1e-2 * peak` is scale-free and fires exactly on the collapse described above.
+    # Writing that assertion here, under an open nightly, is how `e < 1000` got into this file in
+    # the first place. It is #2014, with the margins above as its measurement.
+    #
+    # The exposure is stated rather than claimed away: between this deletion and that issue, nothing
+    # catches a Picard convergence collapse at sigma=0.1.
     #
     # Coupled EOC through the production FixedPointIterator already exists:
     # tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence. What remains uncovered
