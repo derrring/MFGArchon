@@ -171,7 +171,9 @@ class TestDualityConvergence:
     # threshold 1.003133e+03 against final 1.823556e+02, a 5.50x margin -- and it is MORE sensitive
     # than the deleted one, not less: `:94` fires at a uniform post-peak decay factor below 1.0440,
     # `e < 1000` at below 1.0088, so `:94`'s firing region strictly contains it. Nearly model-free,
-    # too: the residual is non-increasing after the peak, so err_U[9] >= err_U[29] and any
+    # too: from the peak through iteration 29 AT THIS CONFIGURATION the residual is non-increasing
+    # -- strictly decreasing across 4->29 at Nx=41, though NOT monotone at Nx=21 nor on the noise
+    # floor generally, as the band two paragraphs up says -- so err_U[9] >= err_U[29] and any
     # perturbation leaving the later sample above 1000 leaves the earlier one above it as well,
     # 20 iterations sooner. So at THIS configuration the deletion costs nothing on the transient.
     #
@@ -188,7 +190,7 @@ class TestDualityConvergence:
     # tests/integration/test_fvm_hjb_coupling.py's `fdm_1d` fixture runs a coupled 1D no-flux
     # FDM_UPWIND solve at Nx=25, Nt=12, sigma=0.4 and asserts convergence, a 10x error drop, mass
     # and positivity -- strictly stronger, at comparable coarseness. What has no counterpart is the
-    # LOW-SIGMA / high-Peclet coarse regime, and the transient guard above.
+    # LOW-SIGMA / high-Peclet coarse regime.
     #
     # THE CASE FOR REPAIRING INSTEAD, which is stronger than "fix the two-grid rate test" and is
     # what a reader should weigh: test_fdm_upwind_stable below already runs the identical Nx=41,
@@ -202,11 +204,13 @@ class TestDualityConvergence:
     # either way, and the two questions are independent. It also wants a DECAY bound rather than a
     # magnitude one: a threshold on a residual is scale- and configuration-dependent, while
     # `final < 1e-2 * peak` is scale-free and fires exactly on the collapse described above.
-    # Writing a threshold here to fit what was observed is how this file got its numbers: c1a3696b,
-    # the same day the file was created, is titled "Relax convergence test to allow oscillatory
+    # Writing a threshold here to fit what was observed is how this file got `:94`: c1a3696b, the
+    # same day the file was created, reads "Relax convergence test to allow oscillatory
     # behavior -- Changed test from checking monotonic decrease to checking overall progress (final
-    # error <= 2x initial max error)", and that is `:94`, the assertion above that turned out to be
-    # doing the real work. (`e < 1000` came in with the file at fc07ae31, 2026-01-17; nightly.yml
+    # error <= 2x initial max error)", and its diff replaces `assert decreasing >= len(errors)//2`
+    # with exactly the `<= initial_max * 2.0` above -- the assertion that turned out to be doing
+    # the real work. (Nothing is known about why `e < 1000` got its value; it arrived with the
+    # file, under no such pressure.) (`e < 1000` came in with the file at fc07ae31, 2026-01-17; nightly.yml
     # did not exist until 8fa80818, 2026-04-02, so no nightly pressure was involved.) It is #2014,
     # with the margin above as its measurement.
     #

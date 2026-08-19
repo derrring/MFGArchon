@@ -43,7 +43,7 @@ listed parameter, differing only in `max_iterations` (30 vs 20) and tolerance. A
 not uncovered in kind: `tests/integration/test_fvm_hjb_coupling.py`'s `fdm_1d` fixture runs a coupled
 1D no-flux `FDM_UPWIND` solve at `Nx=25, Nt=12, sigma=0.4` asserting convergence, a 10× error drop,
 mass and positivity — strictly stronger, at comparable coarseness. What has no counterpart is the
-**low-σ / high-Péclet** coarse regime, and the transient guard.
+**low-σ / high-Péclet** coarse regime.
 
 **The case for repairing instead** is stronger than "fix the two-grid rate test", and worth weighing:
 `test_fdm_upwind_stable` already runs the identical `Nx=41, Nt=20, sigma=0.1, FDM_UPWIND` solve and
