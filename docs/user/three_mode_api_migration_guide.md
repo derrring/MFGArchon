@@ -200,6 +200,13 @@ solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
 
+> **The advection scheme changes in both "After" blocks, and that is not part of the migration.**
+> The `gradient_*` forms above are non-conservative at a no-flux wall (#1075, #2007): on the
+> `examples/basic/three_mode_api_demo.py` problem one of them lost 98.17% of the probability mass
+> while the Picard residual stayed under tolerance (#2008). Migrating the API shape is independent
+> of which scheme you pass — but a guide should not print a leaking one in the code it tells you to
+> write, so these use `divergence_upwind`. Check `result.mass_conservation_error` either way.
+
 **After** (Option 1 - Safe Mode with config):
 ```python
 from mfgarchon.factory import create_paired_solvers
@@ -207,8 +214,8 @@ from mfgarchon.types import NumericalScheme
 
 hjb, fp = create_paired_solvers(
     problem,
-    NumericalScheme.FDM_CENTERED,
-    fp_config={"advection_scheme": "gradient_centered"},
+    NumericalScheme.FDM_UPWIND,
+    fp_config={"advection_scheme": "divergence_upwind"},
 )
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
@@ -219,7 +226,7 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 from mfgarchon.alg.numerical import HJBFDMSolver, FPFDMSolver
 
 hjb = HJBFDMSolver(problem)
-fp = FPFDMSolver(problem, advection_scheme="gradient_centered")
+fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
 
 # Direct Expert Mode - validates automatically
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)

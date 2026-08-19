@@ -71,7 +71,7 @@ def demo_safe_mode():
     # Safe Mode: Just specify the scheme
     result = problem.solve(
         scheme=NumericalScheme.FDM_UPWIND,
-        max_iterations=20,
+        max_iterations=60,
         tolerance=1e-6,
         verbose=True,
     )
@@ -79,6 +79,7 @@ def demo_safe_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
+    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
 
     return result
 
@@ -99,15 +100,18 @@ def demo_expert_mode():
     problem = create_problem()
 
     # Expert Mode: Create and configure solvers manually.
-    # The advection scheme must be a conservative 'divergence_*' one: the gradient forms do not
-    # conserve mass at a no-flux wall (#1075, #2007), and this problem drove one to -98% (#2008).
+    # 'divergence_upwind' is the only one of the four advection schemes that solves this problem:
+    # the two 'gradient_*' forms do not conserve mass at a no-flux wall and drove it to -98%
+    # (#1075, #2007, #2008), and 'divergence_centered' aborts here -- see compare_schemes below.
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
 
     # Solve with custom solvers (duality automatically validated).
-    # 20 was never enough -- the old configuration reported converged=False too. What it did hide is
-    # the mass: err_M read 9.27e-07, three orders under tolerance, because a collapsing density has
-    # tiny increments. The conservative solve converges at 49.
+    # 49 iterations, against 27 for the leaking scheme: losing the mass made the problem easier.
+    # What hid the loss is that err_M measures an INCREMENT -- it read 9.27e-07, just under the
+    # 1e-6 tolerance, while 98% of the mass was gone. The loop did measure the mass
+    # (result.mass_conservation_error = 0.98), but nothing gates on it and nothing printed it,
+    # which is why the line below now does.
     result = problem.solve(
         hjb_solver=hjb,
         fp_solver=fp,
@@ -119,6 +123,7 @@ def demo_expert_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
+    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
 
     return result
 
@@ -141,7 +146,7 @@ def demo_auto_mode():
     # Auto Mode: No scheme or solvers specified
     # System automatically selects FDM_UPWIND (safe default)
     result = problem.solve(
-        max_iterations=20,
+        max_iterations=60,
         tolerance=1e-6,
         verbose=True,
     )
@@ -149,6 +154,7 @@ def demo_auto_mode():
     print(f"\nConverged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"Final error (max): {result.max_error:.3e}")
+    print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
 
     return result
 
@@ -175,15 +181,25 @@ def compare_schemes():
 
     for scheme in schemes:
         print(f"\n--- Testing {scheme.value} ---")
-        result = problem.solve(
-            scheme=scheme,
-            max_iterations=20,
-            tolerance=1e-6,
-            verbose=False,
-        )
+        try:
+            result = problem.solve(
+                scheme=scheme,
+                max_iterations=60,
+                tolerance=1e-6,
+                verbose=False,
+            )
+        except ValueError as exc:
+            # Not a demo bug. FDM_CENTERED routes to the centered advection scheme, which is not
+            # positivity-preserving; when the density goes negative the library refuses to clip it
+            # rather than report a conserved density it did not compute. Refusing is the feature
+            # being demonstrated, so it is reported as a result instead of ending the script.
+            results[scheme.value] = None
+            print(f"Refused: {exc}")
+            continue
         results[scheme.value] = result
         print(f"Converged: {result.converged} in {result.iterations} iterations")
         print(f"Final error (max): {result.max_error:.3e}")
+        print(f"Mass conservation error: {result.mass_conservation_error:.3e}")
 
     return results
 
