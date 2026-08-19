@@ -63,7 +63,22 @@ WHAT THIS STUDY CANNOT SEE
   perturbation of ζ is comparable to or smaller than the error already present, and this study
   cannot resolve it. That is a statement about resolution, not about the fixture: a *solver-side*
   error breaks it decisively, which is what the discrimination measurement below shows.
-- Only `FDM_UPWIND`. The pair is method-agnostic; other schemes are separate parametrisations.
+- Only `FDM_UPWIND`. The pair is method-agnostic, but the LIBRARY mostly is not: measured at
+  Nx=21 on this exact fixture, 2 of 8 solver pairings run at all.
+
+      HJB x FP                 outcome
+      FDM  x FDM               converged, 4 iter, eu = 1.5759e-01
+      GFDM x FDM               converged, 4 iter, eu = 1.9699e-02
+      WENO x FDM               NotImplementedError: source_term is 1D-path only, this is 2D
+      SemiLagrangian x FDM     NotImplementedError: solve_hjb_system takes no source_term
+      FDM  x GFDM/Particle/SL  NotImplementedError: solve_fp_system takes no source_term
+      FDM  x FVM               ValueError: cannot broadcast (21,21) against (882,)
+
+  The NotImplementedErrors are fail-loud guards, not bugs -- but they mean an MMS cannot reach
+  those solvers at all (#1991 for the HJB side). GFDM's source WAS verified to reach it: zeroing
+  s_hjb moves eu from 1.9699e-02 to 9.7640e+00, a factor of 496. The FVM crash is specific to the
+  2D-and-source cell -- 1D+source, 2D-no-source and both FDM cells all run -- so it is neither a
+  general 2D defect nor a general source defect.
 """
 
 from __future__ import annotations
