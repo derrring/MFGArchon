@@ -131,6 +131,38 @@ Cross-project testing discipline governs **what** a test must cover (edge/stress
 | Visualization | Sometimes | Yes | Smoke |
 | Utility function | No | Internal | Unit or smoke |
 
+### The dimension must be able to express the property under test ⚠️
+
+Not "prefer 2D" and not "1D is cheaper". The rule is that **a test in a dimension that cannot
+express the property is not a weak test — it cannot fail at all**, and it reads exactly like a
+passing one.
+
+- **Needs d ≥ 2**: anything involving a normal/tangential decomposition, an axis pairing, a corner,
+  a transpose, or anisotropy. A 1D wall's normal is always the coordinate axis and there is no
+  tangential component, so a scheme that mishandles the tangential part passes 1D by construction.
+- **Fully expressed in d = 1**: sign conventions, time-stepping order, convergence criteria, scalar
+  contracts, source-term plumbing. Here 2D buys runtime and nothing else — measured, the same FP
+  MMS study runs 0.1 s at d = 1 and 1.5 s at d = 2.
+
+**The discriminator is measurable, so do not argue it.** Write a mutation that breaks the property,
+run it in 1D, and read the difference:
+
+```
+drop the tangential advection at wall rows   1D: max|diff| = 0.000e+00   2D: separates
+flip its sign                                1D: max|diff| = 0.000e+00   2D: separates
+read the potential along the wrong axis      1D: max|diff| = 0.000e+00   2D: separates
+```
+
+Three mutants, three exact zeros (#1728/#2006). **`max|diff| = 0` in 1D means the test must go up a
+dimension**; a non-zero difference means 1D expresses it and the extra dimension is cost without
+coverage.
+
+The burden runs both ways: a 2D test whose 1D reduction separates the same mutants owes its runtime
+an explanation, and a 1D test of a directional property owes a mutant showing it can fail.
+
+This is the cross-project "non-discriminating test data" rule applied to dimension — the same shape
+as a uniform density that cannot separate a gradient-form bug from a correct scheme.
+
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
 "Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
