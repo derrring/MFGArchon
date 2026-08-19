@@ -63,6 +63,9 @@ WHAT THIS STUDY CANNOT SEE
   perturbation of ζ is comparable to or smaller than the error already present, and this study
   cannot resolve it. That is a statement about resolution, not about the fixture: a *solver-side*
   error breaks it decisively, which is what the discrimination measurement below shows.
+- **It cannot resolve a coefficient error below ~10%.** Measured: a 5% error in the diffusion
+  coefficient (k = 1.05) or in the drift scale (lambda = 1.05) passes every assertion in this file.
+  Any order reported here is an order at that sensitivity, not a certificate below it.
 - Only `FDM_UPWIND`. The pair is method-agnostic, but the LIBRARY mostly is not: measured at
   Nx=21 on this exact fixture, 2 of 8 solver pairings run at all.
 
@@ -159,8 +162,29 @@ def s_fp(t, x1, x2):
 
 
 def _split(x):
+    """Split the solver's point array into (x1, x2). Raises rather than guessing.
+
+    The previous version fell back to ``(a.ravel(), a.ravel())`` for any other shape, which aliases
+    x2 := x1 and evaluates BOTH manufactured sources on the degenerate diagonal x1 == x2 -- a
+    plausible, wrong source field, silently. In an oracle that is the one failure that cannot be
+    afforded: the test would keep passing while measuring the scheme against the wrong exact
+    solution. Instrumented over a full converged solve, that branch was taken 0 times out of 64, so
+    it bought nothing and risked everything. The repo's own rule is at
+    `utils/pde_coefficients.py:114` -- "the prior silent fallback masked a malformed problem".
+
+    Note this convention is not universal in the library: `FPFVMSolver` passes
+    `geometry.meshgrid()`, a (d, *shape) tuple, where FDM and the whole HJB side pass (N, d)
+    points (#2019). Raising here is what makes that difference visible instead of silently
+    diagonal.
+    """
     a = np.asarray(x, dtype=float)
-    return (a[..., 0], a[..., 1]) if a.ndim >= 2 and a.shape[-1] == 2 else (a.ravel(), a.ravel())
+    if a.ndim >= 2 and a.shape[-1] == 2:
+        return a[..., 0], a[..., 1]
+    raise TypeError(
+        f"_split expected an (N, 2) point array from the solver, got shape {a.shape}. "
+        "Aliasing x2 := x1 would evaluate the manufactured sources on the diagonal and the test "
+        "would pass while measuring the wrong exact solution (see #2019 for the FVM convention)."
+    )
 
 
 def _solve(nx: int, nt: int):
@@ -179,7 +203,12 @@ def _solve(nx: int, nt: int):
         T=T,
         Nt=nt,
         sigma=SIGMA,
-        coupling_coefficient=1.0,  # alpha = -grad U, matching the paper's div(m grad u)
+        # INERT here, and kept only because MFGProblem's own default (0.5) would be equally
+        # inert and more confusing. The drift scale comes from `fp_drift_coefficient` = 1/lambda,
+        # never from this argument (see SIGN CONVENTIONS above). Measured: solves at
+        # coupling_coefficient = 0.5 / 1.0 / 7.0 are bit-identical, max|dU| = max|dM| = 0.000e+00,
+        # against a control where sigma=1.1 moves the same solve by 1.672e-02.
+        coupling_coefficient=1.0,
         components=components,
         source_term_hjb=lambda x, m, v, t: s_hjb(t, *_split(x)).ravel(),
         source_term_fp=lambda x, m, v, t: s_fp(t, *_split(x)).ravel(),
@@ -222,28 +251,56 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     The level is not decoration. An order alone is a min over the HJB scheme, the FP scheme and the
     wall closure, so it cannot say which produced the O(h); the level separates them.
 
-    Bounds are set from measurement. Baseline against two solver-side diffusion errors -- sigma is
-    wrong at problem CONSTRUCTION while s_hjb/s_fp stay closed over the true SIGMA, so the
-    manufactured pair is untouched and only the PDE the scheme discretizes is wrong:
+    WHAT EACH ASSERTION ACTUALLY CATCHES, measured over two independent solver-side defect
+    families. In both, the manufactured pair is untouched -- the wrong coefficient is supplied at
+    problem CONSTRUCTION while s_hjb/s_fp stay closed over the true constants -- so only the PDE
+    the scheme discretizes is wrong.
 
-        D factor   eu(Nx=11)   eu(Nx=21)   eu(Nx=31)   EOC u
-        1.00       3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993
-        1.21       3.5252e-01  2.4572e-01  2.2015e-01   0.521,  0.271
-        2.00       9.6882e-01  9.5405e-01  9.5607e-01   0.022, -0.005
+    Family 1, wrong diffusion (sigma at construction, so D = k*sigma^2/2):
 
-    So 1.5e-01 sits 1.42x above the baseline and 1.47x below the 1.21x mutant. The previous bound
-    of 9e-01 came from a different fixture and would have PASSED the 1.21x mutant outright.
+        k       eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
+        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.05    3.0241e-01  1.6042e-01  1.1106e-01   0.915,  0.907  pass        pass
+        1.10    3.1101e-01  1.7715e-01  1.3559e-01   0.812,  0.659  FAIL        pass
+        1.15    3.2640e-01  2.0434e-01  1.7092e-01   0.676,  0.440  FAIL        FAIL
+        1.21    3.5252e-01  2.4572e-01  2.2015e-01   0.521,  0.271  FAIL        FAIL
+        2.00    9.6882e-01  9.5405e-01  9.5607e-01   0.022, -0.005  FAIL        FAIL
 
-    `em` is not the discriminating field for this defect and no level bound is asserted on it: at
-    1.21x it moves only 3.383e-03 -> 3.487e-03 and its EOC stays inside the band at 0.956 / 0.945.
-    Only at 2x does it leave, at 0.886 / 0.777.
+    Family 2, wrong drift scale (control_cost lambda, so alpha = -grad U / lambda):
 
-    Do NOT reproduce these by mutating `problem.sigma` after construction -- that is inert and
-    silently so. `get_diffusion_coefficient_field` (mfg_problem.py:1416) resolves
+        lambda  eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
+        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.05    3.1276e-01  1.7232e-01  1.2388e-01   0.860,  0.814  pass        pass
+        1.20    3.8375e-01  2.6818e-01  2.3543e-01   0.517,  0.321  FAIL        FAIL
+        1.50    5.4156e-01  4.5111e-01  4.2713e-01   0.264,  0.135  FAIL        FAIL
+
+    Two things follow, and the first corrects an earlier version of this docstring.
+
+    **The level bound is not a discriminator for coefficient errors, and claiming it was is what
+    an earlier version of this file did.** Across 10 mutants in two families it never fails alone:
+    every row where it fails, the EOC assertion has already failed, and at k = 1.10 the EOC fails
+    while the level passes. The retracted claim -- "the previous bound of 9e-01 would have PASSED
+    the 1.21x mutant" -- is false for the same reason: EOC rejects that mutant on 0.521 / 0.271
+    whatever the level bound is.
+
+    It is kept, relabelled, as a **regression guard on the constant**: EOC is a ratio and is blind
+    to an error scaled uniformly across levels, so a future change that preserves first order while
+    multiplying the constant would pass the EOC assertion. No mutant here exhibits that, so this is
+    an unexercised guard and is labelled as one rather than sold as discrimination.
+
+    **The measured detection floor is between 5% and 10%.** A 5% error in either coefficient passes
+    the ENTIRE test (k = 1.05 and lambda = 1.05 both pass both assertions). That is a fact about
+    these resolutions, not about the fixture, and it belongs beside any order this test reports.
+
+    `em` is weaker still: at k = 1.21 it moves only 3.383e-03 -> 3.487e-03 with EOC 0.956 / 0.945,
+    inside the band. No level bound is asserted on it.
+
+    Do NOT reproduce any of this by mutating `problem.sigma` after construction -- that is inert
+    and silently so. `get_diffusion_coefficient_field` (mfg_problem.py:1416) resolves
     override -> volatility_field -> self.sigma, and `volatility_field` is snapshotted at
     construction (:560), so the solve comes back byte-identical while `problem.diffusion` reports
-    the mutated value. Measured: 1.21x and 2.0x that way both reproduce the baseline to every
-    printed digit.
+    the mutated value. Measured: k = 1.21 and k = 2.0 that way both reproduce the baseline to
+    every printed digit.
     """
     errors = [_solve(nx, nt) for nx, nt in LEVELS]
     eu = [e[0] for e in errors]
@@ -252,7 +309,10 @@ def test_coupled_2d_no_flux_converges_at_first_order():
 
     assert all(0.8 <= o <= 1.3 for o in order_u), f"u is not first order: {order_u} (errors {eu})"
     assert all(0.8 <= o <= 1.3 for o in order_m), f"m is not first order: {order_m} (errors {em})"
+    # Regression guard on the constant, NOT a discriminator -- see the tables above. Across ten
+    # measured coefficient mutants this never fails without the EOC assertion failing first.
     assert eu[-1] < 1.5e-01, (
-        f"u error level {eu[-1]:.4e} at the finest grid exceeds 1.5e-01. The order can stay near 1 "
-        f"while the constant moves, which is what a wrong diffusion coefficient looks like here."
+        f"u error level {eu[-1]:.4e} at the finest grid exceeds 1.5e-01 while the order stayed in "
+        f"band (order_u={order_u}). EOC is a ratio and cannot see an error scaled uniformly across "
+        f"levels; this bound is the only thing that can."
     )
