@@ -7,7 +7,9 @@ the Hamiltonian route does not deliver today, and both are open: an alpha-free `
 `SeparableHamiltonian` cannot express because its `coupling` takes only `m` (#2010); and anything at
 all on the Howard path, whose closure keys on `SeparableHamiltonian` private attributes and drops a
 general `HamiltonianBase` subclass bitwise (#2011). Neither is a reason to keep a double-counting
-channel, and `source_term` is not a substitute for either — its contract forbids depending on `m`.
+channel. `source_term` does reach Howard's closure — that is what #1991 added — so #2011 costs
+nothing for `m`-free forcing; what it costs is model data, because `source_term`'s contract forbids
+depending on `m`, and that is also why it cannot stand in for #2010.
 The owner of an alpha-free `F(x, m)` is the Lagrangian, which is where the literature puts it. The package's only caller of that channel used it as an MMS source and has moved
 to `source_term`, which #1991 added for exactly that. **Migrating callers must negate:
 `source_term = -running_cost`.** `h_eval` assembles `-u_t + H(+additive_source) - D*lap_u` while

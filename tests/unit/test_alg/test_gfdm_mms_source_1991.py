@@ -19,16 +19,23 @@ is why a *rename* would have been wrong, and it also bounds what the removal may
 
 So `source_term` is NOT a general replacement, and the removal must not be justified by claiming it
 is. What makes the removal right is that model data has a different owner: an alpha-free `F(x, m)`
-belongs in the Lagrangian, which is where both Cardaliaguet (lecture notes 2020, p.45 --
-"local coupling functions, i.e., when F = F(x, m(t,x))") and this project's own paper
+belongs in the Lagrangian, which is where both Cardaliaguet (lecture notes, section
+"Comments" of the second-order MFG chapter -- "local coupling functions, i.e., when
+F = F(x, m(t,x))"; cited by statement because two printings on this machine disagree on
+pagination, see #2010) and this project's own paper
 (`chapters/chap_01.tex`, running cost `L(x, m, alpha)`) put it. A `HamiltonianBase` subclass
 expresses it, and GFDM honours it **on the Newton paths** -- measured, `H = |p|^2/2 + g*x*m` moves
-`u(0,.)` by 2.24e-01 at g=1. State the path, because it does not generalize: `_solve_backward_howard`
+`u(0,.)` by 2.24e-01 at g=1 (21-point cloud on [0,1], `Nt=10`, `T=0.2`, `sigma=0.5`, default
+`delta`, `M` a normalized `exp(-(x-0.3)^2/0.02)` held fixed -- the figure moves with all of those,
+so it is evidence only with them). State the path, because it does not generalize: `_solve_backward_howard`
 builds its running-cost closure from `getattr(H_class, "_potential")` / `"_coupling"`, which are
 `SeparableHamiltonian` internals, so the same subclass is dropped **bitwise** there -- 0.000e+00,
 against 2.000e-01 for a `SeparableHamiltonian` potential as a positive control on the same path.
-That hole is pre-existing and is #2011; `running_cost=` was the only route reaching it, so closing
-#2011 is what makes this removal costless on Howard. The other gap -- `SeparableHamiltonian`'s
+That hole is pre-existing and is #2011. `source_term` reaches the SAME closure -- `hjb_gfdm.py:3373`
+is `if has_H_extra or mms_src is not None`, which is what #1991 added -- so Howard is not without an
+additive channel; `running_cost=` was the only route for MODEL DATA, since `source_term`'s contract
+bars depending on `m`. Closing #2011 is what makes this removal costless on Howard for the
+`m`-dependent case. The other gap -- `SeparableHamiltonian`'s
 `coupling` taking only `m` -- is #2010. Neither is this channel's to carry, and neither is a reason
 to keep a channel that double-counts.
 
