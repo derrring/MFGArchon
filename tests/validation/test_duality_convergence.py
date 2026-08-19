@@ -128,7 +128,7 @@ class TestDualityConvergence:
     # ends far from its own best. So `max_error` at iteration 30 is a sample off that floor, and no
     # assertion over two samples can measure a rate. (Note also that `max_error = max(err_U, err_M)`
     # is the U increment at iteration 29 but NOT early: err_M dominates at index 0, 1.9832 against
-    # 0.9445 at Nx=20.)
+    # 9.4455e-01 at Nx=20.)
     #
     # The precedent is TestConvergenceRate::test_upwind_first_order_convergence, removed for this
     # exact reason with its account at the bottom of this file -- "It measured the wrong quantity
@@ -165,7 +165,17 @@ class TestDualityConvergence:
     # equivalently the per-iteration decay factor has to fall from its actual ~1.85 to <= 1.01. A
     # solve that merely slowed down stays green; only one that has stopped converging trips it.
     #
-    # Still real, and nothing else in the suite bounds it. No claim of domination survives either:
+    # And the transient is NOT unguarded -- an earlier draft of this note said it was. Measured on
+    # test_dual_fdm_pair_converges' own configuration (Nx_points=[41], Nt=20, sigma=0.1,
+    # FDM_UPWIND, max_iterations=50), its `:94` assertion `final_error <= initial_max * 2.0` reads
+    # threshold 1.003133e+03 against final 1.823556e+02, a 5.50x margin -- and it is MORE sensitive
+    # than the deleted one, not less: `:94` fires at a uniform post-peak decay factor below 1.0440,
+    # `e < 1000` at below 1.0088, so `:94`'s firing region strictly contains it. Nearly model-free,
+    # too: the residual is non-increasing after the peak, so err_U[9] >= err_U[29] and any
+    # perturbation leaving the later sample above 1000 leaves the earlier one above it as well,
+    # 20 iterations sooner. So at THIS configuration the deletion costs nothing on the transient.
+    #
+    # No claim of domination survives either:
     # `max_error` is the U increment at iteration 29 (Nx=40: err_U 4.238e-04 against err_M
     # 4.807e-08), while test_fdm_upwind_stable's mass-conservation and `M.min() > 0` assertions
     # constrain M's physics. The two sets are incomparable, not ordered -- and that test stops at
@@ -184,18 +194,24 @@ class TestDualityConvergence:
     # what a reader should weigh: test_fdm_upwind_stable below already runs the identical Nx=41,
     # Nt=20, sigma=0.1, FDM_UPWIND solve and already holds `result`. A transient bound there is one
     # line at zero marginal runtime -- measured margin for `final < 1e-2 * peak` at its own
-    # 20-iteration budget: 73.5x at Nx=20, 31.9x at Nx=40.
+    # 20-iteration budget: 31.9x. (That test runs Nx=41 only; the 73.5x figure is the Nx=21 leg,
+    # which it does not run, so 31.9x is the binding one.)
     #
     # Deleting is still right, and the reason is not that the guard was worthless. It is that
     # whatever the guard becomes belongs on the SURVIVING test, not on this one -- so this test goes
     # either way, and the two questions are independent. It also wants a DECAY bound rather than a
     # magnitude one: a threshold on a residual is scale- and configuration-dependent, while
     # `final < 1e-2 * peak` is scale-free and fires exactly on the collapse described above.
-    # Writing that assertion here, under an open nightly, is how `e < 1000` got into this file in
-    # the first place. It is #2014, with the margins above as its measurement.
+    # Writing a threshold here to fit what was observed is how this file got its numbers: c1a3696b,
+    # the same day the file was created, is titled "Relax convergence test to allow oscillatory
+    # behavior -- Changed test from checking monotonic decrease to checking overall progress (final
+    # error <= 2x initial max error)", and that is `:94`, the assertion above that turned out to be
+    # doing the real work. (`e < 1000` came in with the file at fc07ae31, 2026-01-17; nightly.yml
+    # did not exist until 8fa80818, 2026-04-02, so no nightly pressure was involved.) It is #2014,
+    # with the margin above as its measurement.
     #
-    # The exposure is stated rather than claimed away: between this deletion and that issue, nothing
-    # catches a Picard convergence collapse at sigma=0.1.
+    # What the deletion actually costs, stated rather than claimed away: the sigma=0.1 COARSE leg,
+    # Nx_points=[21], which has no `:94`-bearing neighbour. The Nx=41 leg is covered.
     #
     # Coupled EOC through the production FixedPointIterator already exists:
     # tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence. What remains uncovered

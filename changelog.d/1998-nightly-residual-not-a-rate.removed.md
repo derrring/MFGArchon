@@ -51,13 +51,23 @@ already holds `result`, so a transient bound there is one line at zero marginal 
 margin for `final < 1e-2 * peak` at its own 20-iteration budget: **73.5×** at `Nx=20`, **31.9×** at
 `Nx=40`.
 
+**And the transient is not left unguarded** — an earlier draft of this fragment said it was.
+Measured on `test_dual_fdm_pair_converges`' own configuration (`Nx_points=[41]`, `Nt=20`,
+`sigma=0.1`, `FDM_UPWIND`, `max_iterations=50`), its `:94` assertion `final_error <= initial_max*2.0`
+reads threshold `1.003133e+03` against final `1.823556e+02` — a **5.50× margin** — and it is *more*
+sensitive than the deleted one: `:94` fires at a uniform post-peak decay factor below **1.0440**,
+`e < 1000` at below **1.0088**, so `:94`'s firing region strictly contains it, 20 iterations sooner.
+What the deletion actually costs is the `sigma=0.1` **coarse** leg (`Nx_points=[21]`), which has no
+such neighbour.
+
 Deleting is still right, and not because the guard was worthless. Whatever the guard becomes belongs
-on the **surviving** test, so this one goes either way and the two questions are independent. It also
-wants a **decay** bound rather than a magnitude one — a residual threshold is scale- and
-configuration-dependent, while `final < 1e-2 * peak` is scale-free and fires exactly on the collapse
-above. Writing that assertion here, under an open nightly, is how `e < 1000` got into the file. It is
-#2014, with those margins as its measurement. The exposure between this deletion and that issue is
-stated rather than claimed away: nothing catches a Picard convergence collapse at `sigma=0.1`.
+on the **surviving** test, so this one goes either way. It also wants a **decay** bound rather than a
+magnitude one — `final < 1e-2 * peak` is scale-free, margin **31.9×** at `test_fdm_upwind_stable`'s
+own budget. Writing a threshold here to fit what was observed is how this file got its numbers:
+`c1a3696b`, the day the file was created, is *"Relax convergence test to allow oscillatory behavior
+… final error ≤ 2× initial max error"* — and that is `:94`, the assertion now doing the real work.
+(`e < 1000` arrived with the file at `fc07ae31`, 2026-01-17; `nightly.yml` did not exist until
+`8fa80818`, 2026-04-02, so no nightly pressure was involved.) Tracked as #2014.
 
 Coupled EOC through the production `FixedPointIterator` already exists in
 `tests/integration/test_coupled_mfg_mms.py`. What remains uncovered is coupled EOC **at a no-flux
