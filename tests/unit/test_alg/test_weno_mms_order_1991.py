@@ -5,16 +5,17 @@
 unverified but unmeasurable. This threads it through the 1D path and pins what the
 resulting measurement shows.
 
-(A census by parameter name gave 8 of 11 lacking it. That over-counts: `HJBGFDMSolver` has
-the same channel under the name `running_cost`, with a different convention -- `f(n) ->
-(n_points,)` rather than `f(t, x)`. The capability gate keys on the name `source_term`, so
-it rejects GFDM for lacking a capability GFDM has. Tracked on #1991; a divergent mechanism
-rather than a missing one, and not this PR's to fix.
+(A census by parameter name gave 8 of 11 lacking it. At the time that over-counted:
+`HJBGFDMSolver` carried the same arithmetic slot under the name `running_cost`, at the opposite
+sign and with a different convention -- `f(n) -> (n_points,)` rather than `f(t, x)`. #1999 has
+since removed that channel, so GFDM now reaches the slot through `source_term` alone and the
+census is no longer an over-count on that solver.
 
-The relationship is a plain negation, `running_cost = -source_term`, fixed by two documented
-primitives: `h_eval.py:83` returns the residual `-u_t + H(+running_cost) - D*lap_u`, while the
-source contract at `base_hjb.py:435` is `F(u) = (u-u_next)/dt + H - S = 0`; setting both to
-zero gives the sign. `hjb_gfdm.py:3079` states it directly -- "Added to Hamiltonian:
+The sign relationship the two slots had is a plain negation, `additive_source = -source_term`,
+fixed by two documented primitives: `h_eval.py` returns the residual
+`-u_t + H(+additive_source) - D*lap_u`, while the source contract at `base_hjb.py:435` is
+`F(u) = (u-u_next)/dt + H - S = 0`; setting both to zero gives the sign. Note the historical
+hazard: the line that once "stated it directly" stated it with the WRONG sign -- "Added to
 H_total = H(x,p,m) + L(t,x)". Measured by running this same manufactured pair through GFDM at
 sigma=1: `-r_u` gives 3.1621e-03 -> 7.9413e-04, EOC 2.0; `+r_u` sits flat at 1.4233 -> 1.4241
 and never converges. So a port carrying an FDM source into GFDM unchanged would converge on the

@@ -3097,10 +3097,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Lagrangian -- V(x,t) + f(m) -- is owned by the Hamiltonian and already enters through
         # `eval_H_batch` on the Newton path and `howard_running_cost` on the Howard path. A second
         # channel could only carry the same quantity, and adding it on top of a Hamiltonian that
-        # already holds a potential double-counted it silently (#2001).
-        # The MMS source is the ONLY additive channel a caller can reach (#1999). The
-        # alpha-independent part of the Lagrangian -- V(x,t) + f(m) -- belongs to the
-        # Hamiltonian and arrives through it, so a source and a running cost can no longer
+        # already holds a potential double-counted it silently (#2001). The MMS source is now the
+        # only additive channel a caller can reach, so a source and a running cost can no longer
         # be confused: there is only one of them.
         self._mms_source_fn: Callable[[int], np.ndarray] | None = None
         if source_term is not None:
@@ -3108,8 +3106,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             _x = self.collocation_points
 
             def _source_at(n: int, _dt: float = _dt, _x: np.ndarray = _x) -> np.ndarray:
-                # `running_cost = -source_term`: h_eval assembles `-u_t + H(+running_cost) -
-                # D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
+                # `additive_source = -source_term`: h_eval assembles `-u_t + H(+additive_source)
+                # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
                 s_n = np.asarray(source_term(n * _dt, _x), dtype=float)
@@ -3247,8 +3245,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Howard derives alpha* = -dH/dp and now consumes the control-cost Lagrangian
         # L(alpha) = lambda/2 |alpha|^2 from the single source (control_cost.lagrangian, wired
         # below), so any QUADRATIC control cost (unit or lambda != 1) MINIMIZE is faithful. The
-        # potential V(x, t), the density coupling f(m), and any caller running cost are wired
-        # (Issue #1247, below). What remains unmodelled — NON-quadratic control cost and the
+        # potential V(x, t), the density coupling f(m), and the MMS source are wired
+        # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains unmodelled — NON-quadratic control cost and the
         # MAXIMIZE sense — is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
         control_cost = getattr(H_class, "control_cost", None)
@@ -3341,17 +3339,19 @@ class HJBGFDMSolver(BaseHJBSolver):
             return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
-        # — potential V(x, t), density coupling f(m^n) — and any caller running cost L_user
-        # into Howard's running_cost slot, so Howard solves the full non-LQ HJB.
+        # — potential V(x, t), density coupling f(m^n) — and the MMS source into Howard's
+        # running_cost slot, so Howard solves the full non-LQ HJB. There is no user running
+        # cost to route: #1999 removed that channel.
         #
         #   SIGN of rc_t (load-bearing). Howard's converged policy-evaluation equation is
         #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 - (sigma^2/2) Lap u^n - rc_t = 0
         #   (substitute alpha* = -grad u^n into b = u^{n+1}/dt + (1/2)|alpha|^2 + rc_t and the
         #   advection operator A_adv u = alpha . grad u; see hjb_howard.py:_howard_step). The
-        #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + L_user - D Lap u = 0
-        #   with H = (1/2)|grad u|^2 + V + f(m)) is
-        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + L_user - (sigma^2/2) Lap u^n = 0.
-        #   Matching the two forces rc_t = -(V + f(m) + L_user): Howard's slot is the Legendre
+        #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + S_slot - D Lap u = 0
+        #   with H = (1/2)|grad u|^2 + V + f(m), and S_slot = -S the MMS source already converted
+        #   into h_eval's additive_source convention by _source_at) is
+        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + S_slot - (sigma^2/2) Lap u^n = 0.
+        #   Matching the two forces rc_t = -(V + f(m) + S_slot): Howard's slot is the Legendre
         #   dual side, which carries the H-additive terms with a FLIPPED sign. Resolved
         #   EMPIRICALLY (not by reasoning alone) by the Howard-vs-Newton agreement gate
         #   test_integrated_howard_matches_newton_nonlq: with Newton as ground truth, s=-1 gives

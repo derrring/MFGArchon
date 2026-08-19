@@ -34,7 +34,7 @@ per-point diffusion paths, the weak-form (FEM Galerkin) FP path via ``FPFEMSolve
 (the clean eigenmode invariant).
 
 The HJB-GFDM case isolates pure diffusion past the Hamiltonian advection with an
-MMS source ``L^n[i] = -H(grad u*^n)`` evaluated on the analytic backward-decaying
+MMS source ``S^n[i] = +H(grad u*^n)`` evaluated on the analytic backward-decaying
 eigenmode, so the ``H`` term cancels in the residual and the recovered field reads
 the diffusion coefficient directly (the #1073 chain: ``problem.diffusion`` already
 equals ``sigma^2/2``, so a path that re-squared it produced ``(sigma^2/2)^2``).
@@ -218,7 +218,7 @@ def _gfdm_diffusion_field_relerr(
     ``u*`` and the relerr is small; a mismatched ``D_reference`` detunes the decay and
     the relerr blows up -- which is how this gate would catch a wrong solver magnitude.
     The Hamiltonian ``H = |p|^2/(2 lam)`` advection is cancelled by the MMS source
-    ``L^n[i] = -H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
+    ``S^n[i] = +H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
     clean (diffusion O(amp) dominates the O(amp^2) Hamiltonian remnant).
     """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))

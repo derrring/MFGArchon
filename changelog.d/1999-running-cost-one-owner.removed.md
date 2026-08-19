@@ -3,7 +3,10 @@ the Lagrangian — the potential `V(x,t)` and the coupling `f(m)` — is owned b
 already reaches the residual through it, so a second channel could only carry the same quantity a
 second time: supplied alongside a Hamiltonian that already held a potential it double-counted
 silently (#2001). The package's only caller of that channel used it as an MMS source and has moved
-to `source_term`, which #1991 added for exactly that. `h_eval.assemble_hjb_residual`'s parameter is
+to `source_term`, which #1991 added for exactly that. **Migrating callers must negate:
+`source_term = -running_cost`.** `h_eval` assembles `-u_t + H(+additive_source) - D*lap_u` while
+the package-wide source contract is `F(u) = (u-u_next)/dt + H - S = 0`, so the two slots carry
+opposite signs. Passing the old callable unchanged solves a different problem and nothing raises. `h_eval.assemble_hjb_residual`'s parameter is
 renamed `additive_source` to match what it now carries, and the orphaned `_normalize_running_cost`
 machinery is deleted. `HJBHowardSolver`'s `running_cost=` is unchanged. It is public — the class is exported and
 its `__init__` still takes the argument — but it is not a rival owner at that layer, because

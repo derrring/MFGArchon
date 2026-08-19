@@ -56,7 +56,7 @@ def test_eval_batch_passes_through_non_lq_coupling():
 
 
 def test_assemble_hjb_residual_byte_identical():
-    """Layer B: assemble_hjb_residual == -u_t + H(+running_cost) - D*lap_u (D = sigma^2/2)."""
+    """Layer B: assemble_hjb_residual == -u_t + H(+additive_source) - D*lap_u (D = sigma^2/2)."""
     from mfgarchon.alg.numerical.hjb_solvers.h_eval import assemble_hjb_residual
     from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 

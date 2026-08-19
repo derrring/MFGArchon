@@ -8,15 +8,23 @@ keys on a parameter NAME, so it was measuring a proxy for the capability it was 
 
 `source_term` and `running_cost` were never the same quantity. #1999 then removed the
 `running_cost=` parameter from this solver entirely -- not because they are the same, but
-because that channel could only carry what `source_term` already carries, at the opposite
-sign. The distinction below is why a *rename* would have been wrong; the removal rests on
-`source_term`'s own contract being general enough, which was verified bitwise:
+because it double-counted against the Hamiltonian's own potential (#2001). The distinction below
+is why a *rename* would have been wrong, and it also bounds what the removal may be justified by:
 
-- `running_cost` is model data. `HJBHowardSolver` documents this slot as "the non-quadratic-in-alpha
-  part of the Lagrangian (potential V(x), congestion g(x, m), etc.)", so it MAY depend on `m`; the
-  alpha-dependent half of the Lagrangian is `control_lagrangian`, which sits inside the Legendre
+- `running_cost` was model data, and `HJBHowardSolver` documents that slot as "the
+  non-quadratic-in-alpha part of the Lagrangian (potential V(x), congestion g(x, m), etc.)", so it
+  MAY depend on `m`. The alpha-dependent half is `control_lagrangian`, inside the Legendre
   transform rather than beside it.
 - `source_term` is artificial forcing for verification and must not depend on `m`.
+
+So `source_term` is NOT a general replacement, and the removal must not be justified by claiming it
+is. What makes the removal right is that model data has a different owner: an alpha-free `F(x, m)`
+belongs in the Lagrangian, which is where both Cardaliaguet (lecture notes 2020, p.45 --
+"local coupling functions, i.e., when F = F(x, m(t,x))") and this project's own paper
+(`chapters/chap_01.tex`, running cost `L(x, m, alpha)`) put it. A `HamiltonianBase` subclass
+expresses it and GFDM honours it -- measured, `H = |p|^2/2 + g*x*m` moves `u(0,.)` by 2.24e-01 at
+g=1. What cannot express it is `SeparableHamiltonian`, whose `coupling` takes only `m`; that gap is
+real, it is what `running_cost` was masking, and it is #2010, not this channel's to carry.
 
 They share one arithmetic slot with opposite signs -- `h_eval.assemble_hjb_residual` returns
 `-u_t + H(+additive_source) - D*lap_u` while the source contract in `base_hjb` is
@@ -207,6 +215,13 @@ def test_the_source_reaches_gfdm_in_2d():
 @pytest.mark.slow
 def test_the_per_point_residual_path_also_honours_the_source():
     """A THIRD arithmetic site, with its own sign, and nothing else reaches it.
+
+    NOT IN THE AUTHORITATIVE GATE. `scripts/local_ci.sh` filters on `scripts/ci_markers.txt`,
+    which starts `not slow`, and this test measures 42.8 s -- 28% of the whole gate -- so the
+    marker is justified and removing it is not the fix. State the consequence rather than leave
+    it inferable: the batch path's sign control (`test_the_source_sign_is_not_free`) and Howard's
+    do run in the gate; this one does not, and the migrated caller in
+    `tests/integration/test_diffusion_magnitude_gate.py` runs on THIS path.
 
     `qp_optimization_level != "none"` switches off the batch residual and uses the per-point
     loop, where the source enters at `hjb_gfdm.py` as `H = H + additive_source[i]` -- separate
