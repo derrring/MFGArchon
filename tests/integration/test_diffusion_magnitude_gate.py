@@ -34,7 +34,7 @@ per-point diffusion paths, the weak-form (FEM Galerkin) FP path via ``FPFEMSolve
 (the clean eigenmode invariant).
 
 The HJB-GFDM case isolates pure diffusion past the Hamiltonian advection with an
-MMS source ``L^n[i] = -H(grad u*^n)`` evaluated on the analytic backward-decaying
+MMS source ``S^n[i] = +H(grad u*^n)`` evaluated on the analytic backward-decaying
 eigenmode, so the ``H`` term cancels in the residual and the recovered field reads
 the diffusion coefficient directly (the #1073 chain: ``problem.diffusion`` already
 equals ``sigma^2/2``, so a path that re-squared it produced ``(sigma^2/2)^2``).
@@ -218,7 +218,7 @@ def _gfdm_diffusion_field_relerr(
     ``u*`` and the relerr is small; a mismatched ``D_reference`` detunes the decay and
     the relerr blows up -- which is how this gate would catch a wrong solver magnitude.
     The Hamiltonian ``H = |p|^2/(2 lam)`` advection is cancelled by the MMS source
-    ``L^n[i] = -H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
+    ``S^n[i] = +H(grad u*^n)``; ``amp`` is kept small so the residual cancellation is
     clean (diffusion O(amp) dominates the O(amp^2) Hamiltonian remnant).
     """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
@@ -237,16 +237,20 @@ def _gfdm_diffusion_field_relerr(
     solver = HJBGFDMSolver(
         prob, x.reshape(-1, 1), delta=delta, monotonicity_scheme="joint_socp", monotonicity_application="precompute"
     )
-    tspace = np.linspace(0.0, T, nt + 1)
 
-    def running_cost_fn(n):  # L^n[i] = -H(grad u*^n) on the analytic field
-        grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - tspace[n])) * _PI * np.sin(_PI * x)
-        return -(grad_u_star**2) / (2.0 * lam)
+    # Issue #1999: this was `running_cost=`, which was the only caller of that channel in the
+    # package and used it as an MMS source -- cancelling H so the solve reduces to the backward
+    # heat equation with an analytic solution. It now uses `source_term`, the channel that exists
+    # for exactly this. The sign flips because `running_cost = -source_term`.
+    def source_fn(t, pts):  # S = +H(grad u*) on the analytic field
+        xx = np.asarray(pts, dtype=float).reshape(-1)
+        grad_u_star = -amp * np.exp(-D_reference * _PI**2 * (T - t)) * _PI * np.sin(_PI * xx)
+        return (grad_u_star**2) / (2.0 * lam)
 
     U = solver.solve_hjb_system(
         M_density=np.ones((nt + 1, n_x)),
         U_terminal=amp * np.cos(_PI * x),
-        running_cost=running_cost_fn,
+        source_term=source_fn,
         show_progress=False,
     )
     u0_star = amp * np.exp(-D_reference * _PI**2 * T) * np.cos(_PI * x)

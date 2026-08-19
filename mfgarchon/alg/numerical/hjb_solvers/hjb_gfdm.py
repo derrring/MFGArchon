@@ -1166,51 +1166,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._D_grad: list | None = None  # Gradient differentiation matrices
         self._D_lap: Any | None = None  # Laplacian differentiation matrix
         self._cached_derivative_weights: dict | None = None  # Pre-computed GFDM weights
-        self._running_cost_fn: Callable[[int], np.ndarray] | None = None  # Running cost f(n) -> (n_points,)
         self._f_potential_warned: bool = False  # One-time warning for unused f_potential (Issue #766)
-
-    def _normalize_running_cost(
-        self,
-        running_cost: np.ndarray | Callable[[int], np.ndarray] | None,
-        n_time_points: int,
-    ) -> Callable[[int], np.ndarray] | None:
-        """Normalize running cost input to a callable f(n) -> (n_points,).
-
-        Accepts three input forms:
-            - None: no running cost
-            - 1D array (n_points,): static cost, same at every timestep
-            - 2D array (n_time_points, n_points): time-dependent cost
-            - Callable: f(time_index) -> (n_points,) array, used directly
-        """
-        if running_cost is None:
-            return None
-
-        # Callable path: validate output shape and return directly
-        if callable(running_cost):
-            test_output = np.asarray(running_cost(0))
-            if test_output.shape != (self.n_points,):
-                raise ValueError(f"running_cost callable must return shape ({self.n_points},), got {test_output.shape}")
-            return running_cost
-
-        # Array path: normalize to callable
-        running_cost = np.asarray(running_cost)
-        if running_cost.ndim == 1:
-            if running_cost.shape[0] != self.n_points:
-                raise ValueError(
-                    f"running_cost must have shape ({self.n_points},) or "
-                    f"({n_time_points}, {self.n_points}), got {running_cost.shape}"
-                )
-            rc_static = running_cost.copy()
-            return lambda _n: rc_static
-        elif running_cost.ndim == 2:
-            if running_cost.shape != (n_time_points, self.n_points):
-                raise ValueError(
-                    f"running_cost must have shape ({n_time_points}, {self.n_points}), got {running_cost.shape}"
-                )
-            rc_full = running_cost.copy()
-            return lambda n: rc_full[n]
-        else:
-            raise ValueError(f"running_cost must be 1D or 2D array, got {running_cost.ndim}D")
 
     def _compute_n_spatial_grid_points(self) -> int:
         """Compute total number of spatial grid points from geometry."""
@@ -2213,7 +2169,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         lap_u: np.ndarray,
         H_class: Any,
         current_time: float,
-        running_cost: np.ndarray | None = None,
+        additive_source: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Compute HJB residual using batch Hamiltonian class (Issue #775).
@@ -2249,7 +2205,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             sigma=sigma,
             t=current_time,
             u_t=u_t,
-            running_cost=running_cost,
+            additive_source=additive_source,
         )
 
     def _compute_hjb_jacobian_hamiltonian(
@@ -2303,7 +2259,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         m_n_plus_1: np.ndarray,
         time_idx: int,
         cached_derivs: dict[int, dict[tuple[int, ...], float]],
-        running_cost: np.ndarray | None = None,
+        additive_source: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Compute HJB residual using pre-computed derivatives (per-point path).
@@ -2328,9 +2284,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             H = self.problem.H(i, m_n_plus_1[i], derivs=p_derivs, x_position=x_pos)
 
-            # Running cost L(x) at this timestep (passed explicitly from backward loop)
-            if running_cost is not None:
-                H = H + running_cost[i]
+            # Additive source at this timestep (passed explicitly from the backward loop)
+            if additive_source is not None:
+                H = H + additive_source[i]
 
             sigma_val = self._get_sigma_value(i)
             diffusion_term = diffusion_from_volatility(sigma_val) * laplacian
@@ -3062,7 +3018,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         U_coupling_prev: np.ndarray | None = None,
         show_progress: bool | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
-        running_cost: np.ndarray | Callable[[int], np.ndarray] | None = None,
         source_term: Callable | None = None,
     ) -> np.ndarray:
         """
@@ -3073,22 +3028,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             U_terminal: (*spatial_shape,) terminal condition u(T,x)
             U_coupling_prev: (Nt, *spatial_shape) previous coupling iteration estimate
             show_progress: Whether to display progress bar for timesteps
-            running_cost: Running cost L(x) or L(t,x) at collocation points.
-                Static array: shape (n_points,) -- same cost at every backward step.
-                Time-dependent array: shape (n_time_points, n_points) -- L(t_n, x) per step.
-                Callable: f(time_index) -> (n_points,) array, evaluated per step.
             source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
                 package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
-                (:mod:`base_hjb`). Distinct from ``running_cost``: a running cost is model data
-                and may depend on ``m``, a source is an artificial forcing for verification and
-                may not. They share an arithmetic slot with OPPOSITE sign -- ``h_eval`` assembles
-                ``-u_t + H(+running_cost) - D*lap_u`` while the source contract subtracts, so
-                ``running_cost = -source_term`` -- and this argument exists so one manufactured
-                solution runs against every solver rather than being rewritten per convention.
-                Supplying both adds them, since they are different quantities. (The
-                "Added to Hamiltonian: H_total = H + L(t,x)" line below belongs to
-                ``running_cost``, not to this argument, whose relation is the negation above.)
-                Added to Hamiltonian: H_total = H(x,p,m) + L(t,x).
+                (:mod:`base_hjb`). This is the ONLY additive channel a caller can reach. The
+                alpha-independent part of the Lagrangian -- the potential ``V(x,t)`` and the
+                coupling ``f(m)`` -- belongs to the Hamiltonian and arrives through it, so a
+                source cannot be confused with a running cost: there is no longer a second slot
+                to confuse it with (Issue #1999). Internally the two still meet with OPPOSITE
+                signs, since ``h_eval`` assembles ``-u_t + H(+additive_source) - D*lap_u`` while
+                the source contract subtracts; the conversion happens once, in ``_source_at``,
+                which returns ``-S``. So the effective Hamiltonian is ``H_total = H - S``, NOT
+                ``H + S``: migrating a callable from the retired ``running_cost=`` channel
+                requires FLIPPING ITS SIGN, since ``running_cost = -source_term``.
             volatility_field: Optional SDE-volatility override. Accepts a scalar,
                 an inspectable one-argument space-only callable ``sigma(x)`` evaluated
                 at each collocation point, or a
@@ -3142,30 +3093,28 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Store original spatial shape for reshaping output
         self._output_spatial_shape = M_density.shape[1:]
 
-        # Normalize running cost to callable f(n) -> (n_points,)
-        # Accepts: None, 1D array, 2D array, or callable
-        self._running_cost_fn = self._normalize_running_cost(running_cost, n_time_points)
-        # Kept SEPARATE from `_running_cost_fn` rather than folded into it. They occupy one
-        # arithmetic slot but are different quantities: a running cost is model data and may
-        # depend on `m` (Howard documents this slot as "the non-quadratic-in-alpha part of the
-        # Lagrangian -- potential V(x), congestion g(x, m)"), while an MMS source is artificial
-        # forcing that must not. Folding them would leave one opaque callable in which a
-        # congestion term and a verification forcing are indistinguishable after the fact.
+        # Issue #1999: there is no user running-cost channel. The alpha-independent part of the
+        # Lagrangian -- V(x,t) + f(m) -- is owned by the Hamiltonian and already enters through
+        # `eval_H_batch` on the Newton path and `howard_running_cost` on the Howard path. A second
+        # channel could only carry the same quantity, and adding it on top of a Hamiltonian that
+        # already holds a potential double-counted it silently (#2001). The MMS source is now the
+        # only additive channel a caller can reach, so a source and a running cost can no longer
+        # be confused: there is only one of them.
         self._mms_source_fn: Callable[[int], np.ndarray] | None = None
         if source_term is not None:
             _dt = self.problem.T / self.problem.Nt
             _x = self.collocation_points
 
             def _source_at(n: int, _dt: float = _dt, _x: np.ndarray = _x) -> np.ndarray:
-                # `running_cost = -source_term`: h_eval assembles `-u_t + H(+running_cost) -
-                # D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
+                # `additive_source = -source_term`: h_eval assembles `-u_t + H(+additive_source)
+                # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
                 s_n = np.asarray(source_term(n * _dt, _x), dtype=float)
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
-                # 6.6433e+00 to 4.6862e+00 with no diagnostic. `_normalize_running_cost` already
+                # 6.6433e+00 to 4.6862e+00 with no diagnostic, and nothing downstream
                 # validates its callable's output; this is the same contract.
                 if s_n.shape != (self.n_points,):
                     # An (N,1) or (1,N) vector has an unambiguous ordering, and `base_hjb`
@@ -3243,16 +3192,13 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
 
             for n in timestep_range:
-                rc_n = self._running_cost_fn(n) if self._running_cost_fn is not None else None
-                if self._mms_source_fn is not None:
-                    s_n = self._mms_source_fn(n)
-                    rc_n = s_n if rc_n is None else np.asarray(rc_n, dtype=float).reshape(-1) + s_n
+                rc_n = self._mms_source_fn(n) if self._mms_source_fn is not None else None
 
                 U_solution_collocation[n, :] = self._solve_timestep(
                     U_solution_collocation[n + 1, :],
                     M_collocation[n, :],  # FIXED: Use m^n, not m^{n+1} (same-time coupling)
                     n,
-                    running_cost=rc_n,
+                    additive_source=rc_n,
                 )
 
                 # Update progress bar with QP statistics if available (Issue #587 Protocol - no hasattr needed)
@@ -3299,8 +3245,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Howard derives alpha* = -dH/dp and now consumes the control-cost Lagrangian
         # L(alpha) = lambda/2 |alpha|^2 from the single source (control_cost.lagrangian, wired
         # below), so any QUADRATIC control cost (unit or lambda != 1) MINIMIZE is faithful. The
-        # potential V(x, t), the density coupling f(m), and any caller running cost are wired
-        # (Issue #1247, below). What remains unmodelled — NON-quadratic control cost and the
+        # potential V(x, t), the density coupling f(m), and the MMS source are wired
+        # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains unmodelled — NON-quadratic control cost and the
         # MAXIMIZE sense — is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
         control_cost = getattr(H_class, "control_cost", None)
@@ -3393,17 +3339,19 @@ class HJBGFDMSolver(BaseHJBSolver):
             return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
-        # — potential V(x, t), density coupling f(m^n) — and any caller running cost L_user
-        # into Howard's running_cost slot, so Howard solves the full non-LQ HJB.
+        # — potential V(x, t), density coupling f(m^n) — and the MMS source into Howard's
+        # running_cost slot, so Howard solves the full non-LQ HJB. There is no user running
+        # cost to route: #1999 removed that channel.
         #
         #   SIGN of rc_t (load-bearing). Howard's converged policy-evaluation equation is
         #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 - (sigma^2/2) Lap u^n - rc_t = 0
         #   (substitute alpha* = -grad u^n into b = u^{n+1}/dt + (1/2)|alpha|^2 + rc_t and the
         #   advection operator A_adv u = alpha . grad u; see hjb_howard.py:_howard_step). The
-        #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + L_user - D Lap u = 0
-        #   with H = (1/2)|grad u|^2 + V + f(m)) is
-        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + L_user - (sigma^2/2) Lap u^n = 0.
-        #   Matching the two forces rc_t = -(V + f(m) + L_user): Howard's slot is the Legendre
+        #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + S_slot - D Lap u = 0
+        #   with H = (1/2)|grad u|^2 + V + f(m), and S_slot = -S the MMS source already converted
+        #   into h_eval's additive_source convention by _source_at) is
+        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + S_slot - (sigma^2/2) Lap u^n = 0.
+        #   Matching the two forces rc_t = -(V + f(m) + S_slot): Howard's slot is the Legendre
         #   dual side, which carries the H-additive terms with a FLIPPED sign. Resolved
         #   EMPIRICALLY (not by reasoning alone) by the Howard-vs-Newton agreement gate
         #   test_integrated_howard_matches_newton_nonlq: with Newton as ground truth, s=-1 gives
@@ -3412,7 +3360,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         #   #1247 Defect 2 sign flip (it previously entered Howard's slot un-negated).
         potential = getattr(H_class, "_potential", None)
         coupling = getattr(H_class, "_coupling", None)
-        user_rc = self._running_cost_fn
         # Issue #1991: the Howard branch must consume the MMS source too. It was read only in the
         # Newton branch, so `solve_hjb_system(source_term=...)` on this path discarded it BITWISE
         # -- measured, |U(source) - U(no source)| = 0.000e+00 at two resolutions, with the Newton
@@ -3423,7 +3370,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         has_H_extra = potential is not None or coupling is not None
 
         howard_running_cost = None
-        if has_H_extra or user_rc is not None or mms_src is not None:
+        if has_H_extra or mms_src is not None:
             colloc_pts = self.collocation_points
             p_zero = np.zeros((self.n_points, self.dimension))
 
@@ -3440,14 +3387,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                             dtype=float,
                         ).ravel()
                     )
-                if user_rc is not None:
-                    rc = rc + np.asarray(user_rc(t_idx), dtype=float).ravel()
                 if mms_src is not None:
                     # `_mms_source_fn` already returns -S in the Newton slot's convention, and the
                     # `-rc` below applies Howard's own flip, so it enters here un-negated exactly
-                    # like `user_rc`.
+                    # in the slot the retired user running cost used.
                     rc = rc + np.asarray(mms_src(t_idx), dtype=float).ravel()
-                return -rc  # rc_t = -(V + f(m) + L_user + S_mms); see SIGN note above.
+                return -rc  # rc_t = -(V + f(m) + S_mms); see SIGN note above.
 
         # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The
@@ -3470,7 +3415,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         u_n_plus_1: np.ndarray,
         m_n_plus_1: np.ndarray,
         time_idx: int,
-        running_cost: np.ndarray | None = None,
+        additive_source: np.ndarray | None = None,
     ) -> np.ndarray:
         """Solve HJB at one time step using Newton iteration with backtracking line search.
 
@@ -3536,7 +3481,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     l_u,
                     H_class,
                     current_time,
-                    running_cost=running_cost,
+                    additive_source=additive_source,
                 )
             else:
                 derivs = self._approximate_all_derivatives_cached(u_trial)
@@ -3546,7 +3491,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     m_n_plus_1,
                     time_idx,
                     derivs,
-                    running_cost=running_cost,
+                    additive_source=additive_source,
                 )
             return float(np.linalg.norm(r))
 
@@ -3568,7 +3513,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     lap_u,
                     H_class,
                     current_time,
-                    running_cost=running_cost,
+                    additive_source=additive_source,
                 )
 
                 if np.linalg.norm(residual) < self.newton_tolerance:
@@ -3590,7 +3535,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     m_n_plus_1,
                     time_idx,
                     all_derivs,
-                    running_cost=running_cost,
+                    additive_source=additive_source,
                 )
 
                 if np.linalg.norm(residual) < self.newton_tolerance:

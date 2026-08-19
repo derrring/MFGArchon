@@ -6,18 +6,43 @@ that argument, so the capability gate at `coupling/base_mfg.py:215` rejected it 
 HJB solver", while GFDM in fact had the channel all along under the name `running_cost`. The gate
 keys on a parameter NAME, so it was measuring a proxy for the capability it was asked about.
 
-`source_term` and `running_cost` are NOT the same quantity and are deliberately not unified:
+`source_term` and `running_cost` were never the same quantity. #1999 then removed the
+`running_cost=` parameter from this solver entirely -- not because they are the same, but
+because it double-counted against the Hamiltonian's own potential (#2001). The distinction below
+is why a *rename* would have been wrong, and it also bounds what the removal may be justified by:
 
-- `running_cost` is model data. `HJBHowardSolver` documents this slot as "the non-quadratic-in-alpha
-  part of the Lagrangian (potential V(x), congestion g(x, m), etc.)", so it MAY depend on `m`; the
-  alpha-dependent half of the Lagrangian is `control_lagrangian`, which sits inside the Legendre
+- `running_cost` was model data, and `HJBHowardSolver` documents that slot as "the
+  non-quadratic-in-alpha part of the Lagrangian (potential V(x), congestion g(x, m), etc.)", so it
+  MAY depend on `m`. The alpha-dependent half is `control_lagrangian`, inside the Legendre
   transform rather than beside it.
 - `source_term` is artificial forcing for verification and must not depend on `m`.
 
+So `source_term` is NOT a general replacement, and the removal must not be justified by claiming it
+is. What makes the removal right is that model data has a different owner: an alpha-free `F(x, m)`
+belongs in the Lagrangian, which is where both Cardaliaguet (lecture notes, section
+"Comments" of the second-order MFG chapter -- "local coupling functions, i.e., when
+F = F(x, m(t,x))"; cited by statement because two printings on this machine disagree on
+pagination, see #2010) and this project's own paper
+(`chapters/chap_01.tex`, running cost `L(x, m, alpha)`) put it. A `HamiltonianBase` subclass
+expresses it, and GFDM honours it **on the Newton paths** -- measured, `H = |p|^2/2 + g*x*m` moves
+`u(0,.)` by 2.24e-01 at g=1 (21-point cloud on [0,1], `Nt=10`, `T=0.2`, `sigma=0.5`, default
+`delta`, `M` a normalized `exp(-(x-0.3)^2/0.02)` held fixed -- the figure moves with all of those,
+so it is evidence only with them). State the path, because it does not generalize: `_solve_backward_howard`
+builds its running-cost closure from `getattr(H_class, "_potential")` / `"_coupling"`, which are
+`SeparableHamiltonian` internals, so the same subclass is dropped **bitwise** there -- 0.000e+00,
+against 2.000e-01 for a `SeparableHamiltonian` potential as a positive control on the same path.
+That hole is pre-existing and is #2011. `source_term` reaches the SAME closure -- `hjb_gfdm.py:3373`
+is `if has_H_extra or mms_src is not None`, which is what #1991 added -- so Howard is not without an
+additive channel; `running_cost=` was the only route for MODEL DATA, since `source_term`'s contract
+bars depending on `m`. Closing #2011 is what makes this removal costless on Howard for the
+`m`-dependent case. The other gap -- `SeparableHamiltonian`'s
+`coupling` taking only `m` -- is #2010. Neither is this channel's to carry, and neither is a reason
+to keep a channel that double-counts.
+
 They share one arithmetic slot with opposite signs -- `h_eval.assemble_hjb_residual` returns
-`-u_t + H(+running_cost) - D*lap_u` while the source contract in `base_hjb` is
-`F(u) = (u-u_next)/dt + H - S = 0`, hence `running_cost = -source_term` -- so the solver keeps them
-as separate attributes and adds them only at the call site.
+`-u_t + H(+additive_source) - D*lap_u` while the source contract in `base_hjb` is
+`F(u) = (u-u_next)/dt + H - S = 0`, hence `running_cost = -source_term`. That sign is why a
+migration is not a rename, and it is what `test_the_source_sign_is_not_free` pins.
 
 Manufactured pair is the 1D reduction of the coupled MMS in the GFDM paper
 (`chapters/appendix.tex`, eq:mms_reference / eq:mms_system):
@@ -99,7 +124,13 @@ def test_gfdm_accepts_the_package_wide_source_argument():
 
     params = set(inspect.signature(HJBGFDMSolver.solve_hjb_system).parameters)
     assert "source_term" in params, "the capability gate at base_mfg.py:215 tests for this name"
-    assert "running_cost" in params, "the modelling concept must survive; it is not the same quantity"
+    # Issue #1999: and there is no second additive channel beside it. The alpha-independent part
+    # of the Lagrangian -- V(x,t) + f(m) -- is the Hamiltonian's, and a `running_cost=` parameter
+    # could only carry the same quantity a second time: supplied alongside a Hamiltonian that
+    # already held a potential, it double-counted silently (#2001).
+    assert "running_cost" not in params, (
+        "a caller must not be able to inject an alpha-free cost that bypasses the Hamiltonian"
+    )
 
 
 def test_mms_reaches_gfdm_and_it_converges():
@@ -198,8 +229,15 @@ def test_the_source_reaches_gfdm_in_2d():
 def test_the_per_point_residual_path_also_honours_the_source():
     """A THIRD arithmetic site, with its own sign, and nothing else reaches it.
 
+    NOT IN THE AUTHORITATIVE GATE. `scripts/local_ci.sh` filters on `scripts/ci_markers.txt`,
+    which starts `not slow`, and this test measures 42.8 s -- 28% of the whole gate -- so the
+    marker is justified and removing it is not the fix. State the consequence rather than leave
+    it inferable: the batch path's sign control (`test_the_source_sign_is_not_free`) and Howard's
+    do run in the gate; this one does not, and the migrated caller in
+    `tests/integration/test_diffusion_magnitude_gate.py` runs on THIS path.
+
     `qp_optimization_level != "none"` switches off the batch residual and uses the per-point
-    loop, where the source enters at `hjb_gfdm.py:2332` as `H = H + running_cost[i]` -- separate
+    loop, where the source enters at `hjb_gfdm.py` as `H = H + additive_source[i]` -- separate
     from `h_eval.assemble_hjb_residual` (Newton batch) and from `howard_running_cost`'s `-rc`.
     Three sites, three conventions to keep straight. Flipping the sign at that one line leaves
     every other test in this module green while the path sits at the flat-1.42 non-convergence

@@ -68,6 +68,20 @@
       "count": 12,
       "note": "Hardcodes the exclusive convention (wrap at (0, Nx-1)) at every site. ENDPOINT_INCLUSIVE, which TensorProductGrid uses, puts the wrap at (0, Nx-2) instead -- so these sites and the grid disagree about which nodes are the same physical point. #1895 hit this three times in a row while extracting the Jacobian's BC bands. This entry has no owner yet, so its anchor is _calculate_derivatives(), the densest concentration of sites rather than an owner: _calculate_derivatives() holds 6 of these 12 sites, so the anchor trips on PARTIAL consolidation, not only full: fixing just those six exits 2 on unambiguous half-progress. That is a fact about this anchor, not an argument for it -- when it fires, move sentinel_symbol to a surviving site (the fp_fdm.py block, or base_hjb.py:966/1000) rather than retire the entry. Retirement is right only when the quantity really is fully single-sourced, because an entry left sitting at 0 reads clean forever. Uncounted by design: `np.roll` periodic wraps (9 code sites, of which base_hjb.py:1042-1043 and hjb_fdm.py:1322-1323 are genuine Jacobian wraps and the rest are Voronoi polygon shifts) -- too noisy to ratchet, so this entry does not cover them.",
       "sentinel_symbol": "_calculate_derivatives"
+    },
+    {
+      "name": "wall_drift_from_scalar_coupling",
+      "quantity": "the advective velocity at a cell face or wall, v = -c * grad(U)",
+      "owner": "ResolvedBC.alpha, produced by FPResolver (geometry/boundary/resolution.py)",
+      "pattern": "-\\s*coupling_coefficient\\s*\\*",
+      "include": [
+        "mfgarchon/**/*.py"
+      ],
+      "exclude": [],
+      "count": 50,
+      "sentinel_file": "mfgarchon/alg/numerical/fp_solvers/fp_fdm_alg_divergence_upwind.py",
+      "sentinel_symbol": "add_interior_entries_divergence_upwind",
+      "note": "Every FP assembly site re-derives the face velocity from a SCALAR coupling coefficient, v = -c*grad(U). That is D_pH for the separable-quadratic Hamiltonian only: for congestion D_pH = p/m^alpha depends on m, and at a wall the impermeable condition is J.n = 0, i.e. Robin in m with alpha = v_n, not dm/dn = 0. FPResolver already computes exactly this and declares it correctly (alpha = v_n, beta = -D), and ResolvedBC's coefficients were widened to fields on 2026-08-16 so they can carry v_n(x). Nothing consumes it: ResolvedBC is produced, exported and never read outside its own module (#2005). This entry ratchets the re-derivation so it cannot grow while that consolidation is pending. THE COUNT IS WHAT THIS PATTERN MATCHES, not a census of sites computing a face velocity -- some matches are inside strings and docstrings (fp_fdm.py:478 is an error message quoting the formula), and no regex separates those. The sentinel is chosen for that reason: add_interior_entries_divergence_upwind's body carries two matches in real code, not prose, and it survives the consolidation this entry pushes for -- it will still assemble upwind interior rows, it will just read the velocity instead of deriving it. Related: #1632 fixed the same quantity failing to arrive in the interior; #1970 built the provider for the wall; #2005 is the consolidation. COUNT PROVENANCE: this checker's own walker reports 50; a direct `re` scan of every mfgarchon/**/*.py reports 68, and `git grep -E` reports 2 because that engine does not implement `\\s` -- the same class of failure this file's docstring records for `\\b`. The three numbers measure three different things and only the checker's own is meaningful to the ratchet. Recorded so the gap is not rediscovered as a regression."
     }
   ]
 }
