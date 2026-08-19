@@ -209,9 +209,13 @@ result = solver.solve()
 > `divergence_upwind`. Check `result.mass_conservation_error` either way; it is on `SolverResult`
 > and nothing gates on it.
 >
-> The **HJB** scheme is unchanged: Option 1 keeps `NumericalScheme.FDM_CENTERED`, so the
-> `fp_config` override below is a real non-default rather than a restatement of the constructor
-> default (`scheme_factory.py` already pairs `FDM_UPWIND` with `divergence_upwind`).
+> Option 1 keeps `NumericalScheme.FDM_CENTERED` so that the `fp_config` override is a real
+> non-default rather than a restatement of the factory default — `FDM_UPWIND` is already paired
+> with `divergence_upwind`. Be aware of what that enum does and does not do: **`FDM_CENTERED`
+> selects the FP half only.** Measured, `HJBFDMSolver.advection_scheme` is `gradient_upwind` under
+> `FDM_UPWIND`, under `FDM_CENTERED`, and under `FDM_CENTERED` with this override alike — the HJB
+> side never varies (#1866). So the pair Option 1 builds is the `FDM_UPWIND` pair; the enum is kept
+> here for the shape of the example, not because it buys HJB order.
 
 **After** (Option 1 - Safe Mode with config):
 ```python
@@ -291,10 +295,14 @@ These schemes satisfy $L_{FP} = L_{HJB}^T$ exactly at matrix level:
 | `SL_LINEAR` | Large time steps, transport-dominated | 1st order | Excellent |
 | `SL_CUBIC` | High accuracy SL | 3rd order (HJB) | Good |
 
-¹ The FP half of `FDM_CENTERED` is `divergence_centered`, which is not positivity-preserving: when
-the density goes negative the mass-fabrication gate stops the solve rather than clip it. On the
-`three_mode_api_demo` problem that happens at timestep 3 of 20. Pair `FDM_CENTERED` with
-`fp_config={"advection_scheme": "divergence_upwind"}` if the HJB order is what you are after.
+¹ **`FDM_CENTERED` differs from `FDM_UPWIND` in the FP half only** — measured,
+`HJBFDMSolver.advection_scheme` is `gradient_upwind` under both (#1866). So the "2nd order" in this
+row is the FP discretisation, and it is the half that will not run: `divergence_centered` is not
+positivity-preserving, and when the density goes negative the mass-fabrication gate stops the solve
+rather than clip it — at timestep 3 of 20 on the `three_mode_api_demo` problem. Overriding the FP
+half to `divergence_upwind` therefore leaves you with exactly the `FDM_UPWIND` pair, not a
+second-order HJB. The HJB-side knob is `HJBFDMSolver(advection_scheme=...)`, which the factory does
+not set.
 
 ### Continuous Duality (Type B) - Asymptotic Adjoint
 
@@ -425,8 +433,9 @@ The system automatically validates:
 ### What's the difference between FDM_UPWIND and FDM_CENTERED?
 
 - **FDM_UPWIND**: First-order accurate, monotone (no oscillations), very stable
-- **FDM_CENTERED**: Second-order accurate, may oscillate for high Peclet numbers. Its FP half
-  refuses to run rather than clip a negative density — see the footnote under the scheme table.
+- **FDM_CENTERED**: differs from `FDM_UPWIND` in the **FP half only** (#1866), so the second order
+  is the FP discretisation — and that half may oscillate for high Peclet numbers and then refuse to
+  run rather than clip a negative density. See the footnote under the scheme table.
 
 For most problems, start with FDM_UPWIND.
 
