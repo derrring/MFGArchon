@@ -117,10 +117,15 @@ class TestDualityConvergence:
     # It recorded `result.max_error`, which is the final PICARD RESIDUAL, not a discretization
     # error against a known solution, and compared two of them across Nx = 20 / 40 under the name
     # "h-convergence". Measured: with tolerance=1e-8 and max_iterations=30 BOTH legs run to the cap
-    # -- `converged=False, iterations=30/30` on either grid. Worse, at max_iterations=300 neither
-    # converges either: the residual LIMIT-CYCLES between 5.9e-05 and 1.7e-03, and its final value
-    # is worse than its own best. So `max_error` here is a sample from a cycle, and no assertion
-    # over two samples can measure a rate.
+    # -- `converged=False, iterations=30/30` on either grid. At max_iterations=300 neither converges
+    # either. The full history, both legs:
+    #
+    #     Nx=20  peak 1.264638e+03 @iter4   best 1.778986e-06 @iter194   @iter29 5.935364e-04
+    #     Nx=40  peak 1.243941e+03 @iter4   best 7.116063e-06 @iter166   @iter29 4.237936e-04
+    #
+    # A transient peaking above 1.2e+03 around iteration 4, then a settled 1e-4..2e-3 noise floor
+    # it never leaves -- final value far from its own best. So `max_error` at iteration 30 is a
+    # sample off that floor, and no assertion over two samples can measure a rate.
     #
     # The precedent is TestConvergenceRate::test_upwind_first_order_convergence, removed for this
     # exact reason with its account at the bottom of this file -- "It measured the wrong quantity
@@ -131,27 +136,45 @@ class TestDualityConvergence:
     # WHAT THIS IS NOT: a clean window. A real numerical change landed inside it. c98a9c5f
     # ("stop overwriting the root the inner Newton just found", #1902) deletes the hand-rolled
     # `u[0] = u[1] - g*dx` no-flux enforcement -- the exact boundary treatment this test's
-    # `no_flux_bc(dimension=1)` runs through -- and it moves these numbers ~5x on darwin:
+    # `no_flux_bc(dimension=1)` runs through. It moves these numbers on darwin -- ~5x on the coarse
+    # leg, 1.31x DOWNWARD on the fine one -- so the quantity that moves as a single number is the
+    # ratio the assertion tests: coarse/fine goes 0.2136 -> 1.4005, a factor 6.56:
     #
     #     179e55a7 (head of the last GREEN nightly)  Nx=20 1.185395e-04  Nx=40 5.550650e-04  FAILS
     #     c98a9c5f and after                         Nx=20 5.935364e-04  Nx=40 4.237936e-04  passes
     #     linux (CI), 4a50e27b and after             Nx=20 8.814973e-05  Nx=40 9.901234e-04  FAILS
     #
-    # So the verdict flipped in OPPOSITE directions on the two platforms across the same change,
+    # On darwin the flip bisects to c98a9c5f. On linux only the ENDPOINTS are known -- green at
+    # 179e55a7, red at 4a50e27b, sixteen commits between -- but c98a9c5f is the only commit in the
+    # window that moves this quantity on the platform we can measure, and the obvious rival
+    # (2e7a909a, the Neumann ghost consolidation) is bracketed by two bit-identical commits.
+    # So the verdict flipped in OPPOSITE directions on the two platforms,
     # which is what a limit-cycling residual does and is stronger grounds for deletion than a
     # clean-window story would have been. No platform conditional is involved, and CI pins the BLAS
     # thread counts to 1. Anyone tracing an FDM_UPWIND no-flux discrepancy to this window should
     # start at #1902 and #1904, not conclude the window is computationally quiet.
     #
-    # What the deletion costs, stated rather than waved away. The Nx=40 leg duplicates
-    # TestNumericalStability::test_fdm_upwind_stable below on every listed parameter -- Nx_points=
-    # [41], Nt=20, T=1.0, sigma=0.1, same components, FDM_UPWIND -- differing only in
-    # max_iterations (30 vs 20) and tolerance, so iterations 21-30 there are now unexercised. That
-    # test's mass-conservation and `M.min() > 0` assertions dominate this one's `e < 1000`; its
-    # isfinite checks do not, since a finite oscillating iterate can carry a residual above 1000.
-    # The COARSE leg -- Nx_points=[21], Nt=10, sigma=0.1, coupled -- has no counterpart anywhere in
-    # the suite, so a raise or a NaN from that specific solve is now caught by nothing. Thin, and
-    # real.
+    # What the deletion costs. `e < 1000` was NOT a vacuous bound -- the residual crosses it, in
+    # this very solve, by 26%: the peak above is 1.26e+03. So that assertion was a crude but LIVE
+    # guard on the TRANSIENT DECAY RATE. Anything costing roughly eight Picard iterations of
+    # convergence speed pushes iteration 30 back over 1000 and fires it. Nothing else in the suite
+    # bounds that, and no claim of domination survives: `max_error = max(err_U, err_M)` is here
+    # entirely the U increment (at Nx=40, iteration 29: err_U 4.238e-04 against err_M 4.807e-08),
+    # while test_fdm_upwind_stable's mass-conservation and `M.min() > 0` assertions constrain M's
+    # physics. The two sets are incomparable, not ordered. That test also stops at iteration 20.
+    #
+    # The rest of the cost is smaller than it first looked. The Nx=40 leg duplicates
+    # test_fdm_upwind_stable on every listed parameter -- Nx_points=[41], Nt=20, T=1.0, sigma=0.1,
+    # same components, FDM_UPWIND -- differing only in max_iterations (30 vs 20) and tolerance, so
+    # iterations 21-30 there are unexercised. And the COARSE leg is not uncovered in kind:
+    # tests/integration/test_fvm_hjb_coupling.py's `fdm_1d` fixture runs a coupled 1D no-flux
+    # FDM_UPWIND solve at Nx=25, Nt=12, sigma=0.4 and asserts convergence, a 10x error drop, mass
+    # and positivity -- strictly stronger, at comparable coarseness. What has no counterpart is the
+    # LOW-SIGMA / high-Peclet coarse regime, and the transient guard above.
+    #
+    # Deleting is still right: a threshold on an unconverged residual is a poor instrument even
+    # when live, and the RATE assertion beside it is indefensible at any threshold. But the
+    # transient goes unguarded, and that is recorded rather than claimed away.
     #
     # Coupled EOC through the production FixedPointIterator already exists:
     # tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence. What remains uncovered
