@@ -157,10 +157,15 @@ def _solve(nx: int, nt: int):
 
 
 def _eoc(errors, levels):
-    return [
-        float(np.log(errors[i] / errors[i + 1]) / np.log(levels[i + 1][0] / levels[i][0]))
-        for i in range(len(errors) - 1)
-    ]
+    """Order against the MESH ratio h_i/h_{i+1}, not the point-count ratio.
+
+    `dx = L/(nx-1)`, so refining 11 -> 21 -> 31 halves h and then takes 2/3 of it: ratios 2.0 and
+    1.5, not 21/11 = 1.909 and 31/21 = 1.476. A first draft divided by the point counts and inflated
+    every order by 7.2% and 4.1% -- while `_solve` twelve lines up computed `dx` with `nx - 1`
+    correctly, so the file disagreed with itself.
+    """
+    h = [L / (nx - 1) for nx, _ in levels]
+    return [float(np.log(errors[i] / errors[i + 1]) / np.log(h[i] / h[i + 1])) for i in range(len(errors) - 1)]
 
 
 @pytest.mark.integration
