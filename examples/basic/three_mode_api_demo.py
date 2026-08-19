@@ -316,19 +316,20 @@ def main():
         print("legitimate -- Auto Mode selects from the geometry -- but it means the numbers above")
         print("are not three measurements of one solver.")
 
-    print("\nRecommendation: Use Safe Mode for most applications.")
-    print("                Use Expert Mode only when you need custom solver config.")
-    print("                Use Auto Mode for quick experiments with default settings.")
-
     # A demo that prints "produced solutions" over a solve that did not converge is #2008's own
     # shape one level up. `problem.solve` returns normally when the coupling loop breaks early, so
-    # the exit status is the only machine-readable signal and it has to carry this.
+    # the exit status is the only machine-readable signal and it has to carry this. Report it BEFORE
+    # the recommendation, so a failed run does not advertise advice above its own failure notice.
     unconverged = [
         name for name, r in (("Safe", result_safe), ("Expert", result_expert), ("Auto", result_auto)) if not r.converged
     ]
     if unconverged:
         print(f"\nNOT CONVERGED: {', '.join(unconverged)}. Exiting non-zero.")
         return 1
+
+    print("\nRecommendation: Use Safe Mode for most applications.")
+    print("                Use Expert Mode only when you need custom solver config.")
+    print("                Use Auto Mode for quick experiments with default settings.")
     return 0
 
 

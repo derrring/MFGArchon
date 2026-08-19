@@ -5,15 +5,19 @@ not run to completion, before or after that line: `compare_schemes()` selects
 gate then stops the solve rather than clip it, and the script died there, short of its own summary.
 Measured: the script exits **1** on `main` and **0** here.
 
-All four advection schemes on this problem, cap 60, one outcome each — the failures are not the
-same failure, which is why the fix is a scheme and not a family:
+All four advection schemes on this problem, one outcome each — the failures are not the same
+failure, which is why the fix is a scheme and not a family. The two aborts fire inside Picard
+iteration 1 and are cap-independent (identical at cap 1); the two iteration counts are at cap 60:
 
 | scheme | outcome |
 |---|---|
 | `gradient_centered` | aborts at timestep 5/20, density `-6.388e-06` |
-| `gradient_upwind` | converges at 27, mass `1.000000 -> 0.018302` (−98.17%) |
+| `gradient_upwind` | converges at 27, endpoint mass ratio `1.000000 -> 0.018302` (−98.17%) |
 | `divergence_centered` | aborts at timestep 3/20, density `-6.319e-06` |
-| `divergence_upwind` | converges at 49, mass conserved to `5.1e-15` |
+| `divergence_upwind` | converges at 49, `mass_conservation_error` `5.1e-15` |
+
+The last two rows report different quantities — an endpoint ratio and a max-over-time drift — and
+are not comparable side by side.
 
 The gradient family is non-conservative at a no-flux wall (#1075, #2007), but *how* a given member
 fails is a property of the configuration — `geometry/boundary/conditions.py` says exactly that above
@@ -39,7 +43,9 @@ In `examples/`:
   on the leaking configuration against `5.1e-15` on the fixed one — but nothing gates on it and
   nothing printed it, so a 98% drain and a converged residual looked identical from the output.
 - The `SUMMARY` reports whether the three modes agreed, **checked rather than asserted**. Levelling
-  the caps made all four solves identical to every printed digit, but that is a fact about this
+  the caps made all four solves bit-identical — `np.array_equal` on the full `U` and `M`, not merely
+  equal to printed precision, which is why the check uses `==` and a tolerance would be wrong — but
+  that is a fact about this
   problem: Auto Mode picks its scheme at runtime from the geometry, so an unstructured mesh sends
   it to FEM while Safe Mode stays pinned to `FDM_UPWIND`.
 - **The exit status now carries convergence.** `problem.solve` returns normally when the coupling
