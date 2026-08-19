@@ -186,11 +186,16 @@ class TestDualityConvergence:
     # The rest of the cost is smaller than it first looked. The Nx=40 leg duplicates
     # test_fdm_upwind_stable on every listed parameter -- Nx_points=[41], Nt=20, T=1.0, sigma=0.1,
     # same components, FDM_UPWIND -- differing only in max_iterations (30 vs 20) and tolerance, so
-    # iterations 21-30 there are unexercised. And the COARSE leg is not uncovered in kind:
-    # tests/integration/test_fvm_hjb_coupling.py's `fdm_1d` fixture runs a coupled 1D no-flux
-    # FDM_UPWIND solve at Nx=25, Nt=12, sigma=0.4 and asserts convergence, a 10x error drop, mass
-    # and positivity -- strictly stronger, at comparable coarseness. What has no counterpart is the
-    # LOW-SIGMA / high-Peclet coarse regime.
+    # iterations 21-30 there are unexercised.
+    #
+    # THE COARSE LEG HAS NO COUNTERPART ANYWHERE, and an earlier version of this comment said
+    # otherwise. It cited tests/integration/test_fvm_hjb_coupling.py's `fdm_1d` fixture as asserting
+    # "convergence, a 10x error drop, mass and positivity -- strictly stronger". Those four
+    # assertions are on the `fvm_1d` fixture, which runs FVM_MUSCL. `fdm_1d` runs FDM_UPWIND and has
+    # exactly ONE consumer -- test_1d_fvm_fdm_agreement -- which asserts cross-scheme agreement
+    # (rel_m < 0.07) and says nothing about convergence, mass or positivity. So a raise or a NaN
+    # from the coarse FDM_UPWIND solve is now caught by nothing. The LOW-SIGMA / high-Peclet coarse
+    # regime is uncovered, and so is the coarse regime generally.
     #
     # THE CASE FOR REPAIRING INSTEAD, which is stronger than "fix the two-grid rate test" and is
     # what a reader should weigh: test_fdm_upwind_stable below already runs the identical Nx=41,

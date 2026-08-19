@@ -38,12 +38,20 @@ entirely the **U** increment (at `Nx=40`, iteration 29: `err_U` 4.238e-04 agains
 while `test_fdm_upwind_stable`'s mass-conservation and `M.min() > 0` assertions constrain M's
 physics. The two sets are incomparable, not ordered, and that test stops at iteration 20.
 
-The rest is smaller than first stated. The `Nx=40` leg duplicates `test_fdm_upwind_stable` on every
-listed parameter, differing only in `max_iterations` (30 vs 20) and tolerance. And the coarse leg is
-not uncovered in kind: `tests/integration/test_fvm_hjb_coupling.py`'s `fdm_1d` fixture runs a coupled
-1D no-flux `FDM_UPWIND` solve at `Nx=25, Nt=12, sigma=0.4` asserting convergence, a 10× error drop,
-mass and positivity — strictly stronger, at comparable coarseness. What has no counterpart is the
-**low-σ / high-Péclet** coarse regime.
+The rest is smaller than first stated: the `Nx=40` leg duplicates `test_fdm_upwind_stable` on every
+listed parameter, differing only in `max_iterations` (30 vs 20) and tolerance.
+
+**The coarse leg has no counterpart anywhere, and an earlier version of this fragment said
+otherwise.** It claimed `tests/integration/test_fvm_hjb_coupling.py`'s `fdm_1d` fixture asserts
+"convergence, a 10× error drop, mass and positivity — strictly stronger". Those four assertions are
+made on the **`fvm_1d`** fixture, which runs `FVM_MUSCL`. `fdm_1d` runs `FDM_UPWIND` and has exactly
+one consumer, `test_1d_fvm_fdm_agreement`, which asserts cross-scheme agreement (`rel_m < 0.07`) and
+nothing about convergence, mass or positivity. Verified: `grep -n "fdm_1d\|fvm_1d"` over that file
+returns 9 lines, 3 of them the `fvm_1d`-only tests, 1 the shared agreement test.
+
+So a raise or a NaN from the coarse `FDM_UPWIND` solve is now caught by nothing — which is what this
+fragment originally said before the false citation replaced it. The **low-σ / high-Péclet** coarse
+regime is uncovered, and so is the coarse regime generally.
 
 **The case for repairing instead** is stronger than "fix the two-grid rate test", and worth weighing:
 `test_fdm_upwind_stable` already runs the identical `Nx=41, Nt=20, sigma=0.1, FDM_UPWIND` solve and
