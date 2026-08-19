@@ -140,25 +140,43 @@ passing one.
 - **Needs d ≥ 2**: anything involving a normal/tangential decomposition, an axis pairing, a corner,
   a transpose, or anisotropy. A 1D wall's normal is always the coordinate axis and there is no
   tangential component, so a scheme that mishandles the tangential part passes 1D by construction.
+  Note the scope: d ≥ 2 is **necessary** for these, not sufficient — see the symmetry measurement
+  below.
 - **Fully expressed in d = 1**: sign conventions, time-stepping order, convergence criteria, scalar
   contracts, source-term plumbing. Here 2D buys runtime and nothing else — measured, the same FP
   MMS study runs 0.1 s at d = 1 and 1.5 s at d = 2.
 
 **The discriminator is measurable, so do not argue it.** Write a mutation that breaks the property,
-run it in 1D, and read the difference:
+run it in 1D, and read the difference. Measured against `test_fp_mms_wall_order_1728.py` (#1728/#2006):
 
 ```
-drop the tangential advection at wall rows   1D: max|diff| = 0.000e+00   2D: separates
-flip its sign                                1D: max|diff| = 0.000e+00   2D: separates
-read the potential along the wrong axis      1D: max|diff| = 0.000e+00   2D: separates
+drop the tangential advection at wall rows   1D: max|diff| = 0.000e+00
+flip its sign                                1D: max|diff| = 0.000e+00
+read the potential along the wrong axis      1D: max|diff| = 0.000e+00
 ```
 
-Three mutants, three exact zeros (#1728/#2006). **`max|diff| = 0` in 1D means the test must go up a
-dimension**; a non-zero difference means 1D expresses it and the extra dimension is cost without
-coverage.
+Three mutants, three exact zeros — **and only two of the three separate in 2D.** That last figure is
+the more useful one, and it is the second half of the rule.
+
+**`max|diff| = 0` in 1D means the test must go up a dimension. It does not mean going up is
+sufficient.** A 2D fixture that is symmetric in the relevant variable cannot express a defect in
+that variable either, and it looks exactly as healthy as one that can. Measured on
+`test_coupled_mms_2d_no_flux.py` (#2016), where the paper's verbatim manufactured pair is
+transpose-symmetric and periodic on the box:
+
+| mutant | verbatim 2D pair | after breaking the symmetry |
+|---|---|---|
+| swap the whole BC family, `no_flux` → `periodic` | byte-identical | `eu` 3.0125e-01 → 1.2939e+01 (42×), EOC → −0.118 |
+| read the potential along the wrong axis (`U[0].T`) | bit-identical | 45.7× / 81.8× / 119.5× |
+
+Two changes bought those: a half-period wavenumber, so the mirror ghost and the periodic ghost stop
+coinciding; and an asymmetry between the axes, so transposing the field is detectable. Neither is
+about dimension. **The question is never "is this 2D" — it is "can this fixture express the defect",
+and dimension is only the first thing that can make the answer no.**
 
 The burden runs both ways: a 2D test whose 1D reduction separates the same mutants owes its runtime
-an explanation, and a 1D test of a directional property owes a mutant showing it can fail.
+an explanation, and a test of a directional property — in any dimension — owes a mutant showing it
+can fail.
 
 This is the cross-project "non-discriminating test data" rule applied to dimension — the same shape
 as a uniform density that cannot separate a gradient-form bug from a correct scheme.
