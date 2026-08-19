@@ -15,8 +15,12 @@ The sign relationship the two slots had is a plain negation, `additive_source = 
 fixed by two documented primitives: `h_eval.py` returns the residual
 `-u_t + H(+additive_source) - D*lap_u`, while the source contract at `base_hjb.py:435` is
 `F(u) = (u-u_next)/dt + H - S = 0`; setting both to zero gives the sign. Note the historical
-hazard: the line that once "stated it directly" stated it with the WRONG sign -- "Added to
-H_total = H(x,p,m) + L(t,x)". Measured by running this same manufactured pair through GFDM at
+hazard, and note what KIND it was: GFDM's docstring read "Added to Hamiltonian: H_total =
+H(x,p,m) + L(t,x)", which is exactly what `h_eval` computes and was correct **for the
+`running_cost` slot it documented**. The defect was placement -- a later edit deleted the
+disclaimer scoping it to that slot and left the line standing under `source_term`, whose sign is
+opposite. A correct relation under the wrong heading reads as a sign error and is worse than one,
+because the relation checks out. Measured by running this same manufactured pair through GFDM at
 sigma=1: `-r_u` gives 3.1621e-03 -> 7.9413e-04, EOC 2.0; `+r_u` sits flat at 1.4233 -> 1.4241
 and never converges. So a port carrying an FDM source into GFDM unchanged would converge on the
 wrong solution, and the unified channel #1991 wants can be built on a settled premise.)

@@ -22,9 +22,15 @@ is. What makes the removal right is that model data has a different owner: an al
 belongs in the Lagrangian, which is where both Cardaliaguet (lecture notes 2020, p.45 --
 "local coupling functions, i.e., when F = F(x, m(t,x))") and this project's own paper
 (`chapters/chap_01.tex`, running cost `L(x, m, alpha)`) put it. A `HamiltonianBase` subclass
-expresses it and GFDM honours it -- measured, `H = |p|^2/2 + g*x*m` moves `u(0,.)` by 2.24e-01 at
-g=1. What cannot express it is `SeparableHamiltonian`, whose `coupling` takes only `m`; that gap is
-real, it is what `running_cost` was masking, and it is #2010, not this channel's to carry.
+expresses it, and GFDM honours it **on the Newton paths** -- measured, `H = |p|^2/2 + g*x*m` moves
+`u(0,.)` by 2.24e-01 at g=1. State the path, because it does not generalize: `_solve_backward_howard`
+builds its running-cost closure from `getattr(H_class, "_potential")` / `"_coupling"`, which are
+`SeparableHamiltonian` internals, so the same subclass is dropped **bitwise** there -- 0.000e+00,
+against 2.000e-01 for a `SeparableHamiltonian` potential as a positive control on the same path.
+That hole is pre-existing and is #2011; `running_cost=` was the only route reaching it, so closing
+#2011 is what makes this removal costless on Howard. The other gap -- `SeparableHamiltonian`'s
+`coupling` taking only `m` -- is #2010. Neither is this channel's to carry, and neither is a reason
+to keep a channel that double-counts.
 
 They share one arithmetic slot with opposite signs -- `h_eval.assemble_hjb_residual` returns
 `-u_t + H(+additive_source) - D*lap_u` while the source contract in `base_hjb` is

@@ -1,8 +1,14 @@
-`HJBGFDMSolver.solve_hjb_system` no longer accepts `running_cost`. The alpha-independent part of
-the Lagrangian — the potential `V(x,t)` and the coupling `f(m)` — is owned by the Hamiltonian and
-already reaches the residual through it, so a second channel could only carry the same quantity a
-second time: supplied alongside a Hamiltonian that already held a potential it double-counted
-silently (#2001). The package's only caller of that channel used it as an MMS source and has moved
+`HJBGFDMSolver.solve_hjb_system` no longer accepts `running_cost`. Supplied alongside a Hamiltonian
+that already held a potential, it double-counted silently (#2001), and that is what the removal
+fixes.
+
+Not that a second channel could *only* have carried the same quantity — it could carry two things
+the Hamiltonian route does not deliver today, and both are open: an alpha-free `F(x, m)`, which
+`SeparableHamiltonian` cannot express because its `coupling` takes only `m` (#2010); and anything at
+all on the Howard path, whose closure keys on `SeparableHamiltonian` private attributes and drops a
+general `HamiltonianBase` subclass bitwise (#2011). Neither is a reason to keep a double-counting
+channel, and `source_term` is not a substitute for either — its contract forbids depending on `m`.
+The owner of an alpha-free `F(x, m)` is the Lagrangian, which is where the literature puts it. The package's only caller of that channel used it as an MMS source and has moved
 to `source_term`, which #1991 added for exactly that. **Migrating callers must negate:
 `source_term = -running_cost`.** `h_eval` assembles `-u_t + H(+additive_source) - D*lap_u` while
 the package-wide source contract is `F(u) = (u-u_next)/dt + H - S = 0`, so the two slots carry
