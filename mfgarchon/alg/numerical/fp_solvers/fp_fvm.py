@@ -518,7 +518,18 @@ class FPFVMSolver(BaseFPSolver):
         m_solution[0] = m0
         m = m0.copy()
 
-        source_grid = self.problem.geometry.meshgrid() if source_term is not None else None
+        # (N, d) POINTS, not a (d, *shape) meshgrid. This solver was the only caller passing
+        # `geometry.meshgrid()`, while FPFDMSolver and the whole HJB side pass
+        # `get_spatial_grid()` -- the convention `BaseHJBSolver.solve_hjb_system` documents
+        # ("x has shape (N, d)"). One callback therefore could not serve both: a source written
+        # against the documented convention returned an (N,) array here and hit
+        # `ValueError: operands could not be broadcast together with shapes (21,21) (882,)`,
+        # where 882 = 2 x 441 is the two coordinate planes flattened together (#2019).
+        #
+        # In 1D the two coincide, which is why this survived: `meshgrid()` gives one (21,) array
+        # and `get_spatial_grid()` gives (21, 1), and a callback that ravels its input accepts
+        # both. The fork was only ever visible in 2D.
+        source_grid = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
@@ -535,7 +546,26 @@ class FPFVMSolver(BaseFPSolver):
             m = self._strang_step(m, alpha_faces, alpha_wrap, dt, spacing, lu)
 
             if source_term is not None:
-                m = m + dt * np.asarray(source_term(k * dt, source_grid), dtype=float)
+                # `.reshape(shape)` for the same reason: FDM ravels the return and reshapes it
+                # (`fp_fdm_time_stepping.py:611`), so a callback returning one value per point is
+                # accepted there. Without this, FVM accepted ONLY a grid-shaped return, so even a
+                # caller obeying the argument convention above still failed here (#2019).
+                # `k*dt`, where FPFDMSolver uses `(k+1)*dt` and says "implicit". That divergence
+                # is real and is deliberately NOT changed here: measured by MMS on a pure-diffusion
+                # manufactured solution, the two are indistinguishable at achievable resolutions.
+                # First refinement (Nt 5 -> 10) gives order 0.910 at k*dt against 0.847 at t_{k+1},
+                # and both then degrade -- as does an FDM control, to 0.343 -- because this scheme
+                # is first order in SPACE (measured 1.026 / 1.004 / 0.978) and the spatial floor
+                # dominates before the temporal order is visible. Changing it would be a behaviour
+                # change with no evidence behind it.
+                s_vals = np.asarray(source_term(k * dt, source_grid), dtype=float).ravel()
+                if s_vals.size != m.size:
+                    raise ValueError(
+                        f"source_term returned {s_vals.size} values for {m.size} cells. It is "
+                        f"called with an (N, d) point array from geometry.get_spatial_grid() and "
+                        f"must return one value per point (#2019)."
+                    )
+                m = m + dt * s_vals.reshape(shape)
 
             if not np.all(np.isfinite(m)):
                 n_bad = int(np.sum(~np.isfinite(m)))
