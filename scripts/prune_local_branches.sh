@@ -42,9 +42,19 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 #
 # `merge-tree --write-tree` answers it directly: merge the branch into origin/main and compare the
 # resulting tree with origin/main's own. Equal means the branch contributes NOTHING to main, which
-# is exactly "absorbed" -- and it holds under a squash merge, where no commit of the branch is an
-# ancestor of main and every commit-graph predicate (`rev-list --count`, `branch --merged`) says
-# unmerged. A conflict exits non-zero and is, by construction, not absorbed.
+# is exactly "absorbed". A conflict exits non-zero and is, by construction, not absorbed.
+#
+# THE SQUASH-MERGE CLAIM IS CONDITIONAL, and an earlier version of this comment stated it flatly.
+# The predicate does recognise a squash-merged branch -- where no commit is an ancestor of main and
+# every commit-graph predicate says unmerged -- but ONLY while main has not since modified the same
+# regions. Once it has, the three-way merge sees both sides changing one region and conflicts, so
+# the branch reads unmerged again. Measured 2026-08-21: of sixteen remote branches whose PRs are
+# MERGED, eight classify as unmerged by this predicate; `fix/1986-sense-sign-one-owner` (#1987)
+# conflicts in `problem_factories.py`, which main has touched twice since that branch point.
+#
+# The error stays a FALSE NEGATIVE -- a landed branch kept, never an unlanded one offered for
+# deletion -- which is why the merged-PR name signal below runs FIRST and is the primary evidence
+# for a branch that has landed. This predicate is the corroborating one, not the load-bearing one.
 #
 # Requires git >= 2.38 for `--write-tree`; checked once at startup rather than per branch, because a
 # missing subcommand would otherwise return 1 for every branch and read as "nothing is absorbed".
@@ -117,11 +127,22 @@ while read -r b; do
     CLOSED) printf '%-46s %s\n' "$b" "name contains $n, CLOSED -- closed does not mean merged" ;;
     *)      printf '%-46s %s\n' "$b" "unmerged, no reference found" ;;
   esac
-done < <(git for-each-ref refs/heads/ --format='%(refname:lstrip=2)' | grep -vx main)
+done < <(
+  # POPULATION IS BOTH SCOPES. It was `refs/heads/` alone, which is how a tree carrying sixteen
+  # remote branches whose PRs are MERGED reported "0 branch(es) show evidence of having landed" on
+  # 2026-08-21: they had never been local. A classifier whose population excludes where the branches
+  # actually are reports clean and is read as "nothing to prune".
+  { git for-each-ref refs/heads/ --format='%(refname:lstrip=2)'
+    git for-each-ref refs/remotes/origin/ --format='%(refname:lstrip=3)'
+  } | grep -vxE 'main|HEAD' | sort -u
+)
 
 echo
 echo "$(wc -l < "$TMP/disposable.txt" | tr -d ' ') branch(es) show evidence of having landed."
 echo "Read the branch before acting. Two of the three signals above are weak by construction:"
 echo "  - the merged-pr signal compares NAMES; names are reused after a merge."
 echo "  - a 3-4 digit run in a branch name may be a grid size, not an issue number."
-echo "Then: git branch -D <name>   (record the sha first -- -D discards the branch's reflog)."
+echo "A name may exist locally, on origin, or both -- the scopes are pooled above because a branch"
+echo "invisible in one of them is exactly what this script existed to miss. Delete accordingly:"
+echo "  local : git branch -D <name>            (record the sha first -- -D discards the reflog)"
+echo "  remote: git push origin --delete <name> (record the sha first -- there is no reflog there)"
