@@ -28,6 +28,8 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from mfgarchon.alg.numerical.weak_form_discretization import WeakFormDiscretization
@@ -265,6 +267,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U_terminal: NDArray | None = None,
         U_coupling_prev: NDArray | None = None,
         volatility_field: float | NDArray | None = None,
+        source_term: Callable | None = None,
         use_newton: bool = False,
         max_newton_iterations: int = 30,
         newton_tolerance: float = 1e-6,
@@ -275,7 +278,16 @@ class WeakFormHJBSolver(BaseHJBSolver):
         cross_density=None,
         **kwargs,
     ) -> NDArray:
-        """Solve the HJB system backward in time on the weak-form operators."""
+        """Solve the HJB system backward in time on the weak-form operators.
+
+        ``source_term(t, x) -> (N,)`` is the MMS forcing S of ``-u_t + H - D*Lap(u) = S``, with x the
+        solver's own ``(N, d)`` dof coordinates -- the same convention BaseHJBSolver documents and
+        HJBFDMSolver uses, evaluated at the time level being solved (#2020). It is SUBTRACTED, per
+        that contract: ``F(u) = (u - u_next)/dt + H - S``.
+
+        Before #2020 this parameter was swallowed by ``**kwargs``: passing it raised nothing, changed
+        nothing, and a convergence order measured through here was an order for the sourceless PDE.
+        """
         # Issue #1071: named explicitly (not swallowed by **kwargs) so a multi-population
         # cross-density trajectory fails loud rather than silently decoupling. Covers the
         # meshless-Galerkin solver, which forwards **kwargs here.
@@ -294,6 +306,20 @@ class WeakFormHJBSolver(BaseHJBSolver):
         Nt = self.problem.Nt
         dt = self.problem.dt
         N = self._n_dof
+
+        def _source_at(t: float) -> NDArray:
+            """M @ S(t, dofs). Zero vector when no source, so both branches stay one code path."""
+            if source_term is None:
+                return np.zeros(N)
+            s_vals = np.asarray(source_term(t, self._disc.dof_coordinates), dtype=float).ravel()
+            if s_vals.shape != (N,):
+                raise ValueError(
+                    f"source_term returned shape {s_vals.shape}; this solver needs ({N},), one value "
+                    f"per dof, evaluated on self._disc.dof_coordinates (shape "
+                    f"{self._disc.dof_coordinates.shape}). Returning a grid-shaped array is the "
+                    f"FPFVMSolver convention, not this one (#2019)."
+                )
+            return self._M @ s_vals
 
         if U_terminal is None:
             U_terminal = np.zeros(N)
@@ -333,7 +359,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     D=D,
                     dt=dt,
                     t=n * dt,
-                    rhs_coupling=np.zeros(N),
+                    # The residual SUBTRACTS rhs_coupling, and the contract subtracts S, so this is
+                    # the source slot -- no change needed inside _solve_timestep_newton.
+                    rhs_coupling=_source_at(n * dt),
                     max_iterations=max_newton_iterations,
                     tolerance=newton_tolerance,
                 )
@@ -356,6 +384,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     # Measured on H = c constant with u_T = 0, where u(0) = -c*T is exact: picard
                     # returned +c*T at c = 1, 2 and -3, against FDM and Newton both giving -c*T.
                     rhs -= self._M @ H_values
+                rhs = rhs + _source_at(n * dt)
                 if rhs_robin is not None:
                     rhs = rhs + rhs_robin
 
