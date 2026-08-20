@@ -110,43 +110,123 @@ class TestDualityConvergence:
     # numbers. Genuine centered-scheme order verification belongs with the MMS convergence
     # suite, not as a single-grid smoke test named after a rate.
 
-    @pytest.mark.slow
-    def test_mesh_refinement_improves_accuracy(self):
-        """Test that finer meshes reduce errors (h-convergence)."""
-        mesh_sizes = [20, 40]
-        final_errors = []
-
-        for Nx in mesh_sizes:
-            problem = MFGProblem(
-                geometry=TensorProductGrid(
-                    bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
-                ),
-                Nt=Nx // 2,
-                T=1.0,
-                sigma=0.1,
-                components=_default_components(),
-            )
-
-            result = problem.solve(
-                scheme=NumericalScheme.FDM_UPWIND,
-                max_iterations=30,
-                tolerance=1e-8,
-                verbose=False,
-            )
-
-            # Record final error (max of U and M errors)
-            final_errors.append(result.max_error)
-
-        # Finer mesh should have smaller error
-        # We can't guarantee strict convergence in all cases (problem-dependent),
-        # but we can check that errors are reasonable
-        assert all(e < 1000 for e in final_errors), "Errors should be bounded"
-
-        # If both converged well, expect refinement to help
-        if all(e < 1.0 for e in final_errors):
-            # Coarse mesh error should be larger (or comparable)
-            # Allow some tolerance for numerical noise
-            assert final_errors[0] >= final_errors[1] * 0.5, "Refinement should improve or maintain accuracy"
+    # test_mesh_refinement_improves_accuracy was removed 2026-08-19 rather than repaired. It is
+    # what #1998 -- "Nightly full test suite is failing" -- actually was: the validation shard
+    # reports `1 failed, 27 passed, 4 xfailed`, that one test, every other shard green.
+    #
+    # It recorded `result.max_error`, which is the final PICARD RESIDUAL, not a discretization
+    # error against a known solution, and compared two of them across Nx = 20 / 40 under the name
+    # "h-convergence". Measured: with tolerance=1e-8 and max_iterations=30 BOTH legs run to the cap
+    # -- `converged=False, iterations=30/30` on either grid. At max_iterations=300 neither converges
+    # either. The full history, both legs:
+    #
+    #     Nx=20  peak 1.264638e+03 @iter4   best 1.778986e-06 @iter194   @iter29 5.935364e-04
+    #     Nx=40  peak 1.243941e+03 @iter4   best 7.116063e-06 @iter166   @iter29 4.237936e-04
+    #
+    # A transient peaking above 1.2e+03 around iteration 4, then a noise floor -- over iterations
+    # 26..300 the residual ranges 1.78e-06..3.44e-03 (Nx=20) and 7.12e-06..3.40e-03 (Nx=40), and
+    # ends far from its own best. So `max_error` at iteration 30 is a sample off that floor, and no
+    # assertion over two samples can measure a rate. (Note also that `max_error = max(err_U, err_M)`
+    # is the U increment at iteration 29 but NOT early: err_M dominates at index 0, 1.9832 against
+    # 9.4455e-01 at Nx=20.)
+    #
+    # The precedent is TestConvergenceRate::test_upwind_first_order_convergence, removed for this
+    # exact reason with its account at the bottom of this file -- "It measured the wrong quantity
+    # ... it compared `result.max_error` ... the final PICARD RESIDUAL". #1728 names that test. (The
+    # removal noted ABOVE, test_centered_fdm_higher_order, is a different defect: one grid and a
+    # tautological assertion. Same file, same cleanup, not the same reason.)
+    #
+    # WHAT THIS IS NOT: a clean window. A real numerical change landed inside it. c98a9c5f
+    # ("stop overwriting the root the inner Newton just found", #1902) deletes the hand-rolled
+    # `u[0] = u[1] - g*dx` no-flux enforcement -- the exact boundary treatment this test's
+    # `no_flux_bc(dimension=1)` runs through. It moves these numbers on darwin -- ~5x on the coarse
+    # leg, 1.31x DOWNWARD on the fine one -- so the quantity that moves as a single number is the
+    # ratio the assertion tests: coarse/fine goes 0.2136 -> 1.4005, a factor 6.56:
+    #
+    #     179e55a7 (head of the last GREEN nightly)  Nx=20 1.185395e-04  Nx=40 5.550650e-04  FAILS
+    #     c98a9c5f and after                         Nx=20 5.935364e-04  Nx=40 4.237936e-04  passes
+    #     linux (CI), 4a50e27b and after             Nx=20 8.814973e-05  Nx=40 9.901234e-04  FAILS
+    #
+    # On darwin the flip bisects to c98a9c5f. On linux only the ENDPOINTS are known -- green at
+    # 179e55a7, red at 4a50e27b, sixteen commits between -- but c98a9c5f is the only commit in the
+    # window that moves this quantity on the platform we can measure, and the obvious rival
+    # (2e7a909a, the Neumann ghost consolidation) is bracketed by two bit-identical commits.
+    # So the verdict flipped in OPPOSITE directions on the two platforms,
+    # which is what a limit-cycling residual does and is stronger grounds for deletion than a
+    # clean-window story would have been. No platform conditional is involved, and CI pins the BLAS
+    # thread counts to 1. Anyone tracing an FDM_UPWIND no-flux discrepancy to this window should
+    # start at #1902 and #1904, not conclude the window is computationally quiet.
+    #
+    # What the deletion costs. `e < 1000` was NOT a vacuous bound -- the residual crosses it, in
+    # this very solve, by 26%: the peak above is 1.26e+03. So that assertion was a LIVE guard on
+    # the transient decay rate -- but a very coarse one, and the first draft of this note overstated
+    # how coarse. MEASURED: the assertion samples the FINAL residual, so to push iteration 30 back
+    # over 1000 the whole decay curve has to be delayed by 24-26 of the 30 iterations, or
+    # equivalently the per-iteration decay factor has to fall from its actual ~1.85 to <= 1.01. A
+    # solve that merely slowed down stays green; only one that has stopped converging trips it.
+    #
+    # And the transient is NOT unguarded -- an earlier draft of this note said it was. Measured on
+    # test_dual_fdm_pair_converges' own configuration (Nx_points=[41], Nt=20, sigma=0.1,
+    # FDM_UPWIND, max_iterations=50), its `:94` assertion `final_error <= initial_max * 2.0` reads
+    # threshold 1.003133e+03 against final 1.823556e+02, a 5.50x margin -- and it is MORE sensitive
+    # than the deleted one, not less: `:94` fires at a uniform post-peak decay factor below 1.0440,
+    # `e < 1000` at below 1.0088, so `:94`'s firing region strictly contains it. Nearly model-free,
+    # too: from the peak through iteration 29 AT THIS CONFIGURATION the residual is non-increasing
+    # -- strictly decreasing across 4->29 at Nx=41, though NOT monotone at Nx=21 nor on the noise
+    # floor generally, as the band two paragraphs up says -- so err_U[9] >= err_U[29] and any
+    # perturbation leaving the later sample above 1000 leaves the earlier one above it as well,
+    # 20 iterations sooner. So at THIS configuration the deletion costs nothing on the transient.
+    #
+    # No claim of domination survives either:
+    # `max_error` is the U increment at iteration 29 (Nx=40: err_U 4.238e-04 against err_M
+    # 4.807e-08), while test_fdm_upwind_stable's mass-conservation and `M.min() > 0` assertions
+    # constrain M's physics. The two sets are incomparable, not ordered -- and that test stops at
+    # iteration 20.
+    #
+    # The rest of the cost is smaller than it first looked. The Nx=40 leg duplicates
+    # test_fdm_upwind_stable on every listed parameter -- Nx_points=[41], Nt=20, T=1.0, sigma=0.1,
+    # same components, FDM_UPWIND -- differing only in max_iterations (30 vs 20) and tolerance, so
+    # iterations 21-30 there are unexercised.
+    #
+    # THE COARSE LEG HAS NO COUNTERPART ANYWHERE, and an earlier version of this comment said
+    # otherwise. It cited tests/integration/test_fvm_hjb_coupling.py's `fdm_1d` fixture as asserting
+    # "convergence, a 10x error drop, mass and positivity -- strictly stronger". Those four
+    # assertions are on the `fvm_1d` fixture, which runs FVM_MUSCL. `fdm_1d` runs FDM_UPWIND and has
+    # exactly ONE consumer -- test_1d_fvm_fdm_agreement -- which asserts cross-scheme agreement
+    # (rel_m < 0.07) and says nothing about convergence, mass or positivity. So a raise or a NaN
+    # from the coarse FDM_UPWIND solve is now caught by nothing. The LOW-SIGMA / high-Peclet coarse
+    # regime is uncovered, and so is the coarse regime generally.
+    #
+    # THE CASE FOR REPAIRING INSTEAD, which is stronger than "fix the two-grid rate test" and is
+    # what a reader should weigh: test_fdm_upwind_stable below already runs the identical Nx=41,
+    # Nt=20, sigma=0.1, FDM_UPWIND solve and already holds `result`. A transient bound there is one
+    # line at zero marginal runtime -- measured margin for `final < 1e-2 * peak` at its own
+    # 20-iteration budget: 31.9x. (That test runs Nx=41 only; the 73.5x figure is the Nx=21 leg,
+    # which it does not run, so 31.9x is the binding one.)
+    #
+    # Deleting is still right, and the reason is not that the guard was worthless. It is that
+    # whatever the guard becomes belongs on the SURVIVING test, not on this one -- so this test goes
+    # either way, and the two questions are independent. It also wants a DECAY bound rather than a
+    # magnitude one: a threshold on a residual is scale- and configuration-dependent, while
+    # `final < 1e-2 * peak` is scale-free and fires exactly on the collapse described above.
+    # Writing a threshold here to fit what was observed is how this file got `:94`: c1a3696b, the
+    # same day the file was created, reads "Relax convergence test to allow oscillatory
+    # behavior -- Changed test from checking monotonic decrease to checking overall progress (final
+    # error <= 2x initial max error)", and its diff replaces `assert decreasing >= len(errors)//2`
+    # with exactly the `<= initial_max * 2.0` above -- the assertion that turned out to be doing
+    # the real work. (Nothing is known about why `e < 1000` got its value; it arrived with the
+    # file, under no such pressure.) (`e < 1000` came in with the file at fc07ae31, 2026-01-17; nightly.yml
+    # did not exist until 8fa80818, 2026-04-02, so no nightly pressure was involved.) It is #2014,
+    # with the margin above as its measurement.
+    #
+    # What the deletion actually costs, stated rather than claimed away: the sigma=0.1 COARSE leg,
+    # Nx_points=[21], which has no `:94`-bearing neighbour. The Nx=41 leg is covered.
+    #
+    # Coupled EOC through the production FixedPointIterator already exists:
+    # tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence. What remains uncovered
+    # is coupled EOC AT A NO-FLUX WALL -- that suite is periodic -- and the deleted test never
+    # measured it either. The standalone FP order study added by #2006
+    # (tests/unit/test_alg/test_fp_mms_wall_order_1728.py) covers the wall but not the coupling.
 
     def test_safe_mode_guarantees_duality(self):
         """Test that Safe Mode automatically creates dual pairs."""
