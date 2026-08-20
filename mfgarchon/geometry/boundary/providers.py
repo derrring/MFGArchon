@@ -404,6 +404,19 @@ class NormalDriftProvider(BaseBCValueProvider):
     1-D, sigma = 0.3, with a wall-normal drift of magnitude 3.2: the non-conservative assembly
     loses **5.4% of the mass**, the conservative one is at machine precision.
 
+    WHICH SOLVERS CAN CONSUME THIS (#1979 / #2013). The FDM grid paths **refuse** a provider-valued
+    wall coefficient: their boundary handlers are keyed on the advection scheme and take no
+    ``boundary_conditions`` argument at all, so nothing reads ``alpha``. Before that refusal existed
+    the segment assembled byte-identically to a plain no-flux wall with no diagnostic -- which is
+    the failure this provider is meant to prevent, arriving by a different route. ``FPFEMSolver``
+    reads ``alpha``/``beta``/``g`` in its weak form and is the path where this provider does its
+    job.
+
+    Resolving it with ``bc.with_resolved_providers(state)`` will get past that refusal and is a
+    DOWNGRADE, not a workaround: this provider exists to be recomputed each Picard iterate from the
+    current ``m``, and resolving freezes it at one state. A frozen normal drift is a constant Robin
+    coefficient, which is a different boundary condition.
+
     ``v_n`` is a functional of the *coupled* solution -- ``v = -c*grad(U)`` with ``c`` from the
     Hamiltonian's control law -- so it is known only per Picard iterate. That is what a provider
     is for, and it is why this one sits on ``alpha`` rather than on ``value``: ``value`` is the

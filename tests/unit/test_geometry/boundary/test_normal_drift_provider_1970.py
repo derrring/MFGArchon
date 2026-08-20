@@ -200,3 +200,60 @@ def test_the_constructor_coefficient_wins_over_the_state(grid):
     value = NormalDriftProvider("left", 2.0).compute({**_state(2.0 * _X, grid), "drift_coefficient": 99.0})
 
     assert value == pytest.approx(4.0), "c=2 with dU/dx=2 gives v_n = +c*dU/dx = 4 at the low wall"
+
+
+class TestWhichSolversConsumeIt:
+    """#2013 landed the refusal this provider now runs into on the grid paths. Without these, the
+    PR ships a provider whose only documented home is a docstring sentence."""
+
+    def _bc(self, alpha):
+        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType, BoundaryConditions
+
+        return BoundaryConditions(
+            segments=[
+                BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min", value=0.0, alpha=alpha),
+                BCSegment(name="wall2", bc_type=BCType.NO_FLUX, boundary="x_max", value=0.0),
+            ],
+            dimension=1,
+        )
+
+    def test_the_fdm_path_refuses_it_rather_than_dropping_it(self):
+        """The refusal is the POINT, not a limitation to route around: this provider exists to stop a
+        wall silently reverting to `d_n m = 0`, and being dropped by the FDM handlers would deliver
+        exactly that under a different name."""
+        import pytest
+
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import (
+            _refuse_provider_wall_coefficients,
+        )
+
+        with pytest.raises(NotImplementedError, match=r"wall\.alpha"):
+            _refuse_provider_wall_coefficients(self._bc(NormalDriftProvider(side="left", drift_coefficient=1.0)))
+
+    def test_a_float_alpha_is_not_refused(self):
+        """Control. Without it, a blanket refusal would pass the test above and break every wall."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import (
+            _refuse_provider_wall_coefficients,
+        )
+
+        _refuse_provider_wall_coefficients(self._bc(1.0))
+
+    def test_resolving_the_provider_freezes_it(self):
+        """The docstring calls resolving a DOWNGRADE. That is measurable, not rhetoric: `compute`
+        reads `U_current` out of the state, so two different value functions give two different wall
+        coefficients -- and a resolved provider gives one number for both."""
+        import numpy as np
+
+        from mfgarchon.geometry import TensorProductGrid
+        from mfgarchon.geometry.boundary import no_flux_bc
+
+        n = 21
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        x = np.linspace(0.0, 1.0, n)
+        prov = NormalDriftProvider(side="left", drift_coefficient=1.0)
+        a = prov.compute({"U_current": x**2, "geometry": grid})
+        b = prov.compute({"U_current": -3.0 * x**2, "geometry": grid})
+        assert a != b, (
+            f"the provider must depend on U_current ({a} vs {b}), or freezing it at one state costs "
+            f"nothing and the DOWNGRADE wording in its docstring is unearned"
+        )
