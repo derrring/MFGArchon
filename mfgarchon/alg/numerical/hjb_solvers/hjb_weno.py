@@ -960,13 +960,17 @@ class HJBWENOSolver(BaseHJBSolver):
             )
         if self.dimension == 1:
             return self._solve_hjb_system_1d(M_density, U_terminal, U_coupling_prev, source_term)
-        elif self.dimension == 2:
-            return self._solve_hjb_system_2d(M_density, U_terminal, U_coupling_prev)
-        elif self.dimension == 3:
-            return self._solve_hjb_system_3d(M_density, U_terminal, U_coupling_prev)
-        else:
-            # Use generalized nD solver for dimensions > 3
-            return self._solve_hjb_system_nd(M_density, U_terminal, U_coupling_prev)
+        # ONE owner for every d >= 2 (#2021). There were three: `_solve_hjb_system_2d`, `_3d` and
+        # `_nd`, the same backward loop written out three times, differing only in slice notation
+        # (`[:, :]` / `[:, :, :]` / `[...]`, and the last covers the others), in logging, and in
+        # THREE DIFFERENT SOURCES for one array shape -- 2d read `self.num_grid_points_*`, 3d read
+        # `M_density.shape[1:]`, nd read `U_terminal.shape`, with nothing checking they agree.
+        #
+        # The 3D copy did not run AT ALL: its first statement called `self._get_logger()`, which
+        # exists nowhere in the MRO, so `HJBWENOSolver` in 3D raised AttributeError immediately and
+        # always had. No test exercised it -- 23 test files mention WENO and none is 3-D -- which is
+        # what a duplicated path with no oracle looks like from the outside: green.
+        return self._solve_hjb_system_nd(M_density, U_terminal, U_coupling_prev)
 
     def _advance_full_interval(self, u_current, m_current, dt, dt_stable_fn, step_fn):
         """Sub-step ``step_fn`` until the full physical interval ``dt`` is covered (Issue #1180).
@@ -998,14 +1002,6 @@ class HJBWENOSolver(BaseHJBSolver):
                 "The CFL/diffusion limit is extreme for this grid; raise max_substeps or coarsen."
             )
         return u
-
-    def _step_2d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """One 2D dimensional-split step of size ``dt`` (Strang or Godunov)."""
-        return self._step_nd_split(u, m, dt)
-
-    def _step_3d_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """One 3D dimensional-split step of size ``dt`` (Strang or Godunov)."""
-        return self._step_nd_split(u, m, dt)
 
     def _step_nd_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
         """One dimensional-split step of size ``dt`` (Strang or Godunov), any dim.
@@ -1091,82 +1087,6 @@ class HJBWENOSolver(BaseHJBSolver):
 
         return U_solved
 
-    def _solve_hjb_system_2d(
-        self,
-        M_density_evolution_from_FP: np.ndarray,
-        U_final_condition_at_T: np.ndarray,
-        U_from_prev_picard: np.ndarray,
-    ) -> np.ndarray:
-        """Solve 2D HJB system using dimensional splitting."""
-        # Extract dimensions from input
-        # M_density has shape (n_time_points, Nx, Ny) where n_time_points = problem.Nt + 1
-        n_time_points = M_density_evolution_from_FP.shape[0]
-        dt = self.problem.T / (n_time_points - 1)  # n_time_points - 1 intervals
-
-        # Initialize solution array - same shape as input
-        U_solved = np.zeros((n_time_points, self.num_grid_points_x, self.num_grid_points_y))
-
-        # Set final condition (last time index)
-        U_solved[-1, :, :] = U_final_condition_at_T
-
-        # Backward time integration
-        for t_idx in range(n_time_points - 2, -1, -1):
-            # Current density at this time
-            m_current = M_density_evolution_from_FP[t_idx, :, :]
-
-            # Current value function
-            u_current = U_solved[t_idx + 1, :, :].copy()
-
-            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
-            U_solved[t_idx, :, :] = self._advance_full_interval(
-                u_current, m_current, dt, self._compute_dt_stable_2d, self._step_2d_split
-            )
-
-        return U_solved
-
-    def _solve_hjb_system_3d(
-        self,
-        M_density_evolution_from_FP: np.ndarray,
-        U_final_condition_at_T: np.ndarray,
-        U_from_prev_picard: np.ndarray,
-    ) -> np.ndarray:
-        """Solve 3D HJB system using dimensional splitting."""
-        logger = self._get_logger()
-        logger.info("Starting 3D WENO HJB solver with dimensional splitting")
-
-        # Extract dimensions from input
-        # M_density has shape (n_time_points, Nx, Ny, Nz) where n_time_points = problem.Nt + 1
-        n_time_points = M_density_evolution_from_FP.shape[0]
-        spatial_shape = M_density_evolution_from_FP.shape[1:]
-
-        # Initialize solution array - same shape as input
-        U_solved = np.zeros((n_time_points, *spatial_shape))
-
-        # Set final condition (last time index)
-        U_solved[-1, :, :, :] = U_final_condition_at_T
-
-        # n_time_points - 1 intervals (was missing here: the loop referenced an unset self.dt)
-        dt = self.problem.T / (n_time_points - 1)
-
-        # Solve backward in time
-        for time_idx in range(n_time_points - 2, -1, -1):
-            logger.debug(f"  3D Time step {time_idx + 1}/{n_time_points - 1}")
-
-            u_current = U_solved[time_idx + 1, :, :, :]
-            m_current = M_density_evolution_from_FP[time_idx, :, :, :]
-
-            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
-            U_solved[time_idx, :, :, :] = self._advance_full_interval(
-                u_current, m_current, dt, self._compute_dt_stable_3d, self._step_3d_split
-            )
-
-            # Progress logging for long computations
-            if (time_idx + 1) % 20 == 0:
-                logger.info(f"    3D WENO: Completed {n_time_points - time_idx - 2}/{n_time_points - 1} time steps")
-
-        logger.info("3D WENO HJB solver completed successfully")
-        return U_solved
-
     def _solve_hjb_system_nd(
         self,
         M_density_evolution_from_FP: np.ndarray,
@@ -1225,82 +1145,38 @@ class HJBWENOSolver(BaseHJBSolver):
         Returns:
             dt_stable: Maximum stable time step
         """
+        # Semantics taken from the deleted `_compute_dt_stable_3d`, which was the CORRECTED copy of
+        # the three (#2021). Two differences, both deliberate:
+        #
+        #   - ZERO GRADIENT gets an explicit branch rather than an epsilon. Adding 1e-10 to the
+        #     speed hides the case instead of naming it; the 3D copy's comment records that the
+        #     pre-fix version left `self.dt` unset here.
+        #   - NO FLOOR. The deleted `max(dt_stable, 1e-10)` said "Ensure positive time step", but
+        #     positivity is not the property required. When the diffusion-limited step is genuinely
+        #     below 1e-10 the floor returns a step ABOVE the stability bound -- measured, 1e-10
+        #     against a true limit of 3.906250e-15 at sigma = 1e7, a factor of 25,600 -- and the
+        #     solve then runs unstably. Without it, `_advance_full_interval` reaches its
+        #     `max_substeps` guard and fails loud, which is the behaviour that path documents.
+        #
+        # Reachability of that floor, so the change is not oversold: it needs
+        # `diffusion_stability_factor * h^2 / sigma^2 < 1e-10`, i.e. `sigma > h * 5e4` at the default
+        # factor -- sigma > 5000 at h = 0.1. Not reachable on a grid an explicit scheme can afford.
+        # The floor is removed because it converts a loud failure into a silent one, not because it
+        # was firing.
         dt_cfl_list = []
         dt_diffusion_list = []
+        sigma_sq = self.problem.sigma**2
 
-        # Check CFL and diffusion conditions for each dimension
         for axis in range(self.dimension):
-            # Compute gradient along this axis
             u_grad = np.gradient(u, self.grid_spacing[axis], axis=axis)
+            max_speed = float(np.max(np.abs(u_grad))) if u_grad.size else 0.0
+            if max_speed > 1e-12:
+                dt_cfl_list.append(self.cfl_number * self.grid_spacing[axis] / max_speed)
+            dt_diffusion_list.append(self.diffusion_stability_factor * self.grid_spacing[axis] ** 2 / sigma_sq)
 
-            # CFL condition for advection
-            max_speed = np.max(np.abs(u_grad)) + 1e-10
-            dt_cfl = self.cfl_number * self.grid_spacing[axis] / max_speed
-            dt_cfl_list.append(dt_cfl)
-
-            # Diffusion stability condition
-            dt_diffusion = self.diffusion_stability_factor * self.grid_spacing[axis] ** 2 / self.problem.sigma**2
-            dt_diffusion_list.append(dt_diffusion)
-
-        # Take minimum across all dimensions for stability
-        dt_stable = min(min(dt_cfl_list), min(dt_diffusion_list))
-
-        return max(dt_stable, 1e-10)  # Ensure positive time step
-
-    def _compute_dt_stable_2d(self, u: np.ndarray, m: np.ndarray) -> float:
-        """Compute stable time step for 2D problem based on CFL and diffusion stability."""
-        # Compute gradients for stability analysis
-        u_x = np.gradient(u, self.grid_spacing_x, axis=0)
-        u_y = np.gradient(u, self.grid_spacing_y, axis=1)
-
-        # CFL condition for advection terms
-        max_speed_x = np.max(np.abs(u_x)) + 1e-10
-        max_speed_y = np.max(np.abs(u_y)) + 1e-10
-
-        dt_cfl_x = self.cfl_number * self.grid_spacing_x / max_speed_x
-        dt_cfl_y = self.cfl_number * self.grid_spacing_y / max_speed_y
-        dt_cfl = min(dt_cfl_x, dt_cfl_y)
-
-        # Stability condition for diffusion term (more restrictive in 2D)
-        dt_diffusion_x = self.diffusion_stability_factor * self.grid_spacing_x**2 / self.problem.sigma**2
-        dt_diffusion_y = self.diffusion_stability_factor * self.grid_spacing_y**2 / self.problem.sigma**2
-        dt_diffusion = min(dt_diffusion_x, dt_diffusion_y)
-
-        # Take minimum for stability
-        dt_stable = min(dt_cfl, dt_diffusion)
-
-        return max(dt_stable, 1e-10)  # Ensure positive time step
-
-    def _compute_dt_stable_3d(self, u: np.ndarray, m: np.ndarray) -> float:
-        """Compute stable time step for 3D problem based on CFL and diffusion stability."""
-        # Compute gradients for stability analysis
-        u_x = np.gradient(u, self.grid_spacing_x, axis=0)
-        u_y = np.gradient(u, self.grid_spacing_y, axis=1)
-        u_z = np.gradient(u, self.grid_spacing_z, axis=2)
-
-        # Maximum gradient magnitude for CFL condition
-        max_grad_x = np.max(np.abs(u_x)) if u_x.size > 0 else 0.0
-        max_grad_y = np.max(np.abs(u_y)) if u_y.size > 0 else 0.0
-        max_grad_z = np.max(np.abs(u_z)) if u_z.size > 0 else 0.0
-
-        # CFL stability condition (very conservative for 3D)
-        if max_grad_x > 1e-12 or max_grad_y > 1e-12 or max_grad_z > 1e-12:
-            dt_cfl_x = self.cfl_number * self.grid_spacing_x / (max_grad_x + 1e-12)
-            dt_cfl_y = self.cfl_number * self.grid_spacing_y / (max_grad_y + 1e-12)
-            dt_cfl_z = self.cfl_number * self.grid_spacing_z / (max_grad_z + 1e-12)
-            dt_cfl = min(dt_cfl_x, dt_cfl_y, dt_cfl_z)
-        else:
-            dt_cfl = float("inf")  # no gradient -> no CFL limit; diffusion bound governs (was unset self.dt)
-
-        # Stability condition for diffusion term (very restrictive in 3D)
-        # All modern MFGProblem have sigma; getattr with default for safety
-        sigma_sq = getattr(self.problem, "sigma", 1.0) ** 2
-        dt_diffusion_x = self.diffusion_stability_factor * (self.grid_spacing_x**2) / sigma_sq
-        dt_diffusion_y = self.diffusion_stability_factor * (self.grid_spacing_y**2) / sigma_sq
-        dt_diffusion_z = self.diffusion_stability_factor * (self.grid_spacing_z**2) / sigma_sq
-        dt_diffusion = min(dt_diffusion_x, dt_diffusion_y, dt_diffusion_z)
-
-        return min(dt_cfl, dt_diffusion)
+        # No gradient anywhere -> no CFL limit; the diffusion bound governs.
+        dt_cfl = min(dt_cfl_list) if dt_cfl_list else float("inf")
+        return min(dt_cfl, min(dt_diffusion_list))
 
     def get_variant_info(self) -> dict[str, str]:
         """
