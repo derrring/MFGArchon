@@ -192,3 +192,89 @@ def test_the_predicate_survives_an_unrelated_nearby_edit_in_main(repo):
         "the branch's content is entirely in main -- merging it produces main's own tree -- so it "
         "is absorbed. Reporting otherwise is the reverse-apply predicate's context sensitivity."
     )
+
+
+class TestThePopulationCoversBothScopes:
+    """2026-08-21: the classifier reported "0 branch(es) show evidence of having landed" on a tree
+    carrying SIXTEEN remote branches whose PRs were merged. They had never been local, and the
+    population was `refs/heads/` alone.
+
+    That is the same shape as the defects this repo has been chasing all week -- a check that is not
+    where the thing it checks lives -- and it is invisible in exactly the way that matters: the
+    output is a clean report, not an error.
+    """
+
+    def test_a_remote_only_branch_is_in_the_population(self, repo):
+        """The load-bearing one. Nothing local; the branch exists only on origin."""
+        _git(repo, "checkout", "-qb", "remote-only")
+        (repo / "r.txt").write_text("r\n")
+        _git(repo, "add", "r.txt")
+        _git(repo, "commit", "-qm", "r")
+        _git(repo, "push", "-q", "origin", "remote-only")
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "branch", "-qD", "remote-only")
+
+        listed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                '{ git for-each-ref refs/heads/ --format="%(refname:lstrip=2)"; '
+                '  git for-each-ref refs/remotes/origin/ --format="%(refname:lstrip=3)"; '
+                "} | grep -vxE 'main|HEAD' | sort -u",
+            ],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        assert "remote-only" in listed, f"a remote-only branch must be enumerated; got {listed}"
+
+    def test_the_population_expression_in_the_script_reads_both_refs(self):
+        """Pinned against the script text, because the expression above is a copy: if the shipped
+        one narrows back to `refs/heads/` the copy keeps passing."""
+        src = _SCRIPT.read_text()
+        assert "refs/remotes/origin/" in src, "the shipped population must enumerate remote refs"
+        assert src.count("git for-each-ref refs/heads/") == 1
+        assert src.count("git for-each-ref refs/remotes/origin/") == 1
+
+    def test_the_remedy_names_the_remote_command_too(self):
+        """`git branch -D` does not touch origin. A report that pools both scopes and then offers
+        only the local command sends the reader to a no-op."""
+        src = _SCRIPT.read_text()
+        assert "git push origin --delete" in src, "the remote remedy must be stated"
+        assert "git branch -D" in src, "the local one must still be stated"
+
+
+def test_a_squash_merged_branch_stops_being_recognised_once_main_moves_on(repo):
+    """The claim this predicate CANNOT make, pinned so it is not re-asserted.
+
+    An earlier comment said absorption "holds under a squash merge". It holds only while main has
+    not since modified the same regions -- after that the three-way merge conflicts and the branch
+    reads unmerged again. Measured on the real repository: of sixteen remote branches whose PRs are
+    merged, eight classify as unmerged this way.
+
+    The error is a FALSE NEGATIVE, which is why the merged-PR name signal is the primary evidence
+    and this predicate is corroborating. This test exists so the limitation is stated by a failing
+    assertion if anyone strengthens the claim.
+    """
+    _git(repo, "checkout", "-qb", "feature")
+    (repo / "a.txt").write_text("base\nfrom-feature\n")
+    _git(repo, "commit", "-qam", "feature edit")
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--squash", "feature")
+    _git(repo, "commit", "-qm", "squashed")
+    # main moves on, touching the same region
+    (repo / "a.txt").write_text("base\nfrom-feature\nand-then-main\n")
+    _git(repo, "commit", "-qam", "main moves on")
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "fetch", "-q", "origin")
+
+    # RECORDED LIMITATION, not a contract. 1 = not absorbed, which is WRONG about this branch --
+    # its content is in main. It is kept because the error is a false negative and because stating
+    # it here is what stops the flat claim being re-asserted in `absorbed()`.
+    assert _absorbed(repo, "feature") == 1, (
+        "the predicate now recognises a squash-merged branch under a moving main. That is an "
+        "improvement, not a failure: update the conditional wording in `absorbed()` and delete this "
+        "test -- but verify against the real repository first, where eight branches with MERGED PRs "
+        "classified as unmerged on 2026-08-21"
+    )
