@@ -26,9 +26,11 @@ if HAS_JAX:
     from jax import device_put, grad, jacfwd, jacrev, jit, vmap
     from jax.lax import cond, scan
 
-    # Enable float64 for numerical precision (JAX defaults to float32)
-    # This is critical for Newton's method convergence with tight tolerances
-    jax.config.update("jax_enable_x64", True)
+    # Through the single owner (#1923). This was an unconditional write AT MODULE IMPORT, so
+    # whether a user's float32 backend survived depended on import order.
+    from mfgarchon.utils.acceleration.jax_precision import require_x64
+
+    require_x64("jax_utils (Newton's method needs float64 for tight tolerances)")
 
     # Optax is optional for optimization schedules
     try:

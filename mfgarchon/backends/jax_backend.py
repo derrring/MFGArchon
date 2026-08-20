@@ -79,13 +79,18 @@ class JAXBackend(BaseBackend):
         import jax
 
         # Set precision
+        # Through the single owner (#1923). This is the only write that may turn x64 OFF, because
+        # it is the only one representing something the USER asked for; the library's internal
+        # float64 requirements go through `require_x64` and fail loud against it rather than
+        # silently overwriting it.
+        from mfgarchon.utils.acceleration.jax_precision import set_x64_policy
+
         if self.precision == "float32":
             self.dtype = jnp.float32
-            # Enable float32 mode in JAX
-            jax.config.update("jax_enable_x64", False)
+            set_x64_policy(False, source="JAXBackend(precision='float32')")
         else:
             self.dtype = jnp.float64
-            jax.config.update("jax_enable_x64", True)
+            set_x64_policy(True, source="JAXBackend(precision='float64')")
 
         # Device selection
         if self.device == "auto":

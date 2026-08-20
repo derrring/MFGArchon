@@ -160,7 +160,11 @@ def shape_functions_and_grads_jax(
     except ImportError:
         raise ImportError("backend='jax' requires jax. Install jax, or use backend='numpy'.") from None
 
-    jax.config.update("jax_enable_x64", True)
+    # Through the single owner (#1923). This was an unconditional write PER CALL, so one MLS call
+    # silently turned a user's float32 process into a float64 one for everything that followed.
+    from mfgarchon.utils.acceleration.jax_precision import require_x64
+
+    require_x64("the meshless MLS basis (its normal equations are ill-conditioned in float32)")
     nodes_j = jnp.asarray(nodes, dtype=jnp.float64)
     exps_j = jnp.asarray(exponents)
 
