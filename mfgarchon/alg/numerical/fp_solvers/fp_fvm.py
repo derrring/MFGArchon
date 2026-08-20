@@ -109,11 +109,6 @@ class FPFVMSolver(BaseFPSolver):
     #: silently discarded. Flip this to True in the same commit that implements it.
     honors_inhomogeneous_neumann: bool = False
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     # The FP equation consumes the advective velocity alpha directly via ``drift_field``; a
     # value function ``U`` may instead be passed via ``potential_field`` (the solver then forms
     # alpha = -coupling*grad(U) at the faces). Default convention is VELOCITY.

@@ -194,7 +194,14 @@ class BaseMFGSolver(ABC):
             4. `problem.boundary_conditions` (direct on problem)
             5. `problem.get_boundary_conditions()` (method on problem)
         """
-        # Priority 1: Check for instance attribute (solvers may cache BCs)
+        # Priority 1: an explicitly-passed BC, cached by the solver under this name.
+        #
+        # Deliberately NOT `self.boundary_conditions`. That attribute carries two meanings in the
+        # tree -- the BC a caller handed the constructor, and a cache of the geometry's BC -- and
+        # honouring it here made a geometry-derived cache outrank a later geometry change, which
+        # `test_gfdm_refreshes_geometry_bc_per_solve` exists to forbid. Solvers that accept an
+        # explicit BC store it under the underscored name; see #1975 for why NO_FLUX and NEUMANN
+        # are not spellings of one condition on the FP side.
         try:
             if self._boundary_conditions is not None:
                 return self._with_geometry_periodic_convention(self._boundary_conditions)
@@ -266,6 +273,22 @@ class BaseMFGSolver(ABC):
     #: this to False. Declaring the type without honouring the value is the RFC #1574 class:
     #: a declared surface broader than the honoured code, silent in the gap.
     honors_inhomogeneous_neumann: bool = True
+
+    #: Declared per solver. `None` means "un-migrated": the gate below no-ops rather than refusing
+    #: everything.
+    _SUPPORTED_BC_TYPES: frozenset | None = None
+
+    @property
+    def supported_bc_types(self) -> frozenset | None:
+        """The `BoundaryCapable` protocol member, implemented once for every solver.
+
+        Thirteen subclasses each carried `return self._SUPPORTED_BC_TYPES` verbatim. That is not a
+        second way of answering the question, it is the same answer written thirteen times -- and on
+        2026-08-17 a solver that declared `_SUPPORTED_BC_TYPES` and called the gate was still
+        ungated, because it was the fourteenth and had not written the forward (#1977). The
+        declaration is now sufficient on its own.
+        """
+        return self._SUPPORTED_BC_TYPES
 
     def _validate_bc_support(self, bc: Any) -> None:
         """Fail loud if ``bc`` requests a ``BCType`` this solver does not declare in

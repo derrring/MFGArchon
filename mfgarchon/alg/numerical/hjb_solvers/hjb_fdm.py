@@ -140,11 +140,6 @@ class HJBFDMSolver(BaseHJBSolver):
     # boundary rows; Robin / Reflecting / Extrapolation are not handled and fail loud.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     @deprecated_parameter(
         param_name="damping_factor",
         since="v0.19.2",

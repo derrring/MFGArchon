@@ -18,7 +18,6 @@ from typing import Any
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility_torch, resolve_volatility
 
 from .base_backend import BaseBackend
 
@@ -261,33 +260,6 @@ class TorchBackend(BaseBackend):
         return torch.meshgrid(*torch_arrays, indexing=indexing)
 
     # Mathematical Operations
-    def grad(self, func, argnum=0):
-        """Compute gradient of function using torch.autograd."""
-
-        def grad_func(*args):
-            # Convert inputs to tensors with gradients
-            tensor_args = []
-            for i, arg in enumerate(args):
-                tensor = self._to_torch(arg)
-                tensor.requires_grad_(i == argnum)
-                tensor_args.append(tensor)
-
-            # Compute function output
-            output = func(*tensor_args)
-
-            # Compute gradient
-            if tensor_args[argnum].grad is not None:
-                tensor_args[argnum].grad.zero_()
-
-            grad_outputs = torch.ones_like(output)
-            grads = torch.autograd.grad(
-                output, tensor_args[argnum], grad_outputs=grad_outputs, create_graph=True, retain_graph=True
-            )[0]
-
-            return grads
-
-        return grad_func
-
     def trapezoid(self, y, x=None, dx=1.0, axis=-1):
         """Trapezoidal integration."""
         y_tensor = self._to_torch(y)
@@ -366,132 +338,6 @@ class TorchBackend(BaseBackend):
             return torch.min(a_tensor, dim=axis)[0]
 
     # MFG-Specific Operations
-    def compute_hamiltonian(self, x, p, m, problem_params):
-        """
-        Compute Hamiltonian H(x, p, m) optimized for PyTorch.
-
-        Default implementation for quadratic Hamiltonian:
-        H(x, p, m) = (1/2)|p|² + V(x) + interaction(x, m)
-        """
-        x_tensor = self._to_torch(x)
-        p_tensor = self._to_torch(p)
-        m_tensor = self._to_torch(m)
-
-        # Kinetic energy term: (1/2)|p|²
-        kinetic_term = 0.5 * torch.sum(p_tensor**2, dim=-1)
-
-        # Potential energy (can be customized based on problem_params)
-        potential_term = problem_params.get("potential_strength", 0.0) * torch.sum(x_tensor**2, dim=-1)
-
-        # Interaction term: logarithmic interaction
-        epsilon = problem_params.get("interaction_epsilon", 1e-8)
-        interaction_term = problem_params.get("interaction_strength", 1.0) * torch.log(m_tensor + epsilon)
-
-        return kinetic_term + potential_term + interaction_term
-
-    def compute_optimal_control(self, x, p, m, problem_params):
-        """
-        Compute optimal control a*(x, p, m) = -Hp(x, p, m).
-
-        For quadratic Hamiltonian: a* = -p
-        """
-        p_tensor = self._to_torch(p)
-        return -p_tensor
-
-    def hjb_step(self, U, M, dt, dx, problem_params):
-        """
-        Single Hamilton-Jacobi-Bellman time step using PyTorch operations.
-
-        Implements: dU/dt + H(x, ∇U, M) = 0
-
-        ⚠️ LQ-only toy stepper (hardcoded H = 0.5|p|² + potential·x² + interaction·log m); does NOT
-        honor ``problem.hamiltonian_class`` and has no caller in the solver fleet. Not the production
-        path — see :meth:`BaseBackend.hjb_step` and deferred RFC #1072.
-        """
-        U_tensor = self._to_torch(U)
-        M_tensor = self._to_torch(M)
-
-        # Compute spatial gradient using finite differences
-        U_grad = torch.gradient(U_tensor, spacing=dx, dim=-1)[0]
-
-        # Compute Hamiltonian
-        x_grid = torch.linspace(
-            problem_params.get("x_min", -1),
-            problem_params.get("x_max", 1),
-            U_tensor.shape[-1],
-            device=self.torch_device,
-            dtype=self.torch_dtype,
-        )
-
-        H = self.compute_hamiltonian(x_grid, U_grad, M_tensor, problem_params)
-
-        # Backward Euler step: U^{n+1} = U^n - dt * H
-        U_new = U_tensor - dt * H
-
-        return U_new
-
-    def fpk_step(self, M, U, dt, dx, problem_params):
-        """
-        Single Fokker-Planck-Kolmogorov time step using PyTorch operations.
-
-        Implements: dM/dt - div(M ∇Hp(x, ∇U, M)) - (σ²/2) ΔM = 0
-        """
-        M_tensor = self._to_torch(M)
-        U_tensor = self._to_torch(U)
-
-        # Compute spatial gradient of U
-        U_grad = torch.gradient(U_tensor, spacing=dx, dim=-1)[0]
-
-        # Compute optimal control (drift)
-        x_grid = torch.linspace(
-            problem_params.get("x_min", -1),
-            problem_params.get("x_max", 1),
-            M_tensor.shape[-1],
-            device=self.torch_device,
-            dtype=self.torch_dtype,
-        )
-
-        drift = self.compute_optimal_control(x_grid, U_grad, M_tensor, problem_params)
-
-        # Compute divergence term: div(M * drift)
-        flux = M_tensor * drift
-        div_term = torch.gradient(flux, spacing=dx, dim=-1)[0]
-
-        # Compute diffusion term: D * d²M/dx²  where D = σ²/2 (Issue #1189: route through D).
-        # Issue #1282: read the volatility through the single-source resolver (canonical
-        # "sigma" key; legacy "diffusion" key holds the volatility despite the name, default
-        # preserves the prior 0.1 no-key behavior).
-        sigma = resolve_volatility(problem_params, legacy_key="diffusion", legacy_is_squared=False, default=0.1)
-        M_grad = torch.gradient(M_tensor, spacing=dx, dim=-1)[0]
-        M_grad2 = torch.gradient(M_grad, spacing=dx, dim=-1)[0]
-        diffusion_term = diffusion_from_volatility_torch(sigma) * M_grad2
-
-        # Forward Euler step: M^{n+1} = M^n + dt * (-div(flux) + diffusion)
-        # Issue #1282: sign was inverted (+ instead of -) on div_term.
-        M_new = M_tensor + dt * (-div_term + diffusion_term)
-
-        # Ensure non-negativity and mass conservation
-        M_new = torch.clamp(M_new, min=1e-12)
-        mass = torch.trapezoid(M_new, dx=dx)
-        M_new = M_new / mass
-
-        return M_new
-
-    # Performance and Compilation
-    def compile_function(self, func, *args, **kwargs):
-        """
-        Compile function using torch.compile for performance.
-
-        Only available in PyTorch 2.0+ with compatible hardware.
-        """
-        if self.compile_mode and hasattr(torch, "compile"):
-            try:
-                return torch.compile(func, **kwargs)
-            except Exception as e:
-                warnings.warn(f"Failed to compile function: {e}")
-                return func
-        return func
-
     def vectorize(self, func, signature=None):
         """
         Vectorize function using torch.vmap when available.

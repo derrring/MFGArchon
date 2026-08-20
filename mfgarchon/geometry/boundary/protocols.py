@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .conditions import BoundaryConditions
+    from .types import BCType
 
 # =============================================================================
 # Generic Type Alias for Vectorized Operations (PEP 695, Python 3.12+)
@@ -309,9 +310,56 @@ class BaseBCApplicator(ABC):
         """Discretization method this applicator handles."""
         ...
 
+    #: The `BCType` members this applicator has a branch for. `None` means undeclared, and the
+    #: gate below is then a no-op -- the same convention `BaseSolver._validate_bc_support` uses for
+    #: un-migrated solvers (#1456). Declaring a type asserts only that a branch exists; whether that
+    #: branch is CORRECT is a separate axis, tracked per cell (#1946).
+    _SUPPORTED_BC_TYPES: frozenset[BCType] | None = None
+
+    @property
+    def supported_bc_types(self) -> frozenset[BCType] | None:
+        """The `BCType` members this applicator handles, or `None` if it has not declared."""
+        return self._SUPPORTED_BC_TYPES
+
+    def _validate_bc_support(self, bc: BoundaryConditions) -> None:
+        """Fail loud if `bc` requests a `BCType` this applicator does not declare.
+
+        This mirrors `BaseSolver._validate_bc_support` (#1456) rather than inventing a second
+        mechanism: that gate works, fires, and `dispatch.py` already calls it the authoritative
+        source. The applicator layer had a namesake -- `supports_bc_type` -- whose body checks the
+        DIMENSION and which has zero callers anywhere; it is left alone and superseded here. #1948
+
+        Without this gate an unhandled type falls out of the dispatch, and what happens next differs
+        per applicator: a silent no-op, a bare `pass`, `else: 0.0`, or a raise. Measured across the
+        (applicator x BCType) product, four different behaviours and only the raise is right.
+        """
+        if self._SUPPORTED_BC_TYPES is None or bc is None:
+            return
+        segments = getattr(bc, "segments", None)
+        if segments is None:
+            return  # not a BoundaryConditions object (e.g. a string sentinel)
+        requested = {seg.bc_type for seg in segments}
+        default = getattr(bc, "default_bc", None)
+        if default is not None:
+            requested.add(default)
+        unsupported = requested - self._SUPPORTED_BC_TYPES
+        if unsupported:
+            names = sorted(t.name for t in unsupported)
+            have = sorted(t.name for t in self._SUPPORTED_BC_TYPES)
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support boundary condition type(s) {names} "
+                f"(supported: {have}). An unsupported type would otherwise be applied as whatever "
+                f"the dispatch falls through to, which is not the condition that was asked for."
+            )
+
     def supports_bc_type(self, bc: BoundaryConditions) -> bool:
         """
         Check if this applicator supports the given BC.
+
+        NOTE: despite the name this checks the DIMENSION, not the BC type, and it has no callers
+        anywhere in the tree. For the type question use `supported_bc_types` /
+        `_validate_bc_support` above. Left in place rather than renamed because it is public
+        surface; #1948 tracks the decision.
 
         Default implementation checks dimension match.
         Subclasses can add additional checks.

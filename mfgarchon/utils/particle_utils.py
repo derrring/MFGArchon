@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from mfgarchon.backends.backend_protocol import BaseBackend
+    from mfgarchon.backends.base_backend import BaseBackend
 
 
 def interpolate_1d_gpu(x_query, x_grid, y_grid, backend: "BaseBackend"):

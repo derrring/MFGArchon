@@ -98,11 +98,6 @@ class FPGFDMSolver(BaseFPSolver):
     #: silently discarded. Flip this to True in the same commit that implements it.
     honors_inhomogeneous_neumann: bool = False
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     def __init__(
         self,
         problem: MFGProblem,
@@ -164,7 +159,16 @@ class FPGFDMSolver(BaseFPSolver):
 
         # Resolve boundary conditions using unified infrastructure
         # Issue #527: Integrate with geometry.boundary infrastructure
-        resolved_bc_type = self._resolve_boundary_type(
+        # Called for its validation side effect only. `_resolve_default_bc` (#1100) raises on a
+        # segments-only BoundaryConditions carrying no default, and this is the ONLY call on this
+        # construction path that does -- `_validate_bc_support` below does not invoke it. Measured
+        # 2026-08-17: replacing this call with `None` leaves 755 gfdm/boundary tests green, so the
+        # refusal is now pinned by test_issue_1456_bc_capability_gate.py.
+        #
+        # The RETURN value is discarded. It used to be stored as `self._boundary_type`, which
+        # nothing in the package ever read (removed 2026-08-17); `TaylorOperator` takes no boundary
+        # argument at all, so the resolved string reached nothing.
+        self._resolve_boundary_type(
             boundary_conditions=boundary_conditions,
             boundary_type_str=boundary_type,
         )
@@ -206,7 +210,6 @@ class FPGFDMSolver(BaseFPSolver):
                 "FPGFDMSolver(domain_bounds=...) is accepted but never applied (Issue #1426): the "
                 "domain is taken from problem.geometry. Remove the argument."
             )
-        self._boundary_type = resolved_bc_type
 
         # Store upwind parameters
         self.upwind_scheme = upwind_scheme

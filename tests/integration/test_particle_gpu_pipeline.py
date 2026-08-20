@@ -14,7 +14,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 
 
 def _default_hamiltonian():
@@ -188,7 +188,6 @@ class TestParticleGPUPipeline:
         for name, bc in [
             ("periodic", periodic_bc(dimension=1)),
             ("no_flux", no_flux_bc(dimension=1)),
-            ("dirichlet", dirichlet_bc(value=0.0, dimension=1)),
         ]:
             solver = FPParticleSolver(
                 problem,
@@ -219,18 +218,13 @@ class TestParticleGPUPipeline:
             "periodic and no-flux are indistinguishable; BC dispatch is not live on this backend"
         )
 
-        # RECORDED DEFECT, not a contract. An absorbing Dirichlet wall must remove particles, and
-        # on the NumPy path it does: measured 344 absorbed at this seed, density differing from
-        # no-flux by 0.688. On the torch path the same solver absorbs 0 and returns a density
-        # BYTE-IDENTICAL to no-flux -- so absorption is a silent no-op here while periodic still
-        # dispatches correctly. Pinned rather than asserted the right way round because the fix
-        # belongs in mfgarchon/, not in this test; fixing it trips these two lines.
-        assert absorbed["dirichlet"] == 0, "torch path now absorbs particles -- remove this defect pin"
-        np.testing.assert_array_equal(
-            densities["dirichlet"],
-            densities["no_flux"],
-            err_msg="torch Dirichlet BC is no longer a no-op -- replace this pin with absorbed > 0",
-        )
+        # The defect pin that stood here is removed, as its own message instructed: the torch path
+        # no longer returns a density byte-identical to no-flux, because it no longer returns one
+        # at all. #1910 is closed by REFUSAL, not by implementation -- the GPU evolution loop still
+        # cannot remove particles at a DIRICHLET segment, and now says so instead of reflecting
+        # them and reporting a plausible density. The refusal is asserted in
+        # test_gpu_particle_refuses_absorbing_bc_1910.py; the loop above therefore no longer feeds
+        # Dirichlet to this backend.
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

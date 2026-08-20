@@ -10,9 +10,19 @@ Two defects, both on `solve_fp_nd_full_system`:
    exists precisely to carry a precomputed alpha* for those Hamiltonians.
 
 Only ``divergence_upwind`` actually reads ``interface_velocity``, so only that
-scheme leaves the coefficient unread; the others still fall back to ``-c*grad(U)``
-and still resolve it. That they silently discard the caller's velocity is a
-separate defect, tracked in #1632.
+scheme leaves the coefficient unread; every other path derives its drift from U
+and still resolves it.
+
+2. Supplying a velocity to a scheme that cannot read it proceeded silently, and it did
+   **not** fall back to ``-c*grad(U)`` as this docstring and the code comments used to
+   claim. The ``velocity_field is not None`` branch replaces U with a zero-U dispatcher,
+   so *both* drift channels were discarded and the solve ran at zero drift -- returning a
+   pure-diffusion density that looks converged and conserves mass. Measured before the
+   guard: ``gradient_upwind`` with a velocity was bit-identical to the pure-diffusion
+   reference (``|B-C| = 0.000e+00``) while differing from the U-driven run by ``2.1e-2``.
+   That was the reachable path for every non-separable Hamiltonian, since
+   ``resolve_fp_drift_kwargs`` routes those down the velocity channel precisely because
+   ``-c*grad(U)`` cannot represent their drift. It now raises (#1632).
 
 Each test fails if the fix is reverted.
 """
@@ -104,20 +114,155 @@ def test_u_channel_unchanged_for_minimize():
 
 
 @pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
-def test_non_consuming_scheme_still_receives_a_real_coefficient(scheme):
-    """The skip must be scheme-aware, not merely velocity-aware.
+def test_velocity_on_a_non_consuming_scheme_raises(scheme):
+    """Issue #1632: a velocity these schemes cannot read must not be silently dropped.
 
-    Only `divergence_upwind` reads `interface_velocity`; the others still fall back
-    to -c*grad(U) and so still need the coefficient. Dropping the scheme test from
-    `_velocity_is_consumed` -- resolving nothing whenever a velocity is present --
-    hands them NaN and the density goes non-finite. That is the exact regression
-    that forced this PR to be narrowed, so pin it here rather than relying on
-    tests/integration/test_fdm_centered_conservation.py to catch it.
+    Catches the reappearance of a *silent* wrong answer, not a crash. Before the guard
+    this call returned a finite, mass-conserving, converged-looking density computed at
+    zero drift, because the `velocity_field is not None` branch had already swapped U for
+    a zero-U dispatcher. Nothing in the output distinguished it from a correct solve --
+    which is why an assertion on finiteness or mass cannot serve as the pin here.
+    """
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_a_zero_velocity_is_not_an_error(scheme):
+    """A zero velocity with NO U to displace is the one accepted case.
+
+    The ground is not "a zero velocity is harmless" -- it is not the velocity that gets
+    discarded. The `velocity_field is not None` branch replaces U with a zero-U dispatcher
+    whatever the velocity's magnitude, so the only safe case is one where there was no U to
+    lose. `FPFDMSolver` reaches every scheme this way on its diffusion-only paths
+    (`_internal_velocity` is set whenever `drift_field` is an ndarray), which is why raising
+    unconditionally broke the torus and mass-leak suites and had to be narrowed.
     """
     result = solve_fp_nd_full_system(
-        _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        _uniform_density(), None, _problem(), velocity_field=_velocity(), advection_scheme=scheme
     )
-    assert np.isfinite(result).all(), f"{scheme} received a non-applicable coefficient"
+    assert np.isfinite(result).all()
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"])
+def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
+    """The narrowing must not open the hole it was narrowing around.
+
+    A zero velocity supplied *with* a value function is not harmless: the zero-U dispatcher
+    displaces that U, so the solve runs at zero drift and produces exactly the silent
+    pure-diffusion answer this guard exists to stop -- measured at 2.1e-2 from the correct
+    answer, the same magnitude as the defect itself. Keying the guard on the velocity's
+    magnitude alone would accept it.
+
+    `divergence_upwind` is in the list deliberately. Exempting the consuming scheme is the
+    mistake that was made once already, on the callable half of this clause; made here instead
+    it silently restores a 1.8e-2 pure-diffusion answer on the DEFAULT scheme, and the callable
+    twin below would not catch it.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(), u_solution, _problem(), velocity_field=_velocity(), advection_scheme=scheme
+        )
+
+
+def test_the_accept_list_does_not_apply_on_the_tensor_diffusion_path():
+    """`solve_timestep_tensor_explicit` has no `interface_velocity` parameter.
+
+    So on that path NO scheme reads the velocity -- including `divergence_upwind`, the default
+    and the only member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone
+    let the whitelisted scheme walk into the exact silent zero-drift solve the guard exists to
+    stop, reachable through the public API with a tensor volatility.
+    """
+    tensor = np.eye(2) * 0.2
+    with pytest.raises(NotImplementedError, match="tensor-diffusion path"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            None,
+            _problem(),
+            velocity_field=_velocity(vx=0.6),
+            advection_scheme="divergence_upwind",
+            tensor_diffusion_field=tensor,
+        )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_upwind"])
+def test_a_zero_velocity_that_displaces_a_callable_drift_raises(scheme):
+    """The velocity arm wins over the callable-drift arm too, not only over the U arm.
+
+    Enumerating inputs got this predicate wrong twice -- first on magnitude, then on U alone.
+    The invariant is about what the `velocity_field is not None` branch DISPLACES, and that
+    branch has two siblings. A zero velocity supplied with a callable drift discards the
+    callable and solves pure diffusion.
+    """
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            None,
+            _problem(),
+            velocity_field=_velocity(),
+            drift_field=lambda t, x, m: np.zeros((2, N, N)),
+            advection_scheme=scheme,
+        )
+
+
+def test_a_callable_drift_alongside_a_real_u_raises():
+    """The second arm has its own precedence, and guarding only the first left it open.
+
+    Inside `elif U_solution_for_drift is not None:` the dispatcher takes
+    `drift_field if use_callable_drift else U_solution_for_drift`, so a callable wins over U
+    with no velocity in play at all -- measured before the fix, the result was the callable's
+    answer with U discarded (|result - U-only| = 2.05e-02). The check is therefore on the
+    whole chain, not on the velocity arm.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(
+            _uniform_density(),
+            u_solution,
+            _problem(),
+            drift_field=lambda t, x, m: np.zeros((2, N, N)),
+        )
+
+
+def test_a_non_callable_drift_array_alongside_a_real_u_raises():
+    """The count check closed this; without a pin it comes back.
+
+    A non-callable ndarray `drift_field` was excluded from the old predicate because that keyed
+    on `use_callable_drift`, so `U + drift_field=<ndarray>` dropped the array without a word
+    (|result - U-only| = 0.000e+00). Reverting the count to the callable-only keying leaves the
+    rest of this file green, which is exactly why this needs its own assertion.
+    """
+    u_solution = np.zeros((NT + 1, N, N))
+    u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
+    with pytest.raises(NotImplementedError, match="1632"):
+        solve_fp_nd_full_system(_uniform_density(), u_solution, _problem(), drift_field=np.zeros((NT + 1, N, N)))
+
+
+def test_a_misspelled_scheme_reports_itself_as_such():
+    """The velocity guard must not pre-empt scheme-name validation and mis-attribute a typo."""
+    with pytest.raises(ValueError, match="Unknown advection_scheme"):
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme="not_a_scheme"
+        )
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+def test_the_raise_names_the_scheme_and_the_way_out(scheme):
+    """The diagnostic must be actionable and greppable, not merely raised."""
+    with pytest.raises(NotImplementedError) as exc:
+        solve_fp_nd_full_system(
+            _uniform_density(), None, _problem(), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        )
+    message = str(exc.value)
+    assert scheme in message, "the offending scheme must be named"
+    assert "divergence_upwind" in message, "the accept-list must be shown"
+    assert "U_solution_for_drift" in message, "the internal parameter must be named"
+    assert "potential_field" in message, "the PUBLIC parameter a caller can actually type must be named"
 
 
 def test_callable_drift_channel_also_runs_for_maximize():

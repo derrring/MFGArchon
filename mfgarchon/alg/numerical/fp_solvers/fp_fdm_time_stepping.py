@@ -131,12 +131,21 @@ _SCHEME_ALIASES = {
 
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 
-# Schemes whose assembly handlers actually read `interface_velocity`. The other three
-# accept the parameter and ignore it, re-deriving the drift from U instead -- so they
-# still need the scalar coefficient. That silent discard of the caller's velocity is a
-# real defect (verified in 1D and 2D: velocity (2.5, -1.7) vs (0, 0) gives bit-identical
-# densities for all three), tracked separately in #1632; this set exists so the driver
-# knows which schemes leave the coefficient unread.
+# Schemes whose assembly handlers actually read `interface_velocity`. Supplying a velocity to
+# any other scheme now raises (Issue #1632): those handlers ignore the parameter, and the
+# `velocity_field is not None` branch below has already replaced U with a zero-U dispatcher, so
+# the drift would be identically zero rather than the -c*grad(U) an earlier comment here claimed.
+# Measured before the guard: `gradient_upwind` with a velocity was bit-identical to the
+# pure-diffusion reference (|B-C| = 0.000e+00) while differing from the U-driven run by 2.1e-2.
+# Reachable by an EXPLICIT velocity: `FPFDMSolver.solve_fp_system(m0, drift_field=<ndarray>)` on a
+# non-consuming scheme, or `FixedPointIterator(..., drift_field=<ndarray>)`, which is forwarded
+# verbatim and bypasses the smoothness dispatch. NOT reachable on the auto-routed coupling path: a
+# non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
+# quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
+# velocity. An earlier revision of this comment claimed the coupling path reached it; measurement
+# on both trees says it raises instead.
+# This set is the accept-list the guard tests against, and it still tells the driver which schemes
+# leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 
 # Marker for "the scalar drift coefficient does not apply on this path": the consuming
@@ -145,6 +154,19 @@ _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})
 # branch fails loudly through the per-timestep NaN guard (Issue #881) instead of silently
 # advecting at rate zero.
 _COEFFICIENT_NOT_APPLICABLE = float("nan")
+
+
+def _resolve_and_validate_scheme(advection_scheme: str) -> str:
+    """Resolve a legacy scheme alias and reject an unknown name.
+
+    One owner for both the alias table and the error string. ``solve_timestep_full_nd`` is a
+    standalone entry point with its own tests, so it validates its own input rather than
+    trusting a caller; this helper is what keeps that from meaning two copies of the message.
+    """
+    resolved = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
+    if resolved not in _VALID_SCHEMES:
+        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
+    return resolved
 
 
 # =============================================================================
@@ -591,6 +613,73 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
+def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
+    """Refuse a provider-valued wall coefficient rather than dropping it (#1979).
+
+    ONE owner, called from every entry that reaches `_BOUNDARY_HANDLERS`. An earlier version sat
+    inline in `solve_fp_nd_full_system` only, while the handlers are dispatched from
+    `solve_timestep_full_nd` -- so calling that directly walked straight past the guard, which is
+    the same "the gate is not where the hazard is" shape the guard exists to fix.
+
+    THE REACHABLE CASE IS NOT ROBIN. Every grid FP solver refuses ROBIN at construction
+    (`_validate_bc_support`, #1456), so that route is already closed. It is a NO_FLUX or NEUMANN
+    segment carrying a provider, which passes the capability gate -- and that is exactly what
+    #1970's `NormalDriftProvider` produces, since an impermeable wall IS Robin in m
+    (`alpha*m - D*d_n m = 0`) and its coefficient lives on `alpha` of a no-flux segment.
+
+    `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers take no
+    `boundary_conditions` argument at all -- the parameter is absent from every signature -- so
+    nothing reads these fields, provider or float, and nothing is in a position to complain.
+    Measured: a segment carrying an `AdjointConsistentProvider` assembles byte-identically to a
+    plain no-flux wall, with no diagnostic. That is the wall a user wired a coupled coefficient to
+    AVOID, returned as though it were their request.
+
+    `value` is checked alongside `alpha` and `beta` because it has the same defect on this path and
+    it is separately filed: #1686, "Every FP solver silently drops the value in neumann_bc(value=g)
+    while HJB honours it". A guard that covered only the coefficients would refuse the provider and
+    keep dropping the datum.
+
+    Refusing is the fix, not reading. The conservative grid schemes already impose `J.n = 0`
+    structurally, so teaching these handlers to add `(alpha, beta, g)` would count the drift twice
+    -- measured at -79.5% mass against -7.4e-15.
+    """
+    if boundary_conditions is None:
+        return
+    from mfgarchon.geometry.boundary.providers import is_provider
+
+    _fields = ("alpha", "beta", "value")
+    offenders = [
+        f"{getattr(seg, 'name', '<unnamed>')}.{field}"
+        for seg in getattr(boundary_conditions, "segments", ())
+        for field in _fields
+        if is_provider(getattr(seg, field, None))
+    ]
+    if not offenders:
+        return
+    types = sorted(
+        {
+            getattr(getattr(seg, "bc_type", None), "name", "?")
+            for seg in getattr(boundary_conditions, "segments", ())
+            if any(is_provider(getattr(seg, f, None)) for f in _fields)
+        }
+    )
+    raise NotImplementedError(
+        f"A provider-valued wall coefficient was supplied ({', '.join(offenders)}), on segment "
+        f"type(s) {types}. The FDM boundary handlers do not read wall coefficients at all: they are "
+        f"keyed on advection_scheme and take no `boundary_conditions` argument, so the segment would "
+        f"assemble byte-identically to a no-flux wall with no diagnostic (Issue #1979).\n"
+        f"\n"
+        f"Use `FPFEMSolver`, whose weak-form assembly implements a general Robin wall and reads "
+        f"alpha/beta/g (established in #1975).\n"
+        f"\n"
+        f"`bc.with_resolved_providers(state)` will also get past this refusal, but it is a DOWNGRADE "
+        f"and not a remedy: a provider exists to be recomputed each Picard iterate, and resolving it "
+        f"freezes it at one state. If the coefficient genuinely is constant, pass a float instead — "
+        f"if it is not, resolving silently solves a different problem, which is the failure this "
+        f"guard was added to stop."
+    )
+
+
 def solve_fp_nd_full_system(
     m_initial_condition: np.ndarray,
     U_solution_for_drift: np.ndarray | None,
@@ -626,7 +715,8 @@ def solve_fp_nd_full_system(
     U_solution_for_drift : np.ndarray | None
         Value function over time-space grid. Shape: (Nt+1, N1, N2, ..., Nd)
         Used to compute drift velocity v = -coupling_coefficient * grad(U)
-        Can be None if drift_field or velocity_field is provided.
+        Must be None when drift_field or velocity_field is provided:
+            supplying more than one drift input is ambiguous and raises (Issue #1632).
     velocity_field : np.ndarray | None
         Precomputed velocity field α*(t, x). Shape: (Nt+1, *spatial_shape)
         for 1D, or (Nt+1, ndim, *spatial_shape) for nD.
@@ -724,20 +814,83 @@ def solve_fp_nd_full_system(
     # Issue #919 Phase 2: velocity_field → pass to implicit solver directly
     # via interface_velocity. No virtual-U conversion needed.
     _velocity_array = velocity_field  # Store for per-timestep slicing
-    _velocity_is_consumed = velocity_field is not None and (
-        _SCHEME_ALIASES.get(advection_scheme, advection_scheme) in _INTERFACE_VELOCITY_SCHEMES
+    # A misspelled scheme must report itself as such rather than as a velocity-channel problem:
+    # the per-timestep assembly validates the name too, but only after this guard would have fired.
+    _resolved_scheme = _resolve_and_validate_scheme(advection_scheme)
+    # A velocity is genuinely consumed only when the assembly it reaches has an
+    # `interface_velocity` parameter. `solve_timestep_tensor_explicit` has none, so on the
+    # tensor-diffusion path NO scheme reads it -- including `divergence_upwind`, the default and
+    # the sole member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone made
+    # the accept-list false exactly where it is most load-bearing.
+    _velocity_is_consumed = (
+        velocity_field is not None
+        and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
+        and tensor_diffusion_field is None
     )
+    _refuse_provider_wall_coefficients(boundary_conditions)
+
+    # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
+    #
+    # AMBIGUITY: the chain is a precedence order, and every level of it silently discards the
+    # levels beneath. `velocity_field is not None` wins over both siblings; inside the second arm,
+    # `drift_field if use_callable_drift else U_solution_for_drift` makes a callable win over U.
+    # Guarding only the first arm left the second one open -- measured, U plus a callable drift
+    # returned the callable's answer with U discarded, |result - U-only| = 2.05e-02. So the check
+    # is on the chain: more than one drift input supplied is ambiguous, whichever pair it is.
+    _drift_inputs = [
+        name
+        for name, given in (
+            ("velocity_field", velocity_field is not None),
+            ("U_solution_for_drift", U_solution_for_drift is not None),
+            ("drift_field", drift_field is not None),
+        )
+        if given
+    ]
+    if len(_drift_inputs) > 1:
+        raise NotImplementedError(
+            f"{len(_drift_inputs)} drift inputs were supplied ({', '.join(_drift_inputs)}), and the "
+            f"dispatch below is a precedence order: the winner silently discards the rest, so the "
+            f"solve would run on one of them and report nothing about the others (Issue #1632). "
+            f"Supply exactly one drift input."
+        )
+    #
+    # CONSUMPTION: an unconsumed velocity is dropped outright. Harmless only when it is all zeros,
+    # because then the drift is zero either way. `Nt = velocity_field.shape[0]` is a further reason
+    # the arms are not interchangeable -- a velocity with fewer time slices than U shortens the
+    # solve -- but that is #919's contract for the velocity-only path, not this guard's to enforce.
+    if velocity_field is not None and not _velocity_is_consumed and np.any(velocity_field):
+        _where = (
+            "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
+            "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list "
+            "does not apply here"
+            if tensor_diffusion_field is not None
+            else f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
+        )
+        raise NotImplementedError(
+            f"A non-zero velocity_field cannot be honoured: {_where}, so it would be dropped and "
+            f"the solve would run at zero drift, returning a pure-diffusion density that looks "
+            f"converged and conserves mass (Issue #1632). Supply the value function instead -- "
+            f"'potential_field' on FPFDMSolver.solve_fp_system, 'U_solution_for_drift' here -- so "
+            f"the drift is derived as -c*grad(U), valid only for a smooth separable Hamiltonian; "
+            f"or use one of {sorted(_INTERFACE_VELOCITY_SCHEMES)} (alias 'flux') with scalar "
+            f"diffusion."
+        )
     if velocity_field is not None:
         Nt = velocity_field.shape[0]
-        # Create a zero-U dispatcher (U is unused when interface_velocity is set)
+        # Zero-U dispatcher. This arm wins over both siblings, which is why supplying a
+        # velocity together with any other drift input now raises above (Issue #1632) --
+        # reaching here means a velocity is the only drift input, so there is no U to lose.
         drift = _DriftDispatcher(drift_field=None, Nt=Nt, spatial_shape=shape, dimension=ndim)
     elif U_solution_for_drift is not None:
         # Determine timestep count
         # Use U_solution shape for timestep count (allows flexible input sizes)
         Nt = U_solution_for_drift.shape[0]
         # Issue #641: Create unified _DriftDispatcher for cleaner time loop
+        # `drift_field if use_callable_drift else ...` was unreachable once the count check
+        # landed: this arm needs `velocity_field is None` and `U_solution_for_drift is not None`,
+        # and the check then forces `drift_field is None`. Removing it is this change's own tail.
         drift = _DriftDispatcher(
-            drift_field=drift_field if use_callable_drift else U_solution_for_drift,
+            drift_field=U_solution_for_drift,
             Nt=Nt,
             spatial_shape=shape,
             dimension=ndim,
@@ -945,9 +1098,11 @@ def solve_fp_nd_full_system(
                 problem,
                 dt,
                 sigma_at_k,
-                # Issue #1631: skip resolving a coefficient the handler will not read.
-                # Only a scheme in _INTERFACE_VELOCITY_SCHEMES actually consumes the
-                # velocity; the others fall back to -c*grad(U) and still need it (#1632).
+                # Issue #1631: skip resolving a coefficient the handler will not read. A consumed
+                # velocity carries alpha* per face, so the scalar coefficient is unused; every
+                # other path derives its drift from U and needs it. The else branch is still
+                # reached with a velocity present -- an all-zero one on a non-consuming scheme is
+                # accepted by the #1632 guard and lands here, resolving a real coefficient.
                 _COEFFICIENT_NOT_APPLICABLE if _velocity_is_consumed else resolve_coupling_coefficient(),
                 spacing,
                 grid,
@@ -1219,9 +1374,8 @@ def solve_timestep_full_nd(
     """
     advection_scheme = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
 
-    # Validate scheme name
-    if advection_scheme not in _VALID_SCHEMES:
-        raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
+    # Validate scheme name (standalone entry point: it does not trust its caller)
+    _resolve_and_validate_scheme(advection_scheme)
     # Total number of unknowns
     N_total = int(np.prod(shape))
 
@@ -1306,13 +1460,24 @@ def solve_timestep_full_nd(
             # NO wrap here -- it is byte-identical to legacy no_flux and differs from canonical
             # periodic_bc by O(1) once mass reaches the wall (verified with an off-center bump).
             # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
+            # ~~robin_bc was recommended here too~~ [CORRECTED 2026-08-16, #1975] -- switching to
+            # the canonical BC does not make a Robin wall work ON THIS PATH. The dispatch below
+            # routes a boundary point of a MIXED bc to the no-flux handler, so a ROBIN segment
+            # assembles byte-identically to no-flux (measured at alpha=3.2 and alpha=999).
+            # Recommending it here sent users from a loud failure to a silent one. It IS honoured
+            # by FPFEMSolver, which reads the coefficients in weak form -- hence the pointer below
+            # rather than a bare removal.
             if legacy_type not in ("neumann", "no_flux"):
                 raise NotImplementedError(
                     f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not honored by the "
                     f"FP-FDM time-stepping assembly (only neumann/no_flux are); it would be silently "
                     f"assembled as no-flux (a legacy 'periodic' does NOT wrap). Use "
-                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / robin_bc / no_flux_bc) "
-                    f"with the modern BoundaryConditions instead (Issue #1559)."
+                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / no_flux_bc) "
+                    f"with the modern BoundaryConditions instead (Issue #1559). robin_bc is NOT in "
+                    f"that list on purpose: this assembly reads none of a ROBIN segment's "
+                    f"coefficients, so it would be a no-flux wall wearing a label. For a "
+                    f"reflecting wall you want no_flux_bc on a conservative scheme, which imposes "
+                    f"J.n = 0 structurally; a GENERAL Robin needs FPFEMSolver (Issue #1975)."
                 ) from None
             is_no_flux = True
             is_uniform = False
@@ -1324,6 +1489,7 @@ def solve_timestep_full_nd(
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
         elif (is_no_flux or not is_uniform) and is_boundary:
             # No-flux or mixed BC at boundary: scheme-specific assembly
+            _refuse_provider_wall_coefficients(boundary_conditions)
             _BOUNDARY_HANDLERS[advection_scheme](
                 row_indices,
                 col_indices,

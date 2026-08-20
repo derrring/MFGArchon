@@ -34,6 +34,19 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: solver_golden_lq_fdm.npz was regenerated 2026-08-12 for #1900. The inner HJB Newton ran to
+# convergence and then OVERWROTE the boundary values with a first-order restatement of the same BC,
+# `u[0] = u[1]` under no-flux -- so the previous baseline had `max|U[:,0]-U[:,1]| = 0.000e+00` and
+# `max|U[:,-1]-U[:,-2]| = 0.000e+00` on every row: the clamp was baked into the fixture, and the
+# gate was pinning the defect rather than protecting against it. The GFDM fixture, on a solver path
+# without that block, shows 2.375e-02 at the same walls, so this is not a property of the problem.
+# After: 5.417e-04 at both walls. Drift 210 of 231 elements, max absolute 8.20e-04, max relative
+# 0.391. The RESIDUAL is untouched -- only a post-solve write was removed -- so the root is
+# unchanged; and the returned array is now actually a root of it, which it was not before
+# (4.338e-02 against a certified 4.424e-07). Both `*_is_sensitive_to_control_cost` gates still pass,
+# so regenerating did not make this vacuous. Correctness argument is external, in
+# tests/unit/test_alg/test_hjb_bc_enforcement_1900.py.
+#
 # NOTE: both fixtures were regenerated for #1894 on 2026-08-11. The Jacobian's diffusion block was
 # restating the interior three-point stencil while the residual applies a BC-aware Laplacian, so
 # both boundary rows were wrong by an amount proportional to sigma^2. The RESIDUAL is untouched, so

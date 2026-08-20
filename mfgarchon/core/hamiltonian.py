@@ -98,6 +98,19 @@ class OptimizationSense(Enum):
     MAXIMIZE = "maximize"  # RL / Economics: max ∫R dt, α = +∂H/∂p
 
 
+def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: float) -> NDArray | float:
+    """The one place this module forms a central difference quotient.
+
+    It was written out at seven sites -- twice inside `dp` alone (a vectorised branch and a
+    per-point fallback), twice inside `dm`, and once each in `_finite_diff_dx`, `DualLagrangian.dm`
+    and `SeparableHamiltonian.dx`. The loop shapes around it differ for real reasons (array ops
+    over a stacked `p` versus scalar evaluations per point); the quotient does not, and a numerical
+    quantity restated seven times does not crash when copies drift -- it converges to a
+    self-consistent wrong answer.
+    """
+    return (f_plus - f_minus) / (2 * eps)
+
+
 class ControlCostBase(ABC):
     """
     Kinetic/control cost component for MFG Hamiltonians.
@@ -838,6 +851,18 @@ class MFGOperatorBase(ABC):
         self._sign = 1 if sense == OptimizationSense.MINIMIZE else -1
 
     @property
+    def sense_sign(self) -> float:
+        """Orientation of the MINIMIZE<->MAXIMIZE mirror: ``+1`` for MINIMIZE (cost-to-go, agents
+        move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL).
+        Every sense-dependent piece is ``s * (MINIMIZE form)``.
+
+        This is the public reading of ``_sign``, set once above. `NetworkHamiltonian` computed the
+        same expression a second time from the same `self.sense` while inheriting `_sign` from here
+        (#1986); that copy is gone, and this is the one owner.
+        """
+        return float(self._sign)
+
+    @property
     @abstractmethod
     def is_hamiltonian(self) -> bool:
         """Return True if this is a Hamiltonian operator."""
@@ -1181,7 +1206,7 @@ class HamiltonianBase(MFGOperatorBase):
                     p_minus[:, i] -= eps
                     H_plus = np.asarray(self(x, m, p_plus, t), dtype=float).ravel()
                     H_minus = np.asarray(self(x, m, p_minus, t), dtype=float).ravel()
-                    grad[:, i] = (H_plus - H_minus) / (2 * eps)
+                    grad[:, i] = _central_difference(H_plus, H_minus, eps)
                 return grad
             except (TypeError, ValueError):
                 # __call__ doesn't support batch m — fall back to per-point loop
@@ -1233,7 +1258,7 @@ class HamiltonianBase(MFGOperatorBase):
             try:
                 H_plus = np.asarray(self(x, m_arr + eps, p_arr, t), dtype=float).ravel()
                 H_minus = np.asarray(self(x, m_arr - eps, p_arr, t), dtype=float).ravel()
-                return (H_plus - H_minus) / (2 * eps)
+                return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError):
                 return np.array(
                     [self._finite_diff_dm(x[i], float(m_arr.flat[i]), p_arr[i], t) for i in range(p_arr.shape[0])]
@@ -1426,7 +1451,7 @@ class HamiltonianBase(MFGOperatorBase):
 
             H_plus = self(x, m, p_plus, t)
             H_minus = self(x, m, p_minus, t)
-            grad[i] = (H_plus - H_minus) / (2 * eps)
+            grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
 
@@ -1444,7 +1469,7 @@ class HamiltonianBase(MFGOperatorBase):
         H_plus = self(x, m_scalar + eps, p, t)
         H_minus = self(x, m_scalar - eps, p, t)
 
-        return float((H_plus - H_minus) / (2 * eps))
+        return float(_central_difference(H_plus, H_minus, eps))
 
     def _finite_diff_dx(
         self,
@@ -1467,7 +1492,7 @@ class HamiltonianBase(MFGOperatorBase):
 
             H_plus = self(x_plus, m, p, t)
             H_minus = self(x_minus, m, p, t)
-            grad[i] = (H_plus - H_minus) / (2 * eps)
+            grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
 
@@ -2215,7 +2240,7 @@ class DualLagrangian(LagrangianBase):
         L_plus = self(x, alpha, m_scalar + eps, t)
         L_minus = self(x, alpha, m_scalar - eps, t)
 
-        return float((L_plus - L_minus) / (2 * eps))
+        return float(_central_difference(L_plus, L_minus, eps))
 
     def _find_optimal_p(
         self,
@@ -2518,7 +2543,7 @@ class SeparableHamiltonian(HamiltonianBase):
             x_minus = x_flat.copy()
             x_plus[i] += eps
             x_minus[i] -= eps
-            grad[i] = (float(self._potential(x_plus, t)) - float(self._potential(x_minus, t))) / (2 * eps)
+            grad[i] = _central_difference(float(self._potential(x_plus, t)), float(self._potential(x_minus, t)), eps)
         return grad
 
     def optimal_control(

@@ -53,11 +53,28 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     _, fp = create_paired_solvers(prob, NumericalScheme.FDM_CENTERED)
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    drift = np.tile(4.0 * (x - 0.7) ** 2, (nt + 1, 1))  # pushes mass toward the left wall
-    m0 = np.exp(-200 * (x - 0.05) ** 2)  # bump AT the left wall (columns 0-2)
+    # Issue #1632: `drift_field=<ndarray>` is the VELOCITY channel, and `divergence_centered`
+    # does not read it -- so the drift this test believed it was applying was discarded and the
+    # solve ran at zero drift. The boundary face flux the docstring describes was never
+    # exercised. Route the drift through `potential_field=U` instead, which this scheme does
+    # consume: for the smooth separable H above the solver forms alpha = -c*grad(U) internally.
+    # U increasing in x gives a leftward velocity, pushing the wall-adjacent bump into the wall.
+    # The potential must be NON-LINEAR. The #1149 fix makes the boundary handler evaluate the
+    # shared face velocity with the interior's central stencil, (U[2]-U[0])/(2*dx), instead of the
+    # one-sided (U[1]-U[0])/dx. Those are algebraically identical for a linear U, so a linear
+    # potential leaves this test blind to the very defect it pins: reverting both walls to the
+    # one-sided form keeps the mass drift at 3.9e-15 under `U = x`, and moves it to 3.0e-02 here.
+    potential = np.tile(0.3 * np.sin(np.pi * x), (nt + 1, 1))
+    # A bump at EACH wall: `U = x + x^2/2` gave a leftward drift everywhere, so the right wall
+    # carried ~5e-15 of density and every right-wall mutation was invisible. `0.3*sin(pi*x)` has
+    # an interior maximum, so the drift runs into both walls, and it is curved, so the central
+    # and one-sided face stencils differ there. Measured: reverting the LEFT wall to one-sided
+    # gives 3.390e-03 and the RIGHT wall 3.390e-03 -- symmetric, where before it was 3.001e-02
+    # and 3.664e-15 (blind).
+    m0 = np.exp(-200 * (x - 0.05) ** 2) + np.exp(-200 * (x - 0.95) ** 2)
     m0 /= m0.sum() * dx
 
-    traj = fp.solve_fp_system(m0, drift_field=drift)
+    traj = fp.solve_fp_system(m0, potential_field=potential)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.all(np.isfinite(traj))
     assert np.max(np.abs(mass - mass[0])) < 1e-12, (
@@ -78,10 +95,12 @@ def test_gradient_centered_still_available_and_leaks():
     assert fp.advection_scheme == "gradient_centered"
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]
-    drift = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
+    # Issue #1632: same correction as above -- `drift_field=<ndarray>` is the velocity channel
+    # and `gradient_centered` does not read it, so this drift was discarded too.
+    potential = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
     m0 = np.exp(-40 * (x - 0.35) ** 2)
     m0 /= m0.sum() * dx
-    traj = fp.solve_fp_system(m0, drift_field=drift)
+    traj = fp.solve_fp_system(m0, potential_field=potential)
     mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
     assert np.max(np.abs(mass - mass[0])) > 1e-3, "gradient_centered is expected to violate conservation"
 
@@ -116,14 +135,14 @@ def test_gradient_leaks_even_with_zero_drift():
     U_zero = np.zeros((nt + 1, n))  # zero drift => pure diffusion at the wall
 
     _, fp_div = create_paired_solvers(_problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED)
-    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, drift_field=U_zero)])
+    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, potential_field=U_zero)])
     assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12
 
     with pytest.warns(UserWarning, match="Issue #1075"):
         _, fp_grad = create_paired_solvers(
             _problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
         )
-    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, drift_field=U_zero)])
+    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, potential_field=U_zero)])
     assert np.max(np.abs(mass_grad - mass_grad[0])) > 1e-3  # leaks under pure diffusion
 
 

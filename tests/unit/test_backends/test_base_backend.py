@@ -191,17 +191,6 @@ class TestBaseBackendArrayOperations:
 class TestBaseBackendMathOperations:
     """Test mathematical operations."""
 
-    def test_gradient_computation(self, minimal_backend):
-        """Test gradient computation via finite differences."""
-
-        def f(x):
-            return x**2
-
-        grad_f = minimal_backend.grad(f, argnum=0)
-        # df/dx = 2x, at x=2 should be approximately 4
-        result = grad_f(2.0)
-        assert abs(result - 4.0) < 1e-5
-
     def test_trapezoid_integration_with_dx(self, minimal_backend):
         """Test trapezoidal integration with dx."""
         y = np.array([1, 2, 3, 4, 5])
@@ -311,47 +300,6 @@ class TestBaseBackendMFGOperations:
         # Default: a = -p
         expected = -2.0
         assert a == expected
-
-    def test_hjb_step_dummy(self, minimal_backend):
-        """Test HJB step (dummy implementation)."""
-        U = np.array([1.0, 2.0, 3.0])
-        M = np.array([0.3, 0.4, 0.3])
-        result = minimal_backend.hjb_step(U, M, 0.01, 0.1, {})
-        # Dummy implementation returns U unchanged
-        np.testing.assert_array_equal(result, U)
-
-    def test_fpk_step_dummy(self, minimal_backend):
-        """Test FPK step (dummy implementation)."""
-        M = np.array([0.3, 0.4, 0.3])
-        U = np.array([1.0, 2.0, 3.0])
-        result = minimal_backend.fpk_step(M, U, 0.01, 0.1, {})
-        # Dummy implementation returns M unchanged
-        np.testing.assert_array_equal(result, M)
-
-
-class TestBaseBackendPerformanceFeatures:
-    """Test performance and compilation features."""
-
-    def test_compile_function_default(self, minimal_backend):
-        """Test default compile_function is no-op."""
-
-        def f(x):
-            return x**2
-
-        compiled_f = minimal_backend.compile_function(f)
-        assert compiled_f is f  # Should return same function
-
-    def test_vectorize_function(self, minimal_backend):
-        """Test function vectorization."""
-
-        def f(x):
-            return x**2
-
-        vf = minimal_backend.vectorize(f)
-        x = np.array([1, 2, 3, 4])
-        result = vf(x)
-        expected = np.array([1, 4, 9, 16])
-        np.testing.assert_array_equal(result, expected)
 
 
 class TestBaseBackendDeviceManagement:

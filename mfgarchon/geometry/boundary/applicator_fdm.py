@@ -141,10 +141,24 @@ class FDMApplicator(BaseStructuredApplicator):
         # Apply BCs to a field
         padded = applicator.apply(field, bc, dx)
 
-        # Or use static methods directly
-        padded = FDMApplicator.apply_1d(field, bc)
-        padded = FDMApplicator.apply_2d(field, bc)
     """
+
+    #: All eight. Measured over the (applicator x BCType) product: every type produces a result
+    #: that differs from the input on both the uniform and the mixed ghost path. Declaring a type
+    #: asserts a branch exists, not that it is correct -- `EXTRAPOLATION_*` on the uniform path
+    #: writes unset memory (#1946), which this gate cannot see and is not meant to. #1948
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
+        {
+            BCType.DIRICHLET,
+            BCType.NEUMANN,
+            BCType.ROBIN,
+            BCType.PERIODIC,
+            BCType.REFLECTING,
+            BCType.NO_FLUX,
+            BCType.EXTRAPOLATION_LINEAR,
+            BCType.EXTRAPOLATION_QUADRATIC,
+        }
+    )
 
     def __init__(
         self,
@@ -187,9 +201,20 @@ class FDMApplicator(BaseStructuredApplicator):
         geometry=None,  # Type: SupportsRegionMarking | None (Issue #596 Phase 2.5)
     ) -> NDArray[np.floating]:
         """
-        Apply boundary conditions to a field.
+        Apply boundary conditions to a field, in any dimension.
 
-        Automatically dispatches to dimension-specific implementation.
+        ~~Automatically dispatches to dimension-specific implementation.~~ [CORRECTED 2026-08-17]
+        There was nothing to dispatch to. `apply_1d`, `apply_2d`, `apply_3d` and `apply_nd` were
+        four names over one body -- the same single line, `pad_array_with_ghosts(field,
+        boundary_conditions, ghost_depth=1, time=time)`, none of them reading the dimension,
+        `domain_bounds` or `config`. All four are deleted; their only appearance outside their own
+        definitions was this class's usage example.
+
+        A boundary condition is a statement about the normal derivative at a face: the dimension
+        selects which axis and which side and changes nothing else. Splitting the ENTRY POINT by
+        dimension is what made #1912 expressible -- a 2-D Robin that dropped `alpha` and `value`
+        and returned the Neumann mirror while the 1-D path computed it correctly. One entry point
+        cannot hold that defect.
 
         Args:
             field: Interior field values
@@ -210,57 +235,10 @@ class FDMApplicator(BaseStructuredApplicator):
         Returns:
             Padded field with ghost cells
         """
+        self._validate_bc_support(boundary_conditions)  # #1948
         # Issue #577 Phase 3: Use pad_array_with_ghosts() for all BCs
         # Geometry parameter enables region_name resolution for mixed BCs
         return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry)
-
-    @staticmethod
-    def apply_1d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 1D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_2d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 2D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_3d(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for 3D BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
-
-    @staticmethod
-    def apply_nd(
-        field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
-        domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
-        config: GhostCellConfig | None = None,
-    ) -> NDArray[np.floating]:
-        """Static method for nD BC application."""
-        # Issue #645: Use dimension-agnostic pad_array_with_ghosts()
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time)
 
     def enforce_values(
         self,
@@ -760,12 +738,20 @@ class GhostBuffer:
             lo_ghost = [slice(None)] * d
             lo_ghost[axis] = slice(0, g)
             lo_interior = [slice(None)] * d
-            lo_interior[axis] = slice(g, 2 * g)
+            # #1971: the ghost slice [0:g] runs OUTERMOST-first (index g-1 is the one adjacent to
+            # the wall) while [g:2g] runs nearest-first, and the assignment pairs them
+            # element-wise -- so ghost layer 1 received the value computed for the FARTHEST
+            # interior cell. Stepping the interior slice backwards makes both run wall-outward,
+            # which is the pairing a mirror means. Reversing the calculator's OUTPUT instead
+            # would have to be done along `axis`, and the obvious `[::-1]` reverses axis 0.
+            lo_interior[axis] = slice(2 * g - 1, g - 1, -1)
 
             hi_ghost = [slice(None)] * d
             hi_ghost[axis] = slice(-g, None)
             hi_interior = [slice(None)] * d
-            hi_interior[axis] = slice(-2 * g, -g)
+            # Mirror problem on this side: the ghost slice runs nearest-first, the interior
+            # [-2g:-g] runs farthest-first.
+            hi_interior[axis] = slice(-g - 1, -2 * g - 1, -1)
 
             # Get interior arrays (views, not copies)
             interior_lo = buf[tuple(lo_interior)]
@@ -786,6 +772,10 @@ class GhostBuffer:
                 **kwargs,
             )
 
+            # At g=1 a one-element slice is its own reverse, which is why every caller saw the
+            # right answer. Measured at g=2 and g=3 on u = cos(2*pi*x), even about both walls so
+            # Neumann(0) is exact there: 5.4e-01 and 1.3e+00 at BOTH walls, with
+            # reversed(got) == want -- every value correct, every slot wrong. (#1971)
             buf[tuple(lo_ghost)] = ghost_lo
             buf[tuple(hi_ghost)] = ghost_hi
 
@@ -1164,17 +1154,38 @@ class PreallocatedGhostBuffer:
                     lo_interior[axis] = g + k  # Adjacent interior cells from g up
                     buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
                     if apply_flux:
-                        buf[tuple(lo_ghost)] += dx * v  # Issue #1262: was -= (du/dx sign), now += (du/dn sign)
+                        # #1967: the offset is the mirror SEPARATION times the flux, and that
+                        # separation grows with the layer. Ghost layer k and its mirror interior
+                        # are (2k-1)*dx apart on a cell-centred grid -- 1*dx for the pair adjacent
+                        # to the wall, 3*dx for the next, and so on. `dx * v` on every layer is the
+                        # k=1 value applied throughout, so g=1 was exact and g>=2 drifted by
+                        # (2k-2)*dx*v. Measured on f = -2x+1 with du/dn = 2: 0 at g=1, 5.0e-01 at
+                        # g=2, 1.0e+00 at g=3. v == 0 leaves the pure mirror, byte-identical.
+                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v
 
-                # High boundary: ghost mirrors adjacent interior
+                # High boundary: ghost mirrors adjacent interior.
+                #
+                # #1967: both indices must walk in the SAME direction, and they did not. The low
+                # loop above pairs `g-1-k` with `g+k` -- ghost nearest the wall with interior
+                # nearest the wall, k advancing outward on both sides. This loop paired `-(k+1)`,
+                # which also starts nearest the wall, with `-(g+k+1)`, which starts at the
+                # FARTHEST interior cell of the stencil and moves further in. At g=1 the two
+                # expressions coincide, which is why every caller in the library saw the right
+                # answer; at g>=2 the layers arrive reversed.
+                #
+                # Measured on u = cos(2*pi*x), even about both walls so Neumann(0) is exact at
+                # both: low wall machine-zero at g=1,2,3 while the high wall was 5.4e-01 at g=2
+                # and 1.3e+00 at g=3, with reversed(got) == want at every depth -- the values were
+                # right and the slots were wrong.
                 for k in range(g):
                     hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall.
+                    hi_ghost[axis] = -(g - k)  # -g, -(g-1), ... -1  : nearest the wall first
                     hi_interior = [slice(None)] * d
-                    hi_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    hi_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first too
                     buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
                     if apply_flux:
-                        buf[tuple(hi_ghost)] += dx * v
+                        buf[tuple(hi_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g, du/dn the OUTWARD normal derivative, which is
@@ -1691,18 +1702,24 @@ class PreallocatedGhostBuffer:
             # agreement between the two paths is what the pin asserts.
             apply_flux = bc_type == BCType.NEUMANN and v != 0.0
             dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+            # #1967, both halves, the same two as the uniform path above -- this is the second
+            # copy of that arithmetic and it carried the same errors.
             for k in range(g):
                 single_ghost = [slice(None)] * d
                 single_interior = [slice(None)] * d
                 if side == "min":
-                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    single_interior[axis] = g + k  # Adjacent interior cells from g up
+                    single_ghost[axis] = g - 1 - k  # g-1 .. 0    : nearest the wall first
+                    single_interior[axis] = g + k  # g, g+1, ...  : nearest first
                 else:
-                    single_ghost[axis] = -(k + 1)  # Ghost cells from -1 down to -g
-                    single_interior[axis] = -(g + k + 1)  # Adjacent interior cells
+                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall,
+                    # so both walks must start there. `-(k+1)` started at the far end while the
+                    # interior walk started near, which pairs the layers backwards for g >= 2.
+                    single_ghost[axis] = -(g - k)  # -g .. -1     : nearest the wall first
+                    single_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first
                 buf[tuple(single_ghost)] = buf[tuple(single_interior)]
                 if apply_flux:
-                    buf[tuple(single_ghost)] += dx * v
+                    # Layer k sits (2k-1)*dx from its mirror, so the offset grows with the layer.
+                    buf[tuple(single_ghost)] += (2 * (k + 1) - 1) * dx * v
 
         elif bc_type == BCType.ROBIN:
             # Robin: alpha*u + beta*du/dn = g

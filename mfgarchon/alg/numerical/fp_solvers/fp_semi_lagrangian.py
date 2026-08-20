@@ -108,11 +108,6 @@ class FPSLJacobianSolver(BaseFPSolver):
     #: silently discarded. Flip this to True in the same commit that implements it.
     honors_inhomogeneous_neumann: bool = False
 
-    @property
-    def supported_bc_types(self) -> frozenset:
-        """BC types this solver supports (BoundaryCapable protocol)."""
-        return self._SUPPORTED_BC_TYPES
-
     @deprecated(since="v0.17.6", replacement="FPSLSolver")
     def __init__(
         self,

@@ -50,11 +50,6 @@ from .factory import (  # noqa: E402
     SolverFactory,
     create_solver,
 )
-from .factory.general_mfg_factory import (  # noqa: E402
-    GeneralMFGFactory,
-    create_general_mfg_problem,
-    get_general_factory,
-)
 from .geometry import (  # noqa: E402
     BoundaryConditions,
     GridNetwork,
@@ -132,7 +127,6 @@ __all__ = [
     # Geometry
     "BoundaryConditions",
     # General MFG factory
-    "GeneralMFGFactory",
     # Network geometry
     "GridNetwork",
     # Solver enums and configuration
@@ -182,7 +176,6 @@ __all__ = [
     "create_scale_free_mfg_problem",
     "create_solver",
     "get_backend_manager",
-    "get_general_factory",
     "set_preferred_backend",
     "show_optional_features",
 ]

@@ -1617,16 +1617,13 @@ def solve_hjb_timestep_newton(
     if bc is not None:
         from mfgarchon.geometry.boundary.types import BCType
 
-        # Compute grid spacing for Neumann BC enforcement
-        if domain_bounds is not None:
-            Nx = len(U_n_current_newton_iterate)
-            # domain_bounds is shape (1, 2) for 1D: [[x_min, x_max]]
-            if domain_bounds.ndim == 2:
-                dx = (domain_bounds[0, 1] - domain_bounds[0, 0]) / Nx
-            else:
-                dx = (domain_bounds[1] - domain_bounds[0]) / Nx
-        else:
-            dx = 1.0  # Fallback (should not happen in practice)
+        # Grid spacing from the geometry that owns it, not re-derived here. The re-derivation
+        # divided the domain span by the POINT count where the interval count is meant, giving
+        # 1/21 against a true 1/20 at Nx=21 -- off by Nx/(Nx-1), and worse on coarse grids. It was
+        # inert under no-flux (it multiplied g = 0) and live for Robin, where it enters the
+        # denominator `alpha + beta/dx`. Third known site of the node-count/interval-count
+        # confusion (#1889, #1896 item 8); asking the owner is what stops a fourth. (#1900)
+        dx = float(problem.geometry.get_grid_spacing()[0])
 
         # Left boundary - Issue #638: Use _get_bc_info_1d for Robin BC support
         left_type, left_value, left_alpha, left_beta = _get_bc_info_1d(bc, "left", current_time)
@@ -1638,17 +1635,32 @@ def solve_hjb_timestep_newton(
             else:
                 U_n_current_newton_iterate[0] = left_value
         elif left_type in (BCType.NEUMANN, BCType.NO_FLUX):
-            # Issue #1685: on the HJB side NO_FLUX *is* du/dn = 0, i.e. Neumann with a
-            # zero value -- see docs/user/guides/boundary_conditions.md. It is a distinct
-            # condition only on the FP side, where it means zero total flux J.n = 0.
-            # Previously it fell through to the else and raised, so a faced NO_FLUX
-            # segment -- a BCSegment carrying an explicit boundary -- crashed Auto Mode.
-            # Neumann: Set boundary value to satisfy gradient constraint
-            # Forward difference: (u[1] - u[0]) / dx = g  =>  u[0] = u[1] - g*dx
-            if backend is not None:
-                U_n_current_newton_iterate[0] = U_n_current_newton_iterate[1] - backend.array([left_value * dx])[0]
-            else:
-                U_n_current_newton_iterate[0] = U_n_current_newton_iterate[1] - left_value * dx
+            # Nothing to enforce: the residual's ghost padding already owns this condition, and
+            # overwriting u[0] afterwards destroys the root Newton just found. (#1900)
+            #
+            # ~~u[0] = u[1] - g*dx~~ stood here, a first-order one-sided form -- so with g = 0 it
+            # forced u[0] == u[1], which the residual never asked for. Measured on the repository's
+            # own smoke fixture: it changed the returned array on 50 of 50 inner solves and
+            # destroyed convergence on 11 of 11 that had achieved it. At t_idx=9, Newton converged
+            # to a residual of 4.424e-07 against a 1e-6 tolerance, reported success, and the array
+            # it returned had a residual of 4.338e-02 -- five orders worse, 4e+04 times the
+            # tolerance it had just certified. `converged` is True there, so the non-convergence
+            # warning is structurally blind to it.
+            #
+            # ~~Which of the two implementations owns the condition was measured ... O(h^2).~~
+            # [RETRACTED 2026-08-12 -- SUPERSEDED-BY: #1904] That measurement showed the two
+            # implementations approach the SAME LIMIT, which is a statement about their difference
+            # and not about either being right. The residual does NOT own this condition: the ghost
+            # is `u[-1] = u[0]`, a CELL-centred mirror on a NODE-centred grid, so the wall Laplacian
+            # converges to HALF the true value -- 0.4959 / 0.4990 / 0.49997 / 0.499984 at
+            # Nx = 21 / 81 / 161 / 321, against 0.9918 -> 0.99997 for the node-centred reflection
+            # `u[-1] = u[1]`. The wall equation is inconsistent, and this overwrite was compensating
+            # for it: deleting it destroys a first-order boundary correction and makes the answer
+            # measurably worse (L2 6-24%, wall node 1.1-3.2x). Fix #1904 first.
+            #
+            # Issue #1685's point survives: on the HJB side NO_FLUX *is* du/dn = 0, so it must not
+            # fall through to the `else` and raise. It is a distinct condition only on the FP side.
+            pass
         elif left_type == BCType.ROBIN:
             # Issue #638: Robin BC enforcement: alpha*u + beta*du/dn = g
             # At left boundary, outward normal is -x, so du/dn = (u[0] - u[1])/dx
@@ -1683,17 +1695,10 @@ def solve_hjb_timestep_newton(
             else:
                 U_n_current_newton_iterate[-1] = right_value
         elif right_type in (BCType.NEUMANN, BCType.NO_FLUX):
-            # Issue #1685: on the HJB side NO_FLUX *is* du/dn = 0, i.e. Neumann with a
-            # zero value -- see docs/user/guides/boundary_conditions.md. It is a distinct
-            # condition only on the FP side, where it means zero total flux J.n = 0.
-            # Previously it fell through to the else and raised, so a faced NO_FLUX
-            # segment -- a BCSegment carrying an explicit boundary -- crashed Auto Mode.
-            # Neumann: Set boundary value to satisfy gradient constraint
-            # Backward difference: (u[-1] - u[-2]) / dx = g  =>  u[-1] = u[-2] + g*dx
-            if backend is not None:
-                U_n_current_newton_iterate[-1] = U_n_current_newton_iterate[-2] + backend.array([right_value * dx])[0]
-            else:
-                U_n_current_newton_iterate[-1] = U_n_current_newton_iterate[-2] + right_value * dx
+            # Deleted for the same reason as the left wall, and measured the same way: the residual
+            # owns du/dn = 0 through its ghost padding, and ~~u[-1] = u[-2] + g*dx~~ overwrote the
+            # converged value with a first-order restatement of it. See the left branch. (#1900)
+            pass
         elif right_type == BCType.ROBIN:
             # Issue #638: Robin BC enforcement: alpha*u + beta*du/dn = g
             # At right boundary, outward normal is +x, so du/dn = (u[-1] - u[-2])/dx

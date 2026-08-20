@@ -70,15 +70,6 @@ def get_available_backends() -> dict[str, bool]:
         backends["jax"] = False
         backends["jax_gpu"] = False
 
-    # Check Numba availability
-    try:
-        import importlib.util
-
-        numba_spec = importlib.util.find_spec("numba")
-        backends["numba"] = numba_spec is not None
-    except ImportError:
-        backends["numba"] = False
-
     return backends
 
 
@@ -104,38 +95,16 @@ def create_backend(backend_name: str | None = None, **kwargs):
         >>> backend = create_backend("jax")
     """
     if backend_name is None or backend_name == "auto":
-        available = get_available_backends()
-
-        # Tiered Priority: torch > jax > numpy (Phase 3 strategy)
-        # PyTorch has priority (leverages RL infrastructure)
-        if available.get("torch", False):
-            backend_name = "torch"
-            # Auto-detect best device: CUDA > MPS > CPU
-            if available.get("torch_cuda", False):
-                kwargs.setdefault("device", "cuda")
-                logger.info("Auto-selected PyTorch backend with CUDA (RL infrastructure available)")
-            elif available.get("torch_mps", False):
-                kwargs.setdefault("device", "mps")
-                logger.info("Auto-selected PyTorch backend with MPS (Apple Silicon)")
-            else:
-                kwargs.setdefault("device", "cpu")
-                logger.info("Auto-selected PyTorch backend with CPU (no GPU available)")
-
-        # JAX fallback (scientific computing alternative)
-        elif available.get("jax", False):
-            backend_name = "jax"
-            # Auto-detect: GPU > CPU
-            if available.get("jax_gpu", False):
-                kwargs.setdefault("device", "gpu")
-                logger.info("Auto-selected JAX backend with GPU (PyTorch not available)")
-            else:
-                kwargs.setdefault("device", "cpu")
-                logger.info("Auto-selected JAX backend with CPU (PyTorch not available)")
-
-        # NumPy baseline (universal compatibility)
-        else:
-            backend_name = "numpy"
-            logger.info("Using NumPy backend (no acceleration available)")
+        # numpy, unconditionally. ~~torch > jax > numpy~~ [CORRECTED 2026-08-17] -- the tiered
+        # priority was written for "RL infrastructure" that `alg/` no longer contains, and it
+        # auto-selected a backend that is measurably wrong for this library: on this machine torch
+        # is 9.2-361x slower than numpy across mean/max/trapezoid, and on MPS it narrows float64 to
+        # float32 while the repository asserts to 1e-10 and 1e-12 (#1921). Solvers already pass
+        # `backend or "numpy"`, so this only ever caught callers who asked for "auto" and got a
+        # silently lower precision than they had.
+        #
+        # An accelerator earns the default by a measurement on this workload, not by being present.
+        backend_name = "numpy"
 
     if backend_name not in _BACKENDS:
         if backend_name == "torch":
@@ -157,16 +126,6 @@ def create_backend(backend_name: str | None = None, **kwargs):
             except ImportError:
                 raise ImportError(
                     "JAX backend requested but not available. Install with: pip install 'mfgarchon[jax]'"
-                ) from None
-        elif backend_name == "numba":
-            # Try to register Numba backend
-            try:
-                from .numba_backend import NumbaBackend
-
-                register_backend("numba", NumbaBackend)
-            except ImportError:
-                raise ImportError(
-                    "Numba backend requested but not available. Install with: pip install numba"
                 ) from None
         elif backend_name == "numpy":
             from .numpy_backend import NumPyBackend
