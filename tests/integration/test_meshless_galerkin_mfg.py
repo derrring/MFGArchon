@@ -92,7 +92,8 @@ class TestMeshlessGalerkinMFG:
         # max|U[-1] - U_terminal| = 0.0 exactly.
         np.testing.assert_allclose(U[-1], 0.5 * (x - 0.5) ** 2, atol=1e-12)
         # ...and the backward sweep must actually transport it. Measured
-        # max|U[0] - U[-1]| = 6.27e-02, so a solver returning the terminal datum at every
+        # max|U[0] - U[-1]| = 6.0468e-02 (6.27e-02 before #2023 corrected the Picard sign), so a
+        # solver returning the terminal datum at every
         # level -- which the shape and finiteness checks accept -- fails here.
         assert np.max(np.abs(U[0] - U[-1])) > 1e-2
 

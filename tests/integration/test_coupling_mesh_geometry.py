@@ -31,7 +31,12 @@ def _fem_problem(refine: int = 2):
         m_initial=lambda x: float(np.exp(-10 * ((np.atleast_1d(x)[0] - 0.5) ** 2))),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+            control_cost=QuadraticControlCost(control_cost=1.0),
+            # -m for #2023: `+m` is crowd-seeking (aggregating, anti-monotone) under the
+            # reward-signed convention and its coupled fixed point diverges; it passed only
+            # because the Picard assembly negated H. This test wants congestion.
+            coupling=lambda m: -m,
+            coupling_dm=lambda m: -1.0,
         ),
     )
     return MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=components, coupling_coefficient=0.5)
