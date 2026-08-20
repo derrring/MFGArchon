@@ -613,6 +613,73 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
+def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
+    """Refuse a provider-valued wall coefficient rather than dropping it (#1979).
+
+    ONE owner, called from every entry that reaches `_BOUNDARY_HANDLERS`. An earlier version sat
+    inline in `solve_fp_nd_full_system` only, while the handlers are dispatched from
+    `solve_timestep_full_nd` -- so calling that directly walked straight past the guard, which is
+    the same "the gate is not where the hazard is" shape the guard exists to fix.
+
+    THE REACHABLE CASE IS NOT ROBIN. Every grid FP solver refuses ROBIN at construction
+    (`_validate_bc_support`, #1456), so that route is already closed. It is a NO_FLUX or NEUMANN
+    segment carrying a provider, which passes the capability gate -- and that is exactly what
+    #1970's `NormalDriftProvider` produces, since an impermeable wall IS Robin in m
+    (`alpha*m - D*d_n m = 0`) and its coefficient lives on `alpha` of a no-flux segment.
+
+    `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers take no
+    `boundary_conditions` argument at all -- the parameter is absent from every signature -- so
+    nothing reads these fields, provider or float, and nothing is in a position to complain.
+    Measured: a segment carrying an `AdjointConsistentProvider` assembles byte-identically to a
+    plain no-flux wall, with no diagnostic. That is the wall a user wired a coupled coefficient to
+    AVOID, returned as though it were their request.
+
+    `value` is checked alongside `alpha` and `beta` because it has the same defect on this path and
+    it is separately filed: #1686, "Every FP solver silently drops the value in neumann_bc(value=g)
+    while HJB honours it". A guard that covered only the coefficients would refuse the provider and
+    keep dropping the datum.
+
+    Refusing is the fix, not reading. The conservative grid schemes already impose `J.n = 0`
+    structurally, so teaching these handlers to add `(alpha, beta, g)` would count the drift twice
+    -- measured at -79.5% mass against -7.4e-15.
+    """
+    if boundary_conditions is None:
+        return
+    from mfgarchon.geometry.boundary.providers import is_provider
+
+    _fields = ("alpha", "beta", "value")
+    offenders = [
+        f"{getattr(seg, 'name', '<unnamed>')}.{field}"
+        for seg in getattr(boundary_conditions, "segments", ())
+        for field in _fields
+        if is_provider(getattr(seg, field, None))
+    ]
+    if not offenders:
+        return
+    types = sorted(
+        {
+            getattr(getattr(seg, "bc_type", None), "name", "?")
+            for seg in getattr(boundary_conditions, "segments", ())
+            if any(is_provider(getattr(seg, f, None)) for f in _fields)
+        }
+    )
+    raise NotImplementedError(
+        f"A provider-valued wall coefficient was supplied ({', '.join(offenders)}), on segment "
+        f"type(s) {types}. The FDM boundary handlers do not read wall coefficients at all: they are "
+        f"keyed on advection_scheme and take no `boundary_conditions` argument, so the segment would "
+        f"assemble byte-identically to a no-flux wall with no diagnostic (Issue #1979).\n"
+        f"\n"
+        f"Use `FPFEMSolver`, whose weak-form assembly implements a general Robin wall and reads "
+        f"alpha/beta/g (established in #1975).\n"
+        f"\n"
+        f"`bc.with_resolved_providers(state)` will also get past this refusal, but it is a DOWNGRADE "
+        f"and not a remedy: a provider exists to be recomputed each Picard iterate, and resolving it "
+        f"freezes it at one state. If the coefficient genuinely is constant, pass a float instead — "
+        f"if it is not, resolving silently solves a different problem, which is the failure this "
+        f"guard was added to stop."
+    )
+
+
 def solve_fp_nd_full_system(
     m_initial_condition: np.ndarray,
     U_solution_for_drift: np.ndarray | None,
@@ -760,53 +827,7 @@ def solve_fp_nd_full_system(
         and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
         and tensor_diffusion_field is None
     )
-    # Issue #1979: a provider-valued wall coefficient is DROPPED here, silently.
-    #
-    # The reachable case is NOT a ROBIN segment -- every grid FP solver refuses ROBIN at
-    # construction (`_validate_bc_support`, #1456), so that route is already closed. It is a
-    # NO_FLUX or NEUMANN segment carrying a provider on `alpha`, which passes the capability gate.
-    # That is exactly what #1970's NormalDriftProvider produces: the impermeable wall IS Robin in
-    # m (alpha*m - D*d_n m = 0), so its coefficient lives on `alpha` of a no-flux segment, and it
-    # is a field recomputed each Picard iterate -- which is what a provider is for.
-    #
-    # `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers do not take
-    # `boundary_conditions` at all -- the parameter is absent from every signature -- so nothing
-    # reads `alpha` or `beta`, provider or float, and nothing is in a position to complain.
-    # Measured: a ROBIN segment carrying an AdjointConsistentProvider assembles byte-identically
-    # to no-flux, with no diagnostic. That is the wall a user wired a coupled coefficient to
-    # AVOID, returned as though it were their request.
-    #
-    # Refuse rather than read. The conservative schemes already impose J.n = 0 structurally
-    # (#1975), so teaching these handlers to add (alpha, beta, g) would count the drift twice --
-    # measured there at -79.5% mass against -7.4e-15. The fix for a general Robin wall on the grid
-    # paths is #1975; this guard only stops the silent one.
-    if boundary_conditions is not None:
-        from mfgarchon.geometry.boundary.providers import is_provider
-
-        _provider_coeffs = [
-            f"{getattr(seg, 'name', '<unnamed>')}.{field}"
-            for seg in getattr(boundary_conditions, "segments", ())
-            for field in ("alpha", "beta")
-            if is_provider(getattr(seg, field, None))
-        ]
-        _types = sorted(
-            {
-                getattr(getattr(seg, "bc_type", None), "name", "?")
-                for seg in getattr(boundary_conditions, "segments", ())
-                if any(is_provider(getattr(seg, f, None)) for f in ("alpha", "beta"))
-            }
-        )
-        if _provider_coeffs:
-            raise NotImplementedError(
-                f"A provider-valued wall coefficient was supplied ({', '.join(_provider_coeffs)}), "
-                f"on segment type(s) {_types}. The FDM boundary handlers do not read wall "
-                f"coefficients at all: they are "
-                f"keyed on advection_scheme and take no `boundary_conditions` argument, so the "
-                f"segment would assemble byte-identically to a no-flux wall with no diagnostic "
-                f"(Issue #1979). Resolve the provider to a constant before the solve -- "
-                f"`bc.with_resolved_providers(state)` -- or use a solver whose boundary assembly "
-                f"reads the coefficients. A general Robin wall on the grid paths is Issue #1975."
-            )
+    _refuse_provider_wall_coefficients(boundary_conditions)
 
     # Issue #1632. Two hazards, and the first belongs to the WHOLE chain below, not to one arm.
     #
@@ -1468,6 +1489,7 @@ def solve_timestep_full_nd(
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
         elif (is_no_flux or not is_uniform) and is_boundary:
             # No-flux or mixed BC at boundary: scheme-specific assembly
+            _refuse_provider_wall_coefficients(boundary_conditions)
             _BOUNDARY_HANDLERS[advection_scheme](
                 row_indices,
                 col_indices,

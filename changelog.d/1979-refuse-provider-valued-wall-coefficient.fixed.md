@@ -24,8 +24,25 @@ there. So the defect is not narrower than filed; it sits on the path the provide
 for.
 
 Refusing is the fix, not reading. The conservative grid schemes already impose `J·n = 0`
-structurally (#1975), so teaching those handlers to add `(alpha, beta, g)` would count the drift
-twice — measured there at −79.5% mass against −7.4e-15.
+structurally, so teaching those handlers to add `(alpha, beta, g)` would count the drift twice —
+measured there at −79.5% mass against −7.4e-15.
+
+Three corrections from review, each of which changed the fix rather than its wording:
+
+- **The guard was not where the hazard is.** It sat in `solve_fp_nd_full_system`, while
+  `_BOUNDARY_HANDLERS` is dispatched from `solve_timestep_full_nd` — so calling that directly walked
+  straight past it. That is the same shape the guard exists to fix, one layer up. It is now a single
+  owner called from both entry points, pinned by a test that fails when either call is removed.
+- **`value` was uncovered.** #1686 records that every FP solver silently drops the value in
+  `neumann_bc(value=g)`. A guard on `alpha`/`beta` alone would refuse the coefficient and keep
+  dropping the datum, so `value` is checked with them.
+- **The message prescribed its own defeat.** It offered `bc.with_resolved_providers(state)` as *the*
+  remedy. A provider exists to be recomputed each Picard iterate; resolving it freezes it at one
+  state, so that advice converts the feature into its absence and calls it a fix. The message now
+  names `FPFEMSolver` — whose weak form implements a general Robin wall and reads `alpha`/`beta`/`g`,
+  established when #1975 was closed — as the path that can actually do this, and labels resolving as
+  a downgrade. The pointer to #1975 as future work is dropped: it is closed COMPLETED, and its
+  finding is that the FEM path already does this.
 
 Pinned in `tests/unit/test_geometry/test_provider_robin_coefficient_refused_1979.py`, both paths,
 each `raises` paired with a float-coefficient control so that a blanket refusal cannot pass. Both

@@ -102,8 +102,72 @@ class TestFDMPath:
         text = str(exc.value)
         assert "wall.alpha" in text, "the message must name WHICH coefficient, not just that one exists"
         assert "NO_FLUX" in text, "the message must name the segment type, since ROBIN is refused elsewhere"
-        assert "with_resolved_providers" in text, "the message must name the remedy"
         assert "1979" in text
+        # The remedy must be a real capability, not a way around the guard. `FPFEMSolver` reads
+        # alpha/beta/g in its weak form (established in #1975, closed COMPLETED); resolving the
+        # provider is a DOWNGRADE -- it freezes a per-iterate coefficient at one state -- and the
+        # message must say so rather than offer it as the fix.
+        assert "FPFEMSolver" in text, "the message must name the path that CAN do this"
+        assert "with_resolved_providers" in text, "resolving must still be mentioned"
+        assert "DOWNGRADE" in text, (
+            "offering `with_resolved_providers` as the remedy prescribes the guard's own defeat: it "
+            "discards exactly the property a provider exists for"
+        )
+        assert "1975" not in text.replace("#1975", ""), "avoid a bare 1975 that reads as an open pointer"
+
+
+class TestTheGuardIsWhereTheHazardIs:
+    """#2013 review: the guard sat in `solve_fp_nd_full_system` while `_BOUNDARY_HANDLERS` is
+    dispatched from `solve_timestep_full_nd`, so calling that directly walked straight past it --
+    the same "the gate is not where the hazard is" shape the guard exists to fix."""
+
+    def test_the_single_owner_is_called_from_both_entry_points(self):
+        import inspect
+
+        from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping as mod
+
+        src = inspect.getsource(mod)
+        assert src.count("def _refuse_provider_wall_coefficients(") == 1, "one owner, not a copy per entry"
+        # Count CALL SITES, which means excluding the `def` line -- it matches the same text, and a
+        # first version of this assertion counted it and read 3 where it expected 2.
+        calls = [
+            ln
+            for ln in src.splitlines()
+            if "_refuse_provider_wall_coefficients(boundary_conditions)" in ln and not ln.lstrip().startswith("def ")
+        ]
+        assert len(calls) == 2, (
+            f"both `solve_fp_nd_full_system` and `solve_timestep_full_nd` must call it; the dispatch "
+            f"site is the one that matters, because it is where _BOUNDARY_HANDLERS is reached. "
+            f"Found {len(calls)}: {calls}"
+        )
+        # and the call must precede the dispatch, not follow it
+        assert src.index(
+            "_refuse_provider_wall_coefficients(boundary_conditions)", src.index("def solve_timestep_full_nd")
+        ) < src.index("_BOUNDARY_HANDLERS[advection_scheme]("), "the guard must run BEFORE the handlers are dispatched"
+
+    def test_a_provider_on_value_is_refused_too(self):
+        """#1686: every FP solver silently drops the value in `neumann_bc(value=g)`. A guard that
+        covered only alpha/beta would refuse the coefficient and keep dropping the datum."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import (
+            _refuse_provider_wall_coefficients,
+        )
+
+        bc = BoundaryConditions(
+            segments=[
+                BCSegment(name="wall", bc_type=BCType.NEUMANN, boundary="x_min", value=ConstantProvider(value=0.5))
+            ],
+            dimension=1,
+        )
+        with pytest.raises(NotImplementedError, match=r"wall\.value"):
+            _refuse_provider_wall_coefficients(bc)
+
+        # Control: a float value must pass, or the guard is a blanket refusal.
+        ok = BoundaryConditions(
+            segments=[BCSegment(name="wall", bc_type=BCType.NEUMANN, boundary="x_min", value=0.5)],
+            dimension=1,
+        )
+        _refuse_provider_wall_coefficients(ok)
+        _refuse_provider_wall_coefficients(None)
 
     def test_a_float_alpha_does_not_trip_the_guard(self):
         """Control: a blanket refusal would pass the two tests above and break every Robin solve."""
