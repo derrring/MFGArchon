@@ -177,9 +177,24 @@ def test_base_stabilization_hook_is_noop():
 
 # --- end-to-end: the recipe converges and matches a conservative reference -----
 @pytest.mark.integration
-def test_recipe_coupled_matches_fdm_on_wellposed_problem():
+@pytest.mark.parametrize(("use_newton", "sd_scale"), [(True, 1.0), (False, 0.0)], ids=["newton_sd", "picard"])
+def test_recipe_coupled_matches_fdm_on_wellposed_problem(use_newton, sd_scale):
     """On a decoupled (unique) LQ problem all schemes must agree. The meshless recipe
-    (Newton + SD) must converge and track FDM-upwind (the mass-conserving reference)."""
+    (Newton or Picard, + SD) must converge and track FDM-upwind (the mass-conserving reference).
+
+    BOTH inner solvers, since #2023. This is the only test that compares the weak-form family
+    against an independent discretization, and it ran `use_newton=True` only -- while
+    `meshless_galerkin/hjb_solver.py:51` and `WeakFormHJBSolver.solve_hjb_system` both DEFAULT to
+    Picard. The one cross-implementation oracle in the suite was pointed at the branch that is not
+    shipped, and the shipped branch carried an inverted Hamiltonian from #773 until #2023.
+
+    `sd_scale` is tied to the branch rather than parametrized independently: the solver fail-louds
+    on `streamline_diffusion_scale > 0` with Picard, because SD enters only the Newton Jacobian and
+    the Type-A duality A_FP = A_HJB^T would be lost. So the Picard cell runs SD off, which is the
+    shipped default pair. Measured against the FDM reference (mean 0.352026, std 0.214427):
+    newton+SD gives dmean 4.28e-03 / dstd 4.84e-04, picard gives 3.52e-03 / 6.10e-04, and
+    newton with SD off reproduces the picard numbers to 1e-6 -- i.e. after #2023 the two branches
+    agree with each other and with an independent discretization."""
     import numpy as _np
 
     from mfgarchon import MFGProblem
@@ -225,8 +240,8 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem():
         hjb_config={
             "collocation_points": cloud,
             "delta": 3.5 / 20,
-            "use_newton": True,
-            "streamline_diffusion_scale": 1.0,
+            "use_newton": use_newton,
+            "streamline_diffusion_scale": sd_scale,
         },
     )
     res = prob.solve(
@@ -234,7 +249,8 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem():
     )
     M = _np.asarray(res.M)
     assert _np.all(_np.isfinite(M)), "recipe blew up"
-    assert M[-1].min() > -1e-9, "density positive (SD suppresses undershoots)"
+    assert M[-1].min() > -1e-9, "density positive"
     mean, std = mean_std(M[-1])
-    assert abs(mean - ref_mean) < 2e-2, f"mean {mean:.4f} vs FDM {ref_mean:.4f}"
-    assert abs(std - ref_std) < 2e-2, f"std {std:.4f} vs FDM {ref_std:.4f}"
+    inner = "newton" if use_newton else "picard"
+    assert abs(mean - ref_mean) < 2e-2, f"[{inner}] mean {mean:.4f} vs FDM {ref_mean:.4f}"
+    assert abs(std - ref_std) < 2e-2, f"[{inner}] std {std:.4f} vs FDM {ref_std:.4f}"

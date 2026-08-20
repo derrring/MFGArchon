@@ -28,6 +28,8 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
     from scipy import sparse
 
@@ -117,6 +119,7 @@ class WeakFormFPSolver(BaseFPSolver):
         potential_field: NDArray | None = None,
         volatility_field: float | NDArray | None = None,
         drift_field: NDArray | None = None,  # DEPRECATED alias for potential_field (Issue #1043)
+        source_term: Callable | None = None,
         **kwargs,
     ) -> NDArray:
         """Solve the FP equation forward in time on the weak-form operators.
@@ -175,6 +178,18 @@ class WeakFormFPSolver(BaseFPSolver):
         m0_mass = float((self._M @ M[0]).sum())
         for n in range(Nt):
             rhs = (self._M / dt) @ M[n]
+            if source_term is not None:
+                # S of `d_t m + div(alpha m) - D Lap(m) = S`, evaluated implicitly at t_{n+1} to
+                # match FPFDMSolver, on the solver's own (N, d) dof coordinates (#2020).
+                s_vals = np.asarray(source_term((n + 1) * dt, self._disc.dof_coordinates), dtype=float).ravel()
+                if s_vals.shape != (N,):
+                    raise ValueError(
+                        f"source_term returned shape {s_vals.shape}; this solver needs ({N},), one "
+                        f"value per dof, evaluated on self._disc.dof_coordinates (shape "
+                        f"{self._disc.dof_coordinates.shape}). A grid-shaped return is the "
+                        f"FPFVMSolver convention, not this one (#2019)."
+                    )
+                rhs = rhs + self._M @ s_vals
             if rhs_robin is not None:
                 rhs = rhs + rhs_robin
 
