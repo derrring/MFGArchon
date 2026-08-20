@@ -32,22 +32,41 @@ fi
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-# Reverse-apply against a temp index seeded from origin/main, NOT the working tree. Against
-# the tree the check is not merely noisy: measured on a fixture, it reports an UNMERGED branch
-# as absorbed and a MERGED one as not, simultaneously, whenever you are sitting on a third
-# branch -- anti-correlated with the property it claims to measure.
+# CONTENT, not text. An earlier version reverse-applied the branch's diff against a temp index
+# (`git apply --cached --check --reverse`). That answers "does this diff reverse-apply", which is a
+# different question and wrong in both directions: a branch whose changes landed and were then
+# FURTHER edited fails to reverse and reads as unmerged, while a diff that happens to reverse for
+# unrelated reasons reads as absorbed. (An even earlier one applied against the WORKING TREE, where
+# it was anti-correlated with the property it claims to measure -- it called an unmerged branch
+# absorbed and a merged one not, simultaneously, whenever you sat on a third branch.)
+#
+# `merge-tree --write-tree` answers it directly: merge the branch into origin/main and compare the
+# resulting tree with origin/main's own. Equal means the branch contributes NOTHING to main, which
+# is exactly "absorbed" -- and it holds under a squash merge, where no commit of the branch is an
+# ancestor of main and every commit-graph predicate (`rev-list --count`, `branch --merged`) says
+# unmerged. A conflict exits non-zero and is, by construction, not absorbed.
+#
+# Requires git >= 2.38 for `--write-tree`; checked once at startup rather than per branch, because a
+# missing subcommand would otherwise return 1 for every branch and read as "nothing is absorbed".
 absorbed() {
-  local mb idx; mb=$(git merge-base origin/main "$1" 2>/dev/null) || return 1
-  git diff "$mb".."$1" > "$TMP/p.diff" 2>/dev/null || return 1
-  [[ -s "$TMP/p.diff" ]] || return 2          # 2 = nothing to check, distinct from "checked and absorbed"
-  idx="$TMP/idx"; rm -f "$idx"
-  GIT_INDEX_FILE="$idx" git read-tree origin/main 2>/dev/null || return 1
-  GIT_INDEX_FILE="$idx" git apply --cached --check --reverse "$TMP/p.diff" 2>/dev/null
+  local mb tree main_tree
+  mb=$(git merge-base origin/main "$1" 2>/dev/null) || return 1
+  git diff --quiet "$mb" "$1" 2>/dev/null && return 2   # 2 = no content difference, distinct from absorbed
+  main_tree=$(git rev-parse "origin/main^{tree}" 2>/dev/null) || return 1
+  tree=$(git merge-tree --write-tree origin/main "$1" 2>/dev/null) || return 1
+  [[ "$tree" == "$main_tree" ]]
 }
 
 if [[ "$_PRUNE_SOURCED" -eq 1 ]]; then
   return 0 2>/dev/null || true
 fi
+if ! git merge-tree --write-tree HEAD HEAD >/dev/null 2>&1; then
+  echo "ABORT: this git has no \`merge-tree --write-tree\` (needs >= 2.38). Without it every branch" >&2
+  echo "       would classify as not-absorbed, which reads as 'nothing to prune' rather than as a" >&2
+  echo "       broken check. Found: $(git --version)" >&2
+  exit 1
+fi
+
 REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 
 # A branch held by a worktree is one `git status` will not report; `git worktree list` is
