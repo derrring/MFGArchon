@@ -13,8 +13,24 @@ third is the one worth having a test for:
 ``THREADS_IT``
     The answer moved. The source is genuinely applied.
 ``REFUSED``
-    ``TypeError`` or ``NotImplementedError``. The solver is out of reach, and says so. This is
-    the fail-loud guard working -- an honest refusal, not a defect.
+    The solver is out of reach and says so. Not a defect -- an honest refusal.
+
+    Two distinct mechanisms produce it, and this probe reaches only the first:
+
+    - **The signature refuses.** Every solver measured REFUSED here raises a bare
+      ``TypeError: got an unexpected keyword argument``. That is loud *by design*, not by
+      accident: ``BaseFPSolver.__init_subclass__`` says so in as many words -- *"No
+      ``**kwargs``: an unnamed parameter raises TypeError at the call site, which is loud"* --
+      and the gate exists only to stop a ``**kwargs`` signature from swallowing the argument
+      silently instead.
+    - **The coupler refuses**, with guidance. On the documented route -- a problem that defines
+      a source, passed through ``compose_fp_source`` -- ``mfg_residual.py`` raises
+      ``NotImplementedError: ... does not accept 'source_term', but the problem defines an FP
+      source term``, naming the remedy. This probe calls the solver directly, so it never gets
+      there.
+
+    Both are honest. Conflating them is not: an earlier draft of this file called the
+    ``TypeError`` "the fail-loud guard working", which named the wrong guard.
 ``ACCEPTS_AND_IGNORES``
     Took the argument, returned a byte-identical answer. **A silent wrong result**: an MMS built
     on such a solver measures the order of the wrong equation and reports a clean number.
@@ -36,6 +52,15 @@ is a recorded column, never a filter. An earlier draft of this file walked only 
 ``hjb_solvers`` and ``fp_solvers`` packages and found 5 and 7; the correct roots give **10 and
 11**, which is where #1991's "ten" comes from. The narrow predicate silently halved the
 population and nothing in its output said so.
+
+What the noise floor does NOT yet do: it is **one** repeat, so it estimates a stochastic
+solver's spread from a single sample. That is enough today because every solver reaching the
+difference test is deterministic -- ``FPFDMSolver`` and the rest return byte-identical arrays on
+a repeat, and the file passes identically over five consecutive runs. The moment a stochastic
+solver becomes reachable (``FPParticleSolver`` is the live candidate, currently ``REFUSED``), the
+floor needs several repeats and the ``10x`` margin needs justifying against the resulting spread
+rather than being asserted. Recorded here rather than discovered later, because a threshold that
+has never been stressed reads exactly like one that has.
 
 ``HJBHowardSolver`` is deliberately absent: it is an iterator, not a solver, and
 ``scripts/capability_census.py`` already lists it under ``OUTSIDE_EVERY_PREDICATE``.
