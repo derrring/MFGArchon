@@ -271,6 +271,19 @@ sys.exit(1 if bad else 0)
 "
 check $? "workflows parse, declare jobs, and have no dangling needs"
 
+# A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
+# like success. Every ratchet below therefore carries a positive control, and the controls are run
+# here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
+# written and this gate never invoked either. 7s for all four.
+# check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
+# purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
+# internal call is ever dropped the coverage would vanish with nothing here to say so.
+step "Ratchet self-tests (the instruments, before their numbers)"
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation; do
+  "$PY" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
+done
+check 0 "every fast ratchet still detects what it claims to detect"
+
 step "Fail-fast ratchet"
 "$PY" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
@@ -300,6 +313,10 @@ if [[ $FAST -eq 0 ]]; then
   # this is the quantity that does not. Bidirectional -- a recovered cell fails until
   # the baseline records it, so a fix cannot land without saying so.
   step "Capability matrix (public solve surface vs external oracles)"
+  # 92s, so it sits in the slow tier beside the matrix it guards rather than with the fast four.
+  "$PY" scripts/capability_matrix.py --self-test
+  check $? "the capability cells still go red under injected drift"
+
   "$PY" scripts/capability_matrix.py --check-baseline scripts/capability_baseline.json
   check $? "no capability change vs baseline"
 

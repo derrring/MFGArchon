@@ -105,6 +105,77 @@ def _counts(results: dict) -> dict:
     return {category: len(items) for category, items in results.items()}
 
 
+#: A file every category must fire on, and one every category must ignore. Both halves matter:
+#: the first proves the check still SEES, the second proves it is not matching indiscriminately.
+_CONTROL_POSITIVE = '''
+def each_category_once(obj):
+    if hasattr(obj, "x"):          # hasattr
+        pass
+    try:
+        obj()
+    except ValueError:             # silent_pass
+        pass
+    try:
+        obj()
+    except:                        # bare_except
+        raise
+    try:
+        obj()
+    except Exception as exc:       # broad_except
+        raise RuntimeError from exc
+'''
+
+_CONTROL_NEGATIVE = '''
+def nothing_to_find(obj):
+    """A docstring mentioning hasattr and a bare except: must not count.
+
+    Neither may a comment: except Exception, pass
+    """
+    try:
+        obj()
+    except ValueError as exc:
+        raise RuntimeError("explicit and narrow") from exc
+    return getattr(obj, "x", None)
+'''
+
+
+def self_test() -> int:
+    """A ratchet whose checks have gone inert reports a stable count and reads like success.
+
+    This is the positive control, and it is two-sided. The one-sided form -- "does it fire on a
+    violation" -- passes for a checker that fires on everything, which would make every count
+    meaningless in the other direction. So a clean file with the same words in docstrings and
+    comments must produce nothing: this module counts CALLS via AST precisely because an earlier
+    regex version counted 40 `hasattr` mentions inside prose as if they were calls.
+    """
+    import tempfile
+    from pathlib import Path
+
+    failures = []
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "positive.py").write_text(_CONTROL_POSITIVE)
+        fired = _counts(check_fail_fast_violations(str(root)))
+        for category, n in sorted(fired.items()):
+            if n < 1:
+                failures.append(f"  {category}: did not fire on a file built to trigger it")
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "negative.py").write_text(_CONTROL_NEGATIVE)
+        quiet = _counts(check_fail_fast_violations(str(root)))
+        for category, n in sorted(quiet.items()):
+            if n:
+                failures.append(f"  {category}: fired {n}x on a file with no violation in it")
+
+    if failures:
+        print("SELF-TEST FAILED -- the ratchet cannot see what it claims to count:")
+        print("\n".join(failures))
+        return 1
+    print(f"self-test OK -- all {len(fired)} categories fire on the violation control and stay silent on the clean one")
+    return 0
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check for 'Fail Fast' principle violations.")
     parser.add_argument("--path", default=".", help="Root directory to scan")
@@ -121,7 +192,20 @@ if __name__ == "__main__":
         ),
     )
 
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help=(
+            "Positive control: assert every category fires on a file built to trigger it and "
+            "stays silent on a clean one. A count is only evidence if the checks still work."
+        ),
+    )
+
     args = parser.parse_args()
+
+    if args.self_test:
+        sys.exit(self_test())
+
     results = check_fail_fast_violations(args.path)
     counts = _counts(results)
 

@@ -191,11 +191,69 @@ def production_uses(symbols: set[str]) -> list[str]:
     return hits
 
 
+#: Symbols this counter MUST find, one per kind it counts. Named rather than discovered, because a
+#: detector cannot be asked to confirm its own reach: the previous version returned nothing BY
+#: CONSTRUCTION and printed `Total deprecated symbols: 0` while 72 were live in the same tree, and
+#: CI was green over it. Zero and clean are the same output; only a known-positive separates them.
+#:
+#: Pick a symbol whose deprecation is unlikely to be resolved soon. When one IS resolved this
+#: sentinel goes red -- that is the check working, and the fix is to re-point it at another live
+#: entry of the same kind, never to delete the kind.
+SENTINELS = {
+    "function": "create_solver",
+    "parameter": "FPFDMSolver.solve_fp_system.velocity_field",
+    "property": "num_points",
+}
+
+
+def self_test() -> int:
+    """Positive control: the counter must still SEE deprecations that are known to be there.
+
+    Two-sided is not available here -- the population is the real package, so there is no "clean
+    tree" to assert silence over. What stands in for the negative half is the KIND coverage: a
+    detector that had collapsed to finding only functions would still satisfy a function-only
+    sentinel, so one symbol per counted kind is asserted.
+    """
+    try:
+        entries, _ = live_deprecations()
+    except EnvironmentIncompleteError as exc:
+        print(f"SELF-TEST INCONCLUSIVE -- the tree could not be read: {sorted(exc.unimportable)}", file=sys.stderr)
+        return 2
+
+    found = {(e.get("type"), e.get("name")) for e in entries}
+    missing = [f"  {kind}: {name}" for kind, name in SENTINELS.items() if (kind, name) not in found]
+
+    if missing:
+        print("SELF-TEST FAILED -- the counter no longer finds symbols known to be deprecated:")
+        print("\n".join(missing))
+        print(
+            "\nEither the detector has gone blind -- which is what this control exists for, and "
+            "has happened once already -- or that deprecation was resolved. Check which, then "
+            "re-point the sentinel at another live entry of the same kind. Do NOT delete the kind."
+        )
+        return 1
+
+    kinds = {e.get("type") for e in entries}
+    unguarded = sorted(kinds - set(SENTINELS))
+    print(f"self-test OK -- {len(SENTINELS)} sentinels found among {len(entries)} live deprecations")
+    if unguarded:
+        print(f"  note: kinds with no sentinel: {unguarded} (a collapse to the guarded kinds would pass)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--write-baseline", action="store_true", help="record current counts and exit")
     parser.add_argument("--show", action="store_true", help="list every live deprecation")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="positive control: assert the counter still finds symbols known to be deprecated",
+    )
     args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
 
     try:
         entries, out_of_scope = live_deprecations()
