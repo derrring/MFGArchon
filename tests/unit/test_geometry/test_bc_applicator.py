@@ -402,12 +402,32 @@ class TestCalculatorClasses:
                 assert np.isclose(padded[0], calc.compute(interior_value=u[0], dx=dx, side="min"))
                 assert np.isclose(padded[-1], calc.compute(interior_value=u[-1], dx=dx, side="max"))
 
-    def test_high_order_ghost_neumann_refuses_rather_than_returning_a_wrong_number(self):
-        """#1936: retired, not deleted -- it shipped in v0.21.0, so the import must survive."""
-        from mfgarchon.geometry.boundary import high_order_ghost_neumann
+    @pytest.mark.parametrize(
+        ("name", "args", "replacement"),
+        [
+            ("high_order_ghost_neumann", ([1.0, 2.0, 3.0, 4.0], 1.0, 1.0), "ghost_cell_neumann"),
+            ("high_order_ghost_dirichlet", ([1.0, 1.0, 1.0, 1.0], 1.0), "ghost_cell_dirichlet"),
+        ],
+    )
+    def test_the_retired_high_order_ghosts_refuse_and_name_their_replacement(self, name, args, replacement):
+        """#1936. Both shipped in v0.21.0, so the import must survive the retirement.
 
-        with pytest.raises(NotImplementedError, match="RETIRED"):
-            high_order_ghost_neumann([1.0, 2.0, 3.0, 4.0], 1.0, 1.0)
+        The refusal has to NAME the replacement, not merely refuse: neither function had a caller
+        or a test, so the next reader has nothing but this message to go on and would otherwise
+        reimplement the same formula.
+
+        Neither is uniformly wrong, which is why reading them did not settle it. `u = x`, max wall:
+        +1.5 / -0.5909 / -0.4600 against +0.5; the SAME order=4 and order=5 branches are exact at
+        the min wall. `u = 1`, dirichlet: [1.6, 4.0] and [1.5, 3.3333] against [1.0, 1.0] on the
+        default cell-centred path, correct on the vertex-centred one. What condemns them is the
+        rate, not any single row: the neumann ghost is O(h) where `ghost_cell_neumann` is O(h^3).
+        """
+        import mfgarchon.geometry.boundary as boundary
+
+        func = getattr(boundary, name)
+        with pytest.raises(NotImplementedError, match="RETIRED") as excinfo:
+            func(*args)
+        assert replacement in str(excinfo.value), f"{name}'s refusal does not name {replacement}"
 
     def test_robin_calculator(self):
         """Test RobinCalculator for mixed boundary conditions."""
