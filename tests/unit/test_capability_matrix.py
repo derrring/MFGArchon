@@ -791,9 +791,15 @@ def test_every_cell_that_solves_records_the_picard_verdict():
     """A cell that solves must say whether the solve converged (#1871).
 
     The field exists because the mass oracles cannot see convergence -- mass is conserved on
-    whatever drift field the FP step is handed. It is recorded, not gated: nothing in
-    `--check-baseline` reacts to it, and a `_picard_verdict` returning constants leaves the
-    full gate green (verified by mutation). This test is the only oracle over the field.
+    whatever drift field the FP step is handed.
+
+    ~~It is recorded, not gated: nothing in `--check-baseline` reacts to it, and a
+    `_picard_verdict` returning constants leaves the full gate green (verified by mutation).
+    This test is the only oracle over the field.~~ [CORRECTED 2026-08-21] Every clause of that
+    is now false. #1893 routed five verdicts through `_solved`, which reads this field, so a
+    `_picard_verdict` returning a constant `False` turns cells RED and this test is no longer
+    the only oracle. Left struck rather than deleted because it is the sentence that would tell
+    a future reader the field is safe to stub, and it is not.
 
     It reads the SOURCE, not the baseline. The first version of this test compared recorded
     artifacts, and deleting a `_picard_verdict` call left it green -- the baseline still

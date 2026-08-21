@@ -290,14 +290,26 @@ def _solved(art: dict) -> bool:
 def _picard_verdict(result, prefix: str = "") -> dict:
     """What the coupled iteration said about itself, recorded beside the oracle (#1871).
 
-    ~~Deliberately NOT part of any cell's ``ok``.~~ [CORRECTED 2026-08-21] It has been part of
-    every cell's ``ok`` since #1893 (`733597d1`), which routed all four verdict lines through
-    ``_solved``: that function is the gate, this one is the record, and each cell calls this one
-    into ``art`` immediately before evaluating ``ok``. No line numbers here on purpose -- a
-    docstring that sits ABOVE the lines it cites renumbers them every time it is itself edited,
-    which is how this correction's own first draft shipped four stale pairs -- and adding this
-    paragraph moved them again. Find them with
-    ``grep -nE '_picard_verdict|ok = ' scripts/capability_matrix.py``, which stays true.
+    ~~Deliberately NOT part of any cell's ``ok``.~~ [CORRECTED 2026-08-21] It has been gated
+    since #1893 (`733597d1`), which added **five** ``_solved(art)`` conjuncts: that function is
+    the gate, this one is the record, and every cell that solves does both.
+
+    ~~all four verdict lines~~ **five.** The first draft of this correction said four, counting
+    only the ``ok = `` lines and dropping ``fvm_vs_fdm/agreement``, whose gate is an inline
+    conditional inside a ``return``. That is the cell ``changelog.d/1891-gate-picard-converged``
+    was written about -- *"the fifth coupled cell was left out and is now included"* -- so this
+    correction reproduced the exact omission that fragment exists to record.
+
+    No line numbers here on purpose: a docstring ABOVE the lines it cites renumbers them every
+    time it is itself edited, which is how the first draft shipped four stale pairs, and writing
+    the paragraph that said so moved them again. Find all ten sites with
+    ``grep -nE '_picard_verdict|_solved' scripts/capability_matrix.py`` (the two ``def`` lines
+    and this paragraph come with them). Not ``ok = `` -- that misses the agreement cell for the
+    same reason the count did.
+
+    The record precedes the verdict in every cell, but not always adjacently: the agreement cell
+    records both ``fvm_`` and ``fdm_`` prefixes and then runs several lines, including an early
+    ``return "FAIL"``, before its gate.
 
     The sentence below describes why the gate was deferred when this field was first recorded, and
     is kept because it is the measurement that justified turning three greens red rather than
@@ -317,7 +329,10 @@ def _picard_verdict(result, prefix: str = "") -> dict:
       ending at 8.2e-01, O(1) after 100 sweeps -- while the value function ends at 5.9e-02
       and is still coming down.
 
-    ``sl_linear_2d`` is the one a budget fixes -- it converges at 35 sweeps in ~3s.
+    ``sl_linear_2d`` is the one a budget fixes -- ~~it converges at 35 sweeps~~
+    [CORRECTED 2026-08-21] it converges at **iteration 32**, in ~3s, under budgets of 35 and
+    60 alike (re-measured under #1893 and recorded in ``capability_baseline.json``). 35 was
+    the budget, not the count; the two were written as if they were the same number.
 
     A mass oracle cannot see any of this, and not because its tolerance is loose: mass
     conservation is a property of the FP time-stepping, which holds on whatever drift it is
