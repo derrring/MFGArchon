@@ -320,8 +320,13 @@ class GraphMFGSolver(BaseCouplingIterator):
         so that all Layer 1 feature dimensions (Levy, custom sources, graph)
         compose at each node, matching Binding Constraint #1 of the Plan.
 
-        Obstacle / penalty VI composition is handled by wrapping each node's
-        HJB solver in PenaltyHJBSolver, not here.
+        ~~Obstacle / penalty VI composition is handled by wrapping each node's
+        HJB solver in PenaltyHJBSolver, not here.~~
+        [CORRECTED 2026-08-21, #2002] ``PenaltyHJBSolver`` is RETIRED and raises on construction;
+        it injected a ``v``-free term through ``source_term``, which cannot carry the value
+        function, so it never composed a variational inequality. There is currently NO obstacle
+        route for a per-node HJB solver here -- ``constraint=`` exists only on ``HJBFDMSolver``
+        (#591), and #2046 tracks threading it through the shared timestep solve.
         """
         p = self._problems[k]
         has_problem_source = p.source_term_hjb is not None

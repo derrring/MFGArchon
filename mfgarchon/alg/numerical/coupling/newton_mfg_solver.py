@@ -70,8 +70,14 @@ class NewtonMFGSolver(BaseCouplingIterator):
         ``source_composition`` helpers shared with the Picard
         ``FixedPointIterator``. The FD Jacobian differentiates through the source
         dependence (option A; see ``MFGResidual``), so Newton converges to the
-        same equilibrium as Picard. Obstacle uses the Picard-matching approximate
-        penalty; ``PenaltyHJBSolver`` (#924) is the proper-handling route.
+        same equilibrium as Picard. Obstacle uses the same ``(1/eps) * max(0, psi)``
+        the Picard path uses -- the two agree, which is #1361's point.
+        ~~``PenaltyHJBSolver`` (#924) is the proper-handling route.~~
+        [CORRECTED 2026-08-21, #2002] It never was, and it is now RETIRED: it injected the same
+        ``v``-free term through ``source_term``, which is ``(t, x) -> array`` and cannot carry the
+        value function a constraint penalty needs. The term both paths apply penalises POSITION,
+        not violation, and cannot enforce ``v >= Psi`` at any ``eps``. The reachable alternative is
+        ``HJBFDMSolver(constraint=...)`` (#591), with its own limits in #2036.
 
     Performance / solver selection:
         NewtonMFGSolver is research-grade for d>=2 / Nx>~50 — it is ~135x slower

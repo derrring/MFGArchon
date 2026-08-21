@@ -1,171 +1,81 @@
-"""
-Unit tests for PenaltyHJBSolver.
+"""`PenaltyHJBSolver` is retired and must refuse construction (#2002).
 
-Tests the variational inequality wrapper that adds obstacle constraints
-to any BaseHJBSolver via penalty method injection (#971).
+WHAT THIS FILE USED TO CONTAIN, AND WHY IT WAS DELETED RATHER THAN ADAPTED
+--------------------------------------------------------------------------
+Eight tests asserting the wrapper worked: that the penalty changed the answer, that a larger
+`penalty_parameter` changed it more, that a zero obstacle was a pass-through, that an existing
+`source_term` was composed with it. Every one of them passed, and every one of them was true.
+
+They measured the wrong quantity. The wrapper applied
+``penalty_parameter * max(0, Psi(x))`` -- no ``v`` -- so "the penalty changes the answer" and
+"a bigger penalty changes it more" are statements about a POSITION penalty, and hold exactly as
+well when the constraint ``v >= Psi`` is satisfied everywhere as when it is violated everywhere.
+A test suite can be fully green over a term that cannot express the thing its module is named
+after. Adapting them would have kept that shape; they are gone.
+
+WHY THE CLASS IS RETIRED
+------------------------
+Not an arithmetic bug. Its design is to add ``v >= Psi(x)`` to ANY inner solver by injecting a
+penalty into that solver's ``source_term``. The penalty for that constraint is
+``max(0, Psi - v)``, which needs the value function; ``source_term`` is ``(t, x) -> array``.
+**There is nowhere for ``v`` to enter.** The channel it chose cannot carry the quantity its
+purpose requires, so the wrapper was unimplementable in the shape it was written, and the
+``(1/eps) * max(0, Psi - v)`` in its own docstring was a description of the intent.
+
+The wrapper was also the only mechanism claiming to give obstacle support to solvers other than
+``HJBFDMSolver``, so retiring it removes a capability that was never there. What replaces it is
+``constraint=`` on that one solver today, and #2046 for the general case.
 """
+
+from __future__ import annotations
+
+import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_penalty import PenaltyHJBSolver
-from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.core.mfg_problem import MFGProblem
-from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
 
 
-def _make_problem(Nx: int = 51, Nt: int = 20, sigma: float = 0.3) -> MFGProblem:
-    """Create a simple 1D MFG problem for testing."""
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: m,
-        coupling_dm=lambda m: 1.0,
-    )
-    components = MFGComponents(
-        hamiltonian=H,
-        u_terminal=lambda x: 0.0,
-        m_initial=lambda x: 1.0,
-    )
-    return MFGProblem(
-        geometry=TensorProductGrid(
-            bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
-        ),
-        T=1.0,
-        Nt=Nt,
-        sigma=sigma,
-        components=components,
-    )
+class _StubInner:
+    """Enough of a solver to reach the constructor. It must never be used."""
+
+    problem = None
+    config = None
+
+    def solve_hjb_system(self, M, U_T, U_prev, volatility_field=None, source_term=None):  # pragma: no cover
+        raise AssertionError("the retired wrapper must not reach its inner solver")
 
 
-def _make_solver_inputs(problem: MFGProblem):
-    """Create standard solve_hjb_system inputs."""
-    Nt = problem.Nt
-    Nx = problem.geometry.get_grid_shape()[0]
-    M = np.ones((Nt + 1, Nx)) / Nx
-    U_T = problem.get_final_u()
-    U_prev = np.zeros((Nt + 1, Nx))
-    return M, U_T, U_prev
+def test_construction_refuses():
+    with pytest.raises(NotImplementedError) as excinfo:
+        PenaltyHJBSolver(inner_solver=_StubInner(), obstacle=lambda x: np.zeros(np.asarray(x).shape[0]))
+
+    message = str(excinfo.value)
+    # The refusal has to say WHY, or the next reader reimplements it the same way.
+    assert "RETIRED" in message
+    assert "source_term" in message, "must name the channel that cannot carry v"
+    assert "constraint=" in message, "must name the replacement"
+    assert "#2036" in message, "must name the replacement's own limits"
 
 
-class TestPenaltyHJBSolverInstantiation:
-    """Test PenaltyHJBSolver construction."""
-
-    def test_wraps_fdm_solver(self):
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x))
-        assert solver._inner is inner
-        assert solver._penalty == 1e4  # default
-
-    def test_custom_penalty_parameter(self):
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x), penalty_parameter=1e6)
-        assert solver._penalty == 1e6
-
-    def test_inherits_scheme_family(self):
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x))
-        assert solver._scheme_family == inner._scheme_family
+def test_the_refusal_survives_a_penalty_parameter():
+    """No value of the knob makes the term depend on `v`, so none of them re-enable the class."""
+    for penalty in (1e-6, 1.0, 1e4, 1e12):
+        with pytest.raises(NotImplementedError):
+            PenaltyHJBSolver(
+                inner_solver=_StubInner(),
+                obstacle=lambda x: np.zeros(np.asarray(x).shape[0]),
+                penalty_parameter=penalty,
+            )
 
 
-class TestPenaltyHJBSolverSolve:
-    """Test solve_hjb_system behavior."""
+def test_it_is_still_exported():
+    """Retired, not deleted: the public name must resolve and explain itself.
 
-    def test_terminal_condition_preserved(self):
-        """Terminal condition U(T) should match the problem's terminal condition."""
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-        solver = PenaltyHJBSolver(inner, obstacle=lambda x: np.zeros_like(x))
-        M, U_T, U_prev = _make_solver_inputs(problem)
-        U = solver.solve_hjb_system(M, U_T, U_prev)
-        np.testing.assert_allclose(U[-1], U_T, atol=1e-10)
+    Removing it from `hjb_solvers.__init__` would turn an explanation into an ImportError, which
+    tells a caller nothing about why their obstacle was never enforced.
+    """
+    from mfgarchon.alg.numerical import hjb_solvers
 
-
-class TestPenaltyEffect:
-    """Test that the penalty parameter affects the solution."""
-
-    def test_penalty_differs_from_unpanelized(self):
-        """Solution with obstacle should differ from solution without."""
-        problem = _make_problem()
-        inner_plain = HJBFDMSolver(problem)
-        inner_penalty = HJBFDMSolver(problem)
-
-        def obstacle(x):
-            return 0.3 * np.sin(np.pi * np.atleast_1d(x).ravel())
-
-        solver_penalty = PenaltyHJBSolver(inner_penalty, obstacle=obstacle, penalty_parameter=1e4)
-
-        M, U_T, U_prev = _make_solver_inputs(problem)
-        U_plain = inner_plain.solve_hjb_system(M, U_T, U_prev)
-        U_penalized = solver_penalty.solve_hjb_system(M, U_T, U_prev)
-
-        # Solutions should differ due to obstacle enforcement
-        assert not np.allclose(U_plain, U_penalized, atol=1e-6)
-
-    def test_higher_penalty_stronger_effect(self):
-        """Higher penalty parameter should push solution closer to obstacle."""
-        problem = _make_problem()
-
-        def obstacle(x):
-            return 0.5 * np.ones_like(np.atleast_1d(x).ravel())
-
-        M, U_T, U_prev = _make_solver_inputs(problem)
-
-        solver_weak = PenaltyHJBSolver(HJBFDMSolver(problem), obstacle=obstacle, penalty_parameter=1e2)
-        solver_strong = PenaltyHJBSolver(HJBFDMSolver(problem), obstacle=obstacle, penalty_parameter=1e5)
-
-        U_weak = solver_weak.solve_hjb_system(M, U_T, U_prev)
-        U_strong = solver_strong.solve_hjb_system(M, U_T, U_prev)
-
-        # Stronger penalty should produce larger (or equal) values at interior times
-        # since it pushes harder against the obstacle from below
-        assert U_strong[0].mean() >= U_weak[0].mean() - 1e-6
-
-    def test_zero_obstacle_is_passthrough(self):
-        """Zero obstacle with zero penalty should match plain solver."""
-        problem = _make_problem()
-        inner1 = HJBFDMSolver(problem)
-        inner2 = HJBFDMSolver(problem)
-
-        # penalty_parameter=0 effectively disables the penalty
-        solver = PenaltyHJBSolver(inner2, obstacle=lambda x: np.zeros_like(x), penalty_parameter=0.0)
-
-        M, U_T, U_prev = _make_solver_inputs(problem)
-        U_plain = inner1.solve_hjb_system(M, U_T, U_prev)
-        U_penalty = solver.solve_hjb_system(M, U_T, U_prev)
-
-        np.testing.assert_allclose(U_plain, U_penalty, atol=1e-10)
-
-    def test_existing_source_term_composed(self):
-        """Penalty should compose with an existing source_term."""
-        problem = _make_problem()
-        inner = HJBFDMSolver(problem)
-
-        def obstacle(x):
-            return np.zeros_like(np.atleast_1d(x).ravel())
-
-        solver = PenaltyHJBSolver(inner, obstacle=obstacle, penalty_parameter=1e3)
-
-        def base_source(t, x):
-            return 0.1 * np.ones(x.shape[0])
-
-        M, U_T, U_prev = _make_solver_inputs(problem)
-
-        # Should not raise — penalty composes with base source
-        U = solver.solve_hjb_system(M, U_T, U_prev, source_term=base_source)
-        assert np.all(np.isfinite(U))
-
-        # The obstacle is identically zero, so penalty * max(0, psi) == 0 and the wrapper must
-        # reduce exactly to the wrapped solver *carrying the base source through*.  Dropping
-        # `base` from penalized_source is the defect this catches; measured difference 0.0.
-        U_ref = HJBFDMSolver(problem).solve_hjb_system(M, U_T, U_prev, source_term=base_source)
-        np.testing.assert_array_equal(U, U_ref)
-
-        # Anti-vacuity: the identity above must not be satisfied by both sides ignoring the
-        # source entirely.  The constant 0.1 source moves the solution by 0.1 (measured).
-        U_no_source = solver.solve_hjb_system(M, U_T, U_prev)
-        assert np.max(np.abs(U - U_no_source)) > 1e-3
+    assert "PenaltyHJBSolver" in hjb_solvers.__all__
+    assert hjb_solvers.PenaltyHJBSolver is PenaltyHJBSolver

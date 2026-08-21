@@ -85,7 +85,31 @@ class PenaltyHJBSolver(BaseHJBSolver):
         obstacle: Callable[[NDArray], NDArray],
         penalty_parameter: float = 1e4,
     ):
-        # Initialize with same problem and config as inner solver
+        raise NotImplementedError(
+            "PenaltyHJBSolver is RETIRED (#2002). It cannot do what it was written to do, and "
+            "the reason is structural rather than a bug in its arithmetic.\n\n"
+            "Its design is to add the variational inequality `v >= Psi(x)` to ANY inner solver by "
+            "injecting a penalty into that solver's `source_term`. A penalty for that constraint "
+            "is `max(0, Psi - v)`, which needs the value function. `source_term` has signature "
+            "`(t, x) -> array`. There is nowhere for `v` to enter, so what it actually applied "
+            "was `penalty_parameter * max(0, Psi(x))` -- positive wherever `Psi > 0` whether or "
+            "not the constraint holds, and byte-identical at a node satisfying it and one "
+            "violating it. It penalised POSITION, not VIOLATION, and no value of "
+            "`penalty_parameter` changes that.\n\n"
+            "What to use instead, and its limits:\n"
+            "  HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))  -- #591.\n"
+            "`ObstacleConstraint.project` does read `u` and does enforce `u >= psi` on the "
+            "returned array. It is not yet an obstacle-problem SOLVER: in 1-D the projection runs "
+            "after the backward sweep, so the result is the unconstrained solution clipped, and "
+            "in n-D the terminal slice is never projected (#2036). It is also the only solver "
+            "carrying a `constraint` attribute, so this is an FDM-family capability, not a "
+            "general one -- #2046 tracks threading the constraint through the shared timestep "
+            "solve, which is where a projection can actually participate in the iteration.\n\n"
+            "If your obstacle is a state penalty V(x) rather than a constraint -- alpha-free and "
+            "u-free -- it belongs in the Hamiltonian's potential (#1999, #2001), not here."
+        )
+        # Unreachable. Left in place so the retirement is a one-line revert if #2002 decides the
+        # wrapper should return with a `(t, x, v)` channel behind it.
         super().__init__(inner_solver.problem, getattr(inner_solver, "config", None))
         self._inner = inner_solver
         self._obstacle = obstacle
