@@ -12,3 +12,11 @@ A **uniform** BC reaching that path now forwards its single segment instead of r
 copy — the information is present, and forwarding makes the two ghost paths agree exactly where they
 previously diverged (Robin, and a callable Neumann value). This is not the `bc.segments[0]` fallback
 the surrounding comment rejects: that one fired on *mixed* BCs, where `[0]` means highest priority.
+
+The discrimination baseline is regenerated in the same change. `bc_uniform_dispatch_reads_as_mixed`
+falls **43 → 12**, and the fall is the fix rather than a regression: the 31 tests that stopped
+noticing were detecting the divergence between the two ghost paths, which is exactly what the
+forward removes. Attributed by A/B on the same mutation and anchor — 43 on `main`, 12 with this
+change, product code the only difference — and recorded as a note in the baseline, because the
+ratchet reads any fall as a regression and cannot see that distinction. Four other rows rose and no
+row went `INEFFECTIVE`.

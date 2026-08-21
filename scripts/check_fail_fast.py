@@ -107,7 +107,7 @@ def _counts(results: dict) -> dict:
 
 #: A file every category must fire on, and one every category must ignore. Both halves matter:
 #: the first proves the check still SEES, the second proves it is not matching indiscriminately.
-_CONTROL_POSITIVE = '''
+_CONTROL_POSITIVE = """
 def each_category_once(obj):
     if hasattr(obj, "x"):          # hasattr
         pass
@@ -123,7 +123,7 @@ def each_category_once(obj):
         obj()
     except Exception as exc:       # broad_except
         raise RuntimeError from exc
-'''
+"""
 
 _CONTROL_NEGATIVE = '''
 def nothing_to_find(obj):

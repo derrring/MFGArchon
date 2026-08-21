@@ -1578,9 +1578,7 @@ class PreallocatedGhostBuffer:
                     if bc.is_uniform:
                         segment = bc.segments[0]
                     else:
-                        default_type = bc._resolve_default_bc(
-                            "PreallocatedGhostBuffer._update_ghosts_mixed"
-                        )
+                        default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
                         # (b) A genuinely mixed BC with an unclaimed face. There is nothing to
                         #     forward: `default_value` is declared, `default_alpha`/`default_beta`
                         #     do not exist on BoundaryConditions at all. `BCSegment`'s defaults are
