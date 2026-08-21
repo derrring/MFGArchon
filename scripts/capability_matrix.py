@@ -290,7 +290,14 @@ def _solved(art: dict) -> bool:
 def _picard_verdict(result, prefix: str = "") -> dict:
     """What the coupled iteration said about itself, recorded beside the oracle (#1871).
 
-    Deliberately NOT part of any cell's ``ok``. Measured when this was added: three of the
+    ~~Deliberately NOT part of any cell's ``ok``.~~ [CORRECTED 2026-08-21] It has been part of
+    every cell's ``ok`` since #1893 (`733597d1`), which routed all four verdict lines through
+    ``_solved``; that function is the gate and this one is the record, and they sit one line apart
+    at 416/418, 454/455, 568/569 and 672/673. The sentence below describes why the gate was
+    deferred when this field was first recorded, and is kept because it is the measurement that
+    justified turning three greens red rather than raising the budgets.
+
+    Measured when this was added: three of the
     five PASS cells run exactly to their iteration budget without converging --
     ``fdm_upwind`` and ``sl_linear`` at 5, ``sl_linear_2d`` at 3 -- so gating on it today
     turns three long-standing greens red. Two of those still do not converge at 100 sweeps,
