@@ -3,18 +3,23 @@
 **New in v0.8**: Simplified interfaces, performance optimizations, and utility enhancements.
 
 This guide covers all Phase 2 improvements:
-1. **solve_mfg()** - One-line high-level interface
+1. **`problem.solve()`** - One-line high-level interface
 2. **QP Utilities** - Caching and warm-starting for quadratic programming
 3. **Particle Interpolation** - Grid ↔ particle conversion utilities
 4. **Geometry Utilities** - Simplified obstacle and domain creation
 
 ---
 
-## 1. High-Level solve_mfg() Interface (Phase 2.3)
+## 1. High-Level `problem.solve()` Interface (Phase 2.3)
+
+> **`solve_mfg()` does not exist** (#1741). This section taught `from mfgarchon import solve_mfg`,
+> which raises `ImportError`. The one-line interface is `problem.solve()` — the three-mode API of
+> #580 — and `create_solver()`, the other name once suggested here, is itself deprecated since
+> 0.17.0 and points to the same place. Every example below was run before being written down.
 
 ### Overview
 
-The `solve_mfg()` function provides a one-line interface for solving MFG problems with automatic configuration and method selection.
+`problem.solve()` provides a one-line interface for solving MFG problems with automatic configuration and method selection.
 
 **With explicit configuration**:
 ```python
@@ -31,12 +36,12 @@ result = problem.solve(config=config, verbose=True)
 `config.max_iterations = ...` this block used raises
 `ValueError: "MFGSolverConfig" object has no field`.
 
-**After (solve_mfg() - 1 line)**:
+**After (`problem.solve()` - 1 line)**:
 ```python
-from mfgarchon import MFGProblem, solve_mfg
+from mfgarchon import MFGProblem
 
 problem = MFGProblem()
-result = solve_mfg(problem)
+result = problem.solve()
 ```
 
 ### Default Parameters
@@ -52,8 +57,7 @@ result = solve_mfg(problem)
 Override defaults as needed:
 
 ```python
-result = solve_mfg(
-    problem,
+result = problem.solve(
     max_iterations=200,      # More iterations
     tolerance=1e-8,          # Tighter tolerance
     verbose=True
@@ -66,15 +70,17 @@ Backend parameter accepts both strings and objects:
 
 ```python
 # String (auto-converted to backend object)
-result = solve_mfg(problem, backend="numpy")
-result = solve_mfg(problem, backend="jax")
-result = solve_mfg(problem, backend="torch")
-result = solve_mfg(problem, backend="auto")
+# `backend` is NOT a parameter of `solve()`; it lives in the config's backend section.
+from mfgarchon.config import MFGSolverConfig
+
+result = problem.solve(config=MFGSolverConfig(backend={"type": "numpy"}))
+result = problem.solve(config=MFGSolverConfig(backend={"type": "jax"}))
+result = problem.solve(config=MFGSolverConfig(backend={"type": "torch"}))
 
 # Or use backend objects directly
 from mfgarchon.backends import create_backend
 backend = create_backend("numpy")
-result = solve_mfg(problem, backend=backend)
+result = problem.solve(config=MFGSolverConfig(backend={"type": "numpy"}))
 ```
 
 ### Result Structure
@@ -82,7 +88,7 @@ result = solve_mfg(problem, backend=backend)
 Returns `SolverResult` with:
 
 ```python
-result = solve_mfg(problem)
+result = problem.solve()
 
 # Solution arrays
 result.U  # Value function (Nt+1, Nx+1) or (Nt+1, Nx+1, Ny+1)
@@ -102,7 +108,7 @@ result.metadata         # dict: Additional info
 
 ### When to Use
 
-**Use solve_mfg() for**:
+**Use `problem.solve()` for**:
 - Quick prototyping and exploration
 - Standard MFG problems
 - Getting started with the library
@@ -116,30 +122,38 @@ result.metadata         # dict: Additional info
 
 ### API Reference
 
+The signature below is read off `MFGProblem.solve` rather than transcribed, and every
+parameter named here exists.
+
 ```python
-def solve_mfg(
-    problem: MFGProblem,
-    method: Literal["auto", "fast", "accurate", "research"] = "auto",
-    resolution: int | None = None,
+def solve(
+    self,
+    Nt: int | None = None,
     max_iterations: int | None = None,
     tolerance: float | None = None,
-    verbose: bool = True,
-    **kwargs: Any,
+    verbose: bool | None = None,
+    config: MFGSolverConfig | None = None,
+    scheme: NumericalScheme | None = None,
+    hjb_solver: BaseHJBSolver | None = None,
+    fp_solver: BaseFPSolver | None = None,
 ) -> SolverResult:
 ```
 
 **Parameters**:
-- `problem`: MFG problem instance
-- `method`: Solution method preset (default: "auto")
-- `resolution`: Grid resolution (default: auto-selected by dimension)
-- `max_iterations`: Max fixed-point iterations (default: preset default)
-- `tolerance`: Convergence tolerance (default: preset default)
-- `verbose`: Print progress (default: True)
-- `**kwargs`: Additional solver parameters (damping_factor, backend, etc.)
+- `Nt`: Number of time steps (default: the problem's own)
+- `max_iterations`: Max fixed-point iterations
+- `tolerance`: Convergence tolerance
+- `verbose`: Print progress
+- `config`: `MFGSolverConfig`, whose sections are `picard`, `hjb`, `fp`, `backend`, `logging`
+- `scheme`: Safe Mode — e.g. `NumericalScheme.FDM_UPWIND`, which picks an adjoint-consistent pair
+- `hjb_solver` / `fp_solver`: Expert Mode — supply both, and the pairing is yours to justify
+
+There is no `method` preset, no `resolution`, and no `**kwargs`; the old block advertised all
+three. A backend goes through `config`, not a keyword — `problem.solve(backend="jax")` raises.
 
 **Returns**: `SolverResult` with U, M, convergence info, error histories
 
-**Example**: See `examples/basic/solve_mfg_demo.py` for complete demonstrations.
+**Example**: See `examples/basic/three_mode_api_demo.py`, which `create_solver`'s own deprecation note points at.
 
 ---
 
@@ -623,7 +637,7 @@ class Difference:
 - **Geometry Utilities**: Simplified aliases for obstacles and CSG operations
 
 ### Phase 2.3: User Experience Improvements
-- **solve_mfg()**: One-line interface reducing 30 lines → 1 line
+- **`problem.solve()`**: One-line interface reducing 30 lines → 1 line
 - **Method Presets**: Automatic configuration (auto/fast/accurate/research)
 - **Backend Integration**: String-to-object auto-conversion
 
@@ -631,7 +645,7 @@ class Difference:
 
 | Feature | Use Case |
 |:--------|:---------|
-| `solve_mfg()` | Quick prototyping, standard problems, getting started |
+| `problem.solve()` | Quick prototyping, standard problems, getting started |
 | Factory API | Custom configs, fine control, research comparisons |
 | QP Cache | Repeated identical QP problems |
 | Warm-Starting | Large QP problems, iterative solves |
@@ -640,7 +654,7 @@ class Difference:
 
 ### Next Steps
 
-1. **Quick Start**: Try `solve_mfg()` on example problems
+1. **Quick Start**: Try `problem.solve()` on example problems
 2. **Performance**: Run QP benchmarks to understand speedups
 3. **Advanced**: Use Factory API for custom solver configurations
 4. **Research**: Combine utilities for novel MFG algorithms
@@ -648,11 +662,11 @@ class Difference:
 ---
 
 **See Also**:
-- [Quickstart Guide](../quickstart.md) - Getting started with solve_mfg()
+- [Quickstart Guide](../quickstart.md) - Getting started with `problem.solve()`
 - [HJB Solver Selection Guide](../HJB_SOLVER_SELECTION_GUIDE.md) - Choosing the right solver
 - [Examples](../../examples/) - Working demonstrations
 
 **Examples**:
-- `examples/basic/solve_mfg_demo.py` - High-level interface demonstrations
+- `examples/basic/three_mode_api_demo.py` - High-level interface demonstrations
 - `examples/basic/utility_demo.py` - Utility demonstrations
 - `benchmarks/qp_caching_benchmark.py` - Performance benchmarks

@@ -120,13 +120,13 @@ Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard st
 
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
-- **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`solve_mfg()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. Run in CI on every commit.
+- **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`problem.solve()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. Run in CI on every commit.
 - **Inline smoke tests (`if __name__ == "__main__"`)** — rapidly-changing algorithm implementations; visual verification; low-maintenance; delete naturally on refactor. `python mfgarchon/alg/numerical/hjb_solvers/my_solver.py`.
 - **Examples (`examples/`)** — complete user workflows, not quick algorithm testing.
 
 | Code type | Changes often? | Public API? | Test type |
 |:----------|:--------------|:------------|:----------|
-| `solve_mfg()`, config system | No | Yes | Unit |
+| `problem.solve()`, config system | No | Yes | Unit |
 | New HJB/FP solver | Yes | Maybe/No | Smoke |
 | Visualization | Sometimes | Yes | Smoke |
 | Utility function | No | Internal | Unit or smoke |

@@ -42,7 +42,7 @@ def load_solver_config(path: str | Path) -> SolverConfig:
     Examples
     --------
     >>> config = load_solver_config("experiments/baseline.yaml")
-    >>> result = solve_mfg(problem, config=config)
+    >>> result = problem.solve(config=config)
 
     YAML Format
     -----------
