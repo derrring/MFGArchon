@@ -26,32 +26,25 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 - **Nonlocal term** applied as ``s += nonlocal_operator @ v_t`` with ``v_t`` the
   time-``t`` slice of the value function (Issue #1259), matching
   ``graph_mfg_solver``'s sign convention.
-- **Obstacle** computes ``(1/eps) * max(0, psi)`` (``eps = problem._penalty_eps`` if set, else
-  ``1e6``), and **both coupling paths -- Picard (``FixedPointIterator``) and coupled-Newton
-  (``MFGResidual``) -- use this one copy, so they do match rather than silently diverge.** That
-  is this module's whole purpose per the opening paragraph, and it holds: both call
-  ``compose_hjb_source``. The referent is spelled out here because a reader (this one) took
-  "both coupling paths" for the two *obstacle* spellings and wrongly withdrew the sentence.
+- **Obstacle** — the branch and its whole account are GONE (#2002 resolved, 2026-08-21). It
+  computed ``(1/eps) * max(0, psi)``, a term with no ``v`` in it: positive wherever ``Psi > 0``
+  whether or not ``v >= Psi`` held, and byte-identical at a node satisfying the constraint and
+  one violating it. It penalised POSITION, not VIOLATION, so it was never an approximation to
+  the variational inequality it was documented as — it was a different term.
 
-  One sentence that used to follow IS false and is withdrawn (#2002): *"Proper handling is the
-  ``PenaltyHJBSolver`` wrapper (#924)"*. That wrapper carries the same stub and says so in its
-  own comment, *"For now, we apply a static obstacle penalty"*; its docstring separately
-  described the intended ``(1/eps) * max(0, Psi - v)`` rather than the term it computes, and
-  scales by ``penalty_parameter`` (``1e4``) where this path divides by ``eps`` -- 1e10 apart at
-  the defaults. The pointer sent a reader to a second, differently-scaled copy.
+  It resolved as a **soft wall**, which is what that term always was. A cost that is ``alpha``-free
+  and ``u``-free is a POTENTIAL, so it now lives where potentials live: ``problem.state_penalty``,
+  composed into the Hamiltonian's ``V`` at problem construction. It never reaches this closure and
+  there is nothing here to compose. ``problem.obstacle`` raises and names both successors.
 
-  **What the ``v = 0`` label understates.** ``max(0, psi)`` contains no ``v`` at all, so it is
-  positive wherever ``Psi > 0`` whether or not ``v >= Psi`` holds: it penalises position, not
-  violation, and is identical at a node satisfying the constraint and one violating it. Not an
-  approximation that degrades with distance from ``v = 0`` -- a different term. Verified through
-  this function: ``u`` nine units below the obstacle and nine above return byte-identical arrays.
+  Deleted rather than left beside the replacement: this module exists to stop parallel physics
+  paths keeping private copies of a convention, and a composition that only ADDS an owner has
+  consolidated nothing.
 
-  The ``v`` is available here: ``u_current`` is bound above and the ``nonlocal`` branch in the
-  same closure uses ``nonlocal_operator @ v_t``. What a fix owes is in #2002; it turns on whether
-  the intent is a constraint or a state penalty ``V(x)``, and if the latter the term is ``u``-free
-  and belongs in the Hamiltonian's potential instead. A constraint-shaped alternative already
-  exists under a different entry point -- ``ObstacleConstraint`` with
-  ``HJBFDMSolver(constraint=...)`` (#591) -- though it has defects of its own; see #2036.
+  The **variational inequality** is a separate, reserved slot — ``ObstacleConstraint`` with
+  ``HJBFDMSolver(constraint=...)`` (#591), deliberately unfinished: it projects rather than
+  solving the VI, and only that one solver carries it (#2036, #2046). It was never this channel's
+  to provide, since a constraint penalty needs ``v`` and ``source_term`` is ``(t, x) -> array``.
 
 - The HJB source passes the **value-function slice** ``v_t`` to
   ``source_term_hjb(x, m, v, t)`` (Issue #1382), matching the documented
@@ -137,23 +130,26 @@ def compose_hjb_source(
     """
     has_nonlocal = problem.nonlocal_operator is not None
     has_source = problem.source_term_hjb is not None
-    has_obstacle = problem.obstacle is not None
 
-    if not (has_nonlocal or has_source or has_obstacle):
+    # The obstacle branch that stood here is GONE (#2002), not moved. `problem.obstacle` is
+    # retired and raises; a soft wall is `problem.state_penalty`, composed into the Hamiltonian's
+    # potential at problem construction, because a term that is `alpha`-free and `u`-free is a
+    # potential and belongs where V lives. Deleted in the same change that added the replacement:
+    # a composition that only ADDS an owner has not consolidated anything.
+    if not (has_nonlocal or has_source):
         return None
 
     def composed(t: float, x: NDArray) -> NDArray:
-        # Source + nonlocal via the shared single-source primitive (Issue #1382);
-        # obstacle is grid-coupler-only. Order [source, obstacle, nonlocal] preserves
-        # byte-for-byte float-sum associativity with the pre-#1382 closure.
+        # Source + nonlocal via the shared single-source primitive (Issue #1382). Order
+        # [source, nonlocal] preserves byte-for-byte float-sum associativity with the pre-#1382
+        # closure; the obstacle term that used to sit between them contributed
+        # `(1/eps) * max(0, psi)` with `eps = 1e6`, i.e. 5e-07 at psi = 0.5, so its removal is
+        # visible in the last bits of any problem that set it -- and every such problem now
+        # raises at construction instead.
         parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt)
         terms: list[NDArray] = []
         if "source" in parts:
             terms.append(parts["source"])
-        if has_obstacle:
-            psi = problem.obstacle(x)
-            eps = getattr(problem, "_penalty_eps", 1e6)
-            terms.append((1.0 / eps) * np.maximum(0.0, psi.ravel()))
         if "nonlocal" in parts:
             terms.append(parts["nonlocal"])
         return sum(terms) if terms else np.zeros(x.shape[0])

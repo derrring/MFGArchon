@@ -80,8 +80,10 @@ def _make_problem_with_source_fp() -> MFGProblem:
     return _make(source_term_fp=lambda x, m, v, t: 0.02 * np.ones(len(x)))
 
 
-def _make_problem_with_obstacle() -> MFGProblem:
-    return _make(obstacle=lambda x: np.asarray(x) - 0.5)
+def _make_problem_with_state_penalty() -> MFGProblem:
+    # A soft wall, cost-signed: expensive on the right half. #2002 -- what `obstacle=` used to
+    # take, minus the claim that it was a constraint.
+    return _make(state_penalty=lambda x: np.maximum(0.0, np.asarray(x) - 0.5))
 
 
 def _make_solvers(problem: MFGProblem):
@@ -127,35 +129,32 @@ def _picard_solve(problem: MFGProblem) -> tuple[np.ndarray, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-def test_newton_solver_solves_with_obstacle():
-    """Newton must reach the SAME equilibrium as Picard on an obstacle problem.
+def test_newton_solver_solves_with_a_state_penalty():
+    """Newton must reach the SAME equilibrium as Picard under a soft wall.
 
-    This is the only end-to-end obstacle coverage of the Newton path anywhere -- the parity
-    class in ``tests/integration/test_source_term_wiring.py`` covers source_term_hjb,
-    source_term_fp and nonlocal_operator but has no obstacle case, and
-    ``test_issue1361_source_composition.py`` pins the obstacle only at the composition level,
-    never through a solve. Finiteness and shape are satisfied by a Newton path that ignores the
-    obstacle entirely, which is the #1285 defect.
+    STRONGER THAN THE OBSTACLE VERSION IT REPLACES, and for a structural reason (#2002).
 
-    Threshold. The obstacle enters as ``(1/eps)*max(0, psi(x))`` with ``eps = 1e6``
-    (the obstacle branch of ``compose_hjb_source``), so it is a small perturbation and the tolerance has to sit
-    below it or it certifies nothing. Measured on this fixture:
+    The obstacle used to enter through `compose_hjb_source`, so this test was checking that two
+    couplers each remembered to consume the same source closure -- a wiring fact, and the #1285
+    defect was one of them forgetting. A `state_penalty` is composed into the Hamiltonian's
+    potential at problem construction, so BOTH paths get it by evaluating H, and no coupler can
+    forget it. What this now checks is that the composition did not break the equivalence: a term
+    inside H must be seen identically by a residual assembled from H (Newton) and by a backward
+    sweep that calls H (Picard).
 
-    - Newton-vs-Picard relative gap with the obstacle wired to both: 2.4e-10 (U), 7.6e-11 (M).
-    - Effect of the obstacle itself, same solver with it on vs off: 9.5e-07 (U), 2.9e-08 (M).
-
-    1e-8 sits between them: 41x above the measured agreement in U and 95x below the gap a
-    Newton path that silently dropped the obstacle would open. A tolerance of 1e-5 would be
-    above the obstacle's whole effect and would pass with the term deleted.
+    Threshold. The old wiring entered as `(1/eps)*max(0, psi)` with `eps = 1e6` -- a 5e-07
+    perturbation, which is why the tolerance had to be so tight. A potential is not divided by
+    anything, so the wall is now an O(1) effect and the gap has room. The assertion is unchanged
+    at 1e-8 rather than loosened: with a LARGER signal, the same tolerance is a stronger claim.
     """
-    problem = _make_problem_with_obstacle()
+    problem = _make_problem_with_state_penalty()
     U_newton, M_newton = _assert_finite_solve(problem)
     U_picard, M_picard = _picard_solve(problem)
 
     u_gap = np.max(np.abs(U_newton - U_picard)) / np.max(np.abs(U_picard))
     m_gap = np.max(np.abs(M_newton - M_picard)) / np.max(np.abs(M_picard))
-    assert u_gap < 1e-8, f"Newton and Picard disagree on the obstacle equilibrium: U gap {u_gap:.3e}"
-    assert m_gap < 1e-8, f"Newton and Picard disagree on the obstacle equilibrium: M gap {m_gap:.3e}"
+    assert u_gap < 1e-8, f"Newton and Picard disagree under a soft wall: U gap {u_gap:.3e}"
+    assert m_gap < 1e-8, f"Newton and Picard disagree under a soft wall: M gap {m_gap:.3e}"
 
 
 # ---------------------------------------------------------------------------

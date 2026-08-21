@@ -1,4 +1,4 @@
-"""Issue #1361: single-source agreement for source/nonlocal/obstacle composition.
+"""Issue #1361: single-source agreement for source/nonlocal composition.
 
 ``_compose_hjb_source`` / ``_compose_fp_source`` were lifted out of
 ``FixedPointIterator`` into the shared ``coupling/source_composition.py`` so the
@@ -55,8 +55,10 @@ _NT = 4
 def _ref_compose_hjb_source(problem, m_current, u_current):
     has_nonlocal = problem.nonlocal_operator is not None
     has_source = problem.source_term_hjb is not None
-    has_obstacle = problem.obstacle is not None
-    if not (has_nonlocal or has_source or has_obstacle):
+    # The obstacle branch is gone from production (#2002) and therefore from this oracle. An
+    # oracle that reimplements the code under test tracks it by hand, which is why this file
+    # reddened when the branch was deleted: that is the oracle working, not a regression.
+    if not (has_nonlocal or has_source):
         return None
 
     def composed(t, x):
@@ -67,10 +69,6 @@ def _ref_compose_hjb_source(problem, m_current, u_current):
             # (the documented (x, m, v, t) contract), not zero.
             v_t = _get_time_slice(u_current, t, problem.dt)
             terms.append(problem.source_term_hjb(x, m_t, v_t, t))
-        if has_obstacle:
-            psi = problem.obstacle(x)
-            eps = getattr(problem, "_penalty_eps", 1e6)
-            terms.append((1.0 / eps) * np.maximum(0.0, psi.ravel()))
         if has_nonlocal:
             v_t = _get_time_slice(u_current, t, problem.dt)
             terms.append(problem.nonlocal_operator @ v_t)
@@ -128,20 +126,22 @@ def _field_configs(gs: int):
     # old v=0 convention, making shared != reference).
     src_hjb = lambda x, m, v, t: 0.7 * np.ones(x.shape[0]) + 0.1 * t + 0.01 * m + 0.03 * v  # noqa: E731
     src_fp = lambda x, m, v, t: 0.05 * np.ones(x.shape[0]) + 0.02 * v  # noqa: E731
-    obstacle = lambda x: np.asarray(x) - 0.5  # noqa: E731
     nonlocal_op = 0.3 * np.eye(gs) + 0.05 * np.ones((gs, gs))
+    # The four obstacle cells are gone (#2002), not renamed to `state_penalty`. This file is about
+    # SOURCE composition -- that the Picard and Newton couplers build the same `(t, x)` closure
+    # from one implementation. A soft wall is no longer a source: it is composed into H's potential
+    # at problem construction and never reaches this closure, so a cell here would assert that a
+    # term absent from both sides is equal on both sides.
     return [
         ("source_hjb", {"source_term_hjb": src_hjb}),
         ("source_fp", {"source_term_fp": src_fp}),
-        ("obstacle", {"obstacle": obstacle}),
         ("nonlocal", {"nonlocal_operator": nonlocal_op}),
-        ("hjb+obstacle+nonlocal", {"source_term_hjb": src_hjb, "obstacle": obstacle, "nonlocal_operator": nonlocal_op}),
+        ("hjb+nonlocal", {"source_term_hjb": src_hjb, "nonlocal_operator": nonlocal_op}),
         (
             "all",
             {
                 "source_term_hjb": src_hjb,
                 "source_term_fp": src_fp,
-                "obstacle": obstacle,
                 "nonlocal_operator": nonlocal_op,
             },
         ),
