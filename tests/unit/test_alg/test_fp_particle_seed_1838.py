@@ -219,7 +219,11 @@ def test_the_torch_sampler_repeats_and_leaves_the_global_torch_stream_alone(devi
     from mfgarchon.backends.torch_backend import TorchBackend
     from mfgarchon.utils.particle_utils import sample_from_density_gpu
 
-    backend = TorchBackend(device=device)
+    # float32 on MPS, which has no float64 at all -- since #1921 that combination raises rather
+    # than narrowing silently. This test's subject is the RNG stream, not precision, so the narrower
+    # dtype costs it nothing; asking for float64 here would be asking for a configuration that does
+    # not exist.
+    backend = TorchBackend(device=device, precision="float32" if device == "mps" else "float64")
     grid = backend.from_numpy(np.linspace(0.0, 1.0, 64))
     density = backend.from_numpy(np.exp(-10 * (np.linspace(0.0, 1.0, 64) - 0.5) ** 2))
 

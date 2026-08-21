@@ -133,13 +133,21 @@ class TorchBackend(BaseBackend):
         else:
             raise ValueError(f"Unsupported precision: {self.precision}")
 
-        # Handle MPS float64 limitation
+        # MPS cannot do float64. Reaching here means the user named BOTH explicitly, since `auto`
+        # no longer selects MPS under float64 (#1921) -- so this is a genuine conflict between two
+        # things the caller asked for, and silently resolving it is what this replaces.
+        #
+        # It used to warn and narrow to float32. A UserWarning is not enough for a precision
+        # downgrade in a library whose tolerances are 1e-10 and 1e-12: it makes them unreachable in
+        # principle rather than hard to hit.
         if self.device_type == "mps" and self.precision == "float64":
-            warnings.warn(
-                "MPS does not support float64, using float32 instead. Set precision='float32' to suppress this warning."
+            raise ValueError(
+                "device='mps' cannot provide precision='float64' -- MPS has no float64 at all. "
+                "This used to narrow silently to float32, which puts this library's 1e-10 and 1e-12 "
+                "convergence tolerances out of reach in principle (Issue #1921). Choose one: "
+                "device='cpu' to keep float64, or precision='float32' to keep MPS. "
+                "device='auto' picks CPU over MPS whenever float64 is requested."
             )
-            self.torch_dtype = torch.float32
-            self.precision = "float32"
 
         # Memory management
         if self.memory_efficient:
@@ -168,10 +176,22 @@ class TorchBackend(BaseBackend):
             ValueError: If specified device is unavailable
         """
         if device_spec == "auto":
-            # Automatic selection with priority: CUDA > MPS > CPU
+            # Automatic selection with priority: CUDA > MPS > CPU.
+            #
+            # MPS IS SKIPPED WHEN float64 WAS ASKED FOR (#1921). MPS cannot do float64, and the
+            # backend used to accept the device and silently narrow the precision instead -- a
+            # choice the LIBRARY made overriding one the USER made. In a library whose convergence
+            # tolerances are 1e-10 and 1e-12 throughout, that does not make them hard to reach, it
+            # makes them unreachable in principle: `1 + 1e-10 != 1` does not survive the round trip.
+            #
+            # CPU keeps the precision and is also faster here -- measured over mean/max/trapezoid,
+            # torch is 9.2x slower than numpy at n = 1e6 and 361x at n = 1e4 -- so nothing is traded
+            # away by preferring it. An EXPLICIT device='mps' with precision='float64' is a
+            # different case: the user asked for both, they conflict, and `_setup_backend` raises
+            # rather than choosing for them.
             if CUDA_AVAILABLE:
                 device = torch_device("cuda")
-            elif MPS_AVAILABLE and MPS_FUNCTIONAL:
+            elif MPS_AVAILABLE and MPS_FUNCTIONAL and self.precision != "float64":
                 device = torch_device("mps")
             else:
                 device = torch_device("cpu")
