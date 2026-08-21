@@ -59,19 +59,35 @@ def _warning_text(scheme="gradient_upwind", n=21):
     return texts[0]
 
 
-def test_the_warning_states_the_drift_dependence():
+def test_the_warning_states_the_loss_is_unbounded_not_a_magnitude():
+    """UPDATED 2026-08-22. The contract this test enforces is unchanged -- the numbers a caller
+    reads are the numbers that were measured -- but the numbers changed, and so did their shape.
+
+    The previous version pinned a single driven figure (`-1.4e-1`). That figure was correct for its
+    fixture and is still in the message as a retraction, but a lone magnitude reads as a bounded
+    error a caller can budget against, and the loss is not bounded: re-measured across cell Peclet
+    it runs 0 -> +0.5%, 0.19 -> -23.6%, 0.89 -> -99.97%. So what must be quotable is the
+    DEPENDENCE and its limit, not a point on it.
+    """
     text = _warning_text()
-    assert "WALL-NORMAL DRIFT" in text, "the leak scales with drift; a flat magnitude misleads"
-    assert "-1.4e-1" in text, "the 1D driven figure must be quotable"
-    assert "-8.9e-1" in text, "and the 2D one, which is another order up"
-    assert "-1.7e-14" in text, "and the zero-drift figure, which is what makes the old one a transient"
+    assert "UNBOUNDED" in text, "a bounded-sounding magnitude is the thing that misled"
+    assert "Peclet" in text, "the axis the loss runs along must be named, or the reader cannot place their own case"
+    assert "-99.97%" in text, "the limit case must be quotable, not only the mild one"
+    assert "-23.6%" in text, "and an intermediate point, so the trend is visible rather than asserted"
+    assert "relaxed uniform field" in text, (
+        "what the caller actually gets back at the limit -- 'lost mass' understates a field that "
+        "no longer resembles the solution"
+    )
 
 
 def test_the_understated_phrase_is_gone_from_the_live_claim():
     """`O(1e-2), even with zero drift` is the sentence that cost the order of magnitude. It may
-    appear as a RETRACTION -- the message says what it used to say -- but not as a live figure."""
+    appear as a RETRACTION -- the message says what it used to say -- but not as a live figure.
+
+    Both superseded figures now sit behind "Earlier revisions", which is what this splits on: a
+    retraction is only safe while it is unmistakably a retraction."""
     text = _warning_text()
-    live = text.split("previously said")[0]
+    live = text.split("Earlier revisions")[0]
     assert "O(1e-2)" not in live, (
         "the understated magnitude is back in the part of the message a reader takes as current"
     )
