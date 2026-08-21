@@ -138,7 +138,7 @@ def test_newton_solver_solves_with_obstacle():
     obstacle entirely, which is the #1285 defect.
 
     Threshold. The obstacle enters as ``(1/eps)*max(0, psi(x))`` with ``eps = 1e6``
-    (source_composition.py:130-133), so it is a small perturbation and the tolerance has to sit
+    (the obstacle branch of ``compose_hjb_source``), so it is a small perturbation and the tolerance has to sit
     below it or it certifies nothing. Measured on this fixture:
 
     - Newton-vs-Picard relative gap with the obstacle wired to both: 2.4e-10 (U), 7.6e-11 (M).

@@ -111,11 +111,30 @@ class PenaltyHJBSolver(BaseHJBSolver):
     ) -> NDArray:
         """Solve HJB with obstacle constraint via penalty method.
 
-        Composes the penalty term (1/eps) * max(0, Psi - v) with any
-        existing source_term, then delegates to the inner solver.
+        .. warning::
 
-        The penalty pushes v upward when it falls below Psi, enforcing
-        the variational inequality v >= Psi in the limit eps -> 0.
+           **This docstring described the intended term, not the implemented one (#2002).**
+           It said the method "composes the penalty term ``(1/eps) * max(0, Psi - v)``" and
+           that "the penalty pushes v upward when it falls below Psi, enforcing the
+           variational inequality ``v >= Psi`` in the limit ``eps -> 0``". The code below
+           computes ``penalty_parameter * max(0, Psi)`` -- no ``v``, and the knob is the
+           reciprocal spelling. Both sentences are withdrawn.
+
+           What is actually applied is a **position** penalty: positive wherever
+           ``Psi > 0``, identical at a node satisfying the constraint and one violating it,
+           so it cannot push ``v`` anywhere in particular. See the comment at the
+           expression itself.
+
+           A constraint-shaped alternative exists elsewhere --
+           :meth:`~mfgarchon.geometry.boundary.ObstacleConstraint.project` (#591), which
+           ``HJBFDMSolver`` applies when constructed with ``constraint=``. It does read ``u``
+           and does enforce ``u >= psi`` on what it returns, which is more than this term can
+           say. **It is not, however, an obstacle-problem solver, and "correct" overstates it**
+           (#2036): in 1D the projection runs after the backward sweep finishes, so the result
+           is exactly ``max(U_free, psi)`` -- the unconstrained solution clipped, with no free
+           boundary resolved; in nD it runs inside the time loop and does feed back, but the
+           terminal slice never passes through it and can violate the constraint. Prefer it
+           over this term while #2002 is open, knowing both limits.
         """
         penalty_param = self._penalty
         obstacle_fn = self._obstacle
@@ -141,6 +160,16 @@ class PenaltyHJBSolver(BaseHJBSolver):
             # not (t, x, v) -> array. The v-dependent penalty must be
             # handled at the time-stepping level inside the solver.
             # For now, we apply a static obstacle penalty.
+            #
+            # #2002: `max(0, psi)` PENALISES POSITION, NOT VIOLATION. It contains no `v`, so it is
+            # positive wherever psi > 0 whether or not `v >= Psi` holds -- verified, unchanged at
+            # v = -10, 0, +10. This is not a weaker form of the constraint; it is a different term.
+            #
+            # And this is NOT the "proper handling" that `source_composition`'s docstring pointed
+            # here for. It is the same stub with the reciprocal knob: multiplying by
+            # `penalty_parameter` (1e4) where that path divides by `eps` (1e6). At psi = 0.5 the two
+            # give 5.000000e+03 and 5.000000e-07 -- 1e10 apart, while a comment there claimed they
+            # matched. That claim is withdrawn; this comment is the other half of the correction.
             psi = np.asarray(obstacle_fn(x)).ravel()
             return base + penalty_param * np.maximum(0.0, psi)
 

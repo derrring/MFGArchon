@@ -70,10 +70,22 @@ class MFGResidual:
         ``M = M_new``, so the residual root coincides with the Picard fixed point
         including the source/nonlocal/obstacle terms.
 
-        Obstacle handling matches the Picard path exactly: the approximate
-        ``v = 0`` penalty ``(1/eps) * max(0, psi)`` (see ``compose_hjb_source``).
-        Proper handling is the ``PenaltyHJBSolver`` wrapper (#924); both coupling
-        paths use the same approximation so they do not silently diverge.
+        Obstacle handling matches the Picard path exactly: the same
+        ``(1/eps) * max(0, psi)`` from the one ``compose_hjb_source``. Both coupling
+        paths therefore do not silently diverge -- that part holds and is the point
+        of #1361.
+
+        Two corrections to what this paragraph used to say (#2002):
+
+        - *"Proper handling is the ``PenaltyHJBSolver`` wrapper (#924)"* is withdrawn.
+          That wrapper carries the same stub, and scales it by ``penalty_parameter``
+          (``1e4``) where this path divides by ``eps`` (``1e6``) -- 1e10 apart.
+        - ``v = 0`` understates it. ``max(0, psi)`` contains no ``v``, so it is identical
+          at a node satisfying ``v >= Psi`` and one violating it: a position penalty, not
+          a weakened constraint. It cannot enforce the inequality at any ``eps``.
+
+        Corrected here as well as in ``compose_hjb_source`` because this is a second
+        copy of the same claim -- the fork this module exists to close.
 
     Attributes:
         problem: MFG problem definition
