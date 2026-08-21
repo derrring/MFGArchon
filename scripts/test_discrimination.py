@@ -258,7 +258,13 @@ MUTATIONS: list[Mutation] = [
         old="        if bc.is_uniform:",
         new="        if False:  # MUTATED: uniform BC reads as mixed -- every BC takes the per-face path",
         owner="PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 1.0",
+        # Re-pointed 2026-08-21. The Neumann probe went blind: the uniform and per-face paths now
+        # agree on Neumann to the last bit, so forcing the per-face path changed nothing the probe
+        # could see and the mutation was scored INEFFECTIVE -- a dead instrument reported as a dead
+        # convention. Measured, same input under both: [1.1 1. 2. 3. 3.1] either way. Robin still
+        # separates them (clean [0] = 1.097561, mutant [0] = 5.0), so the divergence this mutation
+        # models is alive and only the Neumann witness died.
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), robin_bc(dimension=1, alpha=1.0, beta=1.0, value=3.0), ghost_depth=1, spacing=0.05)[0] == 5.0",
     ),
     Mutation(
         name="neumann_low_wall_flux_sign",
@@ -443,7 +449,7 @@ import numpy as np
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry.boundary import neumann_bc
+from mfgarchon.geometry.boundary import neumann_bc, robin_bc
 from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon import MFGProblem
