@@ -686,8 +686,8 @@ print(f"Final Error (M): {self.final_error_M:.6e}")
 # print(f"More Accurate: {{comparison.more_accurate_solver}}")
 
 # Example: Compare with different tolerance
-# result_strict = solve_mfg(problem, config_strict)
-# result_relaxed = solve_mfg(problem, config_relaxed)
+# result_strict = problem.solve(config=config_strict)
+# result_relaxed = problem.solve(config=config_relaxed)
 # comparison = result_strict.compare_to(result_relaxed)
 """
         nb.cells.append(new_code_cell(comparison_code))
@@ -724,9 +724,7 @@ jupyter nbconvert --to python notebook.ipynb
 For full interactive analysis, recreate your `SolverResult` object:
 
 ```python
-from mfgarchon import solve_mfg
-
-result = solve_mfg(problem, config)
+result = problem.solve(config=config)
 
 # Then use all analysis methods:
 analysis = result.analyze_convergence()

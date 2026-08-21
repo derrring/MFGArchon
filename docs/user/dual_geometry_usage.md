@@ -97,7 +97,7 @@ assert problem.geometry_projector is not None  # Created automatically
 **Motivation**: Value function needs high resolution, but density evolution is smooth.
 
 ```python
-from mfgarchon import MFGProblem, solve_mfg
+from mfgarchon import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 
 # Fine grid for accurate HJB solution
@@ -116,7 +116,7 @@ problem = MFGProblem(
 )
 
 # Solve with automatic projection
-result = solve_mfg(problem, max_iterations=50)
+result = problem.solve(problem, max_iterations=50)
 
 print(f"HJB solution shape: {result.U.shape}")  # (201, 201)
 print(f"FP solution shape: {result.M.shape}")   # (51, 51)
@@ -537,7 +537,7 @@ if projector.hjb_to_fp_method == "registry":
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
-from mfgarchon import MFGProblem, solve_mfg
+from mfgarchon import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 
 # Problem: Evacuate building (10m × 10m) with exit at (0, 5)
@@ -574,7 +574,7 @@ problem = MFGProblem(
 )
 
 # Solve
-result = solve_mfg(problem, max_iterations=20)
+result = problem.solve(problem, max_iterations=20)
 
 # Visualize results
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -644,7 +644,7 @@ print(f"FP solution shape: {result.M.shape}")   # (51, 51)
 - ⚠️ Solver integration in progress (Phase 4)
 
 **Solvers with dual geometry support** (after Phase 4):
-- `solve_mfg()`
+- `problem.solve()`
 - Custom solvers using `problem.geometry_projector` directly
 
 **Solvers without support yet**:
