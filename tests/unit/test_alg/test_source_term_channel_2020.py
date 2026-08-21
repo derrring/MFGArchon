@@ -186,6 +186,11 @@ def _hjb_gfdm():
     p = _grid_problem()
     m = np.tile(np.ones(_N) / _N, (p.Nt + 1, 1))
     u = np.zeros((p.Nt + 1, _N))
+    # `inner_solver` defaults to 'newton'. The 'howard' branch is a SEPARATE source path and it
+    # discarded the source bitwise until #1991 -- `hjb_gfdm.py` records
+    # "|U(source) - U(no source)| = 0.000e+00 at two resolutions". Both honour it today (measured
+    # 2026-08-21, max|delta| = 1 on each), so this row's scope is the default branch and the other
+    # is unpinned here. Driving it needs `inner_solver='howard'` plus a monotonicity scheme.
     s = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
     return lambda f: s.solve_hjb_system(m, np.zeros(_N), u, **({"source_term": f} if f else {}))
 
@@ -285,6 +290,13 @@ _CASES = [
 #: parametrisation is a claim about scope, and the claim is only auditable if its gaps are written
 #: down. `test_every_concrete_solver_is_covered_or_named` compares this against discovery, so a
 #: solver added to the package cannot slip past the list in silence.
+#:
+#: KNOWN UNASSERTED SURFACE: only the KEYS are checked. The reason strings are prose that no
+#: assertion reads, so one can rot while its row stays green -- measured, a reason rewritten to
+#: "runs fine on a grid and honours a source" passes. They are kept because a named gap with a
+#: possibly-stale reason beats an unnamed gap, and checking them would mean re-implementing the
+#: construct-and-drive machinery for exactly the solvers this fixture cannot construct or drive.
+#: Re-verify a reason before relying on it; each was measured on 2026-08-21.
 _UNCOVERED: dict[str, str] = {
     "FPSLAdjointSolver": "alias -- overrides only __init__ and shares FPSLSolver.solve_fp_system, "
     "so a row here would measure the same method object twice",
@@ -312,10 +324,16 @@ def _concrete_solvers() -> set[str]:
     import mfgarchon.alg.numerical as _numerical
 
     found: set[str] = set()
+    failed: list[str] = []
     for info in pkgutil.walk_packages(_numerical.__path__, _numerical.__name__ + "."):
         try:
             module = importlib.import_module(info.name)
-        except Exception:
+        except Exception as exc:
+            # Recorded, not swallowed: a solver hidden behind an ImportError would otherwise
+            # surface only as a baffling `assert 20 == 21`, blaming the count for a module that
+            # never loaded. `test_the_swallowing_set_has_not_grown` already guards its walk this
+            # way; this one did not.
+            failed.append(f"{info.name}: {type(exc).__name__}")
             continue
         for obj in vars(module).values():
             if (
@@ -324,6 +342,7 @@ def _concrete_solvers() -> set[str]:
                 and obj not in (BaseHJBSolver, BaseFPSolver)
             ):
                 found.add(obj.__name__)
+    assert not failed, f"modules that would hide a solver from this census: {failed}"
     return found
 
 
@@ -335,16 +354,18 @@ def test_every_concrete_solver_is_covered_or_named():
     path, and none of GFDM, WENO, FVM, semi-Lagrangian or particle -- and nothing said so.
     """
     population = _concrete_solvers()
-    assert len(population) == 21, sorted(population)
-
     covered = {c[0] for c in _CASES}
-    assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
+    # The informative assertion FIRST. `len(population) == 21` fires on the commonest real event --
+    # someone adds a solver -- and its message is a bare count, which blames the wrong thing.
     unaccounted = population - covered - set(_UNCOVERED)
     assert unaccounted == set(), (
         f"concrete solvers with neither a row nor an entry in _UNCOVERED: {sorted(unaccounted)}. "
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
+
+    assert len(population) == 21, sorted(population)
+    assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population
     assert stale == set(), f"_UNCOVERED names classes that no longer exist: {sorted(stale)}"
@@ -360,14 +381,26 @@ def test_a_source_term_is_honoured_or_refused_never_discarded(label, factory, ex
     baseline = np.asarray(call(None), dtype=float)
 
     src = _Source()
+    refusal: str | None = None
     try:
         forced = np.asarray(call(src), dtype=float)
-    except (TypeError, NotImplementedError):
+    except (TypeError, NotImplementedError) as exc:
+        refusal = f"{type(exc).__name__}: {exc}"
+
+    if refusal is not None:
         # A refusal is a correct outcome -- the third option the contract allows, and what the
         # coupling layer produces for every solver here. It is recorded per row rather than
         # accepted anywhere, so that a solver which STARTS honouring the parameter fails this
         # test and gets its row updated deliberately (that is #2020 progress, not a regression).
         assert expected in ("swallows", "refuses"), f"{label} refuses source_term but is listed as {expected!r}"
+        # ... and it must refuse THE SOURCE, not some other argument. Without this, a row raising
+        # about `potential_field` whenever a source is passed scores as an honest refusal --
+        # measured: that mutant passes green without this line. Every current row is an
+        # argument-binding TypeError naming the parameter, so it costs nothing and pins the shape.
+        assert "source_term" in refusal, (
+            f"{label} raised something that never mentions source_term, so it is not evidence the "
+            f"SOURCE was refused: {refusal[:160]}"
+        )
         return
 
     delta = float(np.abs(forced - baseline).max())
