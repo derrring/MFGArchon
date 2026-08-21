@@ -126,13 +126,29 @@ class NetworkHJBSolver(BaseHJBSolver):
                 f"NetworkPolicyIterationHJBSolver, which applies node-BC, or remove the geometry's BC."
             )
 
+        # Issue #2045: refuse a non-network problem in the same shape the node-BC check above
+        # uses, rather than letting the first network-only attribute read raise AttributeError.
+        # `NetworkPolicyIterationHJBSolver` sets `_honors_node_bc`, so it SKIPS that check and
+        # used to fall through to here -- an unguarded read that told the caller nothing about
+        # why the solver was inapplicable, and was indistinguishable from a defect in the solver.
         self.scheme = scheme
         self.tolerance = tolerance
 
-        # Network properties
-        self.num_nodes = problem.num_nodes
-        self.adjacency_matrix = problem.get_adjacency_matrix()
-        self.laplacian_matrix = problem.get_laplacian_matrix()
+        # Network properties. Read inside try/except rather than guarded by `hasattr`: the
+        # fail-fast policy names try-except as the replacement for `hasattr`, and it covers the
+        # wider case -- a problem carrying `num_nodes` but no adjacency accessor fails here too,
+        # where a single-attribute guard would have waved it through to the next line.
+        try:
+            self.num_nodes = problem.num_nodes
+            self.adjacency_matrix = problem.get_adjacency_matrix()
+            self.laplacian_matrix = problem.get_laplacian_matrix()
+        except AttributeError as exc:
+            raise NotImplementedError(
+                f"{type(self).__name__} requires a network problem -- one carrying `num_nodes`, an "
+                f"adjacency matrix and a graph Laplacian. This problem's geometry is "
+                f"{type(problem.geometry).__name__} and it is missing {exc}. The network solvers "
+                f"discretize on nodes and edges and have no continuous-domain path (Issue #2045)."
+            ) from exc
 
         # Time discretization
         self.dt = problem.T / problem.Nt
