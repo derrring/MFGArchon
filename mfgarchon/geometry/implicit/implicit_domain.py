@@ -17,6 +17,7 @@ References:
 - TECHNICAL_REFERENCE_HIGH_DIMENSIONAL_MFG.md Section 4
 """
 
+import warnings
 from abc import abstractmethod
 from collections.abc import Callable
 from typing import Literal
@@ -504,15 +505,35 @@ class ImplicitDomain(
 
         return x_proj[0] if is_single else x_proj
 
-    def is_on_boundary(self, x: NDArray[np.float64], tol: float = SDF_BOUNDARY_TOL) -> bool | NDArray[np.bool_]:
+    def is_on_boundary(
+        self,
+        x: NDArray[np.float64],
+        tolerance: float | None = None,
+        tol: float | None = None,
+    ) -> bool | NDArray[np.bool_]:
         """
         Check if point(s) are on the domain boundary using SDF.
 
-        A point is on the boundary if |φ(x)| < tol where φ is the SDF.
+        A point is on the boundary if |φ(x)| < tolerance where φ is the SDF.
+
+        `tolerance`, matching `GeometryProtocol.is_on_boundary` and the eighteen other
+        implementers (#1943). This family spelled it `tol`, so positional calls worked either way
+        and **any keyword call broke on one side of the split**, with which side decided only by
+        which geometry the caller happened to be handed. Measured before the fix:
+
+            Hyperrectangle.is_on_boundary(pts, tol=0.03)        -> [True, False]
+            Hyperrectangle.is_on_boundary(pts, tolerance=0.03)  -> TypeError
+
+        and `ImplicitApplicator._detect_boundary_points` used the keyword form -- an applicator that
+        exists *for* this family, calling it in the spelling this family did not accept.
+
+        `tol=` is still accepted and deprecated. Six subclasses inherit this method rather than
+        overriding it, so this is the one definition the whole family reads.
 
         Args:
             x: Point(s) to check - shape (d,) or (N, d)
-            tol: Tolerance for boundary detection
+            tolerance: Tolerance for boundary detection
+            tol: Deprecated alias for `tolerance`
 
         Returns:
             Boolean or array of booleans indicating if points are on boundary
@@ -524,8 +545,24 @@ class ImplicitDomain(
             >>> sphere.is_on_boundary(np.array([0.5, 0.0]))
             False
         """
+        if tol is not None:
+            if tolerance is not None:
+                raise TypeError(
+                    "is_on_boundary() received both `tolerance` and `tol`; they are the same "
+                    "argument. Use `tolerance`, which is what GeometryProtocol declares (#1943)."
+                )
+            warnings.warn(
+                "is_on_boundary(tol=...) is deprecated; use `tolerance=`, which is the spelling "
+                "GeometryProtocol and the other eighteen implementers use (#1943).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            tolerance = tol
+        if tolerance is None:
+            tolerance = SDF_BOUNDARY_TOL
+
         sd = self.signed_distance(x)
-        return np.abs(sd) < tol
+        return np.abs(sd) < tolerance
 
     # =========================================================================
     # Trait Protocol Implementations (Issue #590 Phase 1.2)
