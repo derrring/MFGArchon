@@ -10,7 +10,10 @@
   change that leaves the solve further from a fixed point. (`fdm_centered_2d` could not: it raises
   inside the first FP solve, which relaxation of the outer iterate cannot reach.) Every cell holding
   a solver result now carries `picard_converged` and `picard_iterations` in its baseline artifact.
-  **Recorded, not gated**: gating today turns three long-standing greens red, and two of those still
+  ~~**Recorded, not gated**~~ **[SUPERSEDED 2026-08-21 by `1891-gate-picard-converged.changed.md`,
+  which gates it in five verdicts. Both fragments compile into the same release; read that one
+  for the current behaviour and this one for why the gate was deferred.]** Gating when this was
+  written turned three long-standing greens red, and two of those still
   do not converge at 100 sweeps for different reasons — for `fdm_upwind` exactly one of the four
   criterion inputs blocks, the value function's absolute error (rises to 287, ends at `2.3e-04`),
   while for `sl_linear` all four are above tolerance, the density worst and not descending (never
