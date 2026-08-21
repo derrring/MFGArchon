@@ -292,10 +292,16 @@ def _picard_verdict(result, prefix: str = "") -> dict:
 
     ~~Deliberately NOT part of any cell's ``ok``.~~ [CORRECTED 2026-08-21] It has been part of
     every cell's ``ok`` since #1893 (`733597d1`), which routed all four verdict lines through
-    ``_solved``; that function is the gate and this one is the record, and they sit one line apart
-    at 416/418, 454/455, 568/569 and 672/673. The sentence below describes why the gate was
-    deferred when this field was first recorded, and is kept because it is the measurement that
-    justified turning three greens red rather than raising the budgets.
+    ``_solved``: that function is the gate, this one is the record, and each cell calls this one
+    into ``art`` immediately before evaluating ``ok``. No line numbers here on purpose -- a
+    docstring that sits ABOVE the lines it cites renumbers them every time it is itself edited,
+    which is how this correction's own first draft shipped four stale pairs -- and adding this
+    paragraph moved them again. Find them with
+    ``grep -nE '_picard_verdict|ok = ' scripts/capability_matrix.py``, which stays true.
+
+    The sentence below describes why the gate was deferred when this field was first recorded, and
+    is kept because it is the measurement that justified turning three greens red rather than
+    raising the budgets.
 
     Measured when this was added: three of the
     five PASS cells run exactly to their iteration budget without converging --
