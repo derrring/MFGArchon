@@ -261,10 +261,28 @@ class FPFDMSolver(BaseFPSolver):
         # silently assembling a default (no-flux) wall.
         self._validate_bc_support(self.boundary_conditions)
 
-        # Issue #1075: the non-conservative gradient (point-value) advection schemes do
-        # NOT conserve mass at no-flux walls -- even for pure diffusion -- because the
-        # boundary node uses the point-value Neumann Laplacian (sigma^2/dx^2) rather than
-        # the finite-volume half-cell closure. Measured leak ~1.5e-2 (zero drift, n=81).
+        # Issue #1075 / #2007: the non-conservative gradient (point-value) advection schemes do
+        # NOT conserve mass at no-flux walls, because the boundary node uses the point-value
+        # Neumann Laplacian (sigma^2/dx^2) rather than the finite-volume half-cell closure.
+        #
+        # THE LEAK IS DRIFT-DEPENDENT, and the previous string understated it by an order of
+        # magnitude (#2007). It said "leaks O(1e-2), even with zero drift". Measured:
+        #
+        #   genuinely zero drift, stationary initial density   -1.7e-14   (no leak at all)
+        #   wall-normal drift A = 0.7, D = 1/8, d = 1          -1.4e-1
+        #   wall-normal drift A = 0.7, D = 1/8, d = 2          -8.9e-1
+        #
+        # So the 1.5e-2 figure was a TRANSIENT density, which the string did not say, and a reader
+        # budgeting against O(1e-2) was off by 10x exactly where the scheme is used.
+        #
+        # There is a second defect this warning does not cover, and it is not a wall problem:
+        # div(alpha m) = alpha.grad(m) + m div(alpha), and the gradient form drops the second term,
+        # so even repointing the wall leaves a scheme that discretizes a different equation
+        # (measured on a source-free instance, 5.81e-1 -> 8.02e-1, EOC -0.007 -> 0.108). #2007
+        # recommends removing these schemes for that reason; this warning is not a substitute for
+        # that decision, and `test_gradient_centered_still_available_and_leaks` records the
+        # standing one to keep them explicitly selectable.
+        #
         # The conservative path is a 'divergence_*' scheme. Warn once at construction.
         if self.advection_scheme.startswith("gradient") and (
             getattr(self.boundary_conditions, "is_uniform", False)
@@ -272,10 +290,15 @@ class FPFDMSolver(BaseFPSolver):
         ):
             warnings.warn(
                 f"advection_scheme='{self.advection_scheme}' uses the non-conservative "
-                "gradient (point-value) form and does NOT conserve mass at no-flux walls "
-                "(leaks O(1e-2), even with zero drift; see Issue #1075). Use a "
+                "gradient (point-value) form and does NOT conserve mass at no-flux walls. "
+                "The leak scales with the WALL-NORMAL DRIFT: measured -1.4e-1 in 1D and -8.9e-1 "
+                "in 2D at A = 0.7, D = 1/8, against -1.7e-14 at genuinely zero drift with a "
+                "stationary initial density. (This warning previously said 'O(1e-2), even with "
+                "zero drift', which was a transient and understates a driven solve by 10x -- "
+                "Issue #2007.) The same form also drops the m*div(alpha) term of div(alpha m), so "
+                "it does not discretize the FP operator even away from the wall. Use a "
                 "'divergence_*' scheme (default 'divergence_upwind') for mass-conservative "
-                "no-flux solves.",
+                "no-flux solves. See Issue #1075 and Issue #2007.",
                 UserWarning,
                 stacklevel=2,
             )
