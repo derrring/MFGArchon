@@ -566,7 +566,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         #   FP:  dm/dt - (sigma^2/2)Dm - div(m*alpha*) - S_fp = 0
         # source_term_hjb/fp: Callable(x, m, v, t) -> array (problem-level signature)
         # nonlocal_operator: LinearOperator for integro-differential terms J[v]
-        # obstacle: Callable(x) -> array for variational inequality v >= Psi(x)
+        # state_penalty: Callable(x) -> array, a COST-signed level-set penalty (soft wall).
+        #   Composed into the Hamiltonian's potential, NOT into source_term -- see below.
+        # obstacle: RETIRED (#2002). It named a variational inequality and delivered a
+        #   position penalty; setting it now raises and names both successors.
         #
         # Sign convention (Issue #1057, gotcha G-002)
         # -------------------------------------------
@@ -592,7 +595,36 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
         self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
         self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
-        self.obstacle: Callable | None = kwargs.pop("obstacle", None)
+        # A soft wall: `state_penalty(x)` is a COST, positive where the region is expensive.
+        # It is `alpha`-free and `u`-free, which is what makes it a potential rather than a
+        # constraint, and it is composed into H's potential V below. `state_penalty_scale`
+        # MULTIPLIES it, where the retired `_penalty_eps` divided: a penalty amplitude is not a
+        # regularisation parameter and `eps -> 0` is not its limit.
+        #
+        # Both are read ONCE, at construction, by the composition below. Assigning either
+        # afterwards does nothing -- the closure has already captured them.
+        self.state_penalty: Callable | None = kwargs.pop("state_penalty", None)
+        self.state_penalty_scale: float = float(kwargs.pop("state_penalty_scale", 1.0))
+
+        if kwargs.pop("obstacle", None) is not None:
+            raise NotImplementedError(
+                "`obstacle` is RETIRED (#2002). It was documented as the variational inequality "
+                "`v >= Psi(x)` and implemented as `max(0, Psi(x))` -- a term with no `v` in it, "
+                "byte-identical at a node satisfying the constraint and one violating it. It "
+                "penalised POSITION, not VIOLATION, and no scaling changed that.\n\n"
+                "It has two successors, because it was conflating two different things:\n"
+                "  * A SOFT WALL -- a cost for being somewhere, `alpha`-free and `u`-free. That is "
+                "a potential, not a constraint. Pass `state_penalty=Psi_cost` (positive where "
+                "expensive); it is composed into the Hamiltonian's V with the sign that layer "
+                "requires, which is not the sign you would write by hand (`potential` is "
+                "REWARD-signed, gotcha G-001).\n"
+                "  * A REAL CONSTRAINT -- the variational inequality. Pass "
+                "`constraint=ObstacleConstraint(psi, 'lower')` to `HJBFDMSolver` (#591). That slot "
+                "is reserved and deliberately unfinished: it projects rather than solving the VI, "
+                "and only that one solver carries it (#2036, #2046).\n\n"
+                "Note also that `obstacles` (plural) is a different field entirely -- geometric "
+                "regions excluded from the domain -- and was never related to this one."
+            )
 
         # Extract scalar sigma for backward compatibility.
         # If volatility is callable or array, use a representative scalar value.
@@ -774,6 +806,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Initialize functions
         self._initialize_functions(**all_params)
+
+        # A soft wall is a POTENTIAL, so it is composed into H here rather than handed to a
+        # solver as a source (#2002). Done after _initialize_functions because that is where the
+        # Hamiltonian becomes available.
+        if self.state_penalty is not None:
+            self._compose_state_penalty_into_potential()
 
         # Validate custom components if provided
         if self.is_custom:
@@ -1826,6 +1864,102 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # - _potential(): Removed - zero potential is now the explicit default
     # - _u_final(): Removed - must be provided via MFGComponents.u_terminal
     # - _m_initial(): Removed - must be provided via MFGComponents.m_initial
+
+    def _compose_state_penalty_into_potential(self) -> None:
+        """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign.
+
+        ``state_penalty`` is COST-signed: positive where the region is expensive. The
+        Hamiltonian's ``potential`` is REWARD-signed (gotcha G-001, and the sign block above
+        ``source_term_hjb``), so the composition **subtracts**::
+
+            V_new(x, t) = V_old(x, t) - scale * state_penalty(x)
+
+        Measured rather than asserted, on a Gaussian wall at x = 0.5 with no coupling: a
+        potential amplitude of ``-5`` raises ``u(0, mid)`` to ``+0.555`` while ``+5`` lowers it
+        to ``-1.419``. So a cost needs a NEGATIVE ``V``, which is not the sign anyone writes by
+        hand -- which is why this composition exists in one place instead of at every call site.
+
+        COPIES rather than rebuilds. An earlier version constructed a fresh
+        ``SeparableHamiltonian`` from five of its six constructor parameters, which silently
+        dropped ``population_index`` (live: a multi-population problem keyed to population k
+        became population 0) and downgraded a ``QuadraticMFGHamiltonian`` to its base class.
+        ``copy.copy`` preserves the type and every attribute, and leaves the caller's own object
+        unmutated.
+
+        SHAPE. The composed closure returns exactly what the base potential returns, so a
+        vectorised base stays vectorised -- ``SeparableHamiltonian`` probes the potential on a
+        batch to decide whether it can call it that way, and a composition that changed the
+        returned shape defeated that probe. With no base there is nothing to match, so the wall
+        alone is squeezed: the per-point call sites wrap it in ``float()``, and in 1-D ``x``
+        arrives as ``array([0.3])``.
+
+        The LAGRANGIAN is kept in step. ``MFGComponents`` snapshots the potential into
+        ``_lagrangian_class`` at construction, before this runs, and
+        ``HJBSemiLagrangianSolver`` reads that copy whenever the control cost is non-smooth --
+        so composing into the Hamiltonian alone left a solver silently unwalled, which is the
+        defect #2002 is about, in a second channel.
+
+        Raises rather than silently skipping when the Hamiltonian cannot carry a potential.
+        """
+        import copy as _copy
+
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, SeparableLagrangian
+
+        hamiltonian = getattr(self.components, "_hamiltonian_class", None)
+        if not isinstance(hamiltonian, SeparableHamiltonian):
+            raise NotImplementedError(
+                f"state_penalty needs a Hamiltonian that carries a potential; this problem has "
+                f"{type(hamiltonian).__name__}. A soft wall is a potential term V(x), so it can "
+                f"only be composed where V lives. Either build the problem with a "
+                f"SeparableHamiltonian, or fold the penalty into your own Hamiltonian's potential "
+                f"directly -- remembering that `potential` is REWARD-signed, so a cost enters "
+                f"NEGATIVE (#2002)."
+            )
+
+        previous = getattr(hamiltonian, "_potential", None)
+        penalty = self.state_penalty
+        scale = self.state_penalty_scale
+
+        def composed_potential(x: Any, t: float = 0.0) -> Any:
+            import numpy as _np
+
+            wall = scale * _np.asarray(penalty(x), dtype=float)
+            if previous is None:
+                squeezed = wall.squeeze()
+                return float(-squeezed) if squeezed.ndim == 0 else -squeezed
+            base = previous(x, t)
+            # Match the base's own contract exactly -- it decides the shape, not this wrapper.
+            if _np.size(wall) == _np.size(base):
+                wall = _np.reshape(wall, _np.shape(base))
+            return base - wall
+
+        composed = _copy.copy(hamiltonian)
+        composed._potential = composed_potential
+        self.components._hamiltonian_class = composed
+
+        # Keep every other holder of the potential in step, or a solver reads the unwalled copy.
+        # `isinstance`, not `hasattr`: a Lagrangian that carries no potential is a case this does
+        # not know how to compose into, and skipping it silently is the very defect being fixed --
+        # `HJBSemiLagrangianSolver` would then read an unwalled copy and report a clean answer to
+        # a different problem. `SeparableLagrangian` always sets `_potential`; anything else says
+        # so out loud.
+        lagrangian = getattr(self.components, "_lagrangian_class", None)
+        if isinstance(lagrangian, SeparableLagrangian):
+            walled_lagrangian = _copy.copy(lagrangian)
+            walled_lagrangian._potential = composed_potential
+            self.components._lagrangian_class = walled_lagrangian
+        elif lagrangian is not None:
+            raise NotImplementedError(
+                f"state_penalty composed into the Hamiltonian's potential, but this problem's "
+                f"Lagrangian is a {type(lagrangian).__name__}, which this composition does not "
+                f"know how to fold a potential into. `HJBSemiLagrangianSolver` reads the "
+                f"Lagrangian whenever the control cost is non-smooth, so leaving it unwalled "
+                f"would silently solve a different problem (#2002). Fold the penalty into that "
+                f"Lagrangian's own running cost instead -- there it is COST-signed and enters "
+                f"with a plus, the opposite of the Hamiltonian's V."
+            )
+        if getattr(self.components, "hamiltonian", None) is hamiltonian:
+            self.components.hamiltonian = composed
 
     def _initialize_functions(self, **kwargs: Any) -> None:
         """Initialize potential, initial density, and final value functions.

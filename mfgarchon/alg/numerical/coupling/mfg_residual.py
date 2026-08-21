@@ -53,9 +53,9 @@ class MFGResidual:
     The residual measures deviation from this fixed point:
         F(U, M) = [HJB_solve(M) - U, FP_solve(U) - M]
 
-    Source / nonlocal / obstacle terms (Issue #1361):
+    Source / nonlocal terms (Issue #1361):
         ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
-        ``obstacle`` are composed via the single-source helpers
+        are composed via the single-source helpers
         :func:`source_composition.compose_hjb_source` /
         :func:`source_composition.compose_fp_source` — the *same* copy the Picard
         ``FixedPointIterator`` consumes (no private second copy; that was the bug
@@ -68,12 +68,19 @@ class MFGResidual:
         differentiates through the source dependence automatically — no separate
         analytic Jacobian term is needed. At convergence ``U = U_new`` and
         ``M = M_new``, so the residual root coincides with the Picard fixed point
-        including the source/nonlocal/obstacle terms.
+        including the source/nonlocal terms.
 
-        Obstacle handling matches the Picard path exactly: the same
-        ``(1/eps) * max(0, psi)`` from the one ``compose_hjb_source``. Both coupling
-        paths therefore do not silently diverge -- that part holds and is the point
-        of #1361.
+        ~~Obstacle handling matches the Picard path exactly: the same
+        ``(1/eps) * max(0, psi)`` from the one ``compose_hjb_source``.~~
+        [CORRECTED 2026-08-21, #2002] There is no obstacle term on either path any more.
+        It resolved as a soft wall -- a cost that is ``alpha``-free and ``u``-free is a
+        POTENTIAL -- so it is ``problem.state_penalty``, composed into the Hamiltonian's
+        ``V`` at problem construction, and both couplers get it by evaluating ``H``
+        rather than by each remembering to consume a source closure. The branch is
+        deleted from ``compose_hjb_source``; ``problem.obstacle`` raises.
+
+        The rest holds and is the point of #1361: source and nonlocal come from one
+        implementation, so the two coupling paths cannot silently diverge on them.
 
         Two corrections to what this paragraph used to say (#2002):
 
@@ -204,7 +211,7 @@ class MFGResidual:
         Compute HJB solver output for given density.
 
         Issue #1361: composes ``source_term_hjb`` / ``nonlocal_operator`` /
-        ``obstacle`` from the ``(M, U_prev)`` arguments via the single-source
+        from the ``(M, U_prev)`` arguments via the single-source
         :func:`source_composition.compose_hjb_source` (shared with Picard) and
         passes it as ``source_term=`` when the solver accepts it. Composing from
         the arguments (option A) lets the finite-difference Jacobian differentiate
@@ -245,10 +252,10 @@ class MFGResidual:
                 if "source_term" not in self._hjb_sig_params:
                     raise NotImplementedError(
                         f"{type(self.hjb_solver).__name__}.solve_hjb_system does not accept "
-                        f"'source_term', but the problem defines a source / nonlocal / obstacle term. "
+                        f"'source_term', but the problem defines a source / nonlocal term. "
                         f"Silently dropping it in the Newton residual would solve the wrong problem "
                         f"(Issues #1424, #1430) — the Newton path must fail loud like Picard. Use an "
-                        f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator / obstacle."
+                        f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator."
                     )
                 kwargs["source_term"] = hjb_source
 

@@ -4,6 +4,10 @@ Constraint implementations for variational inequality problems.
 This module provides concrete implementations of the ConstraintProtocol for
 obstacle problems, bilateral constraints, and capacity constraints in MFG systems.
 
+"Obstacle" throughout this module means the VARIATIONAL INEQUALITY, never a region removed
+from the domain -- two unrelated senses that meet only in the name `ObstacleConstraint`, whose
+docstring carries the full disambiguation. Stated there once rather than here as well.
+
 Mathematical Background:
     Variational Inequality (VI): Find u ∈ K such that:
         ⟨F(u), v - u⟩ ≥ 0  ∀v ∈ K
@@ -56,6 +60,29 @@ __all__ = [
 class ObstacleConstraint:
     """
     Unilateral constraint for obstacle problems: u ≥ ψ or u ≤ ψ.
+
+    **"Obstacle" here is the VARIATIONAL INEQUALITY, not a region of the domain.** The word
+    carries two unrelated meanings in this package and they meet only in this class name:
+
+    - *Obstacle problem* (this class) constrains the VALUES a field may take -- ``u ≥ ψ``, with
+      a free boundary between the contact set and the continuation set. ψ is a level-set
+      function on the same grid as ``u``; nothing is removed from the domain.
+    - *Geometric obstacle* (``problem.obstacles``, ``obstacle_sdf``, maze walls, the GFDM
+      stencil-visibility machinery) removes a REGION from the domain. Nothing there constrains
+      the value of anything.
+
+    The name is kept because "obstacle problem" is the standard term for this variational
+    inequality, but a reader arriving from ``MFGProblem(obstacles=[Hypersphere(...)])`` -- the
+    same package, a nearly identical word -- will read it the other way. Hence this paragraph.
+
+    A third thing that is NEITHER: a soft wall, i.e. a cost for being somewhere. That is
+    ``alpha``-free and ``u``-free, so it is a POTENTIAL, and it lives at
+    ``problem.state_penalty``, composed into the Hamiltonian's V. It was called ``obstacle``
+    until #2002, where it was documented as this class's inequality and implemented as a
+    position penalty; that field now raises.
+
+    The orthography, stated once: the bare noun ``obstacle*`` is geometry, the ``*Constraint``
+    suffix is the variational inequality, and the potential has a name containing neither.
 
     Implements ConstraintProtocol for variational inequalities with single-sided
     bounds, common in HJB equations with running cost floors and capacity constraints

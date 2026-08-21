@@ -49,56 +49,59 @@ __all__ = [
 @runtime_checkable
 class ConstraintProtocol(Protocol):
     """
-        Protocol for inequality constraints in variational inequality problems.
+    Protocol for inequality constraints in variational inequality problems.
 
-        Defines the interface for constraints that restrict the solution space
-        to a convex set K ⊂ ℝ^N. Used in penalt
+    Constrains the VALUES a field may take. It has nothing to do with geometric obstacles
+    (`problem.obstacles`, `obstacle_sdf`), which remove a region from the domain, nor with a
+    soft wall (`problem.state_penalty`), which is a potential. `ObstacleConstraint`'s
+    docstring has the full three-way disambiguation; it is not repeated here.
 
-    y methods, projected Newton, and
-        active set algorithms for solving VIs.
+    Defines the interface for constraints that restrict the solution space
+    to a convex set K ⊂ ℝ^N. Used in penalty methods, projected Newton, and
+    active set algorithms for solving VIs.
 
-        **Mathematical Context**:
-            A constraint defines a convex set K and provides:
-                1. Projection: P_K(u) = argmin_{v ∈ K} ‖v - u‖
-                2. Feasibility test: u ∈ K?
-                3. Active set: A(u) = {i : constraint binds at u_i}
+    **Mathematical Context**:
+        A constraint defines a convex set K and provides:
+            1. Projection: P_K(u) = argmin_{v ∈ K} ‖v - u‖
+            2. Feasibility test: u ∈ K?
+            3. Active set: A(u) = {i : constraint binds at u_i}
 
-        **Usage in VI Solvers**:
-            >>> # Penalty method
-            >>> for iteration in range(max_iterations):
-            >>>     u_unconstrained = solve_unconstrained_step()
-            >>>     u = constraint.project(u_unconstrained)  # Enforce constraint
-            >>>
-            >>> # Active set method
-            >>> active = constraint.get_active_set(u, tol=1e-8)
-            >>> # Solve reduced problem on inactive set
+    **Usage in VI Solvers**:
+        >>> # Penalty method
+        >>> for iteration in range(max_iterations):
+        >>>     u_unconstrained = solve_unconstrained_step()
+        >>>     u = constraint.project(u_unconstrained)  # Enforce constraint
+        >>>
+        >>> # Active set method
+        >>> active = constraint.get_active_set(u, tol=1e-8)
+        >>> # Solve reduced problem on inactive set
 
-        **Properties Required**:
-            - Projection is idempotent: project(project(u)) = project(u)
-            - Projection is non-expansive: ‖P_K(u) - P_K(v)‖ ≤ ‖u - v‖
-            - Feasibility consistent: is_feasible(project(u)) = True
+    **Properties Required**:
+        - Projection is idempotent: project(project(u)) = project(u)
+        - Projection is non-expansive: ‖P_K(u) - P_K(v)‖ ≤ ‖u - v‖
+        - Feasibility consistent: is_feasible(project(u)) = True
 
-        **Concrete Implementations**:
-            - ObstacleConstraint: K = {u : u ≥ ψ} or {u : u ≤ ψ}
-            - BilateralConstraint: K = {u : ψ_lower ≤ u ≤ ψ_upper}
-            - RegionConstraint: K = {u : u satisfies constraints in region R}
+    **Concrete Implementations**:
+        - ObstacleConstraint: K = {u : u ≥ ψ} or {u : u ≤ ψ}
+        - BilateralConstraint: K = {u : ψ_lower ≤ u ≤ ψ_upper}
+        - RegionConstraint: K = {u : u satisfies constraints in region R}
 
-        Example:
-            >>> from mfgarchon.geometry.boundary.constraints import ObstacleConstraint
-            >>> import numpy as np
-            >>>
-            >>> # Capacity constraint: crowd density ≤ 0.5
-            >>> m_max = 0.5 * np.ones(100)
-            >>> constraint = ObstacleConstraint(m_max, constraint_type='upper')
-            >>>
-            >>> # Check if density is feasible
-            >>> m = np.random.rand(100)
-            >>> if not constraint.is_feasible(m):
-            >>>     m = constraint.project(m)  # Enforce capacity limit
-            >>>
-            >>> # Identify overcrowded locations
-            >>> active = constraint.get_active_set(m, tol=1e-6)
-            >>> print(f"{active.sum()} locations at capacity")
+    Example:
+        >>> from mfgarchon.geometry.boundary.constraints import ObstacleConstraint
+        >>> import numpy as np
+        >>>
+        >>> # Capacity constraint: crowd density ≤ 0.5
+        >>> m_max = 0.5 * np.ones(100)
+        >>> constraint = ObstacleConstraint(m_max, constraint_type='upper')
+        >>>
+        >>> # Check if density is feasible
+        >>> m = np.random.rand(100)
+        >>> if not constraint.is_feasible(m):
+        >>>     m = constraint.project(m)  # Enforce capacity limit
+        >>>
+        >>> # Identify overcrowded locations
+        >>> active = constraint.get_active_set(m, tol=1e-6)
+        >>> print(f"{active.sum()} locations at capacity")
     """
 
     def project(self, u: NDArray) -> NDArray:

@@ -44,7 +44,18 @@ one knob and there is now only one spelling. That second deletion goes beyond wh
 said ("update its numbers rather than deleting it"), because that instruction assumed the second
 side would still exist.
 
-**Remaining retirement condition.** When #2002 makes the compose-side term read ``v``:
+**ALL DEFECT PINS IN THIS FILE HAVE NOW RETIRED (2026-08-21).** #2002 resolved as a soft wall:
+``problem.obstacle`` raises, the compose-side branch is deleted, and a level-set cost is
+``problem.state_penalty``, composed into the Hamiltonian's potential where an ``alpha``-free,
+``u``-free term belongs. So the term this file pinned no longer exists to be wrong, and
+``test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u`` is gone by its own
+condition, as the two penalty-side pins went before it.
+
+What is left is the one test that was always the target rather than the defect. The file is kept
+for it and for this record: a green suite over ``max(0, Psi)`` is what the whole episode looked
+like from inside.
+
+~~**Remaining retirement condition.** When #2002 makes the compose-side term read ``v``:~~
 
 - ``test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u`` asserts
   current-wrong behaviour on purpose and must be **DELETED, not adjusted**.
@@ -57,7 +68,6 @@ side would still exist.
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.geometry.boundary import ObstacleConstraint
 
 EPS_DEFAULT = 1e6  # source_composition.py: getattr(problem, "_penalty_eps", 1e6)
@@ -115,29 +125,3 @@ def test_the_constraint_owner_exists_and_is_u_dependent():
     assert projected[3] == psi[3]
     # And the output genuinely depends on u.
     assert not np.allclose(projected, constraint.project(u + 5.0))
-
-
-def test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u():
-    """DEFECT (#2002). Delete on fix -- do not adjust.
-
-    Drives the real ``compose_hjb_source``, which receives ``u_current`` and could therefore
-    distinguish the two regimes. It does not.
-    """
-    x = _x()
-    m = np.zeros((NT, NX))
-
-    f_violated = compose_hjb_source(_ProblemStub(), m, U_VIOLATED)
-    f_satisfied = compose_hjb_source(_ProblemStub(), m, U_SATISFIED)
-    assert f_violated is not None, "sanity: an obstacle field must produce a closure"
-    assert f_satisfied is not None
-
-    out_violated = f_violated(0.0, x)
-    out_satisfied = f_satisfied(0.0, x)
-
-    assert out_satisfied.shape == (NX,), f"degenerate grid would vacuously pass: {out_satisfied.shape}"
-    assert np.array_equal(out_violated, out_satisfied), (
-        "the obstacle source distinguished the two regimes -- if #2002 is fixed, DELETE this test"
-    )
-    # Not merely small-but-different: positive where a constraint penalty must vanish.
-    assert np.all(out_satisfied > 0.0), "u is 9 above the obstacle everywhere; a penalty must be 0"
-    assert np.allclose(out_satisfied, (1.0 / EPS_DEFAULT) * PSI)

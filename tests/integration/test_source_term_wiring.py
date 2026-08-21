@@ -113,14 +113,21 @@ class TestExtendedPDEFields:
         assert problem.source_term_hjb is None
         assert problem.source_term_fp is None
         assert problem.nonlocal_operator is None
-        assert problem.obstacle is None
+        assert problem.state_penalty is None
 
-    def test_obstacle_field_stored(self):
+    def test_the_retired_obstacle_field_refuses(self):
+        """#2002: it named a variational inequality and delivered a position penalty."""
+        import pytest
+
+        with pytest.raises(NotImplementedError, match="RETIRED"):
+            _make_problem(obstacle=lambda x: np.zeros_like(np.atleast_1d(x)))
+
+    def test_state_penalty_field_stored(self):
         def obstacle(x):
             return x - 0.5
 
-        problem = _make_problem(obstacle=obstacle)
-        assert problem.obstacle is obstacle
+        problem = _make_problem(state_penalty=obstacle)
+        assert problem.state_penalty is obstacle
 
     def test_nonlocal_operator_field_stored(self):
         problem = _make_problem(nonlocal_operator="placeholder")
