@@ -281,10 +281,19 @@ def _solved(art: dict) -> bool:
     Absent means not applicable rather than not converged: cells that run no coupled iteration
     (construction checks) carry no such field and are unaffected.
     """
-    for field in ("picard_converged", "fdm_picard_converged"):
-        if field in art:
-            return bool(art[field]) and bool(art.get("fvm_picard_converged", True))
-    return True
+    # Every `*picard_converged` key both TRIGGERS and CONTRIBUTES. The hardcoded pair it replaced
+    # (#2041) had `fvm_picard_converged` in the `and` clause only, so it could veto a verdict but
+    # never cause one to be evaluated: an artifact whose ONLY convergence evidence said the solve
+    # did not converge fell through to `return True` -- the "absent means not applicable" branch,
+    # which is meant for construction cells that run no coupled iteration at all.
+    #
+    # Unreachable then, because the one prefixed caller writes both keys in a single expression.
+    # But `_picard_verdict(result, prefix=...)` takes an arbitrary prefix and nothing pairs them,
+    # so an FVM-only cell was one addition away. A field that can only ever WEAKEN a verdict must
+    # not be the field that triggers one; the trigger set and the veto set were written as if they
+    # were the same thing.
+    flags = [value for key, value in art.items() if key.endswith("picard_converged")]
+    return all(bool(value) for value in flags) if flags else True
 
 
 def _picard_verdict(result, prefix: str = "") -> dict:

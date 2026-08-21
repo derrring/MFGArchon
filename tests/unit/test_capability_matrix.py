@@ -830,3 +830,44 @@ def test_every_cell_that_solves_records_the_picard_verdict():
         n.name for n in solving if "_picard_verdict" not in ast.dump(n) and "_picard_verdict" not in ast.unparse(n)
     )
     assert not missing, f"these solve a problem and never record whether it converged: {missing}"
+
+
+# ---------------------------------------------------------------------------------------------
+# #2041: `_solved`'s truth table. The defect was that a key could VETO a verdict without being
+# able to TRIGGER one, so an artifact whose only convergence evidence was negative gated green.
+# Nothing here read `_solved` directly before -- `test_every_cell_that_solves_records_the_picard_
+# verdict` reads the SOURCE for record-and-gate presence, which is a different question.
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("artifact", "expected", "why"),
+    [
+        ({"picard_converged": True}, True, "the unprefixed flag, converged"),
+        ({"picard_converged": False}, False, "the unprefixed flag, not converged"),
+        ({"fdm_picard_converged": True, "fvm_picard_converged": True}, True, "both sides converged"),
+        ({"fdm_picard_converged": True, "fvm_picard_converged": False}, False, "the FVM side vetoes"),
+        ({"fdm_picard_converged": False, "fvm_picard_converged": True}, False, "the FDM side vetoes"),
+        (
+            {"fvm_picard_converged": False},
+            False,
+            "#2041: the ONLY evidence says it did not converge -- this gated GREEN before, because "
+            "the fvm_ key could veto but never trigger",
+        ),
+        ({"all_finite": True, "max_drift": 0.0}, True, "no flag at all: absent means NOT APPLICABLE"),
+        ({"picard_converged": None}, False, "None is not convergence; fail safe"),
+    ],
+)
+def test_solved_truth_table(cm, artifact, expected, why):
+    assert cm._solved(artifact) is expected, why
+
+
+def test_any_prefixed_convergence_flag_both_triggers_and_contributes(cm):
+    """The general property, so a NEW prefix added later is covered by construction.
+
+    `_picard_verdict(result, prefix=...)` takes an arbitrary prefix and nothing pairs the keys it
+    writes. The old hardcoded trigger pair meant a future `sl_`-prefixed cell would gate green on
+    an unconverged solve; this asserts the shape rather than the two prefixes that exist today.
+    """
+    assert cm._solved({"anything_at_all_picard_converged": False}) is False
+    assert cm._solved({"anything_at_all_picard_converged": True}) is True
