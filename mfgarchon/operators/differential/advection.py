@@ -400,25 +400,31 @@ class AdvectionOperator(LinearOperator):
         """
         Convert operator to scipy sparse matrix (CSR format).
 
-        **⚠️ IMPORTANT - Godunov Paradox Limitation**:
+        **REFUSES for scheme="upwind" (#1981).** The docstring used to carry this as a
+        recommendation -- "❌ Do NOT use for implicit solver Jacobians" -- and the code did not
+        enforce it, so the caller got a matrix instead of an error.
 
-        This method works by probing the operator with unit vectors (e_j).
-        For operators using Godunov upwinding (scheme="upwind" in tensor_calculus),
-        this can produce incorrect matrices due to state-dependent flux limiting.
+        There is no matrix to extract. Upwinding chooses its difference direction from the local
+        sign of the field, so the operator is NONLINEAR, and probing it with unit vectors
+        linearises it around impulses. Measured on a 9-point grid against the operator's own
+        ``__call__`` with a smooth field ``m = sin(2 pi x) + 2``:
 
-        **Why this matters**: Godunov upwind selects flux direction based on
-        sign(∇m), which changes between localized (unit vector) and distributed
-        (actual density) fields. The extracted matrix represents the operator
-        on impulses, not general smooth fields.
+            velocity      scheme     form         max|A @ m - op(m)|
+            constant 1    centered   either                0.000000
+            constant 1    upwind     either               27.313708
+            linear 1+2x   centered   either                0.000000
+            linear 1+2x   upwind     divergence           80.000000
+            linear 1+2x   upwind     gradient             47.798990
 
-        **Recommendation**:
-        - ✅ Use this method for periodic BC or exploratory analysis
-        - ❌ Do NOT use for implicit solver Jacobians
-        - ✅ For implicit solvers, use velocity-based upwind sparse construction
-          (see fp_fdm_alg_*.py modules)
+        `centered` is exact, so the extraction machinery is sound; the upwind matrix simply is not
+        the operator -- and not only for a varying velocity. #1981 reported the narrower symptom,
+        that `form="divergence"` and `form="gradient"` extract BYTE-IDENTICAL matrices under upwind
+        while `__call__` separates them by 48.97: the form is honoured by the operator and lost by
+        the extraction. That is one consequence of a matrix that does not represent the operator in
+        any case.
 
-        **See**: Godunov paradox and defect correction analysis for full
-        mathematical explanation and the Defect Correction solution strategy.
+        For an implicit solver, build the advection matrix from the VELOCITY sign rather than the
+        field's (see the `fp_fdm_alg_*` modules), which is linear and does have a matrix.
 
         Args:
             max_grid_size: Maximum allowed grid size (default 100,000).
@@ -430,6 +436,7 @@ class AdvectionOperator(LinearOperator):
 
         Raises:
             ValueError: If grid too large (N > max_grid_size)
+            NotImplementedError: If ``scheme="upwind"`` -- see above.
 
         Example:
             >>> # Exploratory use (understand stencil structure)
@@ -447,6 +454,21 @@ class AdvectionOperator(LinearOperator):
             - Suitable for analysis, not for production implicit solvers
         """
         import scipy.sparse as sparse
+
+        if self.scheme == "upwind":
+            raise NotImplementedError(
+                "AdvectionOperator.as_scipy_sparse() is not available for scheme='upwind' "
+                "(Issue #1981). Upwinding picks its difference direction from the local sign of "
+                "the field, so the operator is NONLINEAR and has no matrix; probing it with unit "
+                "vectors linearises it around impulses. Measured against this operator's own "
+                "__call__ on a smooth field, the extracted matrix is off by 27.3 even for a "
+                "CONSTANT velocity, and it loses `form=` entirely -- 'divergence' and 'gradient' "
+                "extract byte-identical matrices where __call__ separates them by 48.97.\n"
+                "\n"
+                "Use scheme='centered', which is exact here (0.000000 against __call__), or build "
+                "the advection matrix from the VELOCITY sign rather than the field's -- that is "
+                "linear and does have a matrix (see the `fp_fdm_alg_*` modules)."
+            )
 
         N = int(np.prod(self.field_shape))
 
