@@ -132,3 +132,130 @@ def test_a_hamiltonian_that_cannot_carry_a_potential_refuses():
 
     with pytest.raises(NotImplementedError, match="carries a potential"):
         problem._compose_state_penalty_into_potential()
+
+
+# ---------------------------------------------------------------------------------------------
+# What the composition must PRESERVE. Each of these was a blocker found in review, and each had
+# zero test discrimination before it was found: the composition rebuilt the Hamiltonian from five
+# of its six constructor parameters, and updated one of the two objects holding the potential.
+# ---------------------------------------------------------------------------------------------
+
+
+def _hamiltonian_with(population_index=0, potential=None):
+    return SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        potential=potential,
+        population_index=population_index,
+    )
+
+
+def _problem_with(hamiltonian, **kwargs):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
+    return MFGProblem(
+        model=Model(hamiltonian=hamiltonian, sigma=0.2),
+        domain=grid,
+        conditions=Conditions(
+            u_terminal=lambda x: np.zeros_like(np.atleast_1d(x)).squeeze(),
+            m_initial=lambda x: 1.0,
+            T=0.3,
+        ),
+        Nt=_NT,
+        **kwargs,
+    )
+
+
+def test_the_composition_preserves_every_hamiltonian_field():
+    """It COPIES; an earlier version rebuilt from five of six constructor parameters.
+
+    `population_index` is the one that was dropped, and it is live -- a multi-population problem
+    keyed to population k silently became population 0. Nothing caught it, because nothing here
+    used a non-default value.
+    """
+    composed = _problem_with(_hamiltonian_with(population_index=2), state_penalty=_wall).components._hamiltonian_class
+
+    assert composed.population_index == 2, "population_index was dropped by the rebuild"
+    assert isinstance(composed, SeparableHamiltonian)
+    assert composed.control_cost.lambda_ == 1.0
+
+
+def test_the_composition_does_not_mutate_the_callers_hamiltonian():
+    """The user's object is theirs. Copy, do not edit in place."""
+    original = _hamiltonian_with()
+    _problem_with(original, state_penalty=_wall)
+    assert original._potential is None, "the caller's Hamiltonian was modified"
+
+
+def test_the_lagrangian_gets_the_wall_too():
+    """`MFGComponents` snapshots the potential into `_lagrangian_class` BEFORE composition.
+
+    `HJBSemiLagrangianSolver` reads that copy whenever the control cost is non-smooth, so a
+    composition that updated the Hamiltonian alone left a solver silently unwalled -- the #2002
+    defect itself, in a second channel.
+    """
+    problem = _problem_with(_hamiltonian_with(), state_penalty=_wall)
+    lagrangian = problem.components._lagrangian_class
+
+    assert lagrangian is not None
+    assert lagrangian._potential is problem.components._hamiltonian_class._potential
+
+
+def test_a_zero_wall_is_a_no_op_on_a_vectorised_base_potential():
+    """The composed closure must return what the BASE returns, or it defeats the vectorisation
+    probe: `SeparableHamiltonian` calls the potential on a batch to decide whether it may.
+
+    A base that is not preserved here shows up as a silent per-point fallback at best, and the
+    base frozen at `x_batch[0]` at worst.
+    """
+
+    def vectorised_base(x, t=0.0):
+        column = np.atleast_1d(np.asarray(x, dtype=float))
+        values = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
+        return float(values[0]) if values.size == 1 else values
+
+    batch = np.linspace(0.0, 1.0, 5).reshape(-1, 1)
+    truth = np.sin(2 * np.pi * batch.ravel())
+
+    bare = _problem_with(_hamiltonian_with(potential=vectorised_base)).components._hamiltonian_class
+    walled = _problem_with(
+        _hamiltonian_with(potential=vectorised_base),
+        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x)),
+    ).components._hamiltonian_class
+
+    assert np.allclose(bare._evaluate_potential_batch(batch, 0.0), truth), "control: base is wrong"
+    assert np.allclose(walled._evaluate_potential_batch(batch, 0.0), truth), "a zero wall changed the base potential"
+    assert walled._potential_is_vectorized is bare._potential_is_vectorized, (
+        "the composition defeated the vectorisation probe"
+    )
+
+
+def test_the_composed_potential_returns_what_the_base_returns():
+    """Shape is the base's contract, not the wrapper's -- asserted directly.
+
+    The vectorisation test above does not discriminate this: with a batch-sized base a stray
+    `.squeeze()` is a no-op, so a mutant that squeezes regardless passes it. The failure only
+    shows on results of size 1, which is exactly the per-point call every solver makes.
+    """
+    seen = {}
+
+    def recording_base(x, t=0.0):
+        column = np.atleast_1d(np.asarray(x, dtype=float))
+        value = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
+        # Per-point callers wrap this in float(), so a size-1 answer must be scalar. That is the
+        # contract the wrapper has to reproduce, not one it may normalise away.
+        out = float(value[0]) if value.size == 1 else value
+        seen[np.shape(np.asarray(x))] = np.shape(out)
+        return out
+
+    composed = _problem_with(
+        _hamiltonian_with(potential=recording_base),
+        state_penalty=lambda x: np.zeros_like(np.atleast_1d(x)),
+    ).components._hamiltonian_class._potential
+
+    for probe in (np.array([0.3]), np.linspace(0.0, 1.0, 5).reshape(-1, 1)):
+        seen.clear()
+        out = composed(probe, 0.0)
+        base_shape = seen[np.shape(probe)]
+        assert np.shape(out) == base_shape, (
+            f"composed returned {np.shape(out)} where the base returned {base_shape} for x of "
+            f"shape {np.shape(probe)} -- the wrapper changed the base's contract"
+        )

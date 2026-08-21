@@ -10,3 +10,10 @@ while `+5` lowers it to `-1.419`. The obstacle branch is deleted from `compose_h
 same change. The **variational inequality** remains a reserved, deliberately unfinished slot:
 `HJBFDMSolver(constraint=ObstacleConstraint(...))` (#591, #2036, #2046). Note `obstacles` (plural,
 geometric regions excluded from the domain) is a different field and is unaffected.
+
+The composition COPIES the Hamiltonian rather than rebuilding it (an earlier draft rebuilt from
+five of its six constructor parameters and silently dropped `population_index`, which a
+multi-population problem needs), returns exactly what the base potential returns (so a vectorised
+base stays vectorised), and updates `_lagrangian_class` as well — `MFGComponents` snapshots the
+potential there at construction, and `HJBSemiLagrangianSolver` reads that copy whenever the control
+cost is non-smooth, so composing into the Hamiltonian alone left a solver silently unwalled.
