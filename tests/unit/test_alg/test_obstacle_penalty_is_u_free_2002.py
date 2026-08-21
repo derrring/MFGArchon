@@ -1,34 +1,53 @@
-"""#2002 -- ``problem.obstacle`` is a second, broken spelling of a concept the library
-already implements correctly.
+"""#2002 -- the ``obstacle`` field is documented as a variational inequality and implemented
+as a position penalty, in two places that differ by 1e10.
 
-``mfg_problem.py`` declares ``obstacle`` as the variational inequality ``v >= Psi(x)``.
-Two code paths act on it and **neither reads ``v``**:
+``mfg_problem.py`` declares ``obstacle`` as ``v >= Psi(x)``. Two code paths act on it and
+**neither reads ``v``**:
 
 ===========================================  =============================  ==============
 path                                         expression                     ``psi = 0.5``
 ===========================================  =============================  ==============
-``source_composition.py``                    ``(1 / eps) * max(0, psi)``    ``5.0e-07``
+``coupling/source_composition.py``           ``(1 / eps) * max(0, psi)``    ``5.0e-07``
 ``hjb_solvers/hjb_penalty.py``               ``penalty * max(0, psi)``      ``5.0e+03``
 ===========================================  =============================  ==============
 
-The headline number is that those are 1e10 apart, but the disqualifying property is
-cheaper to state: **the term is identical at a node that satisfies the constraint and a
-node that violates it**, because ``max(0, psi)`` contains no ``v``. It penalises position,
-not violation. A docstring in ``source_composition`` asserted the two paths "match rather
-than silently diverge"; that sentence is withdrawn (see the module docstring there).
+The headline number is that those are 1e10 apart, but the disqualifying property is cheaper to
+state and independent of both constants: **the term is identical at a node that satisfies the
+constraint and one that violates it**, because ``max(0, psi)`` contains no ``v``. It penalises
+position, not violation.
 
-What makes this a single-source-of-truth defect rather than a missing feature: the
-constraint IS implemented, correctly and reachably, under a different entry point --
-``ObstacleConstraint.project`` (#591), which ``HJBFDMSolver`` calls at ``hjb_fdm.py:499``
-and ``:762`` when constructed with ``constraint=``. So the repo holds two spellings of one
-concept, and the reachable-from-``problem.obstacle`` one is the broken one.
+**The two are not alternatives.** ``FixedPointIterator`` passes ``compose_hjb_source``'s closure
+as ``source_term=`` to whatever HJB solver it holds, and ``PenaltyHJBSolver.penalized_source``
+starts from ``base = source_term(t, x)`` and *adds* its own term. A problem with ``obstacle`` set
+and wrapped in ``PenaltyHJBSolver`` applies both, summed. The 1e10 ratio is therefore a statement
+about two spellings of one knob, not a discrepancy between rival implementations to reconcile.
 
-These tests pin the defect so that reading the (now corrected) comments cannot restore the
-belief that the paths agree. **Retirement condition:** when #2002 routes ``problem.obstacle``
-to the constraint machinery or makes it fail loud, ``test_obstacle_term_cannot_tell_satisfied_from_violated``
-and ``test_the_two_obstacle_scalings_are_1e10_apart`` must be DELETED, not adjusted -- they
-assert current-wrong behaviour on purpose. ``test_the_correct_owner_exists_and_is_u_dependent``
-survives; it describes the target.
+Why the defect survived. It is NOT that no test exercises ``problem.obstacle`` --
+``test_issue1285_newton_fail_loud.py`` builds a problem with ``obstacle=`` and asserts
+``u_gap < 1e-8``. But that test compares **Picard against coupled-Newton**, and both consume the
+one ``compose_hjb_source``, so no amount of ``v``-freedom in the shared term could make it fail.
+The field has end-to-end coverage of *path agreement* and none of *what the term computes*.
+
+A constraint-shaped alternative exists under a different entry point --
+``ObstacleConstraint.project`` (#591), applied by ``HJBFDMSolver(constraint=...)``. It reads ``u``
+and enforces ``u >= psi`` on what it returns, which is more than these terms can say. Calling it
+*correct* overstates it: that path clips post-hoc in 1D and returns an infeasible terminal slice
+in nD (#2036).
+
+**Retirement condition.** When #2002 makes either term read ``v``:
+
+- ``test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u`` and
+  ``test_penalty_source_is_byte_identical_for_violated_and_satisfied_v`` assert current-wrong
+  behaviour on purpose and must be **DELETED, not adjusted**.
+- ``test_the_two_obstacle_spellings_are_1e10_apart`` reddens under a ``v``-dependence fix too,
+  because the fix moves the measured values -- **update its expected values, do not delete it**.
+  It is the only guard on the two constructor defaults, and it fires on its own when the knobs
+  are unified without any ``v`` change (measured).
+- ``test_the_constraint_owner_exists_and_is_u_dependent`` survives; it describes the target.
+- Expect a fourth failure outside this file:
+  ``test_issue1361_source_composition.py::test_hjb_composition_matches_reference_and_delegate``
+  reimplements the production obstacle formula as its oracle (lines 58-71) and reddens under any
+  compose-side fix. That is the oracle needing the same edit, not a regression.
 """
 
 import numpy as np
@@ -37,24 +56,34 @@ from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_sour
 from mfgarchon.alg.numerical.hjb_solvers.hjb_penalty import PenaltyHJBSolver
 from mfgarchon.geometry.boundary import ObstacleConstraint
 
-# The two literal defaults, read off the call sites named in the module docstring.
 EPS_DEFAULT = 1e6  # source_composition.py: getattr(problem, "_penalty_eps", 1e6)
-PENALTY_DEFAULT = 1e4  # hjb_penalty.py: penalty_parameter
+PENALTY_DEFAULT = 1e4  # hjb_penalty.py: penalty_parameter -- NOT passed below, so the real
+# constructor default is what gets exercised.
 
 PSI = 0.5
 NX = 5
-# Two value functions on opposite sides of the obstacle. A term that enforced `v >= Psi`
-# would vanish on SATISFIED and be strictly positive on VIOLATED.
-U_VIOLATED = np.full((3, NX), -9.0)
-U_SATISFIED = np.full((3, NX), +9.0)
+NT = 3
+# Two value functions on opposite sides of the obstacle. A term enforcing `v >= Psi` vanishes on
+# SATISFIED and is strictly positive on VIOLATED. Neither may be all-zero: `max(0, psi - 0)` is
+# `max(0, psi)`, so a zero `v` cannot distinguish the fix from the defect.
+U_VIOLATED = np.full((NT, NX), -9.0)
+U_SATISFIED = np.full((NT, NX), +9.0)
 
 
 def _flat_obstacle(x):
     return np.full(np.asarray(x).shape[0], PSI)
 
 
+def _x():
+    return np.linspace(0.0, 1.0, NX).reshape(-1, 1)
+
+
 class _ProblemStub:
-    """Minimal duck type carrying only the fields the obstacle branch reads."""
+    """Minimal duck type carrying only the fields the obstacle branch reads.
+
+    Verified byte-equal against a real ``MFGProblem(obstacle=...)``; it omits ``_penalty_eps`` on
+    purpose so the ``getattr`` default is the thing under test.
+    """
 
     obstacle = staticmethod(_flat_obstacle)
     nonlocal_operator = None
@@ -62,11 +91,36 @@ class _ProblemStub:
     dt = 0.1
 
 
-def test_the_correct_owner_exists_and_is_u_dependent():
+class _SpyInner:
+    """Captures the ``source_term`` the wrapper hands down, per call."""
+
+    problem = _ProblemStub()
+    config = None
+
+    def __init__(self):
+        self.captured = []
+
+    def solve_hjb_system(self, M, U_T, U_prev, volatility_field=None, source_term=None):
+        self.captured.append(source_term)
+        return np.zeros_like(U_T)
+
+
+def _penalty_source_for(u_prev):
+    """Drive the real ``PenaltyHJBSolver`` with a given ``U_coupling_prev`` and return the
+    ``source_term`` closure it produced, evaluated on the grid."""
+    inner = _SpyInner()
+    solver = PenaltyHJBSolver(inner_solver=inner, obstacle=_flat_obstacle)
+    solver.solve_hjb_system(np.zeros((NT, NX)), np.zeros(NX), u_prev)
+    assert inner.captured, "sanity: the wrapper must pass a source_term down"
+    return inner.captured[-1](0.0, _x())
+
+
+def test_the_constraint_owner_exists_and_is_u_dependent():
     """``ObstacleConstraint.project`` enforces ``u >= psi`` and reads ``u``.
 
-    This is the test that SURVIVES the fix: it establishes that #2002 is a routing
-    defect, not a missing capability. Without it the other two read as "this is hard".
+    SURVIVES the fix. Establishes that #2002 is about a term that cannot express the constraint,
+    not about the constraint being hard to express. It says nothing about whether the solver path
+    around ``project`` solves an obstacle problem -- it does not; see #2036.
     """
     psi = np.full(NX, PSI)
     u = np.array([1.0, 0.2, 0.5, -3.0, 0.9])  # entries 1 and 3 violate u >= psi
@@ -75,7 +129,7 @@ def test_the_correct_owner_exists_and_is_u_dependent():
     projected = constraint.project(u)
 
     assert np.all(projected >= psi - 1e-14), f"project did not enforce u >= psi: {projected}"
-    # Feasible entries must be left alone -- a projection, not a clamp-everything.
+    # Feasible entries untouched -- a projection, not a clamp-everything.
     assert projected[0] == u[0]
     assert projected[4] == u[4]
     # Violated entries land ON the obstacle.
@@ -88,13 +142,11 @@ def test_the_correct_owner_exists_and_is_u_dependent():
 def test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u():
     """DEFECT (#2002). Delete on fix -- do not adjust.
 
-    Drives the REAL ``compose_hjb_source``, which receives ``u_current`` and therefore
-    could distinguish the two regimes. It does not: the obstacle branch computes
-    ``max(0, psi)``, so feeding it a ``u`` nine units BELOW the obstacle and one nine units
-    ABOVE returns the same array. Any fix that makes the term read ``v`` breaks this.
+    Drives the real ``compose_hjb_source``, which receives ``u_current`` and could therefore
+    distinguish the two regimes. It does not.
     """
-    x = np.linspace(0.0, 1.0, NX).reshape(-1, 1)
-    m = np.zeros((3, NX))
+    x = _x()
+    m = np.zeros((NT, NX))
 
     f_violated = compose_hjb_source(_ProblemStub(), m, U_VIOLATED)
     f_satisfied = compose_hjb_source(_ProblemStub(), m, U_SATISFIED)
@@ -104,52 +156,47 @@ def test_composed_hjb_source_is_byte_identical_for_violated_and_satisfied_u():
     out_violated = f_violated(0.0, x)
     out_satisfied = f_satisfied(0.0, x)
 
-    # The defect, stated as the property that disqualifies the term.
+    assert out_satisfied.shape == (NX,), f"degenerate grid would vacuously pass: {out_satisfied.shape}"
     assert np.array_equal(out_violated, out_satisfied), (
-        "the obstacle source distinguished the two regimes -- if #2002 is fixed, DELETE "
-        "this test rather than loosening it"
+        "the obstacle source distinguished the two regimes -- if #2002 is fixed, DELETE this test"
     )
-    # And it is not merely small-but-different: it is positive where it should vanish.
-    assert np.all(out_satisfied > 0.0), (
-        "u is 9 above the obstacle everywhere, so a constraint penalty must be exactly 0"
-    )
+    # Not merely small-but-different: positive where a constraint penalty must vanish.
+    assert np.all(out_satisfied > 0.0), "u is 9 above the obstacle everywhere; a penalty must be 0"
     assert np.allclose(out_satisfied, (1.0 / EPS_DEFAULT) * PSI)
 
 
-def test_penalty_solver_source_is_u_free_and_1e10_from_the_other_path():
+def test_penalty_source_is_byte_identical_for_violated_and_satisfied_v():
     """DEFECT (#2002). Delete on fix -- do not adjust.
 
-    Drives the REAL ``PenaltyHJBSolver``, capturing the ``source_term`` it hands to its
-    inner solver, and evaluates it. Pins both halves: no ``v`` dependence, and a scaling
-    1e10 from ``compose_hjb_source`` -- one divides by ``eps`` (defaulted LARGE, so the
-    coefficient is 1e-6), the other multiplies by ``penalty_parameter`` (1e4).
+    ``PenaltyHJBSolver.solve_hjb_system`` receives ``U_coupling_prev``, so the ``v`` its own
+    withdrawn docstring promised to use is already in hand. Drive it twice with ``v`` on opposite
+    sides of the obstacle and compare the closures it produced.
+
+    The comparison must use a NON-ZERO ``v``: with ``v = 0`` the fix ``max(0, psi - v)`` collapses
+    to ``max(0, psi)`` and this test would pass on a fixed implementation.
     """
-    x = np.linspace(0.0, 1.0, NX).reshape(-1, 1)
-    captured = {}
+    out_violated = _penalty_source_for(U_VIOLATED)
+    out_satisfied = _penalty_source_for(U_SATISFIED)
 
-    class _SpyInner:
-        problem = _ProblemStub()
-        config = None
-
-        def solve_hjb_system(self, M, U_T, U_prev, volatility_field=None, source_term=None):
-            captured["source_term"] = source_term
-            return np.zeros_like(U_T)
-
-    solver = PenaltyHJBSolver(
-        inner_solver=_SpyInner(),
-        obstacle=_flat_obstacle,
-        penalty_parameter=PENALTY_DEFAULT,
+    assert out_satisfied.shape == (NX,), f"degenerate grid would vacuously pass: {out_satisfied.shape}"
+    assert np.array_equal(out_violated, out_satisfied), (
+        "the penalty source distinguished v = -9 from v = +9 -- if #2002 is fixed, DELETE this test"
     )
-    solver.solve_hjb_system(np.zeros((3, NX)), np.zeros(NX), np.zeros((3, NX)))
+    assert np.all(out_satisfied > 0.0), "v is 9 above the obstacle everywhere; a penalty must be 0"
 
-    penalized = captured["source_term"]
-    assert penalized is not None, "sanity: the wrapper must pass a source_term down"
 
-    # The closure takes (t, x) only -- there is nowhere for v to enter.
-    value = penalized(0.0, x)
-    assert np.allclose(value, PENALTY_DEFAULT * PSI), f"hjb_penalty term moved: {value}"
+def test_the_two_obstacle_spellings_are_1e10_apart():
+    """Pins BOTH constructor defaults. Reddens under a ``v``-dependence fix as well -- update its
+    numbers rather than deleting it -- and fires alone when the knobs are unified.
 
-    # The other path, measured through its own real code, on the same obstacle.
-    other = compose_hjb_source(_ProblemStub(), np.zeros((3, NX)), U_VIOLATED)(0.0, x)
-    assert np.allclose(other, (1.0 / EPS_DEFAULT) * PSI)
-    assert np.allclose(value / other, 1.0e10), f"the gap between the two paths moved: {value / other}"
+    Neither default is passed in by the caller here: ``_ProblemStub`` omits ``_penalty_eps`` so
+    ``source_composition``'s ``getattr`` default fires, and ``_penalty_source_for`` omits
+    ``penalty_parameter`` so the constructor default fires. Changing either silently moves the
+    gap and reddens this test.
+    """
+    compose_out = compose_hjb_source(_ProblemStub(), np.zeros((NT, NX)), U_VIOLATED)(0.0, _x())
+    penalty_out = _penalty_source_for(U_VIOLATED)
+
+    assert np.allclose(compose_out, (1.0 / EPS_DEFAULT) * PSI), f"eps default moved: {compose_out}"
+    assert np.allclose(penalty_out, PENALTY_DEFAULT * PSI), f"penalty default moved: {penalty_out}"
+    assert np.allclose(penalty_out / compose_out, 1.0e10), f"the gap moved: {penalty_out / compose_out}"

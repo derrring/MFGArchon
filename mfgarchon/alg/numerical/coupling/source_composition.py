@@ -27,27 +27,32 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
   time-``t`` slice of the value function (Issue #1259), matching
   ``graph_mfg_solver``'s sign convention.
 - **Obstacle** computes ``(1/eps) * max(0, psi)`` (``eps = problem._penalty_eps`` if set, else
-  ``1e6``). Two sentences that used to follow this were false and are withdrawn (#2002):
+  ``1e6``), and **both coupling paths -- Picard (``FixedPointIterator``) and coupled-Newton
+  (``MFGResidual``) -- use this one copy, so they do match rather than silently diverge.** That
+  is this module's whole purpose per the opening paragraph, and it holds: both call
+  ``compose_hjb_source``. The referent is spelled out here because a reader (this one) took
+  "both coupling paths" for the two *obstacle* spellings and wrongly withdrew the sentence.
 
-  - *"Proper handling is the ``PenaltyHJBSolver`` wrapper (#924)"* — that wrapper carries the same
-    stub and says so in its own comment, *"For now, we apply a static obstacle penalty"*. The
-    pointer sent a reader to a second copy.
-  - *"both coupling paths use this same approximation so they* **match** *rather than silently
-    diverge"* — same formula SHAPE, scalings **1e10 apart**. Measured at ``psi = 0.5``:
-    ``source_composition`` gives 5.000000e-07 (``1/eps``, ``eps = 1e6``) and ``hjb_penalty`` gives
-    5.000000e+03 (``penalty_param``, ``1e4``). One divides by its knob, the other multiplies. The
-    sentence asserting they agree is what would stop someone checking.
+  One sentence that used to follow IS false and is withdrawn (#2002): *"Proper handling is the
+  ``PenaltyHJBSolver`` wrapper (#924)"*. That wrapper carries the same stub and says so in its
+  own comment, *"For now, we apply a static obstacle penalty"*; its docstring separately
+  described the intended ``(1/eps) * max(0, Psi - v)`` rather than the term it computes, and
+  scales by ``penalty_parameter`` (``1e4``) where this path divides by ``eps`` -- 1e10 apart at
+  the defaults. The pointer sent a reader to a second, differently-scaled copy.
 
-  Neither expression can enforce what ``mfg_problem.py`` declares. Penalising ``v >= Psi`` needs
-  ``max(0, Psi - v)``, positive exactly when the constraint is broken; ``max(0, Psi)`` contains no
-  ``v`` at all and is positive wherever ``Psi > 0`` regardless. **It penalises position, not
-  violation** — verified, the value is unchanged at ``v = -10, 0, +10``.
+  **What the ``v = 0`` label understates.** ``max(0, psi)`` contains no ``v`` at all, so it is
+  positive wherever ``Psi > 0`` whether or not ``v >= Psi`` holds: it penalises position, not
+  violation, and is identical at a node satisfying the constraint and one violating it. Not an
+  approximation that degrades with distance from ``v = 0`` -- a different term. Verified through
+  this function: ``u`` nine units below the obstacle and nine above return byte-identical arrays.
 
-  The ``v`` is available here: ``_problem_hjb_source_terms`` is called with ``u_current`` three
-  lines above, and the ``nonlocal`` branch in the same closure uses ``nonlocal_operator @ v_t``.
-  What a fix owes, and why the decision is not this docstring's to make, is in #2002 — it turns on
-  whether the intent is a constraint or a state penalty ``V(x)``, and if the latter the term is
-  ``u``-free and belongs in the Hamiltonian's potential instead.
+  The ``v`` is available here: ``u_current`` is bound above and the ``nonlocal`` branch in the
+  same closure uses ``nonlocal_operator @ v_t``. What a fix owes is in #2002; it turns on whether
+  the intent is a constraint or a state penalty ``V(x)``, and if the latter the term is ``u``-free
+  and belongs in the Hamiltonian's potential instead. A constraint-shaped alternative already
+  exists under a different entry point -- ``ObstacleConstraint`` with
+  ``HJBFDMSolver(constraint=...)`` (#591) -- though it has defects of its own; see #2036.
+
 - The HJB source passes the **value-function slice** ``v_t`` to
   ``source_term_hjb(x, m, v, t)`` (Issue #1382), matching the documented
   ``Callable(x, m, v, t)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),

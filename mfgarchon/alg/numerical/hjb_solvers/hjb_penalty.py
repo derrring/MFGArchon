@@ -125,10 +125,16 @@ class PenaltyHJBSolver(BaseHJBSolver):
            so it cannot push ``v`` anywhere in particular. See the comment at the
            expression itself.
 
-           The constraint IS implemented correctly elsewhere --
+           A constraint-shaped alternative exists elsewhere --
            :meth:`~mfgarchon.geometry.boundary.ObstacleConstraint.project` (#591), which
-           ``HJBFDMSolver`` applies when constructed with ``constraint=``. Prefer that path
-           until #2002 resolves which owner survives.
+           ``HJBFDMSolver`` applies when constructed with ``constraint=``. It does read ``u``
+           and does enforce ``u >= psi`` on what it returns, which is more than this term can
+           say. **It is not, however, an obstacle-problem solver, and "correct" overstates it**
+           (#2036): in 1D the projection runs after the backward sweep finishes, so the result
+           is exactly ``max(U_free, psi)`` -- the unconstrained solution clipped, with no free
+           boundary resolved; in nD it runs inside the time loop and does feed back, but the
+           terminal slice never passes through it and can violate the constraint. Prefer it
+           over this term while #2002 is open, knowing both limits.
         """
         penalty_param = self._penalty
         obstacle_fn = self._obstacle
