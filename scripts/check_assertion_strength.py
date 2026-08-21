@@ -120,7 +120,62 @@ def scan(root: Path):
     return weak, total
 
 
+_CONTROL_WEAK = '''
+def test_only_shape():
+    result = compute()
+    assert result is not None
+    assert result.shape == (3, 3)
+    assert np.all(np.isfinite(result))
+'''
+
+_CONTROL_STRONG = '''
+def test_the_value_is_right():
+    result = compute()
+    assert np.allclose(result, EXACT, atol=1e-12)
+'''
+
+
+def self_test() -> int:
+    """Positive control, two-sided. A count is evidence only if the classifier still discriminates.
+
+    One-sided is not enough in either direction here. A classifier that flagged EVERYTHING would
+    satisfy "does it catch a weak test" while making the percentage meaningless, and one that had
+    gone inert would report a falling number that reads as the suite improving -- which is the
+    direction this ratchet is watched in.
+    """
+    import tempfile
+
+    failures = []
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "test_weak_control.py").write_text(_CONTROL_WEAK)
+        weak, total = scan(root)
+        if total != 1:
+            failures.append(f"  collection: saw {total} test functions in a file with exactly 1")
+        if not weak:
+            failures.append("  weak: did not flag a test asserting only shape/finiteness/not-None")
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "test_strong_control.py").write_text(_CONTROL_STRONG)
+        weak, total = scan(root)
+        if total != 1:
+            failures.append(f"  collection: saw {total} test functions in a file with exactly 1")
+        if weak:
+            failures.append(f"  strong: flagged a test that compares against an exact value: {weak}")
+
+    if failures:
+        print("SELF-TEST FAILED -- the classifier no longer separates weak assertions from strong:")
+        print("\n".join(failures))
+        return 1
+    print("self-test OK -- flags the weak control, leaves the strong one alone")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        return self_test()
+
     weak, total = scan(REPO / "tests")
     print(
         f"assertion strength : {len(weak)} of {total} defined test functions assert only what a "
