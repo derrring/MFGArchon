@@ -26,10 +26,28 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 - **Nonlocal term** applied as ``s += nonlocal_operator @ v_t`` with ``v_t`` the
   time-``t`` slice of the value function (Issue #1259), matching
   ``graph_mfg_solver``'s sign convention.
-- **Obstacle** uses the approximate ``v = 0`` penalty ``(1/eps) * max(0, psi)``
-  (``eps = problem._penalty_eps`` if set, else ``1e6``). Proper handling is the
-  ``PenaltyHJBSolver`` wrapper (#924); both coupling paths use this same
-  approximation so they **match** rather than silently diverge.
+- **Obstacle** computes ``(1/eps) * max(0, psi)`` (``eps = problem._penalty_eps`` if set, else
+  ``1e6``). Two sentences that used to follow this were false and are withdrawn (#2002):
+
+  - *"Proper handling is the ``PenaltyHJBSolver`` wrapper (#924)"* — that wrapper carries the same
+    stub and says so in its own comment, *"For now, we apply a static obstacle penalty"*. The
+    pointer sent a reader to a second copy.
+  - *"both coupling paths use this same approximation so they* **match** *rather than silently
+    diverge"* — same formula SHAPE, scalings **1e10 apart**. Measured at ``psi = 0.5``:
+    ``source_composition`` gives 5.000000e-07 (``1/eps``, ``eps = 1e6``) and ``hjb_penalty`` gives
+    5.000000e+03 (``penalty_param``, ``1e4``). One divides by its knob, the other multiplies. The
+    sentence asserting they agree is what would stop someone checking.
+
+  Neither expression can enforce what ``mfg_problem.py`` declares. Penalising ``v >= Psi`` needs
+  ``max(0, Psi - v)``, positive exactly when the constraint is broken; ``max(0, Psi)`` contains no
+  ``v`` at all and is positive wherever ``Psi > 0`` regardless. **It penalises position, not
+  violation** — verified, the value is unchanged at ``v = -10, 0, +10``.
+
+  The ``v`` is available here: ``_problem_hjb_source_terms`` is called with ``u_current`` three
+  lines above, and the ``nonlocal`` branch in the same closure uses ``nonlocal_operator @ v_t``.
+  What a fix owes, and why the decision is not this docstring's to make, is in #2002 — it turns on
+  whether the intent is a constraint or a state penalty ``V(x)``, and if the latter the term is
+  ``u``-free and belongs in the Hamiltonian's potential instead.
 - The HJB source passes the **value-function slice** ``v_t`` to
   ``source_term_hjb(x, m, v, t)`` (Issue #1382), matching the documented
   ``Callable(x, m, v, t)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),
