@@ -1903,7 +1903,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """
         import copy as _copy
 
-        from mfgarchon.core.hamiltonian import SeparableHamiltonian
+        from mfgarchon.core.hamiltonian import SeparableHamiltonian, SeparableLagrangian
 
         hamiltonian = getattr(self.components, "_hamiltonian_class", None)
         if not isinstance(hamiltonian, SeparableHamiltonian):
@@ -1938,11 +1938,26 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.components._hamiltonian_class = composed
 
         # Keep every other holder of the potential in step, or a solver reads the unwalled copy.
+        # `isinstance`, not `hasattr`: a Lagrangian that carries no potential is a case this does
+        # not know how to compose into, and skipping it silently is the very defect being fixed --
+        # `HJBSemiLagrangianSolver` would then read an unwalled copy and report a clean answer to
+        # a different problem. `SeparableLagrangian` always sets `_potential`; anything else says
+        # so out loud.
         lagrangian = getattr(self.components, "_lagrangian_class", None)
-        if lagrangian is not None and hasattr(lagrangian, "_potential"):
+        if isinstance(lagrangian, SeparableLagrangian):
             walled_lagrangian = _copy.copy(lagrangian)
             walled_lagrangian._potential = composed_potential
             self.components._lagrangian_class = walled_lagrangian
+        elif lagrangian is not None:
+            raise NotImplementedError(
+                f"state_penalty composed into the Hamiltonian's potential, but this problem's "
+                f"Lagrangian is a {type(lagrangian).__name__}, which this composition does not "
+                f"know how to fold a potential into. `HJBSemiLagrangianSolver` reads the "
+                f"Lagrangian whenever the control cost is non-smooth, so leaving it unwalled "
+                f"would silently solve a different problem (#2002). Fold the penalty into that "
+                f"Lagrangian's own running cost instead -- there it is COST-signed and enters "
+                f"with a plus, the opposite of the Hamiltonian's V."
+            )
         if getattr(self.components, "hamiltonian", None) is hamiltonian:
             self.components.hamiltonian = composed
 
