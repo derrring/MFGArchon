@@ -1,14 +1,13 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 6138,
-    "commit": "f961db90",
+    "collected": 6384,
+    "commit": "03e41944",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
-    ],
-    "_note": "markers gained `not manual` in #1909; the population is UNCHANGED -- measured 6002 collected and 388 deselected under both sets, because every `manual` test also carries `slow` -- so the kill counts recorded here remain valid without a re-sweep"
+    ]
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
@@ -17,32 +16,32 @@
       "status": "ok"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 9,
+      "kill_count": 10,
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "status": "ok"
     },
     "bc_uniform_dispatch_reads_as_mixed": {
-      "kill_count": 31,
+      "kill_count": 43,
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
       "status": "ok"
     },
     "diffusion_field_2x": {
-      "kill_count": 6,
+      "kill_count": 7,
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 145,
+      "kill_count": 162,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 20,
+      "kill_count": 29,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 90,
+      "kill_count": 128,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -52,32 +51,32 @@
       "status": "ok"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 22,
+      "kill_count": 58,
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
       "status": "ok"
     },
     "godunov_branch_swap": {
-      "kill_count": 19,
+      "kill_count": 29,
       "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
       "status": "ok"
     },
     "grid_interval_count_reads_as_points": {
-      "kill_count": 28,
+      "kill_count": 35,
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 44,
+      "kill_count": 57,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs[\"Dx\"] reads it (:484), cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 13,
+      "kill_count": 22,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
     "m_initial_1d_counting_measure": {
-      "kill_count": 8,
+      "kill_count": 18,
       "owner": "m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
       "status": "ok"
     },
@@ -87,8 +86,8 @@
       "status": "ok"
     },
     "neumann_low_wall_flux_sign": {
-      "kill_count": 23,
-      "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and ghost = interior + dx*v, the same expression as the high wall (#1262). The line's own comment states the convention it replaced: \"Issue #1262: was -= (du/dx sign), now += (du/dn sign)\".",
+      "kill_count": 37,
+      "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
       "status": "ok"
     },
     "newton_residual_grid_scaling_dropped": {
@@ -97,22 +96,22 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 40,
+      "kill_count": 41,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
       "status": "ok"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 3,
+      "kill_count": 6,
       "owner": "The particle FP step measures total mass as `sum(density) * dV` with dV the grid volume element, and the KDE normalisation divides by it so the density on the grid integrates to 1 (`FPParticleSolver._compute_total_mass`, the scalar-spacing branch; consumed by `_normalize_density` at :823 and by the ",
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 19,
+      "kill_count": 21,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 36,
+      "kill_count": 45,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
@@ -122,7 +121,7 @@
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 4,
+      "kill_count": 8,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
