@@ -120,19 +120,19 @@ def scan(root: Path):
     return weak, total
 
 
-_CONTROL_WEAK = '''
+_CONTROL_WEAK = """
 def test_only_shape():
     result = compute()
     assert result is not None
     assert result.shape == (3, 3)
     assert np.all(np.isfinite(result))
-'''
+"""
 
-_CONTROL_STRONG = '''
+_CONTROL_STRONG = """
 def test_the_value_is_right():
     result = compute()
     assert np.allclose(result, EXACT, atol=1e-12)
-'''
+"""
 
 
 def self_test() -> int:

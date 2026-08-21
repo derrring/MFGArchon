@@ -1,13 +1,16 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 6384,
-    "commit": "03e41944",
+    "collected": 6420,
+    "commit": "27124db1",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ]
+  },
+  "_notes": {
+    "bc_uniform_dispatch_reads_as_mixed": "43 -> 12 on 2026-08-22, and the fall is the FIX rather than a regression. #2042 made the per-face ghost path forward a uniform BC's single segment instead of rebuilding a partial copy, so the two paths now agree where they used to diverge (Robin became a bit-identical Dirichlet; a callable Neumann value became its static default). The 31 tests that stopped killing this mutation were detecting THAT DIVERGENCE. They did not get weaker -- the thing they detected got smaller. Attributed by A/B on the same mutation and anchor: 43 on main, 12 with #2042, product code the only difference. What still kills it is the order > 2 path, which #2042 did not touch and which the mutation's `verify` probe uses. GENERAL POINT, and the reason this note exists rather than a bare number: fixing a defect can LOWER a discrimination score, because the defect was what made the convention observable. The ratchet reads any fall as a regression and cannot see that difference -- only a note can."
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
@@ -21,7 +24,7 @@
       "status": "ok"
     },
     "bc_uniform_dispatch_reads_as_mixed": {
-      "kill_count": 43,
+      "kill_count": 12,
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
       "status": "ok"
     },
@@ -31,7 +34,7 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 162,
+      "kill_count": 163,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
@@ -41,7 +44,7 @@
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 128,
+      "kill_count": 129,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -56,7 +59,7 @@
       "status": "ok"
     },
     "godunov_branch_swap": {
-      "kill_count": 29,
+      "kill_count": 31,
       "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
       "status": "ok"
     },
@@ -86,7 +89,7 @@
       "status": "ok"
     },
     "neumann_low_wall_flux_sign": {
-      "kill_count": 37,
+      "kill_count": 39,
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
       "status": "ok"
     },

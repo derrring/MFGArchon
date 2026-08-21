@@ -1,7 +1,7 @@
 {
   "_measured_at": {
-    "collected": 6384,
-    "commit": "03e41944",
+    "collected": 6420,
+    "commit": "27124db1",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -9,7 +9,7 @@
     ]
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
-  "baseline_seconds": 131.2,
+  "baseline_seconds": 136.4,
   "killed_by": {
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M": [
       "m_initial_1d_counting_measure",
@@ -535,15 +535,6 @@
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
-    "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_high_wall_ghost_uses_general_robin_not_neumann": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
-    "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_low_wall_ghost_uses_general_robin_not_neumann": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
-    "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_uniform_matches_mixed_segment_path": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
     "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient": [
       "grid_spacing_uses_point_count"
     ],
@@ -673,12 +664,8 @@
       "upwind_jacobian_tiebreak_inverted",
       "neumann_low_wall_flux_sign"
     ],
-    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[False]": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]": [
-      "godunov_branch_swap",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-dirichlet]": [
       "godunov_branch_swap",
@@ -740,7 +727,7 @@
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
-    "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_obstacle": [
+    "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty": [
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
@@ -1180,6 +1167,9 @@
     "tests/unit/test_check_single_source.py::test_repo_baseline_is_current": [
       "drift_coefficient_2x"
     ],
+    "tests/unit/test_config/test_array_validation.py::TestMFGArrays::test_M_solution_mass_conservation_warning_final": [
+      "fp_initial_condition_written_at_final_index"
+    ],
     "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaled_norm_converges_to_the_continuum_l2_norm[201]": [
       "newton_residual_grid_scaling_dropped"
     ],
@@ -1355,6 +1345,13 @@
     "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_a_wall_is_a_cost_not_a_reward": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local": [
+      "diffusion_scalar_2x",
+      "godunov_branch_swap"
+    ],
     "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma": [
       "diffusion_scalar_2x"
     ],
@@ -1417,6 +1414,12 @@
       "neumann_low_wall_flux_sign"
     ],
     "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_the_two_paths_agree_on_an_inhomogeneous_flux_at_depth": [
+      "neumann_low_wall_flux_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_no_default_robin_2042.py::test_a_uniform_bc_gives_the_same_answer_on_either_path[neumann-callable]": [
+      "neumann_low_wall_flux_sign"
+    ],
+    "tests/unit/test_geometry/boundary/test_no_default_robin_2042.py::test_a_uniform_bc_gives_the_same_answer_on_either_path[neumann-scalar]": [
       "neumann_low_wall_flux_sign"
     ],
     "tests/unit/test_geometry/boundary/test_normal_drift_provider_1970.py::test_the_constructor_coefficient_wins_over_the_state": [
@@ -1484,67 +1487,49 @@
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_a_singular_coefficient_raises_rather_than_mirroring": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[-1.5]": [
-      "bc_uniform_dispatch_reads_as_mixed",
       "neumann_low_wall_flux_sign"
     ],
-    "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[0.0]": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[2.0]": [
-      "bc_uniform_dispatch_reads_as_mixed",
       "neumann_low_wall_flux_sign"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-0.0-1.0-0.7]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-0.5-2.0--0.3]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-1.0-0.3-0.0]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-1.0-0.3-0.7]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-2.0-0.5-0.0]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-3.0--0.4-1.1]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-0.0-1.0-0.7]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-0.5-2.0--0.3]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-1.0-0.3-0.0]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-1.0-0.3-0.7]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-2.0-0.5-0.0]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-3.0--0.4-1.1]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/grids/test_tensor_grid_regions.py::TestBoundaryRegionMarking::test_3d_boundary_naming": [
       "grid_interval_count_reads_as_points"
@@ -1670,16 +1655,13 @@
       "neumann_low_wall_flux_sign"
     ],
     "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.01]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.05]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.5]": [
-      "ghost_spacing_ignored",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_spacing_accepts_a_scalar_or_one_value_per_axis[0.05]": [
       "ghost_spacing_ignored",
@@ -1752,9 +1734,6 @@
     "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v": [
       "neumann_low_wall_flux_sign"
     ],
-    "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_a_constant_field_is_unchanged_by_the_periodic_fill[uniform-path]": [
-      "bc_uniform_dispatch_reads_as_mixed"
-    ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[mixed-path-1]": [
       "periodic_wrap_endpoint_inverted"
     ],
@@ -1765,28 +1744,22 @@
       "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-1]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-2]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-3]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[1]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[2]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[3]": [
-      "periodic_wrap_endpoint_inverted",
-      "bc_uniform_dispatch_reads_as_mixed"
+      "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_3_dirichlet_1d": [
       "bc_uniform_dispatch_reads_as_mixed"
@@ -1961,7 +1934,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
       ],
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "seconds": 133.6,
+      "seconds": 152.2,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
     },
@@ -1980,61 +1953,30 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
-      "seconds": 130.8,
+      "seconds": 150.0,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
     },
     "bc_uniform_dispatch_reads_as_mixed": {
-      "kill_count": 43,
+      "kill_count": 12,
       "killed": [
-        "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_high_wall_ghost_uses_general_robin_not_neumann",
-        "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_low_wall_ghost_uses_general_robin_not_neumann",
-        "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestUniformRobinGhostAlphaBeta::test_uniform_matches_mixed_segment_path",
-        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[False]",
-        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]",
         "tests/unit/test_alg/test_weno_family.py::TestWenoHJDerivativeCorrectness::test_gradient_accurate_at_boundary_nodes",
         "tests/unit/test_alg/test_weno_ghost_order.py::test_weno_ghost_cells_work",
         "tests/unit/test_alg/test_weno_mms_order_1991.py::test_advection_dominated_order_reaches_weno5",
         "tests/unit/test_alg/test_weno_mms_order_1991.py::test_diffusion_dominated_order_is_two",
         "tests/unit/test_alg/test_weno_one_dimensional_solve_2021.py::test_the_2d_solve_still_reproduces_the_pre_consolidation_output",
         "tests/unit/test_alg/test_weno_one_dimensional_solve_2021.py::test_the_3d_solve_runs_at_all",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_a_singular_coefficient_raises_rather_than_mirroring",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[-1.5]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[0.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_robin_with_alpha_zero_beta_one_is_the_neumann_condition[2.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-0.0-1.0-0.7]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-0.5-2.0--0.3]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-1.0-0.3-0.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-1.0-0.3-0.7]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-2.0-0.5-0.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[max-3.0--0.4-1.1]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-0.0-1.0-0.7]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-0.5-2.0--0.3]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-1.0-0.3-0.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-1.0-0.3-0.7]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-2.0-0.5-0.0]",
-        "tests/unit/test_geometry/boundary/test_robin_outward_normal_1907.py::test_the_ghost_satisfies_the_declared_condition_at_both_walls[min-3.0--0.4-1.1]",
         "tests/unit/test_geometry/test_ghost_buffer_order.py::test_order_3_works",
         "tests/unit/test_geometry/test_ghost_buffer_order.py::test_order_5_works",
-        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.01]",
-        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.05]",
-        "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_robin_reads_the_same_spacing[0.5]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_a_constant_field_is_unchanged_by_the_periodic_fill[uniform-path]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-1]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-2]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_periodic_ghosts_hold_the_analytic_continuation[uniform-path-3]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[1]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[2]",
-        "tests/unit/test_geometry/test_periodic_ghost_fill_1822.py::test_the_exclusive_convention_wraps_without_skipping_a_node[3]",
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_3_dirichlet_1d",
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_3_neumann_1d",
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_neumann_both_boundaries_accurate",
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_nonzero_neumann_flux"
       ],
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-      "seconds": 144.3,
+      "seconds": 138.1,
       "status": "ok",
-      "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), robin_bc(dimension=1, alpha=1.0, beta=1.0, value=3.0), ghost_depth=1, spacing=0.05)[0] == 5.0"
+      "verify": "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12"
     },
     "diffusion_field_2x": {
       "kill_count": 7,
@@ -2048,12 +1990,12 @@
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
       ],
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-      "seconds": 133.0,
+      "seconds": 136.7,
       "status": "ok",
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 162,
+      "kill_count": 163,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -2209,6 +2151,7 @@
         "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning",
         "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma",
         "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted",
+        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local",
         "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma",
         "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order",
         "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order",
@@ -2219,7 +2162,7 @@
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestScalar::test_scalar_needs_no_kind"
       ],
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
-      "seconds": 133.8,
+      "seconds": 138.0,
       "status": "ok",
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
@@ -2257,12 +2200,12 @@
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
       ],
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-      "seconds": 136.8,
+      "seconds": 137.2,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 128,
+      "kill_count": 129,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -2369,7 +2312,7 @@
         "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_quartic_control_drift",
         "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
         "tests/unit/test_alg/test_hjb_newton_reports_returned_iterate.py::test_the_configuration_still_exercises_the_non_converged_path",
-        "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_obstacle",
+        "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty",
         "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py::TestD1SolveMustForwardVolatilityField::test_array_sigma_solve_differs_from_mean_sigma_solve",
         "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py::TestD1SolveMustForwardVolatilityField::test_scalar_sigma_solve_is_unchanged",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
@@ -2390,11 +2333,12 @@
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingSolve::test_solutions_are_finite",
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingUpdateSchemes::test_jacobi_scheme",
         "tests/unit/test_alg/test_s1_drift_convention_routing.py::test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field",
+        "tests/unit/test_config/test_array_validation.py::TestMFGArrays::test_M_solution_mass_conservation_warning_final",
         "tests/unit/test_fp_fvm.py::test_gate4_fvm_fdm_agreement_shrinks",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
-      "seconds": 236.6,
+      "seconds": 193.1,
       "status": "ok",
       "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
     },
@@ -2409,7 +2353,7 @@
         "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat"
       ],
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-      "seconds": 131.6,
+      "seconds": 131.7,
       "status": "ok",
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 2.0"
     },
@@ -2476,12 +2420,12 @@
         "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]"
       ],
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "seconds": 132.5,
+      "seconds": 148.3,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 3.0"
     },
     "godunov_branch_swap": {
-      "kill_count": 29,
+      "kill_count": 31,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/integration/test_hjb_fdm_2d_validation.py::TestHJBFDM2DSolving::test_2d_solve_fixed_point",
@@ -2509,12 +2453,14 @@
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NO_FLUX]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-PERIODIC]",
         "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp",
+        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_a_wall_is_a_cost_not_a_reward",
+        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_selection_rule_is_the_godunov_one_not_merely_accurate",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
-      "seconds": 128.1,
+      "seconds": 120.3,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 2.0"
     },
@@ -2558,7 +2504,7 @@
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
-      "seconds": 132.3,
+      "seconds": 149.4,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
@@ -2624,7 +2570,7 @@
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs[\"Dx\"] reads it (:484), cell volume ",
-      "seconds": 133.5,
+      "seconds": 150.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
@@ -2655,7 +2601,7 @@
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]"
       ],
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "seconds": 113.6,
+      "seconds": 122.8,
       "status": "ok",
       "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
     },
@@ -2682,7 +2628,7 @@
         "tests/unit/test_core/test_mfg_problem.py::test_mfg_problem_with_custom_initial_density"
       ],
       "owner": "m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
-      "seconds": 125.8,
+      "seconds": 139.1,
       "status": "ok",
       "verify": "abs(float(np.sum(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).m_initial)) - 1.0) < 1e-9"
     },
@@ -2693,12 +2639,12 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `max|mass(t)/mass(0) - 1|`, not deviation from a 1.0 target (#1672). Documented at `mfgarchon/utils/solver_result.py:41` -- \"mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the\" -- and argued a",
-      "seconds": 134.5,
+      "seconds": 140.8,
       "status": "ok",
       "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.5"
     },
     "neumann_low_wall_flux_sign": {
-      "kill_count": 37,
+      "kill_count": 39,
       "killed": [
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_an_inhomogeneous_flux_is_exact_at_every_layer[low-1]",
@@ -2707,6 +2653,8 @@
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_depth_one_is_byte_identical[neumann-2.0]",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_the_flux_offset_actually_scales_with_the_layer[low]",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_the_two_paths_agree_on_an_inhomogeneous_flux_at_depth",
+        "tests/unit/test_geometry/boundary/test_no_default_robin_2042.py::test_a_uniform_bc_gives_the_same_answer_on_either_path[neumann-callable]",
+        "tests/unit/test_geometry/boundary/test_no_default_robin_2042.py::test_a_uniform_bc_gives_the_same_answer_on_either_path[neumann-scalar]",
         "tests/unit/test_geometry/boundary/test_per_face_bc_path_1937.py::test_the_flux_is_applied_at_every_ghost_layer[1]",
         "tests/unit/test_geometry/boundary/test_per_face_bc_path_1937.py::test_the_flux_is_applied_at_every_ghost_layer[2]",
         "tests/unit/test_geometry/boundary/test_per_face_bc_path_1937.py::test_the_flux_is_applied_at_every_ghost_layer[3]",
@@ -2739,7 +2687,7 @@
         "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v"
       ],
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-      "seconds": 133.2,
+      "seconds": 130.4,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9"
     },
@@ -2753,7 +2701,7 @@
         "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
       ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 138.0,
+      "seconds": 134.1,
       "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
@@ -2803,7 +2751,7 @@
         "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2-OptimizationSense.MINIMIZE]"
       ],
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
-      "seconds": 132.9,
+      "seconds": 143.1,
       "status": "ok",
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
@@ -2818,7 +2766,7 @@
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverSolveFPSystem::test_solve_fp_system_initial_condition"
       ],
       "owner": "The particle FP step measures total mass as `sum(density) * dV` with dV the grid volume element, and the KDE normalisation divides by it so the density on the grid integrates to 1 (`FPParticleSolver._compute_total_mass`, the scalar-spacing branch; consumed by `_normalize_density` at :823 and by the ",
-      "seconds": 132.6,
+      "seconds": 132.3,
       "status": "ok",
       "verify": "FPParticleSolver(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))), num_particles=10)._compute_total_mass(np.ones(4), 0.25) == 4.0"
     },
@@ -2848,7 +2796,7 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
-      "seconds": 130.9,
+      "seconds": 149.3,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
@@ -2902,7 +2850,7 @@
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071::test_bc_none_still_periodic"
       ],
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
-      "seconds": 129.5,
+      "seconds": 132.0,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0"
     },
@@ -2913,7 +2861,7 @@
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence"
       ],
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "seconds": 131.8,
+      "seconds": 129.9,
       "status": "ok",
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
@@ -2926,11 +2874,11 @@
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_coupling_metric_is_the_map_residual_1684.py::test_heavier_damping_does_not_buy_a_smaller_reported_error",
         "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
-        "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_obstacle",
+        "tests/unit/test_alg/test_issue1285_newton_fail_loud.py::test_newton_solver_solves_with_a_state_penalty",
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
-      "seconds": 252.5,
+      "seconds": 242.7,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
     },
@@ -2944,7 +2892,7 @@
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-robin_alpha_eq_beta]"
       ],
       "owner": "on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
-      "seconds": 131.4,
+      "seconds": 130.5,
       "status": "ok",
       "verify": "float(_advection_bands(np.zeros(5), 0.25, None, 0.0, True, _bc_laplacian_bands(5, 0.25, None, 0.0))[1][2]) == -4.0"
     }

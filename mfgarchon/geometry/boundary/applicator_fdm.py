@@ -1565,12 +1565,48 @@ class PreallocatedGhostBuffer:
                     # guessing -- that is deliberate and it is why this is not a silent change: a BC
                     # whose segments do not cover every face and which names no default was
                     # previously given one by accident of sort order.
-                    default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
-                    segment = BCSegment(
-                        name="__default__",
-                        bc_type=default_type,
-                        value=bc.default_value,
-                    )
+                    # #2042: two situations arrive here and only one of them has an answer.
+                    #
+                    # (a) A UNIFORM BC took this path -- exactly one segment, no boundary
+                    #     restriction, so no priority ambiguity and nothing to choose between.
+                    #     Forward it. This is reading the data that is present, not the
+                    #     `bc.segments[0]` fallback the comment above rejects: that one fired on
+                    #     MIXED BCs, where [0] means "highest priority" and handed every unclaimed
+                    #     wall the exit. `is_uniform` is exactly the case where that cannot happen.
+                    #     Synthesising instead drops `alpha`, `beta` and any callable value --
+                    #     measured, a Robin wall became a clean Dirichlet(3.0) bit for bit.
+                    if bc.is_uniform:
+                        segment = bc.segments[0]
+                    else:
+                        default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
+                        # (b) A genuinely mixed BC with an unclaimed face. There is nothing to
+                        #     forward: `default_value` is declared, `default_alpha`/`default_beta`
+                        #     do not exist on BoundaryConditions at all. `BCSegment`'s defaults are
+                        #     `alpha=1.0, beta=0.0`, and **beta = 0 IS Dirichlet** -- so defaulting
+                        #     a ROBIN silently changes the boundary condition's TYPE rather than
+                        #     approximating it, and the caller cannot see it happen.
+                        #
+                        #     There is no default Robin. This continues #1100's ruling one level
+                        #     down: `_resolve_default_bc` already raises when `default_bc` is unset
+                        #     "rather than guessing", and an unspecified alpha/beta is the same
+                        #     incompleteness.
+                        if default_type is BCType.ROBIN:
+                            raise NotImplementedError(
+                                f"This boundary condition names ROBIN as its default, and face "
+                                f"{target_face} is claimed by no segment -- but a Robin needs "
+                                f"`alpha` and `beta`, and `BoundaryConditions` carries no "
+                                f"`default_alpha`/`default_beta` to take them from. Defaulting "
+                                f"them would use BCSegment's `alpha=1.0, beta=0.0`, and beta = 0 "
+                                f"is DIRICHLET -- the wall would silently become a different "
+                                f"boundary condition, not an approximate one. Add a segment "
+                                f"covering {target_face} with explicit alpha/beta, or choose a "
+                                f"default_bc that needs neither (Issue #2042)."
+                            )
+                        segment = BCSegment(
+                            name="__default__",
+                            bc_type=default_type,
+                            value=bc.default_value,
+                        )
 
                 # Apply ghost cell formula for this face
                 self._apply_ghost_for_face(buf, axis, side, segment, time, g)
