@@ -402,6 +402,13 @@ class TestCalculatorClasses:
                 assert np.isclose(padded[0], calc.compute(interior_value=u[0], dx=dx, side="min"))
                 assert np.isclose(padded[-1], calc.compute(interior_value=u[-1], dx=dx, side="max"))
 
+    def test_high_order_ghost_neumann_refuses_rather_than_returning_a_wrong_number(self):
+        """#1936: retired, not deleted -- it shipped in v0.21.0, so the import must survive."""
+        from mfgarchon.geometry.boundary import high_order_ghost_neumann
+
+        with pytest.raises(NotImplementedError, match="RETIRED"):
+            high_order_ghost_neumann([1.0, 2.0, 3.0, 4.0], 1.0, 1.0)
+
     def test_robin_calculator(self):
         """Test RobinCalculator for mixed boundary conditions."""
         from mfgarchon.geometry.boundary import RobinCalculator

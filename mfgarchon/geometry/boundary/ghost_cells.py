@@ -285,85 +285,35 @@ def high_order_ghost_neumann(
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> list[float]:
     """
-    Compute high-order accurate ghost cell values for Neumann BC.
+    RETIRED (#1936): this never delivered the order it advertised.
 
-    Mathematical derivation (cell-centered, 4th order):
-        Given: du/dn = g (Neumann BC at cell face)
-        Want: ghost values that preserve polynomial accuracy
+    Every branch was measured against an exact polynomial on a cell-centred max
+    wall (dx=1, face at x=0, interior at x=-0.5, -1.5, ...; ghost at x=+0.5),
+    fed the exact face derivative. On ``u = x`` -- which any second-order ghost
+    formula reproduces exactly -- it returned:
 
-        The key constraint is that the derivative at the boundary matches g.
-        Using polynomial extrapolation with derivative constraint.
+        order=4 (3rd-order one-sided stencil): -0.5909, exact +0.5   err 1.09
+        order=5 (4th-order one-sided stencil): -0.4600, exact +0.5   err 0.96
+        order<4 fallback (u[0] + 2*dx*g):      +1.5000, exact +0.5   err 1.00
 
-    Args:
-        interior_values: Interior point values [u_0, u_1, u_2, ...] from boundary inward
-        flux_value: Neumann BC value (du/dn = g)
-        dx: Grid spacing
-        outward_normal_sign: +1 for max boundary, -1 for min boundary
-        order: Extrapolation order (4 or 5)
-        grid_type: Grid type
+    ``ghost_cell_neumann`` under that same harness returns +0.5 exactly. The
+    fallback's ``2*dx`` is a vertex-centred step length used on a cell-centred
+    layout, and the two high-order branches impose the derivative constraint at
+    the ghost centre rather than at the face. The vertex-centred branch's
+    ``if order >= 4`` arm and its ``else`` computed the same expression.
 
-    Returns:
-        Ghost values [u_{-1}, u_{-2}] (first is adjacent to interior)
+    Nothing called this, in the package or the tests, which is why the error
+    survived to be found by reading rather than by a failure. It raises instead
+    of being deleted because it shipped in v0.21.0.
+
+    Use :func:`ghost_cell_neumann`, or state the required order on #1936 so a
+    replacement can be derived against a convergence test.
     """
-    g = flux_value * outward_normal_sign
-    u = interior_values
-
-    if order < 4 or len(u) < 3:
-        # Fall back to 2nd-order
-        u_ghost_1 = u[0] + 2.0 * dx * g
-        u_ghost_2 = u[1] + 4.0 * dx * g if len(u) > 1 else u_ghost_1 + 2.0 * dx * g
-        return [u_ghost_1, u_ghost_2]
-
-    if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centered: boundary at grid point
-        # du/dn = (u_0 - u_{-1}) / dx = g => u_{-1} = u_0 - dx*g
-        u_ghost_1 = u[0] - dx * g
-
-        if order >= 4 and len(u) >= 3:
-            # 4th-order: Use polynomial matching derivative at boundary
-            # du/dn|_{x=0} = g and smooth extrapolation through interior
-            u_ghost_2 = u_ghost_1 - dx * g  # Maintain constant derivative
-        else:
-            u_ghost_2 = u_ghost_1 - dx * g
-        return [u_ghost_1, u_ghost_2]
-
-    # Cell-centered: boundary at cell face (x = x_0 - dx/2)
-    # Constraint: du/dn at x = -dx/2 equals g
-
-    if order >= 5 and len(u) >= 4:
-        # 5th-order extrapolation with Neumann constraint
-        # Construct polynomial through (x=0, u0), (x=1, u1), (x=2, u2), (x=3, u3)
-        # and enforce derivative = g at x = -0.5
-
-        # One-sided 4th-order derivative at boundary:
-        # du/dx|_{x=-0.5} = (-25*u_{-1} + 48*u_0 - 36*u_1 + 16*u_2 - 3*u_3) / (12*dx)
-        # Solve for u_{-1} given du/dx = g
-
-        u_ghost_1 = (48 * u[0] - 36 * u[1] + 16 * u[2] - 3 * u[3] - 12 * dx * g) / 25
-
-        # For u_{-2}, use polynomial continuation
-        # du/dx|_{x=-1.5} should match smooth extrapolation
-        u_ghost_2 = (48 * u_ghost_1 - 36 * u[0] + 16 * u[1] - 3 * u[2] - 12 * dx * g) / 25
-
-        return [u_ghost_1, u_ghost_2]
-
-    elif order >= 4 and len(u) >= 3:
-        # 4th-order extrapolation with Neumann constraint
-        # Using 3rd-order one-sided difference:
-        # du/dx|_{x=-0.5} = (-11*u_{-1} + 18*u_0 - 9*u_1 + 2*u_2) / (6*dx) = g
-
-        u_ghost_1 = (18 * u[0] - 9 * u[1] + 2 * u[2] - 6 * dx * g) / 11
-
-        # For u_{-2}, maintain the derivative constraint
-        u_ghost_2 = (18 * u_ghost_1 - 9 * u[0] + 2 * u[1] - 6 * dx * g) / 11
-
-        return [u_ghost_1, u_ghost_2]
-
-    else:
-        # Fall back to 2nd-order
-        u_ghost_1 = u[0] + 2.0 * dx * g
-        u_ghost_2 = u[1] + 4.0 * dx * g if len(u) > 1 else u_ghost_1 + 2.0 * dx * g
-        return [u_ghost_1, u_ghost_2]
+    raise NotImplementedError(
+        "high_order_ghost_neumann is RETIRED (#1936): all three branches are "
+        "wrong -- none reproduces u = x, where ghost_cell_neumann is exact. "
+        "Use ghost_cell_neumann for the second-order Neumann ghost value."
+    )
 
 
 # =============================================================================
