@@ -53,6 +53,19 @@ is a recorded column, never a filter. An earlier draft of this file walked only 
 11**, which is where #1991's "ten" comes from. The narrow predicate silently halved the
 population and nothing in its output said so.
 
+**THREADS_IT is liveness, not correctness, and the distinction is not a quibble.**
+``tests/integration/test_weak_form_source_mms_2020.py`` states it for the weak-form family and it
+governs this table too: *"the answer moves when a source is passed" is a liveness check, not a
+correctness one; what a source channel owes is an ORDER against an exact solution.* A solver can
+apply a source at the wrong sign, the wrong time level or the wrong quadrature point and still
+move the answer by O(1). Everything in the THREADS_IT column has passed the cheapest possible
+test and nothing more; only ``WeakFormHJBSolver`` / ``WeakFormFPSolver`` currently carry order
+studies, and those two are ``NOT_PROBED`` here because this fixture cannot build their
+discretization. So the two files are complementary and neither subsumes the other: this one says
+which solvers a source reaches, that one says whether the source it reaches is right.
+
+A solver newly wired under #2020 owes an order study, not a green row here.
+
 What the noise floor does NOT yet do: it is **one** repeat, so it estimates a stochastic
 solver's spread from a single sample. That is enough today because every solver reaching the
 difference test is deterministic -- ``FPFDMSolver`` and the rest return byte-identical arrays on
