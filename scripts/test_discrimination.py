@@ -258,14 +258,35 @@ MUTATIONS: list[Mutation] = [
         old="        if bc.is_uniform:",
         new="        if False:  # MUTATED: uniform BC reads as mixed -- every BC takes the per-face path",
         owner="PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 1.0",
+        # Re-pointed twice on 2026-08-21. The original probe used a STATIC SCALAR Neumann value
+        # and went blind -- [1.1 1. 2. 3. 3.1] under mutant and clean alike -- so the row scored
+        # INEFFECTIVE, and a dead instrument reads exactly like a dead convention.
+        #
+        # The cause is NOT that "the Neumann paths converged". `_update_ghosts_mixed` finds no
+        # segment for a uniform BC, so it synthesizes `__default__` from `bc_type` and
+        # `bc.default_value` ONLY, dropping alpha, beta and callable values. Static scalar Neumann
+        # is invisible to that because its ghost formula reads none of them. Two order-2 witnesses
+        # to the drop do survive: a CALLABLE Neumann value (clean 1.1, mutant 1.0 -- the original
+        # probe was one lambda from working) and Robin (clean 1.097561, mutant 5.0, which is
+        # bit-identical to a clean Dirichlet(3.0), the beta=0 degenerate case, not Robin
+        # arithmetic).
+        #
+        # Neither is used, because both die the moment the drop is fixed: measured against a
+        # `__default__` that forwards alpha/beta/value, Robin returns to 1.097561 with the mutation
+        # STILL APPLIED. A probe whose witness is a latent defect is one bugfix from blind.
+        #
+        # order > 2 is the durable witness. `_update_ghosts_uniform` dispatches to
+        # `_apply_poly_extrapolation`; the per-face path has no order dispatch at all, so the
+        # separation is structural rather than a consequence of the drop. Measured at order 3:
+        # clean 3.490909, mutant 1.1, and mutant-plus-that-fix still 1.1.
+        verify="abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12",
     ),
     Mutation(
         name="neumann_low_wall_flux_sign",
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
         old="                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v",
         new="                        buf[tuple(lo_ghost)] -= (2 * (k + 1) - 1) * dx * v  # MUTATED: low wall reads du/dx instead of du/dn",
-        owner='inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.',
+        owner="inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
         verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9",
     ),
     Mutation(
@@ -445,6 +466,19 @@ from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry.boundary import neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
+from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
+
+
+def _ghost0(bc, order):
+    # Low-wall ghost value of [1,2,3] at a given reconstruction order.
+    # pad_array_with_ghosts does not expose `order`, and order is the one thing the
+    # per-face ghost path has no dispatch for -- which is what makes it a durable witness.
+    b = PreallocatedGhostBuffer(
+        interior_shape=(3,), boundary_conditions=bc, ghost_depth=1, order=order, spacing=0.05
+    )
+    b.interior[:] = np.array([1.0, 2.0, 3.0])
+    b.update_ghosts(time=0.0)
+    return float(b.padded.copy()[0])
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
@@ -473,13 +507,8 @@ def _stub_problem(control_cost):
 """
 
 
-def _mutation_is_live(mut: Mutation) -> bool:
-    """Is the perturbation observable from outside? The control, on the thing in doubt.
-
-    Evaluated against the mutated tree in a fresh interpreter. Only when this is true
-    does a kill count of zero mean "no test covers this convention" rather than "the
-    mutation never ran".
-    """
+def _eval_verify(mut: Mutation) -> tuple[bool, str]:
+    """Evaluate `mut.verify` against whatever tree is on disk, in a fresh interpreter."""
     proc = subprocess.run(
         [sys.executable, "-B", "-c", f"{_VERIFY_PRELUDE}\nassert ({mut.verify}), {mut.verify!r}"],
         cwd=REPO,
@@ -487,10 +516,53 @@ def _mutation_is_live(mut: Mutation) -> bool:
         text=True,
         env=_env(),
     )
-    if proc.returncode != 0:
-        tail = (proc.stderr.strip().splitlines() or ["(no stderr)"])[-1]
-        print(f"  verify FAILED: {mut.verify}\n    {tail}", flush=True)
-    return proc.returncode == 0
+    tail = (proc.stderr.strip().splitlines() or ["(no stderr)"])[-1]
+    return proc.returncode == 0, tail
+
+
+def _mutation_is_live(mut: Mutation) -> bool:
+    """Is the perturbation observable from outside? The control, on the thing in doubt.
+
+    Only when this is true does a kill count of zero mean "no test covers this
+    convention" rather than "the mutation never ran".
+
+    **Two-sided since #2038.** It was evaluated against the MUTATED tree alone, which
+    proves the expression is true there and nothing else -- an expression true under
+    both trees would pass this and prove nothing, and one true under NEITHER is the
+    failure that actually happened: `bc_uniform_dispatch_reads_as_mixed`'s probe used a
+    static scalar Neumann value, the per-face path returns the same array for that input,
+    and the row scored INEFFECTIVE with the mutation applying perfectly. That direction
+    was caught only because a false-under-both probe fails the one-sided check by luck of
+    direction; a true-under-both probe would have sailed through.
+
+    So the clean side is asserted too: `verify` must be FALSE before the mutation and
+    TRUE after. A probe that cannot tell the two trees apart is not a control.
+
+    Call ONLY with the mutation applied. The clean evaluation temporarily restores the
+    file and re-applies afterwards, so the caller's `backups` stay authoritative.
+    """
+    live, tail = _eval_verify(mut)
+    if not live:
+        print(f"  verify FAILED on the mutated tree: {mut.verify}\n    {tail}", flush=True)
+        return False
+
+    target = REPO / mut.path
+    mutated_text = target.read_text()
+    target.write_text(mutated_text.replace(mut.new, mut.old))
+    try:
+        held_on_clean, _ = _eval_verify(mut)
+    finally:
+        target.write_text(mutated_text)
+
+    if held_on_clean:
+        print(
+            f"  verify is TRUE ON CLEAN CODE too, so it is not a control: {mut.verify}\n"
+            f"    it must be false before the mutation and true after; as written it "
+            f"cannot distinguish the two trees",
+            flush=True,
+        )
+        return False
+    return True
 
 
 def apply_mutation(mut: Mutation, backups: dict[str, str]) -> None:
