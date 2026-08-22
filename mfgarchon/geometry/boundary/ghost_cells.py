@@ -196,7 +196,8 @@ def high_order_ghost_dirichlet(
     `u = 1` with `boundary_value = 1`, where both ghosts must be exactly 1.0:
 
         CELL_CENTERED (the DEFAULT)  order=4  ->  [1.6, 4.0]
-        CELL_CENTERED                order=5  ->  [1.5, 3.3333]
+        CELL_CENTERED                order=5  ->  [1.5, 3.3333]  (needs 4 interior values;
+                                                            with 3 it falls to the order=4 row)
         CELL_CENTERED                order<4  ->  [1.0, 1.0]     (the fallback is fine)
         VERTEX_CENTERED              all      ->  [1.0, 1.0]     (correct)
 
@@ -226,14 +227,16 @@ def high_order_ghost_neumann(
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> list[float]:
     """
-    RETIRED (#1936): first-order in the ghost value, where the rule it improves on is third.
+    RETIRED (#1936): first-order in the ghost value at the max wall, where the rule it improves
+    on is third. Cell-centred throughout; see defect 3 for the min wall and the other rates.
 
     Not uniformly wrong, which is why reading it did not settle the question. Measured on
     `u = x` with the exact face derivative fed in, cell-centred, `dx=1`, ghosts nearest-first:
 
         max wall (sign=+1, the DEFAULT)   order=4  -0.5909   order=5  -0.4600   exact +0.5
         min wall (sign=-1)                order=4  -0.5000   order=5  -0.5000   exact -0.5  (exact)
-        both walls                        order<4  +1.5 / +2.5                  (wrong at both)
+        max wall                          order<4  +1.5, +2.5   exact +0.5, +1.5
+        min wall                          order<4  +2.5, +5.5   exact -0.5, -1.5
 
     Three separable defects, and the headline is the third:
 
@@ -247,21 +250,31 @@ def high_order_ghost_neumann(
        the same derivative everywhere, so this is invisible above and shows only where the flux
        term cannot mask it: `u = x^2` with `g = 0` gives 0.5455 (order=4) and 0.4800 (order=5).
 
-    3. Together they cost the order the name promises. On `u = exp(x)`, max wall, the ghost value
-       converges at rate 1.04, 1.02, 1.01 over h = 0.2 -> 0.025, while `ghost_cell_neumann` on the
-       same sequence gives 3.00, 3.00, 3.00. A derivative built from an O(h) ghost is O(1) wrong.
+    3. Defect 1 ALONE costs the order the name promises -- not the pair. On `u = exp(x)`,
+       cell-centred, over h = 0.2 -> 0.025:
+
+           max wall (defect 1 present)   rate 1.04, 1.02, 1.01     -> O(h)
+           min wall (defect 1 absent)    rate 1.94, 1.98, 1.99     -> O(h^2), defect 2 alone
+           `ghost_cell_neumann`          rate 3.00, 3.00, 3.00     -> O(h^3)
+
+       So it is worse than the rule it was written to improve on at BOTH walls, and a derivative
+       built from the max-wall ghost is O(1) wrong.
 
     The `order<4` fallback is a separate failure of a different kind: `u[0] + 2*dx*g` is the
     repo's own pre-#1972 formula, `interior + 2*dx*g*sign`, struck in this file on 2026-08-18 --
-    a retired rule that survived in a second copy nothing was checking. `NeumannCalculator`'s
-    docstring held a fourth copy until #1936.
+    a retired rule that survived in a copy nothing was checking. It is not the only one: the
+    one-cell form `u_ghost = u_interior + 2*dx*g` survives at SIX sites. #1936 corrects two of
+    them, here and in `NeumannCalculator`; `protocols.py:226/487/492` and the user guide still
+    carry it, and #2057 tracks those. (`u_next_interior +- 2*dx*g` in `_compat.py` and
+    `applicator_fdm.py` is a different, correct formula -- two cells, so 2*dx is right there.)
 
     Also, the vertex-centred branch's `if order >= 4` arm and its `else` computed the same
     expression, so that path advertised fourth order and delivered constant-derivative
     extrapolation.
 
     Nothing called this, in the package or the tests, which is why the errors survived to be found
-    by reading rather than by a failure. It raises instead of being deleted because it shipped.
+    by reading rather than by a failure. It raises instead of being deleted because it shipped:
+    added 2025-12-17 by `1a1ebec6`, present and exported in v0.20.0 and every tag since.
 
     Use :func:`ghost_cell_neumann`. A correct face-constrained 4-point formula is on #1936, derived
     twice independently during review; it is not implemented here because #1936's own acceptance
@@ -269,9 +282,11 @@ def high_order_ghost_neumann(
     a sixth implementation for zero consumers moves that counter the wrong way.
     """
     raise NotImplementedError(
-        "high_order_ghost_neumann is RETIRED (#1936): it is O(h) in the ghost value where "
-        "ghost_cell_neumann is O(h^3), it uses the flux as the inward derivative (so it is exact "
-        "at the min wall and negated at the max wall), and its order<4 fallback is the pre-#1972 "
+        "high_order_ghost_neumann is RETIRED (#1936). Cell-centred ghost value, u = exp(x): it "
+        "converges at O(h) at the max wall and O(h^2) at the min, where ghost_cell_neumann gives "
+        "O(h^3) -- worse than the rule it was written to improve on, at both walls. It uses the "
+        "flux as the inward derivative, which is why order=4 and order=5 are exact at the min "
+        "wall and negated at the max; its order<4 fallback is the pre-#1972 "
         "`interior + 2*dx*g*sign` that this file already struck. "
         "Use ghost_cell_neumann for the Neumann ghost value."
     )
