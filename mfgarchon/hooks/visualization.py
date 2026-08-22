@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.mfg_logging.logger import MFGFormatter
 
 from .base import SolverHooks
 
@@ -325,7 +326,13 @@ class LoggingHook(SolverHooks):
         # Set up handlers
         if log_file:
             handler = logging.FileHandler(log_file)
-            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            # MFGFormatter, not a hand-rolled string: it is the format LogAnalyzer parses.
+            # This line was `logging.Formatter("%(asctime)s - %(name)s - %(levelname)s -
+            # %(message)s")`, which differs in two ways that both defeat the reader -- no
+            # `datefmt`, so asctime carries milliseconds and the timestamp field never matches,
+            # and no `-8s` padding, so the level field never matches either. Measured: a file
+            # written that way yields 0 entries from LogAnalyzer at every level (#2058).
+            formatter = MFGFormatter()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 

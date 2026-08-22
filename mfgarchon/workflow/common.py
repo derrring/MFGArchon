@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 import numpy as np
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.mfg_logging.logger import MFGFormatter
 
 
 class ExecutionStatus(Enum):
@@ -104,7 +105,12 @@ def setup_workflow_logging(
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        # MFGFormatter owns this format; a hand-rolled copy here was the second of two rivals
+        # (#2058). This branch is dead for production callers -- `get_logger` always attaches a
+        # StreamHandler, so the guard above is False and neither handler is built, measured -- but
+        # a dead rival string is still a rival, and it is what a future lift of that guard would
+        # install.
+        formatter = MFGFormatter()
 
         if log_file is not None:
             file_handler = logging.FileHandler(log_file)

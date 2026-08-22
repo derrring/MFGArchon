@@ -184,3 +184,49 @@ class TestLogAnalyserSeesEveryLevel:
         parsed = {entry["level"] for entry in analyzer.entries}
 
         assert parsed == set(levels), f"emitted {levels}, parsed back {sorted(parsed)}"
+
+
+class TestEveryWriterUsesTheOwnedFormat:
+    """#2058: MFGFormatter owns the line format; a hand-rolled copy is a second owner."""
+
+    def test_the_logging_hook_writes_a_file_LogAnalyzer_can_read(self, tmp_path):
+        """`LoggingHook` built its own `logging.Formatter` and produced unreadable files.
+
+        Two independent departures from `MFGFormatter`, either of which alone defeats the reader:
+        no `datefmt`, so `asctime` carries milliseconds and the timestamp field never matches; and
+        no `-8s` padding, so the level field never matches. Measured on the old formatter: 0
+        entries at every level, failing at the timestamp before the level was examined.
+
+        This goes through the writer a user actually gets -- `LoggingHook(log_file=...)` -- rather
+        than through `MFGFormatter` directly, because the defect was that the hook did not use it.
+        """
+        import logging
+
+        from mfgarchon.hooks.visualization import LoggingHook
+        from mfgarchon.utils.mfg_logging.analysis import LogAnalyzer
+
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        log_path = tmp_path / "solver.log"
+        # LoggingHook uses the fixed logger name "MFGSolver" and always addHandler()s, so a test
+        # that does not clean up leaks a handler into every later construction.
+        existing = logging.getLogger("MFGSolver")
+        saved_handlers, saved_level = list(existing.handlers), existing.level
+        existing.handlers.clear()
+        try:
+            hook = LoggingHook(log_file=str(log_path), log_level="DEBUG")
+            for level in levels:
+                hook.logger.log(getattr(logging, level), f"probe line for {level}")
+            for handler in hook.logger.handlers:
+                handler.flush()
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
+        finally:
+            logging.getLogger("MFGSolver").handlers.clear()
+            existing.handlers.extend(saved_handlers)
+            existing.level = saved_level
+
+        analyzer = LogAnalyzer(str(log_path))
+        analyzer.parse_log_file()
+        parsed = {entry["level"] for entry in analyzer.entries}
+
+        assert parsed == set(levels), f"emitted {levels}, parsed back {sorted(parsed)}"
