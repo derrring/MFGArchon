@@ -223,7 +223,7 @@ class BoundaryCalculator(Protocol):
 
     Calculator handles the physics/value aspects of boundary conditions:
     - Dirichlet: u_ghost = 2*g - u_interior
-    - Neumann: u_ghost = u_interior + 2*dx*g
+    - Neumann: u_ghost = u_interior + dx*g, with g = du/dn
     - Robin: combination of above
     - Extrapolation: polynomial continuation
 
@@ -481,16 +481,21 @@ class BaseStructuredApplicator(BaseBCApplicator):
         """
         Compute Neumann ghost cell value (shared formula).
 
-        For central difference gradient stencil with cell-centered grid:
-        - Left boundary (normal points left/inward):
-          du/dn = (u_interior - u_ghost) / (2*dx) = -g  (inward normal)
-          => u_ghost = u_interior + 2*dx*g
-          For zero-flux (g=0): u_ghost = u_next_interior (reflection)
+        WARNING: `g` here is du/dx, NOT du/dn -- the opposite of `ghost_cell_neumann`, which
+        this class's live sibling `NeumannCalculator` uses. Measured on `u = 3x`, dx = 0.1: under
+        du/dx both walls are exact; under du/dn the left wall returns +1.05 where -0.15 is exact.
+        Two conventions for one quantity, in one subpackage. #1936 owns that.
 
-        - Right boundary (normal points right/outward):
-          du/dn = (u_ghost - u_interior) / (2*dx) = g  (outward normal)
-          => u_ghost = u_interior + 2*dx*g
-          For zero-flux (g=0): u_ghost = u_prev_interior (reflection)
+        The ghost reflects across the boundary from `u_next_interior`, two cells away, which is
+        what makes the step `2*dx` here and `dx` in `ghost_cell_neumann`:
+
+        - Left boundary:  u_ghost = u_next_interior - 2*dx*(du/dx)
+        - Right boundary: u_ghost = u_next_interior + 2*dx*(du/dx)
+        - Zero flux:      u_ghost = u_next_interior          (reflection, #542)
+
+        This docstring said `u_ghost = u_interior + 2*dx*g` until #2057, naming the wrong variable
+        and contradicting its own zero-flux line two lines below, which already said
+        `u_next_interior`. The body has always used `u_next_interior`.
 
         Args:
             u_interior: Interior values adjacent to boundary
