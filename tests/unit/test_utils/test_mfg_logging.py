@@ -184,3 +184,66 @@ class TestLogAnalyserSeesEveryLevel:
         parsed = {entry["level"] for entry in analyzer.entries}
 
         assert parsed == set(levels), f"emitted {levels}, parsed back {sorted(parsed)}"
+
+
+class TestEveryWriterUsesTheOwnedFormat:
+    """#2058: MFGFormatter owns the line format; a hand-rolled copy is a second owner."""
+
+    def test_the_logging_hook_writes_a_file_LogAnalyzer_can_read(self, tmp_path):
+        """`LoggingHook` built its own `logging.Formatter` and produced unreadable files.
+
+        Two departures from `MFGFormatter`, and only ONE of them matters. The missing `datefmt`
+        makes `asctime` carry milliseconds, so the reader's timestamp field never matches and the
+        line is dropped before its level is examined -- necessary and sufficient. The missing
+        `-8s` padding costs nothing, because #2056 widened the level group to accept the single
+        space an unpadded levelname leaves; the test 47 lines above pins exactly that tolerance.
+
+        Measured 2x2 against the current reader: `datefmt` alone gives 5/5 at every level with or
+        without padding, no `datefmt` gives 0/5 either way. An earlier revision of this docstring
+        said both defects were independently fatal -- true of the pre-#1918 reader, and carried
+        forward without re-measuring against the one #2056 shipped.
+
+        This goes through the writer a user actually gets -- `LoggingHook(log_file=...)` -- rather
+        than through `MFGFormatter` directly, because the defect was that the hook did not use it.
+        """
+        import logging
+
+        from mfgarchon.hooks.visualization import LoggingHook
+        from mfgarchon.utils.mfg_logging.analysis import LogAnalyzer
+
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        log_path = tmp_path / "solver.log"
+        # LoggingHook uses the fixed logger name "MFGSolver" and always addHandler()s, so a test
+        # that does not clean up leaks a handler into every later construction.
+        existing = logging.getLogger("MFGSolver")
+        saved_handlers, saved_level = list(existing.handlers), existing.level
+        saved_propagate = existing.propagate
+        cached_logger = MFGLogger._loggers.get("MFGSolver")
+        existing.handlers.clear()
+        try:
+            hook = LoggingHook(log_file=str(log_path), log_level="DEBUG")
+            for level in levels:
+                hook.logger.log(getattr(logging, level), f"probe line for {level}")
+            for handler in hook.logger.handlers:
+                handler.flush()
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
+        finally:
+            logging.getLogger("MFGSolver").handlers.clear()
+            existing.handlers.extend(saved_handlers)
+            existing.level = saved_level
+            existing.propagate = saved_propagate
+            # MFGLogger caches by name and short-circuits _setup_logger on a hit, so leaving
+            # "MFGSolver" in the cache hands every later get_logger a handler-less,
+            # non-propagating logger: INFO vanishes and WARNING+ falls through to lastResort on
+            # unformatted stderr. Restoring handlers is not enough; the cache entry has to go.
+            if cached_logger is None:
+                MFGLogger._loggers.pop("MFGSolver", None)
+            else:
+                MFGLogger._loggers["MFGSolver"] = cached_logger
+
+        analyzer = LogAnalyzer(str(log_path))
+        analyzer.parse_log_file()
+        parsed = {entry["level"] for entry in analyzer.entries}
+
+        assert parsed == set(levels), f"emitted {levels}, parsed back {sorted(parsed)}"

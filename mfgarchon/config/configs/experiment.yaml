@@ -19,7 +19,6 @@ experiment:
     console_output: true
     file_output: true
     log_file: "${experiment.output.experiment_dir}/experiment.log"
-    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
   # Visualization configuration
   visualization:
