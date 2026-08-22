@@ -9,6 +9,7 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry.boundary import (
+    GridType,
     dirichlet_bc,
     neumann_bc,
     no_flux_bc,
@@ -383,6 +384,58 @@ class TestCalculatorClasses:
             g = -slope if side == "min" else +slope  # du/dn: the outward normal flips at the min wall
             got = NeumannCalculator(flux_value=g).compute(interior_value=slope * x_interior, dx=dx, side=side)
             assert np.isclose(got, slope * x_ghost), f"{side}: {got} != {slope * x_ghost} for u = {slope}x"
+
+    @pytest.mark.parametrize("grid_type", [GridType.CELL_CENTERED, GridType.VERTEX_CENTERED])
+    @pytest.mark.parametrize("side", ["min", "max"])
+    def test_robin_with_alpha_zero_reproduces_a_linear_field(self, grid_type, side):
+        """#2063: the vertex-centred min wall was inverted, and only this path reached it.
+
+        `alpha = 0, beta = 1` makes Robin the same condition as Neumann, so `u = a*x` must come
+        back exactly -- an external oracle, not either formula restated. Measured before the fix,
+        VERTEX_CENTERED/min: +0.3000 where -0.3000 is exact. The other three cells passed, which is
+        why nothing caught it; the cell-centred branch never used the sign and `grid_type` defaults
+        to cell-centred, so the only path that could reach the bug had no test.
+
+        The cause was `RobinCalculator` deriving an outward sign from `side` and passing it on --
+        the only caller in the package that did. Passing the physically correct -1.0 was what broke
+        it, so the six callers that omitted the argument were right by accident.
+        """
+        from mfgarchon.geometry.boundary import RobinCalculator
+
+        slope, dx = 3.0, 0.1
+        x_interior, x_ghost = (0.0, -dx) if side == "min" else (1.0, 1.0 + dx)
+        outward_normal = -1.0 if side == "min" else +1.0
+
+        calc = RobinCalculator(alpha=0.0, beta=1.0, rhs_value=slope * outward_normal, grid_type=grid_type)
+        got = calc.compute(interior_value=slope * x_interior, dx=dx, side=side)
+
+        assert np.isclose(got, slope * x_ghost), f"{grid_type.name}/{side}: {got} != {slope * x_ghost}"
+
+    def test_the_fp_no_flux_ghost_zeroes_the_TOTAL_flux_given_an_axis_velocity(self):
+        """#2063: `drift_velocity` is v_x, not v*n, and the docstring said the opposite.
+
+        The contract is J.n = 0 with J = v*rho - D*grad(rho), so the check is the residual itself,
+        not a formula restated. Fed v*n as the Args line instructed, the min wall leaves a residual
+        of 1.25 instead of 0; fed v_x it is machine zero. The max wall cannot discriminate, since
+        v*n = v_x there.
+
+        `outward_normal_sign` has no default, because the two callers hold different quantities --
+        `ghost_cell_advection_diffusion_no_flux` already has v*n and passes 1.0, `ZeroFluxCalculator`
+        has v_x and passes the wall's sign -- and +1.0 silently means "max wall".
+        """
+        from mfgarchon.geometry.boundary.ghost_cells import ghost_cell_fp_no_flux
+
+        D, dx, rho_interior = 0.125, 0.1, 1.0
+        for outward_normal in (+1.0, -1.0):
+            for v_x in (+0.5, -0.5):
+                ghost = ghost_cell_fp_no_flux(rho_interior, v_x, D, dx, outward_normal)
+                v_n = v_x * outward_normal
+                rho_face = (ghost + rho_interior) / 2.0
+                drho_dn = (ghost - rho_interior) / dx
+                assert np.isclose(v_n * rho_face - D * drho_dn, 0.0, atol=1e-12)
+
+        with pytest.raises(TypeError):
+            ghost_cell_fp_no_flux(rho_interior, 0.5, D, dx)
 
     def test_neumann_calculator_agrees_with_the_live_applicator_path(self):
         """The two implementations of this ghost disagreed by a factor of 2 and a sign until #1972.

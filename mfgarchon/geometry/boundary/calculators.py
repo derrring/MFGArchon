@@ -260,15 +260,19 @@ class RobinCalculator:
         side: str,
         **kwargs,
     ) -> T:
-        """Compute ghost value for Robin BC (vectorized)."""
-        outward_sign = 1.0 if side == "max" else -1.0
+        """Compute ghost value for Robin BC (vectorized).
+
+        `side` is accepted for the protocol and not used: `rhs_value` carries `du/dn`, which
+        already has the wall's direction. Deriving an outward sign from `side` and passing it on
+        is what #2063 removed -- this was the only caller in the package that did, and it was the
+        only one getting a wrong answer, inverting the vertex-centred min wall.
+        """
         return ghost_cell_robin(
             interior_value,
             self._rhs_value,
             self._alpha,
             self._beta,
             dx,
-            outward_sign,
             self._grid_type,
         )
 
