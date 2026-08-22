@@ -43,6 +43,7 @@ from .decorators import (
 from .logger import (
     # Classes
     LoggedOperation,
+    MFGFormatter,
     # Environment-specific configurations
     configure_development_logging,
     # Primary API
@@ -84,6 +85,7 @@ __all__ = [
     "log_validation_error",
     # Classes
     "LoggedOperation",
+    "MFGFormatter",
     # Decorators
     "LoggingMixin",
     "add_logging_to_class",

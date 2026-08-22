@@ -17,8 +17,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.mfg_logging.logger import MFGFormatter
+from mfgarchon.utils.mfg_logging import MFGFormatter, get_logger
 
 
 class ExecutionStatus(Enum):

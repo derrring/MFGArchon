@@ -192,10 +192,16 @@ class TestEveryWriterUsesTheOwnedFormat:
     def test_the_logging_hook_writes_a_file_LogAnalyzer_can_read(self, tmp_path):
         """`LoggingHook` built its own `logging.Formatter` and produced unreadable files.
 
-        Two independent departures from `MFGFormatter`, either of which alone defeats the reader:
-        no `datefmt`, so `asctime` carries milliseconds and the timestamp field never matches; and
-        no `-8s` padding, so the level field never matches. Measured on the old formatter: 0
-        entries at every level, failing at the timestamp before the level was examined.
+        Two departures from `MFGFormatter`, and only ONE of them matters. The missing `datefmt`
+        makes `asctime` carry milliseconds, so the reader's timestamp field never matches and the
+        line is dropped before its level is examined -- necessary and sufficient. The missing
+        `-8s` padding costs nothing, because #2056 widened the level group to accept the single
+        space an unpadded levelname leaves; the test 47 lines above pins exactly that tolerance.
+
+        Measured 2x2 against the current reader: `datefmt` alone gives 5/5 at every level with or
+        without padding, no `datefmt` gives 0/5 either way. An earlier revision of this docstring
+        said both defects were independently fatal -- true of the pre-#1918 reader, and carried
+        forward without re-measuring against the one #2056 shipped.
 
         This goes through the writer a user actually gets -- `LoggingHook(log_file=...)` -- rather
         than through `MFGFormatter` directly, because the defect was that the hook did not use it.
@@ -211,6 +217,8 @@ class TestEveryWriterUsesTheOwnedFormat:
         # that does not clean up leaks a handler into every later construction.
         existing = logging.getLogger("MFGSolver")
         saved_handlers, saved_level = list(existing.handlers), existing.level
+        saved_propagate = existing.propagate
+        cached_logger = MFGLogger._loggers.get("MFGSolver")
         existing.handlers.clear()
         try:
             hook = LoggingHook(log_file=str(log_path), log_level="DEBUG")
@@ -224,6 +232,15 @@ class TestEveryWriterUsesTheOwnedFormat:
             logging.getLogger("MFGSolver").handlers.clear()
             existing.handlers.extend(saved_handlers)
             existing.level = saved_level
+            existing.propagate = saved_propagate
+            # MFGLogger caches by name and short-circuits _setup_logger on a hit, so leaving
+            # "MFGSolver" in the cache hands every later get_logger a handler-less,
+            # non-propagating logger: INFO vanishes and WARNING+ falls through to lastResort on
+            # unformatted stderr. Restoring handlers is not enough; the cache entry has to go.
+            if cached_logger is None:
+                MFGLogger._loggers.pop("MFGSolver", None)
+            else:
+                MFGLogger._loggers["MFGSolver"] = cached_logger
 
         analyzer = LogAnalyzer(str(log_path))
         analyzer.parse_log_file()
