@@ -132,3 +132,55 @@ class TestHandlerDeduplication:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestLogAnalyserSeesEveryLevel:
+    """#1918: the writer's padding and the reader's regex are two owners of one line format."""
+
+    def test_every_level_written_by_the_real_formatter_is_parsed_back(self, tmp_path):
+        r"""CRITICAL was invisible to the analyser, and it is the level the analyser filters FOR.
+
+        Both ends are the real thing: `MFGFormatter` is the writer (`logger.py`), `LogAnalyzer` is
+        the reader (`analysis.py`), and nothing here restates either one's format.
+
+        What it catches, mutation-tested rather than asserted: a reader regression, a change to the
+        ` - ` separator, a dropped `datefmt`, and a reordering of the name/level fields. What it
+        does NOT catch is a change to the PADDING WIDTH -- `-8s` to `-9s` still passes -- which is
+        the exact class this bug came from. That is the repaired regex being tolerant of padding,
+        not the test being weak, but it is the limit of what this pins.
+
+        `%(levelname)-8s` pads to width 8. CRITICAL is exactly 8 characters, so it is the one level
+        that arrives with no padding, leaving a single space where the reader's `(\w+)\s+ - ` needed
+        two. Measured before the fix: 5 levels emitted, 4 parsed, CRITICAL the only miss -- and
+        `get_summary_statistics` and `find_error_patterns` both select
+        `level in ("ERROR", "CRITICAL")`, so the highest severity was absent from both failure
+        reports. (Named, not cited by line: this test's own edits move those lines.)
+        """
+        import logging
+
+        from mfgarchon.utils.mfg_logging.analysis import LogAnalyzer
+        from mfgarchon.utils.mfg_logging.logger import MFGFormatter
+
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        log_path = tmp_path / "probe.log"
+        logger = logging.getLogger("mfgarchon.test.levels")
+        previous_propagate, previous_level = logger.propagate, logger.level
+        logger.handlers.clear()
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        handler = logging.FileHandler(log_path, mode="w")
+        handler.setFormatter(MFGFormatter())
+        logger.addHandler(handler)
+        try:
+            for level in levels:
+                logger.log(getattr(logging, level), f"probe line for {level}")
+        finally:
+            handler.close()
+            logger.handlers.clear()
+            logger.propagate, logger.level = previous_propagate, previous_level
+
+        analyzer = LogAnalyzer(str(log_path))
+        analyzer.parse_log_file()
+        parsed = {entry["level"] for entry in analyzer.entries}
+
+        assert parsed == set(levels), f"emitted {levels}, parsed back {sorted(parsed)}"

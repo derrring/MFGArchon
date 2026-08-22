@@ -52,7 +52,21 @@ class LogAnalyzer:
         log_pattern = re.compile(
             r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - "  # timestamp
             r"([^-]+?) - "  # logger name
-            r"(\w+)\s+ - "  # level
+            # `\s+ - ` needed TWO spaces before the dash: one for `\s+`, one literal. The
+            # writer's format is `%(levelname)-8s`, and CRITICAL is exactly 8 characters, so it
+            # is the one level that gets zero padding and reaches this line with a single space.
+            # It is a level `get_summary_statistics` and `find_error_patterns` both filter FOR,
+            # so the highest severity was absent from both failure reports.
+            #
+            # The trailing separator is a LITERAL space, not `\s+`, and the difference is not a
+            # preference. `([^-]+?)` cannot contain a dash, so the logger group is pinned to the
+            # first `-` in the line and neither group can backtrack; `\s+- ` therefore accepts a
+            # strict superset of what `\s+ - ` accepted, and both consume exactly one space after
+            # the dash, so the message group starts at the same offset on every line the old form
+            # matched. Byte-identical groups by construction, not by sweep. A greedy `\s+` there
+            # would instead eat leading whitespace and, on an empty message under
+            # include_location=True, swallow the `[location]` field into the message.
+            r"(\w+)\s+- "  # level
             r"(.*?)(?:\s+\[([^\]]+)\])?$"  # message and optional location
         )
 
