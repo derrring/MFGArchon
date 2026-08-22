@@ -170,8 +170,12 @@ class NeumannCalculator:
 
     Computes ghost cell value such that the normal derivative equals
     the prescribed flux g:
-        du/dn = (u_ghost - u_interior) / (2*dx) = g  (cell-centered)
-        => u_ghost = u_interior + 2*dx*g
+        du/dn = (u_ghost - u_interior) / dx = g      (both centrings)
+        => u_ghost = u_interior + dx*g
+
+    The separation is `dx` on either centring and du/dn already carries the wall's direction.
+    This docstring said `2*dx` until #1936; that is the formula #1972 removed from the body it
+    describes, and it was the fourth surviving copy of it.
 
     Supports vectorized operations for efficient array processing.
     """

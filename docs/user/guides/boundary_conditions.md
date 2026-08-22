@@ -222,7 +222,7 @@ For a time-stepping loop, allocate once with `PreallocatedGhostBuffer` instead;
 For cell-centered grids with boundary at cell face:
 
 - **Dirichlet** (u = g): `u_ghost = 2*g - u_interior`
-- **Neumann** (du/dn = g): `u_ghost = u_interior + 2*dx*g` (outward normal)
+- **Neumann** (du/dn = g): `u_ghost = u_interior + dx*g` -- the ghost-to-interior separation is `dx`, not `2*dx`, and `du/dn` already carries the wall's direction, so there is no sign factor. This line said `2*dx*g` until #1936; that is the formula #1972 removed from `ghost_cell_neumann`'s body.
 - **No-flux** (du/dn = 0): `u_ghost = u_interior` -- this is the **zero-gradient** ghost, correct for `u` and for the default applicator path. It is *not* the FP mass-conserving wall; see [FP Solvers (FDM)](#fp-solvers-fdm) below.
 
 ## Corner Handling

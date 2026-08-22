@@ -85,9 +85,12 @@ def ghost_cell_neumann(
     """
     Compute ghost cell value for Neumann BC. `flux_value` is du/dn.
 
-    For cell-centered grids:
-        du/dn = (u_ghost - u_interior) / (2*dx) * sign = g
-        => u_ghost = u_interior + 2*dx*g*sign
+    One formula, both centrings, both walls:
+        du/dn = (u_ghost - u_interior) / dx = g
+        => u_ghost = u_interior + dx*g
+
+    The separation is `dx` on either centring, and du/dn already carries the wall's direction,
+    so there is no sign argument. See the note below for the `2*dx` version this replaced (#1972).
 
     Args:
         interior_value: Value at interior point
@@ -186,94 +189,33 @@ def high_order_ghost_dirichlet(
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> list[float]:
     """
-    Compute high-order accurate ghost cell values for Dirichlet BC.
+    RETIRED (#1936): the cell-centred branches cannot reproduce a constant field.
 
-    For WENO5 and other high-order schemes, 2nd-order ghost cells degrade
-    boundary accuracy. This function provides 4th or 5th order extrapolation.
+    For a Dirichlet ghost the prescribed value is itself a value of `u` at the face, so every
+    coefficient must sum to 1 or the formula cannot return `u` for `u` constant. Measured on
+    `u = 1` with `boundary_value = 1`, where both ghosts must be exactly 1.0:
 
-    Mathematical derivation (cell-centered, 4th order):
-        Given: u_b = g (Dirichlet BC at cell face x = x_0 - dx/2)
-        Want: ghost values u_{-1}, u_{-2} that preserve polynomial accuracy
+        CELL_CENTERED (the DEFAULT)  order=4  ->  [1.6, 4.0]
+        CELL_CENTERED                order=5  ->  [1.5, 3.3333]  (needs 4 interior values;
+                                                            with 3 it falls to the order=4 row)
+        CELL_CENTERED                order<4  ->  [1.0, 1.0]     (the fallback is fine)
+        VERTEX_CENTERED              all      ->  [1.0, 1.0]     (correct)
 
-        Using Lagrange interpolation through boundary point and interior points:
-        - u_{-1} extrapolated from {g, u_0, u_1, u_2}
-        - u_{-2} extrapolated from {g, u_{-1}, u_0, u_1, u_2}
+    So the default path is wrong from constants onward -- more elementary than the failure that
+    retired `high_order_ghost_neumann` alongside it, whose order=4 branch at least reproduces a
+    constant and only breaks from linear on.
 
-    Args:
-        interior_values: Interior point values [u_0, u_1, u_2, ...] from boundary inward
-        boundary_value: Dirichlet BC value g
-        order: Extrapolation order (4 or 5)
-        grid_type: Grid type (cell-centered or vertex-centered)
+    Nothing called this, in the package or the tests. Retired rather than deleted for the same
+    reason as its neighbour: it shipped in v0.21.0, so the import stays valid.
 
-    Returns:
-        Ghost values [u_{-1}, u_{-2}] (first is adjacent to interior)
-
-    References:
-        - Fedkiw et al. (1999): "A Non-oscillatory Eulerian Approach..."
-        - Shu (1998): "Essentially Non-Oscillatory and WENO Schemes..."
+    Use :func:`ghost_cell_dirichlet`, which returns 1.0 here.
     """
-    if order < 4:
-        # Fall back to 2nd-order for low orders
-        u_int = interior_values[0]
-        g = boundary_value
-        if grid_type == GridType.VERTEX_CENTERED:
-            return [g, 2 * g - u_int]
-        else:
-            u_ghost_1 = 2.0 * g - u_int
-            u_ghost_2 = 2.0 * g - interior_values[1] if len(interior_values) > 1 else u_ghost_1
-            return [u_ghost_1, u_ghost_2]
-
-    # High-order extrapolation (4th or 5th order)
-    g = boundary_value
-    u = interior_values
-
-    if grid_type == GridType.VERTEX_CENTERED:
-        # For vertex-centered, boundary is at a grid point
-        # u_{-1} = g directly
-        # u_{-2} extrapolated using polynomial through g, u_0, u_1, u_2
-        if order >= 4 and len(u) >= 3:
-            # 4th-order extrapolation for u_{-2}
-            # Using Lagrange polynomial through (x=-1, g), (x=0, u0), (x=1, u1), (x=2, u2)
-            # evaluated at x=-2
-            u_ghost_2 = 4 * g - 6 * u[0] + 4 * u[1] - u[2]
-        else:
-            u_ghost_2 = 2 * g - u[0]
-        return [g, u_ghost_2]
-
-    # Cell-centered: boundary at cell face (x = x_0 - dx/2)
-    # Ghost cell centers are at x = x_0 - dx, x_0 - 2*dx, etc.
-    # Boundary value g is at x = x_0 - dx/2
-
-    if order >= 5 and len(u) >= 4:
-        # 5th-order Lagrange extrapolation
-        # Points: (x=-0.5, g), (x=0, u0), (x=1, u1), (x=2, u2), (x=3, u3)
-        # Evaluate at x=-1 and x=-2
-
-        # Coefficients derived from Lagrange interpolation formula
-        # u_{-1} at x = -1:
-        u_ghost_1 = (16 / 5) * g - 3 * u[0] + (8 / 5) * u[1] - (1 / 3) * u[2] + (1 / 30) * u[3]
-
-        # u_{-2} at x = -2:
-        u_ghost_2 = (48 / 5) * g - 12 * u[0] + 8 * u[1] - (8 / 3) * u[2] + (2 / 5) * u[3]
-        return [u_ghost_1, u_ghost_2]
-
-    elif order >= 4 and len(u) >= 3:
-        # 4th-order Lagrange extrapolation
-        # Points: (x=-0.5, g), (x=0, u0), (x=1, u1), (x=2, u2)
-        # Evaluate at x=-1 and x=-2
-
-        # u_{-1} at x = -1 (using 4-point Lagrange)
-        u_ghost_1 = (16 / 5) * g - 3 * u[0] + (8 / 5) * u[1] - (1 / 5) * u[2]
-
-        # u_{-2} at x = -2
-        u_ghost_2 = (48 / 5) * g - 12 * u[0] + 8 * u[1] - (8 / 5) * u[2]
-        return [u_ghost_1, u_ghost_2]
-
-    else:
-        # Fall back to 2nd-order
-        u_ghost_1 = 2.0 * g - u[0]
-        u_ghost_2 = 2.0 * g - u[1] if len(u) > 1 else u_ghost_1
-        return [u_ghost_1, u_ghost_2]
+    raise NotImplementedError(
+        "high_order_ghost_dirichlet is RETIRED (#1936): its cell-centred branches -- the "
+        "default grid_type -- cannot reproduce a constant field, returning [1.6, 4.0] at "
+        "order=4 and [1.5, 3.3333] at order=5 where u = 1 requires [1.0, 1.0]. "
+        "Use ghost_cell_dirichlet."
+    )
 
 
 def high_order_ghost_neumann(
@@ -285,99 +227,69 @@ def high_order_ghost_neumann(
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> list[float]:
     """
-    Compute high-order accurate ghost cell values for Neumann BC.
+    RETIRED (#1936): first-order in the ghost value at the max wall, where the rule it improves
+    on is third. Cell-centred throughout; see defect 3 for the min wall and the other rates.
 
-    Mathematical derivation (cell-centered, 4th order):
-        Given: du/dn = g (Neumann BC at cell face)
-        Want: ghost values that preserve polynomial accuracy
+    Not uniformly wrong, which is why reading it did not settle the question. Measured on
+    `u = x` with the exact face derivative fed in, cell-centred, `dx=1`, ghosts nearest-first:
 
-        The key constraint is that the derivative at the boundary matches g.
-        Using polynomial extrapolation with derivative constraint.
+        max wall (sign=+1, the DEFAULT)   order=4  -0.5909   order=5  -0.4600   exact +0.5
+        min wall (sign=-1)                order=4  -0.5000   order=5  -0.5000   exact -0.5  (exact)
+        max wall                          order<4  +1.5, +2.5   exact +0.5, +1.5
+        min wall                          order<4  +2.5, +5.5   exact -0.5, -1.5
 
-    Args:
-        interior_values: Interior point values [u_0, u_1, u_2, ...] from boundary inward
-        flux_value: Neumann BC value (du/dn = g)
-        dx: Grid spacing
-        outward_normal_sign: +1 for max boundary, -1 for min boundary
-        order: Extrapolation order (4 or 5)
-        grid_type: Grid type
+    Three separable defects, and the headline is the third:
 
-    Returns:
-        Ghost values [u_{-1}, u_{-2}] (first is adjacent to interior)
+    1. `flux_value * outward_normal_sign` is used as the INWARD derivative. At the min wall that
+       coincides with the truth, which is why those two rows are exact; at the max wall it is
+       negated. The whole max-wall error is that one term: order=4 is off by exactly `12*h*g/11`
+       (1.0909) and order=5 by `24*h*g/25` (0.9600).
+
+    2. Both high-order branches impose the derivative constraint at the GHOST CENTRE, not at the
+       face -- `(-11*u_{-1} + 18*u_0 - 9*u_1 + 2*u_2)/(6h)` is `p'` at `u_{-1}`. A linear field has
+       the same derivative everywhere, so this is invisible above and shows only where the flux
+       term cannot mask it: `u = x^2` with `g = 0` gives 0.5455 (order=4) and 0.4800 (order=5).
+
+    3. Defect 1 ALONE costs the order the name promises -- not the pair. On `u = exp(x)`,
+       cell-centred, over h = 0.2 -> 0.025:
+
+           max wall (defect 1 present)   rate 1.04, 1.02, 1.01     -> O(h)
+           min wall (defect 1 absent)    rate 1.94, 1.98, 1.99     -> O(h^2), defect 2 alone
+           `ghost_cell_neumann`          rate 3.00, 3.00, 3.00     -> O(h^3)
+
+       So it is worse than the rule it was written to improve on at BOTH walls, and a derivative
+       built from the max-wall ghost is O(1) wrong.
+
+    The `order<4` fallback is a separate failure of a different kind: `u[0] + 2*dx*g` is the
+    repo's own pre-#1972 formula, `interior + 2*dx*g*sign`, struck in this file on 2026-08-18 --
+    a retired rule that survived in a copy nothing was checking. It is not the only one: the
+    one-cell form `u_ghost = u_interior + 2*dx*g` survives at SIX sites. #1936 corrects two of
+    them, here and in `NeumannCalculator`; `protocols.py:226/487/492` and the user guide still
+    carry it, and #2057 tracks those. (`u_next_interior +- 2*dx*g` in `_compat.py` and
+    `applicator_fdm.py` is a different, correct formula -- two cells, so 2*dx is right there.)
+
+    Also, the vertex-centred branch's `if order >= 4` arm and its `else` computed the same
+    expression, so that path advertised fourth order and delivered constant-derivative
+    extrapolation.
+
+    Nothing called this, in the package or the tests, which is why the errors survived to be found
+    by reading rather than by a failure. It raises instead of being deleted because it shipped:
+    added 2025-12-17 by `1a1ebec6`, present and exported in v0.20.0 and every tag since.
+
+    Use :func:`ghost_cell_neumann`. A correct face-constrained 4-point formula is on #1936, derived
+    twice independently during review; it is not implemented here because #1936's own acceptance
+    criterion is that the ghost value gain an owner and the implementation count DROP, and adding
+    a sixth implementation for zero consumers moves that counter the wrong way.
     """
-    g = flux_value * outward_normal_sign
-    u = interior_values
-
-    if order < 4 or len(u) < 3:
-        # Fall back to 2nd-order
-        u_ghost_1 = u[0] + 2.0 * dx * g
-        u_ghost_2 = u[1] + 4.0 * dx * g if len(u) > 1 else u_ghost_1 + 2.0 * dx * g
-        return [u_ghost_1, u_ghost_2]
-
-    if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centered: boundary at grid point
-        # du/dn = (u_0 - u_{-1}) / dx = g => u_{-1} = u_0 - dx*g
-        u_ghost_1 = u[0] - dx * g
-
-        if order >= 4 and len(u) >= 3:
-            # 4th-order: Use polynomial matching derivative at boundary
-            # du/dn|_{x=0} = g and smooth extrapolation through interior
-            u_ghost_2 = u_ghost_1 - dx * g  # Maintain constant derivative
-        else:
-            u_ghost_2 = u_ghost_1 - dx * g
-        return [u_ghost_1, u_ghost_2]
-
-    # Cell-centered: boundary at cell face (x = x_0 - dx/2)
-    # Constraint: du/dn at x = -dx/2 equals g
-
-    if order >= 5 and len(u) >= 4:
-        # 5th-order extrapolation with Neumann constraint
-        # Construct polynomial through (x=0, u0), (x=1, u1), (x=2, u2), (x=3, u3)
-        # and enforce derivative = g at x = -0.5
-
-        # One-sided 4th-order derivative at boundary:
-        # du/dx|_{x=-0.5} = (-25*u_{-1} + 48*u_0 - 36*u_1 + 16*u_2 - 3*u_3) / (12*dx)
-        # Solve for u_{-1} given du/dx = g
-
-        u_ghost_1 = (48 * u[0] - 36 * u[1] + 16 * u[2] - 3 * u[3] - 12 * dx * g) / 25
-
-        # For u_{-2}, use polynomial continuation
-        # du/dx|_{x=-1.5} should match smooth extrapolation
-        u_ghost_2 = (48 * u_ghost_1 - 36 * u[0] + 16 * u[1] - 3 * u[2] - 12 * dx * g) / 25
-
-        return [u_ghost_1, u_ghost_2]
-
-    elif order >= 4 and len(u) >= 3:
-        # 4th-order extrapolation with Neumann constraint
-        # Using 3rd-order one-sided difference:
-        # du/dx|_{x=-0.5} = (-11*u_{-1} + 18*u_0 - 9*u_1 + 2*u_2) / (6*dx) = g
-
-        u_ghost_1 = (18 * u[0] - 9 * u[1] + 2 * u[2] - 6 * dx * g) / 11
-
-        # For u_{-2}, maintain the derivative constraint
-        u_ghost_2 = (18 * u_ghost_1 - 9 * u[0] + 2 * u[1] - 6 * dx * g) / 11
-
-        return [u_ghost_1, u_ghost_2]
-
-    else:
-        # Fall back to 2nd-order
-        u_ghost_1 = u[0] + 2.0 * dx * g
-        u_ghost_2 = u[1] + 4.0 * dx * g if len(u) > 1 else u_ghost_1 + 2.0 * dx * g
-        return [u_ghost_1, u_ghost_2]
-
-
-# =============================================================================
-# Physics-Aware Ghost Cell Formulas
-# =============================================================================
-# IMPORTANT LESSON: The discretized BC must match the physics, not just the
-# mathematical form. For advection-diffusion equations (like Fokker-Planck),
-# a "no-flux" BC means J·n = 0 where J = v*rho - D*grad(rho).
-#
-# - Naive approach: Neumann (d rho/dn = 0) only zeroes diffusion flux
-# - Correct approach: Robin BC that zeroes TOTAL flux
-#
-# This distinction is crucial for mass conservation in FP equations.
-# =============================================================================
+    raise NotImplementedError(
+        "high_order_ghost_neumann is RETIRED (#1936). Cell-centred ghost value, u = exp(x): it "
+        "converges at O(h) at the max wall and O(h^2) at the min, where ghost_cell_neumann gives "
+        "O(h^3) -- worse than the rule it was written to improve on, at both walls. It uses the "
+        "flux as the inward derivative, which is why order=4 and order=5 are exact at the min "
+        "wall and negated at the max; its order<4 fallback is the pre-#1972 "
+        "`interior + 2*dx*g*sign` that this file already struck. "
+        "Use ghost_cell_neumann for the Neumann ghost value."
+    )
 
 
 def ghost_cell_fp_no_flux(
