@@ -449,7 +449,7 @@ class HJBHowardSolver:
         else:
             diffusion_operator = 0.5 * sigma * sigma * D_lap
 
-        for _ in range(self.max_iter):
+        for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below
             A_adv = self._build_A_adv(alpha, static)
             A = eye(n, format="csr") / dt - A_adv - diffusion_operator
 
@@ -504,8 +504,25 @@ class HJBHowardSolver:
 
             u_new = spsolve(A_lil.tocsr(), b)
             if not np.all(np.isfinite(u_new)):
-                logger.warning("HJBHowardSolver: non-finite u after spsolve; returning u_next")
-                return u_next.copy(), alpha
+                # #2072 item 3. This warned and returned `u_next.copy()` -- the PREVIOUS timestep --
+                # then carried on iterating. A fail-silent fallback: the sweep completes, every
+                # value is finite, and the returned field is a plausible-looking answer to a
+                # different problem. Measured while auditing the decomposition guard: a Hamiltonian
+                # that slipped that guard produced an all-finite field 153% wrong against Newton,
+                # and this branch is what made it look finite instead of NaN.
+                #
+                # No test asserted the old behaviour -- zero, against four test files that import
+                # this class -- so nothing depended on limping on.
+                _bad = int(np.count_nonzero(~np.isfinite(u_new)))
+                raise RuntimeError(
+                    f"HJBHowardSolver: policy evaluation returned {_bad} non-finite value(s) of "
+                    f"{u_new.size} at time index {t_idx}, Howard iteration {_iteration}. The linear solve "
+                    f"did not produce a value function, and continuing would substitute the "
+                    f"previous timestep and return a finite field that answers a different "
+                    f"problem. Check the Hamiltonian's decomposition (inner_solver='howard' "
+                    f"assumes a quadratic control cost) and the stencil conditioning; "
+                    f"inner_solver='newton' needs no decomposition. (Issue #2072)"
+                )
 
             # Policy update.
             p_new = np.zeros((n, dimension))

@@ -358,6 +358,50 @@ def test_each_discretisation_completes(discretisation):
     assert np.allclose(U[problem.Nt], U_T)
 
 
+def test_a_non_finite_policy_iterate_raises_instead_of_returning_the_previous_step(monkeypatch):
+    """#2072 item 3. This warned and returned `u_next.copy()`, then carried on iterating.
+
+    A fail-silent fallback: the sweep completes, every value is finite, and the field returned is a
+    plausible-looking answer to a different problem. It is what turned a Hamiltonian that slipped
+    the decomposition guard into an all-finite result 153% wrong against Newton, rather than a NaN
+    somebody would have noticed.
+
+    `spsolve` is patched rather than a singular system constructed, because the property under test
+    is the POLICY -- what the solver does when policy evaluation fails -- not the conditions that
+    make it fail. Building a matrix that happens to be singular would pin an accident of the
+    fixture instead.
+
+    No test asserted the old behaviour: zero, against four test files that import this class.
+    """
+    import mfgarchon.alg.numerical.hjb_solvers.hjb_howard as hjb_howard_module
+
+    pts, bdry, geom = _make_2d_cloud(nx=5, ny=5)
+    problem = _MockProblem(geom, sigma=0.3, T=1.0, Nt=5, dimension=2)
+    gfdm = _make_gfdm_solver(pts, bdry, geom, problem)
+    x_c = np.array([2.0, 2.0])
+    U_T = 0.5 * np.sum((pts - x_c[None, :]) ** 2, axis=1)
+
+    howard = HJBHowardSolver(
+        problem,
+        stencil_provider=gfdm,
+        alpha_star=lambda x, p, m, t: -p,
+        max_iter=15,
+    )
+
+    # sanity: it solves before the patch, so the raise below is the patch and not the fixture
+    assert np.all(np.isfinite(howard.solve_hjb_system(M_density=None, U_terminal=U_T)))
+
+    def _nan_solve(A, b):
+        out = np.empty(b.shape[0], dtype=float)
+        out.fill(np.nan)
+        return out
+
+    monkeypatch.setattr(hjb_howard_module, "spsolve", _nan_solve)
+
+    with pytest.raises(RuntimeError, match="non-finite value"):
+        howard.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+
 # ---------------------------------------------------------------------------
 # 5. 2D smoke + running_cost callable
 # ---------------------------------------------------------------------------
