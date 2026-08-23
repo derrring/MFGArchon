@@ -120,7 +120,6 @@ def ghost_cell_robin(
     alpha: float,
     beta: float,
     dx: float,
-    outward_normal_sign: float = 1.0,
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> float:
     """
@@ -135,26 +134,32 @@ def ghost_cell_robin(
     Solving for u_ghost:
         u_ghost * (alpha/2 + beta/dx) = g - u_interior * (alpha/2 - beta/dx)
 
-    IMPORTANT: For cell-centered grids, du/dn = (u_ghost - u_interior)/dx for BOTH
-    boundaries because ghost is always "outside" and interior is always "inside"
-    regardless of left/right. The outward_normal_sign parameter is kept for backward
-    compatibility but is NOT used in the cell-centered formula.
+    There is NO sign argument, at either centring. `du/dn` already carries the wall's direction,
+    and the ghost sits outside while the interior sits inside at both walls, so
+    `(u_ghost - u_interior)/dx` is the outward normal derivative either way.
 
-    For vertex-centered grids, the sign convention differs.
+    This took an `outward_normal_sign` until #2063, unused cell-centred and APPLIED BACKWARDS
+    vertex-centred. `RobinCalculator` was the only caller in the package that passed it, and
+    passing the physically correct -1.0 at the min wall is what broke it: measured on `u = 3x`,
+    dx = 0.1, alpha = 0, beta = 1, it returned +0.3000 where -0.3000 is exact. The seven callers
+    that omitted it took the +1.0 default and were right by accident. Ignoring the argument
+    entirely is exact on 8 of 8 -- two centrings, two walls, two slopes -- which is why it is
+    gone rather than merely un-defaulted. Same removal, and the same reason, as #1972's from
+    `ghost_cell_neumann`.
+
+    NOT fixed here: the vertex-centred `alpha != 0` arm below is wrong at both walls independently
+    of any sign, returning -10.5 where 3.3 is exact. It solves for a quantity multiplied by alpha
+    rather than for the ghost. #2064.
     """
     if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centered: sign matters because derivative direction differs
         if abs(alpha) > 1e-12:
-            return (rhs_value - beta * outward_normal_sign * interior_value / dx) / alpha
-        else:
-            return interior_value + dx * rhs_value / beta * outward_normal_sign
+            # WRONG at both walls, independently of the sign this branch used to apply: #2064.
+            return (rhs_value - beta * interior_value / dx) / alpha
+        return interior_value + dx * rhs_value / beta
 
-    # Cell-centered: ghost and interior are dx apart
-    # CRITICAL: du/dn = (u_ghost - u_interior)/dx for BOTH left and right boundaries
-    # The outward_normal_sign is NOT used here because the geometry is symmetric:
-    # - At left boundary: ghost at -dx/2, interior at +dx/2
-    # - At right boundary: interior at L-dx/2, ghost at L+dx/2
-    # In both cases, (u_ghost - u_interior)/dx gives the outward normal derivative.
+    # Cell-centered: ghost and interior are dx apart, and the geometry is symmetric --
+    # ghost at -dx/2 / interior at +dx/2 on the left, interior at L-dx/2 / ghost at L+dx/2 on the
+    # right -- so (u_ghost - u_interior)/dx is the outward normal derivative at both walls.
     coeff_ghost = alpha / 2.0 + beta / dx
     coeff_interior = alpha / 2.0 - beta / dx
 
@@ -303,7 +308,7 @@ def ghost_cell_fp_no_flux(
     drift_velocity: float,
     diffusion_coeff: float,
     dx: float,
-    outward_normal_sign: float = 1.0,
+    outward_normal_sign: float,
     grid_type: GridType = GridType.CELL_CENTERED,
 ) -> float:
     """
@@ -337,11 +342,21 @@ def ghost_cell_fp_no_flux(
 
     Args:
         interior_value: Density at interior point rho_interior
-        drift_velocity: Normal component of drift velocity v*n (positive = outward)
+        drift_velocity: Drift velocity in the AXIS direction, v_x -- not v*n. This routine
+            multiplies it by `outward_normal_sign` to obtain v*n, so passing v*n instead
+            double-counts the orientation: measured at a min wall, that leaves a total flux
+            residual of 1.25 rather than 0. A caller that already holds v*n passes it here with
+            `outward_normal_sign=1.0`, which is what `ghost_cell_advection_diffusion_no_flux`
+            does. No default: it is required precisely because the two callers disagree about
+            which quantity they hold, and +1.0 silently means "max wall" (#2063)
         diffusion_coeff: Diffusion coefficient D = sigma^2/2
         dx: Grid spacing
-        outward_normal_sign: +1 for max boundary (outward normal points positive),
-                            -1 for min boundary (outward normal points negative)
+        outward_normal_sign: the factor converting `drift_velocity` to v*n -- NOT "which wall
+            this is". A caller holding the axis velocity v_x passes the wall's outward normal
+            (+1 max, -1 min), which is what `ZeroFluxCalculator` does; a caller already holding
+            v*n passes +1.0 at BOTH walls, which is what
+            `ghost_cell_advection_diffusion_no_flux` does. Reading it as a wall identifier is what
+            made the `drift_velocity` line above say v*n (#2063). Required, no default.
         grid_type: Grid type (cell-centered or vertex-centered)
 
     Returns:
