@@ -7,7 +7,7 @@ The ghost-formula tests that lived here were removed with the methods they cover
 `_compute_ghost_{dirichlet,neumann,robin}` had zero production callers and encoded `du/dx` where
 the live path uses `du/dn`, so the tests pinned a convention nothing consumed.
 
-Run: python mfgarchon/geometry/boundary/_test_shared_ghost_formulas.py
+Run: pytest tests/unit/test_geometry/boundary/test_shared_ghost_formulas.py
 """
 
 from __future__ import annotations
