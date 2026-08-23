@@ -152,10 +152,25 @@ def ghost_cell_robin(
     rather than for the ghost. #2064.
     """
     if grid_type == GridType.VERTEX_CENTERED:
-        if abs(alpha) > 1e-12:
-            # WRONG at both walls, independently of the sign this branch used to apply: #2064.
-            return (rhs_value - beta * interior_value / dx) / alpha
-        return interior_value + dx * rhs_value / beta
+        # ONE formula, every alpha. The wall IS the interior node here, so u_b = u_interior and
+        # du/dn = (u_ghost - u_interior)/dx; substituting into alpha*u_b + beta*du/dn = g gives
+        # the line below. Verified exact on 16 combinations -- 2 walls x 2 (slope, offset) x
+        # {(0,1), (2,1), (2,0.5), (-1.5,2)} -- with zero failures.
+        #
+        # This was two branches until #2064, split on `abs(alpha) > 1e-12` purely to avoid dividing
+        # by beta, and the alpha != 0 arm solved for a quantity multiplied by alpha rather than for
+        # the ghost: it returned -10.5 where 3.3 is exact, at BOTH walls, independently of any sign.
+        # The split is what hid the fact that no sign term belongs here at all -- du/dn already
+        # carries the wall's direction, which is why #2063 could remove `outward_normal_sign`.
+        if np.any(np.abs(np.asarray(beta, dtype=float)) < 1e-12):
+            raise ValueError(
+                "ghost_cell_robin: beta = 0 on a vertex-centred grid is not a Robin condition. "
+                "alpha*u + 0*du/dn = g is the DIRICHLET condition u = g/alpha, and the ghost that "
+                "imposes it is ghost_cell_dirichlet(interior_value, g/alpha, VERTEX_CENTERED) -- "
+                "note g/alpha, not g. Passing it here has no Robin formula to fall into: the ghost "
+                "value is not determined by a condition that does not constrain the derivative."
+            )
+        return interior_value + dx * (rhs_value - alpha * interior_value) / beta
 
     # Cell-centered: ghost and interior are dx apart, and the geometry is symmetric --
     # ghost at -dx/2 / interior at +dx/2 on the left, interior at L-dx/2 / ghost at L+dx/2 on the

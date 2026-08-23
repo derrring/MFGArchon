@@ -411,6 +411,47 @@ class TestCalculatorClasses:
 
         assert np.isclose(got, slope * x_ghost), f"{grid_type.name}/{side}: {got} != {slope * x_ghost}"
 
+    @pytest.mark.parametrize(("alpha", "beta"), [(0.0, 1.0), (2.0, 1.0), (2.0, 0.5), (-1.5, 2.0)])
+    @pytest.mark.parametrize("side", ["min", "max"])
+    def test_vertex_robin_reproduces_a_linear_field_for_every_alpha(self, alpha, beta, side):
+        """#2064: the alpha != 0 arm returned -10.5 where 3.3 is exact, at BOTH walls.
+
+        `u = a*x + b` is reproduced exactly by the Robin ghost whatever the coefficients, because
+        the rhs is constructed FROM the field -- an external oracle, not either formula restated.
+        The offset matters: it is what separates a wrong formula from one that merely mishandles
+        the sign, since `b` shifts interior and ghost equally and leaves du/dn alone.
+
+        alpha = 0 is included as the continuity check: the unified form must degenerate to the
+        Neumann ghost there, which is what the two-branch structure used to special-case.
+        """
+        from mfgarchon.geometry.boundary import RobinCalculator
+
+        slope, offset, dx = 3.0, 5.0, 0.1
+        x_interior, x_ghost = (0.0, -dx) if side == "min" else (1.0, 1.0 + dx)
+        outward_normal = -1.0 if side == "min" else +1.0
+
+        u_interior = slope * x_interior + offset
+        u_ghost = slope * x_ghost + offset
+        rhs = alpha * u_interior + beta * slope * outward_normal
+
+        calc = RobinCalculator(alpha=alpha, beta=beta, rhs_value=rhs, grid_type=GridType.VERTEX_CENTERED)
+        got = calc.compute(interior_value=u_interior, dx=dx, side=side)
+
+        assert np.isclose(got, u_ghost), f"alpha={alpha} beta={beta} {side}: {got} != {u_ghost}"
+
+    def test_vertex_robin_refuses_beta_zero_and_names_the_right_dirichlet_value(self):
+        """#2064: beta = 0 is `alpha*u = g`, i.e. Dirichlet at `g/alpha` -- NOT at `g`.
+
+        The refusal has to carry the division, or a reader follows it to
+        `ghost_cell_dirichlet(g)` and imposes a different boundary value. That is the whole reason
+        this raises rather than delegating silently.
+        """
+        from mfgarchon.geometry.boundary.ghost_cells import ghost_cell_robin
+
+        with pytest.raises(ValueError, match=r"g/alpha") as excinfo:
+            ghost_cell_robin(1.0, 0.7, 2.0, 0.0, 0.1, grid_type=GridType.VERTEX_CENTERED)
+        assert "ghost_cell_dirichlet" in str(excinfo.value)
+
     def test_the_fp_no_flux_ghost_zeroes_the_TOTAL_flux_given_an_axis_velocity(self):
         """#2063: `drift_velocity` is v_x, not v*n, and the docstring said the opposite.
 
