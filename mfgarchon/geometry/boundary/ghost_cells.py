@@ -263,10 +263,16 @@ def high_order_ghost_neumann(
     The `order<4` fallback is a separate failure of a different kind: `u[0] + 2*dx*g` is the
     repo's own pre-#1972 formula, `interior + 2*dx*g*sign`, struck in this file on 2026-08-18 --
     a retired rule that survived in a copy nothing was checking. It is not the only one: the
-    one-cell form `u_ghost = u_interior + 2*dx*g` survives at SIX sites. #1936 corrects two of
-    them, here and in `NeumannCalculator`; `protocols.py:226/487/492` and the user guide still
-    carry it, and #2057 tracks those. (`u_next_interior +- 2*dx*g` in `_compat.py` and
-    `applicator_fdm.py` is a different, correct formula -- two cells, so 2*dx is right there.)
+    one-cell form survived in several docstrings, corrected across #1936 and #2057.
+
+    NO COUNT IS GIVEN HERE, deliberately. Two revisions of this note carried one, and both were
+    right for a spelling and wrong for the population: `u_ghost = u_interior + 2*dx*g` and
+    `u_g = u_i +- 2*dx*g` are the same claim, and counting the first missed `applicator_fdm`'s own
+    module header, which stated the one-cell form with a two-cell step and was wrong at both walls.
+    An earlier version of this note EXCLUDED that site, asserting the occurrence there was the
+    two-cell `u_next_interior +- 2*dx*g` -- a string that appears zero times in that file. A
+    miscounted exclusion shielded the site the count existed to find, so the count is gone rather
+    than corrected: a tally over a hand-chosen literal cannot audit the predicate that chose it.
 
     Also, the vertex-centred branch's `if order >= 4` arm and its `else` computed the same
     expression, so that path advertised fourth order and delivered constant-derivative

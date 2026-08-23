@@ -22,11 +22,18 @@ Dirichlet (u = g at boundary):
     => u_g = 2*g - u_i
 
 Neumann (du/dn = g at boundary, outward normal):
-    (u_i - u_g) / (2*dx) = g  (for left/bottom boundary, normal points inward)
-    => u_g = u_i - 2*dx*g
+    (u_g - u_i) / dx = g   at BOTH walls
+    => u_g = u_i + dx*g
 
-    (u_g - u_i) / (2*dx) = g  (for right/top boundary, normal points outward)
-    => u_g = u_i + 2*dx*g
+    One formula, both walls, both centrings. The ghost-to-interior separation is dx either way --
+    cell-centred puts them at -dx/2 and +dx/2, vertex-centred at -dx and 0 -- and du/dn already
+    carries the wall's direction, so there is no per-wall sign.
+
+    This block said `u_g = u_i -+ 2*dx*g` until #2057: the one-cell form with a two-cell step, the
+    exact defect #1972 removed from `ghost_cell_neumann`. Measured on `u = 3x`, dx = 0.1, on the
+    geometry stated above -- wrong at BOTH walls under BOTH readings of g: left gave +0.75 (as
+    du/dn) or -0.45 (as du/dx) against an exact -0.15, right gave +3.45 against +3.15. Its
+    defining relation was wrong too: `(u_i - u_g)/(2*dx)` returns 1.5 on a field whose du/dx is 3.
 
 Robin (alpha*u + beta*du/dn = g at boundary):
     alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/(2*dx) = g
