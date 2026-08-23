@@ -18,10 +18,27 @@ it in that function, whose comment already says "Gate on the factor directly. Fa
 same shape as #1979 one layer over, where a capability gate keyed on BC *type* let a provider-valued
 *coefficient* through.
 
-This pins the refusal, not a repair. Reading the alpha-free part as `H(x, m, p=0, t)` is unsound --
-it equals that part only when `H_control(0) = 0`, and `H = sqrt(1 + |p|^2)` injects a spurious 1.0 --
-and a guard on "alpha-free part is non-zero" cannot catch the Lagrangian substitution, whose
-alpha-free part is exactly zero. Admitting such a Hamiltonian correctly is #2011's remaining work.
+#2011 SPLIT THIS FILE'S SUBJECT IN TWO, and the split is on which piece Howard can recover.
+
+The alpha-free part it CAN. `howard_running_cost` evaluates the Hamiltonian at p = 0 through the
+same `eval_H_batch` the Newton residual uses -- no private attribute, no decomposition -- and the
+switch that builds it now also fires on the guard's own measurement of |H(x, m, 0, t)|, not only on
+`_potential`/`_coupling`. Measured: `H = |p|^2/2 + g*x*m` gives 1.4586e-01 on Howard against
+1.4687e-01 on Newton, where it gave 0.0000e+00 before.
+
+The control cost it CANNOT, and `_ke` still refuses on it. That is the real limit: Howard
+substitutes a quadratic Lagrangian, and nothing recovers one that is not quadratic.
+
+An earlier version of this docstring called the extraction unsound, on the grounds that
+`H(x, m, p=0, t)` equals the alpha-free part only when `H_control(0) = 0`, with `H = sqrt(1+|p|^2)`
+injecting a spurious 1.0. The objection is right in principle and `_ke` covers it in practice:
+measured through the guard, that Hamiltonian is REFUSED with `_ke = 3.121e+03` against a tolerance
+of 8.0e-09 -- six orders of magnitude, not a margin. What `_ke` cannot separate is `H_control(p) =
+(1/2)|p|^2 + C` from a constant potential `V = C`, and no probe can: they are the same function of
+(x, m, p, t). Treating `H(0)` as the alpha-free part is the standard normalisation, not an error.
+
+The Lagrangian-substitution case is unaffected -- its alpha-free part is exactly zero, so no
+alpha-free gate was ever going to catch it, which is why `_ke` is the one that does.
 """
 
 from __future__ import annotations
@@ -103,17 +120,55 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     )
 
 
-def test_howard_refuses_a_hamiltonian_without_a_control_cost():
-    with pytest.raises(NotImplementedError, match=r"exposes no\s+`?control_cost`?"):
-        _solve(LocalCoupling(1.0), "howard", **SOCP)
+def test_howard_extracts_an_alpha_free_part_it_was_never_told_about():
+    """#2011 item 1. Howard used to DROP this bitwise; it now agrees with Newton.
+
+    `H = |p|^2/2 + g*x*m` carries an alpha-free local coupling F(x, m) on a class that exposes
+    neither `_potential` nor `_coupling`. The switch that built Howard's running-cost closure was
+    keyed on exactly those two SeparableHamiltonian internals, so the coupling was discarded and
+    the solve returned the g = 0 answer. Measured on the issue: 0.0000e+00 on Howard against
+    1.469e-01 on Newton.
+
+    It is now keyed on the guard's OWN measurement of |H(x, m, 0, t)| as well, and the extraction
+    was already convention-free -- `howard_running_cost` evaluates the Hamiltonian at p = 0 through
+    the same `eval_H_batch` the Newton residual uses, which needs no private attribute.
+
+    Newton is the live control, not a recorded number: it reads the Hamiltonian through H() and
+    dp() and needs no decomposition, so it says what the coupling is worth on this problem. The two
+    inner solvers discretise differently, hence a tolerance rather than equality.
+    """
+
+    def spread(inner, **kw):
+        u0 = _solve(LocalCoupling(0.0), inner, **kw)
+        u1 = _solve(LocalCoupling(1.0), inner, **kw)
+        assert np.all(np.isfinite(u1))
+        return float(np.abs(u1 - u0).max())
+
+    newton = spread("newton")
+    howard = spread("howard", **SOCP)
+
+    assert newton > 1e-3, "the control itself must see the coupling, or this test proves nothing"
+    assert howard > 1e-3, f"Howard still dropped the alpha-free part: {howard:.4e}"
+    assert abs(howard - newton) / newton < 0.05, (
+        f"Howard {howard:.4e} vs Newton {newton:.4e} -- extracted, but not the same problem"
+    )
 
 
 def test_the_refusal_names_the_consequence_and_the_alternative():
+    """The refusal that REMAINS is the kinetic one: Howard substitutes a quadratic Lagrangian.
+
+    `H = |p|^4/2` agrees with the unit quadratic at |p| = 0 and 1 -- the only two points an earlier
+    probe sampled -- and no extraction recovers a control cost that is not quadratic. That is why
+    `_ke` is still a refusal while the alpha-free gate is not.
+    """
     with pytest.raises(NotImplementedError) as exc:
-        _solve(LocalCoupling(1.0), "howard", **SOCP)
+        _solve(_quartic(), "howard", **SOCP)
     text = str(exc.value)
     assert "L(alpha) = (1/2)|alpha|^2" in text, "must say WHAT would be substituted"
-    assert "bitwise" in text, "must say the alpha-free part is dropped, not merely approximated"
+    assert "not the problem" in text, (
+        "must distinguish the alpha-free part, which is now extracted, from the control cost, "
+        "which is what it is refusing -- otherwise a reader retries with a different coupling"
+    )
     assert "M_collocation slices" in text, (
         "must disclose WHERE it probed -- an earlier version pinned m to ones and t to 0 and said "
         "neither, so a reader would believe their own density had been checked"
@@ -281,11 +336,12 @@ def _quartic():
     return type("QuarticBare", (HamiltonianBase,), {"__call__": call, "dp": dp})()
 
 
+# #2011 item 1 SPLIT THIS LIST, and the split line landed on the physics rather than being drawn.
+# Every entry here has a control cost that is NOT the unit quadratic -- m-dependent, quartic,
+# anisotropic -- and no probe recovers one, so Howard's substituted Lagrangian would be a different
+# problem. These stay refusals.
 _REFUSE = [
-    ("hidden_coupling_f1_is_zero", lambda: _make("C", lambda x, m, q, p: 0.5 * q + 2.0 * x * (m - 1.0))),
     ("congestion_c1_is_one", _congestion),
-    ("log_coupling", lambda: _make("E", lambda x, m, q, p: 0.5 * q + 2.0 * np.log(np.maximum(m, 1e-12)))),
-    ("affine_coupling", lambda: _make("F", lambda x, m, q, p: 0.5 * q + 2.0 * (m - 1.0))),
     ("quartic_kinetic", _quartic),
     (
         "anisotropic_kinetic",
@@ -301,9 +357,24 @@ _REFUSE = [
 ]
 
 
+# The other half: kinetic part IS (1/2)|p|^2, everything else is an alpha-free F(x, m). These were
+# refused until #2011 because the switch was keyed on `_potential`/`_coupling` and none of them
+# sets either. They are now extracted as H(x, m, 0, t).
+_EXTRACT = [
+    ("hidden_coupling_f1_is_zero", lambda: _make("C", lambda x, m, q, p: 0.5 * q + 2.0 * x * (m - 1.0))),
+    ("log_coupling", lambda: _make("E", lambda x, m, q, p: 0.5 * q + 2.0 * np.log(np.maximum(m, 1e-12)))),
+    ("affine_coupling", lambda: _make("F", lambda x, m, q, p: 0.5 * q + 2.0 * (m - 1.0))),
+]
+
+
 @pytest.mark.parametrize(("name", "factory"), _REFUSE, ids=[n for n, _ in _REFUSE])
 def test_the_probe_sees_hamiltonians_a_fixed_sample_point_cannot(name, factory):
-    """Each of these was ACCEPTED by a probe pinned to m = ones, t = 0, p = e_0."""
+    """Each of these was ACCEPTED by a probe pinned to m = ones, t = 0, p = e_0.
+
+    All that survives here is the KINETIC refusal. The alpha-free entries moved to `_EXTRACT`
+    below, because #2011 made them solvable rather than merely detectable -- a gate that refuses
+    what it could compute is not a safety property.
+    """
     with pytest.raises(NotImplementedError):
         _solve(factory(), "howard", **SOCP)
 
@@ -439,6 +510,25 @@ def test_the_denser_ladder_does_not_false_refuse_a_genuine_quadratic():
     u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **SOCP)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6
+
+@pytest.mark.parametrize(("name", "factory"), _EXTRACT, ids=[n for n, _ in _EXTRACT])
+def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
+    """#2011: accepted AND acted on. Asserting only that it does not raise would be vacuous.
+
+    The terminal condition is `cos` deliberately: with u_T = 0 the exact solution is u == 0, so a
+    solver that silently returned zeros would satisfy any `isfinite` check and this test would pass
+    while proving nothing -- the trap `_solve`'s own docstring names.
+    """
+    u = _solve(factory(), "howard", terminal="cos", **SOCP)
+    assert np.all(np.isfinite(u))
+    assert np.abs(u).max() > 1e-6, "accepted, but the solve produced nothing to check"
+
+    # the alpha-free part must MOVE the answer: compare against the same Hamiltonian with it gone
+    baseline = _solve(BareUnitQuadratic(), "howard", terminal="cos", **SOCP)
+    assert np.abs(u - baseline).max() > 1e-3, (
+        f"{name} was accepted but its alpha-free part changed nothing -- extraction is a no-op, "
+        "which is the pre-#2011 behaviour wearing a green test"
+    )
 
 
 def test_a_wired_alpha_free_part_is_NOT_refused():

@@ -3332,9 +3332,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             #
             # So the probe runs on `M_collocation` at several time slices, at the matching physical
             # times, over several momentum directions AND magnitudes.
-            _pot = getattr(H_class, "_potential", None)
-            _cpl = getattr(H_class, "_coupling", None)
-            _alpha_free_is_wired = _pot is not None or _cpl is not None
+            # `_alpha_free_is_wired` used to live here, keyed on `_potential`/`_coupling`, and
+            # its only consumer was the refusal removed above. The alpha-free part no longer needs
+            # to be DECLARED to be handled -- it is measured as `_af` and extracted as
+            # H(x, m, 0, t) -- so the question "is it wired?" has no consumer left. (#2011)
             _dt_probe = float(self.problem.T) / int(self.problem.Nt)
             _pts = np.asarray(self.collocation_points, dtype=float)
             _rng = np.random.default_rng(0)
@@ -3466,15 +3467,24 @@ class HJBGFDMSolver(BaseHJBSolver):
                 )
 
             _tol = 1e-10 * max(1.0, _scale)
-            _af_bad = (not _alpha_free_is_wired) and _af > _tol
-            if _af_bad or _ke > _tol:
+            # Issue #2011 item 1. The alpha-free part is no longer a refusal: `howard_running_cost`
+            # below extracts it as H(x, m, 0, t) via the same eval_H_batch the Newton residual uses,
+            # which needs no `_potential`/`_coupling` and works for any Hamiltonian. What made that
+            # sound is the `_ke` gate immediately below -- it requires H(p) - H(0) to match
+            # (1/2)|p|^2, which is exactly the statement that H_control(0) = 0, so H(x, m, 0, t) IS
+            # the alpha-free part rather than merely containing it. `_af` is now measured to DECIDE
+            # whether to build that closure, not to refuse.
+            #
+            # `_ke` remains a refusal, and it is the real limit: Howard substitutes a quadratic
+            # Lagrangian, and no probe recovers a Hamiltonian whose control cost is something else.
+            if _ke > _tol:
                 raise NotImplementedError(
                     f"inner_solver='howard' cannot decompose {type(H_class).__name__}: "
                     f"{'it exposes no `control_cost`, and probing' if control_cost is None else 'probing'} "
                     f"it on this problem's own density, times and momentum scale shows Howard's "
                     f"substituted assumptions do not hold "
-                    f"(max|H(x,m,0,t)| = {_af:.3e}{' (unwired)' if _af_bad else ' (wired, not gated)'}, "
-                    f"and H(x,m,p,t) - H(x,m,0,t) departs from (1/2)|p|^2 by {_ke:.3e}; "
+                    f"(its alpha-free part max|H(x,m,0,t)| = {_af:.3e} is extracted and is not the "
+                    f"problem; H(x,m,p,t) - H(x,m,0,t) departs from (1/2)|p|^2 by {_ke:.3e}, which is; "
                     f"tolerance {_tol:.1e}, relative to a probed |H| of {_scale:.3e}). Probed at "
                     f"M_collocation slices {list(_slices)}, times {[round(float(n) * _dt_probe, 4) for n in _slices]}, "
                     f"and {len(_dirs)} momentum vectors at |p| in {[round(float(m), 4) for m in _mags]} "
@@ -3567,7 +3577,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         # so accepting the name while dropping the argument converts the gate's false negative
         # into a false positive: exactly the silent-wrong-answer #1424 exists to prevent.
         mms_src = self._mms_source_fn
-        has_H_extra = potential is not None or coupling is not None
+        # Issue #2011: UNION, not replacement. `_potential`/`_coupling` are SeparableHamiltonian
+        # internals, so keying on them alone dropped any other Hamiltonian's alpha-free part
+        # BITWISE -- measured on the issue, max|u(g=1) - u(g=0)| = 0.0000e+00 on Howard against
+        # 2.2393e-01 on Newton. `_af` is the guard's own measurement of |H(x, m, 0, t)| over this
+        # problem's density, times and points, so it catches a part carried any other way.
+        #
+        # The declared route is kept rather than replaced: the probe samples specific slices and
+        # points, and a potential that vanishes there but not elsewhere would be dropped by a
+        # measurement-only switch. Union can only admit more than today, never less.
+        has_H_extra = potential is not None or coupling is not None or _af > _tol
 
         howard_running_cost = None
         if has_H_extra or mms_src is not None:
