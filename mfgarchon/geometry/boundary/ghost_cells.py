@@ -345,8 +345,12 @@ def ghost_cell_fp_no_flux(
             which quantity they hold, and +1.0 silently means "max wall" (#2063)
         diffusion_coeff: Diffusion coefficient D = sigma^2/2
         dx: Grid spacing
-        outward_normal_sign: +1 for max boundary (outward normal points positive),
-                            -1 for min boundary (outward normal points negative)
+        outward_normal_sign: the factor converting `drift_velocity` to v*n -- NOT "which wall
+            this is". A caller holding the axis velocity v_x passes the wall's outward normal
+            (+1 max, -1 min), which is what `ZeroFluxCalculator` does; a caller already holding
+            v*n passes +1.0 at BOTH walls, which is what
+            `ghost_cell_advection_diffusion_no_flux` does. Reading it as a wall identifier is what
+            made the `drift_velocity` line above say v*n (#2063). Required, no default.
         grid_type: Grid type (cell-centered or vertex-centered)
 
     Returns:

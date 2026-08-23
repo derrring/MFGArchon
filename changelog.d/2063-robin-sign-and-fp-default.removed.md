@@ -38,8 +38,27 @@ a leftward drift at a left wall — where `v·n` would be `+0.5`. The body and t
 `Args:` line was the outlier. Decided by the function's own contract, `J·n = 0`: fed `v_x` the
 residual is machine zero at both walls; fed `v·n` the min wall leaves **1.25**. Corrected.
 
-Not fixed here, and filed while validating the lines this change edits: the vertex-centred
-`alpha != 0` arm of `ghost_cell_robin` is wrong at both walls independently of any sign, returning
-−10.5 where 3.3 is exact (#2064). And #1907, which recorded the cell-centred symptom of the Robin
-sign, no longer reproduces — re-measured with its own harness, 0.000000 where it recorded 0.2 /
-0.05 / 0.0125.
+The `Args:` entry for `outward_normal_sign` is corrected too. It read "+1 for max boundary, −1 for
+min boundary", as though the parameter identified the wall; it does not.
+`ghost_cell_advection_diffusion_no_flux` passes `+1.0` at **both** walls because it already holds
+`v·n`. The parameter is the conversion factor, and reading it as a wall identifier is what made the
+`drift_velocity` line say `v·n` in the first place.
+
+`RobinCalculator` and `ZeroFluxCalculator` now pass `grid_type` by **keyword**. Passed positionally
+it lands on whatever slot follows `dx`, so reintroducing an `outward_normal_sign` parameter would
+silently rebind `GridType` onto it and fall back to cell-centred — mutation-tested during review:
+that restoration leaves 51/51 green. The keyword makes the binding structural rather than lucky.
+
+Not fixed here, and filed while validating the lines this change edits:
+
+- **#2064** — the vertex-centred `alpha != 0` arm of `ghost_cell_robin` is wrong at both walls
+  independently of any sign, returning −10.5 where 3.3 is exact.
+- **#2068** — `ghost_cell_fp_no_flux`'s VERTEX_CENTERED branch leaves a total flux that does not
+  converge under refinement, settling at `−0.5 = −v_x·rho` where the cell-centred branch is machine
+  zero at every resolution. It is self-consistent with a wall at separation `2*dx`, which is the
+  #1972 pathology in the same file. **The `J·n = 0` test this change adds exercises only the
+  cell-centred branch** — the one that already satisfied the contract; replacing the vertex formula
+  with arbitrary values leaves 1309/1309 green.
+- **#1907**, which recorded the cell-centred symptom of the Robin sign, no longer reproduces —
+  re-measured with its own harness, 0.000000 where it recorded 0.2 / 0.05 / 0.0125. It already did
+  not reproduce before this change; nothing here fixes it.

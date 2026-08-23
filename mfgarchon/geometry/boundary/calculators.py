@@ -267,13 +267,17 @@ class RobinCalculator:
         is what #2063 removed -- this was the only caller in the package that did, and it was the
         only one getting a wrong answer, inverting the vertex-centred min wall.
         """
+        # grid_type by KEYWORD, not position. Passed positionally it lands on whatever slot
+        # follows `dx`, so reintroducing an `outward_normal_sign` parameter would silently rebind
+        # GridType onto it and fall back to cell-centred -- mutation-tested: that restoration
+        # leaves 51/51 green. The keyword makes the binding structural rather than lucky (#2063).
         return ghost_cell_robin(
             interior_value,
             self._rhs_value,
             self._alpha,
             self._beta,
             dx,
-            self._grid_type,
+            grid_type=self._grid_type,
         )
 
     def __repr__(self) -> str:
@@ -484,7 +488,7 @@ class ZeroFluxCalculator:
             self._diffusion,
             dx,
             outward_sign,
-            self._grid_type,
+            grid_type=self._grid_type,  # keyword, for the reason given in RobinCalculator (#2063)
         )
 
     def __repr__(self) -> str:

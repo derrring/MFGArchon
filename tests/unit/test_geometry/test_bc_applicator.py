@@ -398,7 +398,7 @@ class TestCalculatorClasses:
 
         The cause was `RobinCalculator` deriving an outward sign from `side` and passing it on --
         the only caller in the package that did. Passing the physically correct -1.0 was what broke
-        it, so the six callers that omitted the argument were right by accident.
+        it, so the seven callers that omitted the argument were right by accident.
         """
         from mfgarchon.geometry.boundary import RobinCalculator
 
@@ -434,7 +434,7 @@ class TestCalculatorClasses:
                 drho_dn = (ghost - rho_interior) / dx
                 assert np.isclose(v_n * rho_face - D * drho_dn, 0.0, atol=1e-12)
 
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError, match="outward_normal_sign"):
             ghost_cell_fp_no_flux(rho_interior, 0.5, D, dx)
 
     def test_neumann_calculator_agrees_with_the_live_applicator_path(self):
