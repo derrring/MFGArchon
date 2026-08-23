@@ -158,6 +158,16 @@ class TestSetupWorkflowLogging:
             if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
         ]
 
+        # #2058: both handlers must carry the OWNED format, not a hand-rolled copy. Asserting
+        # handler TYPES alone left this branch green under any formatter, which is how a second
+        # format string lived here. Type, not string: the string belongs to MFGFormatter.
+        from mfgarchon.utils.mfg_logging import MFGFormatter
+
+        for handler in logger.handlers:
+            assert isinstance(handler.formatter, MFGFormatter), (
+                f"{type(handler).__name__} carries {type(handler.formatter).__name__}, not MFGFormatter"
+            )
+
         assert len(file_handlers) >= 1
         assert len(stream_handlers) >= 1
 
