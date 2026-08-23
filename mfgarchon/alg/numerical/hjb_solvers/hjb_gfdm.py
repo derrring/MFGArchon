@@ -3355,7 +3355,20 @@ class HJBGFDMSolver(BaseHJBSolver):
             _hmin = float(np.min(_dists)) if _pts.shape[0] > 1 else 1.0
             _gT = _spread / _hmin if np.isfinite(_hmin) and _hmin > 0.0 else 0.0
             _gT = _gT if np.isfinite(_gT) and _gT > 0.0 else 1.0
-            _mags = sorted({0.5, 1.0, 2.0, 0.5 * _gT, _gT, 2.0 * _gT})
+            # GEOMETRIC SPAN, not a few multiples of _gT. The previous form was
+            # sorted({0.5, 1, 2, 0.5*_gT, _gT, 2*_gT}), which on this file's own fixture is
+            # {0.5, 1, 2, 20, 40, 80} -- and `_gT` OVERESTIMATES the true max|grad u_T| (2*pi =
+            # 6.2832 here) by 6.4x, because it is a spacing bound rather than a gradient. So the
+            # ladder straddled the operating range without ever landing in it, and the widening
+            # that was meant to close the |p| = 6.18 hole moved the upper rungs further away from
+            # it. Measured: H = |p|^2/2 + bump(|p|^2) with the bump supported on |p| in (3, 10)
+            # passed the probe and produced a finite, plausible field 10.9% wrong against Newton.
+            #
+            # A span cannot have that hole. Overestimating `_gT` stays safe for the same reason as
+            # before -- a genuine quadratic matches the kinetic reference at EVERY |p|, so more
+            # sample points can only make a true refusal stricter, never invent a false one -- and
+            # the span keeps the old ladder's reach while filling what it stepped over. (#2072)
+            _mags = sorted(set(np.geomspace(0.5, max(2.0 * _gT, 2.0), 12).tolist()) | {0.5, 1.0, 2.0})
             _dirs = [np.eye(self.dimension)[0] * _m for _m in _mags]
             _dirs += [v / np.linalg.norm(v) * _m for _m in _mags for v in (_rng.normal(size=self.dimension),)]
 
@@ -3367,9 +3380,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                     return float(np.asarray(control_cost.evaluate(np.asarray(_d, dtype=float))).ravel()[0])
                 return 0.5 * float(np.dot(_d, _d))
 
-            # np.maximum, NOT the builtin: `max(0.0, nan)` returns 0.0, because `nan > 0.0` is False.
-            # A single non-finite value anywhere in the probe would then zero the whole measurement
-            # and drop the tolerance to its floor -- a fail-silent inside the fail-loud guard.
+            # `np.maximum` over the builtin does NOT make this NaN-safe, and an earlier version of
+            # this comment claimed it did. Measured: `np.maximum(0.0, nan)` is `nan` and
+            # `nan > tol` is False; `max(0.0, nan)` is `0.0` and `0.0 > tol` is False. IDENTICAL
+            # acceptance. A quartic returning NaN at one probe magnitude the solve never visits was
+            # ACCEPTED and produced a finite field 153% wrong against Newton. The non-finite check
+            # after the loop is what actually closes it: a probe that could not be evaluated is not
+            # a probe that passed. (#2072)
             # Demonstrated on this file's own refuse-case fixture: one NaN turned a correctly
             # REFUSED Hamiltonian into an accepted one, _af 5.98 -> exactly 0.0.
             _af = _ke = _scale = 0.0
@@ -3396,6 +3413,23 @@ class HJBGFDMSolver(BaseHJBSolver):
             # RELATIVE, not absolute: an algebraically exact unit quadratic whose alpha-free part
             # cancels from terms of magnitude K leaves a residue ~K*eps, and an absolute 1e-10 bound
             # false-refuses it from K ~ 5e5.
+            # A PROBE THAT COULD NOT BE EVALUATED IS NOT A PROBE THAT PASSED. Without this, a single
+            # non-finite value anywhere in the sweep leaves `_af`/`_ke` as NaN, and every subsequent
+            # comparison `nan > tol` is False -- so the guard ACCEPTS, which is the outcome it exists
+            # to prevent. Demonstrated on a quartic returning NaN at one probe magnitude the solve
+            # never visits: accepted, all-finite output, 153% wrong against Newton. (#2072)
+            if not (np.isfinite(_af) and np.isfinite(_ke) and np.isfinite(_scale)):
+                raise NotImplementedError(
+                    f"inner_solver='howard' could not evaluate {type(H_class).__name__} over this "
+                    f"problem's probe: the decomposition check produced a non-finite value "
+                    f"(max|H(x,m,0,t)| = {_af}, kinetic departure = {_ke}, |H| scale = {_scale}). "
+                    f"A non-finite probe cannot certify that Howard's substituted Lagrangian holds, "
+                    f"and comparing it against a tolerance silently ACCEPTS -- `nan > tol` is False. "
+                    f"Probed at momentum magnitudes {[round(float(m), 4) for m in _mags]} over "
+                    f"{len(_dirs)} directions. Use inner_solver='newton', which reads the "
+                    f"Hamiltonian through H() and dp() and needs no decomposition. (Issue #2072)"
+                )
+
             _tol = 1e-10 * max(1.0, _scale)
             _af_bad = (not _alpha_free_is_wired) and _af > _tol
             if _af_bad or _ke > _tol:
