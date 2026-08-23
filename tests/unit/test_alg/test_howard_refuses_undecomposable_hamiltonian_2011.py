@@ -334,12 +334,18 @@ def _pure_bump():
 
 
 def _nan_at_one_probe_point():
-    """H = |p|^4/2, returning NaN only at |p| ~ 80 -- a probe magnitude the solve never visits."""
+    """H = |p|^4/2, returning NaN at |p| = 1.
+
+    |p| = 1 is in the `{0.5, 1, 2}` union, so it is a probe magnitude at EVERY value of the
+    gradient bound. An earlier version placed the NaN at |p| = 80, which existed only because
+    `_gT = spread/hmin` was 40 on this fixture -- so the test was coupled to the very quantity
+    #2072 replaces, and would have gone green-by-vacuity the moment the bound was corrected.
+    """
 
     def call(self, x, m, p, t=0.0):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
-        return np.where(np.abs(q - 6400.0) < 1.0, np.nan, 0.5 * q**2)
+        return np.where(np.abs(q - 1.0) < 1e-9, np.nan, 0.5 * q**2)
 
     def dp(self, x, m, p, t=0.0):
         pa = np.asarray(p, dtype=float)
@@ -362,15 +368,52 @@ def _pure_unit_quadratic():
     return type("PureUnitQuadratic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
 
 
-def test_the_probe_ladder_has_no_gap_over_the_operating_range():
-    """#2072: the ladder straddled max|grad u| without landing on it.
+def _bump_on(lo_q, hi_q, amplitude):
+    """H = |p|^2/2 + a C^1 bump on |p|^2 in (lo_q, hi_q). No alpha-free part, so `_af` is 0 and a
+    refusal can only come from `_ke` -- otherwise the fixture would be caught for the wrong reason
+    and would keep passing if the probe regressed."""
 
-    Measured against main's ladder this fixture is ACCEPTED and produces a finite, plausible field;
-    with the geometric span it is refused. The refusal must come from `_ke` -- the fixture has no
-    alpha-free part, so `_af_bad` cannot be what catches it.
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        return 0.5 * q + amplitude * np.maximum(0.0, q - lo_q) ** 2 * np.maximum(0.0, hi_q - q) ** 2
+
+    def dp(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        db = amplitude * (
+            2 * np.maximum(0.0, q - lo_q) * np.maximum(0.0, hi_q - q) ** 2
+            - 2 * np.maximum(0.0, q - lo_q) ** 2 * np.maximum(0.0, hi_q - q)
+        )
+        f = 1.0 + db
+        return pa * (f[..., None] if pa.ndim > 1 else float(f))
+
+    return type("BumpedKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+@pytest.mark.parametrize(
+    ("name", "lo_q", "hi_q", "amp"),
+    [
+        # straddles the magnitude the solve actually visits (|p| ~ 6.18 on this fixture)
+        ("operating_range", 26.01, 62.41, 5e-4),
+        # the wider bump the first version of this guard fix used
+        ("wide", 9.0, 100.0, 1e-5),
+    ],
+)
+def test_the_probe_finds_a_kinetic_defect_at_the_magnitudes_the_solve_visits(name, lo_q, hi_q, amp):
+    """#2072. The first version of this fix replaced the ladder with a geometric span and claimed
+    "a span cannot have that hole". It can: adjacent rungs of a 12-point geomspace sit at a ratio
+    of ~1.59, so a bump narrower than that in relative width fits between two -- and the
+    `operating_range` case below is exactly such a bump, accepted at 17.4% error against a 2.23%
+    control by that version.
+
+    What closes it is the gradient bound, not the ladder shape. `_gT` was `spread/hmin`, which
+    divides a GLOBAL range by a LOCAL spacing and so diverges under refinement (20, 40, 80, 200 at
+    nx = 11, 21, 41, 201) while the gradient it stands for converges (3.09 -> 3.14). The discrete
+    Lipschitz constant tracks the truth, so the ladder's rungs land where the solve lives.
     """
     with pytest.raises(NotImplementedError, match="cannot decompose"):
-        _solve(_pure_bump(), "howard", terminal="cos", **SOCP)
+        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **SOCP)
 
 
 def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():

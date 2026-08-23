@@ -3348,12 +3348,28 @@ class HJBGFDMSolver(BaseHJBSolver):
             # super-quadratic above stayed accepted. This form cannot fail, and OVERESTIMATING is the
             # safe direction: the kinetic reference tracks a genuine quadratic exactly at every |p|,
             # so a larger probe cannot produce a false refusal, only a stricter true one.
+            # THE DISCRETE LIPSCHITZ CONSTANT OF u_T, not `spread / hmin`. The latter is a spacing
+            # bound with the wrong dimensional content: it divides a GLOBAL range by a LOCAL
+            # spacing, so it diverges linearly under refinement while the gradient it stands for
+            # converges. Measured on u_T = cos(2 pi x): spread/hmin gives 20, 40, 80, 200 at
+            # nx = 11, 21, 41, 201 while max|du/dx| goes 3.09 -> 3.14; on a linear ramp it gives
+            # 200 where the true gradient is 1. The overestimate reaches 63x by nx = 201.
+            #
+            # That is why the earlier widening failed. It was told the probe missed |p| = 6.18 and
+            # widened the ladder to multiples of a quantity 6.4x too large, moving the new rungs
+            # FURTHER from the hole. `max |u_i - u_j| / |x_i - x_j|` is a genuine upper bound on
+            # the discrete gradient, converges to it rather than away, and costs nothing: both
+            # arrays are already materialised here. (#2072)
             _uT = np.asarray(U_terminal_colloc, dtype=float).ravel()
-            _spread = float(np.ptp(_uT)) if _uT.size else 0.0
             _dists = np.linalg.norm(_pts[:, None, :] - _pts[None, :, :], axis=-1)
             np.fill_diagonal(_dists, np.inf)
-            _hmin = float(np.min(_dists)) if _pts.shape[0] > 1 else 1.0
-            _gT = _spread / _hmin if np.isfinite(_hmin) and _hmin > 0.0 else 0.0
+            if _pts.shape[0] > 1 and _uT.size == _pts.shape[0]:
+                _du = np.abs(_uT[:, None] - _uT[None, :])
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    _ratios = np.where(np.isfinite(_dists) & (_dists > 0.0), _du / _dists, 0.0)
+                _gT = float(np.max(_ratios)) if _ratios.size else 0.0
+            else:
+                _gT = 0.0
             _gT = _gT if np.isfinite(_gT) and _gT > 0.0 else 1.0
             # GEOMETRIC SPAN, not a few multiples of _gT. The previous form was
             # sorted({0.5, 1, 2, 0.5*_gT, _gT, 2*_gT}), which on this file's own fixture is
@@ -3368,7 +3384,21 @@ class HJBGFDMSolver(BaseHJBSolver):
             # before -- a genuine quadratic matches the kinetic reference at EVERY |p|, so more
             # sample points can only make a true refusal stricter, never invent a false one -- and
             # the span keeps the old ladder's reach while filling what it stepped over. (#2072)
-            _mags = sorted(set(np.geomspace(0.5, max(2.0 * _gT, 2.0), 12).tolist()) | {0.5, 1.0, 2.0})
+            # The span is DENSER, not hole-free, and an earlier revision of this comment claimed
+            # otherwise. Adjacent rungs of a 12-point geomspace over [0.5, 2*_gT] sit at a ratio of
+            # ~1.59, so a bump narrower than that in relative width still fits between two. What
+            # closes the operating-range hole is `_gT` above now tracking the real gradient, which
+            # puts the ladder's own rungs where the solve actually lives.
+            #
+            # The old ladder's EXACT rungs at 0.5*_gT and _gT are kept in the union rather than
+            # dropped: the geomspace grid lands on neither, and a bump centred on one of them was
+            # refused by the old form and accepted by a geomspace-only one. Same for the low end --
+            # a hard floor of 0.5 stops scaling down when _gT < 1, so the floor is min(0.5, _gT/4).
+            _lo = min(0.5, _gT / 4.0)
+            _mags = sorted(
+                set(np.geomspace(_lo, max(2.0 * _gT, 2.0 * _lo), 12).tolist())
+                | {0.5, 1.0, 2.0, 0.5 * _gT, _gT, 2.0 * _gT}
+            )
             _dirs = [np.eye(self.dimension)[0] * _m for _m in _mags]
             _dirs += [v / np.linalg.norm(v) * _m for _m in _mags for v in (_rng.normal(size=self.dimension),)]
 
@@ -3387,8 +3417,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             # ACCEPTED and produced a finite field 153% wrong against Newton. The non-finite check
             # after the loop is what actually closes it: a probe that could not be evaluated is not
             # a probe that passed. (#2072)
-            # Demonstrated on this file's own refuse-case fixture: one NaN turned a correctly
-            # REFUSED Hamiltonian into an accepted one, _af 5.98 -> exactly 0.0.
+            # (An earlier version of this comment demonstrated the point with "_af 5.98 -> exactly
+            # 0.0". That was the BUILTIN max's behaviour; with np.maximum the value becomes nan,
+            # and the acceptance is identical either way -- which is the whole point above.)
             _af = _ke = _scale = 0.0
             try:
                 for _n in _slices:
