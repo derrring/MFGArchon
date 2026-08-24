@@ -2,8 +2,7 @@
 Concrete topology and calculator implementations for boundary conditions.
 
 This module contains the concrete implementations of the Topology and
-BoundaryCalculator protocols, plus the LinearConstraint dataclass and
-calculator_to_constraint bridge function.
+BoundaryCalculator protocols, plus the LinearConstraint dataclass.
 
 Extracted from applicator_base.py (mechanical refactor, no logic changes).
 """
@@ -20,7 +19,7 @@ from .ghost_cells import (
     ghost_cell_neumann,
     ghost_cell_robin,
 )
-from .protocols import BoundaryCalculator, FieldData, GridType
+from .protocols import FieldData, GridType
 
 # =============================================================================
 # Concrete Topology Implementations
@@ -569,91 +568,6 @@ class LinearConstraint:
     bias: float = 0.0
 
 
-def calculator_to_constraint(
-    calculator: BoundaryCalculator | None,
-    dx: float,
-    side: str,
-    grid_type: GridType = GridType.CELL_CENTERED,
-) -> LinearConstraint:
-    """
-    Convert a BoundaryCalculator to LinearConstraint for matrix assembly.
-
-    This bridges the explicit (ghost cell) and implicit (matrix) worlds,
-    ensuring mathematical equivalence as required by GKS stability.
-
-    Args:
-        calculator: The physics calculator (None for periodic topology)
-        dx: Grid spacing
-        side: Boundary side ('min' or 'max')
-        grid_type: Grid alignment type
-
-    Returns:
-        LinearConstraint describing how ghost depends on interior values
-
-    Note:
-        For periodic topology, this function should not be called - the
-        Topology layer handles periodic by index wrapping, no physics needed.
-    """
-    if calculator is None:
-        # Periodic topology - should not reach here
-        raise ValueError("Periodic boundaries use index wrapping, not LinearConstraint")
-
-    # Tier 1: State constraints (Dirichlet)
-    if isinstance(calculator, DirichletCalculator):
-        return LinearConstraint(weights={}, bias=calculator._boundary_value)
-
-    # Tier 2: Gradient constraints (Neumann/ZeroGradient)
-    if isinstance(calculator, (NeumannCalculator, ZeroGradientCalculator)):
-        flux_value = calculator._flux_value if isinstance(calculator, NeumannCalculator) else 0.0
-        # u_ghost = u_inner + dx*g, both walls: `g` is du/dn and carries the direction. The
-        # `sign * dx * flux_value` form here was the third implementation of this one quantity and
-        # the second convention (#1972); it agreed with the live path at the max wall and inverted
-        # at the min.
-        return LinearConstraint(weights={0: 1.0}, bias=dx * flux_value)
-
-    # Tier 3: Flux constraints (Robin/ZeroFlux)
-    if isinstance(calculator, (RobinCalculator, ZeroFluxCalculator)):
-        if isinstance(calculator, ZeroFluxCalculator):
-            # FP no-flux: alpha = (2D + v*dx) / (2D - v*dx)
-            v = calculator._drift
-            D = calculator._diffusion
-            outward_sign = 1.0 if side == "max" else -1.0
-            v_n = v * outward_sign
-            alpha = (2 * D + v_n * dx) / (2 * D - v_n * dx + 1e-14)
-            return LinearConstraint(weights={0: alpha}, bias=0.0)
-        else:
-            # General Robin: alpha*u + beta*(u_ghost - u_inner)/(2*dx) = g
-            # (central difference for du/dn, outward sign absorbed by side convention)
-            # Solving for u_ghost:
-            #   u_ghost = u_inner * (beta - 2*alpha*dx) / (beta + 2*alpha*dx) + 4*g*dx / (beta + 2*alpha*dx)
-            # when beta = 0 -> Dirichlet; when alpha = 0 -> Neumann (degenerate cases handled above)
-            alpha = calculator._alpha
-            beta = calculator._beta
-            g = calculator._rhs_value
-            outward_sign = 1.0 if side == "max" else -1.0
-            # Effective beta with outward sign
-            beta_eff = beta * outward_sign
-            denom = beta_eff + 2 * alpha * dx
-            if abs(denom) < 1e-14:
-                # Degenerate: fall back to copy (Neumann-like)
-                return LinearConstraint(weights={0: 1.0}, bias=0.0)
-            weight = (beta_eff - 2 * alpha * dx) / denom
-            bias = 2 * g * dx / denom
-            return LinearConstraint(weights={0: weight}, bias=bias)
-
-    # Tier 4: Artificial constraints (Extrapolation)
-    if isinstance(calculator, LinearExtrapolationCalculator):
-        # u_ghost = 2*u[0] - u[1]
-        return LinearConstraint(weights={0: 2.0, 1: -1.0}, bias=0.0)
-
-    if isinstance(calculator, QuadraticExtrapolationCalculator):
-        # u_ghost = 3*u[0] - 3*u[1] + u[2]
-        return LinearConstraint(weights={0: 3.0, 1: -3.0, 2: 1.0}, bias=0.0)
-
-    # Default fallback: Neumann-like (copy interior)
-    return LinearConstraint(weights={0: 1.0}, bias=0.0)
-
-
 __all__ = [
     # Topology implementations
     "PeriodicTopology",
@@ -671,5 +585,4 @@ __all__ = [
     "FPNoFluxCalculator",  # -> ZeroFluxCalculator
     # Matrix assembly support (Tier-Based Coefficient Folding)
     "LinearConstraint",
-    "calculator_to_constraint",
 ]
