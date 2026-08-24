@@ -5,6 +5,7 @@ This module provides common fixtures, test configuration, and utilities
 used across the entire test suite.
 """
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -12,6 +13,37 @@ from pathlib import Path
 import pytest
 
 import numpy as np
+
+# Issue #2090: force a headless matplotlib backend BEFORE anything imports pyplot.
+#
+# `ConvergenceInfo.plot_convergence()` ends in a bare `plt.show()`, and a unit test calls it. On a
+# GUI backend that BLOCKS until the window is dismissed, so the run does not fail -- it waits. A
+# full `pytest tests/unit` stopped at 82% inside `tests/unit/test_types/test_state.py` and never
+# returned; measured, that one test exits 124 under a 60s cap and passes in 0.03s with Agg.
+#
+# It went unnoticed because `scripts/local_ci.sh` runs under a conda environment where Agg is
+# already active, while `uv run --extra dev` resolves the backend to `macosx`. The gate was green
+# and a plain suite run hung, on the same tree.
+#
+# Both mechanisms are needed, and neither is sufficient:
+#
+#   - `MPLBACKEND` reaches xdist workers, which are separate processes -- under `-n auto` a
+#     blocking `show()` kills one shard while the run appears to progress. But it is only read
+#     when matplotlib is FIRST imported, and something imports it before this file executes, so
+#     on its own it arrives too late and the backend stays `macosx`. Measured: the variable was
+#     set and `matplotlib.get_backend()` still returned `macosx`.
+#   - `use(..., force=True)` fixes the already-imported process but does not reach a subprocess.
+#
+# `setdefault` so a developer can still force a backend deliberately; the `use()` call then
+# follows whatever that resolved to rather than overriding it.
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+try:
+    import matplotlib
+
+    matplotlib.use(os.environ["MPLBACKEND"], force=True)
+except ImportError:  # matplotlib is a hard dependency today, but the suite must not need it
+    pass
 
 # Import main package components
 from mfgarchon import MFGProblem
