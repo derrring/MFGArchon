@@ -5,6 +5,7 @@ This module provides common fixtures, test configuration, and utilities
 used across the entire test suite.
 """
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -12,6 +13,39 @@ from pathlib import Path
 import pytest
 
 import numpy as np
+
+# Issue #2090: select a headless matplotlib backend before pyplot is imported.
+#
+# `ConvergenceInfo.plot_convergence()` ends in a bare `plt.show()` and a unit test calls it. On a
+# GUI backend with a foreground session that blocks until the window is dismissed, so the suite
+# does not fail -- it waits. Measured here: that test exits 124 under a 60s cap, and passes in
+# 0.03s under Agg. (On a machine with no foreground GUI session it completes slowly instead of
+# blocking, so the symptom is environment-dependent; the cause is not.)
+#
+# Both interpreters used with this repository default to `macosx` -- the conda env the gate runs
+# under and `uv run --extra dev` alike -- so a headless backend is not something either
+# environment supplies.
+#
+# `MPLBACKEND` is the mechanism: it is read when matplotlib is first imported, and this file is
+# loaded at `pytest_load_initial_conftests`, before any test module and separately in every xdist
+# worker. `use(..., force=True)` is belt-and-braces for a future plugin that imports matplotlib
+# ahead of this file. No such plugin exists here today -- traced over a full-tree collection, the
+# first matplotlib import in the process is this file -- so treat it as insurance, not as a
+# measured necessity.
+#
+# `setdefault` so a backend can be forced deliberately; the `use()` call then follows whatever
+# that resolved to rather than overriding it.
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+import matplotlib  # must follow the MPLBACKEND assignment above
+
+try:
+    matplotlib.use(os.environ["MPLBACKEND"], force=True)
+except ValueError as _exc:  # an unusable MPLBACKEND must name itself, not kill the session
+    raise RuntimeError(
+        f"MPLBACKEND={os.environ['MPLBACKEND']!r} is not a backend matplotlib accepts. "
+        f"The test suite needs a non-interactive one (Agg, pdf, svg, ps, pgf, template)."
+    ) from _exc
 
 # Import main package components
 from mfgarchon import MFGProblem
