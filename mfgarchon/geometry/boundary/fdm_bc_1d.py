@@ -85,47 +85,6 @@ class BoundaryConditions:
             ):
                 raise ValueError("Robin boundary conditions require alpha and beta coefficients")
 
-    def is_periodic(self) -> bool:
-        """Check if boundary conditions are periodic."""
-        return self.type == "periodic"
-
-    def is_dirichlet(self) -> bool:
-        """Check if boundary conditions are Dirichlet."""
-        return self.type == "dirichlet"
-
-    def is_neumann(self) -> bool:
-        """Check if boundary conditions are Neumann."""
-        return self.type == "neumann"
-
-    def is_no_flux(self) -> bool:
-        """Check if boundary conditions are no-flux."""
-        return self.type == "no_flux"
-
-    def is_robin(self) -> bool:
-        """Check if boundary conditions are Robin."""
-        return self.type == "robin"
-
-    def get_matrix_size(self, num_interior_points: int) -> int:
-        """
-        Get the size of the system matrix for these boundary conditions.
-
-        Args:
-            num_interior_points: Number of interior grid points (M)
-
-        Returns:
-            Size of the system matrix
-        """
-        if self.type == "periodic":
-            return num_interior_points
-        elif self.type == "dirichlet":
-            return num_interior_points - 1
-        elif self.type in ["neumann", "robin"]:
-            return num_interior_points + 1
-        elif self.type == "no_flux":
-            return num_interior_points
-        else:
-            raise ValueError(f"Unknown boundary condition type: {self.type}")
-
     def validate_values(self):
         """Validate that required values are provided for the boundary condition type."""
         if self.type == "dirichlet":
