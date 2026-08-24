@@ -18,6 +18,7 @@ one of those failures was a disagreement between what git does and what the scri
 `absorbed()` returns 0 = absorbed, 1 = not absorbed, 2 = no content difference at all.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -25,8 +26,46 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "prune_local_branches.sh"
 
+# Git exports these to hooks, and they beat both `-C` and `cwd=` (Issue #2085): with `GIT_DIR`
+# set, `git -C <tmp> commit` commits into the repository GIT_DIR names, not into <tmp>. Run from
+# the pre-push hook, this file therefore committed `a.txt` onto the developer's branch and wrote
+# its own `user.email=t@t` into their config -- the fixture below looks isolated and was not.
+# Stripping them makes the isolation these tests already intend real rather than nominal.
+_GIT_ENV_LEAKS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    # `GIT_CONFIG` acts as an implicit `--file`, so `git -C <tmp> config ...` rewrites the file it
+    # names -- symptom 2 of #2085 reproduces through it even with GIT_DIR scrubbed.
+    "GIT_CONFIG",
+    # `git init` copies `$GIT_TEMPLATE_DIR/hooks/` into every repository it creates. An ambient
+    # value plants hooks that then execute during this fixture's `git commit`, and
+    # `GIT_CONFIG_GLOBAL=os.devnull` below does not neutralise it -- that only covers
+    # `init.templateDir`, the config spelling of the same thing.
+    "GIT_TEMPLATE_DIR",
+)
+
+
+def _isolated_env():
+    """Environment for every git subprocess here: no inherited repository, no ambient config."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_LEAKS}
+    # Each throwaway repo sets its own `user.*`. Reading the developer's global config would make
+    # the verdicts depend on it, and the incident above was in part a write that reached it.
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    return env
+
 
 def _git(repo, *args, **kw):
+    # Merge rather than `setdefault`: a caller passing its own `env=` would otherwise skip the
+    # scrub entirely, which is the failure this whole helper exists to prevent.
+    kw["env"] = {**_isolated_env(), **(kw.get("env") or {})}
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True, **kw)
 
 
@@ -37,12 +76,18 @@ def repo(tmp_path):
     The upstream is BARE: pushing to the checked-out branch of a non-bare repo is refused, and the
     squash-merge case below has to push."""
     upstream = tmp_path / "upstream.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(upstream)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "main", str(upstream)],
+        check=True,
+        capture_output=True,
+        env=_isolated_env(),
+    )
 
     work = tmp_path / "work"
     work.mkdir()
     _git(work, "init", "-q", "-b", "main")
-    _git(work, "config", "user.email", "t@t")
+    # `.invalid` is reserved (RFC 2606): if this ever escapes into a real config again, it says so.
+    _git(work, "config", "user.email", "fixture@example.invalid")
     _git(work, "config", "user.name", "t")
     (work / "a.txt").write_text("base\n")
     _git(work, "add", "a.txt")
@@ -68,6 +113,7 @@ def _absorbed(repo, branch):
         cwd=str(repo),
         capture_output=True,
         text=True,
+        env=_isolated_env(),
     )
     line = [ln for ln in out.stdout.splitlines() if ln.startswith("rc=")]
     assert line, f"predicate produced no rc: {out.stdout!r} {out.stderr!r}"
@@ -223,6 +269,7 @@ class TestThePopulationCoversBothScopes:
                 "} | grep -vxE 'main|HEAD' | sort -u",
             ],
             cwd=str(repo),
+            env=_isolated_env(),
             capture_output=True,
             text=True,
         ).stdout.split()
@@ -277,4 +324,132 @@ def test_a_squash_merged_branch_stops_being_recognised_once_main_moves_on(repo):
         "improvement, not a failure: update the conditional wording in `absorbed()` and delete this "
         "test -- but verify against the real repository first, where eight branches with MERGED PRs "
         "classified as unmerged on 2026-08-21"
+    )
+
+
+def test_an_ambient_git_dir_does_not_capture_these_tests(tmp_path, monkeypatch):
+    """Issue #2085: `GIT_DIR` beats `-C`, so a hook environment aims this file at the real repo.
+
+    Git exports `GIT_DIR` (and friends) to hooks. `-C` sets the working directory; `GIT_DIR` names
+    the repository, and the variable wins. Run from the pre-push hook, the fixture above committed
+    onto the developer's branch and wrote `user.email=t@t` into their config, while every call in
+    it passed `-C <tmpdir>` and looked isolated.
+
+    Two-sided by construction: the target must receive the write AND the ambient repository named
+    by `GIT_DIR` must not. Asserting only the first passes even when the isolation is gone, because
+    with `GIT_DIR` set the read comes back from the same wrong place the write went to.
+    """
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(ambient)],
+        check=True,
+        capture_output=True,
+        env=_isolated_env(),
+    )
+    target = tmp_path / "target"
+    target.mkdir()
+    _git(target, "init", "-q", "-b", "main")
+
+    monkeypatch.setenv("GIT_DIR", str(ambient / ".git"))
+
+    _git(target, "config", "user.email", "fixture@example.invalid")
+
+    written = _git(target, "config", "--local", "--get", "user.email").stdout.strip()
+    assert written == "fixture@example.invalid", f"the target repo did not receive the write: {written!r}"
+
+    leaked = subprocess.run(
+        ["git", "-C", str(ambient), "config", "--local", "--get", "user.email"],
+        capture_output=True,
+        text=True,
+        env=_isolated_env(),
+    )
+    # Exactly 1 ("key absent"), not merely non-zero: 128 means the ambient path is not a repository,
+    # which would satisfy `!= 0` while proving nothing about isolation.
+    assert leaked.returncode == 1, (
+        f"the repository named by GIT_DIR was written to (user.email={leaked.stdout.strip()!r}). "
+        "The git environment is leaking into these tests again -- run from a hook, this file "
+        "will commit into the developer's checkout (#2085)."
+    )
+
+
+def test_an_ambient_git_config_does_not_redirect_the_writes(tmp_path, monkeypatch):
+    """`GIT_CONFIG` acts as an implicit `--file`, so it redirects writes exactly as `GIT_DIR` does.
+
+    Scrubbing `GIT_DIR` alone is not enough: with `GIT_CONFIG` set, the fixture above writes its
+    identity into whatever file that names, which is symptom 2 of #2085 reproduced through a
+    different door.
+    """
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    _git(victim, "init", "-q", "-b", "main")
+    _git(victim, "config", "user.email", "victim@example.invalid")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    _git(target, "init", "-q", "-b", "main")
+
+    monkeypatch.setenv("GIT_CONFIG", str(victim / ".git" / "config"))
+    _git(target, "config", "user.email", "fixture@example.invalid")
+
+    still = _git(victim, "config", "--local", "--get", "user.email").stdout.strip()
+    assert still == "victim@example.invalid", (
+        f"the config file named by GIT_CONFIG was rewritten to {still!r}; GIT_CONFIG is leaking (#2085)"
+    )
+
+
+def test_an_ambient_git_template_dir_does_not_plant_hooks(tmp_path, monkeypatch):
+    """`git init` copies `$GIT_TEMPLATE_DIR/hooks/` into every repository it creates.
+
+    This is the silent one: an ambient value gets arbitrary code executed by this fixture's own
+    `git commit`, with the suite reporting green throughout. `GIT_CONFIG_GLOBAL=os.devnull`
+    neutralises `init.templateDir` but not the environment variable.
+    """
+    template = tmp_path / "template" / "hooks"
+    template.mkdir(parents=True)
+    sentinel = tmp_path / "hook-ran"
+    hook = template / "post-commit"
+    hook.write_text(f'#!/bin/sh\ntouch "{sentinel}"\n')
+    hook.chmod(0o755)
+
+    monkeypatch.setenv("GIT_TEMPLATE_DIR", str(template.parent))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "fixture@example.invalid")
+    _git(repo, "config", "user.name", "fixture")
+    (repo / "f.txt").write_text("x\n")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-qm", "c")
+
+    assert not sentinel.exists(), (
+        "a hook from GIT_TEMPLATE_DIR was copied into the throwaway repo and executed during "
+        "commit -- an ambient template directory is running code inside these tests (#2085)"
+    )
+
+
+def test_the_developers_global_config_does_not_reach_these_repositories(tmp_path, monkeypatch):
+    """`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` are nulled so a verdict cannot depend on the machine.
+
+    Without this, deleting those two lines from `_isolated_env` changes nothing that any test
+    observes -- the whole config half of the fix was unpinned.
+    """
+    hostile = tmp_path / "gitconfig"
+    hostile.write_text("[user]\n\temail = ambient@example.invalid\n\tname = ambient\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(hostile))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+
+    seen = subprocess.run(
+        ["git", "-C", str(repo), "config", "--get", "user.email"],
+        capture_output=True,
+        text=True,
+        env=_isolated_env(),
+    )
+    assert seen.returncode == 1, (
+        f"the ambient global config leaked in: user.email={seen.stdout.strip()!r}. These tests must "
+        "not read the developer's config (#2085)"
     )
