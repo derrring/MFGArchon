@@ -439,18 +439,44 @@ class TestCalculatorClasses:
 
         assert np.isclose(got, u_ghost), f"alpha={alpha} beta={beta} {side}: {got} != {u_ghost}"
 
-    def test_vertex_robin_refuses_beta_zero_and_names_the_right_dirichlet_value(self):
-        """#2064: beta = 0 is `alpha*u = g`, i.e. Dirichlet at `g/alpha` -- NOT at `g`.
+    @pytest.mark.parametrize("side", ["min", "max"])
+    def test_vertex_robin_computes_the_dirichlet_limit_at_beta_zero(self, side):
+        """#2064: an earlier revision of this change REFUSED here. That was wrong twice over.
 
-        The refusal has to carry the division, or a reader follows it to
-        `ghost_cell_dirichlet(g)` and imposes a different boundary value. That is the whole reason
-        this raises rather than delegating silently.
+        `alpha*u + 0*du/dn = g` is the Dirichlet condition `u = g/alpha` -- determined, not
+        degenerate. The two-arm code it replaced already returned exactly that (measured:
+        alpha=2, beta=0, g=6 gave 3.0), and `enforcement.py`'s `enforce_robin_value_nd` computes
+        the same `rhs/alpha` rather than refusing. Raising would have turned a correct answer into
+        an error and put this owner at odds with that one.
+
+        The threshold was dimensionally wrong as well: `|beta| < 1e-12` is not scale-free, so the
+        same physical condition scaled by 1e-13 was refused while its exact answer was computable.
+        An FP wall sets `beta = -D`, so `sigma = 1e-6` would have been refused and told to become
+        an absorbing wall -- the opposite condition.
         """
         from mfgarchon.geometry.boundary.ghost_cells import ghost_cell_robin
 
-        with pytest.raises(ValueError, match=r"g/alpha") as excinfo:
-            ghost_cell_robin(1.0, 0.7, 2.0, 0.0, 0.1, grid_type=GridType.VERTEX_CENTERED)
-        assert "ghost_cell_dirichlet" in str(excinfo.value)
+        alpha, g, dx = 2.0, 6.0, 0.1
+        got = ghost_cell_robin(1.0, g, alpha, 0.0, dx, grid_type=GridType.VERTEX_CENTERED)
+        assert np.isclose(got, g / alpha), f"{side}: {got} != g/alpha = {g / alpha}"
+
+    def test_vertex_robin_refuses_only_the_genuinely_undetermined_case(self):
+        """`alpha = beta = 0` constrains nothing, so no ghost value exists. That is the ONLY
+        degenerate case, and the message says so rather than sending the reader to compute 0/0."""
+        from mfgarchon.geometry.boundary.ghost_cells import ghost_cell_robin
+
+        with pytest.raises(ValueError, match="does not constrain"):
+            ghost_cell_robin(1.0, 0.7, 0.0, 0.0, 0.1, grid_type=GridType.VERTEX_CENTERED)
+
+    def test_a_small_but_nonzero_beta_is_computed_not_refused(self):
+        """The scale test the old threshold failed: the same physical condition scaled down."""
+        from mfgarchon.geometry.boundary.ghost_cells import ghost_cell_robin
+
+        slope, offset, dx, s = 3.0, 5.0, 0.1, 1e-13
+        u_i = slope * 0.0 + offset
+        rhs = (2.0 * s) * u_i + (1.0 * s) * (-slope)
+        got = ghost_cell_robin(u_i, rhs, 2.0 * s, 1.0 * s, dx, grid_type=GridType.VERTEX_CENTERED)
+        assert np.isclose(got, slope * (-dx) + offset), f"scaled condition refused or wrong: {got}"
 
     def test_the_fp_no_flux_ghost_zeroes_the_TOTAL_flux_given_an_axis_velocity(self):
         """#2063: `drift_velocity` is v_x, not v*n, and the docstring said the opposite.

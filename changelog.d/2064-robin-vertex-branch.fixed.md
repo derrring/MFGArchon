@@ -22,12 +22,25 @@ The split also hid a fact #2063 had to establish separately: **no sign term belo
 `du/dn` already carries the wall's direction, which is why `outward_normal_sign` could be removed —
 the unified formula simply has nowhere to put one.
 
-**`beta = 0` is not a Robin condition.** `alpha*u + 0*du/dn = g` is the Dirichlet condition
-`u = g/alpha`, and the ghost that imposes it is
-`ghost_cell_dirichlet(interior_value, g/alpha, VERTEX_CENTERED)` — **`g/alpha`, not `g`**. The
-refusal carries that division, because a reader who follows it to `ghost_cell_dirichlet(g)` imposes a
-different boundary value. Only one literal `beta=0` call exists in the tree, in a test; production
-usage is zero.
+**`beta = 0` IS computable, and an earlier revision of this change refused it.** `alpha*u + 0*du/dn
+= g` is the Dirichlet condition `u = g/alpha` — determined, not degenerate. The two-arm code this
+replaces already returned exactly that (measured: `alpha=2, beta=0, g=6` → `3.0`), and
+`enforcement.py`'s `enforce_robin_value_nd` computes the same `rhs/alpha` rather than refusing.
+Raising would have converted a correct answer into an error and put this owner at odds with that one.
+
+The threshold was dimensionally wrong as well. `|beta| < 1e-12` is not scale-free: the same physical
+condition scaled by `1e-13` was refused while its exact answer was computable, and `alpha=1e6,
+beta=1e-11` passed and returned a result **182% wrong**. Concretely, an FP wall sets `beta = -D`, so
+`sigma = 1e-6` → `D = 5e-13` would have been refused and told to become a Dirichlet wall at
+`g/alpha = 0` — an **absorbing** wall, the opposite condition to the mass-conserving one requested.
+
+Only `alpha = beta = 0` constrains nothing, and that is what now raises — with a message that says
+so, rather than sending the reader to compute `0/0`.
+
+**Corrected in the same review:** the count in an earlier draft said "16 combinations"; `pytest
+--collect-only` gives **8** — `(slope, offset)` is fixed, so that axis does not exist. And "the split
+existed purely to avoid dividing by `beta`" is inverted: the guard tested **alpha** and protected the
+division by **alpha**; dividing by `beta` is what the unified form introduced.
 
 The new tests use `u = a*x + b` with the rhs constructed **from** the field — an external oracle, not
 either formula restated — and include `alpha = 0` as the continuity check that the unified form
