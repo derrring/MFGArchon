@@ -55,14 +55,12 @@ from scipy.sparse import csr_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
-from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
     from mfgarchon.core.mfg_problem import MFGProblem
 
-logger = get_logger(__name__)
 
 AlphaStarFn = Callable[[np.ndarray, np.ndarray, np.ndarray, int], np.ndarray]
 """Legendre transform: alpha_star(x, p, m, t_idx) -> alpha.
@@ -449,7 +447,7 @@ class HJBHowardSolver:
         else:
             diffusion_operator = 0.5 * sigma * sigma * D_lap
 
-        for _ in range(self.max_iter):
+        for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below
             A_adv = self._build_A_adv(alpha, static)
             A = eye(n, format="csr") / dt - A_adv - diffusion_operator
 
@@ -504,8 +502,36 @@ class HJBHowardSolver:
 
             u_new = spsolve(A_lil.tocsr(), b)
             if not np.all(np.isfinite(u_new)):
-                logger.warning("HJBHowardSolver: non-finite u after spsolve; returning u_next")
-                return u_next.copy(), alpha
+                # #2072 item 3. This warned and returned `u_next.copy()` and RETURNED -- it did not
+                # continue the policy loop; what carried on was the outer backward sweep. (`u_next`
+                # is the LATER time level, previous only in sweep order.) A fail-silent fallback:
+                # the sweep completes, every value is finite, and the returned field is a
+                # plausible-looking answer to a different problem -- measured, every time level came
+                # back bit-identical to the terminal condition.
+                #
+                # A Hamiltonian that slips the decomposition guard reaches here by a real mechanism,
+                # not a hypothetical one: the wrong alpha* = -dH/dp is cubic in p, the policy
+                # iteration diverges, L(alpha) overflows, `b` goes non-finite, and spsolve returns
+                # all-NaN -- so this branch fired at EVERY timestep and is what made the result look
+                # finite instead of NaN.
+                #
+                # Nothing depended on it. Settled by MUTATION rather than by counting: replacing
+                # this fallback with a hard raise on `main` left every test in the Howard-touching
+                # population with an identical outcome. (An earlier version of this comment said
+                # "four test files import this class". One does; three merely name it in a
+                # docstring, a dict key and an importlib string -- and the count was the wrong
+                # predicate anyway, since a test can reach this path through
+                # `inner_solver="howard"` without importing the class at all.)
+                _bad = int(np.count_nonzero(~np.isfinite(u_new)))
+                raise RuntimeError(
+                    f"HJBHowardSolver: policy evaluation returned {_bad} non-finite value(s) of "
+                    f"{u_new.size} at time index {t_idx}, Howard iteration {_iteration}. The linear solve "
+                    f"did not produce a value function, and continuing would substitute the "
+                    f"previous timestep and return a finite field that answers a different "
+                    f"problem. Check the Hamiltonian's decomposition (inner_solver='howard' "
+                    f"assumes a quadratic control cost) and the stencil conditioning; "
+                    f"inner_solver='newton' needs no decomposition. (Issue #2072)"
+                )
 
             # Policy update.
             p_new = np.zeros((n, dimension))
