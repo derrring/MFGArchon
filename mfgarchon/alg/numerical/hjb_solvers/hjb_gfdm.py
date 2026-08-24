@@ -250,8 +250,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         # per-timestep Newton + Armijo line search. 'howard': delegate the backward
         # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
         # MIN_ALPHA stall that freezes Newton on advection-dominant / no-flux-BC regimes).
-        # 'howard' requires monotonicity_scheme='joint_socp' + monotonicity_application=
-        # 'precompute', unit control cost, and a homogeneous no-flux BC (validated in solve).
+        # 'howard' needs unit control cost and a homogeneous no-flux BC (validated in solve).
+        # It no longer requires monotonicity_scheme='joint_socp' (#2066): without SOCP stencils
+        # it takes its operators from the collocation operator and warns that monotonicity --
+        # a convergence hypothesis, not a runnability one -- is not guaranteed.
         inner_solver: str = "newton",
         boundary_indices: np.ndarray | None = None,
         boundary_conditions: dict | BoundaryConditions | None = None,
@@ -3219,8 +3221,8 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         Howard has no Armijo line search, so it avoids the MIN_ALPHA stall the per-point Newton
         path hits on advection-dominant / no-flux-BC regimes (#1118). Operates in collocation
-        space; the caller handles grid<->collocation mapping. Requires joint_socp+precompute
-        stencils and a Hamiltonian exposing dp().
+        space; the caller handles grid<->collocation mapping. Requires a Hamiltonian exposing
+        dp(). SOCP stencils are used when present and are no longer required (#2066).
 
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(x, t) and density
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
@@ -3231,11 +3233,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 
-        if getattr(self, "_joint_socp_stencils", None) is None:
-            raise ValueError(
-                "inner_solver='howard' requires SOCP-precomputed stencils. Construct the solver with "
-                "monotonicity_scheme='joint_socp', monotonicity_application='precompute'."
-            )
+        # Issue #2066: this gate used to refuse here, duplicating a check HJBHowardSolver no
+        # longer makes. Howard needs D_lap, D_grad and an interior/boundary split; none is
+        # SOCP-specific, and the builders close the stencil row whatever produced the weights
+        # (#2081), so SOCP weights and operator weights both assemble correctly. Delegating means
+        # the caller gets Howard's own diagnosis: a warning naming the lost monotonicity when an
+        # operator is available, and a hard error when there is no weight source at all -- which
+        # is strictly more informative than refusing on the presence of one particular object.
         H_class = getattr(self.problem, "hamiltonian_class", None)
         if H_class is None:
             raise ValueError(

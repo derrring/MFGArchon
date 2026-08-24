@@ -163,8 +163,12 @@ class _LQHam(HamiltonianBase):
 # ---------------------------------------------------------------------------
 
 
-def test_construction_requires_joint_socp_stencils():
-    """stencil_provider without _joint_socp_stencils raises."""
+def test_construction_refuses_a_provider_carrying_no_weight_source():
+    """A provider with neither SOCP stencils nor an operator raises (#2066).
+
+    Named for what it checks. The old name -- `requires_joint_socp_stencils` -- described the gate
+    #2066 removed, not this one: SOCP is no longer required, but *some* source of D_lap/D_grad is.
+    """
     _pts, _bdry, geom = _make_2d_cloud()
     problem = _MockProblem(geom)
 
@@ -177,6 +181,62 @@ def test_construction_requires_joint_socp_stencils():
             stencil_provider=_StubProvider(),
             alpha_star=lambda x, p, m, t: -p,
         )
+
+
+def test_howard_runs_without_socp_stencils_and_says_so():
+    """#2066: the gate refused for operators Howard can obtain elsewhere.
+
+    Howard needs `D_lap`, `D_grad` and an interior/boundary split. None is SOCP-specific:
+    `get_derivative_weights` on the live TaylorOperator/LocalRBFOperator returns the SAME dict keys
+    the SOCP object does -- `neighbor_indices`, `grad_weights`, `lap_weights`,
+    `center_idx_in_neighbors` -- which is the entire contract `_build_dlap_from_socp` consumes.
+
+    Monotonicity IS a real hypothesis (Bokanowski-Maroso-Zidani 2009, module docstring), but it is
+    about CONVERGENCE, not about whether the solve can run -- and this module already ships
+    `discretisation="central"`, documented as "Does NOT preserve monotonicity ... included for
+    comparison only". Refusing here while offering that was inconsistent.
+
+    The old gate also did not deliver the property it appeared to guard: a `joint_socp` run logs
+    SOCP-infeasible interior nodes falling "through to bare Wendland-Taylor LSQ (NON-MONOTONE)" and
+    the check passed anyway, because it tested for the OBJECT rather than for monotonicity.
+
+    So: runs, and warns. The warning is the point -- a silent acceptance would trade one wrong
+    behaviour for another.
+    """
+    pts, bdry, geom = _make_2d_cloud(nx=5, ny=5)
+    problem = _MockProblem(geom, sigma=0.3, T=1.0, Nt=5, dimension=2)
+    x_c = np.array([2.0, 2.0])
+    U_T = 0.5 * np.sum((pts - x_c[None, :]) ** 2, axis=1)
+
+    plain = HJBGFDMSolver(problem, collocation_points=pts, boundary_indices=bdry, delta=1.5)
+    assert getattr(plain, "_joint_socp_stencils", None) is None, "fixture must have no SOCP stencils"
+
+    with pytest.warns(UserWarning, match="non-SOCP"):
+        howard = HJBHowardSolver(problem, stencil_provider=plain, alpha_star=lambda x, p, m, t: -p, max_iter=15)
+
+    U = howard.solve_hjb_system(M_density=None, U_terminal=U_T)
+    assert np.all(np.isfinite(U))
+    assert U.shape == (problem.Nt + 1, len(pts))
+    assert np.allclose(U[problem.Nt], U_T), "terminal must be preserved bit-for-bit"
+    # NOT `ptp(U) > 1e-6`: the line above pins U[Nt] == U_T, and U_T is a non-constant quadratic
+    # whose own ptp is ~4, so that assertion holds however little the sweep did -- including a
+    # no-op that returns the terminal slice broadcast backwards. What has to be shown is that the
+    # sweep MOVED something.
+    assert not np.allclose(U[0], U_T), "U[0] equals the terminal condition: the backward sweep did not propagate"
+
+
+def test_construction_still_refuses_when_there_is_no_operator_at_all():
+    """#2066 narrowed the refusal rather than removing it: no SOCP AND no operator is still a
+    hard error, because then there is no source for D_lap/D_grad at all."""
+    _pts, _bdry, geom = _make_2d_cloud()
+    problem = _MockProblem(geom)
+
+    class _StubProvider:
+        _joint_socp_stencils = None
+        _gfdm_operator = None
+
+    with pytest.raises(RuntimeError, match="neither"):
+        HJBHowardSolver(problem, stencil_provider=_StubProvider(), alpha_star=lambda x, p, m, t: -p)
 
 
 def test_construction_rejects_unknown_discretisation():
@@ -526,15 +586,32 @@ def test_inner_solver_rejects_unknown_value():
         _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="bogus")
 
 
-def test_integrated_howard_requires_joint_socp_stencils():
-    """inner_solver='howard' on a non-SOCP scheme raises at solve time (no _joint_socp_stencils)."""
+def test_integrated_howard_runs_on_a_non_socp_scheme_and_warns():
+    """#2066: `inner_solver='howard'` no longer refuses a non-SOCP scheme; it runs and warns.
+
+    This test previously asserted the opposite -- `pytest.raises(ValueError, match="SOCP-precomputed")`
+    -- and it is rewritten rather than deleted because the design changed under it, not because it
+    was wrong when written. The gate it pinned duplicated a refusal `HJBHowardSolver` had already
+    dropped, and it refused on the presence of a particular OBJECT rather than on the property
+    (monotonicity) it appeared to guard.
+
+    Monotonicity governs CONVERGENCE (Bokanowski-Maroso-Zidani 2009), not whether the solve can
+    run, and the builders close the stencil row whatever produced the weights (#2081), so operator
+    weights assemble as correctly as SOCP ones. What must not happen is silent acceptance: the
+    warning is the deliverable, so it is asserted here rather than merely tolerated.
+    """
     pts, bdry, geom = _make_1d_cloud()
     problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=5, dimension=1)
     problem.hamiltonian_class = _LQHam()
     gfdm = _make_gfdm_solver(pts, bdry, geom, problem, scheme="none", k_neighbors=5, inner_solver="howard")
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
-    with pytest.raises(ValueError, match="SOCP-precomputed"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    with pytest.warns(UserWarning, match="non-SOCP"):
+        U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+
+    assert np.all(np.isfinite(U)), "the non-SOCP path must produce a finite solution"
+    assert np.allclose(U[problem.Nt], U_T), "terminal must be preserved"
+    assert not np.allclose(U[0], U_T), "the backward sweep did not propagate"
 
 
 def test_integrated_howard_requires_hamiltonian_class():
