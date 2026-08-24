@@ -51,22 +51,32 @@ class LogAnalyzer:
         # Pattern to match MFGarchon log format
         log_pattern = re.compile(
             r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - "  # timestamp
-            r"([^-]+?) - "  # logger name
+            # Bounded by the ` - ` separator the writer emits, NOT by "contains no dash" (#2062).
+            # `([^-]+?)` could not match a hyphen at all, so every line whose logger name carried
+            # one was skipped with no diagnostic -- and EVERY workflow logger is named
+            # `mfg_workflow.<uuid>`, so a uuid's hyphens made those files parse to zero entries.
+            # The writer pads with `%(name)-20s`, so this group also takes the padding; the caller
+            # strips it.
+            r"(.+?) - "  # logger name
             # `\s+ - ` needed TWO spaces before the dash: one for `\s+`, one literal. The
             # writer's format is `%(levelname)-8s`, and CRITICAL is exactly 8 characters, so it
             # is the one level that gets zero padding and reaches this line with a single space.
             # It is a level `get_summary_statistics` and `find_error_patterns` both filter FOR,
             # so the highest severity was absent from both failure reports.
             #
-            # The trailing separator is a LITERAL space, not `\s+`, and the difference is not a
-            # preference. `([^-]+?)` cannot contain a dash, so the logger group is pinned to the
-            # first `-` in the line and neither group can backtrack; `\s+- ` therefore accepts a
-            # strict superset of what `\s+ - ` accepted, and both consume exactly one space after
-            # the dash, so the message group starts at the same offset on every line the old form
-            # matched. Byte-identical groups by construction, not by sweep. A greedy `\s+` there
-            # would instead eat leading whitespace and, on an empty message under
-            # include_location=True, swallow the `[location]` field into the message.
-            r"(\w+)\s+- "  # level
+            # The trailing `\s?` is optional because an empty or whitespace-only message under
+            # include_location=False leaves the line ending in `-` with nothing after it, and a
+            # literal trailing space could not match that. It is `\s?` and NOT `\s+`: measured,
+            # a greedy `\s+` there eats the message's own leading whitespace ('  leading spaces'
+            # -> 'leading spaces') and, on an empty message under include_location=True, swallows
+            # the `[location]` field into the message. `\s?` does neither.
+            #
+            # The by-construction argument for the old form rested on `([^-]+?)` being unable to
+            # backtrack, which the line above removes, so this form was swept instead: 540 lines
+            # over 6 logger names x 5 levels x 9 message shapes x include_location, comparing
+            # group by group against the previous regex. 0 regressions, 0 differing groups, 160
+            # newly matched -- all of them on the two hyphenated logger names.
+            r"(\w+)\s+-\s?"  # level
             r"(.*?)(?:\s+\[([^\]]+)\])?$"  # message and optional location
         )
 
