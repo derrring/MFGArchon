@@ -452,6 +452,51 @@ class TestCalculatorClasses:
         assert np.isclose(via_buffer[0], padded[0]), f"lo: buffer {via_buffer[0]} vs pad {padded[0]}"
         assert np.isclose(via_buffer[-1], padded[-1]), f"hi: buffer {via_buffer[-1]} vs pad {padded[-1]}"
 
+    @pytest.mark.parametrize("bc_type", [BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC])
+    @pytest.mark.parametrize("shape", [(7, 6), (5, 4, 3)])
+    @pytest.mark.parametrize("ghost_depth", [1, 2])
+    def test_the_two_ghost_paths_agree_in_2d_and_3d(self, bc_type, shape, ghost_depth):
+        """#2076: `GhostBuffer.update()` supplied the extrapolation stencil with an INTEGER index.
+
+        That drops the axis, and the dropped-axis layer then broadcasts against the kept-axis
+        `interior_value` along the wrong axis: on a (7, 7) buffer with axis=1, `interior_value` is
+        (7, 1) and the layer is (7,), which broadcast to (7, 7) and raised on assignment back into
+        the (7, 1) ghost slot. 1D could not see it -- there is no second axis to broadcast against
+        -- and 1D was the only shape tested.
+
+        The field varies at a DIFFERENT rate along each axis on purpose. A field symmetric in the
+        axes is reproduced by an operator that mixes them up, so it could not distinguish "the
+        stencil was taken along axis 1" from "along axis 0".
+        """
+        from mfgarchon.geometry.boundary.applicator_fdm import (
+            create_ghost_buffer_from_bc,
+            pad_array_with_ghosts,
+        )
+
+        d = len(shape)
+        coeffs = (1.0, 10.0, 100.0)[:d]
+        grids = np.meshgrid(*[np.arange(n, dtype=float) for n in shape], indexing="ij")
+        u = sum(c * g for c, g in zip(coeffs, grids, strict=True))
+
+        bc = BoundaryConditions(dimension=d, segments=[BCSegment(name="all", bc_type=bc_type)])
+
+        padded = np.asarray(pad_array_with_ghosts(u, bc, ghost_depth=ghost_depth, spacing=1.0))
+        buffer = create_ghost_buffer_from_bc(bc, shape, 1.0, ghost_depth=ghost_depth)
+        buffer.interior[...] = u
+        buffer.update()
+        via_buffer = np.asarray(buffer.padded)
+
+        assert via_buffer.shape == padded.shape, f"{via_buffer.shape} != {padded.shape}"
+        gap = np.abs(via_buffer - padded).max()
+        assert gap < 1e-10, (
+            f"{d}D shape={shape} g={ghost_depth} {bc_type.name}: the two public ghost paths "
+            f"disagree by {gap:.3e}; they must compute the same ghost from the same cells (#2059)"
+        )
+
+        # Positive control: the comparison is not vacuous because both sides are all-zero or
+        # because the ghost region was never written.
+        assert np.abs(padded).max() > 1.0, "the fixture produced a trivial field"
+
     def test_extrapolation_refuses_rather_than_dropping_to_a_lower_order(self):
         """#2059: the quadratic calculator degraded quadratic -> linear -> edge extension silently.
 

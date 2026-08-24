@@ -791,8 +791,16 @@ class GhostBuffer:
                     )
 
                 def _at(idx: int, ax: int = axis) -> object:
+                    """One interior layer, KEEPING the axis.
+
+                    An integer index would drop `ax`, and the dropped-axis array then broadcasts
+                    against the kept-axis `interior_value` along the wrong axis: in 2D on a (7, 7)
+                    buffer with ax=1, `interior_value` is (7, 1) and an integer-indexed layer is
+                    (7,), which broadcast to (7, 7) and failed on assignment back into the (7, 1)
+                    ghost slot. 1D hid it because there is no other axis to broadcast against.
+                    """
                     sl = [slice(None)] * d
-                    sl[ax] = idx
+                    sl[ax] = slice(idx, idx + 1) if idx != -1 else slice(idx, None)
                     return buf[tuple(sl)]
 
                 extra["lo"] = {"second_interior_value": _at(g + 1)}
@@ -800,6 +808,23 @@ class GhostBuffer:
                 if n_pts == 3:
                     extra["lo"]["third_interior_value"] = _at(g + 2)
                     extra["hi"]["third_interior_value"] = _at(-g - 3)
+
+                # At g > 1 the mirror slices above carry g interior layers, so the calculator
+                # returned g DIFFERENT ghosts -- one per layer -- while `pad_array_with_ghosts`
+                # evaluates the one-sided stencil ONCE and writes that single value to every ghost
+                # layer (`for k in range(g): buf[...] = lo_value`). Measured disagreement between
+                # the two public paths at g=2, 2D (7, 6), EXTRAPOLATION_LINEAR: 2.200e+01.
+                #
+                # The stencil is anchored at the WALL, not at the ghost layer, so there is only
+                # one value to have; feeding the wall-adjacent layer alone reproduces that and the
+                # length-1 axis broadcasts across the g ghost slots on assignment.
+                #
+                # This makes the two paths agree. It does NOT make the shared semantics right:
+                # a constant ghost REGION is what Issue #1966 tracks ("ghost_depth >= 2: Robin and
+                # both extrapolations collapse to a constant"). Agreement first, and the collapse
+                # stays where it is already recorded rather than being half-fixed on one path.
+                interior_lo = _at(g)
+                interior_hi = _at(-g - 1)
 
             # VECTORIZED: Apply calculator to entire boundary array at once
             # All Calculator implementations support NDArray via NumPy broadcasting
