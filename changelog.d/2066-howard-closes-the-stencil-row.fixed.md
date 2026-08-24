@@ -10,3 +10,8 @@
   are renamed `_build_dlap_from_weights` / `_build_dgrad_central_from_weights` — the old names
   asserted an input they no longer receive. Rows accumulate rather than assign, because
   `neighbor_indices` is not unique under a periodic geometry.
+- **`HJBGFDMSolver(inner_solver="howard")` no longer requires SOCP stencils either** (Issue #2066).
+  `_solve_backward_howard` kept its own `raise ValueError("... requires SOCP-precomputed
+  stencils")`, so relaxing `HJBHowardSolver` alone left the routing path refusing. It now
+  delegates: Howard warns when it falls back to operator weights and raises when there is no
+  weight source at all, which is more informative than refusing on the presence of one object.
