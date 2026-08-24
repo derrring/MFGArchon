@@ -179,6 +179,58 @@ def test_construction_requires_joint_socp_stencils():
         )
 
 
+def test_howard_runs_without_socp_stencils_and_says_so():
+    """#2066: the gate refused for operators Howard can obtain elsewhere.
+
+    Howard needs `D_lap`, `D_grad` and an interior/boundary split. None is SOCP-specific:
+    `get_derivative_weights` on the live TaylorOperator/LocalRBFOperator returns the SAME dict keys
+    the SOCP object does -- `neighbor_indices`, `grad_weights`, `lap_weights`,
+    `center_idx_in_neighbors` -- which is the entire contract `_build_dlap_from_socp` consumes.
+
+    Monotonicity IS a real hypothesis (Bokanowski-Maroso-Zidani 2009, module docstring), but it is
+    about CONVERGENCE, not about whether the solve can run -- and this module already ships
+    `discretisation="central"`, documented as "Does NOT preserve monotonicity ... included for
+    comparison only". Refusing here while offering that was inconsistent.
+
+    The old gate also did not deliver the property it appeared to guard: a `joint_socp` run logs
+    SOCP-infeasible interior nodes falling "through to bare Wendland-Taylor LSQ (NON-MONOTONE)" and
+    the check passed anyway, because it tested for the OBJECT rather than for monotonicity.
+
+    So: runs, and warns. The warning is the point -- a silent acceptance would trade one wrong
+    behaviour for another.
+    """
+    pts, bdry, geom = _make_2d_cloud(nx=5, ny=5)
+    problem = _MockProblem(geom, sigma=0.3, T=1.0, Nt=5, dimension=2)
+    x_c = np.array([2.0, 2.0])
+    U_T = 0.5 * np.sum((pts - x_c[None, :]) ** 2, axis=1)
+
+    plain = HJBGFDMSolver(problem, collocation_points=pts, boundary_indices=bdry, delta=1.5)
+    assert getattr(plain, "_joint_socp_stencils", None) is None, "fixture must have no SOCP stencils"
+
+    with pytest.warns(UserWarning, match="non-SOCP"):
+        howard = HJBHowardSolver(problem, stencil_provider=plain, alpha_star=lambda x, p, m, t: -p, max_iter=15)
+
+    U = howard.solve_hjb_system(M_density=None, U_terminal=U_T)
+    assert np.all(np.isfinite(U))
+    assert U.shape == (problem.Nt + 1, len(pts))
+    assert np.allclose(U[problem.Nt], U_T), "terminal must be preserved bit-for-bit"
+    assert np.ptp(U) > 1e-6, "a constant field would mean the solve did not run"
+
+
+def test_construction_still_refuses_when_there_is_no_operator_at_all():
+    """#2066 narrowed the refusal rather than removing it: no SOCP AND no operator is still a
+    hard error, because then there is no source for D_lap/D_grad at all."""
+    _pts, _bdry, geom = _make_2d_cloud()
+    problem = _MockProblem(geom)
+
+    class _StubProvider:
+        _joint_socp_stencils = None
+        _gfdm_operator = None
+
+    with pytest.raises(RuntimeError, match="neither"):
+        HJBHowardSolver(problem, stencil_provider=_StubProvider(), alpha_star=lambda x, p, m, t: -p)
+
+
 def test_construction_rejects_unknown_discretisation():
     pts, bdry, geom = _make_2d_cloud()
     problem = _MockProblem(geom)
