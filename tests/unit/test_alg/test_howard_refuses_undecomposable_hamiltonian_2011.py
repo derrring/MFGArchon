@@ -302,6 +302,139 @@ def test_the_probe_sees_hamiltonians_a_fixed_sample_point_cannot(name, factory):
         _solve(factory(), "howard", **SOCP)
 
 
+def _pure_bump():
+    """H = |p|^2/2 + a C^1 bump supported on |p| in (3, 10), and NO alpha-free part.
+
+    The bump sits where the solve lives -- max|grad u_T| for u_T = cos(2 pi x) is 2*pi = 6.28 --
+    and the old probe ladder stepped over it: `{0.5, 1, 2} x _gT` with _gT = 40 gives
+    {0.5, 1, 2, 20, 40, 80}, so (2, 20) was never sampled. `_gT` is a spacing bound, not a
+    gradient, and overestimates by 6.4x here, which is what pushed the upper rungs past the hole.
+
+    Alpha-free part is exactly zero on purpose: it makes `_af_bad` unable to fire, so a refusal
+    can only come from `_ke`. Without that, this fixture would be caught for the wrong reason and
+    would keep passing if the ladder regressed.
+    """
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        return 0.5 * q + np.maximum(0.0, q - 9.0) ** 2 * np.maximum(0.0, 100.0 - q) ** 2 / 1.0e5
+
+    def dp(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        db = (
+            2 * np.maximum(0.0, q - 9.0) * np.maximum(0.0, 100.0 - q) ** 2
+            - 2 * np.maximum(0.0, q - 9.0) ** 2 * np.maximum(0.0, 100.0 - q)
+        ) / 1.0e5
+        f = 1.0 + db
+        return pa * (f[..., None] if pa.ndim > 1 else float(f))
+
+    return type("PureBump", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+def _nan_at_one_probe_point():
+    """H = |p|^4/2, returning NaN at |p| = 1.
+
+    |p| = 1 is in the `{0.5, 1, 2}` union, so it is a probe magnitude at EVERY value of the
+    gradient bound. An earlier version placed the NaN at |p| = 80, which existed only because
+    `_gT = spread/hmin` was 40 on this fixture -- so the test was coupled to the very quantity
+    #2072 replaces, and would have gone green-by-vacuity the moment the bound was corrected.
+    """
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        return np.where(np.abs(q - 1.0) < 1e-9, np.nan, 0.5 * q**2)
+
+    def dp(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        return 2.0 * (q[..., None] if pa.ndim > 1 else float(q)) * pa
+
+    return type("NanQuartic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+def _pure_unit_quadratic():
+    """H = |p|^2/2 exactly. The false-refusal control for a denser probe ladder."""
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        return 0.5 * np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+
+    def dp(self, x, m, p, t=0.0):
+        return np.asarray(p, dtype=float)
+
+    return type("PureUnitQuadratic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+def _bump_on(lo_q, hi_q, amplitude):
+    """H = |p|^2/2 + a C^1 bump on |p|^2 in (lo_q, hi_q). No alpha-free part, so `_af` is 0 and a
+    refusal can only come from `_ke` -- otherwise the fixture would be caught for the wrong reason
+    and would keep passing if the probe regressed."""
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        return 0.5 * q + amplitude * np.maximum(0.0, q - lo_q) ** 2 * np.maximum(0.0, hi_q - q) ** 2
+
+    def dp(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
+        db = amplitude * (
+            2 * np.maximum(0.0, q - lo_q) * np.maximum(0.0, hi_q - q) ** 2
+            - 2 * np.maximum(0.0, q - lo_q) ** 2 * np.maximum(0.0, hi_q - q)
+        )
+        f = 1.0 + db
+        return pa * (f[..., None] if pa.ndim > 1 else float(f))
+
+    return type("BumpedKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+@pytest.mark.parametrize(
+    ("name", "lo_q", "hi_q", "amp"),
+    [
+        # straddles the magnitude the solve actually visits (|p| ~ 6.18 on this fixture)
+        ("operating_range", 26.01, 62.41, 5e-4),
+        # the wider bump the first version of this guard fix used
+        ("wide", 9.0, 100.0, 1e-5),
+    ],
+)
+def test_the_probe_finds_a_kinetic_defect_at_the_magnitudes_the_solve_visits(name, lo_q, hi_q, amp):
+    """#2072. The first version of this fix replaced the ladder with a geometric span and claimed
+    "a span cannot have that hole". It can: adjacent rungs of a 12-point geomspace sit at a ratio
+    of ~1.59, so a bump narrower than that in relative width fits between two -- and the
+    `operating_range` case below is exactly such a bump, accepted at 17.4% error against a 2.23%
+    control by that version.
+
+    What closes it is the gradient bound, not the ladder shape. `_gT` was `spread/hmin`, which
+    divides a GLOBAL range by a LOCAL spacing and so diverges under refinement (20, 40, 80, 200 at
+    nx = 11, 21, 41, 201) while the gradient it stands for converges (3.09 -> 3.14). The discrete
+    Lipschitz constant tracks the truth, so the ladder's rungs land where the solve lives.
+    """
+    with pytest.raises(NotImplementedError, match="cannot decompose"):
+        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **SOCP)
+
+
+def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():
+    """#2072: NaN made the guard ACCEPT, and the comment claimed the opposite.
+
+    `np.maximum(0.0, nan)` is `nan` and `nan > tol` is False; `max(0.0, nan)` is `0.0` and
+    `0.0 > tol` is False. Identical acceptance -- the choice of `max` was never what made this
+    safe. Measured before the fix: accepted, all-finite output, 153% wrong against Newton.
+    """
+    with pytest.raises(NotImplementedError, match="non-finite"):
+        _solve(_nan_at_one_probe_point(), "howard", terminal="cos", **SOCP)
+
+
+def test_the_denser_ladder_does_not_false_refuse_a_genuine_quadratic():
+    """The control for the two above. A denser probe can only make a TRUE refusal stricter --
+    a genuine quadratic matches the kinetic reference at every |p| -- and this pins that."""
+    u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **SOCP)
+    assert np.all(np.isfinite(u))
+    assert np.abs(u).max() > 1e-6
+
+
 def test_a_wired_alpha_free_part_is_NOT_refused():
     """The false-refusal control, and it is the one a naive fix gets wrong.
 
