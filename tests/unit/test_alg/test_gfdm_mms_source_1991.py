@@ -148,18 +148,15 @@ def test_mms_reaches_gfdm_and_it_converges():
 
 _HOWARD = {
     "inner_solver": "howard",
-    "monotonicity_scheme": "joint_socp",
-    "monotonicity_application": "precompute",
+    # qp_m_matrix (osqp, a base dependency) rather than joint_socp (cvxpy, the `numerical`
+    # extra): this test pins that `source_term` REACHES the Howard branch, not SOCP stencils.
+    "monotonicity_scheme": "qp_m_matrix",
+    "monotonicity_application": "always",
 }
 
 
 def test_the_howard_inner_solver_also_honours_the_source():
     """The source must reach BOTH inner solvers, or the capability gate lies.
-
-    Skipped without cvxpy: `_HOWARD` asks for `joint_socp`, whose stencil construction raises
-    `ImportError("cvxpy is required for joint SOCP")`. cvxpy lives in the `numerical` extra, so
-    without it this read as a failure rather than as code that was never exercised. Guarded here
-    rather than at module level -- the other five tests in this file need no SOCP.
 
     `_mms_source_fn` was read only in the Newton branch, so this configuration accepted
     `source_term` and discarded it bitwise -- measured, |U(source) - U(no source)| = 0.000e+00
@@ -168,7 +165,6 @@ def test_the_howard_inner_solver_also_honours_the_source():
     a false positive: it would certify GFDM as source-capable in a configuration that silently
     solves the wrong problem, which is precisely what #1424 exists to prevent.
     """
-    pytest.importorskip("cvxpy", reason="joint_socp stencils require cvxpy (the `numerical` extra)")
     with_src = _linf(21, **_HOWARD)
     order = np.log(with_src / _linf(41, **_HOWARD)) / np.log(2.0)
     assert 1.7 < order < 2.3, f"Howard path expected ~2, measured {order:.2f}"

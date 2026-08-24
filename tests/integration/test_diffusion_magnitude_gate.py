@@ -261,6 +261,13 @@ def _gfdm_diffusion_field_relerr(
 @pytest.mark.integration
 @pytest.mark.tier3
 def test_hjb_gfdm_diffusion_magnitude():
+    # This one genuinely needs `joint_socp`, so it genuinely needs cvxpy (the `numerical` extra).
+    # `ci.yml`'s release job installs `.[dev]` and runs `pytest tests/ -m "not manual"`, where this
+    # would fail rather than skip -- a red that says "dependency absent", not "code wrong".
+    # Skipping is the honest report; the "was cvxpy actually installed?" question is answered by
+    # the positive control in the workflows that DO install it, not by this test failing.
+    pytest.importorskip("cvxpy", reason="joint_socp stencils require cvxpy (the `numerical` extra)")
+
     """The production HJB-GFDM per-point Newton path (joint_socp + precompute) must apply
     D = sigma^2/2. Verified discriminating: correct D -> field relerr ~0.012, a halved D ->
     ~0.105, a doubled D -> ~0.295; the 0.05 threshold separates correct from either error

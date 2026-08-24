@@ -42,7 +42,13 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 L, T, NX, NT = 1.0, 0.2, 21, 10
-SOCP = {"monotonicity_scheme": "joint_socp", "monotonicity_application": "precompute"}
+# `qp_m_matrix` rather than `joint_socp`: what this file pins is Howard's DECOMPOSITION gate,
+# not SOCP stencils. joint_socp needs cvxpy (the `numerical` extra) and would make all 17 tests
+# below skip wherever it is absent -- including the accept controls, which is the half you least
+# want silently missing. qp_m_matrix runs on osqp, a base dependency, and exercises the same
+# Howard path. SOCP itself is covered by test_socp_m_matrix_property, test_socp_stencil_enlargement
+# and test_joint_socp_mirror_symmetry, which are about SOCP.
+SOCP = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
 
 
 def _first_coord(x):
@@ -80,19 +86,6 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
     """`terminal=None` gives u_T = 0, for which the exact solution is u == 0 -- fine for a
     `raises` test and USELESS as an accept control, since a solver returning zeros passes any
     `isfinite` assertion. Accept controls pass `terminal="cos"`."""
-    # `joint_socp` builds its stencils through `joint_socp.py`, which raises
-    # `ImportError("cvxpy is required for joint SOCP")` at construction. cvxpy lives in the
-    # `numerical` extra, so `uv run --extra dev pytest tests/unit` turned 16 of this file's 17
-    # tests into ERRORS that read like real breakage. Skipping is the honest report: the code was
-    # never exercised.
-    #
-    # Guarded on the SCHEME rather than at module level, because
-    # `test_newton_still_accepts_the_same_hamiltonian` is the accept control for all of them and
-    # needs no SOCP -- a module-level `importorskip` would take the control down with the tests it
-    # controls, which is the one test you least want silently absent.
-    if solver_kwargs.get("monotonicity_scheme") == "joint_socp":
-        pytest.importorskip("cvxpy", reason="joint_socp stencils require cvxpy (the `numerical` extra)")
-
     x = np.linspace(0.0, L, NX)
     grid = TensorProductGrid(bounds=[(0.0, L)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1))
 
