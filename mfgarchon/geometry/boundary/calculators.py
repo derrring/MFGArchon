@@ -368,8 +368,17 @@ class LinearExtrapolationCalculator:
             Ghost value = 2*u_0 - u_1
         """
         if second_interior_value is None:
-            # Fall back to edge extension if second value not provided
-            return interior_value
+            # #2059: this returned `interior_value` -- the zero-GRADIENT ghost, a DIFFERENT
+            # boundary condition silently substituted for the one requested. It was not a rare
+            # fallback either: `GhostBuffer.update()` never supplied the argument, so on that path
+            # it was the ONLY branch that ever ran, and every EXTRAPOLATION_LINEAR request served
+            # through it got a Neumann-0 wall. The caller now supplies it, from the same cells
+            # `pad_array_with_ghosts` uses.
+            raise ValueError(
+                "LinearExtrapolationCalculator requires second_interior_value: the ghost is "
+                "2*u_0 - u_1 and u_1 is not optional. Returning u_0 instead would impose the "
+                "zero-gradient condition, which is a different boundary condition (#2059)."
+            )
         # Vectorized: works for both scalar and array
         return 2.0 * interior_value - second_interior_value
 
@@ -411,10 +420,17 @@ class QuadraticExtrapolationCalculator:
             Ghost value = 3*u_0 - 3*u_1 + u_2
         """
         if second_interior_value is None or third_interior_value is None:
-            # Fall back to linear if not enough points
-            if second_interior_value is not None:
-                return 2.0 * interior_value - second_interior_value
-            return interior_value
+            # #2059: this degraded quadratic -> linear -> edge extension without telling anyone,
+            # so a caller asking for EXTRAPOLATION_QUADRATIC could receive any of three different
+            # boundary conditions depending on how many arguments happened to arrive. The
+            # `pad_array_with_ghosts` path already refuses when the grid cannot carry the stencil,
+            # with the reason "Refuse rather than silently dropping to a lower order"; this now
+            # agrees with it.
+            raise ValueError(
+                "QuadraticExtrapolationCalculator requires second_interior_value and "
+                "third_interior_value: the ghost is 3*u_0 - 3*u_1 + u_2. Silently dropping to "
+                "linear or to edge extension imposes a different boundary condition (#2059)."
+            )
         # Vectorized: works for both scalar and array
         return 3.0 * interior_value - 3.0 * second_interior_value + third_interior_value
 

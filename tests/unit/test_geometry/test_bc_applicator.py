@@ -9,6 +9,9 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BCType,
+    BoundaryConditions,
     GridType,
     dirichlet_bc,
     neumann_bc,
@@ -410,6 +413,64 @@ class TestCalculatorClasses:
         got = calc.compute(interior_value=slope * x_interior, dx=dx, side=side)
 
         assert np.isclose(got, slope * x_ghost), f"{grid_type.name}/{side}: {got} != {slope * x_ghost}"
+
+    @pytest.mark.parametrize(
+        ("bc_type", "expected_lo", "expected_hi"),
+        [
+            (BCType.EXTRAPOLATION_LINEAR, 1.9, 8.0),
+            (BCType.EXTRAPOLATION_QUADRATIC, 2.2, 8.2),
+        ],
+    )
+    def test_the_two_ghost_paths_agree_on_extrapolation(self, bc_type, expected_lo, expected_hi):
+        """#2059: `GhostBuffer` served a DIFFERENT boundary condition than `pad_array_with_ghosts`.
+
+        It never supplied `second_interior_value`, so both extrapolation calculators took their
+        `return interior_value` fallback -- the zero-GRADIENT ghost. Not a rare degradation: on
+        that path it was the only branch that ever ran, so every EXTRAPOLATION_LINEAR request
+        served through `GhostBuffer` got a Neumann-0 wall, silently.
+
+        The oracle is AGREEMENT BETWEEN THE TWO PUBLIC PATHS, not a formula restated here. The
+        expected values are #1958's own measured figures for `u = [2.5, 3.1, 4.0, 5.2, 6.6]`, so a
+        change that broke both paths identically would still be caught.
+        """
+        from mfgarchon.geometry.boundary.applicator_fdm import (
+            create_ghost_buffer_from_bc,
+            pad_array_with_ghosts,
+        )
+
+        u = np.array([2.5, 3.1, 4.0, 5.2, 6.6])
+        bc = BoundaryConditions(dimension=1, segments=[BCSegment(name="all", bc_type=bc_type)])
+
+        padded = pad_array_with_ghosts(u, bc, ghost_depth=1, spacing=1.0)
+        buffer = create_ghost_buffer_from_bc(bc, (len(u),), 1.0, ghost_depth=1)
+        buffer.interior[...] = u
+        buffer.update()
+        via_buffer = np.asarray(buffer.padded)
+
+        assert np.isclose(padded[0], expected_lo)
+        assert np.isclose(padded[-1], expected_hi)
+        assert np.isclose(via_buffer[0], padded[0]), f"lo: buffer {via_buffer[0]} vs pad {padded[0]}"
+        assert np.isclose(via_buffer[-1], padded[-1]), f"hi: buffer {via_buffer[-1]} vs pad {padded[-1]}"
+
+    def test_extrapolation_refuses_rather_than_dropping_to_a_lower_order(self):
+        """#2059: the quadratic calculator degraded quadratic -> linear -> edge extension silently.
+
+        A caller asking for EXTRAPOLATION_QUADRATIC could receive any of three different boundary
+        conditions depending on how many arguments happened to arrive. `pad_array_with_ghosts`
+        already refused when the grid could not carry the stencil, with the reason "Refuse rather
+        than silently dropping to a lower order"; the calculators now agree with it.
+        """
+        from mfgarchon.geometry.boundary import (
+            LinearExtrapolationCalculator,
+            QuadraticExtrapolationCalculator,
+        )
+
+        with pytest.raises(ValueError, match="second_interior_value"):
+            LinearExtrapolationCalculator().compute(interior_value=1.0, dx=0.1, side="min")
+        with pytest.raises(ValueError, match="third_interior_value"):
+            QuadraticExtrapolationCalculator().compute(
+                interior_value=1.0, dx=0.1, side="min", second_interior_value=2.0
+            )
 
     def test_the_fp_no_flux_ghost_zeroes_the_TOTAL_flux_given_an_axis_velocity(self):
         """#2063: `drift_velocity` is v_x, not v*n, and the docstring said the opposite.

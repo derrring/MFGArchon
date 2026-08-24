@@ -764,18 +764,57 @@ class GhostBuffer:
             interior_lo = buf[tuple(lo_interior)]
             interior_hi = buf[tuple(hi_interior)]
 
+            # #2059: the extrapolation calculators need cells the mirror pairing above does not
+            # supply. `LinearExtrapolationCalculator` wants (u_0, u_1) and the quadratic one
+            # (u_0, u_1, u_2), all measured INWARD FROM THE WALL -- not the per-layer mirror
+            # partner. Called without them, both fell back to `return interior_value`, which is
+            # the zero-GRADIENT ghost: a different boundary condition, silently substituted for
+            # the one the caller asked for, on every extrapolation request served through this
+            # class.
+            #
+            # The indices are the ones `pad_array_with_ghosts` already uses for the same BC types
+            # (`buf[g + j]` low, `buf[-g - 1 - j]` high), so the two public paths now compute the
+            # same ghost from the same cells rather than one of them quietly answering a different
+            # question.
+            extra: dict = {}
+            if self._calculator.__class__.__name__ in (
+                "LinearExtrapolationCalculator",
+                "QuadraticExtrapolationCalculator",
+            ):
+                n_pts = 3 if "Quadratic" in self._calculator.__class__.__name__ else 2
+                if buf.shape[axis] - 2 * g < n_pts:
+                    raise ValueError(
+                        f"{self._calculator.__class__.__name__} needs {n_pts} interior cells along "
+                        f"axis {axis} to build its one-sided stencil; this grid has "
+                        f"{buf.shape[axis] - 2 * g}. Refuse rather than silently dropping to a "
+                        f"lower order (#2059)."
+                    )
+
+                def _at(idx: int, ax: int = axis) -> object:
+                    sl = [slice(None)] * d
+                    sl[ax] = idx
+                    return buf[tuple(sl)]
+
+                extra["lo"] = {"second_interior_value": _at(g + 1)}
+                extra["hi"] = {"second_interior_value": _at(-g - 2)}
+                if n_pts == 3:
+                    extra["lo"]["third_interior_value"] = _at(g + 2)
+                    extra["hi"]["third_interior_value"] = _at(-g - 3)
+
             # VECTORIZED: Apply calculator to entire boundary array at once
             # All Calculator implementations support NDArray via NumPy broadcasting
             ghost_lo = self._calculator.compute(
                 interior_value=interior_lo,
                 dx=dx,
                 side="min",
+                **extra.get("lo", {}),
                 **kwargs,
             )
             ghost_hi = self._calculator.compute(
                 interior_value=interior_hi,
                 dx=dx,
                 side="max",
+                **extra.get("hi", {}),
                 **kwargs,
             )
 
