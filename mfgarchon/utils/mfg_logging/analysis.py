@@ -74,8 +74,13 @@ class LogAnalyzer:
             # The by-construction argument for the old form rested on `([^-]+?)` being unable to
             # backtrack, which the line above removes, so this form was swept instead: 540 lines
             # over 6 logger names x 5 levels x 9 message shapes x include_location, comparing
-            # group by group against the previous regex. 0 regressions, 0 differing groups, 160
-            # newly matched -- all of them on the two hyphenated logger names.
+            # group by group against the previous regex. 0 regressions, 0 differing groups, 220
+            # newly matched -- 160 from the logger group and 60 from the `\s?`, and 40 of the 220
+            # land on logger names with NO hyphen, because an empty message under
+            # include_location=False is an entry shape no name can rescue. (An earlier revision of
+            # this comment said "160, all on hyphenated names": that described only the logger-group
+            # half, because the sweep it came from had not yet been re-run against the `\s?` edit.
+            # Read as written, it would have argued the `\s?` edit bought nothing.)
             r"(\w+)\s+-\s?"  # level
             r"(.*?)(?:\s+\[([^\]]+)\])?$"  # message and optional location
         )
