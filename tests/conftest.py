@@ -595,8 +595,9 @@ class MFGLogCapture:
     def at_level(self, level: int, logger: str):
         """Collect records of `level` and above emitted through the logger named `logger`.
 
-        The logger is obtained through the package's own ``get_logger``, so it is the object
-        production code emits on and carries the configuration production gives it.
+        The logger is the object production code emits on -- ``MFGLogger.get_logger`` is
+        ``logging.getLogger`` plus a cache, so both return the same instance. This takes it the
+        plain way, which leaves the logger's configuration untouched.
 
         **A wrong name captures nothing, silently, and this fixture does not stop it.** That is
         the shape a typo takes: `assert not mfg_caplog.records` is satisfied by a misspelt
@@ -614,10 +615,11 @@ class MFGLogCapture:
           `fp_gfdm` and `mfg_problem` have no module-level `get_logger` -- so the verdict moved
           with whether an earlier test in the same worker had run a solve. Its cleanup also
           popped the name out of `logging.Logger.manager.loggerDict`, orphaning live loggers.
-        - *Refuse a name that is neither a module path nor already registered.* Measured, **8 of
-          10** logger names this package actually uses are not module paths (`MFGSolver`,
-          `mfgarchon.performance`, `mfgarchon.solvers.<class>`, ...), so they fell through to the
-          registry arm and the verdict moved with test order again. And `importlib.util.find_spec`
+        - *Refuse a name that is neither a module path nor already registered.* Measured, **10 of
+          11** logger names this package actually uses are not module paths (`MFGSolver`,
+          `mfgarchon.performance`, `mfgarchon.solvers`, `mfgarchon.solvers.<class>`,
+          `__name__ + ".PluginManager"`, ...) -- the one that is comes from a demo function -- so
+          they fell through to the registry arm and the verdict moved with test order again. And `importlib.util.find_spec`
           imports every parent package to answer: one refused name under
           `mfgarchon.geometry.level_set.*` left **+10** loggers and **+8** registry entries
           behind, first-call-only.
@@ -635,24 +637,21 @@ class MFGLogCapture:
                 f"doubles any count assertion. Use one block, or capture a different logger."
             )
 
-        import logging as _logging
-
-        from mfgarchon.utils.mfg_logging import get_logger
-
-        # Snapshot BEFORE `get_logger`, which configures a logger it has not seen:
-        # `_setup_logger` clears handlers, sets the level, attaches a StreamHandler and sets
-        # `propagate = False`. Measured on a name outside the package (`matplotlib`), an
-        # otherwise empty block left it at `propagate=True -> False, handlers=0 -> 1`
-        # permanently. Restoring only the level, as an earlier revision did, leaves that damage
-        # and leaves it silent.
-        existed = logger in _logging.Logger.manager.loggerDict
-        pre = _logging.getLogger(logger)
-        previous_propagate, previous_handlers = pre.propagate, list(pre.handlers)
-
-        target = get_logger(logger)
+        # `logging.getLogger`, NOT the package's `get_logger`. They return the SAME object
+        # (`MFGLogger.get_logger` is `logging.getLogger` plus a cache -- verified), but
+        # `get_logger` also CONFIGURES a logger it has not seen: `_setup_logger` clears handlers,
+        # sets the level, attaches a StreamHandler and sets `propagate = False`
+        # (`utils/mfg_logging/logger.py:189-211`). A capture helper has no business doing that,
+        # and undoing it took three revisions and three review rounds to get wrong three ways.
+        # Not calling it removes the problem instead of restoring from it: nothing is configured,
+        # nothing is cached in `MFGLogger._loggers`, and after the `finally` below the logger is
+        # byte-for-byte as it was found. Measured on a name the package had never used:
+        # `handlers=0 level=0 propagate=True` after the block, and a later production
+        # `get_logger` still configures it normally.
+        target = logging.getLogger(logger)
         handler = _RecordCollector(self.records)
         previous_level = target.level
-        # Level first: an unusable level must raise before anything else has been mutated.
+        # Level first: an unusable level must raise before anything has been mutated.
         target.setLevel(level)
         target.addHandler(handler)
         self._active.add(logger)
@@ -662,17 +661,6 @@ class MFGLogCapture:
             self._active.discard(logger)
             target.removeHandler(handler)
             target.setLevel(previous_level)
-            if not existed and not logger.startswith("mfgarchon"):
-                # Restore ONLY a logger outside the package. Inside it, leaving the
-                # configuration is what production would have done anyway, and undoing it is a
-                # leak in the other direction: `MFGLogger` caches the object, so the next
-                # `get_logger` for that name would return an unconfigured one. Outside it there
-                # is no such argument -- measured, an empty block over `matplotlib` left it at
-                # `propagate=True -> False, handlers=0 -> 1` for the rest of the process.
-                # The name stays in the registry either way; popping it is what orphaned live
-                # loggers in an earlier revision.
-                target.propagate = previous_propagate
-                target.handlers[:] = previous_handlers
 
 
 @pytest.fixture

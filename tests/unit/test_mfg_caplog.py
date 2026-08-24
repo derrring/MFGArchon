@@ -104,26 +104,35 @@ def test_the_capture_does_not_depend_on_the_logger_already_existing(mfg_caplog):
     assert mfg_caplog.messages == ["same capture, pre-existing logger"]
 
 
-def test_the_logger_is_the_one_the_package_hands_out(mfg_caplog):
-    """`at_level` must resolve the name through mfgarchon's `get_logger`, not `logging`'s.
-
-    Swapping it for `logging.getLogger` leaves every other test in this file green -- the
-    records still arrive, because by then something else has usually configured the logger.
-    What breaks is the guarantee in the docstring: that the captured object carries the
-    configuration production gives it. This is the test that fails on that swap.
-    """
-    fresh = "mfgarchon.utils.cli"  # a real module, so the static name check accepts it
+def test_it_captures_on_the_object_production_emits_on(mfg_caplog):
+    """`at_level` uses `logging.getLogger`, and that must be the same object `get_logger` hands
+    production. It is -- `MFGLogger.get_logger` is `logging.getLogger` plus a cache -- and this
+    test is what says so, because the fixture no longer calls `get_logger` to find out."""
+    fresh = "mfgarchon.utils.cli"
     MFGLogger._loggers.pop(fresh, None)
 
     with mfg_caplog.at_level(logging.WARNING, logger=fresh):
-        logging.getLogger(fresh).warning("configured by the package, not by logging")
+        get_logger(fresh).warning("emitted the way production emits")
 
-    assert mfg_caplog.messages == ["configured by the package, not by logging"]
-    # `logging.getLogger` never touches this registry, whatever the logger's prior state, so it
-    # is the one assertion that separates the two calls. Note it is the ONLY one available: the
-    # logger's `propagate`/handlers cannot be asserted here, because `at_level` deliberately
-    # leaves an in-package logger configured (see its `finally`).
-    assert fresh in MFGLogger._loggers, "at_level did not go through mfgarchon's get_logger"
+    assert mfg_caplog.messages == ["emitted the way production emits"]
+
+
+def test_it_leaves_the_logger_exactly_as_it_found_it(mfg_caplog):
+    """The reason `at_level` does not call `get_logger`: that call CONFIGURES a logger it has not
+    seen (clears handlers, sets the level, attaches a StreamHandler, sets `propagate = False`).
+    Three revisions tried to restore from that and each got a different third of it wrong. Not
+    calling it is what makes this assertion possible at all."""
+    name = "mfgarchon.tests.mfg_caplog_untouched"
+    assert name not in logging.Logger.manager.loggerDict, "must not exist yet"
+
+    with mfg_caplog.at_level(logging.WARNING, logger=name):
+        logging.getLogger(name).warning("x")
+
+    after = logging.getLogger(name)
+    assert (after.level, after.propagate, after.handlers) == (logging.NOTSET, True, []), (
+        f"left the logger changed: level={after.level} propagate={after.propagate} {len(after.handlers)} handler(s)"
+    )
+    assert name not in MFGLogger._loggers, "at_level must not populate the package's logger cache"
 
 
 def test_it_captures_at_and_above_the_level_it_was_given(mfg_caplog):
@@ -212,13 +221,21 @@ def test_a_wrong_logger_name_captures_nothing_and_is_NOT_caught(mfg_caplog):
     typo = "mfgarchon.core.measrue"  # measure, misspelt
     real = get_logger("mfgarchon.core.measure")
 
-    with mfg_caplog.at_level(logging.WARNING, logger=typo):
-        real.warning("emitted on the RIGHT logger, captured on the wrong one")
-
-    assert mfg_caplog.records == [], (
-        "a misspelt logger name still captures nothing -- if this now raises or captures, the "
-        "hole has been closed and `at_level`'s docstring and AGENTS.md must say how"
+    closed = (
+        "The hole this test pins has been CLOSED -- a misspelt logger name no longer passes "
+        "silently. That is an improvement, and this test is where it must be recorded: replace "
+        "this test with one that pins the NEW behaviour, and update `at_level`'s docstring and "
+        "AGENTS.md, both of which currently tell readers the hole is open. Do not simply delete "
+        "this test: two earlier guards were removed for re-creating an order-dependence, and the "
+        "next one has to show it does not."
     )
+    try:
+        with mfg_caplog.at_level(logging.WARNING, logger=typo):
+            real.warning("emitted on the RIGHT logger, captured on the wrong one")
+    except Exception as exc:  # a guard was added and it refuses the name
+        raise AssertionError(f"{closed}\n\nIt raised: {exc!r}") from exc
+
+    assert mfg_caplog.records == [], closed
 
 
 def test_the_discipline_that_replaces_the_guard(mfg_caplog):
@@ -253,27 +270,6 @@ def test_it_refuses_a_nested_capture_of_the_same_logger(mfg_caplog):
         get_logger(PROBE).warning("counted once")
 
     assert mfg_caplog.messages == ["counted once"]
-
-
-def test_a_logger_outside_the_package_is_left_as_it_was_found(mfg_caplog):
-    """`get_logger` configures a logger it has not seen -- clears handlers, sets the level,
-    attaches a StreamHandler, sets `propagate = False`. For a name outside the package there is
-    no argument for leaving that behind: measured on `matplotlib`, an otherwise empty block left
-    it at `propagate=True -> False, handlers=0 -> 1` for the rest of the process, and a later
-    `caplog` assertion on a third-party warning would go red -- its absence form vacuously.
-
-    In-package names are deliberately NOT restored; see `at_level`'s `finally`.
-    """
-    outside = "zz_mfg_caplog_probe_outside_the_package"
-    assert outside not in logging.Logger.manager.loggerDict, "must not exist yet"
-
-    with mfg_caplog.at_level(logging.WARNING, logger=outside):
-        pass
-
-    after = logging.getLogger(outside)
-    assert (after.propagate, after.handlers) == (True, []), (
-        f"left an out-of-package logger configured: propagate={after.propagate}, {len(after.handlers)} handler(s)"
-    )
 
 
 @pytest.mark.parametrize("missing", ["", None])

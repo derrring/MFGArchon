@@ -11,8 +11,6 @@ in Issue #1147. The warning is behaviour-additive (the clipped values are unchan
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 import numpy as np
@@ -23,8 +21,6 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_problem import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-
-_CLIP_LOGGER = "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint"
 
 
 def _problem(n=41, nt=20):
@@ -75,10 +71,17 @@ def test_the_stop_names_the_interpolation_and_a_remedy():
     assert "coarsen" in message
 
 
-def test_no_clip_warning_for_linear_pure_diffusion(mfg_caplog):
-    """Linear splatting preserves positivity and Crank-Nicolson diffusion of a smooth
-    Gaussian (cell-Peclet stable) does not undershoot, so the clip never injects mass and
-    no warning fires -- the warning is a real signal, not noise."""
+def test_linear_pure_diffusion_is_not_stopped_by_the_mass_gate():
+    """Linear splatting preserves positivity and Crank-Nicolson diffusion of a smooth Gaussian
+    (cell-Peclet stable) does not undershoot, so the clip never injects mass -- the gate is a real
+    signal, not noise.
+
+    Asserted on the RETURN, not on a log line. The previous form asserted the absence of
+    "positivity clip injected mass" on this solver's logger, and that assertion could not fail:
+    the module has zero `warning` calls (its only log statement is an init-time `info`), and the
+    string exists only in `weak_form_fp_solver.py`. This solver stops by raising -- which its two
+    sibling tests assert -- so what "no clip" looks like here is that the call returns.
+    """
     n, nt = 41, 20
     prob = _problem(n=n, nt=nt)
     fp = FPSLSolver(prob, interpolation_method="linear")
@@ -87,7 +90,13 @@ def test_no_clip_warning_for_linear_pure_diffusion(mfg_caplog):
     m0 /= m0.sum() * (x[1] - x[0])
     U = np.zeros((nt + 1, n))  # no drift -> pure diffusion
 
-    with mfg_caplog.at_level(logging.WARNING, logger=_CLIP_LOGGER):
-        fp.solve_fp_system(m0, potential_field=U)
-    msgs = mfg_caplog.messages
-    assert not any("positivity clip injected mass" in m for m in msgs), f"unexpected clip warning: {msgs}"
+    result = fp.solve_fp_system(m0, potential_field=U)  # must not raise: the gate did not fire
+
+    assert result.shape == (nt + 1, n)
+    assert np.all(result >= 0.0), "a positivity clip would have been needed"
+    dx = x[1] - x[0]
+    # 1e-9, not a looser band: measured, this configuration conserves to 3.55e-15, so the
+    # threshold sits six orders above the answer and still refuses anything the gate would have
+    # stopped. What it does NOT catch is a scheme that drifts below 1e-9 -- for that the gate
+    # itself is the instrument, and "did not raise" above is the assertion that pins it.
+    assert abs(result[-1].sum() * dx - 1.0) < 1e-9, "mass moved without the gate noticing"

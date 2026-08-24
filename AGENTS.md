@@ -223,9 +223,11 @@ Two guards were built and both removed, because each re-created the order-depend
 exists to remove — the record is in `at_level`'s docstring and in the issue tracking a sound design.
 The short version: a runtime criterion ("has the package handed this name out") fires on a correct
 absence assertion over a logger created inside a function, and a static one (`find_spec`) does not
-help because **8 of the 10 logger names this package actually uses are not module paths** —
-`MFGSolver`, `mfgarchon.performance`, `mfgarchon.solvers.<class>` — so they fall through to the
-runtime arm anyway, and `find_spec` imports every parent package to answer.
+help because **10 of the 11 logger names this package actually uses are not module paths** —
+`MFGSolver`, `mfgarchon.performance`, `mfgarchon.solvers`, `mfgarchon.solvers.<class>`,
+`__name__ + ".PluginManager"` — so they fall through to the runtime arm anyway, and `find_spec`
+imports every parent package to answer. (The one that *is* a module path comes from a demo
+function.)
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
