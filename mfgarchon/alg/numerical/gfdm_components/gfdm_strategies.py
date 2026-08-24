@@ -120,8 +120,11 @@ class DifferentialOperator(ABC):
 
     NOT for weak-form methods (FEM, FVM) which require element stiffness matrices.
 
-    The key property is that derivatives are computed as weighted sums:
-        Lu(x_i) = sum_j w_ij u(x_j)
+    The key property is that derivatives are computed as weighted sums over a local
+    stencil. Implementations differ in what the weights multiply -- raw values
+    `u(x_j)`, or deviations `u(x_j) - u(x_i)` -- so the form is not shared and the
+    caller owes a row closure. See `get_derivative_weights` for the contract; writing
+    one of the two forms here as if it were universal is what Issue #2081 was about.
 
     Subclasses must implement:
     - gradient(u): Compute gradient at all points
@@ -186,16 +189,24 @@ class DifferentialOperator(ABC):
 
         Both are returned under the same keys, so the key set does not tell
         them apart -- the contract is the **sum rule**, not the keys.
-        ``TaylorOperator`` and ``UpwindOperator`` return deviation weights;
-        ``LocalRBFOperator`` returns raw-value weights.
+        ``TaylorOperator`` and ``UpwindOperator`` return deviation weights at their
+        default ``taylor_order=2``; ``LocalRBFOperator`` returns raw-value weights.
+        At ``taylor_order=1`` the basis carries no second-order term, so
+        ``lap_weights`` is identically zero and its sum is 0.0 -- an absent Laplacian,
+        not the raw-value convention, and the gradient still needs the closure.
 
         Assemble a row by writing the weights at their neighbor columns and
         setting the center to ``-sum(weights)``, folding in the center's own
         weight when it appears in ``neighbor_indices``::
 
             diag = -sum(w)
-            A[i, j] = w[k] + diag if j == i else w[k]
-            A[i, i] = diag                     # if i not in neighbor_indices
+            A[i, j] += w[k] + diag if j == i else w[k]
+            A[i, i] += diag                    # if i not in neighbor_indices
+
+        **Accumulate, do not assign.** ``neighbor_indices`` is not guaranteed unique:
+        a periodic geometry maps ghost images back to their originals, so one global
+        index can appear twice in a stencil with different displacements and different
+        weights. Assignment keeps the last and silently drops the rest.
 
         That closure is **mandatory** for deviation weights and **idempotent**
         for raw-value ones -- closing a row that already sums to zero returns
@@ -1104,9 +1115,11 @@ class TaylorOperator(DifferentialOperator):
 
         **Deviation convention**: these weights multiply ``u_j - u_center``, so
         a row does not sum to zero and the caller must close it (see the base
-        class). Assembled without the closure the Laplacian is wrong by O(1) --
-        measured 5.6e+02 against an exact value of 1 on a 41-point 1D cloud --
-        not by a small amount that might pass for discretisation error.
+        class). Assembled without the closure the Laplacian is wrong by O(1), not by
+        a small amount that might pass for discretisation error: on a uniform 41-point
+        1D cloud with ``delta=0.1`` and ``q = x^2/2``, whose exact Laplacian is 1, the
+        unclosed operator errs by up to 8.6e+02 over all rows and 5.3e+02 over the
+        interior rows 4..36.
         """
         taylor_data = self.taylor_matrices[point_idx]
         if taylor_data is None:

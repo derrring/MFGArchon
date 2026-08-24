@@ -2,34 +2,44 @@
 
 ``DifferentialOperator.get_derivative_weights`` documents a **raw-value**
 (sensitivity) map, under which a row must sum to zero because a constant field
-has zero derivative. ``LocalRBFOperator`` satisfies that. ``TaylorOperator`` —
-the default, ``method="direct"`` — and ``UpwindOperator`` do not: their weights
+has zero derivative. ``LocalRBFOperator`` satisfies that. ``TaylorOperator`` --
+the default, ``method="direct"`` -- and ``UpwindOperator`` do not: their weights
 multiply *deviations* ``b_j = u_j - u_center``, so a row sums to something far
 from zero. Two conventions behind one method name.
 
-Nothing pinned any of this: before this file, ``grep -rl "create_operator"
-tests/`` returned zero files. A change flipping either operator's convention
-passed the suite in both directions, and #2077 fed deviation weights to a
-raw-value builder in ``hjb_howard.py`` with nothing to catch it.
+Nothing pinned the *operators*: before this file, ``grep -rl "create_operator"
+tests/`` returned zero files, so a change flipping either operator's convention
+passed the suite in both directions. (The *consumers* were better covered --
+dropping the closure inside ``HJBGFDMSolver._build_differentiation_matrices``
+already fails several solver tests. It is the weights API itself that had none.)
 
 These tests pin:
-  (a) every operator in the ``create_operator`` registry is exact on a
-      quadratic (Laplacian) and a linear field (gradient), in 1D and 2D,
-      through the production API — the operators themselves are correct;
+  (a) every operator in the ``create_operator`` registry is exact on an
+      anisotropic quadratic (Laplacian) and a per-axis linear field (gradient),
+      in 1D and 2D, through the production API -- the operators are correct;
   (b) each operator's *convention*, so a silent flip in either direction fails;
   (c) the invariant the whole stack rests on: the row closure is **mandatory**
       for a deviation-convention operator and **idempotent** for a sum-rule
       one, so a consumer may apply it unconditionally;
-  (d) the three closure forms that appear at the four live consumer sites are
-      the same algebra;
-  (e) the pre-assembled production matrices carry the closure — this is the
+  (d) that the three closure spellings found at the four live consumer sites
+      are the same algebra. NOTE: these are re-implementations in this file,
+      compared against each other and against ``op.laplacian``. They do not
+      drive the production sites, and are not a substitute for doing so;
+  (e) the pre-assembled production matrices carry the closure -- this is the
       assertion that fails if ``_preassemble_sparse_matrices`` loses it.
 
-Tolerances come from measurement on ``origin/main`` (``4f0c90d0``), not from a
-guess: Taylor/Upwind reach 5.2e-14 on the Laplacian and 2.2e-15 on the
-gradient; RBF reaches 4.6e-12 and 2.8e-13. The bounds below sit two to three
-orders above those, which still leaves them far below any real discretisation
-error — a genuinely inexact operator fails by O(1), as test (c) demonstrates.
+The probe fields are deliberately anisotropic. ``|x|^2/2`` and ``x_0`` are the
+obvious choices and both are under-determined: an operator computing
+``dim * d2/dx0^2`` reproduces the isotropic quadratic exactly, and a builder that
+writes ``g_weights[0]`` into every gradient row reproduces a field that varies in
+one axis. Both were confirmed to pass an earlier isotropic version of this file
+in 2D, 20 tests green, while being 100% wrong.
+
+Tolerances come from measurement on the fields below, not from a guess:
+Taylor/Upwind reach 6.75e-14 on the Laplacian and 4.00e-15 on the gradient; RBF
+reaches 7.28e-12 and 8.10e-13. The bounds sit roughly 140x above those, still far
+below any real discretisation error -- a genuinely inexact operator fails by
+O(1), as test (c) demonstrates.
 """
 
 from __future__ import annotations
@@ -76,15 +86,35 @@ def _build(method: str, pts: np.ndarray, delta: float):
     return create_operator(pts, delta=delta, method=method, **kwargs)
 
 
-def _exact_fields(pts: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
-    """`q = |x|^2/2` has `Lap q == dim`; `lin = x_0` has `d/dx_0 == 1`.
+# Distinct per-axis coefficients. `|x|^2/2` and `x_0` are the obvious probe fields and both are
+# under-determined. An isotropic quadratic is reproduced by ANY reweighting of the pure second
+# derivatives that sums to `dim`, so an operator computing `dim * d2/dx0^2` passes it; and a linear
+# field varying in one axis leaves every other gradient component unconstrained, so a builder that
+# writes `g_weights[0]` into every row passes it. Both mutants survived the isotropic version of
+# this file, in 2D, while it reported 20 passed.
+_QUAD_COEFFS = (1.0, 3.0, 5.0)
+_GRAD_COEFFS = (1.0, 2.0, 3.0)
 
-    Both are analytic truths, not values recorded from a previous run.
+
+def _exact_fields(pts: np.ndarray) -> tuple[np.ndarray, float, np.ndarray, np.ndarray]:
+    """An anisotropic quadratic and a per-axis linear field, with their analytic derivatives.
+
+    `q = sum_d c_d x_d^2 / 2 + x_0 x_1` has `Lap q == sum_d c_d`. The cross term contributes
+    nothing to the Laplacian and everything to the off-diagonal Hessian, so it is there to catch
+    cross-derivative contamination rather than to be measured.
+
+    `lin = sum_d a_d x_d` has `d/dx_d == a_d`, a different value in every component.
+
+    Analytic truths, not values recorded from a previous run.
     """
     dim = pts.shape[1]
-    q = 0.5 * (pts**2).sum(axis=1)
-    lin = pts[:, 0]
-    return q, float(dim), lin
+    coeffs = np.array(_QUAD_COEFFS[:dim])
+    grad_coeffs = np.array(_GRAD_COEFFS[:dim])
+    q = 0.5 * (coeffs * pts**2).sum(axis=1)
+    if dim >= 2:
+        q = q + pts[:, 0] * pts[:, 1]
+    lin = pts @ grad_coeffs
+    return q, float(coeffs.sum()), lin, grad_coeffs
 
 
 @pytest.mark.parametrize("method", sorted(OPERATORS))
@@ -94,14 +124,17 @@ def test_operator_is_exact_on_quadratic_and_linear(method: str, cloud: str) -> N
     pts, delta, interior = CLOUDS[cloud]()
     spec = OPERATORS[method]
     op = _build(method, pts, delta)
-    q, lap_exact, lin = _exact_fields(pts)
+    q, lap_exact, lin, grad_coeffs = _exact_fields(pts)
 
     err_lap = np.abs(op.laplacian(q)[interior] - lap_exact).max()
-    grad = np.asarray(op.gradient(lin)).reshape(len(pts), -1)
-    err_grad = np.abs(grad[interior, 0] - 1.0).max()
-
     assert err_lap < spec["tol_lap"], f"{method} {cloud}: Lap error {err_lap:.3e}"
-    assert err_grad < spec["tol_grad"], f"{method} {cloud}: grad error {err_grad:.3e}"
+
+    grad = np.asarray(op.gradient(lin)).reshape(len(pts), -1)
+    for axis, expected in enumerate(grad_coeffs):
+        err_grad = np.abs(grad[interior, axis] - expected).max()
+        assert err_grad < spec["tol_grad"], (
+            f"{method} {cloud}: d/dx_{axis} error {err_grad:.3e} against expected {expected}"
+        )
 
 
 @pytest.mark.parametrize("method", sorted(OPERATORS))
@@ -189,7 +222,7 @@ def test_closure_is_mandatory_for_deviation_and_idempotent_for_sum_rule(method: 
     """
     pts, delta, interior = _cloud_1d()
     op = _build(method, pts, delta)
-    q, lap_exact, _ = _exact_fields(pts)
+    q, lap_exact, _, _ = _exact_fields(pts)
 
     open_mat = _assemble(op, len(pts), "none")
     closed = _assemble(op, len(pts), "A")
@@ -210,19 +243,21 @@ def test_closure_is_mandatory_for_deviation_and_idempotent_for_sum_rule(method: 
         assert err_open < OPERATORS[method]["tol_lap"], (
             f"{method}: a sum-rule operator needs no closure, got {err_open:.3e}"
         )
-        # Idempotence, the property consumers rely on. The closure shifts the
-        # diagonal by exactly `-sum(weights)`, so the change it makes IS the
-        # unclosed row's own residual — not a tolerance chosen to pass, but the
-        # mechanism: a row that already sums to zero is left where it was.
+        # Idempotence, the property consumers rely on: closing an already-closed
+        # row leaves it where it was.
+        #
+        # NOT `shift <= residual`: the closure shifts the diagonal by exactly
+        # `-sum(weights)`, and the unclosed row sum IS `sum(weights)`, so those are
+        # the same number computed twice and the comparison cannot fail -- it holds
+        # equally for an operator whose rows sum to 9.0. The claim worth asserting
+        # is absolute: the shift is at machine zero.
         residual = np.abs(np.asarray(open_mat.sum(axis=1)).ravel()).max()
         shift = abs(closed - open_mat).max()
-        assert shift <= residual + 1e-15, (
-            f"{method}: the closure moved the matrix by {shift:.3e}, more than "
-            f"the unclosed row-sum residual {residual:.3e} it should be bounded "
-            f"by — it is not acting as a no-op on a sum-rule operator"
-        )
         assert residual < 1e-10, (
             f"{method}: a sum-rule operator's rows must already sum to zero, largest residual {residual:.3e}"
+        )
+        assert shift < 1e-10, (
+            f"{method}: the closure moved the matrix by {shift:.3e}; on a sum-rule operator it must be a no-op"
         )
 
 
@@ -231,7 +266,7 @@ def test_the_three_live_closure_forms_are_the_same_algebra(method: str) -> None:
     """(d) The four production sites spell the closure three ways; all agree."""
     pts, delta, interior = _cloud_1d()
     op = _build(method, pts, delta)
-    q, lap_exact, _ = _exact_fields(pts)
+    q, lap_exact, _, _ = _exact_fields(pts)
 
     mats = {form: _assemble(op, len(pts), form) for form in ("A", "B", "C")}
     for form, mat in mats.items():
@@ -259,6 +294,14 @@ def test_preassembled_matrices_carry_the_closure() -> None:
     assert op._laplacian_matrix is not None, "TaylorOperator must pre-assemble"
     assert op._gradient_matrices is not None
 
+    # Positive control: a degenerate operator whose matrices are entirely zero has
+    # row sums of exactly 0 and would satisfy every assertion below. `get_derivative_weights`
+    # returns None for a degenerate stencil and the assembly then leaves the row empty,
+    # so this is reachable, not hypothetical.
+    assert op._laplacian_matrix.nnz > 0, "Laplacian matrix is empty -- nothing was assembled"
+    for dim, grad_mat in enumerate(op._gradient_matrices):
+        assert grad_mat.nnz > 0, f"gradient[{dim}] matrix is empty -- nothing was assembled"
+
     lap_rows = np.abs(np.asarray(op._laplacian_matrix.sum(axis=1)).ravel()[interior]).max()
     assert lap_rows < 1e-10, f"pre-assembled Laplacian row sum {lap_rows:.3e} != 0"
     for dim, grad_mat in enumerate(op._gradient_matrices):
@@ -275,7 +318,7 @@ def test_sparse_path_and_per_point_fallback_agree() -> None:
     """
     pts, delta, interior = _cloud_1d()
     op = _build("taylor", pts, delta)
-    q, lap_exact, _ = _exact_fields(pts)
+    q, lap_exact, _, _ = _exact_fields(pts)
 
     sparse = op.laplacian(q).copy()
     op._laplacian_matrix = None
