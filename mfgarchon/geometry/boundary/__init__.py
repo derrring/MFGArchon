@@ -203,7 +203,6 @@ def __getattr__(name: str):
         "Topology": ("protocols", "Topology"),
         "BoundaryCalculator": ("protocols", "BoundaryCalculator"),
         "BoundaryHandler": ("protocols", "BoundaryHandler"),
-        "AdvancedBoundaryHandler": ("protocols", "AdvancedBoundaryHandler"),
         "validate_boundary_handler": ("protocols", "validate_boundary_handler"),
         # Calculators
         "DirichletCalculator": ("calculators", "DirichletCalculator"),
