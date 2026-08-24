@@ -364,11 +364,18 @@ class OmegaConfManager:
                 # Use OmegaConf.select for navigation and direct assignment
                 # First ensure the nested structure exists
                 keys = param_name.split(".")
+                # The `: 1` steps below are load-bearing for the type gate, not style. Under
+                # `strict_optional` (which `[[tool.mypy.overrides]]` turns on for this package)
+                # typeshed's slice overload declares the third parameter `SupportsIndex` with no
+                # `| None`, so a two-argument slice of a `list[str]` is rejected from mypy 2.2
+                # onwards. Spelling the step keeps `mypy mfgarchon/config` -- ci.yml's blocking
+                # gate -- green on every version from 2.1 to 2.3, which is why the dev extra no
+                # longer needs an upper bound on mypy.
                 for i in range(len(keys) - 1):
-                    partial_key = ".".join(keys[: i + 1])
+                    partial_key = ".".join(keys[: i + 1 : 1])
                     if self._OmegaConf.select(config, partial_key) is None:
                         # Create the nested key by setting an empty dict
-                        parent_key = ".".join(keys[:i]) if i > 0 else None
+                        parent_key = ".".join(keys[:i:1]) if i > 0 else None
                         if parent_key:
                             parent = self._OmegaConf.select(config, parent_key)
                             setattr(parent, keys[i], {})
@@ -379,7 +386,7 @@ class OmegaConfManager:
                 if len(keys) == 1:
                     setattr(config, keys[0], param_value)
                 else:
-                    parent_key = ".".join(keys[:-1])
+                    parent_key = ".".join(keys[:-1:1])
                     parent = self._OmegaConf.select(config, parent_key)
                     setattr(parent, keys[-1], param_value)
 
