@@ -6,6 +6,7 @@ used across the entire test suite.
 """
 
 import contextlib
+import importlib.util
 import logging
 import os
 import shutil
@@ -509,12 +510,35 @@ def performance_baselines():
 # =============================================================================
 
 
+def _names_a_module(name: str) -> bool:
+    """Is this logger name the import path of a real module?
+
+    mfgarchon loggers are `get_logger(__name__)`, so the name of every one of them is a module
+    path. `find_spec` answers from the import system -- a surface independent of the logging
+    registry, and therefore able to say something the registry cannot: that a name is wrong even
+    though nothing has run yet.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError, AttributeError):
+        return False
+
+
 class _RecordCollector(logging.Handler):
     """Appends every record it is handed to a list owned by the capture object.
 
-    It carries no level of its own. ``at_level`` sets the level on the logger, and
-    ``Logger.callHandlers`` filters there, so a second threshold here could never decide
-    anything -- measured: mutating it to 0 killed no test. One owner for the level (#2083).
+    It carries no level of its own: ``at_level`` sets the level on the logger, which is the
+    one owner for the threshold (#2083).
+
+    The measurement first offered for this was a null result with no positive control --
+    loosening the handler to level 0 killed no test, which it could not have done, since the
+    logger's own level already filtered everything below. The control that discriminates runs
+    the other way: *tightening* the collector to CRITICAL kills 10 of the 16 tests here. So the
+    handler level was reachable, and the honest reason to drop it is single-ownership, not
+    inertness. It is also not universally true that the logger's level decides: a *propagating*
+    descendant delivers its records to this handler without the target logger's level being
+    consulted. No logger under an mfgarchon name propagates today -- they are all created
+    through ``get_logger`` -- so this is a limit to know, not a live hole.
     """
 
     def __init__(self, records: list[logging.LogRecord]):
@@ -589,13 +613,23 @@ class MFGLogCapture:
         The logger is obtained through the package's own ``get_logger``, so it is the object
         production code emits on and carries the configuration production gives it.
 
-        A name that no mfgarchon code has ever asked for, and that captured nothing, raises on
-        exit. That is the shape a typo takes: `assert not mfg_caplog.records` is satisfied by a
-        misspelt logger exactly as it is by a solve that did not warn, and nothing else in the
-        test can tell them apart. The check is on EXIT, not entry, because a logger may be born
-        during the block -- `fp_gfdm` obtains its own inside the solve, so at entry the name is
-        legitimately absent (measured: absent from `MFGLogger._loggers` and from `loggerDict`
-        when `at_level` is entered, present after the solve).
+        A name that neither corresponds to a module in the package nor has already been handed
+        out by `get_logger` is refused, before anything is created. That is the shape a typo
+        takes: `assert not mfg_caplog.records` is satisfied by a misspelt logger exactly as it
+        is by a solve that did not warn, and nothing else in the test can tell them apart.
+
+        The criterion is **static**. An earlier version asked whether the name had been
+        registered at runtime and captured nothing, and that was wrong in three ways, all
+        measured: it fired on a correct absence assertion over a logger created inside a
+        function (`fp_gfdm` and `mfg_problem` have no module-level `get_logger`), so its verdict
+        depended on whether an earlier test in the same worker had created the logger -- the
+        very order-dependence this fixture exists to remove; its message asserted that nothing
+        had ever obtained a name that `fp_gfdm.py:575` does obtain; and its cleanup popped the
+        name out of `logging.Logger.manager.loggerDict`, orphaning a live logger whose children
+        then pointed at an object no longer in the registry, for the rest of the process.
+
+        What it does not catch: a *parent* of the emitting logger, which is a real module and so
+        passes, while capturing nothing because these loggers do not propagate.
         """
         if not isinstance(logger, str) or not logger:
             raise ValueError(
@@ -613,15 +647,19 @@ class MFGLogCapture:
         from mfgarchon.utils.mfg_logging import get_logger
         from mfgarchon.utils.mfg_logging.logger import MFGLogger
 
-        # Before `get_logger`, which would itself register the name and make the check below
-        # vacuous. `MFGLogger._loggers` rather than `loggerDict`: the question is whether
-        # mfgarchon ever handed this logger out, not whether anything anywhere created it.
-        known_to_the_package = logger in MFGLogger._loggers
+        # Decided before anything is created, from a static fact rather than from what has
+        # happened to run: a refused name leaves no logger behind and no state to undo.
+        if logger not in MFGLogger._loggers and not _names_a_module(logger):
+            raise LookupError(
+                f"{logger!r} is neither a module in this package nor a logger the package has "
+                f"handed out, so nothing can emit on it and an assertion over it would be "
+                f"vacuous. mfgarchon loggers are named after their module -- check the name "
+                f"against the emitting module's `get_logger(__name__)`."
+            )
 
         target = get_logger(logger)
         handler = _RecordCollector(self.records)
         previous_level = target.level
-        collected_before = len(self.records)
         # Level first: an unusable level must raise before anything has been mutated.
         target.setLevel(level)
         target.addHandler(handler)
@@ -632,19 +670,6 @@ class MFGLogCapture:
             self._active.discard(logger)
             target.removeHandler(handler)
             target.setLevel(previous_level)
-
-        # Reached only when the body did not raise -- a real exception must not be masked by
-        # this one.
-        if not known_to_the_package and len(self.records) == collected_before:
-            MFGLogger._loggers.pop(logger, None)
-            logging.Logger.manager.loggerDict.pop(logger, None)
-            raise LookupError(
-                f"nothing in mfgarchon has ever obtained a logger named {logger!r}, and this "
-                f"block captured nothing through it. An absence assertion here would pass for "
-                f"the wrong reason. Check the name against the emitting module's "
-                f"`get_logger(__name__)`; a parent name does not work either, because these "
-                f"loggers do not propagate (#2083)."
-            )
 
 
 @pytest.fixture

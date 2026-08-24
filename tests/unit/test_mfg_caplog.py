@@ -112,13 +112,15 @@ def test_the_logger_is_the_one_the_package_hands_out(mfg_caplog):
     What breaks is the guarantee in the docstring: that the captured object carries the
     configuration production gives it. This is the test that fails on that swap.
     """
-    fresh = "mfgarchon.tests.mfg_caplog_configuration"
-    assert fresh not in MFGLogger._loggers
+    fresh = "mfgarchon.utils.cli"  # a real module, so the static name check accepts it
+    MFGLogger._loggers.pop(fresh, None)
 
     with mfg_caplog.at_level(logging.WARNING, logger=fresh):
         logging.getLogger(fresh).warning("configured by the package, not by logging")
 
     assert mfg_caplog.messages == ["configured by the package, not by logging"]
+    # `logging.getLogger` never touches this registry, whatever the logger's prior state, so it
+    # is the one assertion that separates the two calls.
     assert fresh in MFGLogger._loggers, "at_level did not go through mfgarchon's get_logger"
     assert logging.getLogger(fresh).propagate is False, "the logger did not get package configuration"
 
@@ -196,57 +198,63 @@ def test_it_restores_even_when_the_body_raises(mfg_caplog):
     assert logger.handlers == handlers_before
 
 
-def test_it_refuses_a_name_the_package_has_never_used(mfg_caplog):
+def test_it_refuses_a_name_that_is_neither_a_module_nor_a_known_logger(mfg_caplog):
     """The failure a required `logger=` does NOT prevent: a name that is merely wrong.
 
     `assert not mfg_caplog.records` is satisfied by a misspelt logger exactly as it is by a
     solve that did not warn, and nothing in the test distinguishes them. Six absence
-    assertions in this repository rest on a hand-typed string, so the fixture refuses a name
-    no mfgarchon code has ever asked for when the block also captured nothing.
+    assertions in this repository rest on a hand-typed string.
     """
-    typo = "mfgarchon.tests.mfg_caplog_probe_typo"
+    typo = "mfgarchon.core.measrue"
+    assert typo not in MFGLogger._loggers
 
     with (
-        pytest.raises(LookupError, match="has ever obtained a logger named"),
+        pytest.raises(LookupError, match="neither a module in this package"),
         mfg_caplog.at_level(logging.WARNING, logger=typo),
     ):
-        get_logger(PROBE).warning("emitted on the RIGHT logger, captured on the wrong one")
+        pass  # pragma: no cover -- at_level raises on __enter__
 
-    assert mfg_caplog.records == []
-    assert typo not in MFGLogger._loggers, "the refused name must not be left registered"
-    assert typo not in logging.Logger.manager.loggerDict
+    assert typo not in logging.Logger.manager.loggerDict, (
+        "a refused name must leave nothing behind -- the refusal happens before anything is created"
+    )
 
 
-def test_a_name_the_package_does_use_is_accepted_even_when_it_stays_silent(mfg_caplog):
-    """The control for the refusal above, and the reason it is safe for the six absence
-    assertions: a real mfgarchon logger that emits nothing must NOT raise. Without this, the
-    check above would be indistinguishable from one that forbids absence assertions entirely."""
-    import mfgarchon.core.measure  # noqa: F401  -- its module-level get_logger registers the name
+def test_a_real_module_logger_is_accepted_even_when_it_stays_silent(mfg_caplog):
+    """The control for the refusal above: a real mfgarchon logger that emits nothing must NOT
+    raise. Without this, the check would be indistinguishable from one that forbids absence
+    assertions entirely -- and six of them exist."""
+    import mfgarchon.core.measure  # noqa: F401
 
-    real_and_silent = "mfgarchon.core.measure"
-    assert real_and_silent in MFGLogger._loggers
-
-    with mfg_caplog.at_level(logging.WARNING, logger=real_and_silent):
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.core.measure"):
         pass
 
     assert mfg_caplog.records == []
 
 
-def test_a_body_that_raises_is_not_masked_by_the_name_check(mfg_caplog):
-    """The name check runs after the block, so it must not replace a real exception with its
-    own. An unknown name plus zero records is exactly the state a failed body leaves behind."""
-    unknown = "mfgarchon.tests.mfg_caplog_never_used"
+def test_a_logger_created_only_inside_a_function_is_accepted_before_it_exists(mfg_caplog):
+    """The regression pin for the design this replaced.
 
-    with (
-        pytest.raises(RuntimeError, match="the body's own failure"),
-        mfg_caplog.at_level(logging.WARNING, logger=unknown),
-    ):
-        raise RuntimeError("the body's own failure")
+    `fp_gfdm` has no module-level `get_logger` -- it obtains its logger inside the solve -- so a
+    check that asked "has the package ever handed this name out" refused a correct absence
+    assertion here, and accepted it once some earlier test in the same worker had run a solve.
+    That is #2083's own failure shape re-imported through the guard meant to close a different
+    hole. The criterion is static, so this must hold with the name unregistered.
+    """
+    lazy = "mfgarchon.alg.numerical.fp_solvers.fp_gfdm"
+    MFGLogger._loggers.pop(lazy, None)  # whatever ran before, decide from the static fact
+    assert lazy not in MFGLogger._loggers
+
+    with mfg_caplog.at_level(logging.WARNING, logger=lazy):
+        pass
+
+    assert mfg_caplog.records == []
 
 
 def test_it_refuses_a_nested_capture_of_the_same_logger(mfg_caplog):
     """Two collectors on one logger append the same record twice, which silently doubles a
     count assertion -- and two converted tests assert exact counts."""
+    get_logger(PROBE)  # PROBE is not a module path, so the static check needs it registered
+
     with mfg_caplog.at_level(logging.WARNING, logger=PROBE):
         with (
             pytest.raises(RuntimeError, match="already capturing"),

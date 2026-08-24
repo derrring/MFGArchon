@@ -198,9 +198,9 @@ It is whether the logger existed before this phase's sweep — and a logger born
 pytest's own comment names the gap: the sweep "will miss loggers that *become* non-propagating
 after the `__enter__`", which is exactly when `MFGLogger` sets it.
 
-34 of the package's 104 `get_logger` calls are inside a function (15 consumer-side, 12 with
-`fp_gfdm`'s shape; the rest are `mfg_logging`'s own plumbing), so on 9.1.1 the result depends on
-test order: measured at #2083, the gfdm drift test **fails run alone** and **passes** when a
+34 of the package's 104 `get_logger` calls are inside a function. 19 of those 34 are
+`mfg_logging`'s own plumbing; the other 15 are consumer-side, and 12 of the 15 have `fp_gfdm`'s
+shape — a module logger obtained mid-call. So on 9.1.1 the result depends on test order: measured at #2083, the gfdm drift test **fails run alone** and **passes** when a
 sibling test ran a solve first. Six test modules had each rediscovered some part of this and
 written their own collecting handler.
 
@@ -212,10 +212,20 @@ def test_the_drift_is_reported(mfg_caplog):
 ```
 
 `logger=` is required — there is no root to fall back to, and the no-argument form would capture
-nothing silently. A *wrong* name is the same failure wearing a different face, so `at_level` also
-**refuses a name no mfgarchon code has ever asked for** when the block captured nothing: an
-`assert not mfg_caplog.records` is otherwise satisfied by a typo exactly as it is by a solve that
-did not warn. The check runs on exit, because a logger may legitimately be born inside the block.
+nothing silently. A *wrong* name is the same failure wearing a different face: an
+`assert not mfg_caplog.records` is satisfied by a typo exactly as it is by a solve that did not
+warn. So `at_level` **refuses a name that is neither a module in this package nor a logger the
+package has already handed out**, before anything is created.
+
+The criterion is deliberately **static** — `importlib.util.find_spec`, not "has this name been
+registered yet". A runtime criterion was tried and was wrong three ways, each measured: it fired
+on a correct absence assertion over a logger created inside a function (`fp_gfdm` and
+`mfg_problem` have no module-level `get_logger`), so its verdict moved with test order, which is
+the very defect this fixture removes; its message denied that anything had ever obtained a name
+`fp_gfdm.py:575` does obtain; and its cleanup popped the name out of
+`logging.Logger.manager.loggerDict`, orphaning a live logger for the rest of the process. What the
+static check does not catch is a *parent* of the emitting logger: a real module, so it passes,
+capturing nothing because these loggers do not propagate.
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
