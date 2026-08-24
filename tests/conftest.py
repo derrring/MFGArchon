@@ -14,36 +14,38 @@ import pytest
 
 import numpy as np
 
-# Issue #2090: force a headless matplotlib backend BEFORE anything imports pyplot.
+# Issue #2090: select a headless matplotlib backend before pyplot is imported.
 #
-# `ConvergenceInfo.plot_convergence()` ends in a bare `plt.show()`, and a unit test calls it. On a
-# GUI backend that BLOCKS until the window is dismissed, so the run does not fail -- it waits. A
-# full `pytest tests/unit` stopped at 82% inside `tests/unit/test_types/test_state.py` and never
-# returned; measured, that one test exits 124 under a 60s cap and passes in 0.03s with Agg.
+# `ConvergenceInfo.plot_convergence()` ends in a bare `plt.show()` and a unit test calls it. On a
+# GUI backend with a foreground session that blocks until the window is dismissed, so the suite
+# does not fail -- it waits. Measured here: that test exits 124 under a 60s cap, and passes in
+# 0.03s under Agg. (On a machine with no foreground GUI session it completes slowly instead of
+# blocking, so the symptom is environment-dependent; the cause is not.)
 #
-# It went unnoticed because `scripts/local_ci.sh` runs under a conda environment where Agg is
-# already active, while `uv run --extra dev` resolves the backend to `macosx`. The gate was green
-# and a plain suite run hung, on the same tree.
+# Both interpreters used with this repository default to `macosx` -- the conda env the gate runs
+# under and `uv run --extra dev` alike -- so a headless backend is not something either
+# environment supplies.
 #
-# Both mechanisms are needed, and neither is sufficient:
+# `MPLBACKEND` is the mechanism: it is read when matplotlib is first imported, and this file is
+# loaded at `pytest_load_initial_conftests`, before any test module and separately in every xdist
+# worker. `use(..., force=True)` is belt-and-braces for a future plugin that imports matplotlib
+# ahead of this file. No such plugin exists here today -- traced over a full-tree collection, the
+# first matplotlib import in the process is this file -- so treat it as insurance, not as a
+# measured necessity.
 #
-#   - `MPLBACKEND` reaches xdist workers, which are separate processes -- under `-n auto` a
-#     blocking `show()` kills one shard while the run appears to progress. But it is only read
-#     when matplotlib is FIRST imported, and something imports it before this file executes, so
-#     on its own it arrives too late and the backend stays `macosx`. Measured: the variable was
-#     set and `matplotlib.get_backend()` still returned `macosx`.
-#   - `use(..., force=True)` fixes the already-imported process but does not reach a subprocess.
-#
-# `setdefault` so a developer can still force a backend deliberately; the `use()` call then
-# follows whatever that resolved to rather than overriding it.
+# `setdefault` so a backend can be forced deliberately; the `use()` call then follows whatever
+# that resolved to rather than overriding it.
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-try:
-    import matplotlib
+import matplotlib  # must follow the MPLBACKEND assignment above
 
+try:
     matplotlib.use(os.environ["MPLBACKEND"], force=True)
-except ImportError:  # matplotlib is a hard dependency today, but the suite must not need it
-    pass
+except ValueError as _exc:  # an unusable MPLBACKEND must name itself, not kill the session
+    raise RuntimeError(
+        f"MPLBACKEND={os.environ['MPLBACKEND']!r} is not a backend matplotlib accepts. "
+        f"The test suite needs a non-interactive one (Agg, pdf, svg, ps, pgf, template)."
+    ) from _exc
 
 # Import main package components
 from mfgarchon import MFGProblem
