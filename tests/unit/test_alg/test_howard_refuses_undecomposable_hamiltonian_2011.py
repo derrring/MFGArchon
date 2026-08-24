@@ -42,7 +42,13 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 L, T, NX, NT = 1.0, 0.2, 21, 10
-SOCP = {"monotonicity_scheme": "joint_socp", "monotonicity_application": "precompute"}
+# `qp_m_matrix` rather than `joint_socp`: what this file pins is Howard's DECOMPOSITION gate,
+# not SOCP stencils. joint_socp needs cvxpy (the `numerical` extra) and would make all 17 tests
+# below skip wherever it is absent -- including the accept controls, which is the half you least
+# want silently missing. qp_m_matrix runs on osqp, a base dependency, and exercises the same
+# Howard path. SOCP itself is covered by test_socp_m_matrix_property, test_socp_stencil_enlargement
+# and test_joint_socp_mirror_symmetry, which are about SOCP.
+SOCP = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
 
 
 def _first_coord(x):

@@ -148,8 +148,10 @@ def test_mms_reaches_gfdm_and_it_converges():
 
 _HOWARD = {
     "inner_solver": "howard",
-    "monotonicity_scheme": "joint_socp",
-    "monotonicity_application": "precompute",
+    # qp_m_matrix (osqp, a base dependency) rather than joint_socp (cvxpy, the `numerical`
+    # extra): this test pins that `source_term` REACHES the Howard branch, not SOCP stencils.
+    "monotonicity_scheme": "qp_m_matrix",
+    "monotonicity_application": "always",
 }
 
 

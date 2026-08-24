@@ -53,6 +53,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e ".[dev,numerical]" numba
+        # Positive control for #1658: `.[dev,numerical]` once resolved to nothing for 3.5 months
+        # and the only observable was a SOCP ImportError inside the suite. A skip-based design
+        # removes that observable, so the install has to prove itself here instead.
+        python -c "import cvxpy; print('cvxpy', cvxpy.__version__)"
 
     # NOTE: --paths defaults to `tests`, which includes tests/unit/test_backends and
     # tests/unit/test_visualization. nightly.yml deliberately --ignores both (see its
