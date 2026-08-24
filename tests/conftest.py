@@ -6,7 +6,6 @@ used across the entire test suite.
 """
 
 import contextlib
-import importlib.util
 import logging
 import os
 import shutil
@@ -510,20 +509,6 @@ def performance_baselines():
 # =============================================================================
 
 
-def _names_a_module(name: str) -> bool:
-    """Is this logger name the import path of a real module?
-
-    mfgarchon loggers are `get_logger(__name__)`, so the name of every one of them is a module
-    path. `find_spec` answers from the import system -- a surface independent of the logging
-    registry, and therefore able to say something the registry cannot: that a name is wrong even
-    though nothing has run yet.
-    """
-    try:
-        return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError, AttributeError):
-        return False
-
-
 class _RecordCollector(logging.Handler):
     """Appends every record it is handed to a list owned by the capture object.
 
@@ -579,9 +564,9 @@ class MFGLogCapture:
 
     The API mirrors ``caplog`` so uses read the same, with one difference: ``logger=`` is
     required. There is no root to fall back to, and the no-argument form would capture nothing
-    silently. Note what that does **not** cover on its own: a name that is merely *wrong*
-    captures nothing just as silently, which is why ``at_level`` also refuses a name the
-    package has never used -- see its docstring.
+    silently. Note what that does **not** cover: a name that is merely *wrong* captures nothing
+    just as silently, and this fixture does **not** catch it -- see ``at_level``'s docstring for
+    the two guards that were tried, why both were removed, and the discipline that replaces them.
 
     ```python
     def test_the_drift_is_reported(mfg_caplog):
@@ -613,23 +598,29 @@ class MFGLogCapture:
         The logger is obtained through the package's own ``get_logger``, so it is the object
         production code emits on and carries the configuration production gives it.
 
-        A name that neither corresponds to a module in the package nor has already been handed
-        out by `get_logger` is refused, before anything is created. That is the shape a typo
-        takes: `assert not mfg_caplog.records` is satisfied by a misspelt logger exactly as it
-        is by a solve that did not warn, and nothing else in the test can tell them apart.
+        **A wrong name captures nothing, silently, and this fixture does not stop it.** That is
+        the shape a typo takes: `assert not mfg_caplog.records` is satisfied by a misspelt
+        logger exactly as it is by a solve that did not warn, and nothing here can tell them
+        apart. The discipline that does: **pair every absence assertion with a presence
+        assertion on the same logger name**, so a typo fails the presence half loudly. Five of
+        the six absence assertions in this repository already do.
 
-        The criterion is **static**. An earlier version asked whether the name had been
-        registered at runtime and captured nothing, and that was wrong in three ways, all
-        measured: it fired on a correct absence assertion over a logger created inside a
-        function (`fp_gfdm` and `mfg_problem` have no module-level `get_logger`), so its verdict
-        depended on whether an earlier test in the same worker had created the logger -- the
-        very order-dependence this fixture exists to remove; its message asserted that nothing
-        had ever obtained a name that `fp_gfdm.py:575` does obtain; and its cleanup popped the
-        name out of `logging.Logger.manager.loggerDict`, orphaning a live logger whose children
-        then pointed at an object no longer in the registry, for the rest of the process.
+        Two guards against it were built and both were removed, because each re-created the
+        order-dependence this fixture exists to remove (#2083, and the issue tracking a sound
+        design):
 
-        What it does not catch: a *parent* of the emitting logger, which is a real module and so
-        passes, while capturing nothing because these loggers do not propagate.
+        - *Refuse a name the package has never handed out, if the block captured nothing.*
+          Fires on a correct absence assertion over a logger created inside a function --
+          `fp_gfdm` and `mfg_problem` have no module-level `get_logger` -- so the verdict moved
+          with whether an earlier test in the same worker had run a solve. Its cleanup also
+          popped the name out of `logging.Logger.manager.loggerDict`, orphaning live loggers.
+        - *Refuse a name that is neither a module path nor already registered.* Measured, **8 of
+          10** logger names this package actually uses are not module paths (`MFGSolver`,
+          `mfgarchon.performance`, `mfgarchon.solvers.<class>`, ...), so they fell through to the
+          registry arm and the verdict moved with test order again. And `importlib.util.find_spec`
+          imports every parent package to answer: one refused name under
+          `mfgarchon.geometry.level_set.*` left **+10** loggers and **+8** registry entries
+          behind, first-call-only.
         """
         if not isinstance(logger, str) or not logger:
             raise ValueError(
@@ -644,23 +635,24 @@ class MFGLogCapture:
                 f"doubles any count assertion. Use one block, or capture a different logger."
             )
 
-        from mfgarchon.utils.mfg_logging import get_logger
-        from mfgarchon.utils.mfg_logging.logger import MFGLogger
+        import logging as _logging
 
-        # Decided before anything is created, from a static fact rather than from what has
-        # happened to run: a refused name leaves no logger behind and no state to undo.
-        if logger not in MFGLogger._loggers and not _names_a_module(logger):
-            raise LookupError(
-                f"{logger!r} is neither a module in this package nor a logger the package has "
-                f"handed out, so nothing can emit on it and an assertion over it would be "
-                f"vacuous. mfgarchon loggers are named after their module -- check the name "
-                f"against the emitting module's `get_logger(__name__)`."
-            )
+        from mfgarchon.utils.mfg_logging import get_logger
+
+        # Snapshot BEFORE `get_logger`, which configures a logger it has not seen:
+        # `_setup_logger` clears handlers, sets the level, attaches a StreamHandler and sets
+        # `propagate = False`. Measured on a name outside the package (`matplotlib`), an
+        # otherwise empty block left it at `propagate=True -> False, handlers=0 -> 1`
+        # permanently. Restoring only the level, as an earlier revision did, leaves that damage
+        # and leaves it silent.
+        existed = logger in _logging.Logger.manager.loggerDict
+        pre = _logging.getLogger(logger)
+        previous_propagate, previous_handlers = pre.propagate, list(pre.handlers)
 
         target = get_logger(logger)
         handler = _RecordCollector(self.records)
         previous_level = target.level
-        # Level first: an unusable level must raise before anything has been mutated.
+        # Level first: an unusable level must raise before anything else has been mutated.
         target.setLevel(level)
         target.addHandler(handler)
         self._active.add(logger)
@@ -670,6 +662,17 @@ class MFGLogCapture:
             self._active.discard(logger)
             target.removeHandler(handler)
             target.setLevel(previous_level)
+            if not existed and not logger.startswith("mfgarchon"):
+                # Restore ONLY a logger outside the package. Inside it, leaving the
+                # configuration is what production would have done anyway, and undoing it is a
+                # leak in the other direction: `MFGLogger` caches the object, so the next
+                # `get_logger` for that name would return an unconfigured one. Outside it there
+                # is no such argument -- measured, an empty block over `matplotlib` left it at
+                # `propagate=True -> False, handlers=0 -> 1` for the rest of the process.
+                # The name stays in the registry either way; popping it is what orphaned live
+                # loggers in an earlier revision.
+                target.propagate = previous_propagate
+                target.handlers[:] = previous_handlers
 
 
 @pytest.fixture

@@ -212,20 +212,20 @@ def test_the_drift_is_reported(mfg_caplog):
 ```
 
 `logger=` is required — there is no root to fall back to, and the no-argument form would capture
-nothing silently. A *wrong* name is the same failure wearing a different face: an
-`assert not mfg_caplog.records` is satisfied by a typo exactly as it is by a solve that did not
-warn. So `at_level` **refuses a name that is neither a module in this package nor a logger the
-package has already handed out**, before anything is created.
+nothing silently.
 
-The criterion is deliberately **static** — `importlib.util.find_spec`, not "has this name been
-registered yet". A runtime criterion was tried and was wrong three ways, each measured: it fired
-on a correct absence assertion over a logger created inside a function (`fp_gfdm` and
-`mfg_problem` have no module-level `get_logger`), so its verdict moved with test order, which is
-the very defect this fixture removes; its message denied that anything had ever obtained a name
-`fp_gfdm.py:575` does obtain; and its cleanup popped the name out of
-`logging.Logger.manager.loggerDict`, orphaning a live logger for the rest of the process. What the
-static check does not catch is a *parent* of the emitting logger: a real module, so it passes,
-capturing nothing because these loggers do not propagate.
+**A *wrong* name is the same failure wearing a different face, and the fixture does not catch it.**
+`assert not mfg_caplog.records` is satisfied by a typo exactly as it is by a solve that did not warn.
+The discipline that catches it is at the call site: **pair every absence assertion with a presence
+assertion on the same logger name**, so a typo fails the presence half loudly.
+
+Two guards were built and both removed, because each re-created the order-dependence this fixture
+exists to remove — the record is in `at_level`'s docstring and in the issue tracking a sound design.
+The short version: a runtime criterion ("has the package handed this name out") fires on a correct
+absence assertion over a logger created inside a function, and a static one (`find_spec`) does not
+help because **8 of the 10 logger names this package actually uses are not module paths** —
+`MFGSolver`, `mfgarchon.performance`, `mfgarchon.solvers.<class>` — so they fall through to the
+runtime arm anyway, and `find_spec` imports every parent package to answer.
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 

@@ -120,9 +120,10 @@ def test_the_logger_is_the_one_the_package_hands_out(mfg_caplog):
 
     assert mfg_caplog.messages == ["configured by the package, not by logging"]
     # `logging.getLogger` never touches this registry, whatever the logger's prior state, so it
-    # is the one assertion that separates the two calls.
+    # is the one assertion that separates the two calls. Note it is the ONLY one available: the
+    # logger's `propagate`/handlers cannot be asserted here, because `at_level` deliberately
+    # leaves an in-package logger configured (see its `finally`).
     assert fresh in MFGLogger._loggers, "at_level did not go through mfgarchon's get_logger"
-    assert logging.getLogger(fresh).propagate is False, "the logger did not get package configuration"
 
 
 def test_it_captures_at_and_above_the_level_it_was_given(mfg_caplog):
@@ -198,62 +199,50 @@ def test_it_restores_even_when_the_body_raises(mfg_caplog):
     assert logger.handlers == handlers_before
 
 
-def test_it_refuses_a_name_that_is_neither_a_module_nor_a_known_logger(mfg_caplog):
-    """The failure a required `logger=` does NOT prevent: a name that is merely wrong.
+def test_a_wrong_logger_name_captures_nothing_and_is_NOT_caught(mfg_caplog):
+    """The known hole, pinned so that it is recorded rather than rediscovered.
 
-    `assert not mfg_caplog.records` is satisfied by a misspelt logger exactly as it is by a
-    solve that did not warn, and nothing in the test distinguishes them. Six absence
-    assertions in this repository rest on a hand-typed string.
+    Two guards against this were built and both removed: each re-created the order-dependence
+    the fixture exists to remove (see `at_level`'s docstring). This test states the residual
+    limitation as a fact, so a reader meets it here rather than in a vacuous absence assertion.
+
+    It also fails if a third guard is added without updating the docs -- which is the point:
+    the next person to close this hole has to come through here.
     """
-    typo = "mfgarchon.core.measrue"
-    assert typo not in MFGLogger._loggers
+    typo = "mfgarchon.core.measrue"  # measure, misspelt
+    real = get_logger("mfgarchon.core.measure")
 
-    with (
-        pytest.raises(LookupError, match="neither a module in this package"),
-        mfg_caplog.at_level(logging.WARNING, logger=typo),
-    ):
-        pass  # pragma: no cover -- at_level raises on __enter__
+    with mfg_caplog.at_level(logging.WARNING, logger=typo):
+        real.warning("emitted on the RIGHT logger, captured on the wrong one")
 
-    assert typo not in logging.Logger.manager.loggerDict, (
-        "a refused name must leave nothing behind -- the refusal happens before anything is created"
+    assert mfg_caplog.records == [], (
+        "a misspelt logger name still captures nothing -- if this now raises or captures, the "
+        "hole has been closed and `at_level`'s docstring and AGENTS.md must say how"
     )
 
 
-def test_a_real_module_logger_is_accepted_even_when_it_stays_silent(mfg_caplog):
-    """The control for the refusal above: a real mfgarchon logger that emits nothing must NOT
-    raise. Without this, the check would be indistinguishable from one that forbids absence
-    assertions entirely -- and six of them exist."""
-    import mfgarchon.core.measure  # noqa: F401
+def test_the_discipline_that_replaces_the_guard(mfg_caplog):
+    """What an absence assertion owes instead: a presence assertion on the same name.
 
-    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.core.measure"):
-        pass
-
-    assert mfg_caplog.records == []
-
-
-def test_a_logger_created_only_inside_a_function_is_accepted_before_it_exists(mfg_caplog):
-    """The regression pin for the design this replaced.
-
-    `fp_gfdm` has no module-level `get_logger` -- it obtains its logger inside the solve -- so a
-    check that asked "has the package ever handed this name out" refused a correct absence
-    assertion here, and accepted it once some earlier test in the same worker had run a solve.
-    That is #2083's own failure shape re-imported through the guard meant to close a different
-    hole. The criterion is static, so this must hold with the name unregistered.
+    A typo fails the presence half loudly, which is what makes the absence half mean something.
+    This is the shape `test_fp_network_mass_gate.py` already uses.
     """
-    lazy = "mfgarchon.alg.numerical.fp_solvers.fp_gfdm"
-    MFGLogger._loggers.pop(lazy, None)  # whatever ran before, decide from the static fact
-    assert lazy not in MFGLogger._loggers
+    name = "mfgarchon.core.measure"
+    logger = get_logger(name)
 
-    with mfg_caplog.at_level(logging.WARNING, logger=lazy):
+    with mfg_caplog.at_level(logging.WARNING, logger=name):
         pass
+    assert mfg_caplog.records == [], "nothing logged yet"
 
-    assert mfg_caplog.records == []
+    with mfg_caplog.at_level(logging.WARNING, logger=name):
+        logger.warning("the same name, now used")
+    assert mfg_caplog.messages == ["the same name, now used"], "the presence half is what proves the name was right"
 
 
 def test_it_refuses_a_nested_capture_of_the_same_logger(mfg_caplog):
     """Two collectors on one logger append the same record twice, which silently doubles a
     count assertion -- and two converted tests assert exact counts."""
-    get_logger(PROBE)  # PROBE is not a module path, so the static check needs it registered
+    get_logger(PROBE)
 
     with mfg_caplog.at_level(logging.WARNING, logger=PROBE):
         with (
@@ -264,6 +253,27 @@ def test_it_refuses_a_nested_capture_of_the_same_logger(mfg_caplog):
         get_logger(PROBE).warning("counted once")
 
     assert mfg_caplog.messages == ["counted once"]
+
+
+def test_a_logger_outside_the_package_is_left_as_it_was_found(mfg_caplog):
+    """`get_logger` configures a logger it has not seen -- clears handlers, sets the level,
+    attaches a StreamHandler, sets `propagate = False`. For a name outside the package there is
+    no argument for leaving that behind: measured on `matplotlib`, an otherwise empty block left
+    it at `propagate=True -> False, handlers=0 -> 1` for the rest of the process, and a later
+    `caplog` assertion on a third-party warning would go red -- its absence form vacuously.
+
+    In-package names are deliberately NOT restored; see `at_level`'s `finally`.
+    """
+    outside = "zz_mfg_caplog_probe_outside_the_package"
+    assert outside not in logging.Logger.manager.loggerDict, "must not exist yet"
+
+    with mfg_caplog.at_level(logging.WARNING, logger=outside):
+        pass
+
+    after = logging.getLogger(outside)
+    assert (after.propagate, after.handlers) == (True, []), (
+        f"left an out-of-package logger configured: propagate={after.propagate}, {len(after.handlers)} handler(s)"
+    )
 
 
 @pytest.mark.parametrize("missing", ["", None])
