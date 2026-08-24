@@ -25,9 +25,21 @@ Neumann (du/dn = g at boundary, outward normal):
     (u_g - u_i) / dx = g   at BOTH walls
     => u_g = u_i + dx*g
 
-    One formula, both walls, both centrings. The ghost-to-interior separation is dx either way --
-    cell-centred puts them at -dx/2 and +dx/2, vertex-centred at -dx and 0 -- and du/dn already
-    carries the wall's direction, so there is no per-wall sign.
+    One formula, both walls, AND both centrings -- measured, not asserted: on u = 3x with dx = 0.1
+    the vertex layout (wall at the node, ghost one dx outside) gives -0.300000 and +3.300000
+    against exact -0.3 and +3.3. The separation is dx either way, and du/dn already carries the
+    wall's direction, so there is no per-wall sign and no centring branch.
+
+    THE THREE FORMULAS IN THIS BLOCK DO NOT SHARE THAT PROPERTY, and the header's blanket
+    "cell-centered" is imprecise rather than uniformly true:
+
+      - Neumann  : centring-free, as measured above.
+      - Dirichlet: cell-centred only. `ghost_cell_dirichlet` returns the boundary value itself on
+                   a vertex layout (u_g = g), not 2*g - u_i -- because there the wall IS the node.
+      - Robin    : cell-centred only, and its vertex arm was wrong until #2064.
+
+    An intermediate revision of this comment removed the centring claim from the Neumann line
+    instead of scoping the other two, which demoted a statement that is true.
 
     This block said `u_g = u_i -+ 2*dx*g` until #2057: the one-cell form with a two-cell step, the
     exact defect #1972 removed from `ghost_cell_neumann`. Measured on `u = 3x`, dx = 0.1, on the
@@ -36,9 +48,24 @@ Neumann (du/dn = g at boundary, outward normal):
     defining relation was wrong too: `(u_i - u_g)/(2*dx)` returns 1.5 on a field whose du/dx is 3.
 
 Robin (alpha*u + beta*du/dn = g at boundary):
-    alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/(2*dx) = g
-    => u_g * (alpha/2 + beta/(2*dx)) = g - u_i * (alpha/2 - beta/(2*dx))
-    => u_g = (g - u_i * (alpha/2 - beta/(2*dx))) / (alpha/2 + beta/(2*dx))
+    alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/dx = g
+    => u_g * (alpha/2 + beta/dx) = g - u_i * (alpha/2 - beta/dx)
+    => u_g = (g - u_i * (alpha/2 - beta/dx)) / (alpha/2 + beta/dx)
+
+    The step is dx, not 2*dx. This block said 2*dx until now, four lines below the Neumann block
+    #2057 corrected for the same factor -- and the branch at the bottom of this file delegates to
+    `ghost_cell_robin`, which uses beta/dx. Measured (alpha=1, beta=0.3, g=0.7, dx=0.1, u_i=0.5):
+    this block's old form gave 0.600000 with a residual of +0.15 against the Robin condition; the
+    live path gives 0.557143 with residual 0. It was also internally inconsistent -- the value term
+    (u_g + u_i)/2 commits to the face-midpoint geometry, where the separation is dx.
+
+    The only text in the repo naming this factor as stale was a `test_robin` docstring, and #2057
+    deleted that test along with the orphaned method it covered -- so the correction and its only
+    signpost went in the same change. The correcting work is #1350, "fix Robin ghost-cell expected
+    formula, remove xfail", with the production change at `0ae5515a`. (That docstring wrote
+    "Refs #1237", and an earlier revision of THIS comment copied it: #1237 is the FEM weak-form
+    Robin/Periodic issue and says nothing about an FDM ghost factor. #1350 references it, which is
+    how the citation drifted.)
 
 Corner Handling (Issue #521):
 -----------------------------
@@ -1134,8 +1161,13 @@ class PreallocatedGhostBuffer:
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
             # Zero-gradient Neumann: ghost = adjacent interior (simple reflection).
             # For cell-centered grids with boundary at cell face:
-            #   du/dn|_{boundary} = (u_interior - u_ghost)/dx = 0
+            #   du/dn|_{boundary} = (u_ghost - u_interior)/dx = 0
             #   => u_ghost = u_interior (adjacent interior cell)
+            #
+            # The quotient is (ghost - interior), not (interior - ghost): interior -> ghost IS the
+            # outward direction at either wall, which is what makes this file's header formula
+            # sign-free. Written the other way round it is -du/dn, inert at zero flux and
+            # contradicting the header twenty lines up.
             #
             # Padded array structure: [ghost_0, ..., ghost_{g-1}, interior_0, interior_1, ...]
             # For g=1: ghost at idx 0 should equal interior at idx 1 (adjacent).
@@ -1731,8 +1763,9 @@ class PreallocatedGhostBuffer:
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
             # ghost = adjacent interior, PLUS dx*v for an inhomogeneous Neumann flux.
             #
-            # The flux term was missing here while `_apply_linear_reflection` (the uniform-BC path,
-            # :1151) has carried it since #1262. Both paths are live and which one runs is decided
+            # The flux term was missing here while `_apply_linear_reflection` (the uniform-BC path)
+            # has carried it since #1262. Named, not cited by line: an edit to this same file moved
+            # the target and left the number pointing at an unrelated statement. Both paths are live and which one runs is decided
             # by `bc.is_uniform` -- i.e. by whether the caller wrote one unrestricted segment or one
             # per face, which the docs present as equivalent ways of saying the same thing. Measured
             # on du/dn = 2, dx = 0.25: uniform gave an implied du/dn of +/-2.0, per-face gave 0.0,
