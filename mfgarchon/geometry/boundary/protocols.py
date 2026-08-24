@@ -714,12 +714,21 @@ class BoundaryHandler(Protocol):
 @runtime_checkable
 class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
     """
-    Extended protocol for solvers with advanced BC features.
+    Extended protocol for solvers that can report boundary geometry.
 
-    Adds optional methods for:
+    Adds:
     - Normal vector computation
-    - Mixed/Robin BC support
-    - Time-dependent BC caching
+
+    It does NOT declare a Robin entry point. `apply_robin_bc(values, alpha, beta, gamma) ->
+    values` used to sit here and was removed with zero implementations: the signature says "hand
+    me a solution and I will return one satisfying Robin", but a Robin condition constrains the
+    OPERATOR -- the ghost value that closes a stencil, or the boundary terms of a weak form -- and
+    cannot in general be recovered by editing a solution vector.
+
+    The three owners that actually impose it each need more than `values`:
+    `RobinCalculator.compute` and `ghost_cell_robin` take `(interior_value, dx, side, alpha, beta,
+    rhs)` and return a ghost value; the weak-form path adds boundary terms to the bilinear form.
+    None is expressible as `values -> values`, which is why nothing ever implemented it.
     """
 
     def get_boundary_normals(self) -> NDArray:
@@ -739,34 +748,6 @@ class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
             normals = solver.get_boundary_normals()
             # array([[-1, 0], [-1, 0], ..., [1, 0], [1, 0]])  # 2D box
             ```
-        """
-        ...
-
-    def apply_robin_bc(
-        self,
-        values: NDArray,
-        alpha: float,
-        beta: float,
-        gamma: float,
-        time: float = 0.0,
-    ) -> NDArray:
-        """
-        Apply Robin boundary conditions: alpha u + beta du/dn = gamma.
-
-        Args:
-            values: Solution values (N,)
-            alpha: Coefficient for u term
-            beta: Coefficient for du/dn term
-            gamma: Right-hand side value
-            time: Current time
-
-        Returns:
-            Modified solution values with Robin BC enforced (N,)
-
-        Notes:
-            - Generalization of Dirichlet (beta=0) and Neumann (alpha=0)
-            - Requires both value and gradient enforcement
-            - Not all solvers support Robin BCs efficiently
         """
         ...
 
