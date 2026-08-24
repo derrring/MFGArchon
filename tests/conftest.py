@@ -5,6 +5,8 @@ This module provides common fixtures, test configuration, and utilities
 used across the entire test suite.
 """
 
+import contextlib
+import logging
 import os
 import shutil
 import tempfile
@@ -500,6 +502,101 @@ def performance_baselines():
         "medium_problem_time": 5.0,  # seconds
         "memory_per_dof": 1e-6,  # MB per degree of freedom
     }
+
+
+# =============================================================================
+# Log capture for mfgarchon loggers (Issue #2083)
+# =============================================================================
+
+
+class _RecordCollector(logging.Handler):
+    """Appends every record it is handed to a list owned by the capture object."""
+
+    def __init__(self, records: list[logging.LogRecord], level: int):
+        super().__init__(level=level)
+        self._records = records
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._records.append(record)
+
+
+class MFGLogCapture:
+    """Capture records from an mfgarchon logger, where plain ``caplog`` is unreliable (#2083).
+
+    ``MFGLogger._setup_logger`` sets ``propagate = False`` on every logger it configures
+    (``mfgarchon/utils/mfg_logging/logger.py``), so no mfgarchon record reaches the root
+    logger. What ``caplog`` does about that depends on the pytest version **and** on when the
+    logger was created, which is why six test modules each grew their own collector:
+
+    - pytest 8.4.1 (``uv run --extra dev``): ``catching_logs.__enter__`` attaches the capture
+      handler to the root logger only, so ``caplog`` sees nothing from mfgarchon.
+    - pytest 9.1.1 (the gate interpreter): it also attaches to every non-propagating logger
+      **that already exists** when the test phase starts. A module-level ``get_logger`` is
+      therefore visible, and one obtained inside a function -- 34 call sites in the package,
+      ``fp_gfdm.py:575`` among them -- is born after that sweep and is not. So the same test
+      passes or fails on whether an earlier test in the same worker created the logger first.
+
+    This attaches to the emitting logger on demand, so it depends on neither.
+
+    The API mirrors ``caplog`` so uses read the same, with one difference: ``logger=`` is
+    required, because there is no root to fall back to and a silent fallback is the failure
+    this replaces.
+
+    ```python
+    def test_the_drift_is_reported(mfg_caplog):
+        with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg....fp_gfdm"):
+            solver.solve_fp_system(m0, drift)
+        assert mfg_caplog.records
+    ```
+
+    ``records`` holds what arrived at or above the level ``at_level`` was given, in order,
+    across every ``at_level`` block since the last ``clear()``.
+    """
+
+    def __init__(self) -> None:
+        self.records: list[logging.LogRecord] = []
+
+    @property
+    def messages(self) -> list[str]:
+        """The formatted message of each captured record."""
+        return [record.getMessage() for record in self.records]
+
+    def clear(self) -> None:
+        self.records.clear()
+
+    @contextlib.contextmanager
+    def at_level(self, level: int, logger: str):
+        """Collect records of `level` and above emitted through the logger named `logger`.
+
+        The logger is obtained through the package's own ``get_logger``, so it is the object
+        production code emits on and carries the configuration production gives it.
+        """
+        if not isinstance(logger, str) or not logger:
+            raise ValueError(
+                "mfg_caplog.at_level needs the name of the logger to capture: "
+                "at_level(logging.WARNING, logger='mfgarchon.alg.numerical....'). "
+                "There is no root fallback -- mfgarchon loggers do not propagate (#2083)."
+            )
+
+        from mfgarchon.utils.mfg_logging import get_logger
+
+        target = get_logger(logger)
+        handler = _RecordCollector(self.records, level=level)
+        previous_level = target.level
+        target.addHandler(handler)
+        target.setLevel(level)
+        try:
+            yield self
+        finally:
+            target.removeHandler(handler)
+            target.setLevel(previous_level)
+
+
+@pytest.fixture
+def mfg_caplog() -> MFGLogCapture:
+    """``caplog`` for mfgarchon loggers, independent of pytest version and logger creation
+    order (Issue #2083). See :class:`MFGLogCapture`."""
+    return MFGLogCapture()
 
 
 # =============================================================================

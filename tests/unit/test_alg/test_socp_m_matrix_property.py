@@ -361,37 +361,30 @@ def test_socp_reproduces_hex_closed_form_constant(delta):
     )
 
 
-def test_runtime_dmp_guard_warns_only_when_violated():
+def test_runtime_dmp_guard_warns_only_when_violated(mfg_caplog):
     """Issue #1074 runtime guard: check_dmp=True warns when the drift exceeds α_crit; it is
     silent below the threshold and a no-op when check_dmp=False (the default — numerically inert)."""
     import logging
 
-    records: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda r: records.append(r.getMessage())
-    gfdm_logger = logging.getLogger("mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm")
-    gfdm_logger.addHandler(handler)
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
         solver = _make_solver_check_dmp(sigma=0.3, check_dmp=True)
         solver.assemble_hjb_iteration_matrix(np.zeros((solver.n_points, 1)))  # build operators + α_crit
         x = np.linspace(0.0, 1.0, solver.n_points)
 
-        records.clear()
+        mfg_caplog.clear()
         solver._maybe_warn_dmp(1e-4 * x)  # |drift| ≪ α_crit
-        assert not any("DMP" in m for m in records), "guard warned in the diffusion-dominated regime"
+        assert not any("DMP" in m for m in mfg_caplog.messages), "guard warned in the diffusion-dominated regime"
 
-        records.clear()
+        mfg_caplog.clear()
         solver._dmp_warned = False
         solver._maybe_warn_dmp(100.0 * x)  # |drift| ≫ α_crit
-        assert any("Issue #1074" in m for m in records), "guard did not warn under strong drift"
+        assert any("Issue #1074" in m for m in mfg_caplog.messages), "guard did not warn under strong drift"
 
         off = _make_solver_check_dmp(sigma=0.3, check_dmp=False)
         off.assemble_hjb_iteration_matrix(np.zeros((off.n_points, 1)))
-        records.clear()
+        mfg_caplog.clear()
         off._maybe_warn_dmp(100.0 * x)
-        assert not any("DMP" in m for m in records), "guard fired with check_dmp=False (should be inert)"
-    finally:
-        gfdm_logger.removeHandler(handler)
+        assert not any("DMP" in m for m in mfg_caplog.messages), "guard fired with check_dmp=False (should be inert)"
 
 
 def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
@@ -428,7 +421,7 @@ def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
 # ---------------------------------------------------------------------------
 
 
-def test_dmp_guard_fires_on_real_solve_path():
+def test_dmp_guard_fires_on_real_solve_path(mfg_caplog):
     """Issue #1253 2026-06-10: _maybe_warn_dmp must fire on the normal Newton solve path.
 
     Before the fix: _D_grad is None on the joint_socp/precompute per-point path because
@@ -442,16 +435,7 @@ def test_dmp_guard_fires_on_real_solve_path():
     """
     import logging
 
-    records: list[str] = []
-
-    class _Capture(logging.Handler):
-        def emit(self, record):
-            records.append(record.getMessage())
-
-    handler = _Capture()
-    gfdm_logger = logging.getLogger("mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm")
-    gfdm_logger.addHandler(handler)
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
         # Small sigma → small alpha_crit (D = sigma^2/2 ≈ 0.005).
         # Steep u_terminal → large grad_u → max_alpha ≫ alpha_crit from first Newton step.
         n_x = 21
@@ -475,12 +459,10 @@ def test_dmp_guard_fires_on_real_solve_path():
             U_terminal=u_terminal,
         )
 
-        assert any("DMP" in m or "Issue #1074" in m for m in records), (
+        assert any("DMP" in m or "Issue #1074" in m for m in mfg_caplog.messages), (
             "DMP warning must fire when drift > alpha_crit on the real solve path "
             "(Issue #1253: guard was silently skipped when _D_grad=None)"
         )
-    finally:
-        gfdm_logger.removeHandler(handler)
 
 
 def test_critical_drift_includes_negative_lap_edges():

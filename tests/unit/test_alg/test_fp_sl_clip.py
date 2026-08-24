@@ -27,37 +27,11 @@ from mfgarchon.geometry.boundary import no_flux_bc
 _CLIP_LOGGER = "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint"
 
 
-def _capture_warnings(logger_name):
-    """Attach a record-collecting handler (mfgarchon loggers do not propagate to caplog)."""
-    records: list[logging.LogRecord] = []
-
-    class _Collector(logging.Handler):
-        def emit(self, record):
-            records.append(record)
-
-    logger = logging.getLogger(logger_name)
-    handler = _Collector()
-    logger.addHandler(handler)
-    prev_level = logger.level
-    logger.setLevel(logging.WARNING)
-    return records, logger, handler, prev_level
-
-
 def _problem(n=41, nt=20):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     comp = MFGComponents(hamiltonian=H, m_initial=lambda x: np.ones_like(x), u_terminal=lambda x: x * 0)
     return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, sigma=0.3, coupling_coefficient=0.5)
-
-
-def _run(fp, m0, U, logger_name=_CLIP_LOGGER):
-    records, logger, handler, prev = _capture_warnings(logger_name)
-    try:
-        fp.solve_fp_system(m0, potential_field=U)
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
-    return [r.getMessage() for r in records]
 
 
 def test_a_clip_that_injects_mass_stops_the_solve():
@@ -101,7 +75,7 @@ def test_the_stop_names_the_interpolation_and_a_remedy():
     assert "coarsen" in message
 
 
-def test_no_clip_warning_for_linear_pure_diffusion():
+def test_no_clip_warning_for_linear_pure_diffusion(mfg_caplog):
     """Linear splatting preserves positivity and Crank-Nicolson diffusion of a smooth
     Gaussian (cell-Peclet stable) does not undershoot, so the clip never injects mass and
     no warning fires -- the warning is a real signal, not noise."""
@@ -113,5 +87,7 @@ def test_no_clip_warning_for_linear_pure_diffusion():
     m0 /= m0.sum() * (x[1] - x[0])
     U = np.zeros((nt + 1, n))  # no drift -> pure diffusion
 
-    msgs = _run(fp, m0, U)
+    with mfg_caplog.at_level(logging.WARNING, logger=_CLIP_LOGGER):
+        fp.solve_fp_system(m0, potential_field=U)
+    msgs = mfg_caplog.messages
     assert not any("positivity clip injected mass" in m for m in msgs), f"unexpected clip warning: {msgs}"

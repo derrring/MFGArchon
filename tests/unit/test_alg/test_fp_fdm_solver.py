@@ -1379,7 +1379,7 @@ class TestVaryingSigmaExplicitDriftPerPoint:
 class TestFPFDMSolverCFLDiagnostic:
     """Pin the CFL diffusive diagnostic to the D = sigma^2/2 convention."""
 
-    def test_cfl_diffusive_uses_D_equals_half_sigma_squared(self, standard_problem):
+    def test_cfl_diffusive_uses_D_equals_half_sigma_squared(self, standard_problem, mfg_caplog):
         """The logged diffusive CFL must use D = sigma^2/2, not the bare sigma^2.
 
         Regression guard: the diagnostic previously computed sigma^2 * dt / dx^2, a 2x
@@ -1388,8 +1388,6 @@ class TestFPFDMSolverCFLDiagnostic:
         Capture the log record's formatting arg and pin it to the halved value.
         """
         import logging
-
-        from mfgarchon.alg.numerical.fp_solvers import fp_fdm as fp_fdm_module
 
         solver = FPFDMSolver(standard_problem)
 
@@ -1400,24 +1398,10 @@ class TestFPFDMSolverCFLDiagnostic:
         # Sanity: this configuration must exceed the 0.5 threshold so the diagnostic logs.
         assert expected > 0.5
 
-        records: list[logging.LogRecord] = []
-
-        class _Collector(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                records.append(record)
-
-        module_logger = fp_fdm_module.logger
-        handler = _Collector()
-        old_level = module_logger.level
-        module_logger.addHandler(handler)
-        module_logger.setLevel(logging.DEBUG)
-        try:
+        with mfg_caplog.at_level(logging.DEBUG, logger="mfgarchon.alg.numerical.fp_solvers.fp_fdm"):
             solver._log_cfl_diagnostic()
-        finally:
-            module_logger.removeHandler(handler)
-            module_logger.setLevel(old_level)
 
-        cfl_records = [r for r in records if "CFL diagnostic" in r.msg]
+        cfl_records = [r for r in mfg_caplog.records if "CFL diagnostic" in r.msg]
         assert cfl_records, "CFL diagnostic did not log for an above-threshold configuration"
         logged_cfl = cfl_records[0].args[0]
         assert logged_cfl == pytest.approx(expected)

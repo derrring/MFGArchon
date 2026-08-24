@@ -300,15 +300,16 @@ class TestAutoMode:
 
         _assert_is_a_plausible_solution(result, problem)
 
-    def test_auto_mode_verbose_shows_selection(self, caplog):
-        """Test Auto Mode logs scheme selection when verbose."""
+    def test_auto_mode_verbose_shows_selection(self, mfg_caplog):
+        """Auto Mode names the scheme it selected, on the logger, at INFO.
+
+        The assertion used to be `has_auto_mode_log or result is not None`, whose right branch
+        is unconditionally true -- written to be "robust to logger configuration differences"
+        when the real difference was that whether `caplog` sees an mfgarchon record depends on
+        the pytest version and on when the logger was created (#2083). With `mfg_caplog` the log
+        is observable either way, so the assertion can be the log.
+        """
         import logging
-
-        # Configure logger to ensure INFO messages are captured
-        from mfgarchon.utils.mfg_logging import get_logger
-
-        logger = get_logger("mfgarchon.core.mfg_problem")
-        logger.setLevel(logging.INFO)
 
         problem = MFGProblem(
             geometry=TensorProductGrid(
@@ -319,20 +320,18 @@ class TestAutoMode:
             components=_default_components(),
         )
 
-        with caplog.at_level(logging.INFO, logger="mfgarchon.core.mfg_problem"):
+        with mfg_caplog.at_level(logging.INFO, logger="mfgarchon.core.mfg_problem"):
             result = problem.solve(max_iterations=5, verbose=True)
 
-        # Should log which scheme was selected
         _assert_is_a_plausible_solution(result, problem)
 
-        # Check if Auto Mode or scheme name appears in logs
-        # Note: May not log if logger handler isn't configured, so make this optional
-        log_messages = " ".join([record.message for record in caplog.records])
-        has_auto_mode_log = "Auto Mode" in log_messages or "fdm_upwind" in log_messages
-
-        # Test passes if either: (1) log message found, or (2) result is valid
-        # This makes test robust to logger configuration differences
-        assert has_auto_mode_log or result is not None
+        log_messages = " ".join(mfg_caplog.messages)
+        assert "Auto Mode" in log_messages, (
+            f"Auto Mode did not announce the scheme it selected; captured: {mfg_caplog.messages}"
+        )
+        assert "fdm_upwind" in log_messages, (
+            f"the announcement must name the scheme, not only the mode; captured: {mfg_caplog.messages}"
+        )
 
 
 class TestModeMixingErrors:

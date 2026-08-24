@@ -181,6 +181,32 @@ can fail.
 This is the cross-project "non-discriminating test data" rule applied to dimension — the same shape
 as a uniform density that cannot separate a gradient-form bug from a correct scheme.
 
+### Capturing a log record in a test ⚠️
+
+Use the **`mfg_caplog`** fixture (`tests/conftest.py`), never plain `caplog`. `MFGLogger` sets
+`propagate = False`, so whether `caplog` sees an mfgarchon record depends on the pytest version
+**and** on when the logger was created:
+
+| pytest | what its capture handler attaches to | consequence |
+|---|---|---|
+| 8.4.1 (`uv run --extra dev`) | the root logger only | no mfgarchon record is ever seen |
+| 9.1.1 (the gate interpreter) | root, plus every non-propagating logger that **already exists** at phase start | a module-level `get_logger` is visible; one obtained inside a function is not |
+
+34 call sites in the package obtain their logger inside a function, so the second row makes the
+result depend on test order: measured at #2083, the gfdm drift test **fails run alone** under
+9.1.1 and **passes** when a sibling test ran a solve first. Six test modules had each rediscovered
+some part of this and written their own collecting handler.
+
+```python
+def test_the_drift_is_reported(mfg_caplog):
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg....fp_gfdm"):
+        solver.solve_fp_system(m0, drift)
+    assert mfg_caplog.messages  # or .records for the LogRecord itself
+```
+
+`logger=` is required — there is no root to fall back to, and a silent fallback is exactly the
+failure this removes: an absence assertion that passes because nothing was captured at all.
+
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
 "Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
