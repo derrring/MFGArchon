@@ -719,16 +719,27 @@ class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
     Adds:
     - Normal vector computation
 
-    It does NOT declare a Robin entry point. `apply_robin_bc(values, alpha, beta, gamma) ->
-    values` used to sit here and was removed with zero implementations: the signature says "hand
-    me a solution and I will return one satisfying Robin", but a Robin condition constrains the
-    OPERATOR -- the ghost value that closes a stencil, or the boundary terms of a weak form -- and
-    cannot in general be recovered by editing a solution vector.
+    **Nothing implements this protocol.** Its four members (three inherited from
+    `BoundaryHandler`) are not satisfied by any class in the package: `CollocationPointSet`,
+    `MeshfreeApplicator` and `Hyperrectangle` each define a `get_boundary_normals`, but with
+    incompatible signatures and without the other three members, so `issubclass` is False for all
+    of them. Sharing a method name is not implementing a protocol.
 
-    The three owners that actually impose it each need more than `values`:
-    `RobinCalculator.compute` and `ghost_cell_robin` take `(interior_value, dx, side, alpha, beta,
-    rhs)` and return a ghost value; the weak-form path adds boundary terms to the bilinear form.
-    None is expressible as `values -> values`, which is why nothing ever implemented it.
+    It does NOT declare a Robin entry point. `apply_robin_bc(values, alpha: float, beta: float,
+    gamma: float) -> values` sat here and was removed for three reasons, none of which is that a
+    solution-vector signature is impossible -- `applicator_implicit._apply_robin_along_normal` and
+    the `BCType.ROBIN` branch of `applicator_meshfree` both enforce Robin exactly that way:
+
+    1. It was never implemented, anywhere, in the project's history.
+    2. It duplicates `BoundaryHandler.apply_boundary_conditions(values, bc, time)`, which already
+       carries Robin through `BCSegment.alpha` / `.beta`.
+    3. **Scalar coefficients are the shape #1957 rejected.** The Robin coefficient of a reflecting
+       FP wall is `D_pH(x, grad u) . n` -- it varies along the boundary and is recomputed every
+       Picard iterate, so `alpha: float` cannot hold it. `ghost_cell_robin` and the resolver take
+       field coefficients for exactly this reason.
+
+    Reason 3 is why re-adding a scalar-coefficient Robin hook would be a step backwards even
+    though the general shape is implementable.
     """
 
     def get_boundary_normals(self) -> NDArray:
