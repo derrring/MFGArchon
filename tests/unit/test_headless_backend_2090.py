@@ -27,11 +27,20 @@ import os
 
 import pytest
 
+# A small closed set rather than "not in matplotlib's interactive list": that list has moved twice
+# (`rcsetup.interactive_bk` is gone in 3.11, `backends.backend_registry` replaced it), and what
+# matters here is only that the backend cannot open a window and cannot block in `show()`.
+# Written as a set so a deliberate `MPLBACKEND=pdf` for debugging still satisfies the suite, while
+# `MPLBACKEND=TkAgg` correctly does not -- that one would hang, which is the whole subject.
+NON_INTERACTIVE_BACKENDS = frozenset({"agg", "pdf", "svg", "ps", "cairo", "template"})
+
 
 def test_the_configured_backend_is_headless() -> None:
     """`tests/conftest.py` sets `MPLBACKEND` before anything imports pyplot."""
-    assert os.environ.get("MPLBACKEND") == "Agg", (
-        f"MPLBACKEND is {os.environ.get('MPLBACKEND')!r}; tests/conftest.py must set it to 'Agg' "
+    configured = os.environ.get("MPLBACKEND")
+    assert configured is not None, "MPLBACKEND is unset; tests/conftest.py must set it (#2090)"
+    assert configured.lower() in NON_INTERACTIVE_BACKENDS, (
+        f"MPLBACKEND is {configured!r}, which can open a window; conftest must set a "
         f"before pyplot is imported, or a blocking plt.show() hangs the suite (#2090)"
     )
 
@@ -48,10 +57,10 @@ def test_matplotlib_actually_resolves_to_a_non_interactive_backend() -> None:
     # `matplotlib.rcsetup.interactive_bk` no longer exists (removed by 3.11), and
     # `backends.backend_registry` is its second spelling in as many releases. The name we
     # configure is the thing we can check without tracking that churn.
-    assert backend.lower() == "agg", (
-        f"matplotlib resolved to {backend!r}, not Agg. `MPLBACKEND` is only read when matplotlib "
-        f"is FIRST imported, so if something imports it before tests/conftest.py the variable "
-        f"arrives too late -- which is why conftest also calls use(..., force=True) (#2090)"
+    assert backend.lower() in NON_INTERACTIVE_BACKENDS, (
+        f"matplotlib resolved to {backend!r}, which can open a window. `MPLBACKEND` is only read "
+        f"when matplotlib is FIRST imported, so if something imports it before tests/conftest.py "
+        f"the variable arrives too late -- which is why conftest also calls use(force=True) (#2090)"
     )
 
 
@@ -63,12 +72,12 @@ def test_a_show_call_returns_instead_of_blocking() -> None:
     """
     matplotlib = pytest.importorskip("matplotlib")
     backend = matplotlib.get_backend()
-    if backend.lower() != "agg":
+    if backend.lower() not in NON_INTERACTIVE_BACKENDS:
         # Bail out rather than call show(): on an interactive backend this test would HANG, and a
         # hanging test is worse than a failing one -- it is the exact symptom under diagnosis. The
         # two tests above already fail loudly in that case, and under random ordering this one
         # cannot rely on running after them.
-        pytest.fail(f"backend is {backend!r}, not Agg; refusing to call show() (#2090)")
+        pytest.fail(f"backend {backend!r} can open a window; refusing to call show() (#2090)")
 
     plt = pytest.importorskip("matplotlib.pyplot")
     fig = plt.figure()
