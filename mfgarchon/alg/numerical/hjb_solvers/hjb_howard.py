@@ -97,26 +97,53 @@ Pass None when the problem has no running cost beyond `(1/2)|alpha|^2`.
 # ---------------------------------------------------------------------------
 
 
-def _build_dlap_from_socp(socp_data: dict, n_total: int) -> csr_matrix:
-    """Assemble sparse Laplacian operator from SOCP-corrected stencil weights."""
+def _write_closed_row(A: lil_matrix, i: int, nbr_idx: np.ndarray, weights: np.ndarray) -> None:
+    """Write row `i` from a stencil, closing it so the row sums to zero (Issue #2081).
+
+    Two weight conventions reach this function. SOCP stencils satisfy the sum rule by
+    construction -- `build_taylor_matrix_*` sets `A[:, 0] = 1.0` and the consistency constraint
+    is `e_lap == A.T @ L` with `e_lap[0] == 0.0`, so row 0 of that equality IS `sum_j L_j == 0`,
+    and the fast path's weighted-LSQ solve satisfies it exactly too. `TaylorOperator` and
+    `UpwindOperator` weights multiply deviations `u_j - u_i` and do not.
+
+    The closure is **mandatory** for the second and **idempotent** for the first: subtracting a
+    row sum that is already zero changes nothing. So it is applied unconditionally and there is
+    no branch on where the weights came from. Assembled without it, `TaylorOperator` gives a
+    Laplacian wrong by O(1e+2) rather than by a rounding error.
+
+    Accumulates rather than assigns: `neighbor_indices` is not guaranteed unique -- a periodic
+    geometry maps ghost images back to their originals, so one global index can appear twice in
+    a stencil with different displacements and different weights.
+    """
+    total = 0.0
+    for j_local, j_global in enumerate(nbr_idx):
+        j = int(j_global)
+        if j < 0:  # ghost particle: no column to write
+            continue
+        w = float(weights[j_local])
+        A[i, j] += w
+        total += w
+    # Folds in the centre's own weight when it is in the stencil: it received `w_c` above, so the
+    # diagonal ends at `w_c - sum(all) = -sum(j != c)`, which is the same value the branch for a
+    # centre-free stencil produces.
+    A[i, i] += -total
+
+
+def _build_dlap_from_weights(stencils: dict, n_total: int) -> csr_matrix:
+    """Assemble the sparse Laplacian from per-point stencil weights, row-closed."""
     A = lil_matrix((n_total, n_total))
-    for i, w_dict in socp_data.items():
-        nbr_idx = np.asarray(w_dict["neighbor_indices"])
-        lap_w = w_dict["lap_weights"]
-        for j_local, j_global in enumerate(nbr_idx):
-            A[i, int(j_global)] = float(lap_w[j_local])
+    for i, w_dict in stencils.items():
+        _write_closed_row(A, i, np.asarray(w_dict["neighbor_indices"]), w_dict["lap_weights"])
     return A.tocsr()
 
 
-def _build_dgrad_central(socp_data: dict, n_total: int, axis: int) -> csr_matrix:
-    """Assemble central gradient operator (single axis) from SOCP weights."""
+def _build_dgrad_central_from_weights(stencils: dict, n_total: int, axis: int) -> csr_matrix:
+    """Assemble the central gradient along `axis` from per-point stencil weights, row-closed."""
     A = lil_matrix((n_total, n_total))
-    for i, w_dict in socp_data.items():
-        nbr_idx = np.asarray(w_dict["neighbor_indices"])
+    for i, w_dict in stencils.items():
         grad_w = w_dict["grad_weights"]
         grad_axis = grad_w[axis] if grad_w.ndim == 2 else grad_w
-        for j_local, j_global in enumerate(nbr_idx):
-            A[i, int(j_global)] = float(grad_axis[j_local])
+        _write_closed_row(A, i, np.asarray(w_dict["neighbor_indices"]), grad_axis)
     return A.tocsr()
 
 
@@ -303,7 +330,7 @@ class HJBHowardSolver:
         # elsewhere. Howard needs D_lap, D_grad and an interior/boundary split; none of those is
         # SOCP-specific, and `get_derivative_weights` on the live TaylorOperator/LocalRBFOperator
         # returns the SAME dict keys the SOCP object does -- neighbor_indices, grad_weights,
-        # lap_weights, center_idx_in_neighbors -- which is what `_build_dlap_from_socp` consumes.
+        # lap_weights, center_idx_in_neighbors -- which is what `_build_dlap_from_weights` consumes.
         #
         # Monotonicity is a real hypothesis (Bokanowski-Maroso-Zidani 2009, see the module
         # docstring) but it is a hypothesis about CONVERGENCE, not about whether the solve can run,
@@ -367,7 +394,7 @@ class HJBHowardSolver:
 
         # #2066: SOCP when it is there, the provider's own operator when it is not. Both return
         # the same dict -- neighbor_indices, grad_weights, lap_weights, center_idx_in_neighbors --
-        # which is the entire contract `_build_dlap_from_socp` and `_build_dgrad_central` need. The
+        # which is the entire contract `_build_dlap_from_weights` and `_build_dgrad_central_from_weights` need. The
         # SOCP path is byte-identical to before; nothing about an existing run changes.
         socp_obj = getattr(s, "_joint_socp_stencils", None)
         if socp_obj is not None:
@@ -380,8 +407,8 @@ class HJBHowardSolver:
                 if w is not None:
                     socp_data[i] = w
 
-        D_lap = _build_dlap_from_socp(socp_data, n)
-        D_grad_central = [_build_dgrad_central(socp_data, n, d) for d in range(dimension)]
+        D_lap = _build_dlap_from_weights(socp_data, n)
+        D_grad_central = [_build_dgrad_central_from_weights(socp_data, n, d) for d in range(dimension)]
 
         per_axis_upwind: list[tuple[csr_matrix, csr_matrix]] | None = None
         if self.discretisation == "upwind_per_axis":
