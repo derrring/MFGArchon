@@ -120,8 +120,11 @@ class DifferentialOperator(ABC):
 
     NOT for weak-form methods (FEM, FVM) which require element stiffness matrices.
 
-    The key property is that derivatives are computed as weighted sums:
-        Lu(x_i) = sum_j w_ij u(x_j)
+    The key property is that derivatives are computed as weighted sums over a local
+    stencil. Implementations differ in what the weights multiply -- raw values
+    `u(x_j)`, or deviations `u(x_j) - u(x_i)` -- so the form is not shared and the
+    caller owes a row closure. See `get_derivative_weights` for the contract; writing
+    one of the two forms here as if it were universal is what Issue #2081 was about.
 
     Subclasses must implement:
     - gradient(u): Compute gradient at all points
@@ -178,10 +181,41 @@ class DifferentialOperator(ABC):
         """
         Get derivative sensitivity weights for matrix assembly.
 
-        Returns the weights that map perturbations in neighbor u values to
-        perturbations in derivatives at point i:
-            d(du/dx_d)|_i = sum_j w^grad_{d,j} du_j
-            d(Delta u)|_i = sum_j w^lap_j du_j
+        The caller owes the row closure. Implementations differ in whether
+        their weights multiply raw values or deviations from the center:
+
+            raw value:  d|_i = sum_j w_j u_j          (row already sums to 0)
+            deviation:  d|_i = sum_j w_j (u_j - u_i)  (row sums to something else)
+
+        Both are returned under the same keys, so the key set does not tell
+        them apart -- the contract is the **sum rule**, not the keys.
+        ``TaylorOperator`` and ``UpwindOperator`` return deviation weights at their
+        default ``taylor_order=2``; ``LocalRBFOperator`` returns raw-value weights.
+        At ``taylor_order=1`` the basis carries no second-order term, so
+        ``lap_weights`` is identically zero and its sum is 0.0 -- an absent Laplacian,
+        not the raw-value convention, and the gradient still needs the closure.
+
+        Assemble a row by writing the weights at their neighbor columns and
+        setting the center to ``-sum(weights)``, folding in the center's own
+        weight when it appears in ``neighbor_indices``::
+
+            diag = -sum(w)
+            A[i, j] += w[k] + diag if j == i else w[k]
+            A[i, i] += diag                    # if i not in neighbor_indices
+
+        **Accumulate, do not assign.** ``neighbor_indices`` is not guaranteed unique:
+        a periodic geometry maps ghost images back to their originals, so one global
+        index can appear twice in a stencil with different displacements and different
+        weights. Assignment keeps the last and silently drops the rest.
+
+        That closure is **mandatory** for deviation weights and **idempotent**
+        for raw-value ones -- closing a row that already sums to zero returns
+        it unchanged -- so applying it unconditionally is correct for every
+        operator here, and for any future one under either convention. A
+        consumer that skips it is correct only for raw-value weights, and
+        nothing in the returned dict will tell it which it was handed
+        (Issue #2081; pinned by
+        ``tests/unit/test_alg/test_gfdm_operator_weight_contract_2081.py``).
 
         Args:
             point_idx: Index of the center point
@@ -1077,7 +1111,16 @@ class TaylorOperator(DifferentialOperator):
         return hess
 
     def get_derivative_weights(self, point_idx: int) -> dict | None:
-        """Get derivative sensitivity weights for matrix assembly."""
+        """Get derivative sensitivity weights for matrix assembly.
+
+        **Deviation convention**: these weights multiply ``u_j - u_center``, so
+        a row does not sum to zero and the caller must close it (see the base
+        class). Assembled without the closure the Laplacian is wrong by O(1), not by
+        a small amount that might pass for discretisation error: on a uniform 41-point
+        1D cloud with ``delta=0.1`` and ``q = x^2/2``, whose exact Laplacian is 1, the
+        unclosed operator errs by up to 8.6e+02 over all rows and 5.3e+02 over the
+        interior rows 4..36.
+        """
         taylor_data = self.taylor_matrices[point_idx]
         if taylor_data is None:
             return None
@@ -1901,7 +1944,13 @@ class LocalRBFOperator(DifferentialOperator):
         return lap
 
     def get_derivative_weights(self, point_idx: int) -> dict | None:
-        """Get derivative weights for matrix assembly."""
+        """Get derivative weights for matrix assembly.
+
+        **Raw-value convention**: these weights multiply ``u_j`` directly and
+        the row already sums to zero, unlike ``TaylorOperator``'s. The base
+        class's closure is a no-op here, not an error -- consumers may apply it
+        unconditionally.
+        """
         return self.rbf_weights[point_idx]
 
     def get_neighborhood(self, point_idx: int) -> dict:

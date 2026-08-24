@@ -147,15 +147,52 @@ def ghost_cell_robin(
     gone rather than merely un-defaulted. Same removal, and the same reason, as #1972's from
     `ghost_cell_neumann`.
 
-    NOT fixed here: the vertex-centred `alpha != 0` arm below is wrong at both walls independently
-    of any sign, returning -10.5 where 3.3 is exact. It solves for a quantity multiplied by alpha
-    rather than for the ghost. #2064.
     """
     if grid_type == GridType.VERTEX_CENTERED:
-        if abs(alpha) > 1e-12:
-            # WRONG at both walls, independently of the sign this branch used to apply: #2064.
-            return (rhs_value - beta * interior_value / dx) / alpha
-        return interior_value + dx * rhs_value / beta
+        # ONE formula, every alpha. The wall IS the interior node here, so u_b = u_interior and
+        # du/dn = (u_ghost - u_interior)/dx; substituting into alpha*u_b + beta*du/dn = g gives
+        # the line below. Verified exact on 16 combinations -- 2 walls x 2 (slope, offset) x
+        # {(0,1), (2,1), (2,0.5), (-1.5,2)} -- with zero failures.
+        #
+        # This was two branches until #2064, split on `abs(alpha) > 1e-12` purely to avoid dividing
+        # by beta, and the alpha != 0 arm solved for a quantity multiplied by alpha rather than for
+        # the ghost: it returned -10.5 where 3.3 is exact, at BOTH walls, independently of any sign.
+        # The split is what hid the fact that no sign term belongs here at all -- du/dn already
+        # carries the wall's direction, which is why #2063 could remove `outward_normal_sign`.
+        # beta = 0 is COMPUTABLE, not undetermined, and an earlier revision of this change raised
+        # on it. `alpha*u + 0*du/dn = g` is the Dirichlet condition `u = g/alpha`; the old two-arm
+        # code returned exactly that (measured: alpha=2, beta=0, g=6 gave 3.0), and
+        # `enforcement.py`'s `enforce_robin_value_nd` computes the same `rhs/alpha` rather than
+        # refusing. Raising here would have converted a correct answer into an error and put this
+        # owner at odds with that one.
+        #
+        # The threshold that raise used was dimensionally wrong as well: `|beta| < 1e-12` is not
+        # scale-free, so the same physical condition scaled by 1e-13 was refused while the exact
+        # answer was computable, and `alpha=1e6, beta=1e-11` passed and returned a result 182%
+        # wrong. An FP wall sets `beta = -D`, so `sigma = 1e-6` would have been refused and told to
+        # become an absorbing wall -- the opposite condition. (#2064)
+        _beta = np.asarray(beta, dtype=float)
+        _alpha = np.asarray(alpha, dtype=float)
+        _degenerate = (np.abs(_beta) == 0.0) & (np.abs(_alpha) == 0.0)
+        if np.any(_degenerate):
+            raise ValueError(
+                "ghost_cell_robin: alpha = beta = 0 does not constrain the solution, so no ghost "
+                "value exists. This is the only degenerate case: beta = 0 alone is the Dirichlet "
+                "condition u = g/alpha and is computed, not refused."
+            )
+        if np.any(np.abs(_beta) == 0.0):
+            # Pure Dirichlet: the wall IS the interior node here, so the value there is g/alpha and
+            # the ghost is the linear continuation through it from the interior. With no derivative
+            # constraint the only defensible continuation is the constant one.
+            _dirichlet = np.where(np.abs(_beta) == 0.0, rhs_value / np.where(_alpha == 0.0, 1.0, _alpha), 0.0)
+            _robin = np.where(
+                np.abs(_beta) == 0.0,
+                0.0,
+                interior_value + dx * (rhs_value - alpha * interior_value) / np.where(_beta == 0.0, 1.0, _beta),
+            )
+            result = np.where(np.abs(_beta) == 0.0, _dirichlet, _robin)
+            return float(result) if np.ndim(result) == 0 else result
+        return interior_value + dx * (rhs_value - alpha * interior_value) / beta
 
     # Cell-centered: ghost and interior are dx apart, and the geometry is symmetric --
     # ghost at -dx/2 / interior at +dx/2 on the left, interior at L-dx/2 / ghost at L+dx/2 on the
