@@ -714,12 +714,32 @@ class BoundaryHandler(Protocol):
 @runtime_checkable
 class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
     """
-    Extended protocol for solvers with advanced BC features.
+    Extended protocol for solvers that can report boundary geometry.
 
-    Adds optional methods for:
+    Adds:
     - Normal vector computation
-    - Mixed/Robin BC support
-    - Time-dependent BC caching
+
+    **Nothing implements this protocol.** Its four members (three inherited from
+    `BoundaryHandler`) are not satisfied by any class in the package: `CollocationPointSet`,
+    `MeshfreeApplicator` and `Hyperrectangle` each define a `get_boundary_normals`, but with
+    incompatible signatures and without the other three members, so `issubclass` is False for all
+    of them. Sharing a method name is not implementing a protocol.
+
+    It does NOT declare a Robin entry point. `apply_robin_bc(values, alpha: float, beta: float,
+    gamma: float) -> values` sat here and was removed for three reasons, none of which is that a
+    solution-vector signature is impossible -- `applicator_implicit._apply_robin_along_normal` and
+    the `BCType.ROBIN` branch of `applicator_meshfree` both enforce Robin exactly that way:
+
+    1. It was never implemented, anywhere, in the project's history.
+    2. It duplicates `BoundaryHandler.apply_boundary_conditions(values, bc, time)`, which already
+       carries Robin through `BCSegment.alpha` / `.beta`.
+    3. **Scalar coefficients are the shape #1957 rejected.** The Robin coefficient of a reflecting
+       FP wall is `D_pH(x, grad u) . n` -- it varies along the boundary and is recomputed every
+       Picard iterate, so `alpha: float` cannot hold it. `ghost_cell_robin` and the resolver take
+       field coefficients for exactly this reason.
+
+    Reason 3 is why re-adding a scalar-coefficient Robin hook would be a step backwards even
+    though the general shape is implementable.
     """
 
     def get_boundary_normals(self) -> NDArray:
@@ -739,34 +759,6 @@ class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
             normals = solver.get_boundary_normals()
             # array([[-1, 0], [-1, 0], ..., [1, 0], [1, 0]])  # 2D box
             ```
-        """
-        ...
-
-    def apply_robin_bc(
-        self,
-        values: NDArray,
-        alpha: float,
-        beta: float,
-        gamma: float,
-        time: float = 0.0,
-    ) -> NDArray:
-        """
-        Apply Robin boundary conditions: alpha u + beta du/dn = gamma.
-
-        Args:
-            values: Solution values (N,)
-            alpha: Coefficient for u term
-            beta: Coefficient for du/dn term
-            gamma: Right-hand side value
-            time: Current time
-
-        Returns:
-            Modified solution values with Robin BC enforced (N,)
-
-        Notes:
-            - Generalization of Dirichlet (beta=0) and Neumann (alpha=0)
-            - Requires both value and gradient enforcement
-            - Not all solvers support Robin BCs efficiently
         """
         ...
 
