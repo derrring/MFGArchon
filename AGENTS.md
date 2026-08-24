@@ -184,18 +184,25 @@ as a uniform density that cannot separate a gradient-form bug from a correct sch
 ### Capturing a log record in a test ⚠️
 
 Use the **`mfg_caplog`** fixture (`tests/conftest.py`), never plain `caplog`. `MFGLogger` sets
-`propagate = False`, so whether `caplog` sees an mfgarchon record depends on the pytest version
-**and** on when the logger was created:
+`propagate = False` (`logger.py:211`), so whether `caplog` sees an mfgarchon record differs by
+pytest version, and the two versions in use here disagree:
 
 | pytest | what its capture handler attaches to | consequence |
 |---|---|---|
-| 8.4.1 (`uv run --extra dev`) | the root logger only | no mfgarchon record is ever seen |
-| 9.1.1 (the gate interpreter) | root, plus every non-propagating logger that **already exists** at phase start | a module-level `get_logger` is visible; one obtained inside a function is not |
+| 8.4.1 (`uv run --extra dev`) | the root logger only | **no mfgarchon record is ever seen**, whatever the logger's creation site. Here `propagate = False` is the whole story |
+| 9.1.1 (the gate interpreter) | root, plus every non-propagating logger that **already exists** when `catching_logs.__enter__` runs | a logger that existed before this phase's sweep is visible; one born after it is not |
 
-34 call sites in the package obtain their logger inside a function, so the second row makes the
-result depend on test order: measured at #2083, the gfdm drift test **fails run alone** under
-9.1.1 and **passes** when a sibling test ran a solve first. Six test modules had each rediscovered
-some part of this and written their own collecting handler.
+That sweep runs **once per test phase** (setup / call / teardown), so the discriminator is not
+"module level vs inside a function": a logger created in a *fixture* is visible in the test body.
+It is whether the logger existed before this phase's sweep — and a logger born mid-solve did not.
+pytest's own comment names the gap: the sweep "will miss loggers that *become* non-propagating
+after the `__enter__`", which is exactly when `MFGLogger` sets it.
+
+34 of the package's 104 `get_logger` calls are inside a function (15 consumer-side, 12 with
+`fp_gfdm`'s shape; the rest are `mfg_logging`'s own plumbing), so on 9.1.1 the result depends on
+test order: measured at #2083, the gfdm drift test **fails run alone** and **passes** when a
+sibling test ran a solve first. Six test modules had each rediscovered some part of this and
+written their own collecting handler.
 
 ```python
 def test_the_drift_is_reported(mfg_caplog):
@@ -204,8 +211,11 @@ def test_the_drift_is_reported(mfg_caplog):
     assert mfg_caplog.messages  # or .records for the LogRecord itself
 ```
 
-`logger=` is required — there is no root to fall back to, and a silent fallback is exactly the
-failure this removes: an absence assertion that passes because nothing was captured at all.
+`logger=` is required — there is no root to fall back to, and the no-argument form would capture
+nothing silently. A *wrong* name is the same failure wearing a different face, so `at_level` also
+**refuses a name no mfgarchon code has ever asked for** when the block captured nothing: an
+`assert not mfg_caplog.records` is otherwise satisfied by a typo exactly as it is by a solve that
+did not warn. The check runs on exit, because a logger may legitimately be born inside the block.
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 

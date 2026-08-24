@@ -6,12 +6,14 @@ is why six test modules each grew their own record-collecting handler and why fo
 with plain `caplog` were red:
 
 - pytest 8.4.1 (`uv run --extra dev`): `catching_logs.__enter__` attaches its handler to the root
-  logger only, so `caplog` sees no mfgarchon record at all.
+  logger only, so `caplog` sees no mfgarchon record at all, whatever the creation site. On this
+  version `propagate = False` is the whole cause.
 - pytest 9.1.1 (the gate interpreter): `__enter__` also attaches to every non-propagating logger
-  **that already exists** when the phase starts. A logger obtained at module import is therefore
-  visible; one obtained inside a function -- 34 call sites in the package, `fp_gfdm.py:575` among
-  them -- is born after that sweep and stays invisible, so whether a test passes depends on
-  whether an earlier test in the same worker happened to create the logger first.
+  **that already exists** when it runs. That sweep runs once per test PHASE, so the discriminator
+  is not module-import vs function-local -- a logger created in a fixture is visible in the test
+  body -- it is whether the logger existed before this phase's sweep. One born mid-solve did not,
+  which is the `fp_gfdm.py:575` case, so whether a test passes depends on whether an earlier test
+  in the same worker happened to create the logger first.
 
 `mfg_caplog` attaches to the emitting logger itself, so it depends on neither the pytest version
 nor the order tests run in. These tests pin that, and the `assert logger.propagate is False`
@@ -25,10 +27,29 @@ import logging
 import pytest
 
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.mfg_logging.logger import MFGLogger
 
 # A logger of our own, obtained the way production obtains one: MFGLogger configures it, so the
 # propagate=False under test is set by the code under test and not by this file.
 PROBE = "mfgarchon.tests.mfg_caplog_probe"
+PROBE_PREFIX = "mfgarchon.tests."
+
+
+@pytest.fixture(autouse=True)
+def _forget_the_probe_loggers():
+    """Leave no probe logger behind.
+
+    `MFGLogger.get_logger` caches for the life of the process and `logging` never forgets a
+    name, so without this the file is not re-runnable in one interpreter: the born-late test
+    below asserts its logger does NOT exist yet, and on a second run it would find its own
+    leftover. It also keeps pytest 9's per-phase sweep over `loggerDict` from paying for two
+    phantom loggers in every later test of the worker.
+    """
+    yield
+    for name in [n for n in list(MFGLogger._loggers) if n.startswith(PROBE_PREFIX)]:
+        MFGLogger._loggers.pop(name, None)
+    for name in [n for n in list(logging.Logger.manager.loggerDict) if n.startswith(PROBE_PREFIX)]:
+        logging.Logger.manager.loggerDict.pop(name, None)
 
 
 def test_it_captures_a_record_from_a_non_propagating_logger(mfg_caplog):
@@ -68,13 +89,38 @@ def test_it_sees_a_logger_born_after_pytest_swept_for_them(mfg_caplog, caplog):
 
 def test_the_capture_does_not_depend_on_the_logger_already_existing(mfg_caplog):
     """The other half: a logger that DOES exist beforehand is captured the same way, so the
-    fixture's behaviour does not turn on creation order the way plain `caplog` does."""
-    logger = get_logger(PROBE)  # PROBE already exists: the test above this one created it
+    fixture's behaviour does not turn on creation order the way plain `caplog` does.
+
+    The precondition is asserted rather than assumed. Stated as "the test above created it",
+    it was satisfied by `get_logger` creating it here instead, which made this a duplicate of
+    the first test whenever it ran alone.
+    """
+    logger = get_logger(PROBE)
+    assert PROBE in MFGLogger._loggers, "precondition: the logger must exist before at_level"
 
     with mfg_caplog.at_level(logging.WARNING, logger=PROBE):
         logger.warning("same capture, pre-existing logger")
 
     assert mfg_caplog.messages == ["same capture, pre-existing logger"]
+
+
+def test_the_logger_is_the_one_the_package_hands_out(mfg_caplog):
+    """`at_level` must resolve the name through mfgarchon's `get_logger`, not `logging`'s.
+
+    Swapping it for `logging.getLogger` leaves every other test in this file green -- the
+    records still arrive, because by then something else has usually configured the logger.
+    What breaks is the guarantee in the docstring: that the captured object carries the
+    configuration production gives it. This is the test that fails on that swap.
+    """
+    fresh = "mfgarchon.tests.mfg_caplog_configuration"
+    assert fresh not in MFGLogger._loggers
+
+    with mfg_caplog.at_level(logging.WARNING, logger=fresh):
+        logging.getLogger(fresh).warning("configured by the package, not by logging")
+
+    assert mfg_caplog.messages == ["configured by the package, not by logging"]
+    assert fresh in MFGLogger._loggers, "at_level did not go through mfgarchon's get_logger"
+    assert logging.getLogger(fresh).propagate is False, "the logger did not get package configuration"
 
 
 def test_it_captures_at_and_above_the_level_it_was_given(mfg_caplog):
@@ -148,6 +194,68 @@ def test_it_restores_even_when_the_body_raises(mfg_caplog):
 
     assert logger.level == level_before
     assert logger.handlers == handlers_before
+
+
+def test_it_refuses_a_name_the_package_has_never_used(mfg_caplog):
+    """The failure a required `logger=` does NOT prevent: a name that is merely wrong.
+
+    `assert not mfg_caplog.records` is satisfied by a misspelt logger exactly as it is by a
+    solve that did not warn, and nothing in the test distinguishes them. Six absence
+    assertions in this repository rest on a hand-typed string, so the fixture refuses a name
+    no mfgarchon code has ever asked for when the block also captured nothing.
+    """
+    typo = "mfgarchon.tests.mfg_caplog_probe_typo"
+
+    with (
+        pytest.raises(LookupError, match="has ever obtained a logger named"),
+        mfg_caplog.at_level(logging.WARNING, logger=typo),
+    ):
+        get_logger(PROBE).warning("emitted on the RIGHT logger, captured on the wrong one")
+
+    assert mfg_caplog.records == []
+    assert typo not in MFGLogger._loggers, "the refused name must not be left registered"
+    assert typo not in logging.Logger.manager.loggerDict
+
+
+def test_a_name_the_package_does_use_is_accepted_even_when_it_stays_silent(mfg_caplog):
+    """The control for the refusal above, and the reason it is safe for the six absence
+    assertions: a real mfgarchon logger that emits nothing must NOT raise. Without this, the
+    check above would be indistinguishable from one that forbids absence assertions entirely."""
+    import mfgarchon.core.measure  # noqa: F401  -- its module-level get_logger registers the name
+
+    real_and_silent = "mfgarchon.core.measure"
+    assert real_and_silent in MFGLogger._loggers
+
+    with mfg_caplog.at_level(logging.WARNING, logger=real_and_silent):
+        pass
+
+    assert mfg_caplog.records == []
+
+
+def test_a_body_that_raises_is_not_masked_by_the_name_check(mfg_caplog):
+    """The name check runs after the block, so it must not replace a real exception with its
+    own. An unknown name plus zero records is exactly the state a failed body leaves behind."""
+    unknown = "mfgarchon.tests.mfg_caplog_never_used"
+
+    with (
+        pytest.raises(RuntimeError, match="the body's own failure"),
+        mfg_caplog.at_level(logging.WARNING, logger=unknown),
+    ):
+        raise RuntimeError("the body's own failure")
+
+
+def test_it_refuses_a_nested_capture_of_the_same_logger(mfg_caplog):
+    """Two collectors on one logger append the same record twice, which silently doubles a
+    count assertion -- and two converted tests assert exact counts."""
+    with mfg_caplog.at_level(logging.WARNING, logger=PROBE):
+        with (
+            pytest.raises(RuntimeError, match="already capturing"),
+            mfg_caplog.at_level(logging.WARNING, logger=PROBE),
+        ):
+            pass
+        get_logger(PROBE).warning("counted once")
+
+    assert mfg_caplog.messages == ["counted once"]
 
 
 @pytest.mark.parametrize("missing", ["", None])

@@ -510,10 +510,15 @@ def performance_baselines():
 
 
 class _RecordCollector(logging.Handler):
-    """Appends every record it is handed to a list owned by the capture object."""
+    """Appends every record it is handed to a list owned by the capture object.
 
-    def __init__(self, records: list[logging.LogRecord], level: int):
-        super().__init__(level=level)
+    It carries no level of its own. ``at_level`` sets the level on the logger, and
+    ``Logger.callHandlers`` filters there, so a second threshold here could never decide
+    anything -- measured: mutating it to 0 killed no test. One owner for the level (#2083).
+    """
+
+    def __init__(self, records: list[logging.LogRecord]):
+        super().__init__()
         self._records = records
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -524,23 +529,35 @@ class MFGLogCapture:
     """Capture records from an mfgarchon logger, where plain ``caplog`` is unreliable (#2083).
 
     ``MFGLogger._setup_logger`` sets ``propagate = False`` on every logger it configures
-    (``mfgarchon/utils/mfg_logging/logger.py``), so no mfgarchon record reaches the root
-    logger. What ``caplog`` does about that depends on the pytest version **and** on when the
-    logger was created, which is why six test modules each grew their own collector:
+    (``mfgarchon/utils/mfg_logging/logger.py:211``), so no mfgarchon record reaches the root
+    logger. What ``caplog`` does about that differs by pytest version, and the two versions in
+    use here disagree -- which is why six test modules each grew their own collector:
 
     - pytest 8.4.1 (``uv run --extra dev``): ``catching_logs.__enter__`` attaches the capture
-      handler to the root logger only, so ``caplog`` sees nothing from mfgarchon.
+      handler to the root logger only. **No mfgarchon record is visible, ever**, whatever the
+      logger's creation site. On this version ``propagate = False`` is the whole story.
     - pytest 9.1.1 (the gate interpreter): it also attaches to every non-propagating logger
-      **that already exists** when the test phase starts. A module-level ``get_logger`` is
-      therefore visible, and one obtained inside a function -- 34 call sites in the package,
-      ``fp_gfdm.py:575`` among them -- is born after that sweep and is not. So the same test
-      passes or fails on whether an earlier test in the same worker created the logger first.
+      **that already exists** when ``catching_logs.__enter__`` runs. That sweep runs once per
+      test PHASE (setup / call / teardown), so the discriminator is not "module level vs
+      inside a function" -- a logger created in a *fixture* is visible in the test body,
+      measured -- it is whether the logger existed before this phase's sweep. A logger born
+      mid-solve is not, which is the ``fp_gfdm.py:575`` case. pytest's own comment names this
+      gap: the sweep "will miss loggers that *become* non-propagating after the ``__enter__``",
+      and ``MFGLogger`` sets ``propagate`` at creation.
 
-    This attaches to the emitting logger on demand, so it depends on neither.
+    So on 9.1.1 the same test passes or fails on whether an earlier test in the same worker
+    created the logger first. 34 of the package's 104 ``get_logger`` calls are inside a
+    function; 15 of those are consumer-side and 12 have ``fp_gfdm``'s shape, the rest being
+    ``mfg_logging``'s own plumbing.
+
+    This attaches to the emitting logger on demand, so it depends on neither the version nor
+    the order.
 
     The API mirrors ``caplog`` so uses read the same, with one difference: ``logger=`` is
-    required, because there is no root to fall back to and a silent fallback is the failure
-    this replaces.
+    required. There is no root to fall back to, and the no-argument form would capture nothing
+    silently. Note what that does **not** cover on its own: a name that is merely *wrong*
+    captures nothing just as silently, which is why ``at_level`` also refuses a name the
+    package has never used -- see its docstring.
 
     ```python
     def test_the_drift_is_reported(mfg_caplog):
@@ -555,6 +572,7 @@ class MFGLogCapture:
 
     def __init__(self) -> None:
         self.records: list[logging.LogRecord] = []
+        self._active: set[str] = set()
 
     @property
     def messages(self) -> list[str]:
@@ -570,6 +588,14 @@ class MFGLogCapture:
 
         The logger is obtained through the package's own ``get_logger``, so it is the object
         production code emits on and carries the configuration production gives it.
+
+        A name that no mfgarchon code has ever asked for, and that captured nothing, raises on
+        exit. That is the shape a typo takes: `assert not mfg_caplog.records` is satisfied by a
+        misspelt logger exactly as it is by a solve that did not warn, and nothing else in the
+        test can tell them apart. The check is on EXIT, not entry, because a logger may be born
+        during the block -- `fp_gfdm` obtains its own inside the solve, so at entry the name is
+        legitimately absent (measured: absent from `MFGLogger._loggers` and from `loggerDict`
+        when `at_level` is entered, present after the solve).
         """
         if not isinstance(logger, str) or not logger:
             raise ValueError(
@@ -577,19 +603,48 @@ class MFGLogCapture:
                 "at_level(logging.WARNING, logger='mfgarchon.alg.numerical....'). "
                 "There is no root fallback -- mfgarchon loggers do not propagate (#2083)."
             )
+        if logger in self._active:
+            raise RuntimeError(
+                f"mfg_caplog is already capturing {logger!r} in an enclosing block. Two "
+                f"collectors on one logger append the same record twice, which silently "
+                f"doubles any count assertion. Use one block, or capture a different logger."
+            )
 
         from mfgarchon.utils.mfg_logging import get_logger
+        from mfgarchon.utils.mfg_logging.logger import MFGLogger
+
+        # Before `get_logger`, which would itself register the name and make the check below
+        # vacuous. `MFGLogger._loggers` rather than `loggerDict`: the question is whether
+        # mfgarchon ever handed this logger out, not whether anything anywhere created it.
+        known_to_the_package = logger in MFGLogger._loggers
 
         target = get_logger(logger)
-        handler = _RecordCollector(self.records, level=level)
+        handler = _RecordCollector(self.records)
         previous_level = target.level
-        target.addHandler(handler)
+        collected_before = len(self.records)
+        # Level first: an unusable level must raise before anything has been mutated.
         target.setLevel(level)
+        target.addHandler(handler)
+        self._active.add(logger)
         try:
             yield self
         finally:
+            self._active.discard(logger)
             target.removeHandler(handler)
             target.setLevel(previous_level)
+
+        # Reached only when the body did not raise -- a real exception must not be masked by
+        # this one.
+        if not known_to_the_package and len(self.records) == collected_before:
+            MFGLogger._loggers.pop(logger, None)
+            logging.Logger.manager.loggerDict.pop(logger, None)
+            raise LookupError(
+                f"nothing in mfgarchon has ever obtained a logger named {logger!r}, and this "
+                f"block captured nothing through it. An absence assertion here would pass for "
+                f"the wrong reason. Check the name against the emitting module's "
+                f"`get_logger(__name__)`; a parent name does not work either, because these "
+                f"loggers do not propagate (#2083)."
+            )
 
 
 @pytest.fixture
