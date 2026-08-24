@@ -64,10 +64,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Value-preserving (still 0.1, no result change) — only the silence is fixed. Sourcing the diffusion from
   the problem is the #1470 Strand C follow-up.
 - **The Fokker–Planck advective drift now has a single owner (`H.optimal_control`) in the FVM, FEM, meshless-Galerkin, and particle solvers (#1528, phase 1).** Those solvers previously each hand-wrote the drift as `-fp_drift_coefficient(problem)·∇U` — a per-solver re-derivation of `∂_pH` (the axiom's "Hamiltonian as single source of truth" anti-pattern, the FP-side sibling of the HJB `#1411`). They now feed the same locally-computed gradient into `H.optimal_control`, which is the sense/regularization-aware control law. **Byte-identical on the quadratic-MINIMIZE path** (the owner divides by `λ` where the old form multiplied by `fl(1/λ)`, so it is bit-identical for dyadic `1/λ` — including every `control_cost=1.0` paper config — and ≤2 ULP, ~12 orders below discretization, for non-dyadic `λ`). Validated in `mfg-research/experiments/fp_drift_hamiltonian_routing/` (regression byte-identity + correctness for MAXIMIZE and Moreau–Yosida where `-c∇U` is wrong). This phase is behaviour-neutral: the `#1542` fail-loud on a non-quadratic-MINIMIZE `SeparableHamiltonian` is preserved uniformly across all four families via a new single-sourced guard `assert_quadratic_minimize_drift` (extracted from `fp_drift_coefficient`); lifting the guard to make those regimes run through `H.optimal_control`, plus the SL/FDM families and the router, is the deliberate follow-up phase.
-- **Pin mypy `<2.2` in the dev extras.** mypy 2.2.0 false-positives on valid `list[str]` slices
+- ~~**Pin mypy `<2.2` in the dev extras.** mypy 2.2.0 false-positives on valid `list[str]` slices
   (e.g. `config/omegaconf_manager.py` `keys[:i+1]`) via a typeshed `slice`-overload regression that
   2.1.0 does not have, reddening the blocking config type-gate on every PR. Narrow upper bound until
-  mypy 2.2.1 fixes it (then lift to `<2.3`).
+  mypy 2.2.1 fixes it (then lift to `<2.3`).~~ [SUPERSEDED 2026-08-25]
+  SUPERSEDED-BY: `changelog.d/2082-mypy-ceiling-removed.changed.md`. The ceiling never shipped —
+  both entries would otherwise land in this same section at the 0.22.0 bump and contradict each
+  other. Its release condition was also false: the regression is still present at mypy 2.3.1, so
+  "lift once 2.2.1 fixes it" had no expiry and nothing checking it. The three call sites now spell
+  the slice step, which passes on 2.1 and 2.3 alike.
 - **Fail-fast ratchet baseline tightened.** `scripts/fail_fast_baseline.json` re-baselined to current
   counts (hasattr 172->164, silent_pass 70->60) so the monotone CI ratchet bites again; it had gone
   stale after the v0.21.0 fail-loud fixes reduced live counts below the recorded ceiling.
