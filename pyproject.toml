@@ -132,10 +132,14 @@ dev = [
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.1",
     "ruff>=0.6.0",
-    # Upper bound: mypy 2.2.0 false-positives on valid `list[str]` slices (e.g.
-    # config/omegaconf_manager.py `keys[:i+1]`), a typeshed `slice` overload regression that
-    # 2.1.0 does not have. Lift to `<2.3` once mypy 2.2.1 fixes it. See RFC-adjacent CI note.
-    "mypy>=1.5,<2.2",
+    # No upper bound. There was one, pinned at `<2.2` because mypy 2.2.0 rejects valid
+    # `list[str]` slices in `config/omegaconf_manager.py` -- a typeshed overload that declares
+    # a slice's step `SupportsIndex` with no `| None`, which only bites under the
+    # `strict_optional` this project turns on for that package. It is still unfixed at 2.3.1,
+    # so "lift it once upstream fixes it" was an instruction with no expiry and nothing to
+    # check it. The three call sites now spell the step, which passes on 2.1 and 2.3 alike, so
+    # the ceiling was buying nothing and costing every unrelated fix in 2.2+.
+    "mypy>=1.5",
     "pre-commit>=2.0",
     "types-setuptools",
     "types-psutil",

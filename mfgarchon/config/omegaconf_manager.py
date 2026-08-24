@@ -364,11 +364,25 @@ class OmegaConfManager:
                 # Use OmegaConf.select for navigation and direct assignment
                 # First ensure the nested structure exists
                 keys = param_name.split(".")
+                # The `: 1` steps below are load-bearing for the type gate, not style, and the
+                # rule is WIDER than these three lines: from mypy 2.2 onwards, **any slice with an
+                # omitted step, on any builtin sequence**, is rejected under the `strict_optional`
+                # that `[[tool.mypy.overrides]]` turns on -- for `mfgarchon.config.*` AND
+                # `mfgarchon.factory.*`. typeshed declares the step `SupportsIndex` with no
+                # `| None`, and an omitted step is `None`. Measured on 2.3.0 in this package:
+                #
+                #     rejected : lst[:i]  lst[i:]  lst[:]  s[:i]  b[:i]  t[:i]
+                #     accepted : lst[::2]  lst[::-1]  lst[:i:1]  arr[:i]   (ndarray, not builtin)
+                #
+                # So a ONE-argument slice counts, and `str`/`bytes`/`tuple` count. If the gate
+                # reddens on a slice you did not touch, this is why -- spell the step. Doing so
+                # keeps `mypy mfgarchon/config` (ci.yml's blocking gate) green on 2.1 through 2.3
+                # alike, which is why the dev extra carries no upper bound on mypy.
                 for i in range(len(keys) - 1):
-                    partial_key = ".".join(keys[: i + 1])
+                    partial_key = ".".join(keys[: i + 1 : 1])
                     if self._OmegaConf.select(config, partial_key) is None:
                         # Create the nested key by setting an empty dict
-                        parent_key = ".".join(keys[:i]) if i > 0 else None
+                        parent_key = ".".join(keys[:i:1]) if i > 0 else None
                         if parent_key:
                             parent = self._OmegaConf.select(config, parent_key)
                             setattr(parent, keys[i], {})
@@ -379,7 +393,7 @@ class OmegaConfManager:
                 if len(keys) == 1:
                     setattr(config, keys[0], param_value)
                 else:
-                    parent_key = ".".join(keys[:-1])
+                    parent_key = ".".join(keys[:-1:1])
                     parent = self._OmegaConf.select(config, parent_key)
                     setattr(parent, keys[-1], param_value)
 
