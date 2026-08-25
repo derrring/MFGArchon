@@ -187,7 +187,7 @@ def test_the_removed_flag_raises_on_both_values():
             FPNetworkSolver(problem, enforce_mass_conservation=value)
 
 
-def test_a_drift_that_does_happen_is_reported(caplog):
+def test_a_drift_that_does_happen_is_reported(mfg_caplog):
     """The other half of removing the division: if it does not conserve, say so.
 
     Reported through the logger, not `warnings.warn`, for two measured reasons found in
@@ -220,20 +220,19 @@ def test_a_drift_that_does_happen_is_reported(caplog):
         return 0.99 * original(m, u_cur, t)
 
     logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
-    with caplog.at_level(logging.WARNING, logger=logger_name):
+    with mfg_caplog.at_level(logging.WARNING, logger=logger_name):
         solver.solve_fp_system(m0, u)
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+    assert not mfg_caplog.records, (
         "unpatched, this configuration conserves exactly -- if it already logs, the test below "
         "proves nothing about the perturbation"
     )
 
     solver._explicit_step = leaky
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger=logger_name):
+    mfg_caplog.clear()
+    with mfg_caplog.at_level(logging.WARNING, logger=logger_name):
         solver.solve_fp_system(m0, u)
-    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert records, "the drift was not reported"
-    assert "total mass changed by" in records[0].getMessage()
+    assert mfg_caplog.records, "the drift was not reported"
+    assert "total mass changed by" in mfg_caplog.messages[0]
 
 
 def test_the_threshold_admits_this_scheme_s_own_discretisation_noise():
@@ -271,7 +270,7 @@ def test_the_threshold_admits_this_scheme_s_own_discretisation_noise():
     )
 
 
-def test_the_drift_report_does_not_repeat_across_a_coupled_solve(caplog):
+def test_the_drift_report_does_not_repeat_across_a_coupled_solve(mfg_caplog):
     """A coupled solve calls this once per Picard iteration, and neither channel dedups.
 
     `warnings.warn` keys its dedup on the message text, which carries the drift value and so
@@ -298,17 +297,17 @@ def test_the_drift_report_does_not_repeat_across_a_coupled_solve(caplog):
     solver._explicit_step = lambda m, u_cur, t: 0.99 * original(m, u_cur, t)
 
     logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
-    with caplog.at_level(logging.WARNING, logger=logger_name):
+    with mfg_caplog.at_level(logging.WARNING, logger=logger_name):
         for _ in range(15):
             solver.solve_fp_system(m0, u)
-    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    records = mfg_caplog.records
     assert len(records) == 1, (
         f"{len(records)} records from 15 identical solves; the drift does not grow, so after "
         f"the first there is nothing new to say"
     )
 
 
-def test_a_growing_drift_is_still_reported(caplog):
+def test_a_growing_drift_is_still_reported(mfg_caplog):
     """The suppression must not swallow an escalation, which is the case worth seeing.
 
     Without this, the guard above could be satisfied by never reporting again -- the failure
@@ -328,9 +327,9 @@ def test_a_growing_drift_is_still_reported(caplog):
     original = solver._explicit_step
 
     logger_name = "mfgarchon.alg.numerical.network_solvers.fp_network"
-    with caplog.at_level(logging.WARNING, logger=logger_name):
+    with mfg_caplog.at_level(logging.WARNING, logger=logger_name):
         for factor in (0.999, 0.99, 0.9):
             solver._explicit_step = (lambda f: lambda m, u_cur, t: f * original(m, u_cur, t))(factor)
             solver.solve_fp_system(m0, u)
-    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    records = mfg_caplog.records
     assert len(records) == 3, f"{len(records)} records: each worsening drift must be reported"

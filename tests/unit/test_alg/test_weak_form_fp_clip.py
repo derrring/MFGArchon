@@ -24,22 +24,6 @@ from mfgarchon.geometry.boundary import no_flux_bc
 _CLIP_LOGGER = "mfgarchon.alg.numerical.weak_form_fp_solver"
 
 
-def _capture_warnings(logger_name):
-    """Attach a record-collecting handler (mfgarchon loggers do not propagate to caplog)."""
-    records: list[logging.LogRecord] = []
-
-    class _Collector(logging.Handler):
-        def emit(self, record):
-            records.append(record)
-
-    logger = logging.getLogger(logger_name)
-    handler = _Collector()
-    logger.addHandler(handler)
-    prev_level = logger.level
-    logger.setLevel(logging.WARNING)
-    return records, logger, handler, prev_level
-
-
 def _meshless_fp(n=21):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
@@ -49,7 +33,7 @@ def _meshless_fp(n=21):
     return MeshlessGalerkinFPSolver(problem, collocation_points=cloud, delta=3.5 / (n - 1))
 
 
-def test_clip_warns_when_it_injects_mass():
+def test_clip_warns_when_it_injects_mass(mfg_caplog):
     """A steep drift makes the central Galerkin advection undershoot; the clip then
     injects mass and the solver warns (once)."""
     fp = _meshless_fp()
@@ -58,18 +42,14 @@ def test_clip_warns_when_it_injects_mass():
     m0 /= float((fp._M @ m0).sum())
     steep_drift = np.tile(10.0 * (x - 0.5) ** 2, (fp.problem.Nt + 1, 1))  # large gradient -> large velocity
 
-    records, logger, handler, prev = _capture_warnings(_CLIP_LOGGER)
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger=_CLIP_LOGGER):
         fp.solve_fp_system(m0, drift_field=steep_drift)
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
 
-    msgs = [r.getMessage() for r in records]
+    msgs = mfg_caplog.messages
     assert any("positivity clip injected mass" in m for m in msgs), f"expected a clip warning, got {msgs}"
 
 
-def test_no_clip_warning_on_pure_diffusion():
+def test_no_clip_warning_on_pure_diffusion(mfg_caplog):
     """Pure diffusion (no drift) does not undershoot, so the clip never injects mass and
     no warning is emitted -- the warning is a real signal, not noise."""
     fp = _meshless_fp()
@@ -77,11 +57,7 @@ def test_no_clip_warning_on_pure_diffusion():
     m0 = np.exp(-40 * (x - 0.5) ** 2)
     m0 /= float((fp._M @ m0).sum())
 
-    records, logger, handler, prev = _capture_warnings(_CLIP_LOGGER)
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger=_CLIP_LOGGER):
         fp.solve_fp_system(m0, drift_field=None)
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
 
-    assert not any("positivity clip injected mass" in r.getMessage() for r in records)
+    assert not any("positivity clip injected mass" in m for m in mfg_caplog.messages)

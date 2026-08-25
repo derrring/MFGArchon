@@ -147,7 +147,7 @@ def test_the_scheme_does_not_conserve_mass_and_now_says_so(record_property):
     )
 
 
-def test_the_drift_is_reported_at_warning_level(caplog):
+def test_the_drift_is_reported_at_warning_level(mfg_caplog):
     """The renormalisation's removal left this line as the only signal for the drift.
 
     It was `logger.debug`, which is off by default -- a 179% mass error that nothing
@@ -157,11 +157,10 @@ def test_the_drift_is_reported_at_warning_level(caplog):
     import logging
 
     m0, drift = _inputs(5.0)
-    with caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
         _solver(0.3).solve_fp_system(m0, drift)
-    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert warnings, "the drift was not reported at WARNING or above"
-    assert "1752" in warnings[0].getMessage(), "the message must name the issue tracking the defect"
+    assert mfg_caplog.records, "the drift was not reported at WARNING or above"
+    assert "1752" in mfg_caplog.messages[0], "the message must name the issue tracking the defect"
 
 
 def test_the_remedy_does_not_tell_a_stabilised_solve_to_stabilise():

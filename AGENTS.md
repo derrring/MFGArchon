@@ -181,6 +181,54 @@ can fail.
 This is the cross-project "non-discriminating test data" rule applied to dimension — the same shape
 as a uniform density that cannot separate a gradient-form bug from a correct scheme.
 
+### Capturing a log record in a test ⚠️
+
+Use the **`mfg_caplog`** fixture (`tests/conftest.py`), never plain `caplog`. `MFGLogger` sets
+`propagate = False` (`logger.py:211`), so whether `caplog` sees an mfgarchon record differs by
+pytest version, and the two versions in use here disagree:
+
+| pytest | what its capture handler attaches to | consequence |
+|---|---|---|
+| 8.4.1 (`uv run --extra dev`) | the root logger only | **no mfgarchon record is ever seen**, whatever the logger's creation site. Here `propagate = False` is the whole story |
+| 9.1.1 (the gate interpreter) | root, plus every non-propagating logger that **already exists** when `catching_logs.__enter__` runs | a logger that existed before this phase's sweep is visible; one born after it is not |
+
+That sweep runs **once per test phase** (setup / call / teardown), so the discriminator is not
+"module level vs inside a function": a logger created in a *fixture* is visible in the test body.
+It is whether the logger existed before this phase's sweep — and a logger born mid-solve did not.
+pytest's own comment names the gap: the sweep "will miss loggers that *become* non-propagating
+after the `__enter__`", which is exactly when `MFGLogger` sets it.
+
+34 of the package's 104 `get_logger` calls are inside a function. 19 of those 34 are
+`mfg_logging`'s own plumbing; the other 15 are consumer-side, and 12 of the 15 have `fp_gfdm`'s
+shape — a module logger obtained mid-call. So on 9.1.1 the result depends on test order: measured at #2083, the gfdm drift test **fails run alone** and **passes** when a
+sibling test ran a solve first. Six test modules had each rediscovered some part of this and
+written their own collecting handler.
+
+```python
+def test_the_drift_is_reported(mfg_caplog):
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg....fp_gfdm"):
+        solver.solve_fp_system(m0, drift)
+    assert mfg_caplog.messages  # or .records for the LogRecord itself
+```
+
+`logger=` is required — there is no root to fall back to, and the no-argument form would capture
+nothing silently.
+
+**A *wrong* name is the same failure wearing a different face, and the fixture does not catch it.**
+`assert not mfg_caplog.records` is satisfied by a typo exactly as it is by a solve that did not warn.
+The discipline that catches it is at the call site: **pair every absence assertion with a presence
+assertion on the same logger name**, so a typo fails the presence half loudly.
+
+Two guards were built and both removed, because each re-created the order-dependence this fixture
+exists to remove — the record is in `at_level`'s docstring and in the issue tracking a sound design.
+The short version: a runtime criterion ("has the package handed this name out") fires on a correct
+absence assertion over a logger created inside a function, and a static one (`find_spec`) does not
+help because **10 of the 11 logger names this package actually uses are not module paths** —
+`MFGSolver`, `mfgarchon.performance`, `mfgarchon.solvers`, `mfgarchon.solvers.<class>`,
+`__name__ + ".PluginManager"` — so they fall through to the runtime arm anyway, and `find_spec`
+imports every parent package to answer. (The one that *is* a module path comes from a demo
+function.)
+
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
 "Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing

@@ -11,8 +11,6 @@ in Issue #1147. The warning is behaviour-additive (the clipped values are unchan
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 import numpy as np
@@ -24,40 +22,12 @@ from mfgarchon.core.mfg_problem import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
-_CLIP_LOGGER = "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint"
-
-
-def _capture_warnings(logger_name):
-    """Attach a record-collecting handler (mfgarchon loggers do not propagate to caplog)."""
-    records: list[logging.LogRecord] = []
-
-    class _Collector(logging.Handler):
-        def emit(self, record):
-            records.append(record)
-
-    logger = logging.getLogger(logger_name)
-    handler = _Collector()
-    logger.addHandler(handler)
-    prev_level = logger.level
-    logger.setLevel(logging.WARNING)
-    return records, logger, handler, prev_level
-
 
 def _problem(n=41, nt=20):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     comp = MFGComponents(hamiltonian=H, m_initial=lambda x: np.ones_like(x), u_terminal=lambda x: x * 0)
     return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, sigma=0.3, coupling_coefficient=0.5)
-
-
-def _run(fp, m0, U, logger_name=_CLIP_LOGGER):
-    records, logger, handler, prev = _capture_warnings(logger_name)
-    try:
-        fp.solve_fp_system(m0, potential_field=U)
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
-    return [r.getMessage() for r in records]
 
 
 def test_a_clip_that_injects_mass_stops_the_solve():
@@ -101,10 +71,17 @@ def test_the_stop_names_the_interpolation_and_a_remedy():
     assert "coarsen" in message
 
 
-def test_no_clip_warning_for_linear_pure_diffusion():
-    """Linear splatting preserves positivity and Crank-Nicolson diffusion of a smooth
-    Gaussian (cell-Peclet stable) does not undershoot, so the clip never injects mass and
-    no warning fires -- the warning is a real signal, not noise."""
+def test_linear_pure_diffusion_is_not_stopped_by_the_mass_gate():
+    """Linear splatting preserves positivity and Crank-Nicolson diffusion of a smooth Gaussian
+    (cell-Peclet stable) does not undershoot, so the clip never injects mass -- the gate is a real
+    signal, not noise.
+
+    Asserted on the RETURN, not on a log line. The previous form asserted the absence of
+    "positivity clip injected mass" on this solver's logger, and that assertion could not fail:
+    the module has zero `warning` calls (its only log statement is an init-time `info`), and the
+    string exists only in `weak_form_fp_solver.py`. This solver stops by raising -- which its two
+    sibling tests assert -- so what "no clip" looks like here is that the call returns.
+    """
     n, nt = 41, 20
     prob = _problem(n=n, nt=nt)
     fp = FPSLSolver(prob, interpolation_method="linear")
@@ -113,5 +90,13 @@ def test_no_clip_warning_for_linear_pure_diffusion():
     m0 /= m0.sum() * (x[1] - x[0])
     U = np.zeros((nt + 1, n))  # no drift -> pure diffusion
 
-    msgs = _run(fp, m0, U)
-    assert not any("positivity clip injected mass" in m for m in msgs), f"unexpected clip warning: {msgs}"
+    result = fp.solve_fp_system(m0, potential_field=U)  # must not raise: the gate did not fire
+
+    assert result.shape == (nt + 1, n)
+    assert np.all(result >= 0.0), "a positivity clip would have been needed"
+    dx = x[1] - x[0]
+    # 1e-9, not a looser band: measured, this configuration conserves to 3.55e-15, so the
+    # threshold sits six orders above the answer and still refuses anything the gate would have
+    # stopped. What it does NOT catch is a scheme that drifts below 1e-9 -- for that the gate
+    # itself is the instrument, and "did not raise" above is the assertion that pins it.
+    assert abs(result[-1].sum() * dx - 1.0) < 1e-9, "mass moved without the gate noticing"

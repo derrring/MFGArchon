@@ -10,6 +10,8 @@ Coverage:
 - Weighted least-squares problems with bounds and constraints
 """
 
+import logging
+
 import pytest
 
 import numpy as np
@@ -414,20 +416,16 @@ class TestQPNonConvergenceWarns1071:
     """Issue #1071: a QP/least-squares solve that does not converge must NOT silently return
     the unconstrained solution — it warns (the constraints are not enforced on the result)."""
 
-    def test_unconstrained_fallback_warns_and_returns_x0(self, monkeypatch):
-        import mfgarchon.utils.numerical.qp_utils as qp_mod
-
-        calls: list[str] = []
-        monkeypatch.setattr(qp_mod.logger, "warning", lambda msg, *a, **k: calls.append(str(msg)))
-
+    def test_unconstrained_fallback_warns_and_returns_x0(self, mfg_caplog):
         solver = QPSolver()
         before = solver.stats["failures"]
         x0 = np.array([1.0, 2.0, 3.0])
-        result = solver._unconstrained_fallback(x0)
+        with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.utils.numerical.qp_utils"):
+            result = solver._unconstrained_fallback(x0)
 
         assert np.array_equal(result, x0)  # unconstrained x0 still returned (robustness)
         assert solver.stats["failures"] == before + 1  # failure tracked
-        assert any("did not converge" in c for c in calls)  # and NOT silent
+        assert any("did not converge" in m for m in mfg_caplog.messages)  # and NOT silent
 
 
 if __name__ == "__main__":

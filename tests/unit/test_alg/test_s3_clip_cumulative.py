@@ -8,23 +8,6 @@ import logging
 import numpy as np
 
 
-def _capture(logger_name):
-    """Attach a record-collecting handler directly to a logger (the mfgarchon loggers do not
-    propagate to pytest's caplog root handler)."""
-    logger = logging.getLogger(logger_name)
-    records: list[str] = []
-
-    class _H(logging.Handler):
-        def emit(self, record):
-            records.append(record.getMessage())
-
-    handler = _H(level=logging.WARNING)
-    logger.addHandler(handler)
-    prev = logger.level
-    logger.setLevel(logging.WARNING)
-    return logger, handler, prev, records
-
-
 def _meshless_fp_steep_drift():
     from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -50,14 +33,11 @@ def _meshless_fp_steep_drift():
     return fp, m0, u
 
 
-def test_clip_reports_cumulative_injection():
+def test_clip_reports_cumulative_injection(mfg_caplog):
     fp, m0, u = _meshless_fp_steep_drift()
-    logger, handler, prev, msgs = _capture("mfgarchon.alg.numerical.weak_form_fp_solver")
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.weak_form_fp_solver"):
         fp.solve_fp_system(m0, potential_field=u)
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
+    msgs = mfg_caplog.messages
     assert any("positivity clip" in m for m in msgs), f"expected a clip warning; got {msgs}"
     assert any("CUMULATIVE" in m for m in msgs), (
         f"S3: the solve-end warning must report the cumulative clip injection, not only the first step; got {msgs}"

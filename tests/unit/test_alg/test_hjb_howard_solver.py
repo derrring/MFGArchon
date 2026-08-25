@@ -1286,20 +1286,12 @@ def test_stencil_less_interior_with_provider_bc_rows_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_dmp_guard_warns_on_howard_path_when_advection_dominated():
+def test_dmp_guard_warns_on_howard_path_when_advection_dominated(mfg_caplog):
     """#1381 + #1074 (end-to-end): with sigma=0 (pure advection -> alpha_crit=0) and the
     opt-in check_dmp=True, the guard emits its #1074 warning during the Howard backward
     sweep. Pre-fix the guard never ran on this path, so the warning never appeared.
-
-    Captures via a handler on the named logger (the mfgarchon logger does not propagate to
-    root, so caplog does not see it) -- the pattern in test_socp_m_matrix_property.py.
     """
-    records: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda r: records.append(r.getMessage())
-    gfdm_logger = logging.getLogger("mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm")
-    gfdm_logger.addHandler(handler)
-    try:
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
         LX = 4.0
         pts, bdry, geom = _make_1d_cloud(LX=LX, n_int=11)
         problem = _MockProblem(geom, sigma=0.0, T=1.0, Nt=20, dimension=1)
@@ -1311,8 +1303,6 @@ def test_dmp_guard_warns_on_howard_path_when_advection_dominated():
         U_T = 0.5 * (x_pts - LX / 2) ** 2
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
-        assert any("DMP not guaranteed" in m for m in records), (
+        assert any("DMP not guaranteed" in m for m in mfg_caplog.messages), (
             "DMP guard never warned on the Howard path (Issue #1381 wiring gap)"
         )
-    finally:
-        gfdm_logger.removeHandler(handler)
