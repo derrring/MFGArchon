@@ -274,8 +274,8 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. ~13.5 s for all five, measured, and dominated by
-# check_internal_deprecation at ~10 s -- the figure said 7 s when it covered four and was wrong then too.
+# written and this gate never invoked either. ~6.8 s for all five (three runs: 7.1 / 6.7 / 6.7),
+# of which check_internal_deprecation is 5.0 s and check_citations adds 0.4 s.
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
