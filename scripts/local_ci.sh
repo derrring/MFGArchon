@@ -79,13 +79,14 @@ cannot_run() {  # environment failure: say what was measured, and exit distingui
 # to refuse. If the package does not import, the checks that need it say so, with the traceback,
 # under a GATE RED -- which is a verdict about content, and is the true one.
 #
-# mypy joins ruff in that predicate, and it changes what `--fast` needs: the type gate runs in both
-# tiers, so `--fast` now requires the `dev` extra after all. Stated here because the next line is
-# the claim it contradicts, and an uncorrected claim beside a changed mechanism is worse than
-# either alone.
+# mypy joins ruff in that predicate. Note what that changed: `--fast` used to need neither the
+# package nor the test tooling, and the type gate runs in BOTH tiers, so `--fast` now requires the
+# `dev` extra. The old sentence was left standing above its own correction for one revision -- a
+# reader who reached it and stopped read something false -- so it is rewritten here rather than
+# annotated.
 #
-# What must import is what will actually run. `--fast` (ruff plus three stdlib-only AST scanners,
-# per CLAUDE.md the iterate-while-working mode) needs neither the package nor the test tooling.
+# What must import is what will actually run. `--fast` (ruff, mypy, and three stdlib-only AST
+# scanners, per CLAUDE.md the iterate-while-working mode) does not need the package or pytest.
 # `yaml` is listed because the workflow-integrity step needs it and it is NOT a declared
 # dependency -- it arrives transitively via omegaconf, so an environment can look complete and
 # still fail that step with a bare ModuleNotFoundError under a GATE RED.
@@ -205,6 +206,7 @@ RUFF=("$PY" -P -m ruff)
 # This line is the only tell for a forged interpreter, so it has to be in the pasted evidence.
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
+printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
 
 # A discrimination sweep mutates production source in place and restores it in a `finally`.
 # That survives an exception and SIGINT; it does not survive SIGKILL or a harness timeout, and
@@ -275,25 +277,69 @@ step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 # would make this gate and CI disagree -- which is worse than either scope. Note what the copy
 # inherits: `pyproject.toml` gives `mfgarchon.factory.*` the identical strict treatment, and
 # `mypy mfgarchon/factory --follow-imports=silent` reports 3 errors that neither CI nor this gate
-# sees. Inherited, not introduced -- filed rather than widened here, so the two stay identical.
+# sees. Inherited, not introduced. Widening the LOCAL scope is the one change that would create
+# the gate/CI divergence this step exists to prevent, so the fix belongs on ci.yml and is filed as
+# #2107; widening it here would close the gap by breaking the property.
 #
 # An interpreter without mypy is rejected during interpreter SELECTION (see `resolved_python`),
 # not here: a refusal at this point skips every remaining candidate, which is the defect the ruff
 # paragraph up there records having already paid for once.
 step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
 # `-P`, like every other -m in this file: without it a `mypy/` package sitting in the repo root
-# shadows the real one, and this step reports PASS having checked nothing. Verified both ways.
-printf 'gate mypy       : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
-"$PY" -P -m mypy mfgarchon/config --follow-imports=silent
+# shadows the real one, and this step reports PASS having checked nothing. Verified both ways. The
+# version line is NOT printed here: printed inside the step it reaches neither the head nor the
+# pasted tail, and because `cannot_run` exits at this step it would appear exactly when the gate
+# ABORTS and never on a green run -- which is the run a reviewer is asked to paste.
+# A POSITIVE CONTROL, because this file's own rule is "the instruments, before their numbers" and
+# this step was the one instrument in the gate without one. A clean PASS is indistinguishable from
+# a mypy that has been silenced -- by a config edit, a `# type: ignore` sweep, or a flag that
+# suppresses the category. So make it fire on an error it must catch, with the SAME flags.
+#
+# The control is version-independent on purpose: assigning a `str` to an `int`-annotated local and
+# returning it fires under every mypy in the supported range. The one published discrimination
+# example for this step -- reverting the `keys[: i + 1 : 1]` slice -- errors under 2.3.0 and passes
+# under 1.20.2, both of which satisfy `mypy>=1.5`, so it cannot serve as the control.
+_probe=$(mktemp -d)
+printf 'def f() -> int:\n    x: int = "not an int"\n    return x\n' > "$_probe/probe.py"
+if "$PY" -P -m mypy "$_probe/probe.py" --follow-imports=silent >/dev/null 2>&1; then
+  cannot_run "the mypy control passed when it must fail: a file assigning a str to an int-annotated
+local was accepted. mypy is running but is not reporting, so a clean result from the real check
+would mean nothing. Check $PY's mypy install and the config it picks up."
+fi
+rm -rf "$_probe"
+
+_mypy_out=$("$PY" -P -m mypy mfgarchon/config --follow-imports=silent 2>&1)
 _mypy_rc=$?
-# mypy's exit codes carry the distinction this step needs and `check` would erase: 1 = it looked
-# and found errors, 2 = it could not look at all. Collapsing them reports a MISSING DEPENDENCY as
-# a type error in your code -- measured, with `omegaconf` absent (a declared runtime dependency)
-# and with `pydantic` absent (loaded as a mypy plugin, exit 2, zero files checked).
-if [[ $_mypy_rc -ge 2 ]]; then
-  cannot_run "mypy exited $_mypy_rc, which means it could not analyse the subject at all -- a
-missing dependency or plugin, not a type error in the code. Zero files were checked. Install the
-dev extra into $PY and re-run."
+printf '%s\n' "$_mypy_out"
+# CLASSIFY ON THE OUTPUT, NOT THE EXIT CODE. The first version branched on `rc >= 2` and was wrong
+# in both directions, measured on this tree:
+#
+#   - `omegaconf` absent -- a DECLARED runtime dependency -- exits 1, not 2, so the environment
+#     failure this branch exists for was never caught. The comment claimed it was.
+#   - renaming `mfgarchon/config` away, an ordinary refactor on a perfect environment, exits 2:
+#     the operator was told "ENVIRONMENT failure, install the dev extra", and the gate ABORTED the
+#     remaining checks. Before this step existed the same rename gave FAIL -> GATE RED with correct
+#     attribution and the gate carried on.
+#
+# mypy's exit code says whether it finished, not why. Its OUTPUT carries the distinction, so match
+# that -- and default everything else, exit 2 included, to `check`, which is the pre-existing
+# behaviour and the safe side of a wrong guess.
+_mypy_env_fault=""
+grep -q "Error importing plugin" <<<"$_mypy_out" && _mypy_env_fault="a mypy plugin failed to load"
+# `import-not-found` alone is NOT enough: a typo'd import is a code error and belongs in GATE RED.
+# It is an environment fault only when the module pyproject.toml DECLARES is the one missing, which
+# is decidable -- so decide it rather than guessing from the message.
+while read -r _m; do
+  [[ -n "$_m" ]] || continue
+  if grep -qE "^\s*[\"']${_m}([\"'~=<>!\[]|\s|$)" pyproject.toml; then
+    _mypy_env_fault="the declared dependency '${_m}' is not installed"
+    break
+  fi
+done < <(grep -oE 'library stub for module named "[^"]+"' <<<"$_mypy_out" | sed 's/.*"\(.*\)"/\1/' | cut -d. -f1)
+
+if [[ -n "$_mypy_env_fault" ]]; then
+  cannot_run "$_mypy_env_fault, so mypy could not analyse the subject -- this is not a type error in
+the code. See its output above. Install the dev extra into $PY and re-run."
 fi
 check $_mypy_rc "mfgarchon/config type-checks clean (the gate that otherwise only runs on GitHub)"
 
@@ -404,6 +450,7 @@ fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
+printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
 # Reprinted here, not only at the head: a version-mismatched run and a matched run otherwise
 # produce byte-identical tails, so the comparison this WARN performs is not recoverable from the
 # pasted evidence. Same rule that put the interpreter line here.
