@@ -283,6 +283,7 @@ maintainer explicitly chooses a minor release; do not add compatibility shims fo
 In a single commit:
 1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
 2. `CHANGELOG.md` — collate the `changelog.d/` fragments into a new `## [X.Y.Z] - YYYY-MM-DD` section: `python scripts/collate_changelog.py --version X.Y.Z --date $(date +%F)`, paste it under the new heading, then `git rm changelog.d/*.md` (keep the README). Keep-a-Changelog categories. *One-time (#1521):* the pre-#1521 `## [Unreleased]` block is promoted by hand at the first release after #1521; from then on fragments own the changelog.
+3. `scripts/citation_baseline.json` — re-record it: `python scripts/check_citations.py --write-baseline`. Step 2 moves `changelog.d/` prose into `CHANGELOG.md`, which the citation ratchet exempts, so **both its pins fire on a correct release** — measured at the time of writing, 14 of 39 adjudicable citations and 7 of 19 drifted live in `changelog.d/`. This is mechanical and expected; the gate says so in its own message. It is listed here because a red gate on a mandated step, with no documented remedy, is how a team learns `--no-verify`.
 
 Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow/__init__.py` (independent subpackage version), backend version reporting (external libs), historical version notes in docstrings. Sanity check: `grep -rn "^version =\|^__version__ =" pyproject.toml mfgarchon/` — only `pyproject.toml:11` should change.
 

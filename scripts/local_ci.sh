@@ -432,12 +432,13 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. 7s for all four.
+# written and this gate never invoked either. ~6.8 s for all five (three runs: 7.1 / 6.7 / 6.7),
+# of which check_internal_deprecation is 5.0 s and check_citations adds 0.4 s.
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations; do
   "$PY" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -463,6 +464,25 @@ check $? "docs teach no more missing API than the baseline records"
 step "Single-source ratchet"
 "$PY" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
+
+# Over 200 `path.py:NNN` citations sit in tracked prose and nothing checked them; 19 of the 39 that
+# can be judged -- 49% -- point at a line their named symbol has moved away from (#2102). Checking
+# the number is in range is nearly useless: exactly one of 226 points past EOF. So a citation counts
+# as judged only when ITS OWN LINE names a symbol; nothing is borrowed from a neighbour, and the
+# other 154 are recorded unadjudicable rather than passing. Two numbers are pinned, not one:
+# `drifted` bidirectionally, and `adjudicable` against SHRINKING, because deleting the symbol name
+# from the prose otherwise lowers `drifted` and reads as an improvement. The baseline records WHICH
+# claims are drifted, not only how many: counts alone are satisfied by a compensating pair, and
+# review shipped exactly that -- two rows hidden, two fresh ones added, gate green. 0.4 s.
+#
+# EXPECT THIS TO GO RED ON A VERSION BUMP. AGENTS.md step 2 collates `changelog.d/` into the exempt
+# `CHANGELOG.md`; step 3 is re-recording the baseline. Also measured before shipping: replaying the
+# last 40 commits on main, 5 would have gone red, and 3 of those on prose the author never opened.
+# That is the cost this buys the coverage with, and it is why the failure names the citations and
+# prints the command rather than only moving a number.
+step "Citation ratchet"
+"$PY" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
+check $? "no citation newly entered the review queue, and none left it unrecorded"
 
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check

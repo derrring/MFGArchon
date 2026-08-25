@@ -5,6 +5,24 @@ A line number in a document is a claim with an expiry date, and nothing marks it
 being true. Measured at the time of writing: 18 of the 38 adjudicable citations in this
 repository's live prose -- 47% -- name a symbol that is not near the cited line (Issue #2102).
 
+THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
+All 18 were read by hand: one is a withdrawn claim (#2112) and the other 17 contain both kinds --
+**genuinely wrong citations, and the instrument mis-attributing a symbol** -- in a proportion two
+independent hand-reads disagreed about, so none is stated here.
+A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
+-- "`propagate = False` (logger.py, line 211), so whether `caplog` sees..." is a CORRECT citation
+whose target line really is `logger.propagate = False`, with `caplog` sitting in the consequence
+clause. (Written with the line number in words, because spelling it made this very paragraph the
+20th drifted row -- the third time explaining a defect in this file created another instance of it.) Restricting the
+search to the citation's own line narrows that and does not close it.
+
+It cannot be closed mechanically. Character distance between citation and symbol was measured as a
+discriminator and FAILED: real 8 median, artifact 9, over overlapping ranges. The difference is
+grammatical -- does the symbol describe the cited line, or the sentence's consequence -- and no
+positional rule sees a clause boundary. So the instrument reports a superset and a human separates,
+which is the shape `local_ci.sh` already uses for assertion strength: a review queue, not a delete
+list.
+
 That is 18 of the 38 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
 citations are recorded `unadjudicable`, a large majority. Quoting 49% bare reads as "half this
 repository's citations are wrong" and would be #1918's own failure committed against this report.
@@ -50,12 +68,27 @@ question has an answer: is that symbol within +/-WINDOW lines of the cited line?
 symbol nearby is **recorded as unadjudicable, never counted as passing** -- an unjudged row reads
 exactly like a clean one, which is the failure this repository files under #1918.
 
-WHAT THIS SCRIPT IS NOT
------------------------
-It is a measurement, not a ratchet. There is no baseline and it exits 0 whatever it finds, unless
-the instrument itself cannot report (exit 2). The ratchet is deliberately a separate change: an
-instrument that will gate merges should first be read, and its own error modes seen, on numbers
-nobody has to act on.
+THE RATCHET IS ON WHICH CLAIMS DRIFTED, AND ON TWO COUNTS BESIDE THEM
+----------------------------------------------------------------------
+The baseline records WHICH citations are drifted, keyed on the resolved target and the symbols the
+prose names beside it. Counts alone were satisfied by a compensating pair -- two rows hidden, two
+fresh ones added, gate green. `check_single_source` and `capability_matrix` pin identities for the
+same reason; `check_doc_api` is bidirectional on counts, and `check_fail_fast` is warn-only rather
+than a gate.
+
+The counts stay beside the identities because neither subsumes the other. Two sentences in one file
+citing the same target line collapse to one key, so a second drifted citation does not enlarge the
+set -- caught by this script's own self-test within a minute of the identity check being written.
+And a fixed citation must fail until it is recorded, in EITHER direction.
+
+It also fails when **`adjudicable` shrinks**, and that half is not symmetry for its own sake. The
+cheapest way to make `drifted` fall is to delete the symbol name from the prose: the row leaves the
+numerator AND the denominator, and a numerator-only ratchet records it as an improvement. Measured:
+
+    `far_away` is at pkg/target.py:LINE.  ->  drifted 1  adjudicable 1
+    The thing is at pkg/target.py:LINE.   ->  drifted 0  adjudicable 0  unadjudicable 1
+
+Adding correct new prose raises `adjudicable` and passes; only a shrinking denominator is refused.
 
 KNOWN FAILURE MODE OF THE RESOLVER, PAID FOR ONCE
 -------------------------------------------------
@@ -64,13 +97,19 @@ Every one was an artefact: citations are usually written as a bare basename -- `
 and a line number -- while the file lives at `mfgarchon/core/mfg_problem.py`, and resolving the
 string as a path misses it.
 
-An example path in THIS file's prose is written so it cannot parse as a citation, and that is not
-fussiness: this script is inside the population it scans, so an illustrative path becomes a row in
-its own measurement. The one exception is the regex's own documentation below, where the notation
-IS the subject and neutering it would delete the thing being documented. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
+That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
 repo-relative path, as a path under `mfgarchon/`, and finally as a basename over every tracked
 `.py`, narrowed by suffix when the citation carries directories. A basename matching more than one
 file is reported AMBIGUOUS rather than guessed.
+
+An example path in THIS file's prose must contribute NO ADJUDICABLE ROW -- not "must not parse as a
+citation", which is what this rule said and which the file itself violates: the regex's own
+documentation and `resolve`'s traversal example both parse, and land in `missing`, which is ungated.
+The enforceable invariant is the adjudicable one, and it needs a pin because `--write-baseline`
+records whatever is present -- which is exactly how two rows of this file's own prose shipped inside
+a PASSING baseline. `test_this_file_contributes_no_adjudicable_citation` is that pin. It is not
+circular: it is the instrument judging one ordinary input file, the same shape as the
+shipped-baseline test.
 
 `CHANGELOG.md` is exempt, on the same reasoning `check_doc_api.py` uses: an entry describing a
 v0.16 line is correct as of then. `archive/` likewise.
@@ -95,6 +134,9 @@ broken citations in the measurement this script produces about itself.
 from __future__ import annotations
 
 import argparse
+import builtins
+import contextlib
+import io
 import json
 import re
 import subprocess
@@ -345,6 +387,11 @@ def measure(root: Path) -> dict:
                 if status != "ok":
                     result[status].append(row)
                     continue
+                # The RESOLVED path, not the literal citation text. Rewriting a bare basename to
+                # its full path -- which is the correct repair for the `ambiguous` and `missing`
+                # rows, and what this module's resolver section is about -- is the same claim, and
+                # keying on the raw string reported it as one regression plus one improvement.
+                row["target"] = str(target.relative_to(root))
                 # `git ls-files` lists a tracked file that has been deleted from the working
                 # tree, so `resolve` can return a path that does not open. Unwrapped, that was a
                 # traceback and exit 1 from a step whose contract is "measurement only".
@@ -455,16 +502,346 @@ def self_test(root: Path) -> int:
         subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
         got = measure(d)
         counts = {k: len(v) for k, v in got.items()}
+        ratchet_failures = _ratchet_self_test(d, d / "doc.md", d / "baseline.json")
 
     failures = [f"{k}: expected {n}, got {counts.get(k, 0)}" for k, n in expected.items() if counts.get(k, 0) != n]
+    failures += ratchet_failures
     if failures:
         print("SELF-TEST FAILED -- the instrument cannot see what it counts:")
         for f in failures:
             print(f"  {f}")
         print(f"  full counts: {counts}")
         return 1
-    print(f"self-test OK: every category fires  {counts}")
+    print(f"self-test OK: every category fires, and the ratchet is not inert  {counts}")
     return 0
+
+
+def _ratchet_self_test(d: Path, doc: Path, baseline: Path) -> list[str]:
+    """Prove `--check-baseline` actually goes red. The classifier firing does not imply this.
+
+    Seven shapes over four gate branches. NOT one-to-one, and saying so matters: `left` has two,
+    because a row can leave `drifted` by being fixed or by having its symbol taken away, and those
+    are different edits even though the branch reports them identically now.
+
+    Each mapping below was measured the only way that establishes it -- kill one branch, record
+    WHICH SHAPES GO GREEN. Watching the whole self-test go red instead establishes that *some*
+    branch spoke, not which, and that weaker measurement is how the previous version came to claim
+    a one-to-one isolation it did not have.
+
+      unchanged                              must pass
+      new drifted at an ALREADY-RECORDED     the COUNT moved and no identity did
+        target line
+      new drifted at a FRESH target line     an IDENTITY appeared
+      the symbol SWAPPED beside a recorded    an identity appeared and another left; without the
+        citation                               symbols in the key every count and location is
+                                               unchanged and this passes
+      a recorded drifted one FIXED           an identity LEFT
+      the symbol deleted beside a DRIFTED    an identity LEFT by the other route
+        citation
+      the symbol deleted beside an ANCHORED  only the DENOMINATOR shrank; nothing left `drifted`,
+        citation                               which is why this shape and the one above are not
+                                               interchangeable
+
+    Each shape isolates one branch, verified by killing each branch in turn. The first two are not
+    redundant: identities alone pass two sentences in one file citing the same line, counts alone
+    pass a compensating pair.
+
+    Anchored, not drifted, and that is the whole point of the third shape. Deleting the symbol
+    beside a DRIFTED citation lowers `drifted` too, so the bidirectional branch catches it and the
+    `adjudicable` pin is never exercised -- measured, killing the entire `adjudicable` block left
+    this self-test green. Beside an ANCHORED citation only the denominator moves, which isolates
+    the branch this ratchet exists for.
+    """
+    original = doc.read_text()
+    failures = []
+    seen = []
+
+    def verdict(label: str) -> int:
+        subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
+        # Two of the three shapes are SUPPOSED to print a failure block. Swallow it, or a passing
+        # self-test prints "CITATION RATCHET FAILED" twice and reads as a broken one.
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            rc = compare_to_baseline(measure(d), baseline)
+        seen.append(f"{label}={'red' if rc else 'green'}")
+        return rc
+
+    write_baseline(measure(d), baseline, d)
+    if verdict("unchanged") != 0:
+        failures.append("ratchet: an unchanged tree does not pass its own baseline")
+
+    tgt = "pkg/target.py"
+    # Same target line as an existing drifted row: the identity set does not grow, only the count.
+    doc.write_text(f"{original}\n\n`far_away_symbol` is also at {tgt}:30, a NEW drifted one.\n")
+    if verdict("new drift, same target") == 0:
+        failures.append(
+            "ratchet: a second drifted citation to an ALREADY-RECORDED target line passed -- "
+            "identities alone cannot see it, so the count check is not doing its job"
+        )
+
+    # A target line nothing cites yet: a new identity appears and the count moves with it.
+    doc.write_text(f"{original}\n\n`far_away_symbol` is at {tgt}:31, a NEW drifted one.\n")
+    if verdict("new drift, new target") == 0:
+        failures.append(
+            "ratchet: a drifted citation to a target line nothing else cites passed -- "
+            "the identity check is not doing its job"
+        )
+
+    # Progress, which must also stop the gate until it is recorded. Moving the citation onto the
+    # line the symbol actually occupies removes an identity from the set.
+    doc.write_text(original.replace(f"`far_away_symbol` lives at {tgt}:30", f"`far_away_symbol` lives at {tgt}:90"))
+    if verdict("drifted one fixed") == 0:
+        failures.append(
+            "ratchet: FIXING a recorded drifted citation passed silently -- an unrecorded "
+            "improvement is where the next regression hides, so it must stop the gate"
+        )
+
+    # Both checks at once, which is how review defeated the location-only version: swap the symbol
+    # beside a RECORDED citation for a bogus one at the SAME target line. Every count is unchanged
+    # and every location is unchanged; only the symbol set moves, so the gate key must carry it.
+    doc.write_text(
+        original.replace(f"`far_away_symbol` lives at {tgt}:30", f"Something lives at {tgt}:30")
+        + f"\n\n`bogus_symbol` is at {tgt}:30 as well.\n"
+    )
+    if verdict("symbol swapped, counts intact") == 0:
+        failures.append(
+            "ratchet: swapping the symbol beside a recorded citation for a bogus one at the same "
+            "target line passed -- counts and locations are both unchanged, so the identity key "
+            "must carry the symbols and does not"
+        )
+
+    # The evasion, on a DRIFTED row: it leaves `drifted` and lands in `unadjudicable`, which the
+    # message must call hiding rather than progress.
+    # Compensated by a fresh ANCHORED citation, deliberately: deleting a symbol always shrinks
+    # `adjudicable` too, and that branch fires first, so an uncompensated shape exercises the wrong
+    # one.
+    doc.write_text(
+        original.replace("`far_away_symbol` lives at", "Something lives at")
+        + f"\n\nAlso `anchored_symbol` at {tgt}:31.\n"
+    )
+    if verdict("drifted one, symbol removed") == 0:
+        failures.append(
+            "ratchet: deleting the symbol beside a DRIFTED citation passed -- it left `drifted` "
+            "for `unadjudicable`, where nothing judges it, and a row leaving must stop the gate "
+            "whichever way it left"
+        )
+
+    # The same evasion on an ANCHORED row, which touches ONLY the denominator: nothing leaves
+    # `drifted`, so the branch above cannot fire and this is the one that must.
+    doc.write_text(original.replace("`anchored_symbol` is defined at", "Something is defined at"))
+    if verdict("symbol deleted") == 0:
+        failures.append(
+            "ratchet: deleting a symbol name shrank `adjudicable` and PASSED -- the denominator "
+            "is not pinned, so the ratchet rewards hiding a citation rather than fixing it"
+        )
+
+    doc.write_text(original)
+    subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
+    print(f"  ratchet: {', '.join(seen)}")
+    return failures
+
+
+DEFAULT_BASELINE = Path(__file__).resolve().parent / "citation_baseline.json"
+
+
+def summarise(result: dict) -> dict[str, int]:
+    counts = {k: len(v) for k, v in result.items()}
+    counts["adjudicable"] = counts["anchored"] + counts["drifted"]
+    return counts
+
+
+def _location(r: dict) -> str:
+    """Where a claim points. Stable under prose reflow and under rewriting a bare basename."""
+    return f"{r['file']} -> {r.get('target', r['cites'])}:{r['cited_line']}"
+
+
+def _identities(rows: list[dict]) -> set[str]:
+    """What a claim SAYS: where it points, and which symbols the prose names beside it.
+
+    Two keys exist because they answer different questions. This one gates, and it carries the
+    symbols so that swapping the symbol beside a recorded citation cannot pass -- review defeated
+    the location-only version by adding a bogus symbol at an already-recorded target line while
+    deleting the real one, keeping every count and every location identical.
+
+    `_location` is the same key without the symbols. It is what `write_baseline` and the failure
+    message would need if they ever had to match a drifted row against an `unadjudicable` one --
+    they no longer do, because this branch stopped adjudicating why a row left.
+    """
+    # `sorted(set(...))`: `_symbols_near` returns findall order with duplicates, so swapping two
+    # backticked names inside one sentence -- pure reflow, same claim -- was reported as one
+    # regression plus one improvement, and writing a repeated name once would trip the gate.
+    return {_location(r) + (f" [{','.join(sorted(set(r['symbols'])))}]" if r.get("symbols") else "") for r in rows}
+
+
+def drifted_identities(result: dict) -> list[str]:
+    """Which claims are drifted, not how many.
+
+    Counts alone are satisfied by a compensating pair: review hid two drifted citations and added
+    two fresh ones, and the gate went GREEN with two new broken citations shipped -- which made
+    `local_ci.sh`'s "no citation newly points away from the symbol its prose names" false as an
+    invariant. `check_single_source` and `capability_matrix` pin identities for the same reason.
+
+    The key deliberately omits the CITING line number. Inserting a paragraph above a citation
+    shifts it and would churn every identity in the file on an unrelated edit; the claim being
+    made -- this file says that target line holds this symbol -- does not move.
+    """
+    return sorted(_identities(result["drifted"]))
+
+
+def write_baseline(result: dict, path: Path, root: Path) -> None:
+    def git(*a: str) -> str:
+        # `rstrip("\n")`, NOT `strip()`. `git status --porcelain` emits `XY PATH`, so a worktree-
+        # only modification starts with a SPACE -- and `strip()` ate it off the first line only,
+        # which shifted `ln[3:]` by one character so the carve-out below never matched and every
+        # baseline was stamped `-dirty`. Found by review; the previous version of this file argued
+        # for the carve-out at length and did not implement it, and no test noticed.
+        return subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, check=False).stdout.rstrip(
+            "\n"
+        )
+
+    # `-dirty` is not decoration. A baseline written from an uncommitted tree records a commit
+    # that does not describe what was measured, and the next reader cannot reproduce it -- which
+    # is the same defect as publishing a sweep of a candidate that is not what shipped.
+    #
+    # The baseline itself is excluded from that check, and only it: `measure` scans `.md` and `.py`
+    # (see its `prose` filter), so a `.json` file cannot move a single count. Without the carve-out
+    # the field would read `-dirty` on every baseline ever written, including the one written from
+    # a clean tree, and a marker that is always on discriminates nothing.
+    try:
+        own = str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        # A baseline written OUTSIDE the repository -- which `--write-baseline /tmp/x.json` does,
+        # and which every replay harness does -- has no path inside the tree to exempt. This raised
+        # ValueError and crashed the write; found by a 40-commit replay whose positive control went
+        # red, not by reading.
+        own = None
+    modified = [ln[3:] for ln in git("status", "--porcelain").splitlines() if own is None or ln[3:] != own]
+    head = git("rev-parse", "--short", "HEAD") + ("-dirty" if modified else "")
+    payload = {
+        "_comment": (
+            "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited "
+            "line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target "
+            "file, the cited line, and the symbols the prose names beside it; `counts` pins how "
+            "many, because neither catches what the other does. Both are bidirectional: a new "
+            "drifted citation is a regression and a fixed one is progress that must be recorded "
+            "here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation "
+            "would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline."
+        ),
+        "_measured_at": {"head_when_written": head, "window": WINDOW},
+        "counts": summarise(result),
+        "drifted": drifted_identities(result),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def compare_to_baseline(result: dict, path: Path) -> int:
+    if not path.is_file():
+        print(f"CANNOT COMPARE: no baseline at {path}", file=sys.stderr)
+        return 2
+    baseline = json.loads(path.read_text())
+    recorded, now = baseline["counts"], summarise(result)
+    was, is_now = set(baseline.get("drifted", [])), set(drifted_identities(result))
+    problems = []
+    # Identities and counts each catch what the other cannot, and this is not belt-and-braces:
+    #
+    #   - counts alone pass a COMPENSATING PAIR -- hide two drifted rows, add two fresh ones, and
+    #     the total is unchanged. Review shipped exactly that and the gate went green.
+    #   - identities alone pass a SAME-KEY DUPLICATE -- two different sentences in one file citing
+    #     the same target line collapse to one key, so a second drifted citation does not enlarge
+    #     the set. This script's own `--self-test` caught that within a minute of the identity
+    #     check being written, which is what it is for.
+    if now["drifted"] != recorded["drifted"] and set(is_now) == set(was):
+        problems.append(
+            f"drifted {recorded['drifted']} -> {now['drifted']} with the same set of claims: two "
+            f"citations in one file point at the same target line, so this moved a count without "
+            f"moving an identity."
+        )
+    if appeared := sorted(is_now - was):
+        problems.append(
+            "these citations name a symbol that is no longer near the line they point at:\n"
+            + "\n".join(f"      {a}" for a in appeared)
+            + "\n    Read each one. Two things it can be, and the instrument cannot tell them apart:"
+            + "\n      - the line number is stale: fix it, or drop it and cite the file;"
+            + "\n      - the citation is right and this line's backticked name belongs to a"
+            + "\n        neighbouring clause. Then change nothing and record it -- a"
+            + "\n        legitimate outcome, not a workaround."
+            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112). The"
+            + "\n    other 17 contain both kinds, and two independent hand-reads disagreed about"
+            + "\n    which rows fall in which -- so no proportion here is worth acting on. Read the"
+            + "\n    line."
+        )
+    if left := sorted(was - is_now):
+        # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than
+        # adding more. Four consecutive review rounds broke this branch's attempt to say WHY a row
+        # left: it accused a correct repair of being the evasion; then the fix for that suppressed
+        # the shape written to exercise it; then at a location the baseline had recorded as
+        # ambiguous the evasion and its opposite became byte-identical, with the exclusion list
+        # writable in two individually-innocuous steps; and the location/gate key seam dropped rows
+        # non-deterministically, accusing different rows under different PYTHONHASHSEEDs.
+        #
+        # None of it changed the verdict. Hidden or fixed, the gate is red and a human looks. The
+        # distinction bought one sentence of diagnosis and cost four defects, two of which pointed
+        # the reader at the wrong remedy -- worse than saying nothing. So this says where, and the
+        # reader says why.
+        #
+        # The message names two causes and refuses to close the list, because the list is longer
+        # than two and the extras are invisible from here. A row also leaves `drifted` by becoming
+        # `ambiguous`, or by its target being renamed into `missing`, or by its prose moving under
+        # an exempt path -- and none of those touches the citation or the target line.
+        #
+        # The `ambiguous` route is not theoretical. 14 of the 18 recorded rows cite a BARE
+        # BASENAME, so they resolve through the fallback and a second file with that name anywhere
+        # in the tree moves them. Measured: adding a two-line `mfgarchon/workflow/logger.py` -- one
+        # commit, touching no prose -- moved `AGENTS.md`'s citation of logger.py out of `drifted` and took
+        # `ambiguous` from 5 to 7. Naming two of five causes as though they were all of them is the
+        # same over-claim this branch was rewritten to stop making, in a smaller register.
+        problems.append(
+            "these citations are no longer drifted. Most often they were fixed, or the symbol was "
+            "taken out from beside them so they are now `unadjudicable`, where nothing judges "
+            "them -- but check the note above too: a row also leaves by becoming `ambiguous` or "
+            "`missing`, and neither touches the prose or the target. Read them and decide:\n"
+            + "\n".join(f"      {row}" for row in left)
+            + "\n    Bidirectional on purpose: an unrecorded change is how the next regression "
+            "hides inside a number nobody re-read."
+        )
+    if now["adjudicable"] < recorded["adjudicable"]:
+        problems.append(
+            f"adjudicable {recorded['adjudicable']} -> {now['adjudicable']}: the denominator "
+            f"shrank, so fewer citations are being judged than before. Three causes, in the order "
+            f"you should check them:\n"
+            f"      1. A VERSION BUMP collated `changelog.d/` into `CHANGELOG.md`, which is exempt "
+            f"(AGENTS.md's checklist). Mechanical and expected -- re-record and move on.\n"
+            f"      2. Prose carrying citations was deleted.\n"
+            f"      3. A symbol name was removed from beside a citation, which moves the row to "
+            f"`unadjudicable` where nothing judges it. This is the one the pin exists for."
+        )
+    # The baseline also records `missing`, `ambiguous` and `unadjudicable`, which the gate above
+    # does NOT act on: a planted fixture path and a genuinely broken citation are indistinguishable
+    # to this script, and the checkers in `scripts/` plant plenty. Recorded-but-unjudged is the
+    # exact failure `unadjudicable` is named after, so say when they move instead of storing a
+    # number nobody re-reads.
+    moved = [
+        f"{k} {recorded[k]} -> {now[k]}"
+        for k in ("missing", "ambiguous", "unadjudicable")
+        if k in recorded and now[k] != recorded[k]
+    ]
+    if moved:
+        print(f"citation note (not gated): {', '.join(moved)}")
+
+    if problems:
+        print("CITATION RATCHET FAILED")
+        for p in problems:
+            print(f"    {p}")
+        print(f"\n  counts now: {now}")
+        print("  see them all:  python scripts/check_citations.py --list")
+        print("  record this:   python scripts/check_citations.py --write-baseline")
+        return 1
+    print(f"citation ratchet OK: drifted {now['drifted']}, adjudicable {now['adjudicable']}")
+    return 0
+
+
+def _noop(*_a: object, **_k: object) -> None:
+    """Swallow the human-facing report when the gate wants a verdict."""
 
 
 def main() -> int:
@@ -473,6 +850,20 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="Print every drifted citation")
     parser.add_argument("--json", metavar="FILE", help="Write the full result to FILE")
     parser.add_argument("--self-test", action="store_true", help="Prove the instrument still fires")
+    parser.add_argument(
+        "--write-baseline",
+        metavar="FILE",
+        nargs="?",
+        const=str(DEFAULT_BASELINE),
+        help="Record the current drifted citations as the accepted set (default: %(const)s)",
+    )
+    parser.add_argument(
+        "--check-baseline",
+        metavar="FILE",
+        nargs="?",
+        const=str(DEFAULT_BASELINE),
+        help="Fail if any citation newly drifted, or was fixed without being recorded",
+    )
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -487,28 +878,49 @@ def main() -> int:
 
     counts = {k: len(v) for k, v in result.items()}
     adjudicable = counts["anchored"] + counts["drifted"]
-    print(f"citations        : {sum(counts.values())}")
-    print(f"  adjudicable    : {adjudicable}  (the prose names a symbol next to the citation)")
-    print(f"    anchored     : {counts['anchored']}")
-    print(f"    drifted      : {counts['drifted']}", end="")
+    # Under `--check-baseline` this is a gate step, and the gate's convention is one line per check.
+    # Nothing is lost on failure: `compare_to_baseline` prints the full counts with the verdict.
+    # Shadowing `print` here would make the `CANNOT MEASURE` call above a forward reference and
+    # raise UnboundLocalError on the one path that reports the instrument failing. Ruff caught it.
+    say = _noop if (args.check_baseline is not None and not args.list) else builtins.print
+    say(f"citations        : {sum(counts.values())}")
+    say(f"  adjudicable    : {adjudicable}  (the prose names a symbol next to the citation)")
+    say(f"    anchored     : {counts['anchored']}")
+    say(f"    drifted      : {counts['drifted']}", end="")
     if adjudicable:
-        print(f"   = {counts['drifted'] / adjudicable * 100:.0f}%")
+        say(f"   = {counts['drifted'] / adjudicable * 100:.0f}%")
     else:
-        print()
-    print(f"  unadjudicable  : {counts['unadjudicable']}  (no symbol named -- RECORDED, not passing)")
-    print(f"  ambiguous      : {counts['ambiguous']}  (basename matches several tracked files)")
-    print(f"  missing        : {counts['missing']}  (no such file)")
+        say()
+    say(f"  unadjudicable  : {counts['unadjudicable']}  (no symbol named -- RECORDED, not passing)")
+    say(f"  ambiguous      : {counts['ambiguous']}  (basename matches several tracked files)")
+    say(f"  missing        : {counts['missing']}  (no such file)")
 
     if args.list:
-        print("\ndrifted:")
+        say("\ndrifted:")
         for row in result["drifted"]:
-            print(f"  {row['file']}:{row['line']}")
-            print(f"      cites {row['cites']}:{row['cited_line']} for {row.get('symbols')}")
-            print(f"      at that line: {row.get('at_cited_line', row.get('why'))!r}")
+            say(f"  {row['file']}:{row['line']}")
+            say(f"      cites {row['cites']}:{row['cited_line']} for {row.get('symbols')}")
+            say(f"      at that line: {row.get('at_cited_line', row.get('why'))!r}")
 
     if args.json:
         Path(args.json).write_text(json.dumps(result, indent=2, sort_keys=True))
-        print(f"\nwrote {args.json}")
+        say(f"\nwrote {args.json}")
+
+    if args.write_baseline is not None:
+        if not args.write_baseline:
+            print("CANNOT WRITE: --write-baseline was given an empty path", file=sys.stderr)
+            return 2
+        write_baseline(result, Path(args.write_baseline), root)
+        say(f"\nwrote baseline {args.write_baseline}")
+
+    # `is not None`, not truthiness: `--check-baseline ""` otherwise falls through to exit 0, a
+    # silent pass from a gate. `local_ci.sh` spends a paragraph on this exact shape for
+    # MFG_PYTHON (`+x`, not `:-`) and it was reintroduced here.
+    if args.check_baseline is not None:
+        if not args.check_baseline:
+            print("CANNOT COMPARE: --check-baseline was given an empty path", file=sys.stderr)
+            return 2
+        return compare_to_baseline(result, Path(args.check_baseline))
 
     return 0
 
