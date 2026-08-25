@@ -72,10 +72,20 @@ plain | grep -aE '^(PASS|SKIPPED) ' | head -20
 # whether anything was measured at all, and how to fix the environment -- and the volume problem
 # does not exist in this case: the whole log is under 1 KB when the gate cannot start. Summarising
 # it to one clause was a strict regression against printing nothing at all.
-if plain | grep -aq '^GATE CANNOT RUN'; then
-  plain | sed -n '/^GATE CANNOT RUN/,$p'
-else
-  plain | grep -aE '^GATE (GREEN|RED)' || printf 'GATE VERDICT MISSING -- the gate did not reach its own conclusion\n'
-fi
+# Read the verdict ONCE into a variable rather than `plain | grep -q`. Under `pipefail`, `grep -q`
+# exits at the first match and `sed` takes SIGPIPE, so the pipeline reports 141 and the `if` takes
+# the WRONG branch whenever enough output follows the verdict. Not reachable today only because
+# `cannot_run()` ends in `exit 2` so nothing follows it -- which couples this file's correctness to
+# that property of local_ci.sh. Reproduced: `seq 1 500000 | grep -q '^1$'` is 141, `'^499999$'` is 0.
+verdict=$(plain | grep -aE '^GATE (GREEN|RED|CANNOT RUN)' || true)
+case "$verdict" in
+  *"GATE CANNOT RUN"*)
+    # The full paragraph, not the matched line: it says whether anything was measured at all and
+    # how to fix the environment, and the log is under 1 KB in this case -- no volume problem.
+    plain | sed -n '/^GATE CANNOT RUN/,$p'
+    ;;
+  "") printf 'GATE VERDICT MISSING -- the gate did not reach its own conclusion\n' ;;
+  *)  printf '%s\n' "$verdict" ;;
+esac
 printf 'gate log (%s lines, %s bytes): %s\n' "$(wc -l <"$LOG" | tr -d ' ')" "$(wc -c <"$LOG" | tr -d ' ')" "$LOG"
 exit "$rc"

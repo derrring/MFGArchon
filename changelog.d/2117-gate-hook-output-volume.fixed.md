@@ -25,6 +25,12 @@
   carrying is a backlog, not noise — 456 of its lines are this repository's own tests calling its
   own deprecated `MFGProblem(geometry=, ...)`, across 103 files. Filed as #2119.
 
+  **The adapter stays, as defence in depth rather than the fix.** Review measured three failing
+  tests adding 5,022 bytes — about 1,674 per failure — against the 30,896 bytes of headroom that
+  now remain below the pipe. **Roughly 18 failing tests puts the payload back over the buffer**,
+  which is a reachable number on a bad refactor and is exactly when the reader most needs
+  pre-commit to survive long enough to print which check failed.
+
   `scripts/gate_hook.sh` now stands between them: it runs the gate, writes the full stream to a log
   (`$MFGARCHON_GATE_LOG`, default `$TMPDIR/mfgarchon-gate.log`), and prints a bounded summary —
   identity lines, per-check verdicts, any `FAIL`/`WARN`/`FAILED`, and the gate's own verdict. 6,353

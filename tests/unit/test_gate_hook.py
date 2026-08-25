@@ -51,10 +51,22 @@ def _run(tmp_path: Path, *, rc: int, body: str = "", noise: int = 2000, verdict:
     shutil.copy(ADAPTER, tmp_path / "gate_hook.sh")
     green = "printf '\\033[32mGATE GREEN\\033[0m -- safe to push.\\n'"
     red = "printf '\\033[31mGATE RED\\033[0m -- do not push.\\n'"
+    # rc=2 emits the real CANNOT RUN shape -- a headline plus a body. The docstring below says
+    # "2 is GATE CANNOT RUN", and until this stub said so too that was a claim the test did not
+    # deliver: an auditor would have credited the branch as covered. It also exercises the
+    # `sed -n '/^GATE CANNOT RUN/,$p'` range, which nothing else does.
+    cannot = (
+        "printf '\\033[31mGATE CANNOT RUN\\033[0m -- MFG_PYTHON is unusable\\n'\n"
+        "printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured.\\n'\n"
+        "printf 'Activate the env or set MFG_PYTHON to an interpreter with that tooling.\\n'"
+    )
     stub = tmp_path / "local_ci.sh"
     stub.write_text(
         STUB.format(
-            noise=noise, body=body, rc=rc, verdict=verdict if verdict is not None else (green if rc == 0 else red)
+            noise=noise,
+            body=body,
+            rc=rc,
+            verdict=verdict if verdict is not None else {0: green, 2: cannot}.get(rc, red),
         )
     )
     stub.chmod(0o755)
@@ -75,8 +87,14 @@ def test_the_gates_exit_code_survives_the_adapter(tmp_path, rc):
     The bug this pins returned 0 for every one of them, so the hook would have reported a red gate
     as passing -- the failure mode a pre-push gate exists to prevent.
     """
-    got, _, _ = _run(tmp_path, rc=rc)
+    got, summary, _ = _run(tmp_path, rc=rc)
     assert got == rc, f"stub gate exited {rc}; the adapter reported {got}"
+    if rc == 2:
+        # The BODY, not just the headline. Summarising CANNOT RUN to one clause dropped the
+        # environment-vs-code distinction and the remedy, in the one case where the whole log is
+        # under 1 KB and there is no volume to summarise away.
+        assert "nothing was measured" in summary, f"CANNOT RUN lost its body:\n{summary}"
+        assert "Activate the env" in summary, f"CANNOT RUN lost its remedy:\n{summary}"
 
 
 def test_a_coloured_per_check_FAIL_reaches_the_summary(tmp_path):
