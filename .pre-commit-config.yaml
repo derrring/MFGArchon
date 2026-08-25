@@ -60,7 +60,7 @@ repos:
     hooks:
       - id: local-ci-gate
         name: Full test gate (scripts/local_ci.sh)
-        entry: scripts/local_ci.sh
+        entry: scripts/gate_hook.sh
         language: system
         pass_filenames: false
         always_run: true
