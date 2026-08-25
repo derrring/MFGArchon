@@ -74,20 +74,73 @@ def test_a_bare_exponent_RAISES_for_an_INT_field(tmp_path):
     assert load_solver_config(path).picard.max_iterations == 1000
 
 
-def test_the_int_fields_the_doc_names_are_the_int_fields_that_exist():
-    """The doc lists four exposed `int` fields by name. Pin the list, not the count."""
+def _int_valued_fields() -> list[str]:
+    """Dotted paths of every int-valued field, from pydantic's OWN JSON schema.
 
-    def walk(model, prefix=""):
-        for name, field in model.model_fields.items():
-            annotation = field.annotation
-            if hasattr(annotation, "model_fields"):
-                yield from walk(annotation, f"{prefix}{name}.")
-            elif annotation is int:
-                yield f"{prefix}{name}"
+    Deliberately not a hand-rolled annotation walker. Two were written for this test and both were
+    wrong: the first treated `Model | None` as a leaf and pruned three whole subtrees, missing 11
+    of 15 fields; the second deduped by model class and lost a model reachable by two paths. The
+    schema is the model's account of itself and agrees with a behavioural probe.
+    """
+    schema = MFGSolverConfig.model_json_schema()
+    defs = schema.get("$defs", {})
 
-    assert set(walk(MFGSolverConfig)) == {
-        "hjb.accuracy_order",
-        "hjb.newton.max_iterations",
-        "picard.anderson_memory",
-        "picard.max_iterations",
-    }, "docs/user/configuration_system.md names these four; update both together"
+    def walk(node, prefix="", seen=()):
+        for name, spec in node.get("properties", {}).items():
+            for option in [spec, *spec.get("anyOf", [])]:
+                ref = option.get("$ref", "").rsplit("/", 1)[-1]
+                if ref and ref in defs and ref not in seen:
+                    yield from walk(defs[ref], f"{prefix}{name}.", (*seen, ref))
+                elif option.get("type") == "integer":
+                    yield f"{prefix}{name}"
+                elif "enum" in option and all(isinstance(v, int) and not isinstance(v, bool) for v in option["enum"]):
+                    yield f"{prefix}{name}"  # Literal[int]: same failure, different message
+
+    return sorted(set(walk(schema)))
+
+
+def _nested(path: str, raw: str) -> str:
+    """A YAML document setting one dotted path to an unquoted scalar."""
+    parts = path.split(".")
+    return "".join(f"{'  ' * i}{p}:\n" for i, p in enumerate(parts[:-1])) + (
+        f"{'  ' * (len(parts) - 1)}{parts[-1]}: {raw}\n"
+    )
+
+
+def test_every_int_field_rejects_a_bare_exponent_through_the_loader(tmp_path):
+    """The PROPERTY, not a list of names. Naming them failed twice; this cannot go stale.
+
+    An earlier version of this test asserted that the four fields the doc named were the four that
+    exist. It passed while being wrong about 11 of 15, because the walker it compared against
+    carried the same blind spot as the list -- both sides of the `==` shared the bug, so it
+    certified the wrong answer instead of catching it.
+
+    Every int-valued field rejects `5e3`: 11 with `int_parsing` and 4 -- the `Literal[int]` ones --
+    with `literal_error`. Same cause, different message, so the assertion is that it raises.
+    """
+    fields = _int_valued_fields()
+    assert "picard.max_iterations" in fields, f"the derivation lost a known field; got {fields}"
+    assert len(fields) >= 10, (
+        f"the derivation is what makes this test non-vacuous; it found only {len(fields)}: {fields}"
+    )
+
+    accepted = []
+    for path in fields:
+        cfg = tmp_path / "c.yaml"
+        cfg.write_text(_nested(path, "5e3"))
+        assert isinstance(yaml.safe_load(cfg.read_text()), dict), f"malformed fixture for {path}"
+        try:
+            load_solver_config(cfg)
+            accepted.append(path)
+        except Exception:  # the point is that SOMETHING refuses it, not which type
+            pass
+    assert not accepted, (
+        f"these int fields accepted the bare-exponent spelling `5e3`, so the migration note in "
+        f"docs/user/configuration_system.md is wrong about them: {accepted}"
+    )
+
+    # Negative control: the same spelling on a float field must still load, or the test above is
+    # passing because `load_solver_config` rejects everything.
+    cfg = tmp_path / "float.yaml"
+    cfg.write_text("picard:\n  tolerance: 1e-8\n")
+    assert load_solver_config(cfg).picard.tolerance == pytest.approx(1e-8)

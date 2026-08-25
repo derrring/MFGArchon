@@ -23,9 +23,9 @@
   `load_solver_config` is unaffected — it validates non-strictly and coerces the string back — so
   `tolerance: 1e-8` still loads. For **int** fields it is not: a string will not coerce to `int`
   even non-strictly, so `picard.max_iterations: 1e3` raises out of `load_solver_config` itself,
-  where OmegaConf accepted it by resolving to `1000.0` first. Four fields are exposed
-  (`hjb.accuracy_order`, `hjb.newton.max_iterations`, `picard.anderson_memory`,
-  `picard.max_iterations`). Nothing shipped here was affected; the removed default configs all used
+  where OmegaConf accepted it by resolving to `1000.0` first. It applies to all 15 `int`-valued
+  fields, not the four the first version of this note named -- the other eleven sit behind optional
+  sub-models (`fp.particle`, `hjb.gfdm`, `hjb.fem`) that a hand-rolled annotation walker skipped. Nothing shipped here was affected; the removed default configs all used
   the `1.0e-6` spelling. `tests/unit/test_config/test_yaml_scalar_typing_1687.py` pins the table,
   both field-type outcomes, and the four int fields by name, because a documented behaviour is a
   claim that rots on the next PyYAML release.
