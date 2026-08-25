@@ -218,7 +218,6 @@ def content_duplicates(root: Path, files: list[str]) -> set[str]:
             meta, path = entry.split("\t", 1)
             modes[path] = meta.split(" ", 1)[0]
 
-    wanted = set(files)
     by_inode: dict[tuple[int, int], list[str]] = {}
     for f in files:
         try:
@@ -233,15 +232,23 @@ def content_duplicates(root: Path, files: list[str]) -> set[str]:
     for paths in by_inode.values():
         if len(paths) < 2:
             continue
-        links = [p for p in paths if modes.get(p) == "120000"]
-        if len(links) == len(paths) - 1 and all(str(Path(p)) in wanted or True for p in paths):
-            skip.update(links)
-            continue
-        raise InstrumentError(
-            f"these tracked paths are one file on this filesystem and none of them is a symlink: "
-            f"{', '.join(sorted(paths))} -- every citation in it would be counted once per entry. "
-            f"Resolve the duplicate index entry (`git rm --cached` one of them) and re-run."
-        )
+        # COUNT the regular files; do not match an exact group shape. The previous version
+        # required exactly one non-symlink, so a group of two symlinks pointing at an UNTRACKED
+        # target -- a legitimate tree -- was refused, with a message asserting "none of them is a
+        # symlink" while both were. It also carried `... or True`, which made its other half
+        # unconditionally true: the third inert guard on this issue, and no test saw any of it.
+        regulars = [p for p in paths if modes.get(p) != "120000"]
+        if len(regulars) >= 2:
+            raise InstrumentError(
+                f"these tracked paths are one file on this filesystem and at least two of them "
+                f"are regular files, not symlinks: {', '.join(sorted(regulars))} -- every citation "
+                f"in it would be counted once per entry. Resolve the duplicate index entry "
+                f"(`git rm --cached` one of them) and re-run."
+            )
+        # Keep one representative -- the regular file when there is one, otherwise any single
+        # symlink -- and skip the rest. Chains and groups of three collapse to one count too.
+        keep = regulars[0] if regulars else sorted(paths)[0]
+        skip.update(p for p in paths if p != keep)
     return skip
 
 

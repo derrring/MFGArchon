@@ -339,4 +339,49 @@ def test_two_NON_symlink_entries_on_one_inode_are_refused(tmp_path):
         [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
     )
     assert out.returncode == 2, out.stdout + out.stderr
-    assert "none of them is a symlink" in out.stderr, out.stderr
+    assert "at least two of them" in out.stderr, out.stderr
+
+
+def _stage_symlink(root: Path, link: str, target: str) -> None:
+    (root / link).symlink_to(target)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    mode = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", link], capture_output=True, text=True, check=True
+    ).stdout
+    assert mode.startswith("120000"), f"{link} was not staged as a symlink: {mode!r}"
+
+
+def test_two_symlinks_to_an_UNTRACKED_target_are_not_refused(tmp_path):
+    """A group whose members are ALL symlinks. The previous rule required exactly one non-symlink,
+    so this legitimate tree was refused -- and told "none of them is a symlink" while both were.
+    The rule counts regular files now instead of matching a group shape."""
+    root = _git_tree(tmp_path, {"pkg/target.py": TARGET})
+    (root / "untracked.md").write_text(DRIFTED_LINE)
+    (root / ".gitignore").write_text("untracked.md\n")
+    _stage_symlink(root, "s1.md", "untracked.md")
+    _stage_symlink(root, "s2.md", "untracked.md")
+
+    got = _measure(root)
+    assert len(got["drifted"]) == 1, f"one file, one citation, counted {len(got['drifted'])} times"
+
+
+def test_a_symlink_chain_collapses_to_one_count(tmp_path):
+    """`link2 -> link1 -> real`, all three tracked: one file, one citation."""
+    root = _git_tree(tmp_path, {"real.md": DRIFTED_LINE, "pkg/target.py": TARGET})
+    _stage_symlink(root, "link1.md", "real.md")
+    _stage_symlink(root, "link2.md", "link1.md")
+
+    got = _measure(root)
+    assert len(got["drifted"]) == 1, f"the chain was counted {len(got['drifted'])} times"
+    assert got["drifted"][0]["file"] == "real.md", got["drifted"]
+
+
+def test_the_regular_file_is_the_one_kept(tmp_path):
+    """Which representative survives is a contract, not an accident: the citation must be reported
+    against the real file, so that a reader following the report edits the file rather than a link.
+    """
+    root = _git_tree(tmp_path, {"real.md": DRIFTED_LINE, "pkg/target.py": TARGET})
+    _stage_symlink(root, "aaa_sorts_first.md", "real.md")
+
+    got = _measure(root)
+    assert [r["file"] for r in got["drifted"]] == ["real.md"], got["drifted"]
