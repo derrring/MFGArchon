@@ -239,3 +239,33 @@ def test_the_self_test_notices_when_an_exemption_is_dropped():
                 setattr(mod, attr, keep)
     finally:
         sys.path.pop(0)
+
+
+def test_a_tree_mid_conflict_is_refused_not_counted_three_times(tmp_path):
+    """`git ls-files` lists an unmerged path once per stage, so every citation in a conflicted file
+    is counted three times -- found by rebasing this very branch, where `missing` read 62 against
+    the resolved tree's 30. Both halves are asserted: no duplication, and no verdict at all over a
+    tree holding `<<<<<<<` markers and both versions of every line."""
+    git = ["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t"]
+    root = _git_tree(tmp_path, {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    base = subprocess.run(
+        [*git, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run([*git, "checkout", "-qb", "other"], check=True)
+    (root / "doc.md").write_text("`far_from_the_citation` at pkg/target.py:30.\n")
+    subprocess.run([*git, "commit", "-aqm", "theirs"], check=True)
+    subprocess.run([*git, "checkout", "-q", base], check=True)
+    (root / "doc.md").write_text("`near_the_citation` at pkg/target.py:31.\n")
+    subprocess.run([*git, "commit", "-aqm", "ours"], check=True)
+    subprocess.run([*git, "merge", "other"], capture_output=True, check=False)
+
+    assert subprocess.run(
+        [*git, "ls-files", "--unmerged"], capture_output=True, text=True, check=True
+    ).stdout.strip(), "the fixture did not actually produce a conflict -- this test proves nothing"
+
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
+    )
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "unmerged" in out.stderr, out.stderr

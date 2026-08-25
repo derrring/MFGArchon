@@ -122,6 +122,32 @@ def tracked_files(root: Path) -> list[str]:
     files = [f for f in out.stdout.split("\0") if f]
     if not files:
         raise InstrumentError(f"git ls-files returned nothing in {root} -- not a repository?")
+
+    # An UNMERGED index lists each conflicted path once per stage, so `git ls-files` returns it
+    # three times and every citation in it is counted three times. Found by rebasing this branch:
+    # `missing` read 62 where the resolved tree reads 30, and a gated number would have tripled the
+    # same way for a file that merely happened to be conflicted.
+    #
+    # Refusing is the whole fix, and deduplicating as well was tried and DELETED: unmerged entries
+    # are the only way `git ls-files` repeats a path, so with this raise in place the dedup could
+    # not be reached -- mutating it away killed none of the tests. A guard with no reachable input
+    # is not a second layer of safety, it is a line that reads like one.
+    #
+    # The refusal is also the right verdict on its own terms: a file mid-conflict holds `<<<<<<<`
+    # markers and both versions of every line, so any count over it is meaningless.
+    unmerged = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--unmerged", "-z"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    if unmerged.strip("\0").strip():
+        paths = sorted({e.split("\t", 1)[1] for e in unmerged.split("\0") if "\t" in e})
+        raise InstrumentError(
+            f"the index has unmerged paths ({', '.join(paths[:3])}"
+            f"{', ...' if len(paths) > 3 else ''}) -- a tree mid-conflict holds both versions of "
+            f"every line and any count over it is meaningless. Finish the merge and re-run."
+        )
     return files
 
 
