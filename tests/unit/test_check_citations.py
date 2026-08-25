@@ -566,3 +566,72 @@ def test_the_baseline_file_itself_does_not_make_the_tree_dirty(tmp_path):
         f"defect it pins: {porcelain!r}"
     )
     assert not _write_baseline_at(root, baseline).endswith("-dirty")
+
+
+def test_hiding_a_drifted_citation_is_named_as_HIDING_even_when_the_count_is_compensated(tmp_path):
+    """Isolates the `hidden` branch, which the script's own `--self-test` cannot: deleting a symbol
+    always shrinks `adjudicable` too, and inside the full self-test fixture a sibling branch fires
+    alongside it, so killing the `hidden` report there leaves the run red for the wrong reason.
+
+    Here the deletion is compensated by a fresh ANCHORED citation, so the denominator does not move
+    and this is the only branch that can speak.
+    """
+    anchored = "`near_the_citation` is defined at pkg/target.py:30.\n"
+    root, baseline = _with_baseline(tmp_path, anchored + "\n" + DRIFTED)
+    (root / "doc.md").write_text(
+        anchored
+        + "\n"
+        + DRIFTED.replace("`far_from_the_citation` is", "Something is")
+        + "\nAlso `near_the_citation` at pkg/target.py:31.\n"
+    )
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    # "adjudicable" as a bare substring also matches "unadjudicable" -- the first version of this
+    # assertion did, and failed on a correct run. Match the message the branch actually prints.
+    assert "the denominator" not in out, f"the denominator moved, so this isolates nothing: {out}"
+    assert "NOT by being fixed" in out
+    assert "doc.md -> pkg/target.py:30" in out
+
+
+def test_a_correct_repoint_is_not_accused_of_hiding(tmp_path):
+    """The inverse, and the defect this pins is one review introduced INTO the fix for the
+    misdiagnosis: the location key cannot tell "this row lost its symbol" from "an unrelated
+    sentence in this file already cited that line without one". On the real repository one of the
+    19 recorded rows already collides, and repointing it correctly was reported as the evasion.
+
+    A location already ambiguous when the baseline was written is not evidence of anything later.
+    """
+    doc = DRIFTED + "\nAn unrelated remark about pkg/target.py:30.\n"
+    root, baseline = _with_baseline(tmp_path, doc)
+    (root / "doc.md").write_text(doc.replace("pkg/target.py:30, the prose says", "pkg/target.py:120, the prose says"))
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    assert "IMPROVED" in out, "a correct repoint must read as progress"
+    assert "NOT by being fixed" not in out, "a correct repoint was accused of being the evasion"
+
+
+def test_rewriting_a_bare_basename_to_its_full_path_is_the_same_claim(tmp_path):
+    """The identity key resolves the target before keying on it. Keying on the literal citation
+    text reported one unchanged claim, written more precisely, as a regression AND an improvement --
+    and that rewrite is exactly the correct repair for the `ambiguous` and `missing` rows."""
+    root, baseline = _with_baseline(tmp_path, "`far_from_the_citation` is at target.py:30.\n")
+    (root / "doc.md").write_text("`far_from_the_citation` is at pkg/target.py:30.\n")
+    rc, out = _ratchet(root, baseline)
+    assert rc == 0, out
+
+
+def test_a_baseline_written_OUTSIDE_the_repository_does_not_crash(tmp_path):
+    """`--write-baseline /tmp/x.json` is a legitimate invocation and it raised ValueError: the
+    dirty-check's carve-out called `path.relative_to(root)` unguarded. Found by a replay harness
+    whose positive control went red, not by reading the code."""
+    root, _ = _commit_tree(tmp_path / "repo", {"doc.md": DRIFTED, "pkg/target.py": TARGET})
+    outside = tmp_path / "outside.json"
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "--write-baseline", str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert outside.is_file(), "the baseline was not written"
