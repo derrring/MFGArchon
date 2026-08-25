@@ -100,20 +100,28 @@ H = 0.1
 #:
 #: The x-axis carries three neighbours for two conditions, hence a one-dimensional nullspace and a
 #: genuine optimisation. The y-axis carries two for two and is FORCED -- `L_3 = 20.0` and
-#: `||D_3|| = 3.0` exactly, at every scale and at every `C` in {1, 2, 4, 8}. No y-axis quantity can
+#: `||D_3|| = 3.0` to within 6e-13, at every scale and at every `C` in {1, 2, 4, 8}. A BOUND, not
+#: an exactness: these are solver outputs wearing integers' clothing, and `L_3` is bit-equal to
+#: 20.0 in 0 of those 16 combinations. No y-axis quantity can
 #: discriminate anything, which is why both tests below read the x-axis.
 SCALE_STENCIL = np.array([[0.0, 0.0], [H, 0.0], [-1.4 * H, 0.0], [0.0, 2 * H], [0.0, -3 * H], [5 * H, 0.0]])
 
-#: `DELTA_MULT` is load-bearing and is NOT a free parameter, but the shape of its window is not
-#: what you would guess. Scanned at 0.01 resolution: all three assertions of the fast-path test
-#: hold over [0.57, 1.59], and the stencil falls to `socp_clarabel` above 1.59. The low side does
-#: NOT degrade monotonically -- 0.60, 0.80 and 0.90 all give the same healthy `minL` of 3.198, and
-#: the only bad region is a narrow NOTCH at roughly 0.98-1.00 where `minL` dips to 1e-07. So
-#: "lower is worse" is the wrong lesson; "avoid the notch and stay under 1.59" is the right one.
+#: `DELTA_MULT` is load-bearing and is NOT a free parameter. The set where all three assertions of
+#: the fast-path test hold is NOT AN INTERVAL -- scanned at 0.01 resolution it is
 #:
-#: 1.3 sits 56% above the notch and 22% below the cliff. An earlier version used 1.5, which is
-#: inside the window but only 6% below the cliff, so a change to `wendland_stencil_weights` would
-#: have fired the `via` assertion and read as a library regression.
+#:     [0.57, 0.94]  u  [1.11, 1.57]
+#:
+#: with a band at 0.95-1.10 in between where `minL` falls below the guard: 3.198 at 0.94, then
+#: 5.6e-03, bottoming near 1.2e-07 around 1.00, then climbing back through 0.889 at 1.10 and
+#: crossing 1.0 at 1.11. So "lower is worse" is wrong -- 0.60 and 0.80 are as usable as 1.30 -- and
+#: so is "one narrow notch", which two earlier versions of this comment said. It is a hole.
+#:
+#: The upper edge is set by the GUARD, not by the dispatch: `via` stays on the fast path to 1.59,
+#: but `minL` is 1.057 at 1.57 and 0.635 at 1.58, so `minL > 1.0` fails first.
+#:
+#: 1.3 sits 14.6% above the band and 20.8% below the upper edge, roughly centred in the upper
+#: interval. An earlier version used 1.5, which is 5% below that edge; a change to
+#: `wendland_stencil_weights` would have pushed it out and read as a library regression.
 DELTA_MULT = 1.3
 
 #: The OTHER dispatch path. Wendland least-squares weights that already satisfy the cone at
