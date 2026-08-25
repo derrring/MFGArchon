@@ -1,5 +1,5 @@
 - **The suite's warnings are ratcheted on identity** (Issue #2119). #2118 stopped the gate printing
-  pytest's 6,030-line warnings summary — 95.7% of everything it emitted — because that volume broke
+  pytest's 6,030-line warnings summary — 95.7% of its output BY BYTES, 94.9% by lines — because that volume broke
   pre-commit's writer. **Suppressing a listing makes ignoring it cheaper, so on its own that was a
   regression in attention, not a fix.** "The count is still in the tail" is not a defence: a number
   scrolls past exactly the way 6,030 lines did, and the evidence is that the listing was printed in
@@ -14,16 +14,23 @@
   **Keyed on identity, not count, and the key was chosen by measurement after two designs were
   falsified by the next sample:**
 
-  | key | run 1 | run 2 | run 3 |
-  |:--|--:|--:|--:|
-  | occurrences | 5021 | 5022 | 5022 |
-  | raw `text[:60]` | 315 | 318 | — |
-  | digits→`N`, `text[:60]` | 240 | 240 | **230** |
-  | digits→`N`, `text[:40]` | **225** | **225** | **225** |
+  | key | value | note |
+  |:--|--:|:--|
+  | occurrences | 5022 | 5021–5023 parallel, **5002 serial** — an exact gate flakes |
+  | `(file, line, kind)` | 609 | stable across runs, useless across edits |
+  | raw `text[:60]` | 318 | messages embed measurements, so each count is its own identity |
+  | digits→`N`, `text[:60]` | 230 | **called stable on two agreeing runs; the third differed** |
+  | digits→`N`, `text[:40]` | **225** | what this gates on |
 
-  Occurrences jitter, so an exact gate flakes and a banded one lets new warnings in silently. Raw
-  text embeds measurements (`Hybrid neighborhood: 4/21 points (19.0%)`), so each count was its own
-  identity. The 60-character key was called stable on two agreeing runs and the third broke it.
+  All rows computed from the same raw run so they are comparable. Stability of the shipped key:
+  **eleven agreeing full-suite runs including a fully serial one**, three mine and eight an
+  independent reviewer's, every one set-equal to the committed baseline.
+
+  **What justifies 40 is samples plus a PARTIAL mechanism, and that is stated rather than dressed
+  up.** The digit normalisation closes the one channel that is understood. A second channel this
+  changelog originally named — a `Reason: …` suffix said to render inconsistently — was measured
+  **false** by review: both forms appear in the same run, from two distinct decorated `__init__`s.
+  The 60-character key's instability channel is still unexplained.
 
   **40 is stable by being coarser, not by removing the variation, and that costs something
   measurable**: against the 60-character key it merges 5 groups, about three of them real

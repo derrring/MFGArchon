@@ -7,16 +7,32 @@ calls it was reporting were retired. #2118 stopped printing the listing, which m
 cheaper unless something counts them. "The count is still in the tail" is not that something: a
 number scrolls past exactly the way the listing did.
 
-WHY IDENTITY AND NOT OCCURRENCES. Measured on two runs of the real suite at one commit:
+WHY IDENTITY AND NOT OCCURRENCES, and why THIS identity. Measured on one full-suite run, every
+key computed from the same raw records so the rows are comparable:
 
-    occurrences               5022  vs  5023   <- jitters, so an exact gate flakes and a banded
-                                                  one lets new warnings in silently
-    (file, line, kind)         608  vs   608   <- stable across runs, useless across edits:
-                                                  inserting a line moves every identity in a file
-    (file, kind, text[:60])    315  vs   315   <- stable, and survives an edit
+    occurrences                 5022    jitters 5021-5023 parallel, 5002 serial -- an exact gate
+                                        flakes, a banded one admits new warnings silently
+    (file, line, kind)           609    stable across runs, useless across edits: inserting one
+                                        line moves every identity in that file
+    raw text[:60]                318    messages embed measurements ("Hybrid neighborhood: 4/21
+                                        points (19.0%)"), so each count is its own identity
+    digits->N, text[:60]         230    called STABLE here on two agreeing runs; the third gave a
+                                        different number. That sentence shipped in this docstring.
+    digits->N, text[:40]         225    <- what this gates on
 
-So this gates on the third and REPORTS the first. It is the move `check_citations.py` made when it
-went from counting drifted citations to naming them, for the same reason.
+WHAT JUSTIFIES 40, HONESTLY. Eleven agreeing full-suite runs, including a fully serial one, plus
+ONE understood channel: the embedded measurements, which the digit normalisation closes. A second
+channel named in an earlier version of this file -- a `Reason: ...` suffix said to render
+inconsistently -- was measured FALSE; both forms appear in the same run from two distinct decorated
+`__init__`s. **The 60-character key's instability channel remains unexplained.** So this is samples
+plus a partial mechanism, not a proof, and it is written that way because the alternative already
+put a falsified "stable" into this docstring once.
+
+AND IT IS STABLE BY BEING COARSER. Against the 60-character key it merges 5 groups, three of them
+real distinctions -- `signature 'legacy'` with `'neural'`, Newton's "iteration budget" with
+"residual stopped decreasing", and `ZeroFluxCalculator` with `ZeroGradientCalculator`. A new
+warning differing from an existing one only past character 40 of the same file and category raises
+no new identity. Verified by construction, not inferred.
 
 BIDIRECTIONAL, like the other four baselines. A new identity is a regression. A DISAPPEARED one is
 progress that must be recorded, so a fix cannot land silently and a later regression cannot hide
@@ -37,6 +53,11 @@ from pathlib import Path
 
 BASELINE = Path(__file__).resolve().parent / "warning_baseline.json"
 
+#: A full run is ~6,600 outcomes. The floor only has to separate a real run from a collect-only
+#: one (which reports 0) or a run that died in the first seconds; it is deliberately far below the
+#: real number so that legitimately shrinking the suite does not trip it.
+MIN_TESTS = 500
+
 
 def _load_census(path: Path) -> dict:
     if not path.is_file():
@@ -51,11 +72,21 @@ def _load_census(path: Path) -> dict:
 
 
 def _self_test() -> int:
-    """Positive control: the ratchet must fire in BOTH directions and stay silent on no change.
+    """Positive control, run through the PRODUCTION path -- exit code and printed text both.
 
-    A baseline is only evidence if the comparison still works. Each case is built from the shipped
-    baseline itself, so this exercises the real identities rather than a toy set.
+    An earlier version routed its cases through a `quiet=True` shortcut that returned before every
+    line the real path executes. It was green under three separate mutations that broke the gate:
+    turning the production `return 1` into `return 0` (the ratchet then PRINTS a regression and
+    exits 0, so `check $?` reports PASS); swapping `appeared` with `left` (a regression reported as
+    progress, with an instruction that records it into the baseline); and comparing the baseline to
+    itself. A control that does not execute the return the caller reads is not a control.
+
+    So: `contextlib.redirect_stdout` over the real comparison, assert the code AND the direction,
+    and drive one case through `main()` so nothing between census-load and comparison is uncovered.
+    This is the shape `check_citations.py` already uses in this directory.
     """
+    import contextlib
+    import io
     import tempfile
 
     if not BASELINE.is_file():
@@ -63,41 +94,60 @@ def _self_test() -> int:
         return 2
     base = json.loads(BASELINE.read_text())["identities"]
     if len(base) < 2:
-        print(f"self-test CANNOT RUN: baseline has {len(base)} identities, need 2 to remove one", file=sys.stderr)
+        print(f"self-test CANNOT RUN: baseline has {len(base)} identities, need 2", file=sys.stderr)
         return 2
 
-    cases = {
-        "unchanged": (base, 0),
-        "one appeared": ([*base, "mfgarchon/_probe.py\tUserWarning\tself-test injected identity"], 1),
-        "one vanished": (base[1:], 1),
-    }
+    probe = "mfgarchon/_probe.py\tUserWarning\tself-test injected identity"
+    cases = [
+        ("unchanged", base, 0, None),
+        ("one appeared", [*base, probe], 1, "NEW warning identities (1)"),
+        ("one vanished", base[1:], 1, "Warning identities GONE (1)"),
+    ]
     failures = []
+    for label, identities, want_rc, want_text in cases:
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            rc = _compare(set(identities), set(base), 0)
+        out = sink.getvalue()
+        if rc != want_rc:
+            failures.append(f"{label}: expected exit {want_rc}, got {rc}")
+        if want_text and want_text not in out:
+            # Direction matters: swapping appeared/left keeps the exit code and inverts the meaning.
+            failures.append(f"{label}: expected {want_text!r} in the output, got {out.strip()[:90]!r}")
+        if want_text is None and out.strip() and "ratchet OK" not in out:
+            failures.append(f"{label}: expected an OK line, got {out.strip()[:90]!r}")
+
+    # One case through main(), so census loading and the baseline read are covered too.
     with tempfile.TemporaryDirectory() as tmp:
-        for name, (identities, expected) in cases.items():
-            census = Path(tmp) / "census.json"
-            census.write_text(json.dumps({"identities": sorted(identities), "occurrences": 0}))
-            got = _compare(set(json.loads(census.read_text())["identities"]), set(base), 0, quiet=True)
-            if got != expected:
-                failures.append(f"{name}: expected exit {expected}, got {got}")
+        census = Path(tmp) / "census.json"
+        census.write_text(json.dumps({"identities": sorted([*base, probe]), "occurrences": 0}))
+        argv = sys.argv
+        try:
+            sys.argv = ["check_warnings.py", "--census", str(census)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main()
+        finally:
+            sys.argv = argv
+        if rc != 1:
+            failures.append(f"through main(): an appeared identity must exit 1, got {rc}")
 
     if failures:
         for line in failures:
             print(f"self-test FAILED: {line}", file=sys.stderr)
         return 1
-    print(f"self-test OK: appeared and vanished both fire, no-change stays silent ({len(base)} identities)")
+    print(
+        f"self-test OK: both directions fire with the right message, no-change is silent, main() agrees ({len(base)} identities)"
+    )
     return 0
 
 
-def _compare(now: set[str], was: set[str], occurrences: int, *, quiet: bool = False) -> int:
-    """Shared by the ratchet and its self-test, so the control exercises the real comparison."""
+def _compare(now: set[str], was: set[str], occurrences: int) -> int:
+    """The one comparison. No quiet mode: a control that skips the caller's return is not one."""
     appeared = sorted(now - was)
     left = sorted(was - now)
     if not appeared and not left:
-        if not quiet:
-            print(f"warnings ratchet OK: {len(now)} identities, {occurrences} occurrences (not gated)")
+        print(f"warnings ratchet OK: {len(now)} identities, {occurrences} occurrences (not gated)")
         return 0
-    if quiet:
-        return 1
     if appeared:
         print(f"\nNEW warning identities ({len(appeared)}) -- something started warning that did not:")
         for identity in appeared:
@@ -131,6 +181,19 @@ def main() -> int:
     census = _load_census(census_path)
     now = set(census["identities"])
 
+    # A census from a collect-only or truncated run looks well-formed and is not a measurement.
+    # Without this the ratchet reports hundreds of identities GONE and instructs the reader to
+    # re-baseline -- which would write that non-measurement into the artifact.
+    ran = census.get("tests_run")
+    if ran is not None and ran < MIN_TESTS:
+        print(
+            f"CANNOT RUN: the census records {ran} test outcomes, below the {MIN_TESTS} floor.\n"
+            "That is a collect-only or truncated run, not a measurement of the suite. Refusing\n"
+            "rather than reporting every identity as vanished.",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.show:
         for identity in sorted(now):
             print(identity.replace("\t", "  |  "))
@@ -141,7 +204,8 @@ def main() -> int:
             json.dumps(
                 {
                     "_comment": (
-                        "Warning identities the suite emits (#2119). Keyed (file, kind, text[:60]) -- NOT "
+                        "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised "
+                        "text[:40]) -- NOT "
                         "line numbers, which move under any edit, and NOT occurrence counts, which jitter "
                         "run to run. Bidirectional: a new identity is a regression, a removed one is "
                         "progress that must be recorded here. `occurrences` is reported, never gated. "

@@ -1,5 +1,5 @@
 {
-  "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, text[:60]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. Regenerate with --write-baseline.",
+  "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. Regenerate with --write-baseline.",
   "occurrences_when_written": 5022,
   "identities": [
     "<string>\tUserWarning\tMeshData with dimension=N is experimenta",

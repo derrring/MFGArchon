@@ -124,7 +124,7 @@ MYPY_PROBE="mfgarchon/config/_gate_probe.py"
 # exists to remove. Worse, a SIGINT inside the 4.2 s pass-1 probe killed that probe and let the
 # search fall through to the next candidate, silently changing which interpreter the gate used.
 # `exit 130` is what restores the untrapped behaviour that `main` had for free.
-trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE" "${MFGARCHON_WARNING_CENSUS:-}"; rm -rf "$PROBE_DIR"' EXIT
 trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 # tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
 # source echo and the caret, dropping the `File ...` line that names the culprit.
