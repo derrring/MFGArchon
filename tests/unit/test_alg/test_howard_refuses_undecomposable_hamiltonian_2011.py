@@ -23,8 +23,10 @@ same shape as #1979 one layer over, where a capability gate keyed on BC *type* l
 The alpha-free part it CAN. `howard_running_cost` evaluates the Hamiltonian at p = 0 through the
 same `eval_H_batch` the Newton residual uses -- no private attribute, no decomposition -- and the
 switch that builds it now also fires on the guard's own measurement of |H(x, m, 0, t)|, not only on
-`_potential`/`_coupling`. Measured: `H = |p|^2/2 + g*x*m` gives 1.4586e-01 on Howard against
-1.4687e-01 on Newton, where it gave 0.0000e+00 before.
+`_potential`/`_coupling`. Measured on `H = |p|^2/2 + g*x*m`, where it gave 0.0000e+00 before:
+Howard 1.4687e-01 against Newton 1.4687e-01 under this file's `M_MATRIX_QP`. (Under the
+`joint_socp`/`precompute` this file used before #2093, Howard gives 1.4586e-01 and Newton is
+unchanged -- the scheme moves Howard by 0.7%, not the extraction.)
 
 The control cost it CANNOT, and `_ke` still refuses on it. That is the real limit: Howard
 substitutes a quadratic Lagrangian, and nothing recovers one that is not quadratic.
@@ -36,6 +38,12 @@ measured through the guard, that Hamiltonian is REFUSED with `_ke = 3.121e+03` a
 of 8.0e-09 -- six orders of magnitude, not a margin. What `_ke` cannot separate is `H_control(p) =
 (1/2)|p|^2 + C` from a constant potential `V = C`, and no probe can: they are the same function of
 (x, m, p, t). Treating `H(0)` as the alpha-free part is the standard normalisation, not an error.
+That argument is now measured as well as reasoned: on `H = |p|^2/2 + C + g*x*m`, extracting `C` into
+the running cost shifts `u` by exactly `C*(T - t)` -- `-0.200000` at `t = 0` and `0.000000` at
+`t = T` for `C = 1, T = 0.2` -- IDENTICALLY under Howard and Newton, to six decimals at `C` of 0, 1
+and 10. So `nabla u` is untouched, the policy and the FP drift are untouched, and the Howard-Newton
+gap is bit-for-bit unchanged at `1.6907e-09` across all three. A constant cannot be extracted
+wrongly because there is nothing to get wrong.
 
 The Lagrangian-substitution case is unaffected -- its alpha-free part is exactly zero, so no
 alpha-free gate was ever going to catch it, which is why `_ke` is the one that does.
@@ -65,7 +73,7 @@ L, T, NX, NT = 1.0, 0.2, 21, 10
 # want silently missing. qp_m_matrix runs on osqp, a base dependency, and exercises the same
 # Howard path. SOCP itself is covered by test_socp_m_matrix_property, test_socp_stencil_enlargement
 # and test_joint_socp_mirror_symmetry, which are about SOCP.
-SOCP = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+M_MATRIX_QP = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
 
 
 def _first_coord(x):
@@ -145,7 +153,7 @@ def test_howard_extracts_an_alpha_free_part_it_was_never_told_about():
         return float(np.abs(u1 - u0).max())
 
     newton = spread("newton")
-    howard = spread("howard", **SOCP)
+    howard = spread("howard", **M_MATRIX_QP)
 
     assert newton > 1e-3, "the control itself must see the coupling, or this test proves nothing"
     assert howard > 1e-3, f"Howard still dropped the alpha-free part: {howard:.4e}"
@@ -162,7 +170,7 @@ def test_the_refusal_names_the_consequence_and_the_alternative():
     `_ke` is still a refusal while the alpha-free gate is not.
     """
     with pytest.raises(NotImplementedError) as exc:
-        _solve(_quartic(), "howard", **SOCP)
+        _solve(_quartic(), "howard", **M_MATRIX_QP)
     text = str(exc.value)
     assert "L(alpha) = (1/2)|alpha|^2" in text, "must say WHAT would be substituted"
     assert "not the problem" in text, (
@@ -189,7 +197,7 @@ def test_a_separable_hamiltonian_is_not_refused():
         SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         "howard",
         terminal="cos",
-        **SOCP,
+        **M_MATRIX_QP,
     )
     assert np.all(np.isfinite(u)), "the Howard path must still run for the class it was built for"
     assert np.ptp(u) > 1e-6, "the solve returned a constant field; the Howard path did not run"
@@ -247,7 +255,7 @@ class LambdaTwoQuadratic(HamiltonianBase):
 
 def test_a_bare_unit_quadratic_subclass_is_ACCEPTED():
     """The discriminating control: refusing this is what the attribute-keyed first version did."""
-    u = _solve(BareUnitQuadratic(), "howard", terminal="cos", **SOCP)
+    u = _solve(BareUnitQuadratic(), "howard", terminal="cos", **M_MATRIX_QP)
     assert np.all(np.isfinite(u)), "Howard must accept a Hamiltonian its substitution is exact for"
     assert np.ptp(u) > 1e-6, "the solve returned a constant field; the Howard path did not run"
 
@@ -255,7 +263,7 @@ def test_a_bare_unit_quadratic_subclass_is_ACCEPTED():
 def test_a_lambda_two_quadratic_is_refused_though_its_alpha_free_part_is_zero():
     """The other direction: zero alpha-free part, wrong Lagrangian, and it must still be refused."""
     with pytest.raises(NotImplementedError, match=r"departs from \(1/2\)\|p\|\^2"):
-        _solve(LambdaTwoQuadratic(), "howard", **SOCP)
+        _solve(LambdaTwoQuadratic(), "howard", **M_MATRIX_QP)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -376,7 +384,7 @@ def test_the_probe_sees_hamiltonians_a_fixed_sample_point_cannot(name, factory):
     what it could compute is not a safety property.
     """
     with pytest.raises(NotImplementedError):
-        _solve(factory(), "howard", **SOCP)
+        _solve(factory(), "howard", **M_MATRIX_QP)
 
 
 def _pure_bump():
@@ -490,7 +498,7 @@ def test_the_probe_finds_a_kinetic_defect_at_the_magnitudes_the_solve_visits(nam
     Lipschitz constant tracks the truth, so the ladder's rungs land where the solve lives.
     """
     with pytest.raises(NotImplementedError, match="cannot decompose"):
-        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **SOCP)
+        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **M_MATRIX_QP)
 
 
 def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():
@@ -501,15 +509,16 @@ def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():
     safe. Measured before the fix: accepted, all-finite output, 153% wrong against Newton.
     """
     with pytest.raises(NotImplementedError, match="non-finite"):
-        _solve(_nan_at_one_probe_point(), "howard", terminal="cos", **SOCP)
+        _solve(_nan_at_one_probe_point(), "howard", terminal="cos", **M_MATRIX_QP)
 
 
 def test_the_denser_ladder_does_not_false_refuse_a_genuine_quadratic():
     """The control for the two above. A denser probe can only make a TRUE refusal stricter --
     a genuine quadratic matches the kinetic reference at every |p| -- and this pins that."""
-    u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **SOCP)
+    u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **M_MATRIX_QP)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6
+
 
 @pytest.mark.parametrize(("name", "factory"), _EXTRACT, ids=[n for n, _ in _EXTRACT])
 def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
@@ -519,12 +528,12 @@ def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
     solver that silently returned zeros would satisfy any `isfinite` check and this test would pass
     while proving nothing -- the trap `_solve`'s own docstring names.
     """
-    u = _solve(factory(), "howard", terminal="cos", **SOCP)
+    u = _solve(factory(), "howard", terminal="cos", **M_MATRIX_QP)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6, "accepted, but the solve produced nothing to check"
 
     # the alpha-free part must MOVE the answer: compare against the same Hamiltonian with it gone
-    baseline = _solve(BareUnitQuadratic(), "howard", terminal="cos", **SOCP)
+    baseline = _solve(BareUnitQuadratic(), "howard", terminal="cos", **M_MATRIX_QP)
     assert np.abs(u - baseline).max() > 1e-3, (
         f"{name} was accepted but its alpha-free part changed nothing -- extraction is a no-op, "
         "which is the pre-#2011 behaviour wearing a green test"
@@ -546,6 +555,6 @@ def test_a_wired_alpha_free_part_is_NOT_refused():
             extra={"_potential": (lambda xx, t=0.0: 1.0 * np.asarray(xx).ravel()[0])},
         ),
         "howard",
-        **SOCP,
+        **M_MATRIX_QP,
     )
     assert np.all(np.isfinite(u))

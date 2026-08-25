@@ -4,8 +4,11 @@ expose `_potential` or `_coupling` (#2011). It refused such a Hamiltonian; it no
 The switch that builds Howard's running-cost closure was keyed on those two `SeparableHamiltonian`
 internals, so any other `HamiltonianBase` subclass carrying an `F(x, m)` had it discarded — the
 issue measured `max|u(g=1) − u(g=0)| = 0.0000e+00` on Howard against `1.469e-01` on Newton for
-`H = |p|²/2 + g·x·m`. Measured now: **1.4586e-01 on Howard against 1.4687e-01 on Newton**, a 0.7%
-gap that is the two inner solvers' own discretisation difference.
+`H = |p|²/2 + g·x·m`. Measured now: **1.4687e-01 on Howard against
+1.4687e-01 on Newton** under this file's `M_MATRIX_QP` scheme — the two agree to the printed
+digits, which is stronger than the 5% the test asserts and stronger than the 0.7% recorded when
+this file still used `joint_socp`/`precompute`. The scheme, not the extraction, is what moves
+Howard: under that older scheme it gives 1.4586e-01 and Newton is unchanged at 1.4687e-01.
 
 **No new extraction machinery was needed.** `howard_running_cost` already evaluated the Hamiltonian
 at `p = 0` through the same `eval_H_batch` the Newton residual uses, which requires no private
