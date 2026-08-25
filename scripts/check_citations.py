@@ -95,18 +95,19 @@ Every one was an artefact: citations are usually written as a bare basename -- `
 and a line number -- while the file lives at `mfgarchon/core/mfg_problem.py`, and resolving the
 string as a path misses it.
 
-An example path in THIS file's prose must contribute NO ADJUDICABLE ROW -- not "must not parse as
-a citation", which is what this said and which the file itself violates: the regex's own
-documentation and `resolve`'s traversal example both parse, and land in `missing`, which is
-ungated. The enforceable invariant is the adjudicable one, and
-`test_this_file_contributes_no_adjudicable_citation` pins it. It is not circular: it is the
-instrument judging one ordinary input file, the same shape as the shipped-baseline test.
-
-The reason it needs a pin at all is that `--write-baseline` records whatever is present, which is
-exactly how two rows of this file's own prose shipped inside a passing baseline. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
+That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
 repo-relative path, as a path under `mfgarchon/`, and finally as a basename over every tracked
 `.py`, narrowed by suffix when the citation carries directories. A basename matching more than one
 file is reported AMBIGUOUS rather than guessed.
+
+An example path in THIS file's prose must contribute NO ADJUDICABLE ROW -- not "must not parse as a
+citation", which is what this rule said and which the file itself violates: the regex's own
+documentation and `resolve`'s traversal example both parse, and land in `missing`, which is ungated.
+The enforceable invariant is the adjudicable one, and it needs a pin because `--write-baseline`
+records whatever is present -- which is exactly how two rows of this file's own prose shipped inside
+a PASSING baseline. `test_this_file_contributes_no_adjudicable_citation` is that pin. It is not
+circular: it is the instrument judging one ordinary input file, the same shape as the shipped-
+baseline test.
 
 `CHANGELOG.md` is exempt, on the same reasoning `check_doc_api.py` uses: an entry describing a
 v0.16 line is correct as of then. `archive/` likewise.
@@ -757,11 +758,14 @@ def compare_to_baseline(result: dict, path: Path) -> int:
         problems.append(
             "these citations name a symbol that is no longer near the line they point at:\n"
             + "\n".join(f"      {a}" for a in appeared)
-            + "\n    Read each one. Either the line number is stale -- fix it, or drop it and cite "
-            "the file -- OR the citation is right and this line's backticked name belongs to a "
-            "neighbouring clause, which the instrument cannot tell apart. Hand-read of the 18 "
-            "recorded rows: 9 stale, 8 mis-attributed, 1 already retracted in the prose. If it is "
-            "mis-attributed, change nothing and record it."
+            + "\n    Read each one. Two things it can be, and the instrument cannot tell them apart:"
+            + "\n      - the line number is stale: fix it, or drop it and cite the file;"
+            + "\n      - the citation is right and this line's backticked name belongs to a"
+            + "\n        neighbouring clause. Then change nothing and record it -- a"
+            + "\n        legitimate outcome, not a workaround."
+            + "\n    Of the 18 rows in the standing backlog a hand-read gave 9 stale to 8"
+            + "\n    mis-attributed. That is a rate for accumulated history, not for prose"
+            + "\n    someone just wrote against current code."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

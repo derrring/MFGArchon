@@ -606,11 +606,21 @@ def test_this_file_contributes_no_adjudicable_citation():
     it today -- the regex's own documentation and `resolve`'s `..` traversal example both parse and
     land in `missing`, which is ungated and harmless. What must never happen is an `anchored` or
     `drifted` row, because those are the numbers the ratchet pins.
+
+    NOT VACUOUS BY CONSTRUCTION -- BY INHERITANCE. Blind `measure` (`for f in prose:` -> `for f in
+    []:`) and this test still passes; what fails is `test_the_shipped_baseline_matches_this_repository`
+    two tests up, which pins the population using the same `_measure` helper. The arrangement holds,
+    and it holds because of that sibling, not on its own.
+
+    Both files are checked. `tests/unit/test_check_citations.py` parses 22 citations against this
+    script's 3 -- seven times the exposure -- is prose ABOUT citations, and sits in the same scanned
+    population.
     """
     repo = SCRIPT.parents[1]
     got = _measure(repo)
-    own = [r for r in got["anchored"] + got["drifted"] if r["file"] == "scripts/check_citations.py"]
+    watched = {"scripts/check_citations.py", "tests/unit/test_check_citations.py"}
+    own = [r for r in got["anchored"] + got["drifted"] if r["file"] in watched]
     assert not own, (
-        f"this file's own prose contributed {len(own)} adjudicable row(s) to its own measurement, "
-        f"which the ratchet then pins: {own}"
+        f"prose in this instrument's own files contributed {len(own)} adjudicable row(s) to its own "
+        f"measurement, which the ratchet then pins: {own}"
     )
