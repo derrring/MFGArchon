@@ -18,11 +18,17 @@
 
 - **Behaviour change: YAML scientific notation.** OmegaConf resolved scalars itself and handed
   Pydantic a `float`. PyYAML implements YAML 1.1, whose float rule requires **both a decimal point
-  and a signed exponent**, so `1e-8`, `1E-8`, `1e8` and `-1e-8` now arrive as `str` while `1.0e-8`
-  and `1.e-8` arrive as `float`. `load_solver_config` is unaffected — it validates non-strictly and
-  coerces the string back — so `tolerance: 1e-8` still loads. Code that validates YAML itself with
-  `strict=True` will now reject it. Nothing shipped here was affected; the removed default configs
-  all used the `1.0e-6` spelling.
+  and a signed exponent**, so `1e-8`, `1e8`, `-1e-8` and even `1.0e8` (unsigned exponent) now arrive
+  as `str`, while `1.0e-8` and `1.0E+8` arrive as `float`. For **float** fields
+  `load_solver_config` is unaffected — it validates non-strictly and coerces the string back — so
+  `tolerance: 1e-8` still loads. For **int** fields it is not: a string will not coerce to `int`
+  even non-strictly, so `picard.max_iterations: 1e3` raises out of `load_solver_config` itself,
+  where OmegaConf accepted it by resolving to `1000.0` first. Four fields are exposed
+  (`hjb.accuracy_order`, `hjb.newton.max_iterations`, `picard.anderson_memory`,
+  `picard.max_iterations`). Nothing shipped here was affected; the removed default configs all used
+  the `1.0e-6` spelling. `tests/unit/test_config/test_yaml_scalar_typing_1687.py` pins the table,
+  both field-type outcomes, and the four int fields by name, because a documented behaviour is a
+  claim that rots on the next PyYAML release.
 
   Unknown-field rejection (#1766) is unaffected: it is `extra="forbid"` on the models in
   `config/core.py`, not bridge behaviour. In `test_unknown_fields_are_rejected_1766.py`, two tests

@@ -110,15 +110,25 @@ PyYAML implements YAML 1.1, whose float rule requires **both a decimal point and
 exponent**. OmegaConf resolved scientific notation itself and handed Pydantic a `float`; PyYAML
 hands it a `str`:
 
-| spelling in YAML | `yaml.safe_load` gives |
-|:-----------------|:-----------------------|
-| `1e-8`, `1E-8`, `1e8`, `-1e-8` | `str` |
-| `1.0e-8`, `1.e-8` | `float` |
+| spelling in YAML | `yaml.safe_load` gives | why |
+|:-----------------|:-----------------------|:----|
+| `1e-8`, `1E-8`, `1e8`, `-1e-8` | `str` | no decimal point |
+| `1.0e8`, `1.5e3` | `str` | decimal point, but **unsigned** exponent |
+| `1.0e-8`, `1.0E+8`, `1.e-8`, `.5e+3` | `float` | both present |
 
-`load_solver_config` is unaffected: it calls a non-strict `model_validate`, which coerces the
-string back to `float`. So `tolerance: 1e-8` still loads correctly.
+**For `float` fields, `load_solver_config` is unaffected**: it calls a non-strict `model_validate`,
+which coerces the string back. So `tolerance: 1e-8` still loads correctly.
 
-It matters if you validate YAML yourself with `strict=True`, which rejects the string outright
+**For `int` fields it is not.** A string is not coercible to `int` even non-strictly, so
+`picard.max_iterations: 1e3` raises `Input should be a valid integer, unable to parse string as an
+integer` from `load_solver_config` itself — no `strict=True` required. OmegaConf accepted it,
+because it resolved the scalar to `1000.0` first. The int fields are `hjb.accuracy_order`,
+`hjb.newton.max_iterations`, `picard.anderson_memory` and `picard.max_iterations`; write them
+plainly (`1000`) or with a signed exponent (`1.0e+3`).
+
+Validating YAML yourself with `strict=True` rejects the string on **both** kinds of field
 (`Input should be a valid number [type=float_type, input_value='1e-8', input_type=str]`). Either
-drop `strict=True` on the YAML path, or write `1.0e-8`. Nothing shipped in this repository was
-affected — the removed default configs all used the `1.0e-6` spelling.
+drop `strict=True` on the YAML path, or use a spelling from the `float` row above.
+
+Nothing shipped in this repository was affected — the removed default configs all used the
+`1.0e-6` spelling.
