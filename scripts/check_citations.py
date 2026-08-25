@@ -5,10 +5,16 @@ A line number in a document is a claim with an expiry date, and nothing marks it
 being true. Measured at the time of writing: 19 of the 39 adjudicable citations in this
 repository's live prose -- 49% -- name a symbol that is not near the cited line (Issue #2102).
 
-Those two figures are quoted here and nowhere else, and the volatile ones -- the citation total and
-`missing` -- are quoted nowhere at all. Both move whenever any fixture in `tests/` gains a fake
+That is 19 of the 39 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
+citations are recorded `unadjudicable`, a large majority. Quoting 49% bare reads as "half this
+repository's citations are wrong" and would be #1918's own failure committed against this report.
+
+Those three figures are quoted here and nowhere else. The volatile ones -- the citation total and
+`missing` -- are quoted nowhere at all: both move whenever any fixture in `tests/` gains a fake
 path, and transcribing them by hand from one tree into prose describing another produced three
-separate wrong published counts before this line was written. Run the script.
+separate wrong published counts before this line was written. `unadjudicable` is not in that class
+and dropping it with them was an over-correction; it held at 154 across every commit on this branch
+while the other two moved. Run the script.
 
 THAT PERCENTAGE IS A FUNCTION OF `WINDOW`, AND THE SWEEP HAS NO PLATEAU
 -----------------------------------------------------------------------
@@ -89,6 +95,7 @@ import json
 import re
 import subprocess
 import sys
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -176,17 +183,30 @@ def tracked_files(root: Path) -> list[str]:
     # attempt was deleted rather than kept: `Doc.md` and `doc.md` are distinct strings. The
     # collision has to be resolved against the filesystem, and only for the candidates -- on a
     # case-sensitive filesystem those really are two files and refusing would be wrong.
+    # NFC before casefold, because case is not the only way two names reach one file. Review built
+    # an index holding `cafe\u0301.md` (NFD) and `caf\u00e9.md` (NFC) for a single file: same
+    # st_dev/st_ino, so the check below would have caught them, but `casefold()` alone never paired
+    # them as candidates and the citation was counted twice at exit 0. `core.precomposeunicode` is
+    # true here so macOS will not create it locally; a Linux collaborator committing an NFD name
+    # will. The inode test was right and only the candidate key was too narrow.
     folded: dict[str, str] = {}
     for f in files:
-        clash = folded.setdefault(f.casefold(), f)
-        if clash != f and (root / f).exists() and (root / clash).exists():
+        clash = folded.setdefault(unicodedata.normalize("NFC", f).casefold(), f)
+        if clash == f:
+            continue
+        try:
             a, b = (root / f).stat(), (root / clash).stat()
-            if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino):
-                raise InstrumentError(
-                    f"the index holds {clash!r} and {f!r}, which are the same file on this "
-                    f"filesystem -- every citation in it would be counted twice. Resolve the "
-                    f"duplicate index entry (`git rm --cached` one of them) and re-run."
-                )
+        except OSError:
+            # Neither path resolving is not this guard's business -- an unreadable or vanished
+            # file is reported by the read below. Wrapped because `exists()`-then-`stat()` is a
+            # race, and an unwrapped read is the exact defect this guard was added to fix.
+            continue
+        if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino):
+            raise InstrumentError(
+                f"the index holds {clash!r} and {f!r}, which are the same file on this "
+                f"filesystem -- every citation in it would be counted twice. Resolve the "
+                f"duplicate index entry (`git rm --cached` one of them) and re-run."
+            )
     return files
 
 

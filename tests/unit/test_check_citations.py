@@ -295,6 +295,36 @@ def test_a_failing_unmerged_probe_refuses_instead_of_passing(tmp_path, monkeypat
     assert "--unmerged failed" in out.stderr, out.stderr
 
 
+def test_two_index_entries_differing_only_by_UNICODE_FORM_are_refused(tmp_path):
+    """Case is not the only way two index entries reach one file. `cafe\u0301.md` (NFD) and
+    `caf\u00e9.md` (NFC) are the same file on macOS, and `casefold()` alone never pairs them as
+    candidates -- review measured the citation counted twice at exit 0. The inode test was already
+    right; only the candidate key was too narrow."""
+    import unicodedata
+
+    name_nfc = unicodedata.normalize("NFC", "caf\u00e9.md")
+    name_nfd = unicodedata.normalize("NFD", "caf\u00e9.md")
+    assert name_nfc != name_nfd, "the two Unicode forms must differ or this test proves nothing"
+    root = _git_tree(tmp_path, {name_nfc: "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
+    if not (root / name_nfd).exists():
+        pytest.skip("this filesystem keeps NFD and NFC apart: they really are two files here")
+    git = ["git", "-C", str(root), "-c", "core.precomposeunicode=false"]
+    sha = subprocess.run(
+        [*git, "hash-object", "-w", name_nfc], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run([*git, "update-index", "--add", "--cacheinfo", f"100644,{sha},{name_nfd}"], check=True)
+
+    listed = subprocess.run([*git, "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
+    entries = [e for e in listed.split("\0") if e.endswith(".md")]
+    assert len(entries) == 2, f"the fixture did not produce two index entries: {entries!r}"
+
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
+    )
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "same file on this filesystem" in out.stderr, out.stderr
+
+
 def test_two_index_entries_for_one_file_are_refused(tmp_path):
     """On a case-insensitive filesystem an index carrying `Doc.md` and `doc.md` for ONE on-disk file
     has no unmerged entry, so the conflict guard does not fire and every citation in it is counted
