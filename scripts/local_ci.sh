@@ -86,7 +86,11 @@ cannot_run() {  # environment failure: say what was measured, and exit distingui
 # annotated.
 #
 # What must import is what will actually run. `--fast` (ruff, mypy, and three stdlib-only AST
-# scanners, per CLAUDE.md the iterate-while-working mode) does not need the package or pytest.
+# scanners, per CLAUDE.md the iterate-while-working mode) does not need pytest. It DOES need the
+# package: `scripts/check_internal_deprecation.py` does `import mfgarchon`, and on a package-less
+# interpreter that step exits with ModuleNotFoundError. The sentence claimed otherwise, and so did
+# its first correction, which fixed the tooling clause and preserved the package one -- the same
+# shape as the defect it was written to fix.
 # `yaml` is listed because the workflow-integrity step needs it and it is NOT a declared
 # dependency -- it arrives transitively via omegaconf, so an environment can look complete and
 # still fail that step with a bare ModuleNotFoundError under a GATE RED.
@@ -108,6 +112,9 @@ probe_modules() {
 # that does run.
 PROBE_ERR_FILE=$(mktemp 2>/dev/null) || PROBE_ERR_FILE=""
 PROBE_DIR=$(mktemp -d 2>/dev/null) || PROBE_DIR=""
+# The mypy control's probe must live INSIDE the checked scope to see a per-module override, so it
+# cannot go in PROBE_DIR. It goes under the same trap instead, which is the half that matters.
+MYPY_PROBE="mfgarchon/config/_gate_probe.py"
 # Two traps, not one. A handler installed for INT that only cleans up does NOT end the script:
 # bash runs it and RESUMES at the next command. Measured with that single trap in place, Ctrl-C
 # during --fast let the run continue and render `GATE RED -- do not push` over an interrupted
@@ -115,8 +122,8 @@ PROBE_DIR=$(mktemp -d 2>/dev/null) || PROBE_DIR=""
 # exists to remove. Worse, a SIGINT inside the 4.2 s pass-1 probe killed that probe and let the
 # search fall through to the next candidate, silently changing which interpreter the gate used.
 # `exit 130` is what restores the untrapped behaviour that `main` had for free.
-trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"' EXIT
-trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 # tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
 # source echo and the caret, dropping the `File ...` line that names the culprit.
 probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
@@ -130,7 +137,7 @@ resolved_python() {
   [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
   out=$(cd "$PROBE_DIR" && "$candidate" -P -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
-  # ruff is 2 of the 6 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
+  # ruff is 2 of the 8 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
   # Checked after resolution instead, the search committed to the first candidate satisfying an
   # incomplete predicate and then refused outright -- while a working interpreter was still
   # sitting further down CANDIDATES. Measured: `GATE CANNOT RUN` on a machine where forcing
@@ -268,7 +275,10 @@ step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 # was the check nobody could run locally at all (Issue #2101, option 4).
 #
 # Cost, measured, not estimated: ~22 s the first time (a cold `.mypy_cache`, which is what a fresh
-# clone or a mypy upgrade gets) and ~0.6 s thereafter, on a gate whose full run is ~350 s. The
+# clone or a mypy upgrade gets), on a gate whose full run is ~350 s. The warm figure that stood
+# here (~0.6 s) was measured for the real check ALONE and no longer describes the step: there are
+# five mypy invocations per run now and the control never hits its own cache. Withdrawn rather than
+# replaced -- every attempt to re-measure it has been on a loaded machine. The
 # cache is ~84 MB, gitignored. The first number is the one that lands on a new contributor.
 #
 # Scope and flags are copied from ci.yml verbatim, not chosen here. Raw mypy over the package
@@ -292,21 +302,39 @@ step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
 # ABORTS and never on a green run -- which is the run a reviewer is asked to paste.
 # A POSITIVE CONTROL, because this file's own rule is "the instruments, before their numbers" and
 # this step was the one instrument in the gate without one. A clean PASS is indistinguishable from
-# a mypy that has been silenced -- by a config edit, a `# type: ignore` sweep, or a flag that
-# suppresses the category. So make it fire on an error it must catch, with the SAME flags.
+# a mypy that has been silenced. So make it fire on an error it must catch.
+#
+# THE PROBE LIVES INSIDE THE CHECKED SCOPE, and that is not tidiness. Written to a scratch dir its
+# module name is `probe`, so it shares only the GLOBAL config with the real check -- and review
+# measured three silencers that pass the real check while the probe still errors: a
+# `[[tool.mypy.overrides]] ignore_errors` on `mfgarchon.config.*`, a file-level
+# `# mypy: ignore-errors`, and an inline `# type: ignore`. In the scope, the per-module override is
+# caught: the probe passes, which is the signal.
+#
+# WHAT IT STILL CANNOT CATCH, said plainly because the previous comment claimed otherwise: per-file
+# and per-line silencing in the files under test. No probe can -- that is a property of those files,
+# not of the configuration a probe shares. The earlier text named the `# type: ignore` sweep as
+# covered and it was not.
 #
 # The control is version-independent on purpose: assigning a `str` to an `int`-annotated local and
 # returning it fires under every mypy in the supported range. The one published discrimination
 # example for this step -- reverting the `keys[: i + 1 : 1]` slice -- errors under 2.3.0 and passes
 # under 1.20.2, both of which satisfy `mypy>=1.5`, so it cannot serve as the control.
-_probe=$(mktemp -d)
-printf 'def f() -> int:\n    x: int = "not an int"\n    return x\n' > "$_probe/probe.py"
-if "$PY" -P -m mypy "$_probe/probe.py" --follow-imports=silent >/dev/null 2>&1; then
+# `$MYPY_PROBE` is declared and trapped beside PROBE_DIR at the top, not with a local `mktemp`:
+# an unguarded `_probe=$(mktemp -d)` leaves `$_probe` EMPTY when mktemp fails, so the probe file is
+# never written, mypy errors on a nonexistent path, and the control silently does not fire while
+# the gate proceeds as though the instrument were verified -- a silent-instrument failure inside
+# the instrument-verification code. It was also outside both traps and its `rm` sat after the `fi`,
+# so the `cannot_run` path leaked it. The file records that lesson 200 lines up and this broke it.
+printf 'def _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
+if "$PY" -P -m mypy "$MYPY_PROBE" --follow-imports=silent >/dev/null 2>&1; then
+  rm -f "$MYPY_PROBE"
   cannot_run "the mypy control passed when it must fail: a file assigning a str to an int-annotated
-local was accepted. mypy is running but is not reporting, so a clean result from the real check
-would mean nothing. Check $PY's mypy install and the config it picks up."
+local was accepted, INSIDE mfgarchon/config where the real check runs. mypy is running but is not
+reporting there, so a clean result from the real check would mean nothing. Check $PY's mypy install
+and any ignore_errors override covering mfgarchon.config.*."
 fi
-rm -rf "$_probe"
+rm -f "$MYPY_PROBE"
 
 _mypy_out=$("$PY" -P -m mypy mfgarchon/config --follow-imports=silent 2>&1)
 _mypy_rc=$?
@@ -335,7 +363,12 @@ while read -r _m; do
     _mypy_env_fault="the declared dependency '${_m}' is not installed"
     break
   fi
-done < <(grep -oE 'library stub for module named "[^"]+"' <<<"$_mypy_out" | sed 's/.*"\(.*\)"/\1/' | cut -d. -f1)
+# FLATTEN FIRST. `pretty = true` wraps mypy's output, and the phrase this greps for is split by
+# the wrap at some widths and not others -- measured on an unmodified tree, COLUMNS=100 gave 0
+# matches and a misattributed GATE RED where the default width gave the correct exit 2. Worse,
+# within ONE run at 80 columns two import sites wrapped differently and only one was seen. The
+# predicate is decidable; extracting the module name from wrapped text is not.
+done < <(tr '\n' ' ' <<<"$_mypy_out" | grep -oE 'library stub for module named "[^"]+"' | sed 's/.*"\(.*\)"/\1/' | cut -d. -f1)
 
 if [[ -n "$_mypy_env_fault" ]]; then
   cannot_run "$_mypy_env_fault, so mypy could not analyse the subject -- this is not a type error in
