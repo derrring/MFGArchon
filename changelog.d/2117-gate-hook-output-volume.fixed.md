@@ -1,15 +1,29 @@
-- **The pre-push gate no longer reports a PASSING run as `Failed`** (Issue #2117). pre-commit writes
-  a hook's whole captured stdout in one `output_stream.write(s)`. `scripts/local_ci.sh` emits
-  **804,934 bytes** — the suite, the durations table, four ratchets, the capability matrix, the
-  discrimination and assertion-strength reports — against a non-blocking pipe that holds **65,536**
-  on this platform. Measured: an `io.BufferedWriter` over such a pipe completes at 1 KB and raises
-  `BlockingIOError: [Errno 35]` at 805 KB, which is the traceback in `~/.cache/pre-commit/pre-commit.log`.
+- **The pre-push gate can print why it went red** (Issue #2117), by not handing pre-commit 805 KB.
 
-  The exception propagates out of `_run_single_hook` and the hook is recorded as failed. **The gate
-  had passed.** That is the whole defect: a green gate reported as red, with the one line that
-  distinguishes them — `GATE GREEN` — inside the output that could not be written. Three pushes hit
-  it in one session; the natural response is to hunt a broken test that does not exist, and the
-  second-nature response is `--no-verify`, which is what a pre-push gate exists to prevent.
+  pre-commit writes a hook's captured stdout in one `output_stream.write(s)`, guarded by
+  `verbose or hook.verbose or retcode or files_modified` (`run.py:217`). For this hook the first
+  two are False, so the write fires on a **red** gate — or on a run during which tracked files
+  changed. Either way the payload is the whole gate: **804,837 bytes** against a non-blocking pipe
+  that holds **65,536** on this platform. Measured with pre-commit's own write path: an
+  `io.BufferedWriter` over such a pipe completes at 1 KB and raises `BlockingIOError: [Errno 35]`
+  at 805 KB, the traceback in `~/.cache/pre-commit/pre-commit.log`.
+
+  pre-commit then dies with *"An unexpected error has occurred"* and exit 120 **instead of printing
+  which check failed**. That reads as a pre-commit bug rather than a test failure, and the
+  second-nature response is `--no-verify` — past a gate that was genuinely red.
+
+  A **green** gate can also be reported as `Failed`, but only through the `files_modified`
+  disjunct. The one fully-logged instance here was exactly that: `GATE GREEN` on line 6376 and
+  `- files were modified by this hook` on line 6. The modification was not the gate's — a full run
+  on a clean tree leaves `git status` empty, measured — it was a concurrent edit while the hook ran.
+
+  **The volume is cut at source in the same change.** 95.7% of those 805 KB is pytest's warnings
+  summary: 6,030 of 6,354 lines, 770,223 of 804,837 bytes. `--disable-warnings` on the gate's
+  pytest invocation takes the whole run to **324 lines / 34,614 bytes — 0.53× the pipe instead of
+  12.3×**. It suppresses the listing, not the warnings: the tail still reads `N passed, M warnings`
+  (`-p no:warnings` would drop the count, which is why it is not used). What that listing was
+  carrying is a backlog, not noise — 456 of its lines are this repository's own tests calling its
+  own deprecated `MFGProblem(geometry=, ...)`, across 103 files. Filed as #2119.
 
   `scripts/gate_hook.sh` now stands between them: it runs the gate, writes the full stream to a log
   (`$MFGARCHON_GATE_LOG`, default `$TMPDIR/mfgarchon-gate.log`), and prints a bounded summary —

@@ -505,9 +505,18 @@ if [[ $FAST -eq 0 ]]; then
   # it, so a repo-root `pytest/` package still reaches them. Measured on a probe that must fail:
   # `-P` alone under `-n` crashes every worker (no tests ran); with PYTHONSAFEPATH=1 the real
   # pytest runs and correctly reports it. Anything that forks needs the env var, not just the flag.
+  # `--disable-warnings` suppresses the warnings SUMMARY, not the warnings: the count still lands
+  # in the terminal tail ("N passed, M warnings"), and `-W error` promotion still works. Measured
+  # on a green run: that block is 6,030 of 6,354 lines and 770,223 of 804,837 bytes -- 95.7% of
+  # everything this gate prints. Without it the whole run is 324 lines / 34,614 bytes, which is
+  # 0.53x a 64 KB pipe instead of 12.3x, and #2117's failure mode has nothing to grow into.
+  #
+  # It is a REPORT of a backlog, not a signal: 456 of those lines are this repository's own tests
+  # calling its own deprecated `MFGProblem(geometry=, components=, ...)`. Printing the list every
+  # run for a year has not retired one of them; #2119 is where they get counted instead.
   PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
     -m "$(cat "$(dirname "$0")/ci_markers.txt")" \
-    -q --durations=10
+    -q --durations=10 --disable-warnings
   check $? "full suite"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'

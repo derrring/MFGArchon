@@ -1,11 +1,16 @@
 """`scripts/gate_hook.sh` is the carrier the gate's verdict travels through, so it gets the same
 checks as the gate (#2117).
 
-It exists because pre-commit writes a hook's whole stdout in one `output_stream.write(s)`, and the
-gate emits ~805 KB against a 64 KB non-blocking pipe -- so the write raises `BlockingIOError` and
-pre-commit records a PASSING gate as `Failed`. Reproduced directly: an `io.BufferedWriter` over a
-non-blocking pipe completes at 1 KB and raises at 805 KB with `[Errno 35]`, the error from
-`~/.cache/pre-commit/pre-commit.log`.
+pre-commit writes a hook's captured stdout in one `output_stream.write(s)`, guarded by
+`verbose or hook.verbose or retcode or files_modified` (`run.py:217`). For this hook the first two
+are False, so the write happens on a RED gate or on a run during which tracked files changed --
+and either way the payload is ~805 KB against a 64 KB non-blocking pipe. Reproduced directly: an
+`io.BufferedWriter` over such a pipe completes at 1 KB and raises `[Errno 35]` at 805 KB, the error
+in `~/.cache/pre-commit/pre-commit.log`. pre-commit then dies with exit 120 instead of printing why
+the gate went red.
+
+#2118 also cuts the volume at source -- 95.7% of it is pytest's warnings summary -- so this adapter
+is defence in depth. A red gate's pytest output can grow past the buffer again on its own.
 
 Two bugs were written into the adapter before these tests existed, and both are pinned below:
 
