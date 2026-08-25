@@ -26,10 +26,19 @@ cd "$(dirname "$0")/.."
 # search and would then run the "authoritative gate" against an interpreter that cannot run the
 # suite -- a green-looking run that measured nothing. See `resolved_python` for why the obvious
 # form of that probe does not work.
-cannot_run() {  # environment failure: say that nothing was measured, and exit distinguishably
+cannot_run() {  # environment failure: say what was measured, and exit distinguishably
   printf '\n\033[31mGATE CANNOT RUN\033[0m -- %s\n' "$1"
-  printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
-  printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
+  # Every cannot_run used to sit before the first verdict, so "nothing was measured" was simply
+  # true. The mypy step can fire one after a PASS has printed, and a blanket claim there would be
+  # a false statement about the run in the same breath as a true one about the check.
+  if [[ ${verdicts:-0} -eq 0 ]]; then
+    printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
+    printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
+  else
+    printf 'This is an ENVIRONMENT failure, not a code failure. The %d verdict(s) above did run and\n' "$verdicts"
+    printf 'stand; everything from this check onward was NOT measured. Activate the env\n'
+    printf '(conda activate mfg_env)\n'
+  fi
   printf 'or set MFG_PYTHON to an interpreter with that tooling installed.\n'
   exit 2
 }
@@ -69,6 +78,11 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
 # So `mfgarchon` is a PREFERENCE for choosing between interpreters (pass 1 below), never a reason
 # to refuse. If the package does not import, the checks that need it say so, with the traceback,
 # under a GATE RED -- which is a verdict about content, and is the true one.
+#
+# mypy joins ruff in that predicate, and it changes what `--fast` needs: the type gate runs in both
+# tiers, so `--fast` now requires the `dev` extra after all. Stated here because the next line is
+# the claim it contradicts, and an uncorrected claim beside a changed mechanism is worse than
+# either alone.
 #
 # What must import is what will actually run. `--fast` (ruff plus three stdlib-only AST scanners,
 # per CLAUDE.md the iterate-while-working mode) needs neither the package nor the test tooling.
@@ -121,6 +135,12 @@ resolved_python() {
   # sitting further down CANDIDATES. Measured: `GATE CANNOT RUN` on a machine where forcing
   # candidate 3 runs the whole gate.
   (cd "$PROBE_DIR" && "$candidate" -P -m ruff --version) >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
+  # mypy for the same reason, and it was added here rather than beside its own step for exactly
+  # the reason the paragraph above records: a hard refusal placed AFTER resolution skips every
+  # remaining candidate. Measured on this repo -- an interpreter carrying pytest, xdist and ruff
+  # but not mypy aborted the gate in 0.62 s having run 2 of 11 steps, while candidate 3 would
+  # have run all of them.
+  (cd "$PROBE_DIR" && "$candidate" -P -m mypy --version) >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
   printf '%s' "$candidate"
   return 0
 }
@@ -144,7 +164,7 @@ CANDIDATES=(python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bi
 if [[ -n "${MFG_PYTHON+x}" ]]; then
   PY=$(resolved_python "$MFG_PYTHON") \
     || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
-$(probe_modules) plus ruff, probed from a scratch directory outside the source tree.
+$(probe_modules) plus ruff and mypy, probed from a scratch directory outside the source tree.
 $(probe_err)
 It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
 else
@@ -163,7 +183,7 @@ else
       PY=""
     done
   fi
-  [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff.
+  [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff and mypy.
 $(probe_err)"
 fi
 
@@ -210,6 +230,7 @@ fi
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 check() {
+  verdicts=$((${verdicts:-0} + 1))
   if [[ $1 -eq 0 ]]; then printf '\033[32mPASS\033[0m %s\n' "$2"
   else printf '\033[31mFAIL\033[0m %s\n' "$2"; fail=1; fi
 }
@@ -237,28 +258,44 @@ step "Ruff format"
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 "${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
 
-# The one gate that lived ONLY on GitHub. `ci.yml:168` runs this exact command as a blocking
-# step ("MyPy type gate (config subpackage, blocking)"), and nothing here mirrored it -- measured,
-# `grep -c mypy scripts/local_ci.sh` returned 0 against 23 for ruff. So a type error in
-# `mfgarchon/config` could not be seen before pushing, which is the mirror image of this file's own
-# reason to exist: CLAUDE.md warns that a GitHub-green PR has not had its tests run, and this was
-# the check nobody could run locally at all. ~10 s on a ~150 s gate (Issue #2101, option 4).
+# The one gate that lived ONLY on GitHub. ci.yml runs this exact command as a blocking step named
+# "MyPy type gate (config subpackage, blocking)" and nothing here mirrored it -- measured before
+# this change, `grep -c mypy scripts/local_ci.sh` returned 0 against 23 for ruff. So a type error
+# in `mfgarchon/config` could not be seen before pushing, which is the mirror image of this file's
+# own reason to exist: CLAUDE.md warns that a GitHub-green PR has not had its tests run, and this
+# was the check nobody could run locally at all (Issue #2101, option 4).
+#
+# Cost, measured, not estimated: ~22 s the first time (a cold `.mypy_cache`, which is what a fresh
+# clone or a mypy upgrade gets) and ~0.6 s thereafter, on a gate whose full run is ~350 s. The
+# cache is ~84 MB, gitignored. The first number is the one that lands on a new contributor.
 #
 # Scope and flags are copied from ci.yml verbatim, not chosen here. Raw mypy over the package
 # pulls 1800+ transitive errors from un-annotated dependencies; `--follow-imports=silent` plus the
 # `mfgarchon/config` scope is what makes the count meaningful, and a second opinion about scope
-# would make this gate and CI disagree -- which is worse than either scope.
+# would make this gate and CI disagree -- which is worse than either scope. Note what the copy
+# inherits: `pyproject.toml` gives `mfgarchon.factory.*` the identical strict treatment, and
+# `mypy mfgarchon/factory --follow-imports=silent` reports 3 errors that neither CI nor this gate
+# sees. Inherited, not introduced -- filed rather than widened here, so the two stay identical.
 #
-# Missing mypy is an ENVIRONMENT failure, not a pass. `dev` installs it; an interpreter without it
-# cannot answer the question, and reporting "clean" would be the silent-instrument shape this
-# repository keeps filing (#1918).
-step "MyPy type gate (config subpackage -- mirrors ci.yml:168)"
-"$PY" -c 'import mypy' 2>/dev/null \
-  || cannot_run "mypy is not importable by $PY, so the blocking type gate ci.yml runs could not be
-mirrored here. Install the dev extra (\`pip install -e .[dev]\`) or set MFG_PYTHON to an
-interpreter that has it. Nothing was measured."
-"$PY" -m mypy mfgarchon/config --follow-imports=silent
-check $? "mfgarchon/config type-checks clean (the gate that otherwise only runs on GitHub)"
+# An interpreter without mypy is rejected during interpreter SELECTION (see `resolved_python`),
+# not here: a refusal at this point skips every remaining candidate, which is the defect the ruff
+# paragraph up there records having already paid for once.
+step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
+# `-P`, like every other -m in this file: without it a `mypy/` package sitting in the repo root
+# shadows the real one, and this step reports PASS having checked nothing. Verified both ways.
+printf 'gate mypy       : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
+"$PY" -P -m mypy mfgarchon/config --follow-imports=silent
+_mypy_rc=$?
+# mypy's exit codes carry the distinction this step needs and `check` would erase: 1 = it looked
+# and found errors, 2 = it could not look at all. Collapsing them reports a MISSING DEPENDENCY as
+# a type error in your code -- measured, with `omegaconf` absent (a declared runtime dependency)
+# and with `pydantic` absent (loaded as a mypy plugin, exit 2, zero files checked).
+if [[ $_mypy_rc -ge 2 ]]; then
+  cannot_run "mypy exited $_mypy_rc, which means it could not analyse the subject at all -- a
+missing dependency or plugin, not a type error in the code. Zero files were checked. Install the
+dev extra into $PY and re-run."
+fi
+check $_mypy_rc "mfgarchon/config type-checks clean (the gate that otherwise only runs on GitHub)"
 
 step "Workflow integrity"
 # Parsing is NOT sufficient and this check knows it: a workflow gutted down to one job,

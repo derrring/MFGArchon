@@ -1,11 +1,6 @@
-- **`scripts/local_ci.sh` now runs the blocking mypy gate** (Issue #2101, option 4). `ci.yml:168`
-  runs `mypy mfgarchon/config --follow-imports=silent` as a **blocking** step, and nothing here
-  mirrored it — measured, `grep -c mypy scripts/local_ci.sh` returned **0** against **23** for ruff.
-  That made it the one gate that could not be reproduced or pre-checked before pushing, the mirror
-  image of this repository's own warning that a GitHub-green PR has not had its tests run. Scope and
-  flags are copied from `ci.yml` verbatim rather than chosen again, so the two cannot disagree about
-  what "clean" means. A missing mypy is an environment failure (`cannot_run`), not a pass: reporting
-  clean because the instrument is absent is the silent-instrument shape tracked under #1918. ~10 s on
-  a ~150 s gate. Verified to discriminate: reverting one slice step in `omegaconf_manager.py` takes
-  the step from `Success` to `Found 1 error`. This does not answer #2101's other question — whether
-  the now-unbounded mypy should be pinned — which is deliberately separable.
+The blocking mypy type gate ci.yml runs on `mfgarchon/config` now runs in `./scripts/local_ci.sh`
+too, so a type error in that subpackage is visible before pushing rather than only on GitHub.
+~22 s on a cold `.mypy_cache`, ~0.6 s warm. An interpreter without mypy is skipped during
+interpreter selection rather than aborting the gate, and a mypy that exits 2 -- a missing
+dependency or plugin, nothing checked -- is reported as an environment failure rather than as a
+type error in your code.
