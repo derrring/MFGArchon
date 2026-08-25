@@ -47,7 +47,7 @@ Particle-based FP solvers as alternative to grid methods.
 ### 05. [Config System](./05_config_system.py) | [notebook](./05_config_system.ipynb)
 **Difficulty**: Intermediate | **Time**: 20 minutes
 
-Advanced solver configuration with Pydantic + OmegaConf.
+Advanced solver configuration with Pydantic.
 
 **You'll learn**: `MFGSolverConfig`, `PicardConfig`, solver backend selection, acceleration options
 

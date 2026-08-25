@@ -63,9 +63,9 @@ def load_solver_config(path: str | Path) -> SolverConfig:
         backend:
           type: numpy
 
-    A ``solver:``-wrapped or OmegaConf-vocabulary YAML (e.g. the generated
-    ``mfgarchon/config/configs/*.yaml``) is a different format; load those via
-    :mod:`mfgarchon.config.omegaconf_manager`, not this function.
+    A ``solver:``-wrapped YAML is a different format and this function refuses it by name
+    rather than dropping the keys. Such files were an OmegaConf idiom; that layer was removed
+    in #1687 and loading them is now the application's business, not the library's.
     """
     from .core import SolverConfig
 
@@ -96,8 +96,8 @@ def load_solver_config(path: str | Path) -> SolverConfig:
             raise ValueError(
                 f"Unknown top-level key(s) {unknown} in {path}.\n"
                 f"The solver-config schema is flat; valid top-level keys are {sorted(valid_keys)}.\n"
-                f"A 'solver:'-wrapped or OmegaConf-style YAML (e.g. config/configs/*.yaml) is a "
-                f"different format -- load those via mfgarchon.config.omegaconf_manager."
+                f"A 'solver:'-wrapped YAML is a different format. That shape came from the "
+                f"OmegaConf layer removed in #1687; unwrap it in your own loader."
             )
 
     # Validate and construct

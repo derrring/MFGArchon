@@ -49,27 +49,15 @@ def test_deprecated_aliases_still_work():
     assert any("deprecated" in str(w.message) for w in caught)
 
 
-def test_the_yaml_bridge_drops_interpolation_anchors_but_says_so():
-    """A transport boundary is not an API call.
+def test_a_nested_typo_fails_in_its_own_model():
+    """Only the TOP level was ever filtered by the transport layer; a misspelled nested key reaches
+    its own model and is rejected there.
 
-    `base_tol: 1e-6` with `picard.tolerance: ${base_tol}` is a legitimate OmegaConf idiom: the
-    anchor is scaffolding and has no field to land in. The bridge drops it -- and warns, because
-    a silent drop at the boundary is exactly how a genuine top-level typo would disappear.
+    This replaces two tests that went through `config.bridge`, removed with the OmegaConf layer in
+    #1687. The behaviour they pinned is a property of the models (`extra="forbid"` in
+    `config/core.py`), not of the bridge, so it survives the removal -- which is why it is
+    rewritten here rather than deleted with the bridge. The other of the two pinned the bridge's
+    own interpolation-anchor filtering, which has no meaning without OmegaConf and is gone.
     """
-    omegaconf = pytest.importorskip("omegaconf")
-    from mfgarchon.config.bridge import bridge_to_pydantic
-
-    cfg = omegaconf.OmegaConf.create({"base_tol": 1e-6, "picard": {"tolerance": "${base_tol}", "max_iterations": 100}})
-    with pytest.warns(UserWarning, match="dropped 1 top-level key"):
-        config = bridge_to_pydantic(cfg, MFGSolverConfig)
-    assert config.picard.tolerance == 1e-6
-
-
-def test_a_nested_typo_still_fails_through_the_bridge():
-    """Only the TOP level is filtered. A misspelled nested key reaches its own model."""
-    omegaconf = pytest.importorskip("omegaconf")
-    from mfgarchon.config.bridge import bridge_to_pydantic
-
-    cfg = omegaconf.OmegaConf.create({"picard": {"toleranse": 1e-6}})
     with pytest.raises(ValidationError, match=r"[Ee]xtra inputs"):
-        bridge_to_pydantic(cfg, MFGSolverConfig)
+        MFGSolverConfig.model_validate({"picard": {"toleranse": 1e-6}})

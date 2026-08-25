@@ -148,9 +148,11 @@ class PicardConfig(BaseConfig):
     verbose: bool = True
 
     #: Legacy field names accepted with a DeprecationWarning (v0.19.1), mapped to the canonical
-    #: name. Read by `_translate_legacy_damping_names` below AND by `config.bridge`, which must
-    #: not filter these out before the validator can translate them (Issue #1766 follow-up): the
-    #: bridge filters on `model_fields`, and an alias is by definition not a field. One owner.
+    #: name. Read by `_translate_legacy_damping_names` below. It was also read by `config.bridge`,
+    #: which had to avoid filtering aliases out before the validator could translate them -- an
+    #: alias is by definition not in `model_fields` (Issue #1766 follow-up). That bridge went with
+    #: the OmegaConf layer in #1687; the constraint is recorded because any future loader that
+    #: filters on `model_fields` reintroduces it.
     LEGACY_FIELD_ALIASES: ClassVar[dict[str, str]] = {
         "damping_factor": "relaxation",
         "damping_factor_M": "relaxation_M",

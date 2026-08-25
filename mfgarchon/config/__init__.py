@@ -77,29 +77,6 @@ from .translator import (
 )
 
 # =============================================================================
-# OPTIONAL: OmegaConf-based configuration management
-# =============================================================================
-
-try:
-    # Bridge utilities for Pydantic-OmegaConf interoperability
-    from .bridge import (  # noqa: F401
-        bridge_to_pydantic,
-        load_effective_config,
-        save_effective_config,
-    )
-    from .omegaconf_manager import (  # noqa: F401
-        OmegaConfManager,
-        create_omega_manager,
-        create_parameter_sweep_configs,
-        load_beach_config,
-        load_experiment_config,
-    )
-
-    OMEGACONF_AVAILABLE = True
-except ImportError:
-    OMEGACONF_AVAILABLE = False
-
-# =============================================================================
 # PUBLIC API
 # =============================================================================
 
@@ -146,19 +123,3 @@ __all__ = [
     "MFGArrays",
     "MFGGridConfig",
 ]
-
-# Add OmegaConf functionality if available
-if OMEGACONF_AVAILABLE:
-    __all__.extend(
-        [
-            "OmegaConfManager",
-            "create_omega_manager",
-            "create_parameter_sweep_configs",
-            "load_beach_config",
-            "load_experiment_config",
-            # Bridge utilities
-            "bridge_to_pydantic",
-            "save_effective_config",
-            "load_effective_config",
-        ]
-    )
