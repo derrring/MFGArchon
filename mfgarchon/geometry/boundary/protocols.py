@@ -710,59 +710,6 @@ class BoundaryHandler(Protocol):
         ...
 
 
-# Optional extension for advanced BC handling
-@runtime_checkable
-class AdvancedBoundaryHandler(BoundaryHandler, Protocol):
-    """
-    Extended protocol for solvers that can report boundary geometry.
-
-    Adds:
-    - Normal vector computation
-
-    **Nothing implements this protocol.** Its four members (three inherited from
-    `BoundaryHandler`) are not satisfied by any class in the package: `CollocationPointSet`,
-    `MeshfreeApplicator` and `Hyperrectangle` each define a `get_boundary_normals`, but with
-    incompatible signatures and without the other three members, so `issubclass` is False for all
-    of them. Sharing a method name is not implementing a protocol.
-
-    It does NOT declare a Robin entry point. `apply_robin_bc(values, alpha: float, beta: float,
-    gamma: float) -> values` sat here and was removed for three reasons, none of which is that a
-    solution-vector signature is impossible -- `applicator_implicit._apply_robin_along_normal` and
-    the `BCType.ROBIN` branch of `applicator_meshfree` both enforce Robin exactly that way:
-
-    1. It was never implemented, anywhere, in the project's history.
-    2. It duplicates `BoundaryHandler.apply_boundary_conditions(values, bc, time)`, which already
-       carries Robin through `BCSegment.alpha` / `.beta`.
-    3. **Scalar coefficients are the shape #1957 rejected.** The Robin coefficient of a reflecting
-       FP wall is `D_pH(x, grad u) . n` -- it varies along the boundary and is recomputed every
-       Picard iterate, so `alpha: float` cannot hold it. `ghost_cell_robin` and the resolver take
-       field coefficients for exactly this reason.
-
-    Reason 3 is why re-adding a scalar-coefficient Robin hook would be a step backwards even
-    though the general shape is implementable.
-    """
-
-    def get_boundary_normals(self) -> NDArray:
-        """
-        Compute outward-pointing normal vectors at boundary points.
-
-        Returns:
-            Array of normal vectors (n_boundary, dimension)
-
-        Notes:
-            - For rectangular domains: +/-e_i directions
-            - For general domains: Computed from SDF or mesh geometry
-            - Used for Neumann BC and coordinate rotation (GFDM)
-
-        Example:
-            ```python
-            normals = solver.get_boundary_normals()
-            # array([[-1, 0], [-1, 0], ..., [1, 0], [1, 0]])  # 2D box
-            ```
-        """
-        ...
-
-
 def validate_boundary_handler(solver) -> bool:
     """
     Runtime check if solver implements BoundaryHandler protocol.
@@ -807,6 +754,5 @@ __all__ = [
     "BaseGraphApplicator",
     # Handler protocols (merged here; the separate module is gone, #1711)
     "BoundaryHandler",
-    "AdvancedBoundaryHandler",
     "validate_boundary_handler",
 ]
