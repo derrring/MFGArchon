@@ -612,9 +612,18 @@ def test_this_file_contributes_no_adjudicable_citation():
     two tests up, which pins the population using the same `_measure` helper. The arrangement holds,
     and it holds because of that sibling, not on its own.
 
-    Both files are checked. `tests/unit/test_check_citations.py` parses 22 citations against this
+    MEMBERSHIP CRITERION, so the next person adding a file has a rule and not a precedent: a file
+    belongs in `watched` when the instrument's own measurement INCLUDES it and it is prose ABOUT
+    that measurement. Both halves are required. Either alone is the ordinary case the ratchet
+    already handles as a normal row; it is the conjunction that lets a file's prose move the number
+    that file is being judged by.
+
+    Two files qualify. `tests/unit/test_check_citations.py` parses 22 citations against this
     script's 3 -- seven times the exposure -- is prose ABOUT citations, and sits in the same scanned
-    population.
+    population. `scripts/test_discrimination.py` was proposed and does NOT qualify: the instrument
+    measures it like any other file, but it is prose about mutation coverage, not about this
+    measurement, so the baseline already pins it as an ordinary row. Adding it would widen the set
+    past what the criterion says and past what the assertion message claims.
     """
     repo = SCRIPT.parents[1]
     got = _measure(repo)

@@ -106,8 +106,8 @@ documentation and `resolve`'s traversal example both parse, and land in `missing
 The enforceable invariant is the adjudicable one, and it needs a pin because `--write-baseline`
 records whatever is present -- which is exactly how two rows of this file's own prose shipped inside
 a PASSING baseline. `test_this_file_contributes_no_adjudicable_citation` is that pin. It is not
-circular: it is the instrument judging one ordinary input file, the same shape as the shipped-
-baseline test.
+circular: it is the instrument judging one ordinary input file, the same shape as the
+shipped-baseline test.
 
 `CHANGELOG.md` is exempt, on the same reasoning `check_doc_api.py` uses: an entry describing a
 v0.16 line is correct as of then. `archive/` likewise.
@@ -763,9 +763,9 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 18 rows in the standing backlog a hand-read gave 9 stale to 8"
-            + "\n    mis-attributed. That is a rate for accumulated history, not for prose"
-            + "\n    someone just wrote against current code."
+            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112)"
+            + "\n    and the other 17 hand-read 9 stale to 8 mis-attributed. Close enough to even"
+            + "\n    that neither is the safe default -- read the line, do not assume."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than
