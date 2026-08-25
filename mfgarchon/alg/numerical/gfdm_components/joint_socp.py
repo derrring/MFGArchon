@@ -494,7 +494,7 @@ class PrecomputedJointSocpStencils:
         always trace to these indices (Issue #1102 dual-source bug class —
         legacy fallback to ``op.get_derivative_weights()`` removed in v0.25.0).
     cone_constant_C : float
-        Per-edge cone bound: ||D_{ij}||_2 <= C * h_i * L_{ij}. Default 1.0
+        Per-edge cone bound: ||D_{ij}||_2 <= (C / h_i) * L_{ij}. Default 1.0
         (within the paper's $C_\\star \\in [0.5, 1]$ feasibility range for
         Wendland $C^2$).
     eps_pos : float
