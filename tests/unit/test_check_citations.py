@@ -185,9 +185,7 @@ def test_a_citation_past_EOF_is_drifted_even_with_NO_symbol_named(tmp_path):
     Written that way on purpose. Spelled as a citation, this docstring BECOMES another instance of
     the defect it describes -- measured, it landed in `drifted` and moved the number the ratchet
     pins. Prose quoting a broken citation as evidence is still prose this script scans."""
-    root = _git_tree(
-        tmp_path, {"pkg/target.py": TARGET, "doc.md": "Nothing named, yet pkg/target.py:99999.\n"}
-    )
+    root = _git_tree(tmp_path, {"pkg/target.py": TARGET, "doc.md": "Nothing named, yet pkg/target.py:99999.\n"})
     got = _measure(root)
     assert len(got["drifted"]) == 1, got
     assert not got["unadjudicable"], got
@@ -204,9 +202,7 @@ def test_a_tracked_but_deleted_target_is_reported_not_a_traceback(tmp_path):
         {"pkg/gone.py": "x = 1\n", "doc.md": "`near_the_citation` is at pkg/gone.py:1.\n"},
     )
     (root / "pkg" / "gone.py").unlink()
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
-    )
+    out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root))
     assert out.returncode == 0, out.stdout + out.stderr
     assert "Traceback" not in out.stderr, out.stderr
 
@@ -267,9 +263,7 @@ def test_a_tree_mid_conflict_is_refused_not_counted_three_times(tmp_path):
         [*git, "ls-files", "--unmerged"], capture_output=True, text=True, check=True
     ).stdout.strip(), "the fixture did not actually produce a conflict -- this test proves nothing"
 
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
-    )
+    out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root))
     assert out.returncode == 2, out.stdout + out.stderr
     assert "unmerged" in out.stderr, out.stderr
 
@@ -288,11 +282,11 @@ def test_a_failing_unmerged_probe_refuses_instead_of_passing(tmp_path, monkeypat
         '#!/bin/sh\nfor a in "$@"; do [ "$a" = "--unmerged" ] && exit 3; done\nexec /usr/bin/git "$@"\n'
     )
     (shim / "git").chmod(0o755)
-    root = _git_tree(tmp_path / "repo", {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
-    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
+    root = _git_tree(
+        tmp_path / "repo", {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET}
     )
+    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
+    out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root))
     assert out.returncode == 2, out.stdout + out.stderr
     assert "--unmerged failed" in out.stderr, out.stderr
 
@@ -335,9 +329,7 @@ def test_two_NON_symlink_entries_on_one_inode_are_refused(tmp_path):
         [*git, "ls-files", "--unmerged"], capture_output=True, text=True, check=True
     ).stdout.strip(), "this must not be an unmerged index -- that is the other guard"
 
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
-    )
+    out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root))
     assert out.returncode == 2, out.stdout + out.stderr
     assert "at least two of them" in out.stderr, out.stderr
 
@@ -385,6 +377,8 @@ def test_the_regular_file_is_the_one_kept(tmp_path):
 
     got = _measure(root)
     assert [r["file"] for r in got["drifted"]] == ["real.md"], got["drifted"]
+
+
 # --- the ratchet (#2102 part 2) --------------------------------------------------------------
 #
 # Independent of `--self-test`, which exercises the same three shapes: a self-test asserting its own

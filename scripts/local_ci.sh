@@ -270,10 +270,31 @@ if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
 fi
 
 step "Ruff format"
-"${RUFF[@]}" format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
+# WHOLE REPO, not `mfgarchon/`. Format coverage used to stop exactly where most changes land, and
+# the failure is silent -- an unformatted file produces no signal anywhere in the pipeline. It bit
+# twice in one day: `tests/unit/test_check_citations.py` reached `main` unformatted through a PR
+# with a green local gate AND green CI (#2102), and `tests/conftest.py` was made unformatted in
+# #2120 and caught only by an adversarial reviewer. The invariant was being held by habit --
+# contributors run `ruff format` with no path argument -- and habit is what the gate is for.
+#
+# Cost, measured before widening: 1 file to reformat out of 936, and 0 after. `.` is not everything
+# on disk, and four filters decide what it is: ruff's default file-type filter (py/pyi/ipynb, plus
+# md for format and pyproject.toml for check -- 46 of 1253 tracked files never reach it),
+# `[tool.ruff] exclude`, `respect-gitignore`, and `[tool.ruff.format] exclude = ["*.md"]` which
+# alone accounts for 268 files. All four apply to the directory WALK only, for two reasons: with
+# `force-exclude` unset the two `exclude` settings do not bind an explicitly named path, and the
+# other two are bypassed because ruff always processes a named path, which no setting changes. So
+# `ruff format --check $(git diff --name-only)` is a trap -- ruff parses any named file as Python,
+# and the ones that parse SUCCESSFULLY are rewritten in silence (`.yml`, `.json`); a `.sh` is safe
+# only because it fails to parse.
+"${RUFF[@]}" format --check .; check $? "ruff format --check ."
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
-"${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
+# Same widening, same reason, and it was free: 124 files the lint step never saw -- 105 `.py` under
+# `scripts/`, `examples/` and `benchmarks/`, 11 notebooks under `examples/`, 7 under
+# `.github/scripts/`, and `pyproject.toml` -- have 0 violations between them under the configured
+# per-file-ignores, measured before the change.
+"${RUFF[@]}" check .; check $? "ruff check ."
 
 # The one gate that lived ONLY on GitHub. ci.yml runs this exact command as a blocking step named
 # "MyPy type gate (config subpackage, blocking)" and nothing here mirrored it -- measured before

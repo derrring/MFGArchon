@@ -93,7 +93,9 @@ jobs:
       timeout-minutes: 1
       run: |
         echo "Checking code formatting..."
-        ruff format --check mfgarchon/
+        # Whole repo, matching scripts/local_ci.sh. Covering only mfgarchon/ let an unformatted
+        # file reach main through a PR that was green here and green locally (#2114).
+        ruff format --check .
         echo "✅ Formatting valid"
 
     - name: Ruff lint (critical errors only)

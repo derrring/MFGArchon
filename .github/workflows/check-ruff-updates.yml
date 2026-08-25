@@ -73,7 +73,7 @@ jobs:
       - name: Run ruff format
         if: steps.compare.outputs.needs_update == 'true'
         run: |
-          ruff format mfgarchon/ || true
+          ruff format . || true
 
       - name: Generate changelog snippet
         if: steps.compare.outputs.needs_update == 'true'
