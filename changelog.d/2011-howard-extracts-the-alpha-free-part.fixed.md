@@ -28,15 +28,10 @@ than being drawn. `congestion_c1_is_one` (`½|p|²/m`), `quartic_kinetic` (`½|p
 `½|p|² + F(x,m)` entries move to a new `_EXTRACT` list, where each must be **accepted and change
 the answer** — accepting without acting is the pre-fix behaviour wearing a green test.
 
-On soundness: reading the alpha-free part as `H(x, m, 0, t)` is exact only when `H_control(0) = 0`,
-and the file's own docstring named `H = sqrt(1+|p|²)` as the counterexample. Measured through the
-guard, that Hamiltonian is refused with `_ke = 3.121e+03` against a tolerance of `8.0e-09` — six
-orders of magnitude. What `_ke` cannot separate is `H_control(p) = ½|p|² + C` from a constant
-potential `V = C`, and no probe can: they are the same function. Treating `H(0)` as the alpha-free
-part is the standard normalisation.
-
-Not addressed, and filed while measuring this: `inner_solver='howard'` hard-requires SOCP-precomputed
-stencils for operators it could obtain from the Wendland-Taylor path the Newton solver already uses,
-and that gate checks for the stencil *object* rather than for monotonicity — a `joint_socp` run logs
-that SOCP-infeasible interior nodes "fall through to bare Wendland-Taylor LSQ (NON-MONOTONE)" and the
-gate passes anyway. #2066.
+On soundness: `H(x, m, 0, t)` need not *be* the alpha-free part, and the guarantee does not rest on
+`H_control(0) = 0`. Howard assembles `ref(∇u) + H(x, m, 0, t)` and `_ke` certifies
+`ref(p) = H(p) − H(0)`, so the sum telescopes back to `H(∇u)` whatever the extracted value is —
+adding `C·cos(3t)` to the test fixture moves it over four decades and leaves the Howard–Newton
+discrepancy at `8.0862974638e-03`, unchanged to ten significant figures. The file's earlier
+counterexample `H = sqrt(1+|p|²)` is refused on the separate, real ground that its control cost is
+not unit-quadratic: `_ke = 6.499e+01` against a tolerance of `1.2e-09`.

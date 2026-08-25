@@ -28,22 +28,17 @@ Howard 1.4687e-01 against Newton 1.4687e-01 under this file's `M_MATRIX_QP`. (Un
 `joint_socp`/`precompute` this file used before #2093, Howard gives 1.4586e-01 and Newton is
 unchanged -- the scheme moves Howard by 0.7%, not the extraction.)
 
-The control cost it CANNOT, and `_ke` still refuses on it. That is the real limit: Howard
-substitutes a quadratic Lagrangian, and nothing recovers one that is not quadratic.
+The control cost it CANNOT, and `_ke` refuses on it. Howard substitutes a quadratic Lagrangian and
+nothing recovers one that is not quadratic, so `H = sqrt(1+|p|^2)` is refused at `_ke = 6.499e+01`
+against a tolerance of `1.2e-09`.
 
-An earlier version of this docstring called the extraction unsound, on the grounds that
-`H(x, m, p=0, t)` equals the alpha-free part only when `H_control(0) = 0`, with `H = sqrt(1+|p|^2)`
-injecting a spurious 1.0. The objection is right in principle and `_ke` covers it in practice:
-measured through the guard, that Hamiltonian is REFUSED with `_ke = 3.121e+03` against a tolerance
-of 8.0e-09 -- six orders of magnitude, not a margin. What `_ke` cannot separate is `H_control(p) =
-(1/2)|p|^2 + C` from a constant potential `V = C`, and no probe can: they are the same function of
-(x, m, p, t). Treating `H(0)` as the alpha-free part is the standard normalisation, not an error.
-That argument is now measured as well as reasoned: on `H = |p|^2/2 + C + g*x*m`, extracting `C` into
-the running cost shifts `u` by exactly `C*(T - t)` -- `-0.200000` at `t = 0` and `0.000000` at
-`t = T` for `C = 1, T = 0.2` -- IDENTICALLY under Howard and Newton, to six decimals at `C` of 0, 1
-and 10. So `nabla u` is untouched, the policy and the FP drift are untouched, and the Howard-Newton
-gap is bit-for-bit unchanged at `1.6907e-09` across all three. A constant cannot be extracted
-wrongly because there is nothing to get wrong.
+What licenses the extraction is not that `H(x, m, 0, t)` IS the alpha-free part -- it need not be.
+Howard assembles `ref(nabla u) + H(x, m, 0, t)`, and `_ke` certifies `ref(p) = H(p) - H(0)`, so the
+sum telescopes back to `H(nabla u)` for whatever `H(x, m, 0, t)` is. `H_control(p) = (1/2)|p|^2 + C`
+and a constant potential `V = C` are the same function of `(x, m, p, t)` and no probe separates
+them; the identity is why nothing has to. Adding `C*cos(3t)` to this file's fixture moves
+`H(x, m, 0, t)` over four decades and leaves the Howard-Newton discrepancy at `8.0862974638e-03` --
+the `C = 0` discretisation error, unchanged to ten significant figures.
 
 The Lagrangian-substitution case is unaffected -- its alpha-free part is exactly zero, so no
 alpha-free gate was ever going to catch it, which is why `_ke` is the one that does.
@@ -537,6 +532,18 @@ def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
     assert np.abs(u - baseline).max() > 1e-3, (
         f"{name} was accepted but its alpha-free part changed nothing -- extraction is a no-op, "
         "which is the pre-#2011 behaviour wearing a green test"
+    )
+
+    # ...and it must move it to the RIGHT answer. "Accepted and different" is satisfied by any
+    # wrong extraction; Newton reads the same Hamiltonian through H()/dp() and needs no
+    # decomposition, so it is the independent oracle. Measured: 0.809% / 1.228% / 0.733% for the
+    # three entries, against 27.8% / 111.6% / 52.0% for the no-op extraction this file is here to
+    # catch -- the 5% below separates them by a factor of 5.6 on either side.
+    reference = _solve(factory(), "newton", terminal="cos")
+    rel = np.abs(u - reference).max() / max(np.abs(reference).max(), 1e-30)
+    assert rel < 0.05, (
+        f"{name}: Howard is {rel:.2%} from Newton on the same Hamiltonian -- the alpha-free part "
+        "moved the answer somewhere, but not to where the undecomposed solve puts it"
     )
 
 

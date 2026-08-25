@@ -3339,7 +3339,16 @@ class HJBGFDMSolver(BaseHJBSolver):
             _dt_probe = float(self.problem.T) / int(self.problem.Nt)
             _pts = np.asarray(self.collocation_points, dtype=float)
             _rng = np.random.default_rng(0)
-            _slices = np.unique(np.linspace(0, M_collocation.shape[0] - 1, 3).astype(int))
+            # EVERY time slice. Three was defensible while the alpha-free branch was a second
+            # refusal; #2011 removes that branch, so `_ke` is the only thing left between an
+            # undecomposable Hamiltonian and a plausible wrong answer -- now for every Hamiltonian,
+            # not only those declaring `_potential`/`_coupling`. A gate sampled at three points has
+            # a zero-width hole that is trivial to sit in: H = (1/2)|p|^2 * (1 + A*t*(t-T/2)*(t-T))
+            # has an identically-zero kinetic defect at t = 0, T/2, T and is wrong everywhere else.
+            # Three slices ACCEPT it past the 5% the accept test asserts; every slice refuses it and
+            # still accepts the genuine A = 0 case. The probe costs 0.67s -> 0.78s on its own file,
+            # which is the answer to the only reason to narrow it again.
+            _slices = np.arange(M_collocation.shape[0])
 
             # MAGNITUDES FROM THE PROBLEM, not hard-coded. The previous version sampled |p| in
             # {0.5, 1, 2} while the solve visits max|grad u| = 6.18 on this PR's own fixture, so
@@ -3470,10 +3479,13 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Issue #2011 item 1. The alpha-free part is no longer a refusal: `howard_running_cost`
             # below extracts it as H(x, m, 0, t) via the same eval_H_batch the Newton residual uses,
             # which needs no `_potential`/`_coupling` and works for any Hamiltonian. What made that
-            # sound is the `_ke` gate immediately below -- it requires H(p) - H(0) to match
-            # (1/2)|p|^2, which is exactly the statement that H_control(0) = 0, so H(x, m, 0, t) IS
-            # the alpha-free part rather than merely containing it. `_af` is now measured to DECIDE
-            # whether to build that closure, not to refuse.
+            # sound is an ALGEBRAIC IDENTITY, not a property of the decomposition: Howard assembles
+            # ref(grad u) + H(x, m, 0, t), and `_ke` certifies ref(p) = H(p) - H(0), so the sum
+            # telescopes back to H(grad u) for WHATEVER H(x, m, 0, t) is. It does not say that value
+            # is zero and nothing here needs it to be -- adding C*cos(3t) to this file's fixture
+            # moves the alpha-free part over four decades and leaves the Howard-Newton discrepancy
+            # at 8.0862974638e-03, the C = 0 discretisation error, to ten significant figures.
+            # `_af` is now measured to DECIDE whether to build that closure, not to refuse.
             #
             # `_ke` remains a refusal, and it is the real limit: Howard substitutes a quadratic
             # Lagrangian, and no probe recovers a Hamiltonian whose control cost is something else.
