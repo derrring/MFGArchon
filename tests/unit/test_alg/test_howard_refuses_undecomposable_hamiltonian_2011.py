@@ -46,6 +46,8 @@ alpha-free gate was ever going to catch it, which is why `_ke` is the one that d
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import numpy as np
@@ -343,8 +345,57 @@ def _quartic():
 # Every entry here has a control cost that is NOT the unit quadratic -- m-dependent, quartic,
 # anisotropic -- and no probe recovers one, so Howard's substituted Lagrangian would be a different
 # problem. These stay refusals.
+def _relativistic():
+    """H = sqrt(1 + |p|^2): a non-quadratic control cost whose alpha-free part is a spurious 1.0.
+
+    The docstring above cites this Hamiltonian's `_ke` and tolerance. Until #2069 those were prose
+    numbers with nothing that could fail, and they had gone stale -- #2072 changed `_gT` from 40 to
+    6.18034 and the pair kept the pre-rebase values through a whole review round. This fixture is
+    what makes them measurable.
+    """
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        batch = pa.ndim > 1
+        q = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
+        v = np.sqrt(1.0 + q)
+        return v if batch else float(np.asarray(v).ravel()[0])
+
+    def dp(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        q = np.sum(pa**2, axis=-1, keepdims=True) if pa.ndim > 1 else float(np.sum(pa**2))
+        return pa / np.sqrt(1.0 + q)
+
+    return type("Relativistic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
+def _time_varying_kinetic(amplitude):
+    """H = (1/2)|p|^2 * (1 + A*t*(t - T/2)*(t - T)): the defect a three-slice probe cannot see.
+
+    The cubic vanishes at t = 0, T/2 and T. Nothing about it is special beyond that -- three probed
+    times always admit a cubic vanishing at them, and the polynomial is written for this fixture's
+    even `Nt`, where `linspace(0, Nt, 3)` lands on T/2.
+    """
+
+    def w(tt):
+        return float(tt) * (float(tt) - T / 2.0) * (float(tt) - T)
+
+    def call(self, x, m, p, t=0.0):
+        pa = np.asarray(p, dtype=float)
+        batch = pa.ndim > 1
+        q = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
+        v = 0.5 * q * (1.0 + amplitude * w(t))
+        return v if batch else float(np.asarray(v).ravel()[0])
+
+    def dp(self, x, m, p, t=0.0):
+        return np.asarray(p, dtype=float) * (1.0 + amplitude * w(t))
+
+    return type("TimeVaryingKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
+
+
 _REFUSE = [
     ("congestion_c1_is_one", _congestion),
+    ("relativistic_kinetic", _relativistic),
     ("quartic_kinetic", _quartic),
     (
         "anisotropic_kinetic",
@@ -537,14 +588,58 @@ def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
     # ...and it must move it to the RIGHT answer. "Accepted and different" is satisfied by any
     # wrong extraction; Newton reads the same Hamiltonian through H()/dp() and needs no
     # decomposition, so it is the independent oracle. Measured: 0.809% / 1.228% / 0.733% for the
-    # three entries, against 27.8% / 111.6% / 52.0% for the no-op extraction this file is here to
-    # catch -- the 5% below separates them by a factor of 5.6 on either side.
+    # three entries. The binding one is log_coupling, so the threshold has 4.07x of headroom on the
+    # pass side, not the 6.18x the best entry suggests. The mutation this line catches is the
+    # running-cost SIGN flip (`return -rc` -> `return rc`), which gives 56.47% / 399.58% / 82.86%;
+    # deleting `or _af > _tol` is caught one assertion earlier, by the no-op check above.
     reference = _solve(factory(), "newton", terminal="cos")
     rel = np.abs(u - reference).max() / max(np.abs(reference).max(), 1e-30)
     assert rel < 0.05, (
         f"{name}: Howard is {rel:.2%} from Newton on the same Hamiltonian -- the alpha-free part "
         "moved the answer somewhere, but not to where the undecomposed solve puts it"
     )
+
+
+def test_the_kinetic_probe_covers_every_time_slice():
+    """#2069: `_ke` is sampled at EVERY M_collocation slice, and the gate has no width without it.
+
+    #2011 removed the alpha-free refusal, which makes `_ke` the only thing between an undecomposable
+    Hamiltonian and a plausible wrong answer -- and for every `HamiltonianBase`, not only those
+    declaring `_potential`/`_coupling`. A probe at three times has a zero-width hole, and a cubic
+    vanishing at those three times sits in it: measured, three slices ACCEPT `A = 1000` at 11.29%
+    from Newton and `A = 5000` at 69.85%, both past the 5% the accept test above asserts.
+
+    This test is what makes the widening fail if narrowed. Without it the counterexample lives only
+    in a comment, and reverting `_slices` to the three-slice form leaves the whole howard suite green.
+    """
+    with pytest.raises(NotImplementedError) as exc:
+        _solve(_time_varying_kinetic(1000.0), "howard", terminal="cos", **M_MATRIX_QP)
+    assert "departs from (1/2)|p|^2" in str(exc.value)
+
+    # The false-refusal control, and it is the half that would go silently wrong. A = 0 is the same
+    # Hamiltonian with the defect switched off; refusing it would mean the widening broke the
+    # unit quadratic itself rather than closing a hole.
+    u = _solve(_time_varying_kinetic(0.0), "howard", terminal="cos", **M_MATRIX_QP)
+    assert np.all(np.isfinite(u))
+    assert np.abs(u).max() > 1e-6
+
+
+def test_the_refusal_reports_the_ke_the_docstring_cites():
+    """The docstring's `_ke = 6.499e+01` / `1.2e-09` pair was prose until #2069, and it went stale.
+
+    #2072 changed `_gT` from 40 to 6.18034; the docstring and the changelog kept reporting the
+    pre-rebase `3.121e+03` / `8.0e-09` through a full review round, because nothing could fail.
+    Loose tolerances deliberately -- this pins the ORDER, which is what the argument uses, not a
+    value that would turn every probe-ladder change into a test edit.
+    """
+    with pytest.raises(NotImplementedError) as exc:
+        _solve(_relativistic(), "howard", terminal="cos", **M_MATRIX_QP)
+    text = str(exc.value)
+    ke = float(re.search(r"departs from \(1/2\)\|p\|\^2 by ([\d.e+-]+)", text).group(1))
+    tol = float(re.search(r"tolerance ([\d.e+-]+)", text).group(1))
+    assert ke == pytest.approx(6.499e01, rel=0.05), f"docstring cites 6.499e+01, guard reports {ke:.4e}"
+    assert tol == pytest.approx(1.2e-09, rel=0.2), f"docstring cites 1.2e-09, guard reports {tol:.1e}"
+    assert ke / tol > 1e9, "the margin is what makes the non-quadratic refusal unambiguous"
 
 
 def test_a_wired_alpha_free_part_is_NOT_refused():

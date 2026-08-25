@@ -24,7 +24,7 @@ putting the rungs where the solve lives. The old ladder's **exact** rungs at `0.
 kept in the union rather than dropped — a geomspace grid lands on neither — and the low end is
 `min(0.5, _gT/4)` rather than a hard `0.5`, which stopped scaling down when `_gT < 1`.
 
-Measured, all with **no alpha-free part** so `_af_bad` cannot be what catches them:
+Measured, all with **no alpha-free part** so the alpha-free measurement cannot be what catches them:
 
 | fixture | old bound + old ladder | corrected |
 |---|---|---|

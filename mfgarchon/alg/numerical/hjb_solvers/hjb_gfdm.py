@@ -3345,9 +3345,15 @@ class HJBGFDMSolver(BaseHJBSolver):
             # not only those declaring `_potential`/`_coupling`. A gate sampled at three points has
             # a zero-width hole that is trivial to sit in: H = (1/2)|p|^2 * (1 + A*t*(t-T/2)*(t-T))
             # has an identically-zero kinetic defect at t = 0, T/2, T and is wrong everywhere else.
-            # Three slices ACCEPT it past the 5% the accept test asserts; every slice refuses it and
-            # still accepts the genuine A = 0 case. The probe costs 0.67s -> 0.78s on its own file,
-            # which is the answer to the only reason to narrow it again.
+            # On this file's fixture three slices ACCEPT it at 11.29% from Newton for A = 1000 and
+            # 69.85% for A = 5000, both past the 5% the accept test asserts. Every slice refuses any
+            # nonzero A -- down to 1e-6, since `_ke` is linear in A -- and still accepts A = 0 at
+            # 0.76%. That is the right boundary, not an accident of the threshold: Howard substitutes
+            # ONE Lagrangian for the whole horizon, so a kinetic part that varies with t is precisely
+            # what it cannot represent, and probing every slice cannot false-refuse anything Howard
+            # would get right. Cost is O(Nt * |mags| * n_points) per backward sweep: unmeasurable at
+            # this file's Nt = 10, and ~1s per outer iteration at Nt = 1000 with 2500 points, which
+            # is where to look if it ever matters.
             _slices = np.arange(M_collocation.shape[0])
 
             # MAGNITUDES FROM THE PROBLEM, not hard-coded. The previous version sampled |p| in
@@ -3482,9 +3488,18 @@ class HJBGFDMSolver(BaseHJBSolver):
             # sound is an ALGEBRAIC IDENTITY, not a property of the decomposition: Howard assembles
             # ref(grad u) + H(x, m, 0, t), and `_ke` certifies ref(p) = H(p) - H(0), so the sum
             # telescopes back to H(grad u) for WHATEVER H(x, m, 0, t) is. It does not say that value
-            # is zero and nothing here needs it to be -- adding C*cos(3t) to this file's fixture
-            # moves the alpha-free part over four decades and leaves the Howard-Newton discrepancy
-            # at 8.0862974638e-03, the C = 0 discretisation error, to ten significant figures.
+            # is zero and nothing here needs it to be. The check that carries this is pointwise and
+            # algebraic, not a solve: -alpha*.p - L(alpha*) + H(x,m,0,t) == H(x,m,p,t) at
+            # alpha* = -dH/dp holds to 0.0 on every accepted class -- including alpha-free parts
+            # depending on m at amplitude 1e4 -- and fails on every refused one. A solve comparison
+            # is weaker than it looks: a perturbation constant in x and m shifts both solvers
+            # identically whatever the guard does, so it cannot separate them.
+            #
+            # It is pointwise in (x, m, t), which is why `_slices` above must cover every slice:
+            # three slices certified the identity at three times and Howard applies it at all of
+            # them. One hypothesis is not checked here and is pinned elsewhere (#1645,
+            # test_hl_convention.py) -- that `control_cost.evaluate` and its Lagrangian are a
+            # Legendre pair with no additive constant, which holds for both admitted paths.
             # `_af` is now measured to DECIDE whether to build that closure, not to refuse.
             #
             # `_ke` remains a refusal, and it is the real limit: Howard substitutes a quadratic
@@ -3498,7 +3513,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"(its alpha-free part max|H(x,m,0,t)| = {_af:.3e} is extracted and is not the "
                     f"problem; H(x,m,p,t) - H(x,m,0,t) departs from (1/2)|p|^2 by {_ke:.3e}, which is; "
                     f"tolerance {_tol:.1e}, relative to a probed |H| of {_scale:.3e}). Probed at "
-                    f"M_collocation slices {list(_slices)}, times {[round(float(n) * _dt_probe, 4) for n in _slices]}, "
+                    f"all {len(_slices)} M_collocation slices, times {round(float(_slices[0]) * _dt_probe, 4)} "
+                    f"to {round(float(_slices[-1]) * _dt_probe, 4)}, "
                     f"and {len(_dirs)} momentum vectors at |p| in {[round(float(m), 4) for m in _mags]} "
                     f"(scaled to a terminal-gradient bound of {_gT:.4g}). Howard would silently substitute "
                     f"L(alpha) = {'its declared quadratic Lagrangian' if control_cost is not None else '(1/2)|alpha|^2'} "
@@ -3608,9 +3624,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             def howard_running_cost(t_idx):
                 rc = np.zeros(self.n_points)
                 if has_H_extra:
-                    # V(x, t) + f(m^n) via the SAME eval_H_batch the Newton residual uses
-                    # (single source). At p=0 the gate-enforced unit-quadratic control cost
-                    # gives H_control(0)=0, so eval_H_batch(..., p=0, ...) == V(x, t) + f(m^n).
+                    # H(x, m^n, 0, t) via the SAME eval_H_batch the Newton residual uses (single
+                    # source). NOT because H_control(0) = 0 -- the guard never establishes that, and
+                    # for the bare `HamiltonianBase` classes admitted since #2011 there is no
+                    # H_control to speak of. What licenses it is the telescoping identity the guard
+                    # certifies; see the `_ke` block above, which owns that argument.
                     rc = (
                         rc
                         + np.asarray(
