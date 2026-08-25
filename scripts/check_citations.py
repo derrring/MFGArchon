@@ -95,10 +95,15 @@ Every one was an artefact: citations are usually written as a bare basename -- `
 and a line number -- while the file lives at `mfgarchon/core/mfg_problem.py`, and resolving the
 string as a path misses it.
 
-An example path in THIS file's prose is written so it cannot parse as a citation, and that is not
-fussiness: this script is inside the population it scans, so an illustrative path becomes a row in
-its own measurement. The one exception is the regex's own documentation below, where the notation
-IS the subject and neutering it would delete the thing being documented. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
+An example path in THIS file's prose must contribute NO ADJUDICABLE ROW -- not "must not parse as
+a citation", which is what this said and which the file itself violates: the regex's own
+documentation and `resolve`'s traversal example both parse, and land in `missing`, which is
+ungated. The enforceable invariant is the adjudicable one, and
+`test_this_file_contributes_no_adjudicable_citation` pins it. It is not circular: it is the
+instrument judging one ordinary input file, the same shape as the shipped-baseline test.
+
+The reason it needs a pin at all is that `--write-baseline` records whatever is present, which is
+exactly how two rows of this file's own prose shipped inside a passing baseline. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
 repo-relative path, as a path under `mfgarchon/`, and finally as a basename over every tracked
 `.py`, narrowed by suffix when the citation carries directories. A basename matching more than one
 file is reported AMBIGUOUS rather than guessed.
@@ -752,7 +757,11 @@ def compare_to_baseline(result: dict, path: Path) -> int:
         problems.append(
             "these citations name a symbol that is no longer near the line they point at:\n"
             + "\n".join(f"      {a}" for a in appeared)
-            + "\n    Fix the line number, or drop it and cite the file."
+            + "\n    Read each one. Either the line number is stale -- fix it, or drop it and cite "
+            "the file -- OR the citation is right and this line's backticked name belongs to a "
+            "neighbouring clause, which the instrument cannot tell apart. Hand-read of the 18 "
+            "recorded rows: 9 stale, 8 mis-attributed, 1 already retracted in the prose. If it is "
+            "mis-attributed, change nothing and record it."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

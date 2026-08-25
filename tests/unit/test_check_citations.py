@@ -593,3 +593,24 @@ def test_a_baseline_written_OUTSIDE_the_repository_does_not_crash(tmp_path):
     )
     assert out.returncode == 0, out.stdout + out.stderr
     assert outside.is_file(), "the baseline was not written"
+
+
+def test_this_file_contributes_no_adjudicable_citation():
+    """The instrument sits inside the population it scans, and its own prose has become a row it
+    counts three times -- twice inside the paragraph explaining why that must not happen.
+
+    The gate cannot catch this: `--write-baseline` records whatever is present, which is how two
+    such rows shipped inside a PASSING baseline. Only a test run against the real repository fires.
+
+    ADJUDICABLE, not "parses as a citation". The stated rule was the latter and this file violates
+    it today -- the regex's own documentation and `resolve`'s `..` traversal example both parse and
+    land in `missing`, which is ungated and harmless. What must never happen is an `anchored` or
+    `drifted` row, because those are the numbers the ratchet pins.
+    """
+    repo = SCRIPT.parents[1]
+    got = _measure(repo)
+    own = [r for r in got["anchored"] + got["drifted"] if r["file"] == "scripts/check_citations.py"]
+    assert not own, (
+        f"this file's own prose contributed {len(own)} adjudicable row(s) to its own measurement, "
+        f"which the ratchet then pins: {own}"
+    )
