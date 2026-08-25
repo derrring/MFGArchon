@@ -1,36 +1,39 @@
 {
-  "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` is bidirectional: a new one is a regression, a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from the prose would otherwise lower `drifted` and read as an improvement.",
+  "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target file, the cited line, and the symbols the prose names beside it; `counts` pins how many, because neither catches what the other does. Both are bidirectional: a new drifted citation is a regression and a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation would otherwise lower `drifted` and read as an improvement. `ambiguous_locations` records target lines a file cites both with and without a symbol, so that repointing one correctly is not reported as the evasion. Regenerate with --write-baseline.",
   "_measured_at": {
-    "head_when_written": "09cb6e82",
+    "head_when_written": "cf31cc50",
     "window": 12
   },
+  "ambiguous_locations": [
+    "tests/unit/test_mfg_caplog.py -> mfgarchon/alg/numerical/fp_solvers/fp_gfdm.py:575"
+  ],
   "counts": {
     "adjudicable": 39,
     "ambiguous": 5,
     "anchored": 20,
     "drifted": 19,
-    "missing": 37,
+    "missing": 45,
     "unadjudicable": 154
   },
   "drifted": [
-    "AGENTS.md -> logger.py:211",
-    "CLAUDE.md -> logger.py:211",
-    "changelog.d/1663-backend-unavailable-tests.fixed.md -> __init__.py:149",
-    "changelog.d/1686-bc-convention-docs.fixed.md -> fp_fdm_alg_divergence_centered.py:273",
-    "changelog.d/1904-ghost-buffer-spacing.fixed.md -> applicator_fdm.py:203",
-    "changelog.d/1904-ghost-buffer-spacing.fixed.md -> tensor_calculus.py:1049",
-    "changelog.d/1918-critical-invisible-to-log-analyser.fixed.md -> hooks/visualization.py:328",
-    "changelog.d/1918-critical-invisible-to-log-analyser.fixed.md -> workflow/common.py:107",
-    "changelog.d/single-source-ratchet.added.md -> code_generation.py:400",
-    "mfgarchon/geometry/boundary/conditions.py -> core/hamiltonian.py:1284",
-    "mfgarchon/geometry/boundary/protocols.py -> applicator_fdm.py:2664",
-    "tests/integration/test_coupled_mms_2d_no_flux.py -> mfg_problem.py:1416",
-    "tests/unit/test_alg/test_gfdm_mms_source_1991.py -> hjb_gfdm.py:3373",
-    "tests/unit/test_alg/test_meshless_stabilization.py -> meshless_galerkin/hjb_solver.py:51",
-    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> fp_network.py:606",
-    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> hjb_howard.py:363",
-    "tests/unit/test_alg/test_taylor_operator_obstacle_visibility.py -> gfdm_strategies.py:386",
-    "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py -> hjb_weno.py:330",
-    "tests/unit/test_mfg_caplog.py -> fp_gfdm.py:575"
+    "AGENTS.md -> mfgarchon/utils/mfg_logging/logger.py:211 [caplog]",
+    "CLAUDE.md -> mfgarchon/utils/mfg_logging/logger.py:211 [caplog]",
+    "changelog.d/1663-backend-unavailable-tests.fixed.md -> mfgarchon/__init__.py:149 [create_backend]",
+    "changelog.d/1686-bc-convention-docs.fixed.md -> mfgarchon/alg/numerical/fp_solvers/fp_fdm_alg_divergence_centered.py:273 [NO_FLUX,NO_FLUX,NoFluxCalculator,ZeroGradientCalculator,ZeroFluxCalculator]",
+    "changelog.d/1904-ghost-buffer-spacing.fixed.md -> mfgarchon/geometry/boundary/applicator_fdm.py:203 [FDMApplicator.apply,grid_spacing]",
+    "changelog.d/1904-ghost-buffer-spacing.fixed.md -> mfgarchon/utils/numerical/tensor_calculus.py:1049 [self.spacings]",
+    "changelog.d/1918-critical-invisible-to-log-analyser.fixed.md -> mfgarchon/hooks/visualization.py:328 [setup_workflow_logging]",
+    "changelog.d/1918-critical-invisible-to-log-analyser.fixed.md -> mfgarchon/workflow/common.py:107 [setup_workflow_logging]",
+    "changelog.d/single-source-ratchet.added.md -> mfgarchon/meta/code_generation.py:400 [diffusion_from_volatility_torch,diffusion_from_volatility,owner,sentinel_symbol]",
+    "mfgarchon/geometry/boundary/conditions.py -> mfgarchon/core/hamiltonian.py:1284 [HamiltonianBase.optimal_control]",
+    "mfgarchon/geometry/boundary/protocols.py -> mfgarchon/geometry/boundary/applicator_fdm.py:2664",
+    "tests/integration/test_coupled_mms_2d_no_flux.py -> mfgarchon/core/mfg_problem.py:1416 [get_diffusion_coefficient_field]",
+    "tests/unit/test_alg/test_gfdm_mms_source_1991.py -> mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py:3373 [source_term]",
+    "tests/unit/test_alg/test_meshless_stabilization.py -> mfgarchon/alg/numerical/meshless_galerkin/hjb_solver.py:51 [WeakFormHJBSolver.solve_hjb_system]",
+    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> mfgarchon/alg/numerical/hjb_solvers/hjb_howard.py:363 [seg.bc_type,BoundaryHandler]",
+    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> mfgarchon/alg/numerical/network_solvers/fp_network.py:606 [HJBNetworkSolver]",
+    "tests/unit/test_alg/test_taylor_operator_obstacle_visibility.py -> mfgarchon/alg/numerical/gfdm_components/gfdm_strategies.py:386 [_n_points]",
+    "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py -> mfgarchon/alg/numerical/hjb_solvers/hjb_weno.py:330 [_SUPPORTED_BC_TYPES]",
+    "tests/unit/test_mfg_caplog.py -> mfgarchon/alg/numerical/fp_solvers/fp_gfdm.py:575 [caplog]"
   ]
 }
