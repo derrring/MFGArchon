@@ -21,7 +21,7 @@ import yaml
 
 from mfgarchon.config import MFGSolverConfig, load_solver_config
 
-#: Exactly the table in `docs/user/configuration_system.md`. If PyYAML changes, this fails and the
+#: Mirrors the table in `docs/user/configuration_system.md` -- nothing enforces the two agree, so If PyYAML changes, this fails and the
 #: doc is what needs editing.
 SPELLINGS = [
     ("1e-8", str),

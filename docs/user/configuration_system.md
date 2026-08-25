@@ -123,7 +123,7 @@ which coerces the string back. So `tolerance: 1e-8` still loads correctly.
 `picard.max_iterations: 1e3` raises `Input should be a valid integer, unable to parse string as an
 integer` from `load_solver_config` itself — no `strict=True` required. OmegaConf accepted it,
 because it resolved the scalar to `1000.0` first. **This applies to every `int`-valued field in
-the schema** — there are 15, including ones nested behind optional sub-models such as
+the schema** — 15 of them at the time of writing, including ones nested behind optional sub-models such as
 `fp.particle.num_particles` and `hjb.gfdm.neighborhood.k_neighbors`. The `Literal[int]` fields
 (`element_order`, `rk_order`, `weno_order`) fail the same way with a different message. Write any
 of them plainly (`1000`) or with a signed exponent (`1.0e+3`).

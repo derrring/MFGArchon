@@ -23,12 +23,17 @@
   `load_solver_config` is unaffected — it validates non-strictly and coerces the string back — so
   `tolerance: 1e-8` still loads. For **int** fields it is not: a string will not coerce to `int`
   even non-strictly, so `picard.max_iterations: 1e3` raises out of `load_solver_config` itself,
-  where OmegaConf accepted it by resolving to `1000.0` first. It applies to all 15 `int`-valued
-  fields, not the four the first version of this note named -- the other eleven sit behind optional
-  sub-models (`fp.particle`, `hjb.gfdm`, `hjb.fem`) that a hand-rolled annotation walker skipped. Nothing shipped here was affected; the removed default configs all used
-  the `1.0e-6` spelling. `tests/unit/test_config/test_yaml_scalar_typing_1687.py` pins the table,
-  both field-type outcomes, and the four int fields by name, because a documented behaviour is a
-  claim that rots on the next PyYAML release.
+  where OmegaConf accepted it by resolving to `1000.0` first. It applies to every `int`-valued
+  field, not the four the first version of this note named -- the others sit behind optional
+  sub-models (`fp.particle`, `hjb.gfdm`, `hjb.fem`) that a hand-rolled annotation walker skipped.
+  Nothing shipped here was affected; the removed default configs all used the `1.0e-6` spelling.
+
+  `tests/unit/test_config/test_yaml_scalar_typing_1687.py` pins the spelling table and both
+  field-type outcomes, and asserts the PROPERTY that every `int`-valued field rejects the
+  bare-exponent spelling through the real loader. The field list is DERIVED from pydantic's schema
+  rather than named, because naming it was wrong both times it was tried -- a documented behaviour
+  is a claim that rots on the next PyYAML release, and a documented list is one that rots on the
+  next field.
 
   Unknown-field rejection (#1766) is unaffected: it is `extra="forbid"` on the models in
   `config/core.py`, not bridge behaviour. In `test_unknown_fields_are_rejected_1766.py`, two tests
