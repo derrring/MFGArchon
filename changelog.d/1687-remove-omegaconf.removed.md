@@ -7,18 +7,35 @@
 
   **`bridge_to_pydantic` does not collapse to a plain `model_validate`.** It carried `strict=True`,
   so `{'picard': {'max_iterations': '100'}}` raised there and is silently coerced to `int` without
-  it. A caller relying on that rejection must pass `strict=True`. The four YAMLs were never in any
-  wheel either — `package-data` is commented out — they were written into the installed package
-  directory at runtime by `_create_default_configs`, so this also removes a write-into-site-packages
-  pattern.
+  it. A caller relying on that rejection must pass `strict=True` — **but only on a dict built in
+  Python, not on YAML**; see the scalar note below. The four YAMLs were never in any wheel either —
+  `package-data` is commented out — they were written into the installed package directory at
+  runtime by `_create_default_configs`, so this also removes a write-into-site-packages pattern.
 
   YAML interpolation, composition and merging go with them; they were
   OmegaConf features, not library features. `load_solver_config` / `save_solver_config` /
   `validate_yaml_config` are unchanged and remain the flat-YAML path.
 
+- **Behaviour change: YAML scientific notation.** OmegaConf resolved scalars itself and handed
+  Pydantic a `float`. PyYAML implements YAML 1.1, whose float rule requires **both a decimal point
+  and a signed exponent**, so `1e-8`, `1E-8`, `1e8` and `-1e-8` now arrive as `str` while `1.0e-8`
+  and `1.e-8` arrive as `float`. `load_solver_config` is unaffected — it validates non-strictly and
+  coerces the string back — so `tolerance: 1e-8` still loads. Code that validates YAML itself with
+  `strict=True` will now reject it. Nothing shipped here was affected; the removed default configs
+  all used the `1.0e-6` spelling.
+
   Unknown-field rejection (#1766) is unaffected: it is `extra="forbid"` on the models in
-  `config/core.py`, not bridge behaviour. Two tests that exercised it *through* the bridge are
-  replaced by one that exercises it directly.
+  `config/core.py`, not bridge behaviour. In `test_unknown_fields_are_rejected_1766.py`, two tests
+  that exercised it *through* the bridge are replaced by one that exercises it directly. Verified by
+  mutation: reverting to `extra="ignore"` fails 3 of 4 tests on the branch against 4 of 5 before, so
+  the guard is not weakened.
+
+  Separately, `tests/unit/test_config/test_bridge.py` (14 tests) is deleted. Thirteen were
+  bridge-scoped. The fourteenth, `test_the_alias_map_has_one_owner`, imports only `PicardConfig` and
+  is **carried over** to `test_picard_relaxation_alias.py`: it checks every entry of
+  `LEGACY_FIELD_ALIASES` by iterating the map, where the rest of that file uses a hardcoded
+  parametrize list — a second copy. Without it, adding an alias whose canonical target does not
+  exist leaves the config suite green at 173 passed.
 
 - **`jupyter`, `jupyterlab` and `seaborn` are no longer dependencies.** Measured: zero imports in
   the package, the tests, the examples and the benchmarks. `nbformat` stays, because the package
@@ -27,4 +44,7 @@
 - **`pyyaml` is now declared.** `config/io.py` has always imported it at module level while nothing
   declared it — it arrived transitively from omegaconf and from jupyterlab's dependency chain, both
   removed above. A fresh install would otherwise have lost `load_solver_config` and the local gate's
-  workflow-integrity step.
+  workflow-integrity step. `utils/cli.py`'s `try/except ImportError` around the same import, and its
+  two unreachable `raise` branches, go with it: this change is what made them unreachable. The test
+  that patched the removed `YAML_AVAILABLE` flag is replaced by one asserting the declaration is
+  present, which is the invariant the unconditional imports actually need.

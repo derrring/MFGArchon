@@ -44,12 +44,16 @@ Particle-based FP solvers as alternative to grid methods.
 
 ---
 
-### 05. [Config System](./05_config_system.py) | [notebook](./05_config_system.ipynb)
+### 05. [Problem Variations and Next Steps](./05_config_system.py) | [notebook](./05_config_system.ipynb)
 **Difficulty**: Intermediate | **Time**: 20 minutes
 
-Advanced solver configuration with Pydantic.
+Vary problem parameters and compare the resulting solutions. **Despite the filename, this tutorial
+does not cover the configuration system** — it never mentions `MFGSolverConfig`. For that, see
+[`docs/user/configuration_system.md`](../../docs/user/configuration_system.md). The file keeps its
+name so existing links resolve.
 
-**You'll learn**: `MFGSolverConfig`, `PicardConfig`, solver backend selection, acceleration options
+**You'll learn**: building problem variations, comparing solutions across settings, reading MFG
+solution outputs
 
 ---
 

@@ -133,3 +133,30 @@ class TestPicardRelaxationAliasCollision:
     def test_both_damping_schedule_and_relaxation_schedule_raises(self):
         with pytest.raises(ValueError, match=r"both legacy .* and canonical"):
             PicardConfig(damping_schedule="harmonic", relaxation_schedule="sqrt")
+
+
+def test_the_alias_map_has_one_owner():
+    """Every entry of `LEGACY_FIELD_ALIASES` is checked BY ITERATING THE MAP, not by a copy of it.
+
+    Carried over from `test_config/test_bridge.py` when #1687 deleted that file. It was written
+    for a two-reader problem that no longer exists -- the bridge and the validator each held their
+    own alias set and disagreed -- but the property it pins survives the bridge's removal and is
+    the one this file otherwise lacks.
+
+    `TestPicardRelaxationAliasWarnings` covers the same five aliases through a HARDCODED
+    parametrize list, which is a second copy of the map: add a sixth alias pointing at a field that
+    does not exist and every test in this file still passes, because none of them read the map.
+    Measured -- with `"damping_tolerance": "tolerence_typo"` added, the config suite stays green at
+    173 passed and only the assertion below fires.
+    """
+    aliases = PicardConfig.LEGACY_FIELD_ALIASES
+    assert aliases, "the map must be reachable from the class, not buried in the validator"
+    for legacy, canonical in aliases.items():
+        assert legacy not in PicardConfig.model_fields, f"{legacy} is an alias, not a field"
+        assert canonical in PicardConfig.model_fields, f"{canonical} must be a real field"
+        # Round-trip with the canonical field's own default, so the value is type-correct for
+        # every alias (they do not all map to floats -- adaptive_damping maps to a bool).
+        probe = PicardConfig.model_fields[canonical].get_default(call_default_factory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert PicardConfig(**{legacy: probe}).model_dump()[canonical] == probe

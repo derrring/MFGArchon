@@ -3,9 +3,9 @@ returning all-default config.
 
 The solver-config schema (``MFGSolverConfig`` / its ``SolverConfig`` alias) is FLAT:
 top-level keys are ``hjb``, ``fp``, ``picard``, ``backend``, ``logging``. A plain
-``model_validate`` silently ignores unknown top-level keys, so a ``solver:``-wrapped
-or ``solver:``-wrapped YAML (the vocabulary the removed OmegaConf layer used, whose top
-level is ``solver:``/``optimization:``/``debug:``) used to load as all-defaults -- the
+``model_validate`` silently ignores unknown top-level keys, so a YAML in the vocabulary
+the removed OmegaConf layer used -- whose top level is
+``solver:``/``optimization:``/``debug:`` -- used to load as all-defaults, the
 user's config silently doing nothing. ``load_solver_config`` now rejects unknown
 top-level keys (kernel fail-fast). The flat round-trip (save -> load) is unaffected.
 """

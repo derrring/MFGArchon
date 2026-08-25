@@ -96,10 +96,29 @@ the config layer and the solvers; prefer them over reading fields by hand.
 | Removed | Where the responsibility went |
 |:--------|:------------------------------|
 | `OmegaConfManager`, `create_omega_manager` | The application's own loader |
-| `bridge_to_pydantic` | `model_validate(..., strict=True)` — with one config system there is nothing to bridge. **Keep `strict=True`**: the bridge defaulted to it, so `{'max_iterations': '100'}` raised there and a plain `model_validate` coerces it to `int` instead |
+| `bridge_to_pydantic` | `model_validate(...)` — with one config system there is nothing to bridge. Use `strict=True` for a dict you built in Python, where the bridge's behaviour carried over exactly: `{'max_iterations': '100'}` raised there and a plain `model_validate` coerces it to `int`. **Do not use it on data that came from `yaml.safe_load`** — see the note below |
 | `save_effective_config` / `load_effective_config` | `save_solver_config` writes YAML; `model_dump_json` writes JSON |
 | `create_parameter_sweep_configs` | The experiment layer; a sweep is a loop over built configs |
 | `mfgarchon/config/configs/*.yaml` | Shipped defaults for the removed manager |
 | YAML interpolation, composition, merging | OmegaConf features, not library features |
 
 `OMEGACONF_AVAILABLE` is gone from `mfgarchon.config`. Code that branched on it can drop the branch.
+
+### One behaviour change to know about: YAML scalars
+
+PyYAML implements YAML 1.1, whose float rule requires **both a decimal point and a signed
+exponent**. OmegaConf resolved scientific notation itself and handed Pydantic a `float`; PyYAML
+hands it a `str`:
+
+| spelling in YAML | `yaml.safe_load` gives |
+|:-----------------|:-----------------------|
+| `1e-8`, `1E-8`, `1e8`, `-1e-8` | `str` |
+| `1.0e-8`, `1.e-8` | `float` |
+
+`load_solver_config` is unaffected: it calls a non-strict `model_validate`, which coerces the
+string back to `float`. So `tolerance: 1e-8` still loads correctly.
+
+It matters if you validate YAML yourself with `strict=True`, which rejects the string outright
+(`Input should be a valid number [type=float_type, input_value='1e-8', input_type=str]`). Either
+drop `strict=True` on the YAML path, or write `1.0e-8`. Nothing shipped in this repository was
+affected — the removed default configs all used the `1.0e-6` spelling.

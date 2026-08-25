@@ -14,14 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml  # type: ignore[import-untyped]
+
 from mfgarchon.utils.exceptions import InvalidConfigurationError
-
-try:
-    import yaml  # type: ignore[import-untyped]
-
-    YAML_AVAILABLE = True
-except ImportError:
-    YAML_AVAILABLE = False
 
 
 def create_base_parser() -> argparse.ArgumentParser:
@@ -166,8 +161,6 @@ def load_config_file(config_path: str | Path) -> dict[str, Any]:
             if suffix == ".json":
                 return json.load(f)
             elif suffix in [".yaml", ".yml"]:
-                if not YAML_AVAILABLE:
-                    raise ValueError("YAML support requires PyYAML: pip install PyYAML")
                 return yaml.safe_load(f)
             else:
                 raise ValueError(f"Unsupported config file format: {suffix}")
@@ -191,8 +184,6 @@ def save_config_file(config: dict[str, Any], output_path: str | Path) -> None:
             if suffix == ".json":
                 json.dump(config, f, indent=2, default=str)
             elif suffix in [".yaml", ".yml"]:
-                if not YAML_AVAILABLE:
-                    raise ValueError("YAML support requires PyYAML: pip install PyYAML")
                 yaml.safe_dump(config, f, indent=2, default_flow_style=False)
             else:
                 # Default to JSON
