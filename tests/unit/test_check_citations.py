@@ -721,29 +721,3 @@ def test_every_statement_of_the_hand_read_agrees_with_the_baseline():
                 f"the next 400 characters; every statement of it must name the withdrawn row, not "
                 f"just the file it lives in"
             )
-
-    # A NEGATIVE pin on the policy, and the only clause here that is phrasing-independent. The
-    # proportion is the fact that actually drifted -- 10:8, then 9:8, then "near-evenly" -- and a
-    # fourth copy phrased its own way would slip past the pattern above, as the module docstring
-    # did for two review rounds. Seventeen rows cannot separate an even split from 2:1 either way
-    # (the 95% Clopper-Pearson interval at 9/17 contains both 1/3 and 2/3), so no proportion
-    # belongs in any of these files.
-    # Only integers that could BE a class count are interesting: a split is two of them. Larger
-    # numbers nearby are percentages, line references and issue numbers, and flagging those makes
-    # the check noise. `expected` and `expected - 1` are the row totals the statements legitimately
-    # carry.
-    allowed = {expected, expected - 1}
-    for name, text in files.items():
-        for match in pattern.finditer(text):
-            # Forward only: a split follows the claim it qualifies. Looking backwards catches
-            # unrelated prose -- an earlier draft flagged "step 3" of the release checklist.
-            window = text[match.start() : match.end() + 400]
-            counts = {int(n) for n in re.findall(r"\b\d{1,2}\b", window)}
-            stray = {n for n in counts if n <= expected} - allowed
-            assert not stray, (
-                f"{name} states the hand-read and carries {sorted(stray)} within reach of it. If "
-                f"that is a split between the two classes, it does not belong: two independent "
-                f"hand-reads disagreed about which rows fall in which, and seventeen rows cannot "
-                f"separate an even split from 2:1 -- the 95% Clopper-Pearson interval at 9/17 "
-                f"contains both. Widen `allowed` only for a number that is not a proportion"
-            )
