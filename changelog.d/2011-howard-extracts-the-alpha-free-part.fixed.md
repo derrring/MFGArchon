@@ -33,14 +33,18 @@ On soundness: `H(x, m, 0, t)` need not *be* the alpha-free part, and the guarant
 `ref(p) = H(p) − H(0)`, so the sum telescopes back to `H(∇u)` whatever the extracted value is.
 
 The check that carries this is pointwise and algebraic, not a solve comparison:
-`−α*·p − L(α*) + H(x, m, 0, t) == H(x, m, p, t)` at `α* = −∂H/∂p` holds to `0.0` on every accepted
-class — including alpha-free parts depending on `m` at amplitude `1e4` — and fails on every refused
-one. A solve comparison is the weaker instrument and was nearly vacuous as first stated: a
+`−α*·p − L(α*) + H(x, m, 0, t) == H(x, m, p, t)` at `α* = −∂H/∂p`. It is exact on every
+algebraically-exact class — including alpha-free parts depending on `m` at amplitude `1e4` — and
+broken on every refused one. What acceptance guarantees is not exactness but `_ke ≤ tol`: a
+barely-accepted class sits at that bound. A solve comparison is the weaker instrument and was nearly vacuous as first stated: a
 perturbation constant in `x` and `m` shifts both solvers identically whatever the guard does, so it
 separates nothing. The identity is pointwise in `(x, m, t)`, which is why the probe must cover every
 time slice — see the companion fragment. One hypothesis is not checked by the guard and is pinned
-elsewhere (#1645, `test_hl_convention.py`): that `control_cost.evaluate` and its Lagrangian are a
-Legendre pair with no additive constant, which holds for both admitted paths.
+elsewhere (#1645, `test_hl_convention.py`) for the **declared** path: that `control_cost.evaluate`
+and its Lagrangian are a Legendre pair with no additive constant. That test's `CONTROL_COSTS` covers
+quadratic, bounded and l1, and does not reach the fallback path — which does not need it, since
+`hjb_howard.py` and `_kinetic_ref` both hardcode the unit quadratic and are conjugate by
+construction.
 
 `H = sqrt(1+|p|²)` is refused on the separate, real ground that its control cost is not
 unit-quadratic — `_ke = 6.499e+01` against a tolerance of `1.2e-09` — and it now has a fixture in

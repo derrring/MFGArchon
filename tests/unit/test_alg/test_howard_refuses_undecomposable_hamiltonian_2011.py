@@ -36,9 +36,11 @@ What licenses the extraction is not that `H(x, m, 0, t)` IS the alpha-free part 
 Howard assembles `ref(nabla u) + H(x, m, 0, t)`, and `_ke` certifies `ref(p) = H(p) - H(0)`, so the
 sum telescopes back to `H(nabla u)` for whatever `H(x, m, 0, t)` is. `H_control(p) = (1/2)|p|^2 + C`
 and a constant potential `V = C` are the same function of `(x, m, p, t)` and no probe separates
-them; the identity is why nothing has to. Adding `C*cos(3t)` to this file's fixture moves
-`H(x, m, 0, t)` over four decades and leaves the Howard-Newton discrepancy at `8.0862974638e-03` --
-the `C = 0` discretisation error, unchanged to ten significant figures.
+them; the identity is why nothing has to. The check that carries this is pointwise and algebraic,
+not a solve: `-alpha*.p - L(alpha*) + H(x, m, 0, t) == H(x, m, p, t)` at `alpha* = -dH/dp`, exact on
+every algebraically-exact class and broken on every refused one. A solve comparison is the weaker
+instrument -- a perturbation constant in `x` and `m` shifts both solvers identically whatever the
+guard does, so it separates nothing.
 
 The Lagrangian-substitution case is unaffected -- its alpha-free part is exactly zero, so no
 alpha-free gate was ever going to catch it, which is why `_ke` is the one that does.
@@ -441,7 +443,7 @@ def _pure_bump():
     {0.5, 1, 2, 20, 40, 80}, so (2, 20) was never sampled. `_gT` is a spacing bound, not a
     gradient, and overestimates by 6.4x here, which is what pushed the upper rungs past the hole.
 
-    Alpha-free part is exactly zero on purpose: it makes `_af_bad` unable to fire, so a refusal
+    Alpha-free part is exactly zero on purpose: it makes the alpha-free measurement unable to be what fires, so a refusal
     can only come from `_ke`. Without that, this fixture would be caught for the wrong reason and
     would keep passing if the ladder regressed.
     """

@@ -3348,12 +3348,21 @@ class HJBGFDMSolver(BaseHJBSolver):
             # On this file's fixture three slices ACCEPT it at 11.29% from Newton for A = 1000 and
             # 69.85% for A = 5000, both past the 5% the accept test asserts. Every slice refuses any
             # nonzero A -- down to 1e-6, since `_ke` is linear in A -- and still accepts A = 0 at
-            # 0.76%. That is the right boundary, not an accident of the threshold: Howard substitutes
-            # ONE Lagrangian for the whole horizon, so a kinetic part that varies with t is precisely
-            # what it cannot represent, and probing every slice cannot false-refuse anything Howard
-            # would get right. Cost is O(Nt * |mags| * n_points) per backward sweep: unmeasurable at
-            # this file's Nt = 10, and ~1s per outer iteration at Nt = 1000 with 2500 points, which
-            # is where to look if it ever matters.
+            # 0.76%. That boundary is right rather than lucky: Howard substitutes ONE Lagrangian for
+            # the whole horizon, so a kinetic part that varies with t is precisely what it cannot
+            # represent.
+            #
+            # This is a REPRESENTABILITY gate, not an accuracy gate, and the two do come apart --
+            # at A = 1e-6 it refuses while the three-slice build accepts and Howard lands 0.7572%
+            # from Newton, the same as the A = 0 baseline. That is not a false refusal to fix by
+            # loosening: the Hamiltonian is genuinely outside what Howard substitutes, and the
+            # accuracy at that amplitude is the defect being small, not absent. It degrades
+            # continuously with A, and `_ke` is what tracks the defect rather than its current size.
+            #
+            # Cost is O(Nt * |mags| * n_points) per backward sweep: ~16% of this file's runtime at
+            # Nt = 10 (0.67s -> 0.78s), and ~1s per outer iteration at Nt = 1000 with 2500 points --
+            # measured on the probe loop alone with a cheap Hamiltonian, which is where to look if
+            # it ever matters.
             _slices = np.arange(M_collocation.shape[0])
 
             # MAGNITUDES FROM THE PROBLEM, not hard-coded. The previous version sampled |p| in
@@ -3490,16 +3499,20 @@ class HJBGFDMSolver(BaseHJBSolver):
             # telescopes back to H(grad u) for WHATEVER H(x, m, 0, t) is. It does not say that value
             # is zero and nothing here needs it to be. The check that carries this is pointwise and
             # algebraic, not a solve: -alpha*.p - L(alpha*) + H(x,m,0,t) == H(x,m,p,t) at
-            # alpha* = -dH/dp holds to 0.0 on every accepted class -- including alpha-free parts
-            # depending on m at amplitude 1e4 -- and fails on every refused one. A solve comparison
+            # alpha* = -dH/dp. It is EXACT on every algebraically-exact class, including alpha-free
+            # parts depending on m at amplitude 1e4, and broken on every refused one. What
+            # acceptance guarantees is not exactness but `_ke <= _tol`: a barely-accepted class sits
+            # at that bound, not at 0. A solve comparison
             # is weaker than it looks: a perturbation constant in x and m shifts both solvers
             # identically whatever the guard does, so it cannot separate them.
             #
             # It is pointwise in (x, m, t), which is why `_slices` above must cover every slice:
             # three slices certified the identity at three times and Howard applies it at all of
             # them. One hypothesis is not checked here and is pinned elsewhere (#1645,
-            # test_hl_convention.py) -- that `control_cost.evaluate` and its Lagrangian are a
-            # Legendre pair with no additive constant, which holds for both admitted paths.
+            # test_hl_convention.py) for the DECLARED path only -- that `control_cost.evaluate` and
+            # its Lagrangian are a Legendre pair with no additive constant. The fallback path is not
+            # covered by that test and does not need to be: `hjb_howard.py` and `_kinetic_ref` above
+            # both hardcode the unit quadratic, so they are conjugate by construction.
             # `_af` is now measured to DECIDE whether to build that closure, not to refuse.
             #
             # `_ke` remains a refusal, and it is the real limit: Howard substitutes a quadratic
