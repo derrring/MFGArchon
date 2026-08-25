@@ -26,9 +26,10 @@
 
   On `wendland_lsq_fast_path` no solver runs: the Wendland least-squares weights are accepted if
   they already satisfy the cone, so `(L, D)` do not depend on `h_i` and `kappa_max = h_i * const`
-  exactly. Measured, `kappa_max / h_i` is bit-identical across all four scales -- spread exactly
-  0.0 -- the smallest off-centre weight is 3.4558, and the value does not move under injected
-  solver tolerance because there is no solver. `hjb_gfdm.py:1078` picked `C = 8.0` partly to reach
+  exactly. Measured, `kappa_max / h_i` agrees to 1 ulp across all four scales -- stated as a bound
+  rather than an exactness, because "spread exactly 0.0" was true at one value of the fixture's
+  `delta` multiplier and false at the one actually shipped. The smallest off-centre weight is
+  3.4558, and the value does not move under injected solver tolerance because there is no solver. `hjb_gfdm.py:1078` picked `C = 8.0` partly to reach
   this path; how often it is reached is not measured and is not asserted.
 
   Both discriminators verified red against `median -> min`, `-> mean` and `-> max`. Filed #2113 for
