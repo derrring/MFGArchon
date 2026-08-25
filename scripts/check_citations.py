@@ -5,6 +5,11 @@ A line number in a document is a claim with an expiry date, and nothing marks it
 being true. Measured at the time of writing: 19 of the 39 adjudicable citations in this
 repository's live prose -- 49% -- name a symbol that is not near the cited line (Issue #2102).
 
+Those two figures are quoted here and nowhere else, and the volatile ones -- the citation total and
+`missing` -- are quoted nowhere at all. Both move whenever any fixture in `tests/` gains a fake
+path, and transcribing them by hand from one tree into prose describing another produced three
+separate wrong published counts before this line was written. Run the script.
+
 THAT PERCENTAGE IS A FUNCTION OF `WINDOW`, AND THE SWEEP HAS NO PLATEAU
 -----------------------------------------------------------------------
 It moves about 1 point per unit near 12, and the denominator does not move at all -- only the split
@@ -14,14 +19,16 @@ between anchored and drifted:
     drifted  64.1%  59.0%  53.8%  48.7%  46.2%  43.6%  30.8%  23.1%
 
 There is no plateau, so quote the number with its window, never bare. The one WINDOW-INDEPENDENT
-statement available is the floor: **9 of the 39 adjudicable citations (23%) name a symbol that is
-not in the target file at all**, at any window. `WINDOW = 12` is a choice, not a measurement, and it
-is the constant a reader should attack first.
+statement available is the floor: **9 of the 39 adjudicable citations survive any window** -- 8
+whose named symbol is not in the target file at all, plus the one past EOF, which has no symbol and
+is wrong regardless. (Two of the 8 are the same paragraph reached through `AGENTS.md` and its
+`CLAUDE.md` symlink; both are tracked paths, so both are scanned.) `WINDOW = 12` is a choice, not a
+measurement, and it is the constant a reader should attack first.
 
 WHY THE SYMBOL IS THE DISCRIMINATOR
 -----------------------------------
-Checking "is the line number inside the file" is almost useless. Of 224 citations exactly ONE
-points past EOF, and two of three "in range" citations sampled at random landed on blank lines. A
+Checking "is the line number inside the file" is almost useless. Of every citation in this
+repository exactly ONE points past EOF, and two of three "in range" citations sampled at random landed on blank lines. A
 drifted citation almost always still points somewhere.
 
 That single row is also why the EOF test runs BEFORE the symbol gate in `measure`. Gated on a
@@ -135,12 +142,23 @@ def tracked_files(root: Path) -> list[str]:
     #
     # The refusal is also the right verdict on its own terms: a file mid-conflict holds `<<<<<<<`
     # markers and both versions of every line, so any count over it is meaningless.
-    unmerged = subprocess.run(
+    probe = subprocess.run(
         ["git", "-C", str(root), "ls-files", "--unmerged", "-z"],
         capture_output=True,
         text=True,
         check=False,
-    ).stdout
+    )
+    # The returncode check is the guard, not decoration. Without it a failing query returns an
+    # empty stdout, the `if` below is false, and the tripled count this exists to refuse is handed
+    # back as a clean measurement with exit 0 -- demonstrated by review with a `git` that fails
+    # only on `--unmerged`. A silent zero from a broken query reads exactly like a clean result,
+    # which is the failure this whole script is about.
+    if probe.returncode != 0:
+        raise InstrumentError(
+            f"git ls-files --unmerged failed in {root}: {probe.stderr.strip()} -- so whether the "
+            f"index is mid-conflict is unknown, and a count over a conflicted tree is meaningless."
+        )
+    unmerged = probe.stdout
     if unmerged.strip("\0").strip():
         paths = sorted({e.split("\t", 1)[1] for e in unmerged.split("\0") if "\t" in e})
         raise InstrumentError(
@@ -148,6 +166,27 @@ def tracked_files(root: Path) -> list[str]:
             f"{', ...' if len(paths) > 3 else ''}) -- a tree mid-conflict holds both versions of "
             f"every line and any count over it is meaningless. Finish the merge and re-run."
         )
+    # Unmerged entries are the only way `git ls-files` repeats a PATH, but that is not the property
+    # that matters: what inflates a count is more index entries than distinct files on disk. On a
+    # case-INSENSITIVE filesystem -- macOS by default -- an index carrying both `Doc.md` and
+    # `doc.md` for one on-disk file has no unmerged entry, passes the guard above, and counts every
+    # citation in that file twice. Review built exactly that index and measured it.
+    #
+    # Deduplicating the list would not have caught this either, which is why the earlier `set()`
+    # attempt was deleted rather than kept: `Doc.md` and `doc.md` are distinct strings. The
+    # collision has to be resolved against the filesystem, and only for the candidates -- on a
+    # case-sensitive filesystem those really are two files and refusing would be wrong.
+    folded: dict[str, str] = {}
+    for f in files:
+        clash = folded.setdefault(f.casefold(), f)
+        if clash != f and (root / f).exists() and (root / clash).exists():
+            a, b = (root / f).stat(), (root / clash).stat()
+            if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino):
+                raise InstrumentError(
+                    f"the index holds {clash!r} and {f!r}, which are the same file on this "
+                    f"filesystem -- every citation in it would be counted twice. Resolve the "
+                    f"duplicate index entry (`git rm --cached` one of them) and re-run."
+                )
     return files
 
 

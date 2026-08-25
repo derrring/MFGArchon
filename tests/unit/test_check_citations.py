@@ -14,6 +14,7 @@ near the cited line. Two ways it can fail while reporting a number:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -269,3 +270,54 @@ def test_a_tree_mid_conflict_is_refused_not_counted_three_times(tmp_path):
     )
     assert out.returncode == 2, out.stdout + out.stderr
     assert "unmerged" in out.stderr, out.stderr
+
+
+def test_a_failing_unmerged_probe_refuses_instead_of_passing(tmp_path, monkeypatch):
+    """The guard's returncode check. Without it a failing query returns empty stdout, the guard's
+    `if` is false, and the tripled count it exists to refuse is handed back as a clean measurement
+    with exit 0 -- which is the silent-zero-from-a-broken-query shape this whole script is about.
+
+    The shim fails ONLY on `--unmerged`, so every other git call still works and the run reaches
+    the guard rather than dying earlier for an unrelated reason.
+    """
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "git").write_text(
+        '#!/bin/sh\nfor a in "$@"; do [ "$a" = "--unmerged" ] && exit 3; done\nexec /usr/bin/git "$@"\n'
+    )
+    (shim / "git").chmod(0o755)
+    root = _git_tree(tmp_path / "repo", {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
+    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
+    )
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "--unmerged failed" in out.stderr, out.stderr
+
+
+def test_two_index_entries_for_one_file_are_refused(tmp_path):
+    """On a case-insensitive filesystem an index carrying `Doc.md` and `doc.md` for ONE on-disk file
+    has no unmerged entry, so the conflict guard does not fire and every citation in it is counted
+    twice. Deduplicating the path list would not catch it either -- the two strings differ, which is
+    why the earlier `set()` was deleted rather than kept."""
+    root = _git_tree(tmp_path, {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
+    if (root / "DOC.MD").exists() != (root / "doc.md").exists():
+        pytest.skip("case-sensitive filesystem: `Doc.md` and `doc.md` really are two files here")
+    git = ["git", "-C", str(root)]
+    sha = subprocess.run(
+        [*git, "hash-object", "-w", "doc.md"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run([*git, "update-index", "--add", "--cacheinfo", f"100644,{sha},Doc.md"], check=True)
+
+    listed = subprocess.run([*git, "ls-files"], capture_output=True, text=True, check=True).stdout
+    assert "Doc.md" in listed, "the fixture did not add the second index entry"
+    assert "doc.md" in listed, "the fixture replaced the original entry instead of adding one"
+    assert not subprocess.run(
+        [*git, "ls-files", "--unmerged"], capture_output=True, text=True, check=True
+    ).stdout.strip(), "this must NOT be an unmerged index -- that is the other guard"
+
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
+    )
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "same file on this filesystem" in out.stderr, out.stderr
