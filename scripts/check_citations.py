@@ -495,15 +495,25 @@ def self_test(root: Path) -> int:
 def _ratchet_self_test(d: Path, doc: Path, baseline: Path) -> list[str]:
     """Prove `--check-baseline` actually goes red. The classifier firing does not imply this.
 
-    Six shapes, one per gate branch, each verified by killing that branch and watching this go red:
+    Seven shapes over four gate branches. NOT one-to-one, and saying so matters: `left` has two,
+    because a row can leave `drifted` by being fixed or by having its symbol taken away, and those
+    are different edits even though the branch reports them identically now.
+
+    Each mapping below was measured the only way that establishes it -- kill one branch, record
+    WHICH SHAPES GO GREEN. Watching the whole self-test go red instead establishes that *some*
+    branch spoke, not which, and that weaker measurement is how the previous version came to claim
+    a one-to-one isolation it did not have.
 
       unchanged                              must pass
       new drifted at an ALREADY-RECORDED     the COUNT moved and no identity did
         target line
       new drifted at a FRESH target line     an IDENTITY appeared
-      a recorded drifted one FIXED           an identity LEFT, reported as progress
-      the symbol deleted beside a DRIFTED    an identity LEFT, reported as the EVASION -- the row
-        citation                               turns up in `unadjudicable`
+      the symbol SWAPPED beside a recorded    an identity appeared and another left; without the
+        citation                               symbols in the key every count and location is
+                                               unchanged and this passes
+      a recorded drifted one FIXED           an identity LEFT
+      the symbol deleted beside a DRIFTED    an identity LEFT by the other route
+        citation
       the symbol deleted beside an ANCHORED  only the DENOMINATOR shrank; nothing left `drifted`,
         citation                               which is why this shape and the one above are not
                                                interchangeable
@@ -579,16 +589,17 @@ def _ratchet_self_test(d: Path, doc: Path, baseline: Path) -> list[str]:
     # The evasion, on a DRIFTED row: it leaves `drifted` and lands in `unadjudicable`, which the
     # message must call hiding rather than progress.
     # Compensated by a fresh ANCHORED citation, deliberately: deleting a symbol always shrinks
-    # `adjudicable` too, and that branch fires first, so an uncompensated shape leaves this one
-    # unexercised -- measured, killing the `hidden` report kept the self-test green.
+    # `adjudicable` too, and that branch fires first, so an uncompensated shape exercises the wrong
+    # one.
     doc.write_text(
         original.replace("`far_away_symbol` lives at", "Something lives at")
         + f"\n\nAlso `anchored_symbol` at {tgt}:31.\n"
     )
-    if verdict("drifted one hidden") == 0:
+    if verdict("drifted one, symbol removed") == 0:
         failures.append(
             "ratchet: deleting the symbol beside a DRIFTED citation passed -- it left `drifted` "
-            "for `unadjudicable`, where nothing judges it, and that is the evasion this refuses"
+            "for `unadjudicable`, where nothing judges it, and a row leaving must stop the gate "
+            "whichever way it left"
         )
 
     # The same evasion on an ANCHORED row, which touches ONLY the denominator: nothing leaves
@@ -628,10 +639,14 @@ def _identities(rows: list[dict]) -> set[str]:
     the location-only version by adding a bogus symbol at an already-recorded target line while
     deleting the real one, keeping every count and every location identical.
 
-    `_location` is the message's key and must NOT carry symbols: an evasion moves a row into
-    `unadjudicable`, which has no symbols at all, so a symbol-bearing key could never match it.
+    `_location` is the same key without the symbols. It is what `write_baseline` and the failure
+    message would need if they ever had to match a drifted row against an `unadjudicable` one --
+    they no longer do, because this branch stopped adjudicating why a row left.
     """
-    return {_location(r) + (f" [{','.join(r['symbols'])}]" if r.get("symbols") else "") for r in rows}
+    # `sorted(set(...))`: `_symbols_near` returns findall order with duplicates, so swapping two
+    # backticked names inside one sentence -- pure reflow, same claim -- was reported as one
+    # regression plus one improvement, and writing a repeated name once would trip the gate.
+    return {_location(r) + (f" [{','.join(sorted(set(r['symbols'])))}]" if r.get("symbols") else "") for r in rows}
 
 
 def drifted_identities(result: dict) -> list[str]:
@@ -647,19 +662,6 @@ def drifted_identities(result: dict) -> list[str]:
     made -- this file says that target line holds this symbol -- does not move.
     """
     return sorted(_identities(result["drifted"]))
-
-
-def ambiguous_locations(result: dict) -> list[str]:
-    """Locations that are BOTH drifted and unadjudicable right now, in the same file.
-
-    Recorded so the failure message can refuse to accuse. A location key cannot tell "this row lost
-    its symbol" from "an unrelated sentence in this file already cited that line without one" -- and
-    on this repository one of the 19 recorded rows already collides, so repointing it CORRECTLY was
-    reported as the evasion the ratchet exists to refuse. A location that was already ambiguous when
-    the baseline was written is not evidence of anything later.
-    """
-    drifted = {_location(r) for r in result["drifted"]}
-    return sorted(drifted & {_location(r) for r in result["unadjudicable"]})
 
 
 def write_baseline(result: dict, path: Path, root: Path) -> None:
@@ -699,14 +701,11 @@ def write_baseline(result: dict, path: Path, root: Path) -> None:
             "many, because neither catches what the other does. Both are bidirectional: a new "
             "drifted citation is a regression and a fixed one is progress that must be recorded "
             "here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation "
-            "would otherwise lower `drifted` and read as an improvement. `ambiguous_locations` "
-            "records target lines a file cites both with and without a symbol, so that repointing "
-            "one correctly is not reported as the evasion. Regenerate with --write-baseline."
+            "would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline."
         ),
         "_measured_at": {"head_when_written": head, "window": WINDOW},
         "counts": summarise(result),
         "drifted": drifted_identities(result),
-        "ambiguous_locations": ambiguous_locations(result),
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -739,37 +738,27 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n".join(f"      {a}" for a in appeared)
             + "\n    Fix the line number, or drop it and cite the file."
         )
-    if left := was - is_now:
-        # A row that left `drifted` and turned up in `unadjudicable` was not fixed -- the symbol
-        # name was taken out from beside it, which is the evasion this ratchet exists to refuse.
-        # Calling that "IMPROVED" is the misdiagnosis review objected to, and it is one set
-        # intersection away from being told correctly.
-        # Compare LOCATIONS, not gate keys: an evasion lands in `unadjudicable`, which has no
-        # symbols, so a symbol-bearing key can never match it. And exclude locations the baseline
-        # already recorded as ambiguous -- one of this repository's 19 rows collides with an
-        # unrelated sentence citing the same line, and accusing a correct repair of being the
-        # evasion is the misdiagnosis this branch was written to remove, reintroduced inverted.
-        was_ambiguous = set(baseline.get("ambiguous_locations", []))
-        now_unadjudicable = {_location(r) for r in result["unadjudicable"]}
-        left_locations = {k.split(" [", 1)[0]: k for k in left}
-        hidden = sorted(
-            orig for loc, orig in left_locations.items() if loc in now_unadjudicable and loc not in was_ambiguous
+    if left := sorted(was - is_now):
+        # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than
+        # adding more. Four consecutive review rounds broke this branch's attempt to say WHY a row
+        # left: it accused a correct repair of being the evasion; then the fix for that suppressed
+        # the shape written to exercise it; then at a location the baseline had recorded as
+        # ambiguous the evasion and its opposite became byte-identical, with the exclusion list
+        # writable in two individually-innocuous steps; and the location/gate key seam dropped rows
+        # non-deterministically, accusing different rows under different PYTHONHASHSEEDs.
+        #
+        # None of it changed the verdict. Hidden or fixed, the gate is red and a human looks. The
+        # distinction bought one sentence of diagnosis and cost four defects, two of which pointed
+        # the reader at the wrong remedy -- worse than saying nothing. So this says where, and the
+        # reader says why.
+        problems.append(
+            "these citations are no longer drifted -- either they were fixed, or the symbol was "
+            "taken out from beside them and they are now `unadjudicable`, where nothing judges "
+            "them. Read them and decide which:\n"
+            + "\n".join(f"      {row}" for row in left)
+            + "\n    Bidirectional on purpose: an unrecorded change is how the next regression "
+            "hides inside a number nobody re-read."
         )
-        if fixed := sorted(left - set(hidden)):
-            problems.append(
-                "these citations are no longer drifted [IMPROVED -- record it]:\n"
-                + "\n".join(f"      {f}" for f in fixed)
-                + "\n    Bidirectional on purpose: an unrecorded improvement is how the next "
-                "regression hides inside a number nobody re-read."
-            )
-        if hidden:
-            problems.append(
-                "these citations left `drifted` by losing the symbol beside them, NOT by being "
-                "fixed -- they are now `unadjudicable`, where nothing judges them:\n"
-                + "\n".join(f"      {h}" for h in hidden)
-                + "\n    This is the evasion the ratchet exists to refuse. Fix the line number "
-                "instead, or say plainly in the prose that the reference is approximate."
-            )
     if now["adjudicable"] < recorded["adjudicable"]:
         problems.append(
             f"adjudicable {recorded['adjudicable']} -> {now['adjudicable']}: the denominator "

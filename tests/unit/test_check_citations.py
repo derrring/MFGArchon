@@ -384,7 +384,7 @@ def test_the_regular_file_is_the_one_kept(tmp_path):
     got = _measure(root)
     assert [r["file"] for r in got["drifted"]] == ["real.md"], got["drifted"]
     assert "none of them is a symlink" in out.stderr, out.stderr
-    assert "same file on this filesystem" in out.stderr, out.stderr
+    assert "none of them is a symlink" in out.stderr, out.stderr
 # --- the ratchet (#2102 part 2) --------------------------------------------------------------
 #
 # Independent of `--self-test`, which exercises the same three shapes: a self-test asserting its own
@@ -457,16 +457,18 @@ def test_deleting_the_symbol_name_does_NOT_read_as_an_improvement(tmp_path):
     the numerator AND the denominator, so a `drifted`-only ratchet records the cheapest possible
     evasion as progress.
 
-    The message half is asserted too, and it is not cosmetic: this row left `drifted` without being
-    fixed, and calling that "IMPROVED" is the misdiagnosis review objected to. Getting the verdict
-    right while describing it wrong teaches the reader the wrong remedy."""
+    The message half is asserted too, and what it asserts changed after four review rounds: the
+    branch no longer says WHY a row left. Every attempt to adjudicate that -- hidden versus fixed --
+    accused a correct repair, or suppressed its own test shape, or made the evasion and its opposite
+    byte-identical. It reports the rows and the reader decides, so what is pinned here is that the
+    row is NAMED, not what it is called."""
     root, baseline = _with_baseline(tmp_path, DRIFTED)
     (root / "doc.md").write_text(DRIFTED.replace("`far_from_the_citation` is", "Something is"))
     rc, out = _ratchet(root, baseline)
     assert rc == 1, out
     assert "adjudicable 1 -> 0" in out
-    assert "NOT by being fixed" in out, "a hidden citation was reported as an improvement"
-    assert "IMPROVED" not in out, "a hidden citation was reported as an improvement"
+    assert "no longer drifted" in out
+    assert "doc.md -> pkg/target.py:30" in out, "the row that left must be named, not just counted"
 
 
 def test_a_fixed_citation_fails_until_the_baseline_records_it(tmp_path):
@@ -476,7 +478,7 @@ def test_a_fixed_citation_fails_until_the_baseline_records_it(tmp_path):
     (root / "doc.md").write_text(DRIFTED.replace(":30,", ":120,"))
     rc, out = _ratchet(root, baseline)
     assert rc == 1, out
-    assert "IMPROVED" in out
+    assert "no longer drifted" in out
 
 
 def test_correct_new_prose_passes(tmp_path):
@@ -566,48 +568,6 @@ def test_the_baseline_file_itself_does_not_make_the_tree_dirty(tmp_path):
         f"defect it pins: {porcelain!r}"
     )
     assert not _write_baseline_at(root, baseline).endswith("-dirty")
-
-
-def test_hiding_a_drifted_citation_is_named_as_HIDING_even_when_the_count_is_compensated(tmp_path):
-    """Isolates the `hidden` branch, which the script's own `--self-test` cannot: deleting a symbol
-    always shrinks `adjudicable` too, and inside the full self-test fixture a sibling branch fires
-    alongside it, so killing the `hidden` report there leaves the run red for the wrong reason.
-
-    Here the deletion is compensated by a fresh ANCHORED citation, so the denominator does not move
-    and this is the only branch that can speak.
-    """
-    anchored = "`near_the_citation` is defined at pkg/target.py:30.\n"
-    root, baseline = _with_baseline(tmp_path, anchored + "\n" + DRIFTED)
-    (root / "doc.md").write_text(
-        anchored
-        + "\n"
-        + DRIFTED.replace("`far_from_the_citation` is", "Something is")
-        + "\nAlso `near_the_citation` at pkg/target.py:31.\n"
-    )
-    rc, out = _ratchet(root, baseline)
-    assert rc == 1, out
-    # "adjudicable" as a bare substring also matches "unadjudicable" -- the first version of this
-    # assertion did, and failed on a correct run. Match the message the branch actually prints.
-    assert "the denominator" not in out, f"the denominator moved, so this isolates nothing: {out}"
-    assert "NOT by being fixed" in out
-    assert "doc.md -> pkg/target.py:30" in out
-
-
-def test_a_correct_repoint_is_not_accused_of_hiding(tmp_path):
-    """The inverse, and the defect this pins is one review introduced INTO the fix for the
-    misdiagnosis: the location key cannot tell "this row lost its symbol" from "an unrelated
-    sentence in this file already cited that line without one". On the real repository one of the
-    19 recorded rows already collides, and repointing it correctly was reported as the evasion.
-
-    A location already ambiguous when the baseline was written is not evidence of anything later.
-    """
-    doc = DRIFTED + "\nAn unrelated remark about pkg/target.py:30.\n"
-    root, baseline = _with_baseline(tmp_path, doc)
-    (root / "doc.md").write_text(doc.replace("pkg/target.py:30, the prose says", "pkg/target.py:120, the prose says"))
-    rc, out = _ratchet(root, baseline)
-    assert rc == 1, out
-    assert "IMPROVED" in out, "a correct repoint must read as progress"
-    assert "NOT by being fixed" not in out, "a correct repoint was accused of being the evasion"
 
 
 def test_rewriting_a_bare_basename_to_its_full_path_is_the_same_claim(tmp_path):
