@@ -270,10 +270,23 @@ if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
 fi
 
 step "Ruff format"
-"${RUFF[@]}" format --check mfgarchon/; check $? "ruff format --check mfgarchon/"
+# WHOLE REPO, not `mfgarchon/`. Format coverage used to stop exactly where most changes land, and
+# the failure is silent -- an unformatted file produces no signal anywhere in the pipeline. It bit
+# twice in one day: `tests/unit/test_check_citations.py` reached `main` unformatted through a PR
+# with a green local gate AND green CI (#2102), and `tests/conftest.py` was made unformatted in
+# #2120 and caught only by an adversarial reviewer. The invariant was being held by habit --
+# contributors run `ruff format` with no path argument -- and habit is what the gate is for.
+#
+# Cost, measured before widening: 1 file to reformat out of 936, and 0 after. `ruff` reads its own
+# `exclude` from pyproject, so `.` means the repository as the project defines it, not everything
+# on disk. (`.pre-commit-config.yaml` excludes `^investigations/` from ruff-format; that directory
+# does not exist, so the two are not in conflict today.)
+"${RUFF[@]}" format --check .; check $? "ruff format --check ."
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
-"${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
+# Same widening, same reason, and it was free: `scripts/`, `examples/` and `benchmarks/` -- 105
+# files the lint step never saw -- have 0 violations between them, measured before the change.
+"${RUFF[@]}" check .; check $? "ruff check ."
 
 # The one gate that lived ONLY on GitHub. ci.yml runs this exact command as a blocking step named
 # "MyPy type gate (config subpackage, blocking)" and nothing here mirrored it -- measured before
