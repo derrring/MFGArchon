@@ -1,0 +1,15 @@
+{
+  "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` is bidirectional: a new one is a regression, a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from the prose would otherwise lower `drifted` and read as an improvement.",
+  "_measured_at": {
+    "head_when_written": "75c8b1fc-dirty",
+    "window": 12
+  },
+  "counts": {
+    "adjudicable": 39,
+    "ambiguous": 5,
+    "anchored": 20,
+    "drifted": 19,
+    "missing": 33,
+    "unadjudicable": 154
+  }
+}

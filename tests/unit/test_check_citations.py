@@ -61,9 +61,7 @@ TARGET = "\n".join(
 def test_its_own_self_test_passes():
     """If this fails, nothing else in this file means anything: the instrument cannot see its own
     planted defects, so its verdict on the repository is unfounded."""
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT), "--self-test"], capture_output=True, text=True, check=False
-    )
+    out = subprocess.run([sys.executable, str(SCRIPT), "--self-test"], capture_output=True, text=True, check=False)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "every category fires" in out.stdout
 
@@ -385,3 +383,107 @@ def test_the_regular_file_is_the_one_kept(tmp_path):
 
     got = _measure(root)
     assert [r["file"] for r in got["drifted"]] == ["real.md"], got["drifted"]
+    assert "none of them is a symlink" in out.stderr, out.stderr
+    assert "same file on this filesystem" in out.stderr, out.stderr
+# --- the ratchet (#2102 part 2) --------------------------------------------------------------
+#
+# Independent of `--self-test`, which exercises the same three shapes: a self-test asserting its own
+# correctness is not evidence, and the ratchet is the half that can go inert without any category
+# count changing.
+
+
+def _ratchet(root: Path, baseline: Path) -> tuple[int, str]:
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "--check-baseline", str(baseline)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+    return out.returncode, out.stdout + out.stderr
+
+
+def _with_baseline(tmp_path: Path, doc: str) -> tuple[Path, Path]:
+    root = _git_tree(tmp_path, {"pkg/target.py": TARGET, "doc.md": doc})
+    baseline = tmp_path / "baseline.json"
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--write-baseline", str(baseline)],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=str(root),
+    )
+    return root, baseline
+
+
+DRIFTED = "`far_from_the_citation` is at pkg/target.py:30, the prose says.\n"
+
+
+def test_an_unchanged_tree_passes_its_own_baseline(tmp_path):
+    """The negative control for the ratchet. A gate that is red on arrival teaches everyone to
+    pass `--no-verify`, and it would satisfy every other test in this section."""
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    rc, out = _ratchet(root, baseline)
+    assert rc == 0, out
+    assert "citation ratchet OK" in out
+
+
+def test_a_new_drifted_citation_fails(tmp_path):
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    (root / "doc.md").write_text(DRIFTED + "\n" + DRIFTED.replace("is at", "also at"))
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    assert "drifted 1 -> 2" in out
+
+
+def test_deleting_the_symbol_name_does_NOT_read_as_an_improvement(tmp_path):
+    """The reason the ratchet pins two numbers. Dropping the backticked symbol moves the row out of
+    the numerator AND the denominator, so a `drifted`-only ratchet records the cheapest possible
+    evasion as progress. Both halves must fire here."""
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    (root / "doc.md").write_text(DRIFTED.replace("`far_from_the_citation` is", "Something is"))
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    assert "drifted 1 -> 0" in out
+    assert "adjudicable 1 -> 0" in out
+
+
+def test_a_fixed_citation_fails_until_the_baseline_records_it(tmp_path):
+    """Bidirectional, matching `capability_matrix` and `check_single_source`: an unrecorded
+    improvement is where the next regression hides, inside a number nobody re-read."""
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    (root / "doc.md").write_text(DRIFTED.replace(":30,", ":120,"))
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    assert "IMPROVED" in out
+
+
+def test_correct_new_prose_passes(tmp_path):
+    """Adding a citation that is right must not be refused -- otherwise the gate taxes writing
+    documentation, and the cheapest way to stay green becomes citing nothing."""
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    (root / "doc.md").write_text(DRIFTED + "\n`near_the_citation` is at pkg/target.py:30.\n")
+    rc, out = _ratchet(root, baseline)
+    assert rc == 0, out
+
+
+def test_a_missing_baseline_is_reported_not_silently_passed(tmp_path):
+    root = _git_tree(tmp_path, {"pkg/target.py": TARGET, "doc.md": DRIFTED})
+    rc, out = _ratchet(root, tmp_path / "no_such_baseline.json")
+    assert rc == 2, out
+    assert "CANNOT COMPARE" in out
+
+
+def test_the_shipped_baseline_matches_this_repository():
+    """A baseline written from an uncommitted tree records a commit that does not describe what was
+    measured. This fails the moment the repository's own citations move without the baseline."""
+    repo = SCRIPT.parents[1]
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "--check-baseline"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(repo),
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
