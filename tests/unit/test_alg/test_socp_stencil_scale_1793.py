@@ -1,60 +1,57 @@
-"""The joint-SOCP stencil scale `h_i` cannot be checked by a BOUND on the diagnostic it defines.
+"""The joint-SOCP stencil scale `h_i` is pinned through the constraint, because the diagnostic
+that reports on it cannot pin it at any `C`.
 
-Issue #1793. `h_i` non-dimensionalises the monotonicity cone -- the constraint is
-``||D_j||_2 <= (C / h_i) * L_j`` -- and it also appears in the per-edge ratio reported about that
-constraint, ``kappa_j = h_i * ||D_j|| / L_j``. Inflate `h_i`, the constraint tightens, the optimum's
-``||D_j||`` shrinks by the same factor, and kappa comes back inside the bound looking healthy. A
-25-axis mutation sweep found the suite blind: 5770 passed with `median` replaced by `max`.
+Issue #1793. `h_i = median(neighbour distances)` non-dimensionalises the monotonicity cone. It
+enters the solve in two distinct places:
 
-WHERE KAPPA CARRIES INFORMATION ABOUT `h_i`, AND WHERE IT CARRIES NONE
-----------------------------------------------------------------------
-Sharper than "kappa is self-consistent", and measured on the fixture below:
+    (a) the CONSTRAINT   ||D_j||_2 <= (C / h_i) * L_j        -- shapes the solution
+    (b) the DIAGNOSTIC   kappa_j = h_i * ||D_j||_2 / L_j     -- reports on it, exposed as kappa_max
 
-    scale     C = 1.0 (cone slack)    C = 8.0 (cone binding)
-    min          0.9999997               7.9999915
-    median       0.9642736               7.9999954
-    mean         0.9770679               7.9999961
-    max          0.7543788               8.0000000
-    spread       3.70 / 1.33 / 21.77%    0.00 / 0.00 / 0.00%
+A 25-axis mutation sweep found the suite blind to the scale entirely: 5770 passed with `median`
+replaced by `max`. This file pins (a). It does not pin (b), and the reason is a measurement, not
+an omission.
 
-**Where the cone BINDS, kappa is `C` by construction and carries zero information about the scale.**
-Where it does not bind, kappa is objective-determined and carries all of it. The pin therefore runs
-at `C = 1.0`, and **that is not production's setting** -- `hjb_gfdm.py` uses `C = C_max = 8.0` with
-`use_relaxed_fallback=True`, where no pin on kappa can discriminate anything. That is a real limit
-of this approach, stated rather than hidden.
+WHY `kappa_max` CANNOT PIN THE SCALE AT ANY `C` -- MEASURED, AND IT COST TWO REVIEW ROUNDS
+-------------------------------------------------------------------------------------------
+`kappa_max` is the only scale-carrying quantity `JointSocpStencilData` exposes, so it is the
+obvious probe, and earlier versions of this file pinned it. It is unusable, because the two
+conditions that would make it meaningful are mutually exclusive on any fixture:
 
-It is also why the previous version of this pin was fragile: its fixture bound at `C = 1.0`, so the
-pinned `0.9999999108` was `1.0` minus CLARABEL's constraint residual (8.9e-08), and a solver
-tolerance change moved it. The value pinned below sits 3.6% inside the cone and is bit-identical
-across repeats.
+    C     kappa_max vs C   L_1 (the argmax edge)   kappa_max separation, min/mean/max vs median
+    1.0      SLACK             9.88e-08                3.705% /  1.327% / 21.767%
+    1.5      SLACK             3.16e-08                0.768% /  1.683% /  5.164%
+    2.0      binds             5.48e-02                0.000% /  0.241% /  2.199%
+    4.0      binds             9.51e-02                0.000% /  0.000% /  0.303%
+    8.0      binds             6.46e-02                0.000% /  0.000% /  0.000%
 
-WHAT THE TWO MECHANISMS EACH ESTABLISH
----------------------------------------
-- `test_a_uniform_cross_returns_the_analytic_weights` is an oracle for the CONSISTENCY SOLVE, and
-  weaker than it looks. On a uniform 5-point cross the equality system has an EMPTY nullspace, so
-  the feasible set is a single point and `L` is fixed by ``A.T @ L = e_lap`` alone: the assertion
-  passes unchanged at `C = 1e6`, at `C = 0.01`, and with `h_i` scaled 100x either way. It pins
-  `build_taylor_matrix_2d` and "the solver returned the consistency solution". It says nothing
-  about the cone, the objective, or `eps_pos` -- and nothing about `h_i`.
-- `test_the_stencil_scale_is_pinned_where_the_cone_has_slack` is the discriminator. Its fixture has
-  a one-dimensional nullspace, so the SOCP genuinely optimises there.
+- **Where the cone binds, `kappa_max` IS `C`** by construction and carries nothing -- at
+  production's `C = 8.0` it agrees across all four candidate scales to five decimal places.
+- **Where the cone is slack, the argmax edge is the one the optimiser DELETES.** Nothing binds, so
+  the objective drives an x-axis weight onto the `eps_pos = 0.0` bound: `L_1 = 9.88e-08` against
+  `||D_1|| = 4.76e-07`. The exact optimum is `L_1 = ||D_1|| = 0`, so `kappa_1 = h_i * ||D_1|| / L_1`
+  is **0/0** -- whichever point CLARABEL's central path is carrying when it stops. Tightening the
+  solver tracks it one-for-one (`L_1` = 9.87e-06, 9.88e-10, 9.89e-12, 1.03e-13 at tol 1e-6, 1e-9,
+  1e-12, 1e-14) until it crosses the `L_j <= 1e-12 -> inf` guard at `joint_socp.py:307` and the pin
+  fails as `inf`. **Tightening the solver breaks it**, the opposite of the direction anyone hardens
+  against.
 
-TWO CLAIMS THE PREVIOUS VERSION OF THIS FILE RECORDED AS FINDINGS, BOTH FALSE
------------------------------------------------------------------------------
-Kept as a warning, because they were written here as reasons for a later reader NOT to look.
+Slack is exactly the condition under which some edge gets zeroed, so there is no `C` in between.
+The separations in the third column are differences between indeterminate forms.
 
-- **"Feasibility does not flip."** It does. Over ~1,900 stencils (four cloud families x three seeds
-  x k in {9,13} x C in {1.0, 8.0}) review found a graded-cloud stencil at a spread of only **1.19x**
-  that is feasible under `median` and INFEASIBLE under `max`, rescued only at `C >= 1.2`. The
-  earlier claim rested on five geometries at three C values -- fifteen solves -- against a rate near
-  0.05%, which misses it with probability ~99%. **An underpowered negative result written down as a
-  settled one.**
-- **"`eps_M > 0` never happens."** That measured the harness, not the geometry.
-  `PrecomputedJointSocpStencils` defaults `use_relaxed_fallback=False`, which makes the relaxed
-  branch unreachable by construction. At production settings review measured `eps_M` reaching
-  **5.3e2** on ordinary clouds with no mutation at all, on roughly a third of the interior stencils
-  of an irregular cloud. This is the claim closest to the paper's load-bearing `eps_M == 0`, and it
-  was the one stated most confidently and supported least.
+WHAT IS PINNED INSTEAD
+-----------------------
+At `C = 8.0` the cone binds on edge 1, so ``||D_1|| = (C / h_i) * L_1`` holds with equality and
+`L_1` is set by the constraint -- the load-bearing use of `h_i`, the one that shapes the solution
+rather than reporting on it. `L_1` reads 3.65e-02 / 6.46e-02 / 7.50e-02 / 9.77e-02 under
+min / median / mean / max, and at 6.46e-02 it is seven orders clear of the positivity bound that
+made the slack-regime reading meaningless. It is not a trivial readout of `h_i`: `||D_1||` moves
+too, so `L_1 / h_i` is 0.365 / 0.323 / 0.302 / 0.195 rather than constant.
+
+This leaves the diagnostic path unpinned. That is a real gap and it is not closable with the
+current dataclass -- `kappa_max` is the only channel and it is degenerate in both directions.
+Issue #2113 records the production consequence: at slack `C` the reported `kappa_max` is the cone
+ratio of a neighbour that has been given zero weight, and exposing `h_i` on the dataclass is the
+cheapest fix listed there.
 """
 
 from __future__ import annotations
@@ -66,6 +63,7 @@ import numpy as np
 pytest.importorskip("cvxpy", reason="joint_socp requires cvxpy (the `numerical` extra)")
 
 from mfgarchon.alg.numerical.gfdm_components.joint_socp import (
+    JointSocpStencilData,
     PrecomputedJointSocpStencils,
     build_taylor_matrix_2d,
     solve_joint_socp_at_stencil,
@@ -74,15 +72,32 @@ from mfgarchon.alg.numerical.gfdm_components.joint_socp import (
 
 H = 0.1
 
-#: min, median, mean and max of the neighbour distances are four DISTINCT values here --
-#: 0.10, 0.20, 0.228, 0.50. The previous fixture had `median == min` exactly, so `median -> min`
-#: was invisible to it and passed all three tests. The spread is 2.5x; realistic kNN stencils run
-#: 1.29-1.43, so this is more favourable to the pin than production geometry.
-SLACK_STENCIL = np.array([[0.0, 0.0], [H, 0.0], [-1.4 * H, 0.0], [0.0, 2 * H], [0.0, -3 * H], [5 * H, 0.0]])
+#: Neighbour distances are 0.10, 0.14, 0.20, 0.30, 0.50, so min / median / mean / max are four
+#: DISTINCT values -- 0.10, 0.20, 0.248, 0.50. The previous fixture had `median == min` exactly, so
+#: `median -> min` was invisible to it and passed every test in this file. Ratio max/min is 5x
+#: (median/min and max/median are each 2.5x); realistic kNN stencils run 1.29-1.43, so this fixture
+#: is more favourable to a scale pin than production geometry is.
+#:
+#: The x-axis carries three neighbours for two conditions, hence a one-dimensional nullspace and a
+#: genuine optimisation. The y-axis carries two for two and is FORCED -- `L_3 = 20.0` and
+#: `||D_3|| = 3.0` exactly, at every scale and at every `C` in {1, 2, 4, 8}. No y-axis quantity can
+#: discriminate anything, which is why both tests below read the x-axis.
+SCALE_STENCIL = np.array([[0.0, 0.0], [H, 0.0], [-1.4 * H, 0.0], [0.0, 2 * H], [0.0, -3 * H], [5 * H, 0.0]])
+
+#: `hjb_gfdm.py:1073` builds the production cache with `cone_constant_C=8.0`, `eps_pos=0.0`.
+#: The pin runs at production's setting, which the previous version of this file claimed was
+#: impossible -- that claim was an artifact of pinning `kappa_max`.
+PRODUCTION_C = 8.0
 
 
 def test_a_uniform_cross_returns_the_analytic_weights():
-    """Oracle for the consistency solve. See the module docstring for what it does NOT establish."""
+    """Oracle for the consistency solve. See the module docstring for what it does NOT establish.
+
+    On a uniform 5-point cross the equality system has an EMPTY nullspace, so the feasible set is a
+    single point and `L` is fixed by ``A.T @ L = e_lap`` alone: this passes unchanged at `C = 1e6`,
+    at `C = 0.01`, and with `h_i` scaled 100x either way. It pins `build_taylor_matrix_2d` and "the
+    solver returned the consistency solution", and says nothing about the cone or the scale.
+    """
     offsets = np.array([[0.0, 0.0], [H, 0.0], [-H, 0.0], [0.0, H], [0.0, -H]])
     A, _ = build_taylor_matrix_2d(offsets)
     nullspace_dim = A.shape[0] - np.linalg.matrix_rank(A.T)
@@ -102,76 +117,95 @@ def test_a_uniform_cross_returns_the_analytic_weights():
     np.testing.assert_allclose(np.asarray(result["L"]), np.array([-4.0, 1.0, 1.0, 1.0, 1.0]) / H**2, rtol=1e-9)
 
 
-def _slack_stencil_kappa() -> float:
+def _production_stencil() -> JointSocpStencilData:
     """Route through `PrecomputedJointSocpStencils`: it is the object that COMPUTES `h_i`.
 
     A direct `solve_joint_socp_at_stencil` call takes the scale as an argument and therefore cannot
     see any change to how it is derived. `joint_socp.py`'s `_build_stencil_arrays` is the only site
     in the package that derives one.
     """
-    points = SLACK_STENCIL
-    nz = np.linalg.norm(points - points[0], axis=1)
+    nz = np.linalg.norm(SCALE_STENCIL - SCALE_STENCIL[0], axis=1)
     nz = nz[nz > 1e-12]
     assert len({round(float(f(nz)), 9) for f in (np.min, np.median, np.mean, np.max)}) == 4, (
         "the fixture must keep min, median, mean and max distinct, or a scale change is invisible"
     )
 
     pre = PrecomputedJointSocpStencils(
-        points=points,
+        points=SCALE_STENCIL,
         interior_indices=np.array([0]),
         delta=8 * H,
-        neighborhoods={0: {"indices": np.arange(len(points))}},
-        cone_constant_C=1.0,
+        neighborhoods={0: {"indices": np.arange(len(SCALE_STENCIL))}},
+        cone_constant_C=PRODUCTION_C,
     )
     data = pre.stencils[0]
     assert data.via == "socp_clarabel", f"via={data.via}"
-    return float(data.kappa_max)
+    assert list(data.neighbor_indices) == [0, 1, 2, 3, 4, 5], (
+        f"the edge indices below name specific neighbours; got {data.neighbor_indices} and a "
+        f"reordering would silently repoint them at a different point of the fixture"
+    )
+    assert data.center_in_neighbors == 0, f"the centre must be index 0; got {data.center_in_neighbors}"
+    return data
 
 
-def test_the_stencil_scale_is_pinned_where_the_cone_has_slack():
+def test_the_scale_is_pinned_through_the_binding_cone_constraint():
     """The discriminator. Verified red against `median -> min`, `-> mean` and `-> max`.
 
-    Tolerance: the four candidate scales separate by 3.70%, 1.33% and 21.77%, and the value is
-    bit-identical across repeated solves. `rel=1e-3` leaves 13x margin on the smallest signal and
-    an order of slack against a solver-tolerance change -- the previous `1e-4` around a value that
-    WAS the solver residual is what made the earlier pin fragile.
+    Edge 1 is the neighbour at `(H, 0)`, and at `C = 8.0` it is the one the cone binds on, so its
+    weight is what ``||D_1|| <= (C / h_i) * L_1`` forces. Separations from the pinned value are
+    43.4% (min), 16.2% (mean) and 51.3% (max); measured drift across solver tolerances 1e-6 to
+    1e-14 is 9.6e-05. `rel=1e-3` therefore sits 10x above the noise and 162x below the smallest
+    signal.
+
+    The two assertions before the pin are not decoration. Each states a condition under which the
+    pinned number means what the name says, and each has been observed to fail on this same
+    fixture at a different `C`.
     """
-    assert _slack_stencil_kappa() == pytest.approx(0.9642735774, rel=1e-3)
+    data = _production_stencil()
+    L = np.asarray(data.L)
 
-
-def test_the_weights_carry_no_usable_signal_about_the_scale():
-    """Negative control for the CHOICE OF QUANTITY, and the reason this file pins kappa.
-
-    Everything asserted here holds under `min`, `median`, `mean` AND `max` -- measured -- which is
-    exactly why none of it can serve as the discriminator:
-
-        scale     sum(L)      centre weight   min off-centre weight
-        min       1.07e-14      -61.9799          5.48e-02
-        median   -1.06e-13      -61.9048          9.88e-08
-        mean     -1.60e-14      -61.9048          1.50e-08
-        max      -3.02e-14      -61.9048          1.81e-08
-
-    The centre weight moves 0.12% across a 5x change of scale; kappa moves 21.77%. The earlier
-    version of this test asserted `max|L|` stable to 1%, quoting a 0.018% max-norm figure -- which
-    hid that one off-centre weight collapses from 5.48e-02 to 9.88e-08, effectively deleting that
-    neighbour. The weights DO change; they change in a place a pin cannot read.
-
-    So this asserts the two structural properties instead, which a broken construction WOULD break
-    even though a rescaled one does not: Laplacian consistency and the M-matrix sign pattern.
-    """
-    pre = PrecomputedJointSocpStencils(
-        points=SLACK_STENCIL,
-        interior_indices=np.array([0]),
-        delta=8 * H,
-        neighborhoods={0: {"indices": np.arange(len(SLACK_STENCIL))}},
-        cone_constant_C=1.0,
+    assert data.kappa_max == pytest.approx(PRODUCTION_C, rel=1e-5), (
+        f"this pin means 'L_1 is what the BINDING cone forces'. With kappa_max={data.kappa_max!r} "
+        f"!= C={PRODUCTION_C} nothing binds, the weight is objective-determined instead, and the "
+        f"assertion below would be pinning a different quantity under the same name"
     )
-    L = np.asarray(pre.stencils[0].L)
+    assert L[1] > 1e-3, (
+        f"edge 1 must stay clear of the eps_pos=0.0 bound for this to be an optimum rather than a "
+        f"0/0 artifact of where the solver stopped; got L_1={L[1]!r}. Where the cone is slack this "
+        f"same weight is 9.88e-08 and every quantity read off it is meaningless -- module docstring"
+    )
+    assert L[1] == pytest.approx(0.0645589, rel=1e-3)
+
+
+def test_the_reported_diagnostic_carries_no_signal_about_the_scale():
+    """Negative control for the CHOICE OF QUANTITY: why the test above reads a weight, not `kappa`.
+
+    Everything asserted here holds under `min`, `median`, `mean` AND `max` -- measured at
+    `C = 8.0` -- which is exactly why none of it can serve as the discriminator:
+
+        scale     kappa_max     sum(L)       centre weight
+        min       7.999991     -7.19e-14       -61.9549
+        median    7.999995     -8.79e-14       -61.9933
+        mean      7.999996     -1.19e-13       -62.0076
+        max       8.000000     -4.44e-15       -62.0387
+
+    `kappa_max` moves 0.0001% across a 5x change of scale and the centre weight moves 0.14%; the
+    binding edge's weight moves 43-51%. These quantities DO change -- they change by amounts no
+    tolerance can separate from solver noise.
+
+    So this asserts the structural properties instead, which a broken construction WOULD break even
+    though a rescaled one does not: Laplacian consistency and the M-matrix sign pattern.
+    """
+    data = _production_stencil()
+    L = np.asarray(data.L)
 
     assert abs(L.sum()) < 1e-9, f"Laplacian weights must sum to zero; got {L.sum():.3e}"
     assert L[0] < 0, f"the centre weight must be negative; got {L[0]}"
-    assert (L[1:] >= 0).all(), f"off-centre weights must be non-negative (M-matrix); got {L[1:]}"
-    assert L[0] == pytest.approx(-61.905, rel=1e-2), (
-        "the centre weight is pinned at 1% to document that it CANNOT discriminate: it moves 0.12% "
+    assert (L[1:] >= -1e-9).all(), (
+        f"off-centre weights must be non-negative (M-matrix); got {L[1:]}. The tolerance is not "
+        f"cosmetic: eps_pos is 0.0, so the bound is respected only to solver tolerance and an "
+        f"exactly-zero comparison would flake on any weight the solver drives onto it"
+    )
+    assert L[0] == pytest.approx(-61.99, rel=1e-2), (
+        "the centre weight is pinned at 1% to document that it CANNOT discriminate: it moves 0.14% "
         "across a 5x change of scale, so a scale change passes this assertion by construction"
     )
