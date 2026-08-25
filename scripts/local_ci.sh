@@ -326,7 +326,16 @@ step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
 # the gate proceeds as though the instrument were verified -- a silent-instrument failure inside
 # the instrument-verification code. It was also outside both traps and its `rm` sat after the `fi`,
 # so the `cannot_run` path leaked it. The file records that lesson 200 lines up and this broke it.
-printf 'def _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
+printf '# MUTATED -- local_ci.sh mypy control; a leftover means a run was killed\ndef _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
+# The write must be CONFIRMED, not assumed. Two concurrent runs on one checkout -- the pre-push
+# hook and a manual invocation is the realistic pair -- share this fixed path, and the loser can
+# have its probe deleted between the write and the check: the `if` is then false, no `cannot_run`
+# fires, and the gate proceeds as though the instrument were verified. Measured. A `$$` in the
+# name would fix the race and reopen the leftover problem, which the .gitignore entry closes only
+# because the path is fixed.
+[[ -f "$MYPY_PROBE" ]] || cannot_run "the mypy control's probe could not be written to $MYPY_PROBE,
+or was removed before it could be read -- a concurrent gate run on this checkout is the usual
+cause. Nothing about the type gate was verified, so its result is not reported."
 if "$PY" -P -m mypy "$MYPY_PROBE" --follow-imports=silent >/dev/null 2>&1; then
   rm -f "$MYPY_PROBE"
   cannot_run "the mypy control passed when it must fail: a file assigning a str to an int-annotated

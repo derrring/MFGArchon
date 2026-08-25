@@ -893,3 +893,13 @@ docs/user/private/
 # Generated outputs (regenerable)
 outputs/
 research_outputs/
+
+# The mypy gate's positive control (scripts/local_ci.sh). It lives INSIDE mfgarchon/config so it
+# shares that package's mypy configuration -- an out-of-tree probe cannot see a per-module
+# `ignore_errors` override. It is written and deleted within one step, but the traps cover EXIT,
+# INT and TERM, not SIGKILL or a harness timeout, and this checkout has been left with leftovers
+# from a killed run twice. Uningnored, a leftover is committable and invisible to every guard here:
+# ruff formats and accepts it, it carries no `# MUTATED` marker, and `_assert_clean_tree` looks
+# only at tracked files. Committed, it turns CI red on its deliberate type error while the local
+# gate stays green -- the exact local/CI divergence that gate exists to remove.
+mfgarchon/config/_gate_probe.py
