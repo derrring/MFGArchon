@@ -13,8 +13,9 @@ the version-bump checklist in `AGENTS.md`.
   withdrawn claim (#2112, and neither of the other two classes). The remaining 17 contain both
   genuinely wrong citations and cases of the instrument attributing a symbol from a different clause
   on the same line -- **and no proportion between them is worth acting on.** Two independent
-  hand-reads returned mirror-image splits, so the classes are hard to tell apart even by hand; a
-  binomial interval on seventeen rows spans 29% to 76% either way. Character distance between
+  hand-reads returned mirror-image splits, so the classes are hard to tell apart even by hand, and
+  **seventeen rows cannot separate an even split from 2:1 in either direction** whatever the labels
+  say. Character distance between
   citation and symbol was measured as a mechanical discriminator and does not separate them either
   (median 8 for real against 9 for artifact). So the gate's job is that a new row gets looked at,
   not that every row is a defect.

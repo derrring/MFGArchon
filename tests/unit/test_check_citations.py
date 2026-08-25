@@ -620,9 +620,11 @@ def test_this_file_contributes_no_adjudicable_citation():
       1. it is in the scanned POPULATION -- `.md` or `.py`, tracked, not `CHANGELOG.md`, and not
          under one of the directories `EXEMPT_DIRS` names. Not "contributes a row": contributing
          zero adjudicable rows is what this test asserts, so that reading would empty the set.
-         This half does silent work. `citation_baseline.json` is WHOLLY prose about this
-         measurement in its `_comment` and would pass half 2 outright; it is excluded only because
-         the suffix filter never reaches it. So is `local_ci.sh`. Neither is an oversight.
+         This half does silent work, by three separate mechanisms. `citation_baseline.json` is
+         WHOLLY prose about this measurement in its `_comment` and would pass half 2 outright; it
+         is excluded by the SUFFIX filter, as is `local_ci.sh`. `CLAUDE.md` is `.md` and passes
+         the suffix test -- it is dropped as a CONTENT DUPLICATE of `AGENTS.md`. None is an
+         oversight, and naming only one mechanism would suggest there is only one.
       2. its SUBJECT is this measurement -- the whole file is about it, not a paragraph of it.
 
     Half 2 is stated at file granularity on purpose, and it is the half that decides cases. At
@@ -641,9 +643,10 @@ def test_this_file_contributes_no_adjudicable_citation():
     parses 22 citations against the script's 3, seven times the exposure. The two
     `changelog.d/2102-*` fragments are wholly prose about this measurement -- one quotes its output
     verbatim -- and `changelog.d/` is emphatically in the population: 7 of the 18 recorded drifted
-    rows live there (the 8 is `tests/`; review transposed the two buckets and I copied the figure). All four currently contribute zero adjudicable rows, so adding the fragments
-    costs no red; they are here because the criterion admits them, and a rule that contradicts the
-    set it annotates is worse than no rule.
+    rows live there. (The 8 is `tests/`. Review transposed the two buckets in one round and I
+    copied the figure here in the next, without recounting it.) All four currently contribute zero
+    adjudicable rows, so adding the fragments costs no red; they are here because the criterion
+    admits them, and a rule that contradicts the set it annotates is worse than no rule.
 
     `scripts/test_discrimination.py` was proposed and does NOT qualify: the instrument measures it
     like any other file, but its subject is mutation coverage, not this measurement. It contributes
@@ -682,25 +685,65 @@ def test_every_statement_of_the_hand_read_agrees_with_the_baseline():
     """
     root = SCRIPT.parents[1]
     expected = len(json.loads((SCRIPT.parent / "citation_baseline.json").read_text())["drifted"])
-    files = {
-        "scripts/check_citations.py": SCRIPT.read_text(encoding="utf-8"),
-        "changelog.d/2102-citation-ratchet.added.md": (
-            root / "changelog.d" / "2102-citation-ratchet.added.md"
-        ).read_text(encoding="utf-8"),
-    }
+
+    # The fragment is DELETED at the next version bump -- `AGENTS.md` release step 2 mandates
+    # `git rm changelog.d/*.md` once collated. Reading it unconditionally would turn a mandated
+    # step into a FileNotFoundError traceback, which is how a team learns `--no-verify`; that
+    # sentence is AGENTS.md's own, about this very gate. So the fragment is optional and the floor
+    # counts the files actually read, not a constant.
+    files = {"scripts/check_citations.py": SCRIPT.read_text(encoding="utf-8")}
+    fragment = root / "changelog.d" / "2102-citation-ratchet.added.md"
+    if fragment.is_file():
+        files["changelog.d/2102-citation-ratchet.added.md"] = fragment.read_text(encoding="utf-8")
+    floor = 3 if len(files) == 2 else 2  # two statements live in the script itself
     pattern = re.compile(r"(\d+)(?: rows)? (?:were read by hand|in the standing backlog)")
 
     found = {name: [int(m) for m in pattern.findall(text)] for name, text in files.items()}
     total = sum(len(v) for v in found.values())
-    assert total >= 3, (
-        f"expected at least the three known statements of the hand-read; the pattern matched "
-        f"{total}: {found}. If a copy was deleted, drop this floor in the same commit -- do not "
-        f"leave a pattern that silently matches fewer things than it was written for"
+    assert total >= floor, (
+        f"expected at least {floor} statements of the hand-read across {sorted(files)}; the pattern "
+        f"matched {total}: {found}. A copy was deleted, or -- more likely -- a copy was REWRAPPED "
+        f"so the pattern no longer spans it. Do not lower the floor to make this pass"
     )
     disagreeing = {n: v for n, v in found.items() if any(c != expected for c in v)}
     assert not disagreeing, (
         f"the baseline records {expected} drifted rows; these statements say otherwise: "
         f"{disagreeing}. Every copy must be edited together, which is why there should not be three"
     )
+    # Proximity, not presence. Presence is satisfied by one stray mention anywhere in 900+ lines,
+    # which is a per-statement claim tested against a whole file -- the same shape as the "labels
+    # swapped" over-read this test's own subject matter was corrected for.
     for name, text in files.items():
-        assert "#2112" in text, f"{name} states the hand-read but does not cite the withdrawn row"
+        for match in pattern.finditer(text):
+            window = text[match.start() : match.end() + 400]
+            assert "#2112" in window, (
+                f"{name} states the hand-read at offset {match.start()} without citing #2112 within "
+                f"the next 400 characters; every statement of it must name the withdrawn row, not "
+                f"just the file it lives in"
+            )
+
+    # A NEGATIVE pin on the policy, and the only clause here that is phrasing-independent. The
+    # proportion is the fact that actually drifted -- 10:8, then 9:8, then "near-evenly" -- and a
+    # fourth copy phrased its own way would slip past the pattern above, as the module docstring
+    # did for two review rounds. Seventeen rows cannot separate an even split from 2:1 either way
+    # (the 95% Clopper-Pearson interval at 9/17 contains both 1/3 and 2/3), so no proportion
+    # belongs in any of these files.
+    # Only integers that could BE a class count are interesting: a split is two of them. Larger
+    # numbers nearby are percentages, line references and issue numbers, and flagging those makes
+    # the check noise. `expected` and `expected - 1` are the row totals the statements legitimately
+    # carry.
+    allowed = {expected, expected - 1}
+    for name, text in files.items():
+        for match in pattern.finditer(text):
+            # Forward only: a split follows the claim it qualifies. Looking backwards catches
+            # unrelated prose -- an earlier draft flagged "step 3" of the release checklist.
+            window = text[match.start() : match.end() + 400]
+            counts = {int(n) for n in re.findall(r"\b\d{1,2}\b", window)}
+            stray = {n for n in counts if n <= expected} - allowed
+            assert not stray, (
+                f"{name} states the hand-read and carries {sorted(stray)} within reach of it. If "
+                f"that is a split between the two classes, it does not belong: two independent "
+                f"hand-reads disagreed about which rows fall in which, and seventeen rows cannot "
+                f"separate an even split from 2:1 -- the 95% Clopper-Pearson interval at 9/17 "
+                f"contains both. Widen `allowed` only for a number that is not a proportion"
+            )
