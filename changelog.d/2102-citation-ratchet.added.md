@@ -9,8 +9,15 @@ beside a citation moves it to `unadjudicable` where nothing judges it. A version
 design -- collating `changelog.d/` into the exempt `CHANGELOG.md` moves rows -- which is step 3 of
 the version-bump checklist in `AGENTS.md`.
 
-  The recorded set is a **review queue, not a defect list**. All 18 rows were read by hand: 10 are
-  genuinely wrong citations and 8 are the instrument attributing a symbol from a different clause on
-  the same line. That cannot be separated mechanically -- character distance between citation and
-  symbol was measured as a discriminator and does not separate them (median 8 for real against 9 for
-  artifact) -- so the gate's job is that a new row gets looked at, not that every row is a defect.
+  The recorded set is a **review queue, not a defect list**. All 18 rows were read by hand: one is a
+  withdrawn claim (#2112, and neither of the other two classes), and the remaining 17 split
+  near-evenly between genuinely wrong citations and the instrument attributing a symbol from a
+  different clause on the same line. **The direction of that split is not established** -- an
+  independent re-read of seven rows returned the two labels swapped relative to mine, which is
+  itself the point: they are hard to tell apart by hand, and character distance between citation and
+  symbol was measured as a mechanical discriminator and does not separate them either (median 8 for
+  real against 9 for artifact). So the gate's job is that a new row gets looked at, not that every
+  row is a defect.
+
+  The gate's own red message carries the operational copy of this and is the one to change if the
+  numbers move; this paragraph is the release-note copy and cites #2112 for the withdrawn row.

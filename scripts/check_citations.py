@@ -763,9 +763,10 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112)"
-            + "\n    and the other 17 hand-read 9 stale to 8 mis-attributed. Close enough to even"
-            + "\n    that neither is the safe default -- read the line, do not assume."
+            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112) and"
+            + "\n    the other 17 split near-evenly between the two. Do not lean on the direction:"
+            + "\n    review re-read seven of them and found my stale/mis-attributed labels swapped"
+            + "\n    on that subset. Read the line."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

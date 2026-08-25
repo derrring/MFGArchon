@@ -607,27 +607,46 @@ def test_this_file_contributes_no_adjudicable_citation():
     land in `missing`, which is ungated and harmless. What must never happen is an `anchored` or
     `drifted` row, because those are the numbers the ratchet pins.
 
-    NOT VACUOUS BY CONSTRUCTION -- BY INHERITANCE. Blind `measure` (`for f in prose:` -> `for f in
-    []:`) and this test still passes; what fails is `test_the_shipped_baseline_matches_this_repository`
-    two tests up, which pins the population using the same `_measure` helper. The arrangement holds,
-    and it holds because of that sibling, not on its own.
+    NOT VACUOUS BY CONSTRUCTION -- BY INHERITANCE. Blind `measure` -- replace `for f in prose:`
+    with `for f in []:` -- and this test still passes; what fails is
+    `test_the_shipped_baseline_matches_this_repository` two tests up, which pins the population
+    using the same `_measure` helper. The arrangement holds because of that sibling, not on its own.
 
-    MEMBERSHIP CRITERION, so the next person adding a file has a rule and not a precedent: a file
-    belongs in `watched` when the instrument's own measurement INCLUDES it and it is prose ABOUT
-    that measurement. Both halves are required. Either alone is the ordinary case the ratchet
-    already handles as a normal row; it is the conjunction that lets a file's prose move the number
-    that file is being judged by.
+    MEMBERSHIP CRITERION, so the next person adding a file has a rule and not a precedent. A file
+    belongs in `watched` when BOTH hold:
 
-    Two files qualify. `tests/unit/test_check_citations.py` parses 22 citations against this
-    script's 3 -- seven times the exposure -- is prose ABOUT citations, and sits in the same scanned
-    population. `scripts/test_discrimination.py` was proposed and does NOT qualify: the instrument
-    measures it like any other file, but it is prose about mutation coverage, not about this
-    measurement, so the baseline already pins it as an ordinary row. Adding it would widen the set
-    past what the criterion says and past what the assertion message claims.
+      1. it is in the scanned POPULATION -- `.md` or `.py`, tracked, not `CHANGELOG.md`, and not
+         under one of the directories `EXEMPT_DIRS` names. Not "contributes a row": contributing
+         zero adjudicable rows is what this test asserts, so that reading would empty the set.
+      2. its SUBJECT is this measurement -- the whole file is about it, not a paragraph of it.
+
+    Half 2 is stated at file granularity on purpose, and it is the half that decides cases. At
+    paragraph granularity `AGENTS.md` qualifies: it is in the population, it carries a paragraph
+    about this gate quoting its own numbers, and it contributes one adjudicable row -- so this test
+    would go RED today on a file whose subject is the repository's whole workflow. Two readers
+    applying a criterion without a granularity clause would disagree, with a red gate riding on it.
+
+    Four files qualify. `scripts/check_citations.py` and this file are the instrument; this one
+    parses 22 citations against the script's 3, seven times the exposure. The two
+    `changelog.d/2102-*` fragments are wholly prose about this measurement -- one quotes its output
+    verbatim -- and `changelog.d/` is emphatically in the population: 8 of the 18 recorded drifted
+    rows live there. All four currently contribute zero adjudicable rows, so adding the fragments
+    costs no red; they are here because the criterion admits them, and a rule that contradicts the
+    set it annotates is worse than no rule.
+
+    `scripts/test_discrimination.py` was proposed and does NOT qualify: the instrument measures it
+    like any other file, but its subject is mutation coverage, not this measurement. It contributes
+    3 anchored and 11 unadjudicable rows, and an anchored row turning drifted lands in `appeared`,
+    so the baseline already pins it as an ordinary file.
     """
     repo = SCRIPT.parents[1]
     got = _measure(repo)
-    watched = {"scripts/check_citations.py", "tests/unit/test_check_citations.py"}
+    watched = {
+        "scripts/check_citations.py",
+        "tests/unit/test_check_citations.py",
+        "changelog.d/2102-citation-measurement.added.md",
+        "changelog.d/2102-citation-ratchet.added.md",
+    }
     own = [r for r in got["anchored"] + got["drifted"] if r["file"] in watched]
     assert not own, (
         f"prose in this instrument's own files contributed {len(own)} adjudicable row(s) to its own "
