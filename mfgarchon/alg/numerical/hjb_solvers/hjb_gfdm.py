@@ -3356,8 +3356,12 @@ class HJBGFDMSolver(BaseHJBSolver):
             # at A = 1e-6 it refuses while the three-slice build accepts and Howard lands 0.7572%
             # from Newton, the same as the A = 0 baseline. That is not a false refusal to fix by
             # loosening: the Hamiltonian is genuinely outside what Howard substitutes, and the
-            # accuracy at that amplitude is the defect being small, not absent. It degrades
-            # continuously with A, and `_ke` is what tracks the defect rather than its current size.
+            # accuracy at that amplitude is the defect being small, not absent. Measured on the
+            # three-slice counterfactual, the error degrades continuously and monotonically over
+            # seven decades of A -- 0.7572% at 0, 0.8195% at 10, 4.29% at 300, 69.85% at 5000 --
+            # so there is no amplitude below which it is harmless, which is why loosening has no
+            # defensible threshold. `_ke` tracks the departure in the Hamiltonian, not the error it
+            # currently produces in u.
             #
             # Cost is O(Nt * |mags| * n_points) per backward sweep: ~16% of this file's runtime at
             # Nt = 10 (0.67s -> 0.78s), and ~1s per outer iteration at Nt = 1000 with 2500 points --
