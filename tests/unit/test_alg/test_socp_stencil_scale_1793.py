@@ -51,8 +51,8 @@ property of one `DELTA_MULT` on one LAPACK and silently survives changes to eith
 measured here and is not asserted -- it swings on `k_neighbors`, which `hjb_gfdm.py:276` leaves
 auto-computed. Reachable and otherwise untested is reason enough.
 
-The measurements behind each number, and the three claims earlier versions of this file made and
-had refuted, are in the commit history and in #2113.
+The measurements behind each number are in the commit history; the production consequence of
+`kappa_max`'s degeneracy is #2113.
 """
 
 from __future__ import annotations
@@ -119,8 +119,7 @@ FAST_PATH_STENCIL = np.array(
 )
 
 #: `hjb_gfdm.py:1073` builds the production cache with `cone_constant_C=8.0`, `eps_pos=0.0`.
-#: The pin runs at production's setting, which the previous version of this file claimed was
-#: impossible -- that claim was an artifact of pinning `kappa_max`.
+#: Both pins run at that setting.
 PRODUCTION_C = 8.0
 
 
