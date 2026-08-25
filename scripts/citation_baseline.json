@@ -1,14 +1,14 @@
 {
   "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target file, the cited line, and the symbols the prose names beside it; `counts` pins how many, because neither catches what the other does. Both are bidirectional: a new drifted citation is a regression and a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline.",
   "_measured_at": {
-    "head_when_written": "07b90a07",
+    "head_when_written": "61068b64-dirty",
     "window": 12
   },
   "counts": {
-    "adjudicable": 39,
+    "adjudicable": 38,
     "ambiguous": 5,
     "anchored": 20,
-    "drifted": 19,
+    "drifted": 18,
     "missing": 39,
     "unadjudicable": 154
   },
@@ -23,7 +23,6 @@
     "changelog.d/single-source-ratchet.added.md -> mfgarchon/meta/code_generation.py:400 [diffusion_from_volatility,diffusion_from_volatility_torch,owner,sentinel_symbol]",
     "mfgarchon/geometry/boundary/conditions.py -> mfgarchon/core/hamiltonian.py:1284 [HamiltonianBase.optimal_control]",
     "mfgarchon/geometry/boundary/protocols.py -> mfgarchon/geometry/boundary/applicator_fdm.py:2664",
-    "scripts/check_citations.py -> mfgarchon/utils/mfg_logging/logger.py:211 [drifted]",
     "tests/integration/test_coupled_mms_2d_no_flux.py -> mfgarchon/core/mfg_problem.py:1416 [get_diffusion_coefficient_field]",
     "tests/unit/test_alg/test_gfdm_mms_source_1991.py -> mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py:3373 [source_term]",
     "tests/unit/test_alg/test_meshless_stabilization.py -> mfgarchon/alg/numerical/meshless_galerkin/hjb_solver.py:51 [WeakFormHJBSolver.solve_hjb_system]",

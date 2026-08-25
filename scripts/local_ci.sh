@@ -324,7 +324,7 @@ check $? "no new site restating a single-owner quantity"
 # prints the command rather than only moving a number.
 step "Citation ratchet"
 "$PY" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
-check $? "no citation newly drifted, and none was fixed or hidden without being recorded"
+check $? "no citation newly entered the review queue, and none left it unrecorded"
 
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check

@@ -8,3 +8,9 @@ both directions, alongside `adjudicable` against shrinking, since deleting the s
 beside a citation moves it to `unadjudicable` where nothing judges it. A version bump trips this by
 design -- collating `changelog.d/` into the exempt `CHANGELOG.md` moves rows -- which is step 3 of
 the version-bump checklist in `AGENTS.md`.
+
+  The recorded set is a **review queue, not a defect list**. All 18 rows were read by hand: 10 are
+  genuinely wrong citations and 8 are the instrument attributing a symbol from a different clause on
+  the same line. That cannot be separated mechanically -- character distance between citation and
+  symbol was measured as a discriminator and does not separate them (median 8 for real against 9 for
+  artifact) -- so the gate's job is that a new row gets looked at, not that every row is a defect.

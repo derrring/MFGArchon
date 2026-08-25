@@ -5,6 +5,22 @@ A line number in a document is a claim with an expiry date, and nothing marks it
 being true. Measured at the time of writing: 18 of the 38 adjudicable citations in this
 repository's live prose -- 47% -- name a symbol that is not near the cited line (Issue #2102).
 
+THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
+All 18 were read by hand: **10 are genuinely wrong** and 8 are the instrument mis-attributing a
+symbol. A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
+-- "`propagate = False` (logger.py, line 211), so whether `caplog` sees..." is a CORRECT citation
+whose target line really is `logger.propagate = False`, with `caplog` sitting in the consequence
+clause. (Written with the line number in words, because spelling it made this very paragraph the
+20th drifted row -- the third time explaining a defect in this file created another instance of it.) Restricting the
+search to the citation's own line narrows that and does not close it.
+
+It cannot be closed mechanically. Character distance between citation and symbol was measured as a
+discriminator and FAILED: real 8 median, artifact 9, over overlapping ranges. The difference is
+grammatical -- does the symbol describe the cited line, or the sentence's consequence -- and no
+positional rule sees a clause boundary. So the instrument reports a superset and a human separates,
+which is the shape `local_ci.sh` already uses for assertion strength: a review queue, not a delete
+list.
+
 That is 18 of the 38 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
 citations are recorded `unadjudicable`, a large majority. Quoting 49% bare reads as "half this
 repository's citations are wrong" and would be #1918's own failure committed against this report.
@@ -760,7 +776,7 @@ def compare_to_baseline(result: dict, path: Path) -> int:
         # The `ambiguous` route is not theoretical. 14 of the 18 recorded rows cite a BARE
         # BASENAME, so they resolve through the fallback and a second file with that name anywhere
         # in the tree moves them. Measured: adding a two-line `mfgarchon/workflow/logger.py` -- one
-        # commit, touching no prose -- moved `AGENTS.md -> logger.py:211` out of `drifted` and took
+        # commit, touching no prose -- moved `AGENTS.md`'s citation of logger.py out of `drifted` and took
         # `ambiguous` from 5 to 7. Naming two of five causes as though they were all of them is the
         # same over-claim this branch was rewritten to stop making, in a smaller register.
         problems.append(
