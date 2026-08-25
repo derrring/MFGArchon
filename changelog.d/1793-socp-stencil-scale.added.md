@@ -4,9 +4,17 @@
   same factor, and leaves `kappa` inside the bound looking healthy. A 25-axis mutation sweep found
   the suite blind: 5770 passed with `median` replaced by `max`.
 
-  **The two paths behave oppositely, and a pin on one says nothing about the other.**
+  **What decides whether `kappa_max` is usable is not which path ran, but WHY the fast path was
+  skipped.** Three exits reach the SOCP and only two force anything: a cone rejection puts the
+  optimum on the cone, so `kappa_max = C`; an M-matrix rejection leaves a positivity bound active,
+  so the argmax is `0/0`. The third is `np.linalg.solve` raising on a singular `AᵀA`
+  (`joint_socp.py:246`), where neither check ever ran and nothing is forced. Both fixtures in this
+  file take that exit. Two earlier versions of this changelog asserted the degeneracy of every `C`
+  and then of every solver-path stencil; both were false, the second refuted by this file's own
+  uniform-cross oracle, where the cone is slack at 0.005 against `C = 1.0` with every off-centre
+  weight at 100.0.
 
-  On `socp_clarabel`, `kappa_max` is unusable. Where the cone binds it is `C` by construction: at
+  On `SCALE_STENCIL`, `kappa_max` is unusable. Where the cone binds it is `C` by construction: at
   `C = 8.0` all four candidate scales agree to five significant figures. Where the cone is slack
   nothing binds, so the objective drives an x-axis weight onto the `eps_pos = 0.0` bound and the
   argmax edge is the one the optimiser deleted — `L_1 = 9.88e-08` against `||D_1|| = 4.76e-07`, a
@@ -18,10 +26,10 @@
 
   On `wendland_lsq_fast_path` no solver runs: the Wendland least-squares weights are accepted if
   they already satisfy the cone, so `(L, D)` do not depend on `h_i` and `kappa_max = h_i * const`
-  exactly. Measured, `kappa_max / h_i` agrees to 2e-16 across all four scales, the smallest
-  off-centre weight is 3.45, and the value is bit-identical under injected solver tolerance because
-  there is no solver. `hjb_gfdm.py:1078` picked `C = 8.0` precisely to land here, so this is the
-  path production usually takes.
+  exactly. Measured, `kappa_max / h_i` is bit-identical across all four scales -- spread exactly
+  0.0 -- the smallest off-centre weight is 3.4558, and the value does not move under injected
+  solver tolerance because there is no solver. `hjb_gfdm.py:1078` picked `C = 8.0` partly to reach
+  this path; how often it is reached is not measured and is not asserted.
 
   Both discriminators verified red against `median -> min`, `-> mean` and `-> max`. Filed #2113 for
   the production consequence: one field name returns qualitatively different things on the two

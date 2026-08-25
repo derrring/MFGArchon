@@ -11,13 +11,11 @@ A 25-axis mutation sweep found the suite blind to the scale entirely: 5770 passe
 replaced by `max`. This file pins one non-degenerate quantity on each path, both at production's
 `C = 8.0` (`hjb_gfdm.py:1073`).
 
-ON THE SOLVER PATH, `kappa_max` IS UNUSABLE -- AND THAT IS NOT A FACT ABOUT `kappa_max`
----------------------------------------------------------------------------------------
+WHY `kappa_max` IS NOT THE PROBE, AND WHAT ACTUALLY DECIDES THAT
+-----------------------------------------------------------------
 `kappa_max` is the obvious probe -- it is the quantity the dataclass names after the diagnostic --
-and two earlier versions of this file pinned it. (`L` and `D` are exposed too, and carry the scale
-on the solver path; that is what the constraint pin below reads.) On a stencil
-where CLARABEL actually runs, the two conditions that would make it meaningful are mutually
-exclusive -- measured by scanning `C` from 1.0 to 8.0 on `SCALE_STENCIL`:
+and two earlier versions of this file pinned it. On `SCALE_STENCIL` it is unusable, measured by
+scanning `C` from 1.0 to 8.0:
 
     C     kappa_max vs C   L_1 (the argmax edge)   separation min/mean/max vs median
     1.0      SLACK             9.88e-08               3.705% / 1.327% / 21.767%
@@ -25,35 +23,54 @@ exclusive -- measured by scanning `C` from 1.0 to 8.0 on `SCALE_STENCIL`:
     2.0      binds             5.48e-02               0.000% / 0.241% /  2.199%
     8.0      binds             6.46e-02               0.000% / 0.000% /  0.000%
 
-Where the cone binds it reports `C` back. Where it is slack, nothing binds, so the objective drives
-an x-axis weight onto the `eps_pos = 0.0` bound and the argmax edge is the one the optimiser
-DELETED: `L_1 = 9.88e-08` against `||D_1|| = 4.76e-07`, whose exact optimum is `0/0`. Tightening
-CLARABEL tracks it one-for-one (9.87e-06, 9.88e-10, 9.89e-12, 1.03e-13 at tol 1e-6/-9/-12/-14)
-until it crosses the `L_j <= 1e-12 -> inf` guard at `joint_socp.py:307` and the pin fails as `inf`.
+Where the cone binds it reports `C` back. Where it is slack, an x-axis weight sits on the
+`eps_pos = 0.0` bound and the argmax edge is the one the optimiser deleted -- `L_1 = 9.88e-08`
+against `||D_1|| = 4.76e-07`, whose exact optimum is `0/0`. Tightening CLARABEL tracks it
+one-for-one (9.87e-06, 9.88e-10, 9.89e-12, 1.03e-13 at tol 1e-6/-9/-12/-14) until it crosses the
+`L_j <= 1e-12 -> inf` guard at `joint_socp.py:307` and the pin fails as `inf`.
 
-**An earlier version of this file generalised that into "kappa_max cannot pin the scale at any C".
-That is false, and the counterexample is production's dominant path.** The `C`-scan above could not
-have found it: `_production_stencil` asserts `via == "socp_clarabel"`, so the sweep's own population
-predicate excluded the case that refutes the conclusion drawn from it. Recorded because the sweep
-looked exhaustive -- ten values of `C`, four scales -- and was exhaustive only inside an assumption
-it never stated. Issue #2113 carries the same overstatement and is corrected there too.
+**THAT IS A PROPERTY OF THIS GEOMETRY, NOT OF THE DISPATCH, AND TWO EARLIER VERSIONS OF THIS
+PARAGRAPH SAID OTHERWISE.** The first claimed it of every `C`; the second, of every stencil the
+solver runs on. Both were refuted, the second by a fixture thirty lines below in this same file.
+
+There are THREE ways to reach the SOCP, and only two of them force anything:
+
+    fast path rejected because the cone fails  -> the optimum sits on the cone -> kappa_max = C
+    fast path rejected because M-matrix fails  -> a positivity bound is active -> 0/0 at the argmax
+    `np.linalg.solve(ATA, rhs)` RAISES         -> NEITHER check ever ran -> nothing is forced
+
+The third exit is `except (np.linalg.LinAlgError, ValueError): pass` at `joint_socp.py:246`, and it
+is not exotic: **both fixtures in this file take it**, because `A` has more columns than rows and
+`ATA` is singular. `test_a_uniform_cross_returns_the_analytic_weights` is then a live counterexample
+to the second claim -- CLARABEL runs, the cone is slack (0.005 against `C = 1.0`), and every
+off-centre weight is 100.0. It cannot discriminate the scale, because a uniform cross has
+`min == median == mean == max` by construction, but it is exactly the conjunction that paragraph
+said could not occur.
+
+So the honest statement is narrow: **on `SCALE_STENCIL` at `C = 8.0`, the cone binds and `L_1` is
+what it forces.** Anything wider needs conditioning on WHY the fast path was skipped, and this file
+measures that for two geometries.
 
 ON THE FAST PATH, `kappa_max` IS AN EXACT READOUT OF THE SCALE
 --------------------------------------------------------------
-`wendland_lsq_fast_path` runs no solver: it takes the Wendland least-squares weights and ACCEPTS
-them if every edge already satisfies the cone (`joint_socp.py:232`, `if k_j > C + 1e-9`). So `(L, D)`
-do not depend on `h_i` at all, and
+`wendland_lsq_fast_path` runs no solver: it takes the Wendland least-squares weights and accepts
+them when `m_matrix_ok and cone_ok` (`joint_socp.py:237`) -- BOTH, not the cone alone, and the
+M-matrix half is what the other half of this file leans on. So `(L, D)` do not depend on `h_i` at
+all, and
 
     kappa_max = h_i * max_j ||D_j|| / L_j = h_i * const
 
-identically. On `FAST_PATH_STENCIL` that constant is 0.4495952901 and `kappa_max / h_i` agrees to
-2e-16 across all four candidate scales, with the smallest off-centre weight 3.45 -- four orders
-clear of any bound, at every scale. Nothing is a ratio of two vanishing numbers here, and with no
-solver in the loop the value is bit-identical under injected tolerance.
+identically. On `FAST_PATH_STENCIL` that constant is 0.2840929695, and `kappa_max / h_i` is
+BIT-IDENTICAL across all four candidate scales -- spread exactly 0.0, not merely small. The
+smallest off-centre weight is 3.4558 at every scale, against a `1e-12` guard in the library and
+`eps_pos = 0.0`, so nothing here is a ratio of two vanishing numbers. With no solver in the loop
+the value does not move under injected tolerance either.
 
 `hjb_gfdm.py:1078` chose `C = 8.0` with the comment "higher C -> cone less binding, picks fast-path
-Wendland-LSQ where M-matrix holds", so this is the path production spends most of its time on. It
-was untested by this file until the review that found the claim above was too strong.
+Wendland-LSQ where M-matrix holds" -- so `C = 8.0` is chosen partly to reach this path. HOW OFTEN
+it is reached is NOT measured here and is not a safe thing to assert: on uniform and jittered grids
+review measured 100% fast path at `k = 9` and 0% at `k = 13`, and `hjb_gfdm.py:276` leaves
+`k_neighbors` auto-computed. The path is reachable and untested, which is reason enough.
 """
 
 from __future__ import annotations
@@ -86,10 +103,19 @@ H = 0.1
 SCALE_STENCIL = np.array([[0.0, 0.0], [H, 0.0], [-1.4 * H, 0.0], [0.0, 2 * H], [0.0, -3 * H], [5 * H, 0.0]])
 
 #: The OTHER dispatch path. Wendland least-squares weights that already satisfy the cone at
-#: `C = 8.0`, so `joint_socp.py:232` accepts them and no solver runs. `(L, D)` are then independent
+#: `C = 8.0`, so `joint_socp.py:234` accepts them and no solver runs. `(L, D)` are then independent
 #: of `h_i`, which makes `kappa_max = h_i * const` exactly -- the readout `SCALE_STENCIL` cannot
 #: give. Found by adversarial review as the counterexample to this file's earlier claim that no
-#: fixture could pin the diagnostic; kept as a fixture because it is production's usual path.
+#: fixture could pin the diagnostic.
+#:
+#: `DELTA_MULT` is load-bearing and is NOT a free parameter. Measured, the fast path holds for
+#: multipliers 1.05 to 1.55 and the stencil falls to `socp_clarabel` at 1.60; below 1.05 the
+#: smallest off-centre weight collapses to 0.0. An earlier version used 1.5 -- inside the window,
+#: but one 6.7% step from its top edge, so a change to `wendland_stencil_weights` would have fired
+#: the `via` assertion and read as a library regression. 1.3 is the middle.
+#: Middle of the measured [1.05, 1.55] window, not its edge.
+DELTA_MULT = 1.3
+
 FAST_PATH_STENCIL = np.array(
     [
         [0.0, 0.0],
@@ -183,7 +209,7 @@ def test_the_scale_is_pinned_through_the_binding_cone_constraint():
     L = np.asarray(data.L)
 
     # rel=1e-2, not tighter: this guard only has to tell `binds` (8.0) from `slack` (0.96), which
-    # is 13% away. At rel=1e-5 the whole test went RED at CLARABEL tolerances 1e-6 and 1e-7 -- on
+    # is 88% of C away (0.96 against 8.0). At rel=1e-5 the whole test went RED at CLARABEL tolerances 1e-6 and 1e-7 -- on
     # THIS assertion, not the pin -- and then blamed it on the cone not binding, which was false;
     # the cone still bound to 5.8e-5 there. The green band was 1e-8..1e-14 with CLARABEL's default
     # sitting on its edge. A guard whose message misdiagnoses is worse than a looser guard.
@@ -238,13 +264,14 @@ def test_the_reported_diagnostic_carries_no_signal_about_the_scale():
 def _fast_path_stencil() -> JointSocpStencilData:
     """`FAST_PATH_STENCIL` through the object that derives `h_i`, at production's `C`."""
     nz = np.linalg.norm(FAST_PATH_STENCIL - FAST_PATH_STENCIL[0], axis=1)
+    nz = nz[nz > 1e-12]  # the centre's own 0.0 is not a neighbour distance; `joint_socp.py:662`
     assert len({round(float(f(nz)), 9) for f in (np.min, np.median, np.mean, np.max)}) == 4, (
         "the fixture must keep min, median, mean and max distinct, or a scale change is invisible"
     )
     pre = PrecomputedJointSocpStencils(
         points=FAST_PATH_STENCIL,
         interior_indices=np.array([0]),
-        delta=1.5 * float(nz.max()),
+        delta=DELTA_MULT * float(nz.max()),
         neighborhoods={0: {"indices": np.arange(len(FAST_PATH_STENCIL))}},
         cone_constant_C=PRODUCTION_C,
     )
@@ -254,15 +281,16 @@ def _fast_path_stencil() -> JointSocpStencilData:
 def test_the_scale_is_pinned_through_the_diagnostic_on_the_fast_path():
     """The discriminator for path (b). Verified red against `median -> min`, `-> mean`, `-> max`.
 
-    `kappa_max` reads 0.068489 / 0.091052 / 0.111430 / 0.160150 under min / median / mean / max --
-    separations of 24.8%, 22.4% and 75.9% from the pinned value, against a `kappa_max` that moves
-    0.0001% on `SCALE_STENCIL` at the same `C`. `kappa_max / h_i` is 0.4495952901 for all four,
-    agreeing to 2e-16, because the fast path never consults `h_i` when computing `(L, D)` -- only
-    when deciding whether to accept them and when forming the ratio.
+    `kappa_max` reads 0.043277 / 0.057535 / 0.070411 / 0.101196 under min / median / mean / max --
+    separations of 24.78%, 22.38% and 75.89% from the pinned value, against a `kappa_max` that
+    moves 0.0001% on `SCALE_STENCIL` at the same `C`. `kappa_max / h_i` is 0.2840929695 for all
+    four and bit-identical, because the fast path never consults `h_i` when computing `(L, D)` --
+    only when deciding whether to accept them, and when forming the ratio.
 
     `rel=1e-7` rather than something tighter: no solver runs, so there is no solver tolerance to
-    protect against and the value is bit-identical across repeats. The margin left is for a
-    different LAPACK, and it still sits six orders below the smallest signal.
+    protect against. The margin is for a different LAPACK, and review measured that -- reference
+    LAPACK 3.9.0 against Apple Accelerate differ by 1.5e-16 relative, 0.7 ulp, so `rel=1e-7` is
+    conservative by about seven orders rather than the one I guessed at.
     """
     data = _fast_path_stencil()
     L = np.asarray(data.L)
@@ -271,8 +299,8 @@ def test_the_scale_is_pinned_through_the_diagnostic_on_the_fast_path():
         f"this pin means 'the accepted Wendland weights scaled by h_i'; got via={data.via!r}. On "
         f"the solver path the same quantity is either C or a 0/0 ratio -- see the module docstring"
     )
-    assert L[1:].min() > 1e-2, (
+    assert L[1:].min() > 1.0, (
         f"every edge must carry real weight for kappa_max to be a ratio of two real numbers; got "
         f"min off-centre weight {L[1:].min()!r}"
     )
-    assert data.kappa_max == pytest.approx(0.09105245225, rel=1e-7)
+    assert data.kappa_max == pytest.approx(0.05753476984, rel=1e-7)
