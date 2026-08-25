@@ -2,14 +2,31 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. Measured at the time of writing: 44% of the adjudicable citations in this repository's
-live prose named a symbol that was not near the cited line (Issue #2102).
+being true. Measured at the time of writing: 19 of the 39 adjudicable citations in this
+repository's live prose -- 49% -- name a symbol that is not near the cited line (Issue #2102).
+
+THAT PERCENTAGE IS A FUNCTION OF `WINDOW`, AND THE SWEEP HAS NO PLATEAU
+-----------------------------------------------------------------------
+It moves about 1 point per unit near 12, and the denominator does not move at all -- only the split
+between anchored and drifted:
+
+    WINDOW      1      6     10     12     16     25     60    200
+    drifted  64.1%  59.0%  53.8%  48.7%  46.2%  43.6%  30.8%  23.1%
+
+There is no plateau, so quote the number with its window, never bare. The one WINDOW-INDEPENDENT
+statement available is the floor: **9 of the 39 adjudicable citations (23%) name a symbol that is
+not in the target file at all**, at any window. `WINDOW = 12` is a choice, not a measurement, and it
+is the constant a reader should attack first.
 
 WHY THE SYMBOL IS THE DISCRIMINATOR
 -----------------------------------
-Checking "is the line number inside the file" is almost useless. Of 208 citations exactly ONE
-pointed past EOF, and two of three "in range" citations sampled at random landed on blank lines. A
+Checking "is the line number inside the file" is almost useless. Of 224 citations exactly ONE
+points past EOF, and two of three "in range" citations sampled at random landed on blank lines. A
 drifted citation almost always still points somewhere.
+
+That single row is also why the EOF test runs BEFORE the symbol gate in `measure`. Gated on a
+symbol, as it was first written, the one certainly-broken citation in the repository was filed as
+`unadjudicable` and this paragraph rested on a finding the instrument did not report.
 
 So a citation is adjudicable exactly when the prose around it names a symbol in backticks. Then the
 question has an answer: is that symbol within +/-WINDOW lines of the cited line? A citation with no
@@ -26,15 +43,36 @@ nobody has to act on.
 KNOWN FAILURE MODE OF THE RESOLVER, PAID FOR ONCE
 -------------------------------------------------
 The first version of this measurement reported "184 citations point at a file that does not exist".
-Every one was an artefact: citations are usually written as a BARE BASENAME (`mfg_problem.py:2534`)
-while the file lives at `mfgarchon/core/mfg_problem.py`, and resolving the string as a path misses
-it. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
+Every one was an artefact: citations are usually written as a bare basename -- `mfg_problem.py`
+and a line number -- while the file lives at `mfgarchon/core/mfg_problem.py`, and resolving the
+string as a path misses it.
+
+An example path in THIS file's prose is written so it cannot parse as a citation, and that is not
+fussiness: this script is inside the population it scans, so an illustrative path becomes a row in
+its own measurement. The one exception is the regex's own documentation below, where the notation
+IS the subject and neutering it would delete the thing being documented. That produced a clean, plausible, wrong answer. Resolution now tries, in order: the string as a
 repo-relative path, as a path under `mfgarchon/`, and finally as a basename over every tracked
 `.py`, narrowed by suffix when the citation carries directories. A basename matching more than one
 file is reported AMBIGUOUS rather than guessed.
 
-`CHANGELOG.md` is exempt, on the same reasoning `scripts/check_doc_api.py:82` uses: an entry
-describing a v0.16 line is correct as of then. `archive/` likewise.
+`CHANGELOG.md` is exempt, on the same reasoning `check_doc_api.py` uses: an entry describing a
+v0.16 line is correct as of then. `archive/` likewise.
+
+`changelog.d/` fragments are NOT exempt, and the asymmetry is deliberate rather than an oversight:
+a citation is judged while it can still be fixed, and a fragment is editable where a released entry
+is history. The consequence is real and should not surprise anyone -- collating fragments at a
+version bump moves ~12 rows out of `drifted` in one commit. Under the bidirectional ratchet part 2 adds
+that is not a free win: `drifted` falling fails the gate and forces a human to re-baseline, which is the
+contract working, not a hole in it.
+
+WHAT THIS SCRIPT COUNTS THAT IS NOT A DEFECT
+--------------------------------------------
+`missing` is mostly fixture text. A checker that plants a fake path in a test is not making
+a claim about this repository, and nothing here can tell the difference -- `test_check_single_source`
+contributes 5 rows and `test_check_fail_fast` 4, none of them a defect in anything. Only 2 of 30 are
+genuine dead paths. That is why part 2's ratchet will record `missing` and never act on it, and why this
+script builds its own fixtures from variables rather than literals: written out, they counted as
+broken citations in the measurement this script produces about itself.
 """
 
 from __future__ import annotations
@@ -98,7 +136,10 @@ def _index_by_basename(files: list[str]) -> dict[str, list[str]]:
 def resolve(rel: str, root: Path, by_base: dict[str, list[str]]) -> tuple[Path | None, str]:
     """Return (path, status) where status is 'ok', 'ambiguous' or 'missing'."""
     for candidate in (root / rel, root / "mfgarchon" / rel):
-        if candidate.is_file():
+        # `root / rel` is not confined: `sub/../../outside/escape.py:3` read a file outside the
+        # repository and reported it anchored. A citation that leaves the tree is not a citation
+        # into this codebase.
+        if candidate.is_file() and candidate.resolve().is_relative_to(root.resolve()):
             return candidate, "ok"
     matches = by_base.get(Path(rel).name, [])
     if "/" in rel:
@@ -111,19 +152,31 @@ def resolve(rel: str, root: Path, by_base: dict[str, list[str]]) -> tuple[Path |
 
 
 def _symbols_near(lines: list[str], i: int, cited_stem: str) -> list[str]:
-    """Symbols in the citation's own line, plus adjacent lines within the same paragraph.
+    """Symbols named on the citation's OWN line. Nothing is borrowed from a neighbouring line.
 
-    The paragraph is the unit, and the walk STOPS AT A BLANK LINE. A flat +/-1 window instead lets a
-    citation borrow a symbol from the next sentence, which reports a drifted citation as anchored --
-    caught by this file's own self-test, where seven unrelated claims on seven consecutive lines all
-    anchored to each other's symbols. Real prose wraps inside a paragraph, so adjacent non-blank
-    lines are genuinely the same claim; a blank line is where that stops being true.
+    Two earlier designs were wrong, and the second was wrong in a way the first hid.
+
+    The original took a flat +/-1 lines. Then a guard was added to skip BLANK neighbours, described
+    as "the paragraph is the unit". That guard was INERT: a line falsy under `.strip()` holds no
+    backtick, so the identifier regex finds nothing in it either way, and deleting it changed no
+    output on any input. It passed unnoticed because it shipped alongside a rewritten self-test
+    fixture whose claims were separated by blank lines -- the FIXTURE was doing all the work.
+    Independent review deleted both guards and the self-test plus all eight unit tests survived,
+    including one named for the behaviour.
+
+    The defect was live the whole time, because real prose does not put a blank line between every
+    claim. Measured on this repository: 20 of 41 anchored rows anchored ONLY on a symbol absent from
+    the citation's own line, two hand-verified false -- one borrowing `SeparableHamiltonian` from the
+    next line, where it belongs to a DIFFERENT citation.
+
+    A narrower repair -- keep the neighbours, drop those carrying their own citation -- looks better
+    on the aggregate (74 -> 70 adjudicable against 74 -> 39) and **fixes neither confirmed case**.
+    Both were checked against it directly, which is the only reason that is known. So the rule is
+    the strict one: the line that carries the citation must name what it cites, or the row is
+    recorded `unadjudicable` and judged by nothing. A smaller denominator that means something beats
+    a larger one holding 20 rows anchored on someone else's evidence.
     """
     span = [lines[i]]
-    if i > 0 and lines[i - 1].strip():
-        span.append(lines[i - 1])
-    if i + 1 < len(lines) and lines[i + 1].strip():
-        span.append(lines[i + 1])
     context = " ".join(span)
     out = []
     for s in IDENT.findall(context):
@@ -161,16 +214,31 @@ def measure(root: Path) -> dict:
                 if status != "ok":
                     result[status].append(row)
                     continue
+                # `git ls-files` lists a tracked file that has been deleted from the working
+                # tree, so `resolve` can return a path that does not open. Unwrapped, that was a
+                # traceback and exit 1 from a step whose contract is "measurement only".
+                try:
+                    target_lines = target.read_text(errors="replace").splitlines()
+                except OSError:
+                    row["why"] = "tracked but not readable in the working tree"
+                    result["missing"].append(row)
+                    continue
+
+                # EOF BEFORE the symbol gate, not after. A citation past the end of its file is
+                # wrong with no symbol needed, and gating it on one hid the single certainly-broken
+                # citation in this repository inside `unadjudicable` -- the one row the module
+                # docstring rests its central argument on.
+                if ln > len(target_lines):
+                    row["why"] = f"past EOF ({len(target_lines)} lines)"
+                    row["symbols"] = _symbols_near(lines, i, Path(rel).stem)
+                    result["drifted"].append(row)
+                    continue
+
                 symbols = _symbols_near(lines, i, Path(rel).stem)
                 if not symbols:
                     result["unadjudicable"].append(row)
                     continue
                 row["symbols"] = symbols
-                target_lines = (target or Path()).read_text(errors="replace").splitlines()
-                if ln > len(target_lines):
-                    row["why"] = f"past EOF ({len(target_lines)} lines)"
-                    result["drifted"].append(row)
-                    continue
                 window = "\n".join(target_lines[max(0, ln - 1 - WINDOW) : ln - 1 + WINDOW])
                 if any(s.split(".")[-1] in window for s in symbols):
                     result["anchored"].append(row)
@@ -191,9 +259,9 @@ def self_test(root: Path) -> int:
     import tempfile
 
     expected = {
-        "drifted": 2,
+        "drifted": 3,
         "anchored": 2,
-        "unadjudicable": 1,
+        "unadjudicable": 2,
         "missing": 1,
         "ambiguous": 1,
     }
@@ -214,29 +282,45 @@ def self_test(root: Path) -> int:
         (d / "other").mkdir()
         (d / "other" / "dup.py").write_text("x = 1\n")
         (d / "pkg" / "dup.py").write_text("y = 2\n")
-        # Blank lines between claims: each is its own paragraph, which is what the walk above
-        # treats as the unit. Written this way deliberately -- the first version had them on
-        # consecutive lines and every claim anchored to its neighbour's symbol.
+        # Built from variables, so no `<path>.py:<digits>` literal appears in THIS file. A planted
+        # fixture is not a claim about this repository and the scanner cannot tell: written out,
+        # these lines were counted as broken citations in the measurement this script produces
+        # about itself, which made editing a comment here move its own numbers.
+        tgt, gone, dup = "pkg/target.py", "pkg/no_such_file.py", "dup.py"
         (d / "doc.md").write_text(
             "\n\n".join(
                 [
                     # anchored, symbol on the cited line
-                    "`anchored_symbol` is defined at pkg/target.py:30.",
+                    f"`anchored_symbol` is defined at {tgt}:30.",
                     # anchored, symbol a few lines off but inside the window
-                    "See `anchored_symbol` -- pkg/target.py:36 is inside it.",
+                    f"See `anchored_symbol` -- {tgt}:36 is inside it.",
                     # drifted, symbol is 60 lines away
-                    "`far_away_symbol` lives at pkg/target.py:30, it says.",
+                    f"`far_away_symbol` lives at {tgt}:30, it says.",
                     # drifted, past EOF
-                    "`anchored_symbol` at pkg/target.py:9999.",
+                    f"`anchored_symbol` at {tgt}:9999.",
+                    # drifted with NO symbol named: past EOF is wrong whether or not the prose
+                    # names anything, and gating it on a symbol hid the one real case in the repo.
+                    f"Nothing is named here, but {tgt}:9998 is past the end.",
                     # unadjudicable: a citation with no backticked symbol beside it
-                    "Something happens at pkg/target.py:30 for reasons.",
+                    f"Something happens at {tgt}:30 for reasons.",
+                    # unadjudicable: the symbol is on the PRECEDING line, not this one. Two lines,
+                    # no blank between -- the shape the previous walk borrowed across, and the one
+                    # the blank-line fixture could never exhibit. Restoring the +/-1 span turns
+                    # this into an `anchored` row and fails the counts above.
+                    f"`anchored_symbol` is a fine symbol.\nSomething else at {tgt}:30.",
                     # missing: no such file
-                    "`anchored_symbol` at pkg/no_such_file.py:12.",
+                    f"`anchored_symbol` at {gone}:12.",
                     # ambiguous: bare basename matching two tracked files
-                    "`anchored_symbol` at dup.py:1.",
+                    f"`anchored_symbol` at {dup}:1.",
                 ]
             )
         )
+        # Exemptions need a shape or nothing notices when one is dropped: emptying EXEMPT_DIRS and
+        # deleting the CHANGELOG entry both SURVIVED this self-test as first written. Each file
+        # below carries a citation that WOULD be drifted if it were scanned.
+        (d / "CHANGELOG.md").write_text(f"`far_away_symbol` was at {tgt}:30 in v0.16.\n")
+        (d / "archive").mkdir()
+        (d / "archive" / "old.md").write_text(f"`far_away_symbol` at {tgt}:30, long ago.\n")
         subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
         got = measure(d)
         counts = {k: len(v) for k, v in got.items()}
