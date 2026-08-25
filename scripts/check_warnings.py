@@ -34,6 +34,13 @@ real distinctions -- `signature 'legacy'` with `'neural'`, Newton's "iteration b
 warning differing from an existing one only past character 40 of the same file and category raises
 no new identity. Verified by construction, not inferred.
 
+WHAT AN IDENTITY IS, because "225" reads as 225 distinct warnings and is not. The key is per
+CALL SITE: one deprecated API called from 153 test files is 153 identities. The 225 are 44 distinct
+(kind, message) pairs across 189 files, the largest group being 153 sharing
+`Legacy MFGProblem(geometry=, components=`. That is the intended behaviour, not an artifact -- a
+new test reaching for a deprecated API should turn this red, and it only can if the caller is part
+of the key.
+
 BIDIRECTIONAL, like the other four baselines. A new identity is a regression. A DISAPPEARED one is
 progress that must be recorded, so a fix cannot land silently and a later regression cannot hide
 behind it.
@@ -97,30 +104,53 @@ def _self_test() -> int:
         print(f"self-test CANNOT RUN: baseline has {len(base)} identities, need 2", file=sys.stderr)
         return 2
 
-    probe = "mfgarchon/_probe.py\tUserWarning\tself-test injected identity"
+    probes = [f"mfgarchon/_probe{n}.py\tUserWarning\tself-test injected identity {n}" for n in (1, 2)]
+    # TWO of each, not one. With every case moving a single identity, `len(appeared)` is never
+    # above 1 and anything conditioned on the count is uncovered -- review demonstrated a
+    # fail-open BAND (`return 0 if len(appeared) + len(left) >= 2 else 1`) and a truncated listing
+    # (`appeared[:0]`) that both passed a one-at-a-time control while printing the regression.
     cases = [
-        ("unchanged", base, 0, None),
-        ("one appeared", [*base, probe], 1, "NEW warning identities (1)"),
-        ("one vanished", base[1:], 1, "Warning identities GONE (1)"),
+        ("unchanged", base, 0, [], []),
+        ("two appeared", [*base, *probes], 1, ["NEW warning identities (2)"], probes),
+        ("two vanished", base[2:], 1, ["Warning identities GONE (2)"], sorted(base)[:2]),
     ]
     failures = []
-    for label, identities, want_rc, want_text in cases:
+    for label, identities, want_rc, want_texts, want_named in cases:
         sink = io.StringIO()
         with contextlib.redirect_stdout(sink):
             rc = _compare(set(identities), set(base), 0)
         out = sink.getvalue()
         if rc != want_rc:
             failures.append(f"{label}: expected exit {want_rc}, got {rc}")
-        if want_text and want_text not in out:
-            # Direction matters: swapping appeared/left keeps the exit code and inverts the meaning.
-            failures.append(f"{label}: expected {want_text!r} in the output, got {out.strip()[:90]!r}")
-        if want_text is None and out.strip() and "ratchet OK" not in out:
+        for want in want_texts:
+            if want not in out:
+                failures.append(f"{label}: expected {want!r} in the output, got {out.strip()[:90]!r}")
+        # EVERY identity must be NAMED, not just counted. A ratchet that reports "2 appeared"
+        # without saying which is a counter, which is what this whole file exists to replace.
+        for identity in want_named:
+            if identity.split("\t")[0] not in out:
+                failures.append(f"{label}: {identity.split(chr(9))[0]} was counted but not named")
+        if not want_texts and out.strip() and "ratchet OK" not in out:
             failures.append(f"{label}: expected an OK line, got {out.strip()[:90]!r}")
+
+    # The REMEDY is the actionable half, and inverting it turns the ratchet into a baseline
+    # eraser: a regression carrying "re-baseline with --write-baseline" gets recorded, not fixed.
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink):
+        _compare({*base, *probes}, set(base), 0)
+    appeared_out = sink.getvalue()
+    if "Fix the cause" not in appeared_out:
+        failures.append("a NEW identity must be told to fix the cause, not to re-baseline")
+    if "Re-baseline with" in appeared_out.split("GONE")[0]:
+        failures.append("a NEW identity is carrying the re-baseline instruction, which would record it")
 
     # One case through main(), so census loading and the baseline read are covered too.
     with tempfile.TemporaryDirectory() as tmp:
         census = Path(tmp) / "census.json"
-        census.write_text(json.dumps({"identities": sorted([*base, probe]), "occurrences": 0}))
+        # A realistic `tests_run`, so the floor can be strict. An earlier version omitted it, which
+        # forced `census.get("tests_run")` to tolerate a missing key -- the control's shape making
+        # the guard accept exactly the class of file the guard exists to reject.
+        census.write_text(json.dumps({"identities": sorted([*base, *probes]), "occurrences": 0, "tests_run": 6639}))
         argv = sys.argv
         try:
             sys.argv = ["check_warnings.py", "--census", str(census)]
@@ -130,6 +160,17 @@ def _self_test() -> int:
             sys.argv = argv
         if rc != 1:
             failures.append(f"through main(): an appeared identity must exit 1, got {rc}")
+
+        # Below the floor: a collect-only census must be REFUSED, not reported as 225 vanished.
+        census.write_text(json.dumps({"identities": [], "occurrences": 0, "tests_run": 0}))
+        try:
+            sys.argv = ["check_warnings.py", "--census", str(census)]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                rc = main()
+        finally:
+            sys.argv = argv
+        if rc != 2:
+            failures.append(f"through main(): a census below the {MIN_TESTS} floor must exit 2, got {rc}")
 
     if failures:
         for line in failures:
@@ -184,8 +225,8 @@ def main() -> int:
     # A census from a collect-only or truncated run looks well-formed and is not a measurement.
     # Without this the ratchet reports hundreds of identities GONE and instructs the reader to
     # re-baseline -- which would write that non-measurement into the artifact.
-    ran = census.get("tests_run")
-    if ran is not None and ran < MIN_TESTS:
+    ran = census.get("tests_run", 0)
+    if ran < MIN_TESTS:
         print(
             f"CANNOT RUN: the census records {ran} test outcomes, below the {MIN_TESTS} floor.\n"
             "That is a collect-only or truncated run, not a measurement of the suite. Refusing\n"

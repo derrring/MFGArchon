@@ -11,6 +11,12 @@
   ratchets it bidirectionally against `scripts/warning_baseline.json`: **225 identities**, a new one
   is a regression, a vanished one is progress that must be recorded.
 
+  **An identity is per call site**, which is why 225 reads larger than it is: those 225 are 44
+  distinct `(kind, message)` pairs across 189 files, the biggest group being 153 files sharing
+  `Legacy MFGProblem(geometry=, components=`. That is the design, not an artifact — a new test
+  reaching for a deprecated API should turn the gate red, and it can only do that if the caller is
+  part of the key.
+
   **Keyed on identity, not count, and the key was chosen by measurement after two designs were
   falsified by the next sample:**
 
@@ -18,7 +24,7 @@
   |:--|--:|:--|
   | occurrences | 5022 | 5021–5023 parallel, **5002 serial** — an exact gate flakes |
   | `(file, line, kind)` | 609 | stable across runs, useless across edits |
-  | raw `text[:60]` | 318 | messages embed measurements, so each count is its own identity |
+  | raw `text[:60]` | 315–319 | messages embed measurements, so each count is its own identity |
   | digits→`N`, `text[:60]` | 230 | **called stable on two agreeing runs; the third differed** |
   | digits→`N`, `text[:40]` | **225** | what this gates on |
 
