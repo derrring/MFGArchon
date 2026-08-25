@@ -751,10 +751,23 @@ def compare_to_baseline(result: dict, path: Path) -> int:
         # distinction bought one sentence of diagnosis and cost four defects, two of which pointed
         # the reader at the wrong remedy -- worse than saying nothing. So this says where, and the
         # reader says why.
+        #
+        # The message names two causes and refuses to close the list, because the list is longer
+        # than two and the extras are invisible from here. A row also leaves `drifted` by becoming
+        # `ambiguous`, or by its target being renamed into `missing`, or by its prose moving under
+        # an exempt path -- and none of those touches the citation or the target line.
+        #
+        # The `ambiguous` route is not theoretical. 14 of the 18 recorded rows cite a BARE
+        # BASENAME, so they resolve through the fallback and a second file with that name anywhere
+        # in the tree moves them. Measured: adding a two-line `mfgarchon/workflow/logger.py` -- one
+        # commit, touching no prose -- moved `AGENTS.md -> logger.py:211` out of `drifted` and took
+        # `ambiguous` from 5 to 7. Naming two of five causes as though they were all of them is the
+        # same over-claim this branch was rewritten to stop making, in a smaller register.
         problems.append(
-            "these citations are no longer drifted -- either they were fixed, or the symbol was "
-            "taken out from beside them and they are now `unadjudicable`, where nothing judges "
-            "them. Read them and decide which:\n"
+            "these citations are no longer drifted. Most often they were fixed, or the symbol was "
+            "taken out from beside them so they are now `unadjudicable`, where nothing judges "
+            "them -- but check the note above too: a row also leaves by becoming `ambiguous` or "
+            "`missing`, and neither touches the prose or the target. Read them and decide:\n"
             + "\n".join(f"      {row}" for row in left)
             + "\n    Bidirectional on purpose: an unrecorded change is how the next regression "
             "hides inside a number nobody re-read."

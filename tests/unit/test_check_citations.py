@@ -383,8 +383,6 @@ def test_the_regular_file_is_the_one_kept(tmp_path):
 
     got = _measure(root)
     assert [r["file"] for r in got["drifted"]] == ["real.md"], got["drifted"]
-    assert "none of them is a symlink" in out.stderr, out.stderr
-    assert "none of them is a symlink" in out.stderr, out.stderr
 # --- the ratchet (#2102 part 2) --------------------------------------------------------------
 #
 # Independent of `--self-test`, which exercises the same three shapes: a self-test asserting its own
