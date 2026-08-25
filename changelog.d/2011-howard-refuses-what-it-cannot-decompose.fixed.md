@@ -20,12 +20,13 @@ because the shape recurs:
    quadratic at both sampled points), and any anisotropy. A stand-in for the data standing in for
    the data.
 
-The shipped guard probes `H(x, m, 0, t) == 0` and `H(x, m, p, t) − H(x, m, 0, t) == (1/2)|p|²` **on
-the problem's own data**, at three `M_collocation` time slices, at the matching physical times, and
-over momentum vectors whose MAGNITUDES are derived from the terminal datum rather than hard-coded.
-It skips the alpha-free half when `_potential` / `_coupling` are present, because that route wires it
-— an earlier version refused a `HamiltonianBase` subclass that sets `_potential` and agrees with
-Newton to 2.30%.
+The shipped guard measures `H(x, m, 0, t)` and probes
+`H(x, m, p, t) − H(x, m, 0, t) == (1/2)|p|²` **on the problem's own data**, at every `M_collocation`
+time slice, at the matching physical times, and over momentum vectors whose MAGNITUDES are derived
+from the terminal datum rather than hard-coded. Only the second is a refusal; the first decides
+whether to build Howard's running-cost closure, which is the `#2011 item 1` change described in the
+companion fragment. An earlier version refused a `HamiltonianBase` subclass that sets `_potential`
+and agrees with Newton to 2.30%.
 
 Three corrections to earlier versions of this guard, each measured:
 
