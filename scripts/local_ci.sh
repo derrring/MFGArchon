@@ -326,7 +326,7 @@ step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
 # the gate proceeds as though the instrument were verified -- a silent-instrument failure inside
 # the instrument-verification code. It was also outside both traps and its `rm` sat after the `fi`,
 # so the `cannot_run` path leaked it. The file records that lesson 200 lines up and this broke it.
-printf '# MUTATED -- local_ci.sh mypy control; a leftover means a run was killed\ndef _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
+printf '# MUTATED -- local_ci.sh mypy control. A leftover means a gate run was killed; DELETE THIS\n# FILE (rm -f mfgarchon/config/_gate_probe.py). The guard above prescribes `git checkout --`,\n# which cannot touch this one: it is untracked AND gitignored, so `git clean -n` will not even\n# list it, and following that instruction loops.\ndef _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
 # The write must be CONFIRMED, not assumed. Two concurrent runs on one checkout -- the pre-push
 # hook and a manual invocation is the realistic pair -- share this fixed path, and the loser can
 # have its probe deleted between the write and the check: the `if` is then false, no `cannot_run`
@@ -336,12 +336,22 @@ printf '# MUTATED -- local_ci.sh mypy control; a leftover means a run was killed
 [[ -f "$MYPY_PROBE" ]] || cannot_run "the mypy control's probe could not be written to $MYPY_PROBE,
 or was removed before it could be read -- a concurrent gate run on this checkout is the usual
 cause. Nothing about the type gate was verified, so its result is not reported."
-if "$PY" -P -m mypy "$MYPY_PROBE" --follow-imports=silent >/dev/null 2>&1; then
+# GREP FOR THE PLANTED ERROR CODE, do not test mypy's exit status. Exit status answers "did mypy
+# report something", and the control needs "did mypy report THE thing". A probe truncated mid-
+# statement -- a partial write, a full disk -- exits 2 with `[syntax]`, which an exit-status test
+# reads as INSTRUMENT VERIFIED while proving nothing about whether assignment errors are reported
+# in this scope. `[[ -f ]]` above does not close it either: the marker is line 1, so a write that
+# stops there leaves a syntactically valid, error-free, NON-EMPTY module, which `[[ -s ]]` would
+# also wave through. Measured on four write outcomes; this grep is strictly stronger on every one.
+# Capture, then match. `set -o pipefail` is on, and mypy exits 1 when it finds the error the
+# control WANTS -- so `mypy | grep -q` returns mypy's 1 even on a match, and the control fires on
+# every healthy run. Measured: the one-liner passes standalone and inverts inside this script.
+_probe_out=$("$PY" -P -m mypy "$MYPY_PROBE" --follow-imports=silent 2>&1)
+if ! grep -q '\[assignment\]' <<<"$_probe_out"; then
   rm -f "$MYPY_PROBE"
-  cannot_run "the mypy control passed when it must fail: a file assigning a str to an int-annotated
-local was accepted, INSIDE mfgarchon/config where the real check runs. mypy is running but is not
-reporting there, so a clean result from the real check would mean nothing. Check $PY's mypy install
-and any ignore_errors override covering mfgarchon.config.*."
+  cannot_run "the mypy control did not report the assignment error planted in $MYPY_PROBE. Either
+mypy is silenced in mfgarchon.config -- check for an ignore_errors override or a disabled error
+code -- or the probe was not written whole. Nothing about the type gate was verified."
 fi
 rm -f "$MYPY_PROBE"
 
