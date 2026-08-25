@@ -50,12 +50,20 @@ question has an answer: is that symbol within +/-WINDOW lines of the cited line?
 symbol nearby is **recorded as unadjudicable, never counted as passing** -- an unjudged row reads
 exactly like a clean one, which is the failure this repository files under #1918.
 
-WHAT THIS SCRIPT IS NOT
------------------------
-It is a measurement, not a ratchet. There is no baseline and it exits 0 whatever it finds, unless
-the instrument itself cannot report (exit 2). The ratchet is deliberately a separate change: an
-instrument that will gate merges should first be read, and its own error modes seen, on numbers
-nobody has to act on.
+THE RATCHET IS ON TWO NUMBERS, AND THE SECOND ONE IS WHY
+--------------------------------------------------------
+`--check-baseline` fails when `drifted` moves in EITHER direction -- a new one is a regression, a
+fixed one is progress that must be recorded, which is the convention `capability_matrix` and
+`check_single_source` already use here.
+
+It also fails when **`adjudicable` shrinks**, and that half is not symmetry for its own sake. The
+cheapest way to make `drifted` fall is to delete the symbol name from the prose: the row leaves the
+numerator AND the denominator, and a numerator-only ratchet records it as an improvement. Measured:
+
+    `far_away` is at pkg/target.py:LINE.  ->  drifted 1  adjudicable 1
+    The thing is at pkg/target.py:LINE.   ->  drifted 0  adjudicable 0  unadjudicable 1
+
+Adding correct new prose raises `adjudicable` and passes; only a shrinking denominator is refused.
 
 KNOWN FAILURE MODE OF THE RESOLVER, PAID FOR ONCE
 -------------------------------------------------
@@ -95,6 +103,9 @@ broken citations in the measurement this script produces about itself.
 from __future__ import annotations
 
 import argparse
+import builtins
+import contextlib
+import io
 import json
 import re
 import subprocess
@@ -455,16 +466,149 @@ def self_test(root: Path) -> int:
         subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
         got = measure(d)
         counts = {k: len(v) for k, v in got.items()}
+        ratchet_failures = _ratchet_self_test(d, d / "doc.md", d / "baseline.json")
 
     failures = [f"{k}: expected {n}, got {counts.get(k, 0)}" for k, n in expected.items() if counts.get(k, 0) != n]
+    failures += ratchet_failures
     if failures:
         print("SELF-TEST FAILED -- the instrument cannot see what it counts:")
         for f in failures:
             print(f"  {f}")
         print(f"  full counts: {counts}")
         return 1
-    print(f"self-test OK: every category fires  {counts}")
+    print(f"self-test OK: every category fires, and the ratchet is not inert  {counts}")
     return 0
+
+
+def _ratchet_self_test(d: Path, doc: Path, baseline: Path) -> list[str]:
+    """Prove `--check-baseline` actually goes red. The classifier firing does not imply this.
+
+    Three shapes, and the third is the reason the ratchet pins two numbers instead of one:
+    an unchanged tree must pass, a NEW drifted citation must fail, and deleting the symbol name
+    from beside an existing drifted citation -- which lowers `drifted` -- must ALSO fail.
+    """
+    original = doc.read_text()
+    failures = []
+    seen = []
+
+    def verdict(label: str) -> int:
+        subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
+        # Two of the three shapes are SUPPOSED to print a failure block. Swallow it, or a passing
+        # self-test prints "CITATION RATCHET FAILED" twice and reads as a broken one.
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            rc = compare_to_baseline(measure(d), baseline)
+        seen.append(f"{label}={'red' if rc else 'green'}")
+        return rc
+
+    write_baseline(measure(d), baseline, d)
+    if verdict("unchanged") != 0:
+        failures.append("ratchet: an unchanged tree does not pass its own baseline")
+
+    new_drift = "`far_away_symbol` is at " + "pkg/target.py" + ":30, a NEW drifted one."
+    doc.write_text(f"{original}\n\n{new_drift}\n")
+    if verdict("new drift") == 0:
+        failures.append("ratchet: a NEW drifted citation did not fail the baseline -- the ratchet is inert")
+
+    # The gaming path: drop the symbol and the row leaves BOTH numerator and denominator.
+    doc.write_text(original.replace("`far_away_symbol` lives at", "Something lives at"))
+    if verdict("symbol deleted") == 0:
+        failures.append(
+            "ratchet: deleting a symbol name lowered `drifted` and PASSED -- "
+            "the denominator is not pinned, so the ratchet rewards hiding a citation"
+        )
+
+    doc.write_text(original)
+    subprocess.run(["git", "-C", str(d), "add", "-A"], check=True)
+    print(f"  ratchet: {', '.join(seen)}")
+    return failures
+
+
+DEFAULT_BASELINE = Path(__file__).resolve().parent / "citation_baseline.json"
+
+
+def summarise(result: dict) -> dict[str, int]:
+    counts = {k: len(v) for k, v in result.items()}
+    counts["adjudicable"] = counts["anchored"] + counts["drifted"]
+    return counts
+
+
+def write_baseline(result: dict, path: Path, root: Path) -> None:
+    def git(*a: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, check=False).stdout.strip()
+
+    # `-dirty` is not decoration. A baseline written from an uncommitted tree records a commit
+    # that does not describe what was measured, and the next reader cannot reproduce it -- which
+    # is the same defect as publishing a sweep of a candidate that is not what shipped.
+    #
+    # The baseline itself is excluded from that check, and only it: `measure` scans `.md` and `.py`
+    # (see its `prose` filter), so a `.json` file cannot move a single count. Without the carve-out
+    # the field would read `-dirty` on every baseline ever written, including the one written from
+    # a clean tree, and a marker that is always on discriminates nothing.
+    modified = [ln[3:] for ln in git("status", "--porcelain").splitlines() if ln[3:] != str(path.relative_to(root))]
+    head = git("rev-parse", "--short", "HEAD") + ("-dirty" if modified else "")
+    payload = {
+        "_comment": (
+            "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited "
+            "line (#2102). `drifted` is bidirectional: a new one is a regression, a fixed one is "
+            "progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the "
+            "symbol name from the prose would otherwise lower `drifted` and read as an improvement."
+        ),
+        "_measured_at": {"head_when_written": head, "window": WINDOW},
+        "counts": summarise(result),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def compare_to_baseline(result: dict, path: Path) -> int:
+    if not path.is_file():
+        print(f"CANNOT COMPARE: no baseline at {path}", file=sys.stderr)
+        return 2
+    recorded = json.loads(path.read_text())["counts"]
+    now = summarise(result)
+    problems = []
+    if now["drifted"] > recorded["drifted"]:
+        problems.append(
+            f"drifted {recorded['drifted']} -> {now['drifted']}: a citation names a symbol that is "
+            f"no longer near the line it points at. Fix the number, or drop it and cite the file."
+        )
+    elif now["drifted"] < recorded["drifted"]:
+        problems.append(
+            f"drifted {recorded['drifted']} -> {now['drifted']} [IMPROVED -- record it in the "
+            f"baseline]. Bidirectional on purpose: an unrecorded improvement is how the next "
+            f"regression hides inside a number nobody re-read."
+        )
+    if now["adjudicable"] < recorded["adjudicable"]:
+        problems.append(
+            f"adjudicable {recorded['adjudicable']} -> {now['adjudicable']}: the denominator "
+            f"shrank. Either prose carrying citations was deleted, or a symbol name was removed "
+            f"from beside one -- which moves it to `unadjudicable`, where nothing judges it."
+        )
+    # The baseline also records `missing`, `ambiguous` and `unadjudicable`, which the gate above
+    # does NOT act on: a planted fixture path and a genuinely broken citation are indistinguishable
+    # to this script, and the checkers in `scripts/` plant plenty. Recorded-but-unjudged is the
+    # exact failure `unadjudicable` is named after, so say when they move instead of storing a
+    # number nobody re-reads.
+    moved = [
+        f"{k} {recorded[k]} -> {now[k]}"
+        for k in ("missing", "ambiguous", "unadjudicable")
+        if k in recorded and now[k] != recorded[k]
+    ]
+    if moved:
+        print(f"citation note (not gated): {', '.join(moved)}")
+
+    if problems:
+        print("CITATION RATCHET FAILED")
+        for p in problems:
+            print(f"  {p}")
+        print(f"  counts now: {now}")
+        return 1
+    print(f"citation ratchet OK: drifted {now['drifted']}, adjudicable {now['adjudicable']}")
+    return 0
+
+
+def _noop(*_a: object, **_k: object) -> None:
+    """Swallow the human-facing report when the gate wants a verdict."""
 
 
 def main() -> int:
@@ -473,6 +617,8 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="Print every drifted citation")
     parser.add_argument("--json", metavar="FILE", help="Write the full result to FILE")
     parser.add_argument("--self-test", action="store_true", help="Prove the instrument still fires")
+    parser.add_argument("--write-baseline", metavar="FILE", nargs="?", const=str(DEFAULT_BASELINE))
+    parser.add_argument("--check-baseline", metavar="FILE", nargs="?", const=str(DEFAULT_BASELINE))
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -487,28 +633,40 @@ def main() -> int:
 
     counts = {k: len(v) for k, v in result.items()}
     adjudicable = counts["anchored"] + counts["drifted"]
-    print(f"citations        : {sum(counts.values())}")
-    print(f"  adjudicable    : {adjudicable}  (the prose names a symbol next to the citation)")
-    print(f"    anchored     : {counts['anchored']}")
-    print(f"    drifted      : {counts['drifted']}", end="")
+    # Under `--check-baseline` this is a gate step, and the gate's convention is one line per check.
+    # Nothing is lost on failure: `compare_to_baseline` prints the full counts with the verdict.
+    # Shadowing `print` here would make the `CANNOT MEASURE` call above a forward reference and
+    # raise UnboundLocalError on the one path that reports the instrument failing. Ruff caught it.
+    say = _noop if (args.check_baseline and not args.list) else builtins.print
+    say(f"citations        : {sum(counts.values())}")
+    say(f"  adjudicable    : {adjudicable}  (the prose names a symbol next to the citation)")
+    say(f"    anchored     : {counts['anchored']}")
+    say(f"    drifted      : {counts['drifted']}", end="")
     if adjudicable:
-        print(f"   = {counts['drifted'] / adjudicable * 100:.0f}%")
+        say(f"   = {counts['drifted'] / adjudicable * 100:.0f}%")
     else:
-        print()
-    print(f"  unadjudicable  : {counts['unadjudicable']}  (no symbol named -- RECORDED, not passing)")
-    print(f"  ambiguous      : {counts['ambiguous']}  (basename matches several tracked files)")
-    print(f"  missing        : {counts['missing']}  (no such file)")
+        say()
+    say(f"  unadjudicable  : {counts['unadjudicable']}  (no symbol named -- RECORDED, not passing)")
+    say(f"  ambiguous      : {counts['ambiguous']}  (basename matches several tracked files)")
+    say(f"  missing        : {counts['missing']}  (no such file)")
 
     if args.list:
-        print("\ndrifted:")
+        say("\ndrifted:")
         for row in result["drifted"]:
-            print(f"  {row['file']}:{row['line']}")
-            print(f"      cites {row['cites']}:{row['cited_line']} for {row.get('symbols')}")
-            print(f"      at that line: {row.get('at_cited_line', row.get('why'))!r}")
+            say(f"  {row['file']}:{row['line']}")
+            say(f"      cites {row['cites']}:{row['cited_line']} for {row.get('symbols')}")
+            say(f"      at that line: {row.get('at_cited_line', row.get('why'))!r}")
 
     if args.json:
         Path(args.json).write_text(json.dumps(result, indent=2, sort_keys=True))
-        print(f"\nwrote {args.json}")
+        say(f"\nwrote {args.json}")
+
+    if args.write_baseline:
+        write_baseline(result, Path(args.write_baseline), root)
+        say(f"\nwrote baseline {args.write_baseline}")
+
+    if args.check_baseline:
+        return compare_to_baseline(result, Path(args.check_baseline))
 
     return 0
 
