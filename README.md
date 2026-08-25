@@ -83,7 +83,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - [02 - Custom Hamiltonian](examples/tutorials/02_custom_hamiltonian.ipynb) - Non-quadratic control
 - [03 - 2D Geometry](examples/tutorials/03_2d_geometry.ipynb) - Multi-dimensional problems
 - [04 - Particle Methods](examples/tutorials/04_particle_methods.ipynb) - Monte Carlo FP solver
-- [05 - Config System](examples/tutorials/05_config_system.ipynb) - Pydantic + OmegaConf
+- [05 - Problem Variations](examples/tutorials/05_config_system.ipynb) - parameter studies and solution comparison
 - [06 - BC Coupling](examples/tutorials/06_boundary_condition_coupling.ipynb) - Adjoint-consistent BC
 
 **Guides** (`docs/user/guides/`):
@@ -138,7 +138,7 @@ pip install mfgarchon[nn]      # + PyTorch (live: torch backends), gymnasium/SB3
 pip install mfgarchon[all]     # + JAX, Numba, profiling tools
 ```
 
-**Default install** includes: NumPy, SciPy, Matplotlib, Rich, scikit-fem, meshio, osqp, igraph, Hydra/OmegaConf, Jupyter, Plotly.
+**Default install** includes: NumPy, SciPy, Matplotlib, Rich, Pydantic, typing-inspection, PyYAML, scikit-fem, meshio, osqp, igraph, Plotly, pandas, h5py, nbformat, psutil.
 
 **Requires**: Python 3.12+
 

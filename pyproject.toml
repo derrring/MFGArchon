@@ -50,10 +50,21 @@ dependencies = [
     "nbformat>=5.0",           # Notebook result export
 
     # Interactive computing and visualization
-    "jupyter>=1.0",
-    "jupyterlab>=4.0",
+    # `jupyter`, `jupyterlab` and `seaborn` were here and are gone (#1687): zero imports in the
+    # package, the tests, the examples and the benchmarks. `nbformat` stays because the package
+    # WRITES notebooks; the application you read them in is not a library dependency.
     "plotly>=5.17",            # Interactive plots in notebooks
-    "seaborn>=0.13",           # Statistical plotting
+
+    # YAML config loading (`config/io.py` imports it at module level)
+    # Declared explicitly since #1687. It was never declared and arrived transitively -- from
+    # omegaconf and from jupyterlab's dependency chain -- so removing those in one change would
+    # have broken `load_solver_config` and the gate's workflow-integrity step on a fresh install.
+    #
+    # The floor is CHOSEN, not derived: the package uses only `safe_load`, `safe_dump`, `dump` and
+    # `YAMLError`, all of which predate 5.x. 6.0 is the modern baseline and the first release where
+    # bare `load()` requires a Loader, so it is the floor worth having rather than the lowest one
+    # that would work.
+    "pyyaml>=6.0",
 
     # FEM support (used by HJBFEMSolver, FPFEMSolver)
     "scikit-fem>=9.0",         # FEM assembly
@@ -64,9 +75,6 @@ dependencies = [
 
     # Network MFG (used by NetworkGeometry)
     "igraph>=0.10.0",          # Graph backend (C-based, fast)
-
-    # Configuration management
-    "omegaconf>=2.3",
 
     # System monitoring
     "psutil>=7.2.2",
@@ -133,12 +141,13 @@ dev = [
     "pytest-timeout>=2.1",
     "ruff>=0.6.0",
     # No upper bound. There was one, pinned at `<2.2` because mypy 2.2.0 rejects valid
-    # `list[str]` slices in `config/omegaconf_manager.py` -- a typeshed overload that declares
-    # a slice's step `SupportsIndex` with no `| None`, which only bites under the
-    # `strict_optional` this project turns on for that package. It is still unfixed at 2.3.1,
-    # so "lift it once upstream fixes it" was an instruction with no expiry and nothing to
-    # check it. The three call sites now spell the step, which passes on 2.1 and 2.3 alike, so
-    # the ceiling was buying nothing and costing every unrelated fix in 2.2+.
+    # `list[str]` slices under the `strict_optional` this project turns on for `config` -- a
+    # typeshed overload declaring a slice's step `SupportsIndex` with no `| None`, still unfixed
+    # at 2.3.1. "Lift it once upstream fixes it" was an instruction with no expiry and nothing to
+    # check it; spelling the step at the call sites passes on 2.1 and 2.3 alike, so the ceiling
+    # was buying nothing and costing every unrelated fix in 2.2+. The three sites that motivated
+    # it lived in `config/omegaconf_manager.py` and went with #1687; the reasoning is kept
+    # because the typeshed overload has not changed and the next omitted step will hit it.
     "mypy>=1.5",
     "pre-commit>=2.0",
     "types-setuptools",

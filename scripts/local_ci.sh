@@ -91,9 +91,11 @@ cannot_run() {  # environment failure: say what was measured, and exit distingui
 # interpreter that step exits with ModuleNotFoundError. The sentence claimed otherwise, and so did
 # its first correction, which fixed the tooling clause and preserved the package one -- the same
 # shape as the defect it was written to fix.
-# `yaml` is listed because the workflow-integrity step needs it and it is NOT a declared
-# dependency -- it arrives transitively via omegaconf, so an environment can look complete and
-# still fail that step with a bare ModuleNotFoundError under a GATE RED.
+# `yaml` is listed because the workflow-integrity step needs it. It used to arrive transitively
+# and was declared nowhere -- from omegaconf, and from jupyterlab's dependency chain -- so an
+# environment could look complete and still fail that step with a bare ModuleNotFoundError under a
+# GATE RED. #1687 removed both suppliers and declared `pyyaml` directly, which is what keeps this
+# probe honest: it now names a dependency the project actually asks for.
 probe_modules() {
   if [[ $FAST -eq 1 ]]; then printf 'yaml'; else printf 'yaml, numpy, pytest, xdist'; fi
 }

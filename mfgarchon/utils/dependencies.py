@@ -119,13 +119,6 @@ DEPENDENCY_MAP = {
         "description": "Progress bars and console output",
         "required": True,
     },
-    "omegaconf": {
-        "install_group": "core",
-        "install_cmd": "pip install mfgarchon",
-        "alternative": "pip install omegaconf",
-        "description": "Configuration management",
-        "required": True,
-    },
 }
 
 
@@ -344,7 +337,7 @@ def show_optional_features() -> None:
 
         # Map install_group to display category
         if group == "core":
-            if pkg_name in ["rich", "omegaconf"]:
+            if pkg_name in ["rich"]:
                 category = "Workflow"
             else:
                 category = "Core (always available)"

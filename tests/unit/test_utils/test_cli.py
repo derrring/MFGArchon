@@ -13,6 +13,7 @@ Tests command-line interface utilities including:
 
 import argparse
 import json
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -250,17 +251,33 @@ def test_load_config_file_unsupported_format():
 
 
 @pytest.mark.unit
-def test_load_config_file_yaml_without_pyyaml():
-    """Test load_config_file() raises error for YAML without PyYAML."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        config_path = Path(tmpdir) / "config.yaml"
-        config_path.write_text("problem: {T: 2.0}")
+def test_pyyaml_is_declared_because_the_code_imports_it_unconditionally():
+    """Replaces `test_load_config_file_yaml_without_pyyaml`, which #1687 made unreachable.
 
-        with (
-            patch("mfgarchon.utils.cli.YAML_AVAILABLE", False),
-            pytest.raises(ValueError, match="YAML support requires PyYAML"),
-        ):
-            load_config_file(config_path)
+    That test patched `mfgarchon.utils.cli.YAML_AVAILABLE` to False to reach a `raise` guarding a
+    missing PyYAML. The flag and the guard are gone: `pyyaml` is a declared core dependency, so the
+    ImportError branch cannot be entered and a test that patches a module attribute out of
+    existence pins nothing.
+
+    What IS worth pinning is the reason it became unreachable. `mfgarchon/config/io.py` and this
+    module both `import yaml` at module scope, unconditionally -- so `import mfgarchon.config`
+    fails outright on a fresh install if the declaration is dropped. Before #1687 the dependency
+    was satisfied only transitively (omegaconf, and jupyterlab via jupyter-server -> jupyter-events)
+    while never being declared, which is a latent bug that removing omegaconf would have detonated.
+    This asserts the declaration is present, which is the invariant the unconditional imports need.
+    """
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    assert pyproject.is_file(), f"expected pyproject.toml at {pyproject}"
+    declared = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
+    names = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower().replace("_", "-") for d in declared}
+
+    assert "numpy" in names, f"the parse is wrong, not the population: got {sorted(names)}"
+    assert "pyyaml" in names, (
+        f"mfgarchon/config/io.py and mfgarchon/utils/cli.py import yaml at module scope, so pyyaml "
+        f"must be a declared core dependency; core dependencies are {sorted(names)}"
+    )
 
 
 # ===================================================================

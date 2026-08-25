@@ -3,9 +3,9 @@ returning all-default config.
 
 The solver-config schema (``MFGSolverConfig`` / its ``SolverConfig`` alias) is FLAT:
 top-level keys are ``hjb``, ``fp``, ``picard``, ``backend``, ``logging``. A plain
-``model_validate`` silently ignores unknown top-level keys, so a ``solver:``-wrapped
-or OmegaConf-vocabulary YAML (e.g. the generated ``config/configs/*.yaml``, whose top
-level is ``solver:``/``optimization:``/``debug:``) used to load as all-defaults -- the
+``model_validate`` silently ignores unknown top-level keys, so a YAML in the vocabulary
+the removed OmegaConf layer used -- whose top level is
+``solver:``/``optimization:``/``debug:`` -- used to load as all-defaults, the
 user's config silently doing nothing. ``load_solver_config`` now rejects unknown
 top-level keys (kernel fail-fast). The flat round-trip (save -> load) is unaffected.
 """
@@ -49,7 +49,7 @@ def test_flat_yaml_values_are_honored(tmp_path):
 
 
 def test_solver_wrapped_yaml_is_rejected(tmp_path):
-    """A ``solver:``-wrapped YAML (the OmegaConf/legacy vocabulary) is rejected loudly
+    """A ``solver:``-wrapped YAML (the legacy vocabulary) is rejected loudly
     instead of silently returning all-defaults."""
     path = tmp_path / "wrapped.yaml"
     yaml.safe_dump(
