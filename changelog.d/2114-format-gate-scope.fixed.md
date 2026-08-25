@@ -41,9 +41,10 @@
   a repo `.md` are then refused, while a gitignored `.nox/x.py` is still formatted.
 
   So `ruff format --check $(git diff --name-only)` is a trap that `force-exclude` does not close,
-  and it is worse than markdown: ruff accepts an explicitly named `.yml`, `.json` or `.sh` and
-  **parses it as Python**. `a:   1` reformats as an annotated assignment; `{"a":  1}` as a dict
-  literal.
+  and it is worse than markdown: ruff accepts any explicitly named file and parses it as
+  Python. The dangerous set is the extensions that parse SUCCESSFULLY and are rewritten in
+  silence — `a:   1` in a `.yml` becomes an annotated assignment, `{"a":  1}` in a `.json` a dict
+  literal. A `.sh` is the safe case precisely because it fails to parse and is left untouched.
 
   Two consequential sites are updated with the gates rather than left to diverge. The monthly
   `check-ruff-updates.yml` repaired only `mfgarchon/` after bumping the pin, so the first ruff
