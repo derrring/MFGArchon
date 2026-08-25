@@ -14,13 +14,11 @@ repos:
       # Format code (replaces Black + isort)
       - id: ruff-format
         # Configuration read from pyproject.toml [tool.ruff.format] and [tool.ruff.lint.isort]
-        exclude: ^investigations/
 
       # Lint code (replaces Pylint + flake8)
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
         # Configuration read from pyproject.toml [tool.ruff.lint]
-        exclude: ^investigations/
 
   # Essential safety checks (low friction, prevent bugs)
   - repo: https://github.com/pre-commit/pre-commit-hooks
