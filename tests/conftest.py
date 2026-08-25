@@ -731,3 +731,115 @@ def validate_mfg_solution(U, M, problem):
 
 # Export validation function for use in tests
 __all__ = ["validate_mfg_solution"]
+
+
+# --- warnings census (#2119) -------------------------------------------------------------------
+#
+# The gate runs pytest with `--disable-warnings`: the listing is 6,030 lines and 95.7% of
+# everything the gate prints, and printing it every run for a year retired none of the 456 calls it
+# was reporting. Suppressing it makes ignoring them CHEAPER, so it only stops being a regression in
+# attention if something counts them instead. This writes the census; `scripts/check_warnings.py`
+# ratchets it.
+#
+# `terminalreporter.stats["warnings"]` on the controller is COMPLETE under `-n auto` and under
+# `--disable-warnings` alike -- verified against pytest's own printed listing at full scale, 225 of
+# 225 both ways, and against the raw records, 5022 matched of 5022. So this costs no second suite
+# run and needs no per-worker merge.
+#
+# But the hook does NOT run only on the controller, which an earlier version of this comment said.
+# It runs in every xdist worker too -- instrumented, all ten of them, seeing 182 to 1958 warnings
+# each -- and each writes the whole file. It came out right only because the controller's
+# `pytest_sessionfinish` is a wrapper hook that yields before writing, so xdist has already joined
+# the workers. Correct by ordering, asserted by nothing. The guard below makes it correct by
+# construction.
+#
+# Off unless asked: writing a file on every ad-hoc `pytest` run would be a side effect nobody
+# asked for, and a gate that silently rewrites its own input is how a ratchet stops ratcheting.
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    out = os.environ.get("MFGARCHON_WARNING_CENSUS")
+    if not out or os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+
+    import json
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    # `{abs_path}:{line}: {Type}: {text}\n  {source}\n` -- pytest's own rendering.
+    pattern = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?P<kind>\w*(?:Warning|Error)): (?P<text>.*)")
+
+    census = {}
+    for record in terminalreporter.stats.get("warnings", []):
+        first = str(record.message).split("\n", 1)[0]
+        m = pattern.match(first)
+        if not m:
+            continue
+        raw = Path(m.group("path")).resolve()
+        try:
+            rel = str(raw.relative_to(root))
+        except ValueError:
+            # Outside the repo. Keeping the absolute path would put this machine's conda prefix
+            # into a committed baseline -- 7 of 225 identities, enough to make it red everywhere
+            # else. Normalised to a portable suffix rather than dropped: `_pytest/python.py`
+            # raising PytestReturnNotNoneWarning is a warning about OUR tests.
+            parts = raw.parts
+            if "site-packages" in parts:
+                rel = "site-packages/" + "/".join(parts[parts.index("site-packages") + 1 :])
+            elif any(part.startswith("python3.") for part in parts):
+                idx = next(i for i, part in enumerate(parts) if part.startswith("python3."))
+                rel = "stdlib/" + "/".join(parts[idx + 1 :])
+            else:
+                rel = raw.name
+        # NO LINE NUMBER in the identity. It is stable across runs and worthless across edits:
+        # inserting one line at the top of a file moves every identity in it, so a line-keyed
+        # ratchet would go red on any unrelated change. Measured on the real suite: keyed with the
+        # line, two runs give 608 and 608; keyed without it, 315 and 315. Both stable, and only one
+        # survives an edit. Same reason `check_citations.py` keys on symbols rather than counts.
+        # DIGITS NORMALISED, then truncated to 40. Both were forced by measurement, and the first
+        # two designs were falsified by the next sample:
+        #
+        #   raw text[:60]              315 / 318 / --     messages embed measurements
+        #   digits->N, text[:60]       240 / 240 / 230    called stable on two samples; the third broke it
+        #   digits->N, text[:40]       225 / 225 / 225
+        #
+        # 40 IS STABLE BY BEING COARSER, not by removing the variation, and that is a real cost:
+        # against the 60-char key it merges 5 groups, of which about three are distinctions worth
+        # having -- `signature 'legacy'` with `'neural'`, and Newton's "iteration budget" with
+        # "residual stopped decreasing". A new warning differing from an existing one only past
+        # character 40 of the same file and category will not raise a new identity.
+        #
+        # WHAT IS AND IS NOT ESTABLISHED. The embedded-measurement channel above is real and
+        # closing it is what the normalisation does. An earlier version of this comment named a
+        # second channel -- "the same warning renders with and without a `Reason: ...` suffix
+        # between runs" -- and review measured that FALSE: both forms appear in the SAME run from
+        # the same file, because they are two distinct decorated `__init__`s and
+        # `mfgarchon/utils/deprecation.py:94` builds the suffix from decoration-time constants.
+        # So the 60-character key's instability channel is still UNEXPLAINED, and 40 characters is
+        # justified by eleven agreeing full-suite runs plus the one channel that is understood --
+        # not by a complete mechanism. Said plainly because the alternative is what put a
+        # falsified "stable" into this file twice.
+        #
+        # The per-process warning registry does move OCCURRENCES with the distribution: 5021-5023
+        # under `-n auto`, 5002 serial. It does not move the identity set -- serial and parallel
+        # give the same 225.
+        text = re.sub(r"\d+", "N", m.group("text"))[:40]
+        key = f"{rel}\t{m.group('kind')}\t{text}"
+        census[key] = census.get(key, 0) + 1
+
+    # `tests_run` is provenance, not decoration. A `--collect-only` run reaches this hook and
+    # writes a plausible 2-identity census; fed to the ratchet it reports 223 GONE and tells the
+    # reader to re-baseline, which would destroy the baseline. Two such files were found on this
+    # machine. `check_warnings.py` refuses a census whose `tests_run` is implausibly small.
+    payload = {
+        "identities": sorted(census),
+        "occurrences": sum(census.values()),
+        "tests_run": sum(len(terminalreporter.stats.get(k, [])) for k in ("passed", "failed", "xfailed", "skipped")),
+    }
+    try:
+        target = Path(out)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, indent=2) + "\n")
+    except OSError as exc:
+        # Loud, and NOT fatal. An unwritable census path used to raise out of the hook, which ate
+        # pytest's entire summary line -- the run ended at [100%] and a traceback, with both tests
+        # passing and no way to tell from the output.
+        print(f"\nwarning census NOT written to {out}: {exc}")
