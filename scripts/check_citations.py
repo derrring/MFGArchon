@@ -6,8 +6,10 @@ being true. Measured at the time of writing: 18 of the 38 adjudicable citations 
 repository's live prose -- 47% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
-All 18 were read by hand: **10 are genuinely wrong** and 8 are the instrument mis-attributing a
-symbol. A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
+All 18 were read by hand: one is a withdrawn claim (#2112) and the other 17 contain both kinds --
+**genuinely wrong citations, and the instrument mis-attributing a symbol** -- in a proportion two
+independent hand-reads disagreed about, so none is stated here.
+A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
 -- "`propagate = False` (logger.py, line 211), so whether `caplog` sees..." is a CORRECT citation
 whose target line really is `logger.propagate = False`, with `caplog` sitting in the consequence
 clause. (Written with the line number in words, because spelling it made this very paragraph the
@@ -763,10 +765,10 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112) and"
-            + "\n    the other 17 split near-evenly between the two. Do not lean on the direction:"
-            + "\n    review re-read seven of them and found my stale/mis-attributed labels swapped"
-            + "\n    on that subset. Read the line."
+            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112). The"
+            + "\n    other 17 contain both kinds, and two independent hand-reads disagreed about"
+            + "\n    which rows fall in which -- so no proportion here is worth acting on. Read the"
+            + "\n    line."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

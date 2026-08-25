@@ -14,7 +14,9 @@ near the cited line. Two ways it can fail while reporting a number:
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -618,6 +620,9 @@ def test_this_file_contributes_no_adjudicable_citation():
       1. it is in the scanned POPULATION -- `.md` or `.py`, tracked, not `CHANGELOG.md`, and not
          under one of the directories `EXEMPT_DIRS` names. Not "contributes a row": contributing
          zero adjudicable rows is what this test asserts, so that reading would empty the set.
+         This half does silent work. `citation_baseline.json` is WHOLLY prose about this
+         measurement in its `_comment` and would pass half 2 outright; it is excluded only because
+         the suffix filter never reaches it. So is `local_ci.sh`. Neither is an oversight.
       2. its SUBJECT is this measurement -- the whole file is about it, not a paragraph of it.
 
     Half 2 is stated at file granularity on purpose, and it is the half that decides cases. At
@@ -626,11 +631,17 @@ def test_this_file_contributes_no_adjudicable_citation():
     would go RED today on a file whose subject is the repository's whole workflow. Two readers
     applying a criterion without a granularity clause would disagree, with a red gate riding on it.
 
+    For a file that is genuinely HALF about this measurement the clause gives no answer, and it is
+    meant to default to exclusion: a file left out of `watched` still has its citations pinned as
+    ordinary baseline rows, so a drift there still reddens the gate and still gets read.
+    Under-inclusion falls back to the ordinary ratchet; over-inclusion is the expensive direction.
+    Resolve a mixed file by that asymmetry, not by arguing from these four as precedent.
+
     Four files qualify. `scripts/check_citations.py` and this file are the instrument; this one
     parses 22 citations against the script's 3, seven times the exposure. The two
     `changelog.d/2102-*` fragments are wholly prose about this measurement -- one quotes its output
-    verbatim -- and `changelog.d/` is emphatically in the population: 8 of the 18 recorded drifted
-    rows live there. All four currently contribute zero adjudicable rows, so adding the fragments
+    verbatim -- and `changelog.d/` is emphatically in the population: 7 of the 18 recorded drifted
+    rows live there (the 8 is `tests/`; review transposed the two buckets and I copied the figure). All four currently contribute zero adjudicable rows, so adding the fragments
     costs no red; they are here because the criterion admits them, and a rule that contradicts the
     set it annotates is worse than no rule.
 
@@ -652,3 +663,44 @@ def test_this_file_contributes_no_adjudicable_citation():
         f"prose in this instrument's own files contributed {len(own)} adjudicable row(s) to its own "
         f"measurement, which the ratchet then pins: {own}"
     )
+
+
+def test_every_statement_of_the_hand_read_agrees_with_the_baseline():
+    """The hand-read is stated in THREE places. Pin them to each other and to the baseline.
+
+    Option 1 was to name one copy authoritative and trust the pointer. That is what failed: the
+    count drifted twice inside this PR alone (17 against a denominator of 18; then 10+8 in the
+    changelog against 1+9+8 in the gate message), and when review and I each went looking for
+    copies we both grepped the phrasing WE knew and both missed the module docstring at the top of
+    `check_citations.py` -- a third copy, found only when a count of remaining occurrences came back
+    2 instead of 1. A convention cannot protect a fact when nobody knows how many copies exist.
+
+    So this enumerates them by pattern instead of by memory, and derives the number from the
+    baseline rather than restating it. Deleting a copy is fine; the pattern simply stops matching
+    it. Adding one is fine too, as long as it agrees. What is not fine is a fourth copy saying
+    something else, which is the only outcome this file's history predicts.
+    """
+    root = SCRIPT.parents[1]
+    expected = len(json.loads((SCRIPT.parent / "citation_baseline.json").read_text())["drifted"])
+    files = {
+        "scripts/check_citations.py": SCRIPT.read_text(encoding="utf-8"),
+        "changelog.d/2102-citation-ratchet.added.md": (
+            root / "changelog.d" / "2102-citation-ratchet.added.md"
+        ).read_text(encoding="utf-8"),
+    }
+    pattern = re.compile(r"(\d+)(?: rows)? (?:were read by hand|in the standing backlog)")
+
+    found = {name: [int(m) for m in pattern.findall(text)] for name, text in files.items()}
+    total = sum(len(v) for v in found.values())
+    assert total >= 3, (
+        f"expected at least the three known statements of the hand-read; the pattern matched "
+        f"{total}: {found}. If a copy was deleted, drop this floor in the same commit -- do not "
+        f"leave a pattern that silently matches fewer things than it was written for"
+    )
+    disagreeing = {n: v for n, v in found.items() if any(c != expected for c in v)}
+    assert not disagreeing, (
+        f"the baseline records {expected} drifted rows; these statements say otherwise: "
+        f"{disagreeing}. Every copy must be edited together, which is why there should not be three"
+    )
+    for name, text in files.items():
+        assert "#2112" in text, f"{name} states the hand-read but does not cite the withdrawn row"
