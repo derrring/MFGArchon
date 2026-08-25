@@ -274,7 +274,8 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. ~7s for all five.
+# written and this gate never invoked either. ~13.5 s for all five, measured, and dominated by
+# check_internal_deprecation at ~10 s -- the figure said 7 s when it covered four and was wrong then too.
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
@@ -312,10 +313,18 @@ check $? "no new site restating a single-owner quantity"
 # as judged only when ITS OWN LINE names a symbol; nothing is borrowed from a neighbour, and the
 # other 154 are recorded unadjudicable rather than passing. Two numbers are pinned, not one:
 # `drifted` bidirectionally, and `adjudicable` against SHRINKING, because deleting the symbol name
-# from the prose otherwise lowers `drifted` and reads as an improvement. 0.4 s.
+# from the prose otherwise lowers `drifted` and reads as an improvement. The baseline records WHICH
+# claims are drifted, not only how many: counts alone are satisfied by a compensating pair, and
+# review shipped exactly that -- two rows hidden, two fresh ones added, gate green. 0.4 s.
+#
+# EXPECT THIS TO GO RED ON A VERSION BUMP. AGENTS.md step 2 collates `changelog.d/` into the exempt
+# `CHANGELOG.md`; step 3 is re-recording the baseline. Also measured before shipping: replaying the
+# last 40 commits on main, 5 would have gone red, and 3 of those on prose the author never opened.
+# That is the cost this buys the coverage with, and it is why the failure names the citations and
+# prints the command rather than only moving a number.
 step "Citation ratchet"
 "$PY" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
-check $? "no citation newly points away from the symbol its prose names"
+check $? "no citation newly drifted, and none was fixed or hidden without being recorded"
 
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check

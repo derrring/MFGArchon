@@ -429,24 +429,44 @@ def test_an_unchanged_tree_passes_its_own_baseline(tmp_path):
     assert "citation ratchet OK" in out
 
 
-def test_a_new_drifted_citation_fails(tmp_path):
+def test_a_new_drifted_citation_to_an_ALREADY_RECORDED_line_fails(tmp_path):
+    """Identities alone cannot see this one, which is why the count check stayed. Two sentences in
+    one file citing the same target line collapse to one key, so the set does not grow -- the
+    script's own `--self-test` caught that within a minute of the identity check being written."""
     root, baseline = _with_baseline(tmp_path, DRIFTED)
     (root / "doc.md").write_text(DRIFTED + "\n" + DRIFTED.replace("is at", "also at"))
     rc, out = _ratchet(root, baseline)
     assert rc == 1, out
-    assert "drifted 1 -> 2" in out
+    assert "with the same set of claims" in out
+
+
+def test_a_new_drifted_citation_to_a_FRESH_line_names_it(tmp_path):
+    """And counts alone cannot see a compensating pair -- hide two rows, add two, the total is
+    unchanged. Measured on this repository, that shipped two new broken citations through a green
+    gate. So the failure must name WHICH claim, not only how many."""
+    root, baseline = _with_baseline(tmp_path, DRIFTED)
+    (root / "doc.md").write_text(DRIFTED + "\n" + DRIFTED.replace(":30,", ":31,"))
+    rc, out = _ratchet(root, baseline)
+    assert rc == 1, out
+    assert "no longer near the line they point at" in out
+    assert "doc.md -> pkg/target.py:31" in out, "the failure must name WHICH citation"
 
 
 def test_deleting_the_symbol_name_does_NOT_read_as_an_improvement(tmp_path):
     """The reason the ratchet pins two numbers. Dropping the backticked symbol moves the row out of
     the numerator AND the denominator, so a `drifted`-only ratchet records the cheapest possible
-    evasion as progress. Both halves must fire here."""
+    evasion as progress.
+
+    The message half is asserted too, and it is not cosmetic: this row left `drifted` without being
+    fixed, and calling that "IMPROVED" is the misdiagnosis review objected to. Getting the verdict
+    right while describing it wrong teaches the reader the wrong remedy."""
     root, baseline = _with_baseline(tmp_path, DRIFTED)
     (root / "doc.md").write_text(DRIFTED.replace("`far_from_the_citation` is", "Something is"))
     rc, out = _ratchet(root, baseline)
     assert rc == 1, out
-    assert "drifted 1 -> 0" in out
     assert "adjudicable 1 -> 0" in out
+    assert "NOT by being fixed" in out, "a hidden citation was reported as an improvement"
+    assert "IMPROVED" not in out, "a hidden citation was reported as an improvement"
 
 
 def test_a_fixed_citation_fails_until_the_baseline_records_it(tmp_path):
