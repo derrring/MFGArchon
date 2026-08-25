@@ -105,6 +105,7 @@ def _self_test() -> int:
         return 2
 
     probes = [f"mfgarchon/_probe{n}.py\tUserWarning\tself-test injected identity {n}" for n in (1, 2)]
+    many = [f"mfgarchon/_probe{n}.py\tUserWarning\tself-test injected identity {n}" for n in range(10, 16)]
     # TWO of each, not one. With every case moving a single identity, `len(appeared)` is never
     # above 1 and anything conditioned on the count is uncovered -- review demonstrated a
     # fail-open BAND (`return 0 if len(appeared) + len(left) >= 2 else 1`) and a truncated listing
@@ -112,7 +113,18 @@ def _self_test() -> int:
     cases = [
         ("unchanged", base, 0, [], []),
         ("two appeared", [*base, *probes], 1, ["NEW warning identities (2)"], probes),
-        ("two vanished", base[2:], 1, ["Warning identities GONE (2)"], sorted(base)[:2]),
+        # BOTH BLOCKS IN ONE CALL, and six of each rather than two. No case exercised the
+        # both-at-once path -- which is the commonest real one, since renaming a test file gives
+        # 1 GONE + 1 NEW -- so `if left and not appeared:` passed the control while silently
+        # dropping the GONE block. Six also lifts the threshold a fail-open band has to clear:
+        # any band above the largest fixture survives, so the fixture is what sets the bar.
+        (
+            "six each way",
+            [*base[6:], *many],
+            1,
+            ["NEW warning identities (6)", "Warning identities GONE (6)"],
+            [*many, *sorted(base)[:6]],
+        ),
     ]
     failures = []
     for label, identities, want_rc, want_texts, want_named in cases:
@@ -130,7 +142,10 @@ def _self_test() -> int:
         for identity in want_named:
             if identity.split("\t")[0] not in out:
                 failures.append(f"{label}: {identity.split(chr(9))[0]} was counted but not named")
-        if not want_texts and out.strip() and "ratchet OK" not in out:
+        # NOT `and out.strip()`: guarding this on the output being non-empty makes the assertion
+        # self-disable exactly when the line it checks has been deleted. Same shape as the guard
+        # whose leniency this control forced one commit ago.
+        if not want_texts and "ratchet OK" not in out:
             failures.append(f"{label}: expected an OK line, got {out.strip()[:90]!r}")
 
     # The REMEDY is the actionable half, and inverting it turns the ratchet into a baseline
@@ -225,7 +240,14 @@ def main() -> int:
     # A census from a collect-only or truncated run looks well-formed and is not a measurement.
     # Without this the ratchet reports hundreds of identities GONE and instructs the reader to
     # re-baseline -- which would write that non-measurement into the artifact.
-    ran = census.get("tests_run", 0)
+    if "tests_run" not in census:
+        print(
+            "CANNOT RUN: this census predates the provenance field, so nothing says whether it\n"
+            "measured the suite. Re-run the suite to produce a current one.",
+            file=sys.stderr,
+        )
+        return 2
+    ran = census["tests_run"]
     if ran < MIN_TESTS:
         print(
             f"CANNOT RUN: the census records {ran} test outcomes, below the {MIN_TESTS} floor.\n"
