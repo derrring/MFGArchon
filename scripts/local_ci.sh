@@ -277,15 +277,19 @@ step "Ruff format"
 # #2120 and caught only by an adversarial reviewer. The invariant was being held by habit --
 # contributors run `ruff format` with no path argument -- and habit is what the gate is for.
 #
-# Cost, measured before widening: 1 file to reformat out of 936, and 0 after. `ruff` reads its own
-# `exclude` from pyproject, so `.` means the repository as the project defines it, not everything
-# on disk. (`.pre-commit-config.yaml` excludes `^investigations/` from ruff-format; that directory
-# does not exist, so the two are not in conflict today.)
+# Cost, measured before widening: 1 file to reformat out of 936, and 0 after. `.` is not everything
+# on disk, and four filters decide what it is: ruff's default file-type filter (py/pyi/ipynb, plus
+# md for format and pyproject.toml for check -- 46 of 1253 tracked files never reach it),
+# `[tool.ruff] exclude`, `respect-gitignore`, and `[tool.ruff.format] exclude = ["*.md"]` which
+# alone accounts for 268 files. `force-exclude` is unset, so all four apply to the directory WALK
+# only: a path named explicitly on the command line bypasses every one of them.
 "${RUFF[@]}" format --check .; check $? "ruff format --check ."
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
-# Same widening, same reason, and it was free: `scripts/`, `examples/` and `benchmarks/` -- 105
-# files the lint step never saw -- have 0 violations between them, measured before the change.
+# Same widening, same reason, and it was free: 124 files the lint step never saw -- 105 `.py` under
+# `scripts/`, `examples/` and `benchmarks/`, 11 notebooks under `examples/`, 7 under
+# `.github/scripts/`, and `pyproject.toml` -- have 0 violations between them under the configured
+# per-file-ignores, measured before the change.
 "${RUFF[@]}" check .; check $? "ruff check ."
 
 # The one gate that lived ONLY on GitHub. ci.yml runs this exact command as a blocking step named
