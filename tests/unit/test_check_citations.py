@@ -507,3 +507,62 @@ def test_the_shipped_baseline_matches_this_repository():
         cwd=str(repo),
     )
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def _commit_tree(tmp_path: Path, files: dict[str, str]) -> tuple[Path, list[str]]:
+    root = _git_tree(tmp_path, files)
+    git = ["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    return root, git
+
+
+def _write_baseline_at(root: Path, baseline: Path) -> str:
+    sys.path.insert(0, str(SCRIPT.parent))
+    try:
+        import importlib
+
+        mod = importlib.reload(importlib.import_module("check_citations"))
+        mod.write_baseline(mod.measure(root), baseline, root)
+    finally:
+        sys.path.pop(0)
+    import json
+
+    return json.loads(baseline.read_text())["_measured_at"]["head_when_written"]
+
+
+def test_a_baseline_from_a_dirty_tree_says_so(tmp_path):
+    """`-dirty` exists so the next reader knows the recorded commit does not describe what was
+    measured. Removing the suffix entirely was killed by zero tests before this one."""
+    root, _ = _commit_tree(tmp_path, {"doc.md": DRIFTED, "pkg/target.py": TARGET})
+    (root / "doc.md").write_text(DRIFTED + "\nan unrelated edit\n")
+    assert _write_baseline_at(root, tmp_path / "b.json").endswith("-dirty")
+
+
+def test_the_baseline_file_itself_does_not_make_the_tree_dirty(tmp_path):
+    """The carve-out, and the reason it is not cosmetic: writing the baseline modifies the baseline,
+    so without it EVERY baseline is stamped `-dirty` including one written from a clean tree, and a
+    marker that is always on discriminates nothing.
+
+    This is also the regression test for how it was broken: `git status --porcelain` emits
+    `XY PATH`, an unstaged modification starts with a SPACE, and `.stdout.strip()` ate that space
+    off the first line only -- shifting the path by one character so the comparison never matched.
+    Removing the carve-out was likewise killed by zero tests.
+    """
+    root, git = _commit_tree(tmp_path, {"doc.md": DRIFTED, "pkg/target.py": TARGET})
+    baseline = root / "citation_baseline.json"
+    # TRACKED and committed first, then modified. An untracked baseline reports `?? path`, whose
+    # first character is not a space -- and the bug this pins only bites on ` M path`, so a fixture
+    # left untracked passes with the defect restored. Measured: it did, over all 26 tests.
+    _write_baseline_at(root, baseline)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "record baseline"], check=True)
+    _write_baseline_at(root, baseline)
+
+    porcelain = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"], capture_output=True, text=True, check=True
+    ).stdout
+    assert porcelain.startswith(" M "), (
+        f"this fixture must leave the baseline TRACKED and UNSTAGED, or it cannot exhibit the "
+        f"defect it pins: {porcelain!r}"
+    )
+    assert not _write_baseline_at(root, baseline).endswith("-dirty")
