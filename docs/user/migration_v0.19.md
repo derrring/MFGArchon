@@ -134,7 +134,7 @@ result = problem.solve(config=MFGSolverConfig(...))        # explicit control
 
 ## Step 4: Update YAML configs if affected
 
-If you have YAML configuration files that set fields now removed from canonical (e.g. `newton.damping_factor`, `newton.line_search`, `newton.verbose`, `gfdm.constraint_tolerance`, or similar), Pydantic's strict validation at `bridge_to_pydantic()` will now raise `ValidationError` pointing at the unknown field. Either remove the field, or map it to its canonical replacement per the tables above.
+If you have YAML configuration files that set fields now removed from canonical (e.g. `newton.damping_factor`, `newton.line_search`, `newton.verbose`, `gfdm.constraint_tolerance`, or similar), Pydantic's `extra="forbid"` will raise `ValidationError` pointing at the unknown field when the config is validated. (This guide originally named `bridge_to_pydantic()`, removed with the OmegaConf layer in #1687; the behaviour is unchanged and now surfaces through `load_solver_config` or a direct `model_validate`.) Either remove the field, or map it to its canonical replacement per the tables above.
 
 ## Questions
 

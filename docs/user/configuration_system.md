@@ -96,7 +96,7 @@ the config layer and the solvers; prefer them over reading fields by hand.
 | Removed | Where the responsibility went |
 |:--------|:------------------------------|
 | `OmegaConfManager`, `create_omega_manager` | The application's own loader |
-| `bridge_to_pydantic` | `model_validate` — with one config system there is nothing to bridge |
+| `bridge_to_pydantic` | `model_validate(..., strict=True)` — with one config system there is nothing to bridge. **Keep `strict=True`**: the bridge defaulted to it, so `{'max_iterations': '100'}` raised there and a plain `model_validate` coerces it to `int` instead |
 | `save_effective_config` / `load_effective_config` | `save_solver_config` writes YAML; `model_dump_json` writes JSON |
 | `create_parameter_sweep_configs` | The experiment layer; a sweep is a loop over built configs |
 | `mfgarchon/config/configs/*.yaml` | Shipped defaults for the removed manager |

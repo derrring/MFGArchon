@@ -1,10 +1,18 @@
 - **OmegaConf is removed; the config stack is Pydantic plus `config/io.py`** (Issue #1687). A
   numerical library should not own a config framework — it should accept typed objects, and loading
-  config files belongs to the application layer. Gone: `OmegaConfManager` and its module functions,
-  `bridge_to_pydantic` (with one config system there is nothing to bridge — it collapses to
-  `model_validate`), `save_effective_config` / `load_effective_config`,
-  `create_parameter_sweep_configs`, the four shipped `mfgarchon/config/configs/*.yaml`, and the
-  `OMEGACONF_AVAILABLE` flag. YAML interpolation, composition and merging go with them; they were
+  config files belongs to the application layer. Gone: `OmegaConfManager` with `create_omega_manager`,
+  `load_beach_config`, `load_experiment_config` and `create_parameter_sweep_configs`;
+  `bridge_to_pydantic`; `save_effective_config` / `load_effective_config`; the four
+  `mfgarchon/config/configs/*.yaml`; and the `OMEGACONF_AVAILABLE` flag.
+
+  **`bridge_to_pydantic` does not collapse to a plain `model_validate`.** It carried `strict=True`,
+  so `{'picard': {'max_iterations': '100'}}` raised there and is silently coerced to `int` without
+  it. A caller relying on that rejection must pass `strict=True`. The four YAMLs were never in any
+  wheel either — `package-data` is commented out — they were written into the installed package
+  directory at runtime by `_create_default_configs`, so this also removes a write-into-site-packages
+  pattern.
+
+  YAML interpolation, composition and merging go with them; they were
   OmegaConf features, not library features. `load_solver_config` / `save_solver_config` /
   `validate_yaml_config` are unchanged and remain the flat-YAML path.
 
