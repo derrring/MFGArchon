@@ -237,6 +237,29 @@ step "Ruff format"
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 "${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
 
+# The one gate that lived ONLY on GitHub. `ci.yml:168` runs this exact command as a blocking
+# step ("MyPy type gate (config subpackage, blocking)"), and nothing here mirrored it -- measured,
+# `grep -c mypy scripts/local_ci.sh` returned 0 against 23 for ruff. So a type error in
+# `mfgarchon/config` could not be seen before pushing, which is the mirror image of this file's own
+# reason to exist: CLAUDE.md warns that a GitHub-green PR has not had its tests run, and this was
+# the check nobody could run locally at all. ~10 s on a ~150 s gate (Issue #2101, option 4).
+#
+# Scope and flags are copied from ci.yml verbatim, not chosen here. Raw mypy over the package
+# pulls 1800+ transitive errors from un-annotated dependencies; `--follow-imports=silent` plus the
+# `mfgarchon/config` scope is what makes the count meaningful, and a second opinion about scope
+# would make this gate and CI disagree -- which is worse than either scope.
+#
+# Missing mypy is an ENVIRONMENT failure, not a pass. `dev` installs it; an interpreter without it
+# cannot answer the question, and reporting "clean" would be the silent-instrument shape this
+# repository keeps filing (#1918).
+step "MyPy type gate (config subpackage -- mirrors ci.yml:168)"
+"$PY" -c 'import mypy' 2>/dev/null \
+  || cannot_run "mypy is not importable by $PY, so the blocking type gate ci.yml runs could not be
+mirrored here. Install the dev extra (\`pip install -e .[dev]\`) or set MFG_PYTHON to an
+interpreter that has it. Nothing was measured."
+"$PY" -m mypy mfgarchon/config --follow-imports=silent
+check $? "mfgarchon/config type-checks clean (the gate that otherwise only runs on GitHub)"
+
 step "Workflow integrity"
 # Parsing is NOT sufficient and this check knows it: a workflow gutted down to one job,
 # or one whose `needs:` points at a job that was deleted, parses perfectly. GitHub rejects
