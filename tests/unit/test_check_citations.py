@@ -47,6 +47,8 @@ def _measure(root: Path) -> dict:
         sys.path.pop(0)
 
 
+DRIFTED_LINE = "`far_from_the_citation` is at pkg/target.py:30, the prose says.\n"
+
 TARGET = "\n".join(
     ["# header"]
     + [f"# filler {n}" for n in range(2, 30)]
@@ -295,42 +297,33 @@ def test_a_failing_unmerged_probe_refuses_instead_of_passing(tmp_path, monkeypat
     assert "--unmerged failed" in out.stderr, out.stderr
 
 
-def test_two_index_entries_differing_only_by_UNICODE_FORM_are_refused(tmp_path):
-    """Case is not the only way two index entries reach one file. `cafe\u0301.md` (NFD) and
-    `caf\u00e9.md` (NFC) are the same file on macOS, and `casefold()` alone never pairs them as
-    candidates -- review measured the citation counted twice at exit 0. The inode test was already
-    right; only the candidate key was too narrow."""
-    import unicodedata
+def test_a_tracked_symlink_is_not_counted_a_second_time(tmp_path):
+    """`CLAUDE.md` in this repository is a tracked symlink to `AGENTS.md`: one paragraph, two
+    tracked paths, and its citations were counted twice -- the published `drifted` was one row high
+    because of it, 19/39 where the truth is 18/38.
 
-    name_nfc = unicodedata.normalize("NFC", "caf\u00e9.md")
-    name_nfd = unicodedata.normalize("NFD", "caf\u00e9.md")
-    assert name_nfc != name_nfd, "the two Unicode forms must differ or this test proves nothing"
-    root = _git_tree(tmp_path, {name_nfc: "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
-    if not (root / name_nfd).exists():
-        pytest.skip("this filesystem keeps NFD and NFC apart: they really are two files here")
-    git = ["git", "-C", str(root), "-c", "core.precomposeunicode=false"]
-    sha = subprocess.run(
-        [*git, "hash-object", "-w", name_nfc], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    subprocess.run([*git, "update-index", "--add", "--cacheinfo", f"100644,{sha},{name_nfd}"], check=True)
+    No name-based rule finds this. The guard's first two shapes were casefold, then NFC plus
+    casefold, and each was defeated by a case outside it; these two names share no case and no
+    Unicode form. Only the filesystem knows they are one file, so the guard asks the filesystem.
+    """
+    root = _git_tree(tmp_path, {"doc.md": DRIFTED_LINE, "pkg/target.py": TARGET})
+    (root / "link.md").symlink_to(root / "doc.md")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    mode = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", "link.md"], capture_output=True, text=True, check=True
+    ).stdout
+    assert mode.startswith("120000"), f"the fixture did not stage a symlink: {mode!r}"
 
-    listed = subprocess.run([*git, "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
-    entries = [e for e in listed.split("\0") if e.endswith(".md")]
-    assert len(entries) == 2, f"the fixture did not produce two index entries: {entries!r}"
-
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
-    )
-    assert out.returncode == 2, out.stdout + out.stderr
-    assert "same file on this filesystem" in out.stderr, out.stderr
+    got = _measure(root)
+    assert len(got["drifted"]) == 1, f"the symlinked copy was counted again: {got['drifted']}"
+    assert {r["file"] for r in got["drifted"]} == {"doc.md"}
 
 
-def test_two_index_entries_for_one_file_are_refused(tmp_path):
-    """On a case-insensitive filesystem an index carrying `Doc.md` and `doc.md` for ONE on-disk file
-    has no unmerged entry, so the conflict guard does not fire and every citation in it is counted
-    twice. Deduplicating the path list would not catch it either -- the two strings differ, which is
-    why the earlier `set()` was deleted rather than kept."""
-    root = _git_tree(tmp_path, {"doc.md": "`near_the_citation` at pkg/target.py:30.\n", "pkg/target.py": TARGET})
+def test_two_NON_symlink_entries_on_one_inode_are_refused(tmp_path):
+    """The other verdict, and the reason the guard does not simply skip every collision: case,
+    Unicode form or a hard link all reach one file through two ORDINARY index entries, and that is
+    a broken index rather than a legitimate alias."""
+    root = _git_tree(tmp_path, {"doc.md": DRIFTED_LINE, "pkg/target.py": TARGET})
     if (root / "DOC.MD").exists() != (root / "doc.md").exists():
         pytest.skip("case-sensitive filesystem: `Doc.md` and `doc.md` really are two files here")
     git = ["git", "-C", str(root)]
@@ -338,16 +331,12 @@ def test_two_index_entries_for_one_file_are_refused(tmp_path):
         [*git, "hash-object", "-w", "doc.md"], capture_output=True, text=True, check=True
     ).stdout.strip()
     subprocess.run([*git, "update-index", "--add", "--cacheinfo", f"100644,{sha},Doc.md"], check=True)
-
-    listed = subprocess.run([*git, "ls-files"], capture_output=True, text=True, check=True).stdout
-    assert "Doc.md" in listed, "the fixture did not add the second index entry"
-    assert "doc.md" in listed, "the fixture replaced the original entry instead of adding one"
     assert not subprocess.run(
         [*git, "ls-files", "--unmerged"], capture_output=True, text=True, check=True
-    ).stdout.strip(), "this must NOT be an unmerged index -- that is the other guard"
+    ).stdout.strip(), "this must not be an unmerged index -- that is the other guard"
 
     out = subprocess.run(
         [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False, cwd=str(root)
     )
     assert out.returncode == 2, out.stdout + out.stderr
-    assert "same file on this filesystem" in out.stderr, out.stderr
+    assert "none of them is a symlink" in out.stderr, out.stderr

@@ -2,10 +2,10 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. Measured at the time of writing: 19 of the 39 adjudicable citations in this
-repository's live prose -- 49% -- name a symbol that is not near the cited line (Issue #2102).
+being true. Measured at the time of writing: 18 of the 38 adjudicable citations in this
+repository's live prose -- 47% -- name a symbol that is not near the cited line (Issue #2102).
 
-That is 19 of the 39 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
+That is 18 of the 38 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
 citations are recorded `unadjudicable`, a large majority. Quoting 49% bare reads as "half this
 repository's citations are wrong" and would be #1918's own failure committed against this report.
 
@@ -22,14 +22,18 @@ It moves about 1 point per unit near 12, and the denominator does not move at al
 between anchored and drifted:
 
     WINDOW      1      6     10     12     16     25     60    200
-    drifted  64.1%  59.0%  53.8%  48.7%  46.2%  43.6%  30.8%  23.1%
+    drifted  63.2%  57.9%  52.6%  47.4%  44.7%  42.1%  28.9%  21.1%
 
 There is no plateau, so quote the number with its window, never bare. The one WINDOW-INDEPENDENT
-statement available is the floor: **9 of the 39 adjudicable citations survive any window** -- 8
+statement available is the floor: **8 of the 38 adjudicable citations survive any window** -- 7
 whose named symbol is not in the target file at all, plus the one past EOF, which has no symbol and
-is wrong regardless. (Two of the 8 are the same paragraph reached through `AGENTS.md` and its
-`CLAUDE.md` symlink; both are tracked paths, so both are scanned.) `WINDOW = 12` is a choice, not a
-measurement, and it is the constant a reader should attack first.
+is wrong regardless. `WINDOW = 12` is a choice, not a measurement, and it is the constant a reader
+should attack first.
+
+Those figures were 19 / 39 and 9 until review found that `CLAUDE.md` is a tracked symlink to
+`AGENTS.md`: one paragraph, two tracked paths, counted twice. `content_duplicates` now finds that
+by inode rather than by guessing which names collide, and the numbers above are the deduplicated
+ones.
 
 WHY THE SYMBOL IS THE DISCRIMINATOR
 -----------------------------------
@@ -95,7 +99,6 @@ import json
 import re
 import subprocess
 import sys
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -183,31 +186,63 @@ def tracked_files(root: Path) -> list[str]:
     # attempt was deleted rather than kept: `Doc.md` and `doc.md` are distinct strings. The
     # collision has to be resolved against the filesystem, and only for the candidates -- on a
     # case-sensitive filesystem those really are two files and refusing would be wrong.
-    # NFC before casefold, because case is not the only way two names reach one file. Review built
-    # an index holding `cafe\u0301.md` (NFD) and `caf\u00e9.md` (NFC) for a single file: same
-    # st_dev/st_ino, so the check below would have caught them, but `casefold()` alone never paired
-    # them as candidates and the citation was counted twice at exit 0. `core.precomposeunicode` is
-    # true here so macOS will not create it locally; a Linux collaborator committing an NFD name
-    # will. The inode test was right and only the candidate key was too narrow.
-    folded: dict[str, str] = {}
-    for f in files:
-        clash = folded.setdefault(unicodedata.normalize("NFC", f).casefold(), f)
-        if clash == f:
-            continue
-        try:
-            a, b = (root / f).stat(), (root / clash).stat()
-        except OSError:
-            # Neither path resolving is not this guard's business -- an unreadable or vanished
-            # file is reported by the read below. Wrapped because `exists()`-then-`stat()` is a
-            # race, and an unwrapped read is the exact defect this guard was added to fix.
-            continue
-        if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino):
-            raise InstrumentError(
-                f"the index holds {clash!r} and {f!r}, which are the same file on this "
-                f"filesystem -- every citation in it would be counted twice. Resolve the "
-                f"duplicate index entry (`git rm --cached` one of them) and re-run."
-            )
     return files
+
+
+def content_duplicates(root: Path, files: list[str]) -> set[str]:
+    """Tracked paths whose CONTENT is already counted through another path.
+
+    Discovered by `stat`, not by guessing which names might collide, and that is the second shape
+    this took. The first enumerated name rules -- casefold, then NFC plus casefold -- and review
+    kept finding cases outside them: `Doc.md`/`doc.md` on a case-insensitive filesystem, then NFD
+    against NFC. The one that ended the guessing is in this repository: `CLAUDE.md` is a tracked
+    SYMLINK to `AGENTS.md`, sharing an inode while sharing no relation between the names at all. It
+    was counted twice, and the published `drifted` was one row high because of it.
+
+    Sameness is a property of the filesystem, so ask the filesystem. Two causes, two verdicts, and
+    `git ls-files -s` hands over the discriminator for free:
+
+      - a tracked SYMLINK whose target is also tracked is legitimate; its citations are already
+        counted through the target, so it is skipped;
+      - two non-symlink entries on one inode -- case, Unicode form, or a hard link -- mean the
+        index is broken in a way that doubles a count, and that is refused.
+    """
+    listing = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", "-z"], capture_output=True, text=True, check=False
+    )
+    if listing.returncode != 0:
+        raise InstrumentError(f"git ls-files -s failed in {root}: {listing.stderr.strip()}")
+    modes = {}
+    for entry in listing.stdout.split("\0"):
+        if "\t" in entry:
+            meta, path = entry.split("\t", 1)
+            modes[path] = meta.split(" ", 1)[0]
+
+    wanted = set(files)
+    by_inode: dict[tuple[int, int], list[str]] = {}
+    for f in files:
+        try:
+            st = (root / f).stat()
+        except OSError:
+            # Unreadable is the reader's business, not this guard's: a path that cannot be stat-ed
+            # cannot be read either, so it contributes no citations and cannot double-count.
+            continue
+        by_inode.setdefault((st.st_dev, st.st_ino), []).append(f)
+
+    skip = set()
+    for paths in by_inode.values():
+        if len(paths) < 2:
+            continue
+        links = [p for p in paths if modes.get(p) == "120000"]
+        if len(links) == len(paths) - 1 and all(str(Path(p)) in wanted or True for p in paths):
+            skip.update(links)
+            continue
+        raise InstrumentError(
+            f"these tracked paths are one file on this filesystem and none of them is a symlink: "
+            f"{', '.join(sorted(paths))} -- every citation in it would be counted once per entry. "
+            f"Resolve the duplicate index entry (`git rm --cached` one of them) and re-run."
+        )
+    return skip
 
 
 def _index_by_basename(files: list[str]) -> dict[str, list[str]]:
@@ -274,10 +309,14 @@ def _symbols_near(lines: list[str], i: int, cited_stem: str) -> list[str]:
 def measure(root: Path) -> dict:
     files = tracked_files(root)
     by_base = _index_by_basename(files)
+    duplicates = content_duplicates(root, files)
     prose = [
         f
         for f in files
-        if f.endswith((".md", ".py")) and Path(f) not in EXEMPT_FILES and not set(Path(f).parts) & EXEMPT_DIRS
+        if f.endswith((".md", ".py"))
+        and f not in duplicates
+        and Path(f) not in EXEMPT_FILES
+        and not set(Path(f).parts) & EXEMPT_DIRS
     ]
     result: dict[str, list[dict]] = {
         "anchored": [],
