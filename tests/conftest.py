@@ -731,3 +731,81 @@ def validate_mfg_solution(U, M, problem):
 
 # Export validation function for use in tests
 __all__ = ["validate_mfg_solution"]
+
+
+# --- warnings census (#2119) -------------------------------------------------------------------
+#
+# The gate runs pytest with `--disable-warnings`: the listing is 6,030 lines and 95.7% of
+# everything the gate prints, and printing it every run for a year retired none of the 456 calls it
+# was reporting. Suppressing it makes ignoring them CHEAPER, so it only stops being a regression in
+# attention if something counts them instead. This writes the census; `scripts/check_warnings.py`
+# ratchets it.
+#
+# `pytest_terminal_summary` runs on the CONTROLLER and `terminalreporter.stats["warnings"]` is
+# fully populated there even under `-n auto` and even with `--disable-warnings` -- both measured, 40
+# of 40 either way. So this costs no second suite run and needs no per-worker merge.
+#
+# Off unless asked: writing a file on every ad-hoc `pytest` run would be a side effect nobody
+# asked for, and a gate that silently rewrites its own input is how a ratchet stops ratcheting.
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    out = os.environ.get("MFGARCHON_WARNING_CENSUS")
+    if not out:
+        return
+
+    import json
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    # `{abs_path}:{line}: {Type}: {text}\n  {source}\n` -- pytest's own rendering.
+    pattern = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?P<kind>\w*(?:Warning|Error)): (?P<text>.*)")
+
+    census = {}
+    for record in terminalreporter.stats.get("warnings", []):
+        first = str(record.message).split("\n", 1)[0]
+        m = pattern.match(first)
+        if not m:
+            continue
+        raw = Path(m.group("path")).resolve()
+        try:
+            rel = str(raw.relative_to(root))
+        except ValueError:
+            # Outside the repo. Keeping the absolute path would put this machine's conda prefix
+            # into a committed baseline -- 7 of 225 identities, enough to make it red everywhere
+            # else. Normalised to a portable suffix rather than dropped: `_pytest/python.py`
+            # raising PytestReturnNotNoneWarning is a warning about OUR tests.
+            parts = raw.parts
+            if "site-packages" in parts:
+                rel = "site-packages/" + "/".join(parts[parts.index("site-packages") + 1 :])
+            elif any(part.startswith("python3.") for part in parts):
+                idx = next(i for i, part in enumerate(parts) if part.startswith("python3."))
+                rel = "stdlib/" + "/".join(parts[idx + 1 :])
+            else:
+                rel = raw.name
+        # NO LINE NUMBER in the identity. It is stable across runs and worthless across edits:
+        # inserting one line at the top of a file moves every identity in it, so a line-keyed
+        # ratchet would go red on any unrelated change. Measured on the real suite: keyed with the
+        # line, two runs give 608 and 608; keyed without it, 315 and 315. Both stable, and only one
+        # survives an edit. Same reason `check_citations.py` keys on symbols rather than counts.
+        # DIGITS NORMALISED, then truncated to 40. Both were forced by measurement, and the first
+        # two designs were falsified by the next sample:
+        #
+        #   raw text[:60]              315 / 318 / --     messages embed measurements
+        #   digits->N, text[:60]       240 / 240 / 230    called stable on two samples; the third broke it
+        #   digits->N, text[:40]       225 / 225 / 225
+        #
+        # 40 IS STABLE BY BEING COARSER, not by removing the variation, and that is a real cost:
+        # against the 60-char key it merges 5 groups, of which about three are distinctions worth
+        # having -- `signature 'legacy'` with `'neural'`, and Newton's "iteration budget" with
+        # "residual stopped decreasing". A new warning differing from an existing one only past
+        # character 40 of the same file and category will not raise a new identity.
+        #
+        # What varies is not only scheduling: the same warning renders with and without a
+        # "Reason: ..." suffix between runs, which is what split it at 60. Under `-n auto` the
+        # per-process warning registry also dedupes differently as the distribution moves, so the
+        # observable set is not purely a property of the code. Any key here trades resolution for
+        # stability; this one is stated rather than assumed.
+        text = re.sub(r"\d+", "N", m.group("text"))[:40]
+        key = f"{rel}\t{m.group('kind')}\t{text}"
+        census[key] = census.get(key, 0) + 1
+
+    Path(out).write_text(json.dumps({"identities": sorted(census), "occurrences": sum(census.values())}, indent=2) + "\n")

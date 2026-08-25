@@ -440,7 +440,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings; do
   "$PY" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -514,10 +514,19 @@ if [[ $FAST -eq 0 ]]; then
   # It is a REPORT of a backlog, not a signal: 456 of those lines are this repository's own tests
   # calling its own deprecated `MFGProblem(geometry=, components=, ...)`. Printing the list every
   # run for a year has not retired one of them; #2119 is where they get counted instead.
+  # MFGARCHON_WARNING_CENSUS: `tests/conftest.py` writes the identities this run emitted, so the
+  # ratchet below costs no second suite run. Measured: the controller's warning stats are complete
+  # under `-n auto` and under `--disable-warnings` alike.
+  export MFGARCHON_WARNING_CENSUS="${MFGARCHON_WARNING_CENSUS:-${TMPDIR:-/tmp}/mfgarchon-warnings.$$.json}"
   PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
     -m "$(cat "$(dirname "$0")/ci_markers.txt")" \
     -q --durations=10 --disable-warnings
   check $? "full suite"
+
+  # Suppressing the listing without this is a regression in attention, not a fix: it makes ignoring
+  # 5,000 warnings cheaper. This is what makes the suppression honest. (#2119)
+  "$PY" scripts/check_warnings.py
+  check $? "no warning identity appeared or vanished unrecorded"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'
 fi
