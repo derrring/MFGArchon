@@ -26,10 +26,19 @@ cd "$(dirname "$0")/.."
 # search and would then run the "authoritative gate" against an interpreter that cannot run the
 # suite -- a green-looking run that measured nothing. See `resolved_python` for why the obvious
 # form of that probe does not work.
-cannot_run() {  # environment failure: say that nothing was measured, and exit distinguishably
+cannot_run() {  # environment failure: say what was measured, and exit distinguishably
   printf '\n\033[31mGATE CANNOT RUN\033[0m -- %s\n' "$1"
-  printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
-  printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
+  # Every cannot_run used to sit before the first verdict, so "nothing was measured" was simply
+  # true. The mypy step can fire one after a PASS has printed, and a blanket claim there would be
+  # a false statement about the run in the same breath as a true one about the check.
+  if [[ ${verdicts:-0} -eq 0 ]]; then
+    printf 'This is an ENVIRONMENT failure, not a code failure: nothing was measured, so it says\n'
+    printf 'nothing about whether the change is sound. Activate the env (conda activate mfg_env)\n'
+  else
+    printf 'This is an ENVIRONMENT failure, not a code failure. The %d verdict(s) above did run and\n' "$verdicts"
+    printf 'stand; everything from this check onward was NOT measured. Activate the env\n'
+    printf '(conda activate mfg_env)\n'
+  fi
   printf 'or set MFG_PYTHON to an interpreter with that tooling installed.\n'
   exit 2
 }
@@ -70,8 +79,18 @@ cannot_run() {  # environment failure: say that nothing was measured, and exit d
 # to refuse. If the package does not import, the checks that need it say so, with the traceback,
 # under a GATE RED -- which is a verdict about content, and is the true one.
 #
-# What must import is what will actually run. `--fast` (ruff plus three stdlib-only AST scanners,
-# per CLAUDE.md the iterate-while-working mode) needs neither the package nor the test tooling.
+# mypy joins ruff in that predicate. Note what that changed: `--fast` used to need neither the
+# package nor the test tooling, and the type gate runs in BOTH tiers, so `--fast` now requires the
+# `dev` extra. The old sentence was left standing above its own correction for one revision -- a
+# reader who reached it and stopped read something false -- so it is rewritten here rather than
+# annotated.
+#
+# What must import is what will actually run. `--fast` (ruff, mypy, and three stdlib-only AST
+# scanners, per CLAUDE.md the iterate-while-working mode) does not need pytest. It DOES need the
+# package: `scripts/check_internal_deprecation.py` does `import mfgarchon`, and on a package-less
+# interpreter that step exits with ModuleNotFoundError. The sentence claimed otherwise, and so did
+# its first correction, which fixed the tooling clause and preserved the package one -- the same
+# shape as the defect it was written to fix.
 # `yaml` is listed because the workflow-integrity step needs it. It used to arrive transitively
 # and was declared nowhere -- from omegaconf, and from jupyterlab's dependency chain -- so an
 # environment could look complete and still fail that step with a bare ModuleNotFoundError under a
@@ -95,6 +114,9 @@ probe_modules() {
 # that does run.
 PROBE_ERR_FILE=$(mktemp 2>/dev/null) || PROBE_ERR_FILE=""
 PROBE_DIR=$(mktemp -d 2>/dev/null) || PROBE_DIR=""
+# The mypy control's probe must live INSIDE the checked scope to see a per-module override, so it
+# cannot go in PROBE_DIR. It goes under the same trap instead, which is the half that matters.
+MYPY_PROBE="mfgarchon/config/_gate_probe.py"
 # Two traps, not one. A handler installed for INT that only cleans up does NOT end the script:
 # bash runs it and RESUMES at the next command. Measured with that single trap in place, Ctrl-C
 # during --fast let the run continue and render `GATE RED -- do not push` over an interrupted
@@ -102,8 +124,8 @@ PROBE_DIR=$(mktemp -d 2>/dev/null) || PROBE_DIR=""
 # exists to remove. Worse, a SIGINT inside the 4.2 s pass-1 probe killed that probe and let the
 # search fall through to the next candidate, silently changing which interpreter the gate used.
 # `exit 130` is what restores the untrapped behaviour that `main` had for free.
-trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"' EXIT
-trap 'rm -f "$PROBE_ERR_FILE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE"; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 # tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
 # source echo and the caret, dropping the `File ...` line that names the culprit.
 probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
@@ -117,12 +139,18 @@ resolved_python() {
   [[ -n "$want_package" ]] && modules="mfgarchon, $modules"
   out=$(cd "$PROBE_DIR" && "$candidate" -P -c "import $modules, sys; sys.stdout.write('MFGARCHON_OK')" 2>"${PROBE_ERR_FILE:-/dev/null}")
   [[ "$out" == "MFGARCHON_OK" ]] || return 1
-  # ruff is 2 of the 6 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
+  # ruff is 2 of the 8 --fast checks, so it belongs in the predicate that SELECTS an interpreter.
   # Checked after resolution instead, the search committed to the first candidate satisfying an
   # incomplete predicate and then refused outright -- while a working interpreter was still
   # sitting further down CANDIDATES. Measured: `GATE CANNOT RUN` on a machine where forcing
   # candidate 3 runs the whole gate.
   (cd "$PROBE_DIR" && "$candidate" -P -m ruff --version) >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
+  # mypy for the same reason, and it was added here rather than beside its own step for exactly
+  # the reason the paragraph above records: a hard refusal placed AFTER resolution skips every
+  # remaining candidate. Measured on this repo -- an interpreter carrying pytest, xdist and ruff
+  # but not mypy aborted the gate in 0.62 s having run 2 of 11 steps, while candidate 3 would
+  # have run all of them.
+  (cd "$PROBE_DIR" && "$candidate" -P -m mypy --version) >/dev/null 2>>"${PROBE_ERR_FILE:-/dev/null}" || return 1
   printf '%s' "$candidate"
   return 0
 }
@@ -146,7 +174,7 @@ CANDIDATES=(python python3 /opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bi
 if [[ -n "${MFG_PYTHON+x}" ]]; then
   PY=$(resolved_python "$MFG_PYTHON") \
     || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
-$(probe_modules) plus ruff, probed from a scratch directory outside the source tree.
+$(probe_modules) plus ruff and mypy, probed from a scratch directory outside the source tree.
 $(probe_err)
 It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
 else
@@ -165,7 +193,7 @@ else
       PY=""
     done
   fi
-  [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff.
+  [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff and mypy.
 $(probe_err)"
 fi
 
@@ -187,6 +215,7 @@ RUFF=("$PY" -P -m ruff)
 # This line is the only tell for a forged interpreter, so it has to be in the pasted evidence.
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
+printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
 
 # A discrimination sweep mutates production source in place and restores it in a `finally`.
 # That survives an exception and SIGINT; it does not survive SIGKILL or a harness timeout, and
@@ -212,6 +241,7 @@ fi
 fail=0
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 check() {
+  verdicts=$((${verdicts:-0} + 1))
   if [[ $1 -eq 0 ]]; then printf '\033[32mPASS\033[0m %s\n' "$2"
   else printf '\033[31mFAIL\033[0m %s\n' "$2"; fail=1; fi
 }
@@ -238,6 +268,134 @@ step "Ruff format"
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"
 "${RUFF[@]}" check mfgarchon/ tests/; check $? "ruff check mfgarchon/ tests/"
+
+# The one gate that lived ONLY on GitHub. ci.yml runs this exact command as a blocking step named
+# "MyPy type gate (config subpackage, blocking)" and nothing here mirrored it -- measured before
+# this change, `grep -c mypy scripts/local_ci.sh` returned 0 against 23 for ruff. So a type error
+# in `mfgarchon/config` could not be seen before pushing, which is the mirror image of this file's
+# own reason to exist: CLAUDE.md warns that a GitHub-green PR has not had its tests run, and this
+# was the check nobody could run locally at all (Issue #2101, option 4).
+#
+# Cost, measured, not estimated: ~22 s the first time (a cold `.mypy_cache`, which is what a fresh
+# clone or a mypy upgrade gets), on a gate whose full run is ~350 s. The warm figure that stood
+# here (~0.6 s) was measured for the real check ALONE and no longer describes the step: there are
+# five mypy invocations per run now and the control never hits its own cache. Withdrawn rather than
+# replaced -- every attempt to re-measure it has been on a loaded machine. The
+# cache is ~84 MB, gitignored. The first number is the one that lands on a new contributor.
+#
+# Scope and flags are copied from ci.yml verbatim, not chosen here. Raw mypy over the package
+# pulls 1800+ transitive errors from un-annotated dependencies; `--follow-imports=silent` plus the
+# `mfgarchon/config` scope is what makes the count meaningful, and a second opinion about scope
+# would make this gate and CI disagree -- which is worse than either scope. Note what the copy
+# inherits: `pyproject.toml` gives `mfgarchon.factory.*` the identical strict treatment, and
+# `mypy mfgarchon/factory --follow-imports=silent` reports 3 errors that neither CI nor this gate
+# sees. Inherited, not introduced. Widening the LOCAL scope is the one change that would create
+# the gate/CI divergence this step exists to prevent, so the fix belongs on ci.yml and is filed as
+# #2107; widening it here would close the gap by breaking the property.
+#
+# An interpreter without mypy is rejected during interpreter SELECTION (see `resolved_python`),
+# not here: a refusal at this point skips every remaining candidate, which is the defect the ruff
+# paragraph up there records having already paid for once.
+step "MyPy type gate (config subpackage -- mirrors the blocking job in ci.yml)"
+# `-P`, like every other -m in this file: without it a `mypy/` package sitting in the repo root
+# shadows the real one, and this step reports PASS having checked nothing. Verified both ways. The
+# version line is NOT printed here: printed inside the step it reaches neither the head nor the
+# pasted tail, and because `cannot_run` exits at this step it would appear exactly when the gate
+# ABORTS and never on a green run -- which is the run a reviewer is asked to paste.
+# A POSITIVE CONTROL, because this file's own rule is "the instruments, before their numbers" and
+# this step was the one instrument in the gate without one. A clean PASS is indistinguishable from
+# a mypy that has been silenced. So make it fire on an error it must catch.
+#
+# THE PROBE LIVES INSIDE THE CHECKED SCOPE, and that is not tidiness. Written to a scratch dir its
+# module name is `probe`, so it shares only the GLOBAL config with the real check -- and review
+# measured three silencers that pass the real check while the probe still errors: a
+# `[[tool.mypy.overrides]] ignore_errors` on `mfgarchon.config.*`, a file-level
+# `# mypy: ignore-errors`, and an inline `# type: ignore`. In the scope, the per-module override is
+# caught: the probe passes, which is the signal.
+#
+# WHAT IT STILL CANNOT CATCH, said plainly because the previous comment claimed otherwise: per-file
+# and per-line silencing in the files under test. No probe can -- that is a property of those files,
+# not of the configuration a probe shares. The earlier text named the `# type: ignore` sweep as
+# covered and it was not.
+#
+# The control is version-independent on purpose: assigning a `str` to an `int`-annotated local and
+# returning it fires under every mypy in the supported range. The one published discrimination
+# example for this step -- reverting the `keys[: i + 1 : 1]` slice -- errors under 2.3.0 and passes
+# under 1.20.2, both of which satisfy `mypy>=1.5`, so it cannot serve as the control.
+# `$MYPY_PROBE` is declared and trapped beside PROBE_DIR at the top, not with a local `mktemp`:
+# an unguarded `_probe=$(mktemp -d)` leaves `$_probe` EMPTY when mktemp fails, so the probe file is
+# never written, mypy errors on a nonexistent path, and the control silently does not fire while
+# the gate proceeds as though the instrument were verified -- a silent-instrument failure inside
+# the instrument-verification code. It was also outside both traps and its `rm` sat after the `fi`,
+# so the `cannot_run` path leaked it. The file records that lesson 200 lines up and this broke it.
+printf '# MUTATED -- local_ci.sh mypy control. A leftover means a gate run was killed; DELETE THIS\n# FILE (rm -f mfgarchon/config/_gate_probe.py). The guard above prescribes `git checkout --`,\n# which cannot touch this one: it is untracked AND gitignored, so `git clean -n` will not even\n# list it, and following that instruction loops.\ndef _gate_probe() -> int:\n    x: int = "not an int"\n    return x\n' > "$MYPY_PROBE"
+# The write must be CONFIRMED, not assumed. Two concurrent runs on one checkout -- the pre-push
+# hook and a manual invocation is the realistic pair -- share this fixed path, and the loser can
+# have its probe deleted between the write and the check: the `if` is then false, no `cannot_run`
+# fires, and the gate proceeds as though the instrument were verified. Measured. A `$$` in the
+# name would fix the race and reopen the leftover problem, which the .gitignore entry closes only
+# because the path is fixed.
+[[ -f "$MYPY_PROBE" ]] || cannot_run "the mypy control's probe could not be written to $MYPY_PROBE,
+or was removed before it could be read -- a concurrent gate run on this checkout is the usual
+cause. Nothing about the type gate was verified, so its result is not reported."
+# GREP FOR THE PLANTED ERROR CODE, do not test mypy's exit status. Exit status answers "did mypy
+# report something", and the control needs "did mypy report THE thing". A probe truncated mid-
+# statement -- a partial write, a full disk -- exits 2 with `[syntax]`, which an exit-status test
+# reads as INSTRUMENT VERIFIED while proving nothing about whether assignment errors are reported
+# in this scope. `[[ -f ]]` above does not close it either: the marker is line 1, so a write that
+# stops there leaves a syntactically valid, error-free, NON-EMPTY module, which `[[ -s ]]` would
+# also wave through. Measured on four write outcomes; this grep is strictly stronger on every one.
+# Capture, then match. `set -o pipefail` is on, and mypy exits 1 when it finds the error the
+# control WANTS -- so `mypy | grep -q` returns mypy's 1 even on a match, and the control fires on
+# every healthy run. Measured: the one-liner passes standalone and inverts inside this script.
+_probe_out=$("$PY" -P -m mypy "$MYPY_PROBE" --follow-imports=silent 2>&1)
+if ! grep -q '\[assignment\]' <<<"$_probe_out"; then
+  rm -f "$MYPY_PROBE"
+  cannot_run "the mypy control did not report the assignment error planted in $MYPY_PROBE. Either
+mypy is silenced in mfgarchon.config -- check for an ignore_errors override or a disabled error
+code -- or the probe was not written whole. Nothing about the type gate was verified."
+fi
+rm -f "$MYPY_PROBE"
+
+_mypy_out=$("$PY" -P -m mypy mfgarchon/config --follow-imports=silent 2>&1)
+_mypy_rc=$?
+printf '%s\n' "$_mypy_out"
+# CLASSIFY ON THE OUTPUT, NOT THE EXIT CODE. The first version branched on `rc >= 2` and was wrong
+# in both directions, measured on this tree:
+#
+#   - `omegaconf` absent -- a DECLARED runtime dependency -- exits 1, not 2, so the environment
+#     failure this branch exists for was never caught. The comment claimed it was.
+#   - renaming `mfgarchon/config` away, an ordinary refactor on a perfect environment, exits 2:
+#     the operator was told "ENVIRONMENT failure, install the dev extra", and the gate ABORTED the
+#     remaining checks. Before this step existed the same rename gave FAIL -> GATE RED with correct
+#     attribution and the gate carried on.
+#
+# mypy's exit code says whether it finished, not why. Its OUTPUT carries the distinction, so match
+# that -- and default everything else, exit 2 included, to `check`, which is the pre-existing
+# behaviour and the safe side of a wrong guess.
+_mypy_env_fault=""
+grep -q "Error importing plugin" <<<"$_mypy_out" && _mypy_env_fault="a mypy plugin failed to load"
+# `import-not-found` alone is NOT enough: a typo'd import is a code error and belongs in GATE RED.
+# It is an environment fault only when the module pyproject.toml DECLARES is the one missing, which
+# is decidable -- so decide it rather than guessing from the message.
+while read -r _m; do
+  [[ -n "$_m" ]] || continue
+  if grep -qE "^\s*[\"']${_m}([\"'~=<>!\[]|\s|$)" pyproject.toml; then
+    _mypy_env_fault="the declared dependency '${_m}' is not installed"
+    break
+  fi
+# FLATTEN FIRST. `pretty = true` wraps mypy's output, and the phrase this greps for is split by
+# the wrap at some widths and not others -- measured on an unmodified tree, COLUMNS=100 gave 0
+# matches and a misattributed GATE RED where the default width gave the correct exit 2. Worse,
+# within ONE run at 80 columns two import sites wrapped differently and only one was seen. The
+# predicate is decidable; extracting the module name from wrapped text is not.
+done < <(tr '\n' ' ' <<<"$_mypy_out" | grep -oE 'library stub for module named "[^"]+"' | sed 's/.*"\(.*\)"/\1/' | cut -d. -f1)
+
+if [[ -n "$_mypy_env_fault" ]]; then
+  cannot_run "$_mypy_env_fault, so mypy could not analyse the subject -- this is not a type error in
+the code. See its output above. Install the dev extra into $PY and re-run."
+fi
+check $_mypy_rc "mfgarchon/config type-checks clean (the gate that otherwise only runs on GitHub)"
 
 step "Workflow integrity"
 # Parsing is NOT sufficient and this check knows it: a workflow gutted down to one job,
@@ -276,12 +434,13 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # A ratchet whose measurement has gone blind reports a stable or FALLING count and reads exactly
 # like success. Every ratchet below therefore carries a positive control, and the controls are run
 # here rather than existing unrun: check_doc_api and capability_matrix have had one since they were
-# written and this gate never invoked either. 7s for all four.
+# written and this gate never invoked either. ~6.8 s for all five (three runs: 7.1 / 6.7 / 6.7),
+# of which check_internal_deprecation is 5.0 s and check_citations adds 0.4 s.
 # check_doc_api also self-tests inside --check-baseline, so it runs twice. Kept in this loop on
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations; do
   "$PY" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -307,6 +466,25 @@ check $? "docs teach no more missing API than the baseline records"
 step "Single-source ratchet"
 "$PY" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
+
+# Over 200 `path.py:NNN` citations sit in tracked prose and nothing checked them; 19 of the 39 that
+# can be judged -- 49% -- point at a line their named symbol has moved away from (#2102). Checking
+# the number is in range is nearly useless: exactly one of 226 points past EOF. So a citation counts
+# as judged only when ITS OWN LINE names a symbol; nothing is borrowed from a neighbour, and the
+# other 154 are recorded unadjudicable rather than passing. Two numbers are pinned, not one:
+# `drifted` bidirectionally, and `adjudicable` against SHRINKING, because deleting the symbol name
+# from the prose otherwise lowers `drifted` and reads as an improvement. The baseline records WHICH
+# claims are drifted, not only how many: counts alone are satisfied by a compensating pair, and
+# review shipped exactly that -- two rows hidden, two fresh ones added, gate green. 0.4 s.
+#
+# EXPECT THIS TO GO RED ON A VERSION BUMP. AGENTS.md step 2 collates `changelog.d/` into the exempt
+# `CHANGELOG.md`; step 3 is re-recording the baseline. Also measured before shipping: replaying the
+# last 40 commits on main, 5 would have gone red, and 3 of those on prose the author never opened.
+# That is the cost this buys the coverage with, and it is why the failure names the citations and
+# prints the command rather than only moving a number.
+step "Citation ratchet"
+"$PY" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
+check $? "no citation newly entered the review queue, and none left it unrecorded"
 
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check
@@ -346,6 +524,7 @@ fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
+printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
 # Reprinted here, not only at the head: a version-mismatched run and a matched run otherwise
 # produce byte-identical tails, so the comparison this WARN performs is not recoverable from the
 # pasted evidence. Same rule that put the interpreter line here.
