@@ -281,8 +281,11 @@ step "Ruff format"
 # on disk, and four filters decide what it is: ruff's default file-type filter (py/pyi/ipynb, plus
 # md for format and pyproject.toml for check -- 46 of 1253 tracked files never reach it),
 # `[tool.ruff] exclude`, `respect-gitignore`, and `[tool.ruff.format] exclude = ["*.md"]` which
-# alone accounts for 268 files. `force-exclude` is unset, so all four apply to the directory WALK
-# only: a path named explicitly on the command line bypasses every one of them.
+# alone accounts for 268 files. All four apply to the directory WALK only, for two reasons: with
+# `force-exclude` unset the two `exclude` settings do not bind an explicitly named path, and the
+# other two are bypassed because ruff always processes a named path, which no setting changes. So
+# `ruff format --check $(git diff --name-only)` is a trap -- ruff accepts a named `.yml`/`.json`
+# and parses it as Python.
 "${RUFF[@]}" format --check .; check $? "ruff format --check ."
 
 step "Ruff lint (full ruleset, includes tests/ which CI does not)"

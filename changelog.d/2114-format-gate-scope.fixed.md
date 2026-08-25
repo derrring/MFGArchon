@@ -17,8 +17,8 @@
   tokens a reformat is supposed to move. Lint: **124 files the lint step never saw**, with **0
   violations between them** under the configured `per-file-ignores` — 105 `.py` under `scripts/`,
   `examples/` and `benchmarks/`, plus 11 notebooks under `examples/`, 7 `.py` under
-  `.github/scripts/`, and `pyproject.toml` itself. That
-  window was closing, not opening: the format number was 1 today and is 0 after.
+  `.github/scripts/`, and `pyproject.toml` itself. That window was closing, not opening: the format
+  number was 1 today and is 0 after.
 
   Verified the widened gate actually fires rather than merely covering more ground — an unformatted
   file planted in `scripts/`, `examples/`, `benchmarks/` and `tests/` turns the gate RED in each
@@ -34,9 +34,16 @@
   `[tool.ruff.format] exclude = ["*.md"]` accounts for 268 files on its own: 1204 walked without
   it, 936 with.
 
-  **`force-exclude` is unset, so all four are walk-only.** A path named explicitly on the command
-  line bypasses every one of them — which would bite anyone who later writes
-  `ruff format --check $(git diff --name-only)`, and not only for markdown.
+  **All four are walk-only, for two different reasons, and only one of them has a setting.**
+  `force-exclude` is unset, so the two `exclude` settings do not apply to a path named explicitly on
+  the command line. The other two are bypassed by ruff's general rule that a named path is always
+  processed, which no setting turns off — measured under `force-exclude = true`, `archive/x.py` and
+  a repo `.md` are then refused, while a gitignored `.nox/x.py` is still formatted.
+
+  So `ruff format --check $(git diff --name-only)` is a trap that `force-exclude` does not close,
+  and it is worse than markdown: ruff accepts an explicitly named `.yml`, `.json` or `.sh` and
+  **parses it as Python**. `a:   1` reformats as an annotated assignment; `{"a":  1}` as a dict
+  literal.
 
   Two consequential sites are updated with the gates rather than left to diverge. The monthly
   `check-ruff-updates.yml` repaired only `mfgarchon/` after bumping the pin, so the first ruff
