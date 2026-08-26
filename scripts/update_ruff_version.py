@@ -19,6 +19,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ONE OWNER for "where the ruff pin is". Three encodings of this lived in this file and disagreed
+# pairwise on shapes that are all valid YAML: `\s+` spans a blank line but not a comment, and the
+# comment-tolerant form written for #2123 spanned a comment but not a blank line -- so widening one
+# reader narrowed it on the other axis, and `get_current_version` would print a version that
+# `update_files` then refused to bump. Both readers use this now. The trailing group is the pin's
+# own indentation and `rev:` key; the caller appends what it wants to do with the value.
+#
+# It cannot run past the ruff block: the repeated group matches only blank or comment lines, so any
+# other key (`hooks:`, the next `- repo:`) ends the match without a `rev:`.
+RUFF_PIN = r"astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*(?:#[^\n]*)?\n)*[^\S\n]*rev:[^\S\n]*"
+
 
 def get_current_version() -> str:
     """Get current ruff version from .pre-commit-config.yaml."""
@@ -31,7 +42,7 @@ def get_current_version() -> str:
     content = config_path.read_text()
 
     # Find ruff version
-    match = re.search(r"astral-sh/ruff-pre-commit\s+rev:\s*v([0-9.]+)", content)
+    match = re.search(RUFF_PIN + r"v([0-9.]+)", content)
 
     if not match:
         print("❌ Error: Could not find ruff version in .pre-commit-config.yaml")
@@ -78,15 +89,11 @@ def update_files(new_version: str) -> list[str]:
     # Update .pre-commit-config.yaml
     config_path = Path(".pre-commit-config.yaml")
     content = config_path.read_text()
-    # `[^\S\n]*\n(?:[^\S\n]*#[^\n]*\n)*` rather than `\s+`: a comment between the `repo:` line
-    # and its `rev:` is valid YAML and `\s+` cannot span it, so the substitution silently matched
-    # nothing and `main()` printed "No files needed updating" and exited 0. The workflow's `sed`
-    # handles that shape correctly, so the two bumpers disagreed on it. (#2123)
-    updated = re.sub(
-        r"(astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*#[^\n]*\n)*[^\S\n]*rev:[^\S\n]*)v[0-9.]+",
-        rf"\1v{new_version}",
-        content,
-    )
+    # `RUFF_PIN` rather than `\s+`: a comment between the `repo:` line and its `rev:` is valid
+    # YAML and `\s+` cannot span it, so the substitution silently matched nothing and `main()`
+    # printed "No files needed updating" and exited 0. The workflow's `sed` handles that shape
+    # correctly, so the two bumpers disagreed on it. (#2123)
+    updated = re.sub(f"({RUFF_PIN})v[0-9.]+", rf"\1v{new_version}", content)
 
     if updated != content:
         config_path.write_text(updated)

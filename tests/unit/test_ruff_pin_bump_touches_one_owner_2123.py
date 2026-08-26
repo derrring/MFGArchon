@@ -64,7 +64,7 @@ def test_the_module_imports_without_requests():
     """
     assert callable(_urv.update_files)
     src = (_REPO / "scripts" / "update_ruff_version.py").read_text()
-    assert not re.search(r"^import requests", src, flags=re.M), (
+    assert not re.search(r"^(?:import requests\b|from requests\b)", src, flags=re.M), (
         "requests must stay inside the functions that use it until something declares it"
     )
 
@@ -162,3 +162,51 @@ def test_the_bumper_no_longer_reaches_for_a_pin_that_moved(tmp_path, monkeypatch
 
     assert _urv.update_files("0.17.0") == [".pre-commit-config.yaml"]
     assert "ruff==0.16.0" in decoy.read_text(), "a file that is not the owner must be left alone"
+
+
+@pytest.mark.parametrize(
+    ("name", "between"),
+    [
+        ("nothing", ""),
+        ("a comment", "    # pinned monthly by check-ruff-updates.yml\n"),
+        ("a blank line", "\n"),
+        ("a blank line then a comment", "\n    # pinned monthly\n"),
+        ("a comment then a blank line", "    # pinned monthly\n\n"),
+    ],
+)
+def test_both_readers_in_the_file_agree_on_where_the_pin_is(name, between, tmp_path, monkeypatch):
+    """One owner, pinned on the axis that broke it: WIDENING one reader narrowed it on the other.
+
+    Three encodings of "where the ruff pin is" lived in this file and disagreed pairwise, all on
+    valid YAML. `\\s+` spans a blank line and not a comment; the comment-tolerant form written for
+    #2123 spanned a comment and not a blank line. So `get_current_version` printed `v0.16.0` for a
+    blank-line config that `update_files` then refused, raising "the bump matched nothing. Check
+    the shape of the ruff block" -- pointing the reader at a config that is fine.
+
+    A single-shape test cannot catch that class: it pins one axis and the next widening is free to
+    narrow the other. This asserts the two readers AGREE, which goes red whichever one moves.
+    """
+    fixture = _CLEAN.replace(
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n",
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n" + between,
+    )
+    p = _write(tmp_path, monkeypatch, fixture)
+    assert _urv.get_current_version() == "0.16.0", f"the reader missed the pin with {name} between"
+    assert _urv.update_files("0.17.0") == [".pre-commit-config.yaml"], (
+        f"the bumper missed the pin with {name} between, and the reader did not"
+    )
+    assert _revs(p.read_text()) == ["v0.17.0", "v6.0.0"]
+
+
+def test_a_bump_to_the_version_already_pinned_writes_nothing_and_does_not_raise(tmp_path, monkeypatch):
+    """The postcondition checks the pin's resulting VALUE, not that a write happened -- and that
+    distinction had no test, in a branch whose commit exists to make it.
+
+    `--force` does not compare versions; it calls straight through. So `--force 0.16.0` against a
+    config already at 0.16.0 legitimately writes nothing, and a postcondition phrased as "something
+    must have been written" would fail a correct run. Every other call in this file bumps 0.16.0 to
+    a different version, so all of them pass under either phrasing.
+    """
+    p = _write(tmp_path, monkeypatch, _CLEAN)
+    assert _urv.update_files("0.16.0") == []
+    assert p.read_text() == _CLEAN
