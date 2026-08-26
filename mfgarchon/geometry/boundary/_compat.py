@@ -107,7 +107,7 @@ def get_ghost_values_nd(
 
     The ghost values are derived from BC type:
     - Dirichlet: u_ghost = 2*g - u_interior (cell-centered)
-    - Neumann/No-flux: u_ghost = u_next_interior (reflection for central diff)
+    - Neumann/No-flux: u_ghost = u_interior + dx*g, g = du/dn (`ghost_cell_neumann` owns it)
     - Periodic: u_ghost = u_opposite_boundary
 
     Supports mixed BCs where different boundaries have different types.
@@ -241,7 +241,6 @@ def get_ghost_values_nd(
                 dx,
                 time,
                 config,
-                "left",
                 alpha_l,
                 beta_l,
             )
@@ -258,7 +257,6 @@ def get_ghost_values_nd(
                 dx,
                 time,
                 config,
-                "right",
                 alpha_r,
                 beta_r,
             )
@@ -350,7 +348,6 @@ def _compute_single_ghost(
     dx: float,
     time: float,
     config: GhostCellConfig,
-    side: str,
     alpha: float = 1.0,
     beta: float = 0.0,
 ) -> NDArray:
@@ -364,7 +361,6 @@ def _compute_single_ghost(
         dx: Grid spacing
         time: Current time
         config: Ghost cell configuration
-        side: "left" or "right"
     """
     g = bc_value if bc_value is not None else 0.0
     if callable(g):
@@ -383,9 +379,10 @@ def _compute_single_ghost(
             return 2 * g - u_int
 
     elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-        # #2067, same as the sibling branch in `_compute_ghost_pair`. The `side` split existed
-        # only to undo the du/dx sign; du/dn already carries the wall's direction, so the owner
-        # needs no side argument and neither does this.
+        # #2067, same as the sibling branch in `_compute_ghost_pair`. The `side` parameter this
+        # function took existed only to undo the du/dx sign; du/dn already carries the wall's
+        # direction, so the owner needs no side argument and neither does this. It is gone with
+        # the arithmetic that needed it -- nothing else in this function read it.
         return ghost_cell_neumann(u_int, g, dx)
 
     elif bc_type == BCType.ROBIN:

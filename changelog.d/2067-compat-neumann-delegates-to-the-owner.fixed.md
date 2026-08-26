@@ -14,24 +14,56 @@
 
   **It was not only the convention, and this is the half the issue did not have.** The branch also
   used the `2*dx` separation measured off the **second** interior cell, the form #1972 retired from
-  `ghost_cells.py` for being self-consistent with a wrong wall position. So it disagreed with the
-  owner at `g = 0` as well — that is, on a plain no-flux wall, which is the default:
-  **0.300** on `u = 3x` and **0.588** on `u = sin(2πx)`. A constant field was the only one that
-  agreed, which is why nothing caught it.
+  `ghost_cells.py`. So it disagreed with the owner at `g = 0` as well — on a plain no-flux wall,
+  which is the default. Measured on a **cell-centred** grid, `dx = 0.1`: **0.300** on `u = 3x` and
+  **0.500** on `u = sin(2πx)`. (An earlier draft printed `0.588` for the sine inside a cell-centred
+  discussion; `0.587785 = sin(2π·0.1)` needs nodes at `j·dx`, the vertex layout. `u = 3x` gives
+  0.300 on both, which is why the pair looked consistent.) A constant field is the only one that
+  agrees on either layout.
+
+  **The two forms are order mirror images, and this says so rather than implying the retired one was
+  simply wrong.** Measured on `u = sin x + 0.3x²` with `du/dn` prescribed at the min wall:
+
+  | centring | `u_int + dx·g` (delegated) | `u_next ∓ 2dx·(du/dx)` (retired) |
+  |:---------|:---------------------------|:---------------------------------|
+  | **cell** | rate 3.00 → `O(h³)` | rate 1.92, 1.96, 1.98 → `O(h²)` |
+  | **vertex** | rate 2.04, 2.02, 2.01 → `O(h²)` | rate 3.00 → `O(h³)` |
+
+  At a vertex wall the retired form's difference is centred **on the wall node** — the classical
+  no-flux mirror — and is a full order better. Three things make delegating right anyway: no caller
+  passes a non-default `GhostCellConfig` to `get_ghost_values_nd`; `u_int + dx·g` is what
+  `ghost_cell_neumann`, `ghost_cell_robin` and `NeumannCalculator` all produce at **both**
+  centrings, so delegating makes `_compat` agree with the live path where keeping the old form
+  would make it disagree; and the order question therefore belongs to `ghost_cell_neumann` and
+  #1972, not here. **#2129 records that #1972's stated evidence — "verified exact on 12
+  combinations … against `u = a·x`" — cannot discriminate the two**, because a linear field makes
+  them identical to machine precision at both centrings and both walls.
 
   Both Neumann branches (`_compute_ghost_pair` and `_compute_single_ghost`) now call
-  `ghost_cell_neumann(u_int, g, dx)`. The `side` split in the second one existed only to undo the
-  `du/dx` sign and is gone with it. Implementation count of the inline form in `mfgarchon/`:
-  **3 → 0**.
+  `ghost_cell_neumann(u_int, g, dx)`. The `side` parameter of the second existed only to undo the
+  `du/dx` sign; nothing else in that function read it, so it is deleted along with both call sites'
+  arguments. Counting the inline form in `mfgarchon/`, and saying which count, because
+  `ghost_cells.py:311` warns that a tally over a hand-chosen literal cannot audit the predicate that
+  chose it: **executable lines 3 → 0**, expressions 4 → 0, dispatch sites 2 → 0.
 
   **The pin is an external oracle, not path-A-vs-path-B**, because agreement with
   `ghost_cell_neumann` is tautological the moment the branch calls it — and a characterization test
   restating the branch's own arithmetic is exactly what carried the retired convention through two
   reviews. `test_a_neumann_wall_reproduces_a_linear_field_exactly` feeds `u = slope*x` at three
-  slopes and asserts the ghost continues it exactly. Verified against two mutations — reading `g`
-  as `du/dx`, and reverting to the `2*dx` separation — each of which turns the characterization
-  case and the `slope = 3.0` and `slope = −1.7` cases red while **`slope = 0.0` survives both**,
-  which is the non-discriminating input named in the test's own docstring.
+  slopes and asserts the ghost continues it exactly.
+
+  Verified at full-suite scope against three mutations. Reading `g` as `du/dx` turns 3 red;
+  reverting to the verbatim pre-#2067 code turns **4** red, the fourth being
+  `test_hjb_fdm_solver.py::test_get_ghost_values_nd_neumann` in another file; `slope = 0.0` survives
+  both, which is the non-discriminating input the test's docstring names. It does not survive
+  everything — replacing the branch body outright kills it too.
+
+  **`_compute_single_ghost`'s Neumann branch had zero discrimination and now has a pin.** Replacing
+  its whole body with a constant turned nothing red in 6610 tests: the only test executing that line
+  asserts the refusal beside it, not the value.
+  `test_a_neumann_face_on_a_MIXED_boundary_reproduces_a_linear_field` routes a non-uniform
+  BoundaryConditions through it and applies the same linear oracle; the constant-body mutation now
+  turns exactly its two cases red.
 
   Two characterization expectations move with the fix and say why in place:
   `(2.75, 5.55) → (2.675, 6.775)` in the #1961 file, and `field[1]`/`field[-2]` → `field[0]`/

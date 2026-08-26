@@ -159,7 +159,12 @@ def test_a_robin_condition_without_coefficients_refuses():
 )
 def test_the_other_members_are_byte_identical(name, factory, expected):
     """#1955 pinned this function byte-identical across the module's deletion, over five cases.
-    This change touches only the ROBIN branch, and these are the members that must prove it."""
+
+    #2067 moved the `neumann` row: the branch stopped restating `u_next -/+ 2*dx*g` and now calls
+    `ghost_cell_neumann`. The other two rows are what still prove the rest of the function is
+    untouched. This row is not decoration either -- it is currently the only assertion separating
+    the `dx` separation from the `2*dx` vertex mirror, which the linear-field oracle below cannot
+    do because both reproduce a linear field exactly."""
     bc = factory()
     bc.domain_bounds = _BOUNDS
     ghosts = _ghosts(bc)
@@ -179,9 +184,11 @@ def test_a_neumann_wall_reproduces_a_linear_field_exactly(slope):
     - the convention. `du/dn` at the low wall of `u = slope*x` is `-slope`; the old branch read `g`
       as `du/dx` and applied it with opposite signs, so feeding `du/dn` inverted the low wall.
     - the separation. The old form measured across `2*dx` from the SECOND interior cell, so it
-      disagreed with the owner even at `g = 0` -- 0.3 on `u = 3x`, 0.588 on `u = sin(2*pi*x)`.
-      Only a constant field agreed, which is why the `slope = 0` case below cannot carry this
-      test on its own and the other two are not decoration.
+      disagreed with the owner even at `g = 0`. On a CELL-CENTRED grid at dx = 0.1: 0.300 on
+      `u = 3x`, 0.500 on `u = sin(2*pi*x)`. Only a constant field agrees, which is why the
+      `slope = 0` case below cannot carry this test on its own and the other two are not
+      decoration. (0.588 is the same quantity on a VERTEX layout, where the nodes sit at j*dx;
+      `u = 3x` gives 0.300 on either, which is how the mismatched pair went unnoticed.)
     """
     dx = 0.25
     x = np.arange(5) * dx
@@ -196,3 +203,38 @@ def test_a_neumann_wall_reproduces_a_linear_field_exactly(slope):
         assert _scalar(ghosts[(0, wall)]) == pytest.approx(exact, abs=1e-12), (
             f"wall {wall}: ghost must continue u = {slope}*x exactly"
         )
+
+
+@pytest.mark.parametrize("slope", [3.0, -1.7])
+def test_a_neumann_face_on_a_MIXED_boundary_reproduces_a_linear_field(slope):
+    """#2067: the OTHER Neumann branch. Without this it had zero discrimination in 6610 tests.
+
+    `_compute_ghost_pair` handles a uniform BoundaryConditions; a non-uniform one routes each face
+    through `_compute_single_ghost`, whose Neumann branch this PR also changed. Measured before
+    adding this: replacing that branch's whole body with `return 12345.0` turned **nothing** red at
+    full suite scope. `test_a_robin_condition_without_coefficients_refuses` executes the line and
+    asserts nothing about its value -- a covered line with no discrimination.
+
+    The oracle is the same linear field the uniform test uses, for the same reason: agreement with
+    `ghost_cell_neumann` is tautological once the branch calls it.
+    """
+    dx = 0.25
+    x = np.arange(5) * dx
+    u = slope * x
+    bc = BoundaryConditions(
+        segments=[
+            # du/dn at the min wall of u = slope*x is -slope; the max wall is Dirichlet so the two
+            # faces cannot be uniform and each one goes through `_compute_single_ghost`.
+            BCSegment(name="lo", bc_type=BCType.NEUMANN, value=-slope, boundary="x_min"),
+            BCSegment(name="hi", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    bc.domain_bounds = _BOUNDS
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        ghosts = get_ghost_values_nd(u, bc, (dx,))
+
+    assert _scalar(ghosts[(0, 0)]) == pytest.approx(slope * (x[0] - dx), abs=1e-12), (
+        "the mixed-boundary Neumann face must continue u = slope*x exactly"
+    )
