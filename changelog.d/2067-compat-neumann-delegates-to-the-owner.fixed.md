@@ -35,9 +35,18 @@
   `ghost_cell_neumann`, `ghost_cell_robin` and `NeumannCalculator` all produce at **both**
   centrings, so delegating makes `_compat` agree with the live path where keeping the old form
   would make it disagree; and the order question therefore belongs to `ghost_cell_neumann` and
-  #1972, not here. **#2129 records that #1972's stated evidence — "verified exact on 12
-  combinations … against `u = a·x`" — cannot discriminate the two**, because a linear field makes
-  them identical to machine precision at both centrings and both walls.
+  #1972, not here. An earlier revision of this fragment cited #2129 for the claim that #1972's
+  stated evidence cannot discriminate its own change. **That claim was wrong and #2129 is closed as
+  invalid**: #1972 replaced `interior_value + {1,2}·dx·g·sign`, which reads the FIRST interior, and
+  a linear field separates that from the shipped rule in 6 of 12 combinations — #1972's own
+  population, 2 centrings × 2 walls × slopes {3, −1.7, 0}. The `u_next ∓ 2·dx·g`
+  mirror a linear field cannot separate is the one removed HERE, from `_compat.py`. The order table
+  above is about that one and stands.
+
+  What the vertex half of this convention actually rests on is **#1904** and **#1935**, both open
+  and both `priority: high`: `TensorProductGrid` — the only concrete `CartesianGrid` subclass —
+  builds `np.linspace(lo, hi, N)`, so the
+  wall is a node, and the no-flux ghost is cell-centred on a node-centred grid.
 
   Both Neumann branches (`_compute_ghost_pair` and `_compute_single_ghost`) now call
   `ghost_cell_neumann(u_int, g, dx)`. The `side` parameter of the second existed only to undo the
@@ -84,5 +93,6 @@
   than owed**: from this change `_compat` calls `ghost_cell_neumann` directly and
   `pad_array_with_ghosts` reaches the same function through `NeumannCalculator`, so any such test
   compares an owner to itself and nothing can redden it. That is the objection this file's own
-  header already raises for the Robin path. **#2068 is the same divergence one function over**, in `ghost_cell_fp_no_flux`'s
+  header already raises for the Robin path. **#2068 is the same divergence one function over**, in
+  `ghost_cell_fp_no_flux`'s
   vertex-centred branch, and is not touched here.
