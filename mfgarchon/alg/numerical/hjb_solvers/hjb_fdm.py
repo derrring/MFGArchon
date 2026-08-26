@@ -815,7 +815,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         Uses vectorized batch HamiltonianBase evaluation (Issue #784).
         For scalar diffusion, includes the diffusion term -(sigma^2/2)*Laplacian(U)
-        following the 1D pattern in base_hjb.py:774-803 (Issue #787).
+        following the 1D pattern in ``compute_hjb_residual`` (Issue #787).
 
         Args:
             U: Value function at current timestep
@@ -953,7 +953,7 @@ class HJBFDMSolver(BaseHJBSolver):
             H_convective = eval_H_batch(H_class, x_grid, m_grid, p_grid, time)
 
             # Diffusion term: -(sigma^2/2) * Laplacian(U) (Issue #787)
-            # Follows 1D pattern in base_hjb.py:774-803
+            # Follows the 1D pattern in base_hjb's compute_hjb_residual
             sigma = sigma_at_n if sigma_at_n is not None else self.problem.sigma
             lap_u = self._get_laplacian_op()(U).ravel()
             H_values_flat = H_convective - diffusion_from_volatility(sigma, kind="field") * lap_u

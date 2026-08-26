@@ -132,7 +132,7 @@ class TestDeadOptionsHaveNoEffectOnTheSolve:
 
     - A read with no effect on the output -- into a log record, a metric -- is not detected.
     - Construction-time consumption is out of reach by design: ``TaylorOperator`` is built at
-      ``fp_gfdm.py:176`` BEFORE the attributes are stored at :186, and threading an option in
+      ``fp_gfdm.py`` before the attributes are stored, and threading an option in
       there is how ``obstacle_sdf`` was wired (#1556). The pre-existing ``..._raises`` tests cover
       the construction path; this covers the solve path.
     - Semantics that only appear in configurations this does not run: 2-D, a boundary type other

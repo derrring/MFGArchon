@@ -9,10 +9,10 @@ cost measured on its own.
 **Two sites, and cutting either alone changes nothing.** Three independent routes reach torch
 during `import mfgarchon`:
 
-    utils/__init__.py:30 -> adjoint_validation.py:55 -> alg -> ...
-        -> nonlinear_solvers.py:45 -> utils/acceleration/__init__.py -> torch_utils.py:16
-    utils/__init__.py:92 -> utils/geometry.py:30 -> geometry -> ... -> (same leaf)
-    base_hjb.py:11 -> backends/compat -> backends/__init__.py -> torch_backend.py:30
+    utils/__init__.py -> adjoint_validation.py -> alg -> ...
+        -> nonlinear_solvers.py -> utils/acceleration/__init__.py -> torch_utils.py
+    utils/__init__.py -> utils/geometry.py -> geometry -> ... -> (same leaf)
+    base_hjb.py -> backends/compat -> backends/__init__.py -> torch_backend.py
 
 The first two converge on `utils/acceleration`; the third does not *import torch through* it —
 though it does load the module (`import mfgarchon.backends` leaves `utils.acceleration` in
@@ -44,7 +44,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 # `cwd=REPO` alone does NOT pin which tree a probe imports. For `python -c`, `sys.path[0]` is the
 # current directory and precedes PYTHONPATH -- so cwd wins, until `-P` / `PYTHONSAFEPATH=1` strips
-# it, and `scripts/local_ci.sh:311` sets exactly that (deliberately: xdist workers do not inherit
+# it, and `scripts/local_ci.sh` sets exactly that (deliberately: xdist workers do not inherit
 # `-P`). `subprocess.run` inherits the environment, so under the gate the cwd entry is gone, nothing
 # replaces it, and the probe imports whatever the EDITABLE INSTALL points at. On the canonical
 # checkout the two trees coincide and the gate is honest; in a worktree -- which this repo MANDATES
@@ -309,7 +309,7 @@ def test_the_introspection_helper_still_works():
 
     # The precondition here is UNBOUND, and something else in the suite binds it. Not the dir test
     # above -- that binds `to_tensor`. The binder is
-    # `tests/integration/test_cross_backend_consistency.py:16`, whose module-level
+    # `tests/integration/test_cross_backend_consistency.py`, whose module-level
     # `from mfgarchon.utils.acceleration import ... TORCH_UTILS_AVAILABLE` triggers the PEP 562
     # `__getattr__`, which caches via `globals()[name] = value`. That runs at COLLECTION, so it has
     # already happened in every xdist worker before any test body starts, and then the bare lookup

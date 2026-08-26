@@ -1641,7 +1641,7 @@ class TensorProductGrid(
         from mfgarchon.operators import PartialDerivOperator
 
         # Use caller-supplied BC if provided, otherwise fall back to grid's own BC.
-        # Matches the pattern of get_laplacian_operator (tensor_grid.py:1474).
+        # Matches the pattern of get_laplacian_operator.
         # Issue #1255 (A), 2026-06-10 audit.
         # A caller-supplied BC never met this grid, so its periodic convention is unstated and
         # would wrap the historical way on a grid whose two endpoints are one point. Complete it

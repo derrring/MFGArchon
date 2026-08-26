@@ -256,44 +256,16 @@ class ImplicitApplicator(MeshfreeApplicator):
         # governs", which is the honest answer here. (That the applicator silently flattens a mixed
         # BC at all is a separate, pre-existing defect, filed on its own.)
         #
-        # Two earlier versions of this line, both measured wrong:
+        # Two traps this line has already fallen into, both measured:
         #
-        # ~~`next(s for s in bc.segments if s.value is not None)`~~ [CORRECTED 2026-08-15] --
-        # `BCSegment.value` defaults to `0.0`, not `None`, and nothing in the package passes
-        # `value=None`, so that filter never filtered and the expression was unconditionally
-        # `segments[0]`. Segments sort priority-descending, so the value came from whichever segment
-        # sorted first while `bc_type` came from `_resolve_default_bc` and alpha/beta from
-        # `_robin_alpha_beta`. Three sources, one condition.
-        #
-        # ~~a NEUMANN/NO_FLUX family clause~~ [CORRECTED 2026-08-15] -- it made a NO_FLUX resolution
-        # impose a non-zero flux: `[BCSegment(NEUMANN, value=2.5)]` under `default_bc=NO_FLUX` gave
-        # an implied `du/dn` of 2.5, where NO_FLUX means 0 by definition, and reordering the segments
-        # changed the answer. Its stated justification -- "without that, a NEUMANN segment under
-        # `default_bc=NO_FLUX` falls through to `bc.default_value`" -- described the CORRECT
-        # behaviour as the bug: `default_value` is 0.0 there, which is exactly what NO_FLUX requires.
-        # Review measured that the clause's only support was one case of the test written to justify
-        # it, in the same commit.
-        #
-        # Not `bc.default_value` as the primary source either: it is a plain float and the factory
-        # writes 0.0 into it whenever the value is callable (`conditions.py:929`), so routing
-        # everything through it would fix the scalar case and silently break the callable one this
-        # method exists to serve. Hence the uniform gate rather than a blanket substitution.
-        # NO_FLUX and REFLECTING are definitionally zero-flux: no value they carry can be a normal
-        # derivative. This is an INVARIANT, asserted before any selection, not another rule about
-        # which segment to read -- and that distinction is why it ends the escalation. Three earlier
-        # versions of the selection below were each wrong in a different way, because each still had
-        # a "which segment" degree of freedom to get wrong; a clamp has none.
-        #
-        # The package states this convention in three other places, so leaving it out was cross-path
-        # disagreement rather than a judgement call: `applicator_fdm.py:1149` ("NO_FLUX / REFLECTING,
-        # definitionally zero-flux"), the ghost path's `apply_flux = bc_type == BCType.NEUMANN and
-        # v != 0.0`, and `applicator_meshfree.py`'s NO_FLUX branch, which is `pass`.
-        #
-        # It is not hypothetical: `with_resolved_providers` -- the documented pre-solve step --
-        # turns `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a
-        # number, which without this clamp is imposed as a flux. Measured on a 24-point sphere with
-        # `spacing=0.05`: `uniform_bc(NO_FLUX, value=2.5)` moved the boundary from 3.8 to 3.925,
-        # an implied du/dn of 2.5, where base returned the correct 3.8.
+        # - `s.value is not None` never filters: `BCSegment.value` defaults to `0.0`, not `None`,
+        #   and nothing passes `value=None`. The expression is then unconditionally `segments[0]`,
+        #   whose value comes from whichever segment sorts first while `bc_type` and alpha/beta
+        #   come from two other resolvers -- three sources, one condition.
+        # - A NEUMANN/NO_FLUX family clause makes a NO_FLUX resolution impose a NON-ZERO flux:
+        #   `[BCSegment(NEUMANN, value=2.5)]` under `default_bc=NO_FLUX` gave an implied `du/dn`
+        #   of 2.5, and reordering the segments changed the answer. `default_value` is 0.0 there,
+        #   which is what NO_FLUX requires.
         if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
             return 0.0
 

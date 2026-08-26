@@ -439,7 +439,7 @@ class BaseStructuredApplicator(BaseBCApplicator):
 
         Note:
             This validation is shared across all dimension-specific functions
-            to eliminate duplication. Previously duplicated at applicator_fdm.py:1247.
+            to eliminate duplication.
         """
         if not np.isfinite(field).all():
             raise ValueError("Field contains NaN or Inf values. Check solver convergence and boundary conditions.")
@@ -492,7 +492,7 @@ class BaseStructuredApplicator(BaseBCApplicator):
 
         Note:
             This computation is shared across dimension-specific functions
-            to eliminate duplication. Previously duplicated at applicator_fdm.py:2664.
+            to eliminate duplication.
         """
         domain_bounds = np.atleast_2d(domain_bounds)
         spacing = []

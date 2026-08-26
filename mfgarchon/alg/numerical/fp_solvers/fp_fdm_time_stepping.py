@@ -142,8 +142,7 @@ _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
 # verbatim and bypasses the smoothness dispatch. NOT reachable on the auto-routed coupling path: a
 # non-quadratic-MINIMIZE-separable H makes `fp_drift_coefficient` raise first (#1542), and for the
 # quadratic-MINIMIZE separable class `resolve_fp_drift_kwargs` sends `potential_field=U`, never a
-# velocity. An earlier revision of this comment claimed the coupling path reached it; measurement
-# on both trees says it raises instead.
+# velocity -- measured, the coupling path raises rather than reaching it.
 # This set is the accept-list the guard tests against, and it still tells the driver which schemes
 # leave the scalar coefficient unread.
 _INTERFACE_VELOCITY_SCHEMES = frozenset({"divergence_upwind"})

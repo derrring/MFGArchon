@@ -46,7 +46,7 @@ def _problem_with_source(captured: list, *, kind: str) -> MFGProblem:
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    # source_term_hjb/fp are MFGProblem-level kwargs (mfg_problem.py:568), not MFGComponents fields.
+    # source_term_hjb/fp are MFGProblem-level kwargs (mfg_problem.py), not MFGComponents fields.
     source_kw = {"source_term_hjb": spy} if kind == "hjb" else {"source_term_fp": spy}
     return MFGProblem(geometry=grid, T=0.4, Nt=_NT, sigma=0.3, components=comps, **source_kw)
 

@@ -575,10 +575,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # -------------------------------------------
         # source_term_hjb enters the canonical HJB on the RIGHT-hand side:
         #     -u_t + H(x, m, Du) - (sigma^2/2) Lap u = S_hjb
-        # The residual assembly SUBTRACTS it from H (base_hjb.py: `Phi_U -=
-        # source_term`, lines 728 batch-path and 772 per-point-path; canonical
-        # form + `F(u) = (u - u_next)/dt + H - S = 0` documented at
-        # base_hjb.py:410 and base_hjb.py:437):
+        # The residual assembly SUBTRACTS it from H -- `base_hjb.py`'s
+        # `Phi_U -= source_term`, on both the batch and per-point paths:
         #     F(u) = (u - u_next)/dt - (sigma^2/2) Lap u + H - S_hjb = 0
         # Consequence for the sign a user must pass:
         #   - A POSITIVE source_term_hjb raises the value / cost-to-go u, so it
