@@ -62,11 +62,45 @@ jobs:
         run: |
           LATEST="${{ steps.latest.outputs.version }}"
 
-          # Update .pre-commit-config.yaml
-          sed -i "s/rev: v[0-9.]\+/rev: v$LATEST/" .pre-commit-config.yaml
+          # ANCHORED to the ruff repo (#2123). Unanchored, this rewrote EVERY `rev:` line --
+          # `.pre-commit-config.yaml` also pins `pre-commit/pre-commit-hooks`, and `sed`'s `s///`
+          # applies once PER LINE, not per file. Simulated at LATEST=0.17.0, the old expression set
+          # pre-commit-hooks from v6.0.0 to v0.17.0, a tag that does not exist, so `pre-commit`
+          # could not fetch ANY hook environment and the bot's own PR opened with every hook broken.
+          # It has not fired yet only because it runs on needs_update, and no bot PR has merged
+          # since that second `rev:` line was added.
+          sed -i "/astral-sh\/ruff-pre-commit/,/rev:/ s/rev: v[0-9.]\+/rev: v$LATEST/" .pre-commit-config.yaml
 
-          # Update CI workflow
-          sed -i "s/ruff==[0-9.]\+/ruff==$LATEST/" .github/workflows/modern_quality.yml
+          # The guard, because an anchored expression comes unanchored again in one edit and
+          # nothing downstream notices: a broken pin fails at `pre-commit install-hooks`, in the
+          # bot's PR, and that PR's own status checks stay green because no workflow runs
+          # pre-commit. It lands on main invisibly and then blocks every contributor's push.
+          #
+          # It checks IDENTITY, not a line count. A count of 1 is satisfied by two configurations
+          # that reproduce the original defect with this fix in place -- a ruff block whose `rev:`
+          # precedes its `repo:`, and a ruff block with no `rev:` at all; in both the range lands on
+          # pre-commit-hooks and changes exactly one line. Re-reading the pin the way ci.yml does
+          # rules out both.
+          bumped=$(grep -A1 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
+                   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [ "$bumped" != "$LATEST" ]; then
+            echo "::error::after the bump the ruff pin reads '${bumped:-<unreadable>}', expected '$LATEST'"
+            git diff .pre-commit-config.yaml
+            exit 1
+          fi
+          # and nothing else moved
+          changed=$(git diff --numstat .pre-commit-config.yaml | awk '{print $1}')
+          if [ "${changed:-0}" != "1" ]; then
+            echo "::error::the bump changed ${changed:-0} lines, expected exactly 1"
+            git diff .pre-commit-config.yaml
+            exit 1
+          fi
+
+          # No second pin to update. `modern_quality.yml` was sed'd here for a `ruff==` line that
+          # moved out of it -- that file now says "Ruff formatting and linting (covered by ci.yml
+          # quick-checks)" and contains the string zero times, so the step was a no-op. `ci.yml`
+          # holds no pin either: it READS the version out of `.pre-commit-config.yaml` at runtime
+          # in its `RUFF_VERSION=$(grep ...)` line. One owner, one edit. (#2123)
 
           echo "Updated ruff version to $LATEST"
 
@@ -89,7 +123,6 @@ jobs:
 
           ### Changes
           - Updated `.pre-commit-config.yaml`: `v$CURRENT` → `v$LATEST`
-          - Updated `.github/workflows/modern_quality.yml`: `$CURRENT` → `$LATEST`
           - Applied formatting changes (if any)
 
           ### Review Checklist

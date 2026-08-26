@@ -19,7 +19,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-import requests
+# ONE OWNER for "where the ruff pin is". Three encodings of this lived in this file and disagreed
+# pairwise on shapes that are all valid YAML: `\s+` spans a blank line but not a comment, and the
+# comment-tolerant form written for #2123 spanned a comment but not a blank line -- so widening one
+# reader narrowed it on the other axis, and `get_current_version` would print a version that
+# `update_files` then refused to bump. Both readers use this now. The trailing group is the pin's
+# own indentation and `rev:` key; the caller appends what it wants to do with the value.
+#
+# It cannot run past the ruff block: the repeated group matches only blank or comment lines, so any
+# other key (`hooks:`, the next `- repo:`) ends the match without a `rev:`.
+RUFF_PIN = r"astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*(?:#[^\n]*)?\n)*[^\S\n]*rev:[^\S\n]*"
 
 
 def get_current_version() -> str:
@@ -33,7 +42,7 @@ def get_current_version() -> str:
     content = config_path.read_text()
 
     # Find ruff version
-    match = re.search(r"astral-sh/ruff-pre-commit\s+rev:\s*v([0-9.]+)", content)
+    match = re.search(RUFF_PIN + r"v([0-9.]+)", content)
 
     if not match:
         print("❌ Error: Could not find ruff version in .pre-commit-config.yaml")
@@ -45,6 +54,12 @@ def get_current_version() -> str:
 def get_latest_version() -> str:
     """Get latest ruff version from GitHub API."""
     try:
+        # Imported here, not at module scope: `requests` is in neither pyproject.toml nor
+        # environment.yml (control: scipy is in both), and it reaches this environment only through
+        # conda and Sphinx. A module-scope import made every consumer of this file need a package
+        # nothing declares -- which #2123's own test was the first to notice, by failing collection.
+        import requests
+
         response = requests.get("https://api.github.com/repos/astral-sh/ruff/releases/latest", timeout=10)
         response.raise_for_status()
         version = response.json()["tag_name"].lstrip("v")
@@ -67,30 +82,50 @@ def compare_versions(current: str, latest: str) -> str:
         return "ahead"
 
 
-def update_files(new_version: str) -> None:
-    """Update ruff version in configuration files."""
+def update_files(new_version: str) -> list[str]:
+    """Update ruff version in configuration files. Returns the paths it wrote."""
     files_updated = []
 
     # Update .pre-commit-config.yaml
     config_path = Path(".pre-commit-config.yaml")
     content = config_path.read_text()
-    updated = re.sub(r"(astral-sh/ruff-pre-commit\s+rev:\s*)v[0-9.]+", rf"\1v{new_version}", content)
+    # `RUFF_PIN` rather than `\s+`: a comment between the `repo:` line and its `rev:` is valid
+    # YAML and `\s+` cannot span it, so the substitution silently matched nothing and `main()`
+    # printed "No files needed updating" and exited 0. The workflow's `sed` handles that shape
+    # correctly, so the two bumpers disagreed on it. (#2123)
+    updated = re.sub(f"({RUFF_PIN})v[0-9.]+", rf"\1v{new_version}", content)
 
     if updated != content:
         config_path.write_text(updated)
         files_updated.append(".pre-commit-config.yaml")
 
-    # Update .github/workflows/modern_quality.yml
-    workflow_path = Path(".github/workflows/modern_quality.yml")
+    # Postcondition. NOT "main() only calls this when the versions differ" -- `--force` does not
+    # compare, it calls straight through, so `--force 0.16.0` on a config already at 0.16.0
+    # legitimately writes nothing. What makes this sound is that it checks the resulting VALUE of
+    # the pin, not whether a write happened: already-current passes, matched-nothing raises. Reads
+    # the pin back the way ci.yml does.
+    # Split on the repo boundary first: a forward search for `rev:` runs into the NEXT block and
+    # reports that block's version, which is a misleading error rather than a wrong verdict.
+    # Anchored to a line start, so a COMMENT mentioning a version -- `# was rev: v9.9.9 before
+    # #2050` -- cannot shadow the real pin. Unanchored, this read the comment's version and denied
+    # a bump that had in fact landed correctly. It is deliberately NOT `RUFF_PIN`: this runs on the
+    # already-split block and wants the pin's own line, not the route from the repo URL to it.
+    blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
+    ruff_block = next((b for b in blocks if "astral-sh/ruff-pre-commit" in b), "")
+    check = re.search(r"^[^\S\n]*rev:[^\S\n]*v([0-9.]+)", ruff_block, flags=re.M)
+    if check is None or check.group(1) != new_version:
+        got = f"v{check.group(1)}" if check else "no `rev:` at all"
+        raise RuntimeError(
+            f"after asking for v{new_version} the ruff block has {got}; the bump matched nothing. "
+            f"Check the shape of the ruff block in {config_path}."
+        )
 
-    if workflow_path.exists():
-        content = workflow_path.read_text()
-        updated = re.sub(r"ruff==[0-9.]+", f"ruff=={new_version}", content)
-
-        if updated != content:
-            workflow_path.write_text(updated)
-            files_updated.append(".github/workflows/modern_quality.yml")
-
+    # #2123: there is no second pin. This used to rewrite a `ruff==` line in
+    # `modern_quality.yml`; that line moved out, the file now says "Ruff formatting and linting
+    # (covered by ci.yml quick-checks)" and contains `ruff==` zero times, and `ci.yml` holds no pin
+    # either -- ci.yml's quick-checks job READS the version out of `.pre-commit-config.yaml` at
+    # runtime, in its `RUFF_VERSION=$(grep ...)` line.
+    # A bumper that touches more than the one owner is how the owner stops being one.
     return files_updated
 
 
@@ -174,6 +209,8 @@ def main():
             if args.update:
                 # Fetch release notes
                 try:
+                    import requests  # lazy, see get_latest_version
+
                     response = requests.get(
                         f"https://api.github.com/repos/astral-sh/ruff/releases/tags/v{latest}",
                         timeout=10,
