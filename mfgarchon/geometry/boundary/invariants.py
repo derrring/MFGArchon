@@ -65,10 +65,23 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     node's two half-weights sum to one full weight, so it equals the rectangle rule over the
     N-1 distinct nodes exactly when the seam is closed.
 
-    It is also the right quadrature on a WALLED endpoint-inclusive grid, for a different reason:
-    there is no seam, and the two end nodes carry half a cell each. ``sum(m)*dx`` over-counts them
-    by ``dx*(m[0]+m[-1])/2`` -- 3.5% on the no-flux fixture in
-    ``test_fp_matrix_conservation.py``, before any evolution.
+    On a WALLED endpoint-inclusive grid it is right for a different reason: there is no seam, and
+    the two end nodes carry half a cell each. ``sum(m)*dx`` over-counts them by
+    ``dx*(m[0]+m[-1])/2`` -- 3.5% on the no-flux fixture in ``test_fp_matrix_conservation.py``,
+    before any evolution.
+
+    THE WALLED CASE IS NOT UNCONDITIONAL, and this function cannot detect the exception. The
+    ``h/2`` endpoint weight assumes ``m`` is resolvable between nodes. A density that concentrates
+    AT a wall violates that, and the rule then halves the answer instead of approximating it:
+    under pure inflow drift with no diffusion the exact solution is a Dirac at the wall carrying
+    all the mass, the discrete state becomes a single spike on node 0, and this returns 0.5 for a
+    problem that conserves 1. ``sum(m)*dx`` returns 1 there, but only by giving node 0 a full cell
+    reaching to ``-h/2``, outside the declared bounds; the finite-volume half-cell reading also
+    gives 0.5. **No quadrature on this grid is trustworthy for a boundary-concentrated measure** --
+    what control volume the endpoint node owns is an open question, not a settled convention.
+
+    So: use this where the density is resolved at the wall, which is every diffusive case. Where a
+    wall-concentrated state is the point of the test, report the state, not a single mass number.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
