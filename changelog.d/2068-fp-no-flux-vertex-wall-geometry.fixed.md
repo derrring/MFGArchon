@@ -34,7 +34,7 @@
   survived elsewhere. Instead: the two centrings discretise the same continuous condition, so their
   leading correction in `dx` must agree — measured 0.99375 for the corrected branch against
   **2.01266** for the retired one at `dx = 3.125e−3`, the factor of two being exactly the "diffusive
-  flux is twice what the condition requires" the issue found. Reverting the branch turns five tests
+  flux is twice what the condition requires" the issue found. Reverting the branch turns six tests
   red; the `drift = 0` case survives, correctly, because every form returns `rho_interior` there.
 
   **The correction does not make the two centrings equivalent, and the fragment says so rather than

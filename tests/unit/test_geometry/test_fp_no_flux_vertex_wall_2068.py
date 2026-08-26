@@ -6,13 +6,23 @@ interior node, which is why `ghost_cell_dirichlet` returns `g` there unmodified 
 `ghost_cell_neumann` uses separation `dx` on both centrings (#1972). So the branch satisfied its own
 stencil to machine zero while leaving a total flux that did not converge.
 
-The tests below are deliberately NOT the defining equation rearranged -- asserting
-`v_n*rho_i == D*(rho_g - rho_i)/dx` would restate the fix. Two independent properties instead:
+The tests below are deliberately NOT the defining equation rearranged. The first version of this
+file was: it asserted `v_n*rho_i == D*(rho_g - rho_i)/dx`, the implemented formula moved across the
+equals sign, identically zero at every `dx`. Three properties replace it, plus a control:
 
 - the two centrings discretise the SAME continuous condition, so their leading correction in `dx`
   must agree. The old form's was exactly twice the cell-centred one, which is the "diffusive flux
   is exactly twice what the condition requires" the issue measured.
-- the flux residual must converge under refinement. The old form's froze at `-v_x*rho`.
+- the ghost stays within the O(z^2) truncation bound of the exact profile
+  `rho(s) = rho(wall)*exp(v_n*s/D)`, and converges to it at rate 2 -- with the cell arm's rate 3 as
+  the control that the two have not been collapsed into one formula. That profile is an oracle
+  rather than a restatement: nothing in this module produces it.
+- the ghost stays BOUNDED across the retired form's pole at `dx = D/v_n`, where that form gives
+  +499 / -501.
+
+Every one of them admits a form strictly more accurate than the fix -- the exact `exp(z)` and the
+Pade `(1+z/2)/(1-z/2)` pass all of them. That is what this file failed to do the first time, and it
+is why none is written as an equality against the shipped values.
 
 `v = 0` is the non-discriminating input: every form here returns `rho_interior` there, so the
 `drift=0` case below is a control on the harness, not evidence about the geometry.
@@ -58,9 +68,10 @@ def test_the_vertex_ghost_stays_within_the_truncation_bound_of_the_exact_profile
 
     which is the implemented formula rearranged: substitute `rho_g = rho_i*(D + v_n*dx)/D` and it
     is identically zero in exact arithmetic, at every `dx`, including `dx = 1e6`. It measured
-    floating-point associativity. Worse, it REJECTED the exact ghost `rho_i*exp(z)` (residual
-    -3.8e-01) and rejected the strictly more accurate Pade form -- so it was a characterization
-    test pinning `1 + z` while its own docstring disclaimed being one.
+    floating-point associativity. Worse, it REJECTED the exact ghost `rho_i*exp(z)` -- residual
+    -0.1148, -0.0535, -0.0259, -0.0127, -0.0063 over that loop, against a 1e-12 tolerance -- and
+    rejected the strictly more accurate Pade form. It was a characterization test pinning `1 + z`
+    while its own docstring disclaimed being one.
 
     The oracle is the exact zero-flux profile, which no discretisation in this module produces:
     `rho(s) = rho(wall)*exp(v_n*s/D)` along the outward normal, so the exact ghost one step out is
@@ -91,8 +102,10 @@ def test_the_ghost_stays_bounded_across_the_retired_forms_pole():
     `-501.0` at `dx = 0.251`.
 
     The assertion is a BOUND, not the fix's exact values, so it does not punish a better formula.
-    Across the same window the corrected `1 + z` gives at most 2.0, the exact `exp(z)` 2.72 and the
-    Pade form 2.99; only the retired one leaves the bound, by two orders.
+    Over the asserted window the corrected `1 + z` peaks at 2.20, the exact `exp(z)` at 3.32 and
+    the Pade form at 4.00, all at the widest `dx`; only the retired one leaves the bound, by two
+    orders. (An earlier revision quoted 2.0 / 2.72 / 2.99 as maxima -- those are the values AT the
+    pole, not over the window.)
 
     NOT asserted, deliberately: that the corrected form goes negative under strong INWARD drift at
     `z < -1`. It does -- `z = -4` gives `-3.0` where the exact profile gives `0.0183` -- and an
