@@ -52,11 +52,20 @@
   reviews. `test_a_neumann_wall_reproduces_a_linear_field_exactly` feeds `u = slope*x` at three
   slopes and asserts the ghost continues it exactly.
 
-  Verified at full-suite scope against three mutations. Reading `g` as `du/dx` turns 3 red;
-  reverting to the verbatim pre-#2067 code turns **4** red, the fourth being
-  `test_hjb_fdm_solver.py::test_get_ghost_values_nd_neumann` in another file; `slope = 0.0` survives
-  both, which is the non-discriminating input the test's docstring names. It does not survive
+  Verified at full-suite scope, and the counts below are against the test set this PR **ships**, not
+  the one it started from — an earlier draft quoted 3 and 4, measured before the mixed-face test
+  below existed. Reading `g` as `du/dx` in both branches turns **5** red; reverting the paired
+  branch to the verbatim pre-#2067 arithmetic turns **4**, one of them
+  `test_hjb_fdm_solver.py::test_get_ghost_values_nd_neumann` in another file. `slope = 0.0` survives
+  both, which is the non-discriminating input the test's docstring names, and it does not survive
   everything — replacing the branch body outright kills it too.
+
+  **What the linear oracle cannot separate, stated rather than left to be found:** the `2·dx`
+  **vertex mirror** `u_neighbor + 2·dx·g` reproduces a linear field exactly as well, so it reddens
+  neither oracle test. Two characterization rows separate it — the `neumann` row here and
+  `test_get_ghost_values_nd_neumann` in `test_hjb_fdm_solver.py`, which does it at `g = 0` where
+  `u_next ≠ u_int` — and that is measured, not assumed: the vertex-mirror mutation reddens exactly
+  those two.
 
   **`_compute_single_ghost`'s Neumann branch had zero discrimination and now has a pin.** Replacing
   its whole body with a constant turned nothing red in 6610 tests: the only test executing that line
@@ -71,5 +80,9 @@
 
   `get_ghost_values_nd` stays deprecated with its declared v0.25.0 removal (#1955); this makes it
   satisfy the deprecation policy's first clause — the old API calls the new one internally — which
-  it did not. **#2068 is the same divergence one function over**, in `ghost_cell_fp_no_flux`'s
+  it did not. **Clause 2, the `old == new` equivalence test, is discharged by construction rather
+  than owed**: from this change `_compat` calls `ghost_cell_neumann` directly and
+  `pad_array_with_ghosts` reaches the same function through `NeumannCalculator`, so any such test
+  compares an owner to itself and nothing can redden it. That is the objection this file's own
+  header already raises for the Robin path. **#2068 is the same divergence one function over**, in `ghost_cell_fp_no_flux`'s
   vertex-centred branch, and is not touched here.
