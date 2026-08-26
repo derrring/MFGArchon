@@ -151,7 +151,9 @@ def test_a_robin_condition_without_coefficients_refuses():
     ("name", "factory", "expected"),
     [
         ("dirichlet", lambda: dirichlet_bc(dimension=1, value=2.5), (2.5, -1.6)),
-        ("neumann", lambda: neumann_bc(dimension=1, value=0.7), (2.75, 5.55)),
+        # #2067: was (2.75, 5.55), the retired `u[1] - 2*dx*g` / `u[-2] + 2*dx*g` form. The
+        # branch now delegates to `ghost_cell_neumann`, so both walls read `u_int + dx*g`.
+        ("neumann", lambda: neumann_bc(dimension=1, value=0.7), (2.675, 6.775)),
         ("periodic", lambda: periodic_bc(dimension=1), (6.6, 2.5)),
     ],
 )
@@ -164,3 +166,33 @@ def test_the_other_members_are_byte_identical(name, factory, expected):
 
     assert _scalar(ghosts[(0, 0)]) == pytest.approx(expected[0])
     assert _scalar(ghosts[(0, 1)]) == pytest.approx(expected[1])
+
+
+@pytest.mark.parametrize("slope", [3.0, -1.7, 0.0])
+def test_a_neumann_wall_reproduces_a_linear_field_exactly(slope):
+    """#2067: an EXTERNAL oracle, because agreement with `ghost_cell_neumann` is now tautological.
+
+    The branch used to restate its own arithmetic in the expectation, which is what let it hold a
+    retired convention through two reviews. A linear field is the oracle any first-order ghost rule
+    must reproduce exactly, and it discriminates BOTH things that were wrong:
+
+    - the convention. `du/dn` at the low wall of `u = slope*x` is `-slope`; the old branch read `g`
+      as `du/dx` and applied it with opposite signs, so feeding `du/dn` inverted the low wall.
+    - the separation. The old form measured across `2*dx` from the SECOND interior cell, so it
+      disagreed with the owner even at `g = 0` -- 0.3 on `u = 3x`, 0.588 on `u = sin(2*pi*x)`.
+      Only a constant field agreed, which is why the `slope = 0` case below cannot carry this
+      test on its own and the other two are not decoration.
+    """
+    dx = 0.25
+    x = np.arange(5) * dx
+    u = slope * x
+    for wall, index, dudn in ((0, 0, -slope), (1, -1, +slope)):
+        bc = neumann_bc(dimension=1, value=dudn)
+        bc.domain_bounds = _BOUNDS
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ghosts = get_ghost_values_nd(u, bc, (dx,))
+        exact = slope * (x[index] - dx if wall == 0 else x[index] + dx)
+        assert _scalar(ghosts[(0, wall)]) == pytest.approx(exact, abs=1e-12), (
+            f"wall {wall}: ghost must continue u = {slope}*x exactly"
+        )
