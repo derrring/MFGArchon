@@ -109,8 +109,29 @@ def ghost_cell_neumann(
     # it converted du/dn to du/dx so the formula could convert back, and the round trip is where
     # the sign errors lived.
     #
-    # Verified exact on 12 combinations (2 centrings x 2 walls x slopes 3, -1.7, 0) against
-    # `u = a*x`, which any first-order ghost rule reproduces exactly; O(h^2) on `u = x^2`.
+    # EVIDENCE, and what it does not establish (#2129). The 12-combination check against `u = a*x`
+    # -- 2 centrings x 2 walls x slopes 3, -1.7, 0 -- is exact, and it CANNOT discriminate this form
+    # from the `2*dx` mirror `u_next -/+ 2*dx*(du/dx)` it replaced: on a linear field the two are
+    # byte-identical at both centrings and both walls, all six pairs. A rule that reproduces a
+    # linear field exactly is the weakest thing a first-order ghost can do, so passing it separates
+    # nothing.
+    #
+    # What discriminates is the derivative the CONSUMING stencil then computes. The consumer here
+    # is a centred difference (`operators/stencils/finite_difference.py:95`, `:344`). Measured on
+    # `u = sin x + 0.3x^2` with `du/dn` prescribed at the wall, error in `u'` at the wall:
+    #
+    #     cell-centred     0.0 at every dx        EXACT -- the centred difference across ghost and
+    #                                             interior is centred on the wall itself
+    #     vertex-centred   rate 0.96, 0.98, 0.99  O(dx) -- that difference spans 2*dx around the
+    #                                             wall NODE, and the `2*dx` mirror is exact there
+    #
+    # So this formula is exact at cell centring and first order at vertex centring, and the mirror
+    # is the reverse. One formula is kept anyway, for a reason that is a fact about this package and
+    # not about the mathematics: `VERTEX_CENTERED` appears ZERO times in `alg/` and `solvers/`, so
+    # no scheme here reaches the vertex arm, while the cell arm is on every live path. Two formulas
+    # would be two owners and a `grid_type` argument on a function that currently needs neither, to
+    # serve a configuration nothing requests. If a vertex-grid scheme ever lands, this is the line
+    # to revisit and #2129 is the measurement to start from -- not the linear-field check above.
     return interior_value + dx * flux_value
 
 
@@ -297,7 +318,9 @@ def high_order_ghost_neumann(
 
            max wall (defect 1 present)   rate 1.04, 1.02, 1.01     -> O(h)
            min wall (defect 1 absent)    rate 1.94, 1.98, 1.99     -> O(h^2), defect 2 alone
-           `ghost_cell_neumann`          rate 3.00, 3.00, 3.00     -> O(h^3)
+           `ghost_cell_neumann`          rate 3.00, 3.00, 3.00     -> O(h^3)   [CELL-CENTRED;
+                                         the vertex arm is O(h^2) as a ghost value and O(h) in the
+                                         derivative a centred stencil takes from it -- #2129]
 
        So it is worse than the rule it was written to improve on at BOTH walls, and a derivative
        built from the max-wall ghost is O(1) wrong.
