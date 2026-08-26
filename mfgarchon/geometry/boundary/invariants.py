@@ -68,20 +68,29 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2`` -- true of the weights, but which
     quadrature is the mass there depends on the state, below.
 
-    WHAT THIS RETURNS WHEN THE SCHEME CONSERVES THE RECTANGLE SUM. Write the endpoint share
-    ``s = dx*(m[0]+m[-1])/2 / (sum(m)*dx)``. Then ``trapezoid == (sum(m)*dx) * (1 - s)``
+    WHAT THIS RETURNS WHEN THE SCHEME CONSERVES THE RECTANGLE SUM, ON A UNIFORM GRID. Write the
+    endpoint share ``s = dx*(m[0]+m[-1])/2 / (sum(m)*dx)``. Then ``trapezoid == (sum(m)*dx)*(1-s)``
     identically, so when ``sum(m)*dx`` is held fixed this returns exactly
     ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint share, and nothing else.
 
-    CHECK THAT CONDITION RATHER THAN ASSUMING IT. It is one line -- ``M.sum(axis=1)*dx`` at the
-    first and last rows -- and no scheme name substitutes for it. Measured on the no-flux wall,
-    which is four walls dispatched by ``advection_scheme``:
+    That arithmetic, and the one-line check below, need a single ``dx``. This package builds grids
+    that have none -- ``TensorProductGrid(spacing_type="custom", ...)`` is endpoint-inclusive with
+    ``is_uniform=False`` and ``spacing=None``. There the identity fails outright (gap 0.88 on
+    ``x**1.5``, 0.9998 on ``x**3``). THE FUNCTION IS STILL RIGHT THERE: it takes ``x`` rather than
+    ``dx`` and ``np.trapezoid`` integrates a non-uniform grid, verified 0.000e+00 on both. Only the
+    explanation and the shortcut are uniform-grid statements.
 
-    - ``divergence_*`` holds it to 1e-15 under a SCALAR sigma at any drift, 1-D and 2-D, and loses
-      it under a spatially varying ``volatility_field``: 4.3e-02 on a 0.05|0.40 step, scaling
-      smoothly with the variation, machine-zero for a constant ARRAY -- so it is the variation and
-      not the array (#1183).
-    - ``gradient_*`` holds the trapezoid instead, AT ZERO DRIFT ONLY, where this returns 1e-14
+    CHECK THAT CONDITION RATHER THAN ASSUMING IT. On a uniform grid it is one line --
+    ``M.sum(axis=1)*dx`` at the first and last rows -- and no scheme name substitutes for it.
+    Measured on the no-flux wall, which is four walls dispatched by ``advection_scheme``:
+
+    - A spatially varying ``volatility_field`` breaks the rectangle sum for ALL FOUR: 4.3e-02
+      (``divergence_*``) and 4.5e-02 (``gradient_*``) on a 0.05|0.40 step, scaling smoothly with
+      the variation and machine-zero for a constant ARRAY, so it is the variation and not the
+      array (#1183). It costs ``gradient_*`` the trapezoid too, 4.4e-02.
+    - Under a SCALAR sigma the families differ. ``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
+      any drift, measured to cell Peclet 87, in 1-D and 2-D.
+    - ``gradient_*`` holds the trapezoid instead, and only at zero drift, where this returns 1e-14
       while the share moves 6e-03. Under wall-normal drift it holds neither, and
       ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet
       0.19, -99.97% at 0.89 (#2007).
