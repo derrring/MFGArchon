@@ -249,7 +249,7 @@ class TestFPParticleSolverSolveFPSystem:
         solver.solve_fp_system(m_initial, U_solution)
 
         assert solver.current_strategy is not None  # After solve
-        # The dispatch outcome is what the caller branches on (fp_particle.py:1542,
+        # The dispatch outcome is what the caller branches on (fp_particle.py,
         # `if self.current_strategy.name == "cpu"`), and the numpy backend must select the CPU
         # strategy. Measured: "cpu" on every run. Also drops the hasattr duck-typing check.
         assert solver.current_strategy.name == "cpu"
@@ -409,7 +409,7 @@ class TestFPParticleSolverIntegration:
         The data has to be able to separate the branches: with a uniform m_initial and U = 0 there
         is no transport at all, so wrap and reflect produce the same density and the loop is
         decorative. Mass starts at the right wall and is pushed further right, so the two BCs must
-        disagree about where it ends up (fp_particle.py:125, "reflecting ... wrap (periodic)").
+        disagree about where it ends up (fp_particle.py, "reflecting ... wrap (periodic)").
         """
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())

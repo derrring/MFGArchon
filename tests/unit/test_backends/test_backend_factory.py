@@ -152,7 +152,7 @@ class TestCreateBackend:
 
         `torch_backend.py` imports fine without torch -- it degrades to `TORCH_AVAILABLE =
         False` -- so the error a real user sees comes from the constructor
-        (`torch_backend.py:109`). Clearing the flag is what reproduces that path.
+        (`torch_backend.py`). Clearing the flag is what reproduces that path.
 
         ~~`backends/__init__.py` registers "torch" into `_BACKENDS` whether or not torch
         exists, so the `if backend_name not in _BACKENDS` branch is unreachable for torch~~
@@ -174,7 +174,7 @@ class TestCreateBackend:
         """A machine without JAX gets JAXBackend's own diagnostic.
 
         Same shape as the torch case: `jax_backend.py` imports without JAX, so the constructor
-        raises (`jax_backend.py:66`). ~~so "jax" is always registered~~ [CORRECTED 2026-08-14]
+        raises (`jax_backend.py`). ~~so "jax" is always registered~~ [CORRECTED 2026-08-14]
         -- jax is registered on demand since #1930, so this test registers it and needs the
         cleanup fixture.
         """
@@ -322,7 +322,7 @@ class TestBackendInitialization:
         repo = Path(__file__).resolve().parents[3]
         # `cwd=repo` does not pin the tree. For `python -c`, `sys.path[0]` is the current directory
         # and precedes PYTHONPATH -- so cwd wins, until `-P` / `PYTHONSAFEPATH=1` strips it, which
-        # is exactly what `scripts/local_ci.sh:311` sets and what `subprocess.run` inherits. Under
+        # is exactly what `scripts/local_ci.sh` sets and what `subprocess.run` inherits. Under
         # the gate the cwd entry is gone, nothing replaces it, and this probe measures the EDITABLE
         # INSTALL instead of the tree under test -- silently identical on the canonical checkout,
         # wrong in the worktree this repo mandates for pre-merge review. So: put the tree back on

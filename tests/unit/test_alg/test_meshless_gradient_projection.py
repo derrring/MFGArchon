@@ -31,7 +31,7 @@ def _disc(d: int, n_per: int):
 
 
 def _nodal_gradient_operators(disc):
-    """Mirror the solver: G_d = M_lumped^{-1} R_d (weak_form_hjb_solver.py:90)."""
+    """Mirror the solver: G_d = M_lumped^{-1} R_d (weak_form_hjb_solver.py)."""
     m_lumped_inv = 1.0 / disc.mass().toarray().sum(axis=1)
     return [m_lumped_inv[:, None] * r.toarray() for r in disc.gradient_projection()]
 

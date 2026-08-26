@@ -62,10 +62,9 @@ Robin (alpha*u + beta*du/dn = g at boundary):
     The only text in the repo naming this factor as stale was a `test_robin` docstring, and #2057
     deleted that test along with the orphaned method it covered -- so the correction and its only
     signpost went in the same change. The correcting work is #1350, "fix Robin ghost-cell expected
-    formula, remove xfail", with the production change at `0ae5515a`. (That docstring wrote
-    "Refs #1237", and an earlier revision of THIS comment copied it: #1237 is the FEM weak-form
-    Robin/Periodic issue and says nothing about an FDM ghost factor. #1350 references it, which is
-    how the citation drifted.)
+    formula, remove xfail", with the production change at `0ae5515a`. (Do not cite #1237 for this: it is the FEM
+    weak-form Robin/Periodic issue and says nothing about an FDM ghost factor. #1350 references it,
+    which is how that citation spreads.)
 
 Corner Handling (Issue #521):
 -----------------------------

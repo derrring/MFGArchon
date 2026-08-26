@@ -15,7 +15,7 @@ Two defects in the same loop, in two copies of it:
 `(2·1-1)·dx = dx`. Every caller in the library passes 1 or omits it, which is why a suite of 6147
 was green with both present.
 
-~~The one production consumer at depth 3 is `hjb_weno.py:330`, whose `_SUPPORTED_BC_TYPES` is
+~~The one production consumer at depth 3 is `hjb_weno.py`, whose `_SUPPORTED_BC_TYPES` is
 `{NEUMANN, NO_FLUX, PERIODIC}` — exactly the family defect 1 hits.~~ [CORRECTED] The supported set
 is right and the depth is right, but the routing is not: at depth 3 a *uniform* BC does not enter
 the repaired loop at all. Instrumented call counts through a real `HJBWenoSolver`, depth 3,
@@ -30,8 +30,8 @@ order 5:
 
 So the reached path is `_apply_poly_extrapolation`, which `self._order` selects and
 `_update_ghosts_mixed` ignores. The repaired loop is reachable only per-face, and both in-repo
-per-face HJB constructors — `geometry/boundary/bc_coupling.py:65` (deprecated) and
-`alg/numerical/adjoint/bc_coupling.py:178` — emit `ROBIN`, which WENO refuses. **Reachable but
+per-face HJB constructors — `geometry/boundary/bc_coupling.py` (deprecated) and
+`alg/numerical/adjoint/bc_coupling.py` — emit `ROBIN`, which WENO refuses. **Reachable but
 not currently reached**, which is a weaker claim than the struck sentence and is the true one.
 
 **The oracle is an exact continuation, not another code path.** `cos(2πx)` is even about both

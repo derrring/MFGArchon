@@ -1147,7 +1147,7 @@ def robin_bc(
       checked at construction (#1977).
     - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case only.
     - **Every grid FP solver refuses ROBIN at construction** (``_validate_bc_support``, #1456,
-      raising from ``base_solver.py:324``), uniform and mixed alike. The refusal is load-bearing:
+      raising from ``BaseMFGSolver``), uniform and mixed alike. The refusal is load-bearing:
       the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of
       ``alpha``/``beta``/``value``. Below the gate -- calling ``solve_timestep_full_nd`` directly,
       or mutating ``solver.boundary_conditions`` after construction (#1699) -- a ROBIN segment is
@@ -1204,8 +1204,8 @@ def robin_bc(
     rejects MAXIMIZE.
 
     For contrast, the ``gradient_*`` family imposes ``d_n m = 0`` by hard-coding the mirrored ghost
-    ``m_{N+1} = m_{N-1}`` (``fp_fdm_alg_gradient_upwind.py:318``,
-    ``fp_fdm_alg_gradient_centered.py:243``) and is non-conservative by design (#1075). How much it
+    ``m_{N+1} = m_{N-1}`` (``add_boundary_no_flux_entries_gradient_upwind``,
+    and its ``_centered`` twin) and is non-conservative by design (#1075). How much it
     leaks is a property of the configuration, not of the family -- at sigma=0.3, 81 points on
     [0,1], dt=1e-3, Gaussian initial density of width s0 at 0.5, potential channel:
 

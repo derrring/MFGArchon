@@ -4,17 +4,17 @@ The inversion is what creates the cycle that blocks decoupling, and that is why 
 
 ~~Every heavy package enters through one line~~ and ~~`import mfgarchon` is 4.89s~~ [RETRACTED
 2026-08-14, see #1930] — both were refuted by measurement after this file was written. It is not
-a single entry point: with that line cut, torch arrives through `utils/__init__.py:92` →
-`utils/geometry.py:30` instead of `:30` → `adjoint_validation.py:55`. `utils/__init__.py` is an
+a single entry point: with that line cut, torch arrives through `utils/__init__.py` →
+`utils/geometry.py` instead of `:30` → `adjoint_validation.py`. `utils/__init__.py` is an
 18-import, 106-name re-export hub, so cutting edges one at a time is a treadmill — all three
 planned cuts applied together moved the total 4.31s → 4.62s, which is to say not at all.
 
-~~torch arrives via `utils/data/polars_integration.py:27`~~ [CORRECTED 2026-08-14] — that named
+~~torch arrives via `utils/data/polars_integration.py`~~ [CORRECTED 2026-08-14] — that named
 the wrong witness. The probe watched `find_spec("torch")`, and polars PROBES for torch for its
 `to_torch()` interop without importing it; `import polars` alone leaves `torch` out of
 `sys.modules`. Re-measured by intercepting the module's actual execution: both routes converge
-on the same leaf, `nonlinear_solvers.py:45` → `utils/acceleration/__init__.py:68` →
-`torch_utils.py:16`. That convergence is the more useful fact and neither the original analysis
+on the same leaf, `nonlinear_solvers.py` → `utils/acceleration/__init__.py` →
+`torch_utils.py`. That convergence is the more useful fact and neither the original analysis
 nor its first correction had it. The absolute figure is a property of
 one process anyway (4.89s here, 6.37s cold and 4.04s warm elsewhere); what reproduces is the
 decomposition, roughly half third-party and half the library importing itself.
@@ -64,7 +64,7 @@ UTILS = REPO / "mfgarchon" / "utils"
 # wrong: a bound cannot tell "an edge was removed" from "the scanner stopped seeing edges", and
 # this file had two live ways to stop seeing them (a module-level `try/except`, and a relative
 # import -- both now fixed, both silently under a `<=`). It is also the house convention, for a
-# recorded reason: `scripts/check_single_source.py:47` records a change "which removes nothing"
+# recorded reason: `scripts/check_single_source.py` records a change "which removes nothing"
 # dropping a count 6 -> 0 and printing SHRANK.
 EXPECTED_MODULE_LEVEL = 1
 
@@ -398,7 +398,7 @@ def test_the_hub_can_be_deferred_without_a_circular_import():
         tree = Path(tmp) / "tree"
         shutil.copytree(REPO / "mfgarchon", tree / "mfgarchon", ignore=shutil.ignore_patterns("__pycache__"))
         (tree / "mfgarchon" / "utils" / "__init__.py").write_text(source.replace(match.group(0), lazy, 1))
-        # `PYTHONPATH` and an explicit `sys.path` insert, not cwd: `local_ci.sh:311` runs pytest
+        # `PYTHONPATH` and an explicit `sys.path` insert, not cwd: `local_ci.sh` runs pytest
         # under `PYTHONSAFEPATH=1`, which drops cwd from `sys.path` -- and the subprocess then
         # resolved `mfgarchon` from the EDITABLE INSTALL, which imports fine, so this test passed
         # over a tree it never read. Measured: back-edge restored + PYTHONSAFEPATH=1 -> 1 passed,

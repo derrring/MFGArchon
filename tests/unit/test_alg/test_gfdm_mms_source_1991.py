@@ -2,7 +2,7 @@
 
 MMS is the only *external* oracle in this library -- every other check compares one code path
 against another -- and its forcing enters through `source_term`. `HJBGFDMSolver` did not accept
-that argument, so the capability gate at `coupling/base_mfg.py:215` rejected it with "Use an FDM
+that argument, so the capability gate at `coupling/base_mfg.py` rejected it with "Use an FDM
 HJB solver", while GFDM in fact had the channel all along under the name `running_cost`. The gate
 keys on a parameter NAME, so it was measuring a proxy for the capability it was asked about.
 
@@ -31,7 +31,7 @@ so it is evidence only with them). State the path, because it does not generaliz
 builds its running-cost closure from `getattr(H_class, "_potential")` / `"_coupling"`, which are
 `SeparableHamiltonian` internals, so the same subclass is dropped **bitwise** there -- 0.000e+00,
 against 2.000e-01 for a `SeparableHamiltonian` potential as a positive control on the same path.
-That hole is pre-existing and is #2011. `source_term` reaches the SAME closure -- `hjb_gfdm.py:3373`
+That hole is pre-existing and is #2011. `source_term` reaches the SAME closure -- `hjb_gfdm.py`
 is `if has_H_extra or mms_src is not None`, which is what #1991 added -- so Howard is not without an
 additive channel; `running_cost=` was the only route for MODEL DATA, since `source_term`'s contract
 bars depending on `m`. Closing #2011 is what makes this removal costless on Howard for the
@@ -123,7 +123,7 @@ def test_gfdm_accepts_the_package_wide_source_argument():
     import inspect
 
     params = set(inspect.signature(HJBGFDMSolver.solve_hjb_system).parameters)
-    assert "source_term" in params, "the capability gate at base_mfg.py:215 tests for this name"
+    assert "source_term" in params, "the capability gate at base_mfg.py tests for this name"
     # Issue #1999: and there is no second additive channel beside it. The alpha-independent part
     # of the Lagrangian -- V(x,t) + f(m) -- is the Hamiltonian's, and a `running_cost=` parameter
     # could only carry the same quantity a second time: supplied alongside a Hamiltonian that
@@ -160,7 +160,7 @@ def test_the_howard_inner_solver_also_honours_the_source():
 
     `_mms_source_fn` was read only in the Newton branch, so this configuration accepted
     `source_term` and discarded it bitwise -- measured, |U(source) - U(no source)| = 0.000e+00
-    at two resolutions. Since the gate at `coupling/base_mfg.py:215` keys on the parameter
+    at two resolutions. Since the gate at `coupling/base_mfg.py` keys on the parameter
     NAME, accepting the name while dropping the argument turns that gate's false negative into
     a false positive: it would certify GFDM as source-capable in a configuration that silently
     solves the wrong problem, which is precisely what #1424 exists to prevent.

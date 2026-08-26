@@ -88,7 +88,7 @@ class TestDiagonalTensorEqualsScalar:
         #
         # Note which weight lands on which axis: sigma_x = 0.2 is the tensor's FIRST index but it
         # multiplies the Laplacian along ARRAY AXIS 1, because _tensor_diffusion_2d unpacks
-        # `Ny, Nx = u.shape` (tensor_calculus.py:1029). The nD branch (tensor_calculus.py:1100
+        # `Ny, Nx = u.shape` (tensor_calculus.py). The nD branch (tensor_calculus.py
         # onward) uses the opposite convention -- tensor axis i acts on array axis i.
         lap_axis0 = (np.roll(m, -1, axis=0) - 2 * m + np.roll(m, 1, axis=0)) / dx**2
         lap_axis1 = (np.roll(m, -1, axis=1) - 2 * m + np.roll(m, 1, axis=1)) / dy**2
@@ -126,7 +126,7 @@ class TestAnisotropic2D:
         # tensor's FIRST index addresses the SECOND array axis. With meshgrid(indexing="ij"),
         # u = X**2 varies along array axis 0 and yields 2*D[1,1], not 2*D[0,0].
         # This is the OPPOSITE of the nD branch (see TestNDDispatcher.test_3d_tensor_diffusion,
-        # where tensor axis i acts on array axis i). tensor_calculus.py:1029 vs 1100.
+        # where tensor axis i acts on array axis i). tensor_calculus.py's two branches.
         x = np.linspace(0, 1, 16)
         X, Y = np.meshgrid(x, x, indexing="ij")
         hx = x[1] - x[0]

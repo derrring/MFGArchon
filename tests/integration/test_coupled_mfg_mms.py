@@ -39,22 +39,23 @@ to a (wrong) self-consistent fixed point and mass is still conserved.
 
 VERIFIED CONVENTIONS (working tree, not memory)
 -----------------------------------------------
-HJB residual (source SUBTRACTED): base_hjb.py:661 / :705 ``Phi_U -= source_term``;
-  effective continuous equation ``-d_t u + H(x, m, grad u) - (sigma^2/2) Lap u = S_HJB``.
+HJB residual (source SUBTRACTED): ``Phi_U -= source_term`` in base_hjb.py, both the batch
+  and per-point paths; effective continuous equation
+  ``-d_t u + H(x, m, grad u) - (sigma^2/2) Lap u = S_HJB``.
   => S_HJB = -d_t u* + H(x, m*, grad u*) - (sigma^2/2) Lap u*  (the continuous LHS).
-H = H_control(p) + V + f(m), coupling ADDED: hamiltonian.py:2144; with
-  QuadraticControlCost, H_control(p) = |p|^2/(2*lambda) (hamiltonian.py:365).
-FP RHS (source ADDED): fp_fdm_time_stepping.py:513 (explicit) and :1184 (implicit
-  MFG-coupled, the path FPFDMSolver uses); effective continuous equation
+H = H_control(p) + V + f(m), coupling ADDED (hamiltonian.py); with QuadraticControlCost,
+  H_control(p) = |p|^2/(2*lambda).
+FP RHS (source ADDED): fp_fdm_time_stepping.py, both the explicit and the implicit
+  MFG-coupled path FPFDMSolver uses; effective continuous equation
   ``d_t m + div(alpha* m) - (sigma^2/2) Lap m = S_FP``.
   => S_FP = d_t m* + div(alpha* m*) - (sigma^2/2) Lap m*.
-FP drift: alpha = -coupling_coefficient * grad(U) (fp_fdm_alg_divergence_upwind.py:158,178),
-  coupling_coefficient default 0.5 (mfg_problem.py:261). It is an INDEPENDENT knob
-  from lambda; we set coupling_coefficient = 1/lambda = 1.0 so the drift the solver
-  builds agrees with -grad u* / lambda regardless of which drift path is selected
-  (the SeparableHamiltonian + smooth control branch passes potential_field=U_new and
-  the FP solver forms v = -coupling_coefficient * grad U: fixed_point_iterator.py:755-763).
-sigma vs D: D = sigma^2/2 (mfg_problem.py:36, fp_fdm_time_stepping.py:475). Pass sigma
+FP drift: alpha = -coupling_coefficient * grad(U) (fp_fdm_alg_divergence_upwind.py),
+  coupling_coefficient default 0.5 (MFGProblem). It is an INDEPENDENT knob from lambda;
+  we set coupling_coefficient = 1/lambda = 1.0 so the drift the solver builds agrees with
+  -grad u* / lambda regardless of which drift path is selected (the SeparableHamiltonian +
+  smooth control branch passes potential_field=U_new and the FP solver forms
+  v = -coupling_coefficient * grad U, in fixed_point_iterator).
+sigma vs D: D = sigma^2/2 -- `diffusion_from_volatility` is the one converter. Pass sigma
   via sigma=; the (2*pi^2*sigma^2) coefficients below already encode (sigma^2/2)*k^2.
 
 FALSE-SAFETY GUARDS encoded here

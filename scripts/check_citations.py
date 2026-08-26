@@ -2,19 +2,21 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. Measured at the time of writing: 18 of the 38 adjudicable citations in this
-repository's live prose -- 47% -- name a symbol that is not near the cited line (Issue #2102).
+being true. At `WINDOW = 12`: 13 of the 32 adjudicable citations in this repository's live prose
+-- 41% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
-All 18 were read by hand: one is a withdrawn claim (#2112) and the other 17 contain both kinds --
-**genuinely wrong citations, and the instrument mis-attributing a symbol** -- in a proportion two
-independent hand-reads disagreed about, so none is stated here.
+All 13 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
+instrument mis-attributing a symbol** -- in a proportion two independent hand-reads disagreed
+about, so none is stated here. The row whose disposition was already settled, a claim withdrawn
+under this repository's retraction convention (#2112), has left the population: the prose carrying
+it was deleted.
 A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
 -- "`propagate = False` (logger.py, line 211), so whether `caplog` sees..." is a CORRECT citation
 whose target line really is `logger.propagate = False`, with `caplog` sitting in the consequence
-clause. (Written with the line number in words, because spelling it made this very paragraph the
-20th drifted row -- the third time explaining a defect in this file created another instance of it.) Restricting the
-search to the citation's own line narrows that and does not close it.
+clause. (Written with the line number in words: spelling it would make this very paragraph one
+more drifted row, which is how explaining the defect here kept creating another instance of it.)
+Restricting the search to the citation's own line narrows that and does not close it.
 
 It cannot be closed mechanically. Character distance between citation and symbol was measured as a
 discriminator and FAILED: real 8 median, artifact 9, over overlapping ranges. The difference is
@@ -23,16 +25,14 @@ positional rule sees a clause boundary. So the instrument reports a superset and
 which is the shape `local_ci.sh` already uses for assertion strength: a review queue, not a delete
 list.
 
-That is 18 of the 38 that are JUDGED AT ALL, and the coverage figure belongs beside it: 154
-citations are recorded `unadjudicable`, a large majority. Quoting 49% bare reads as "half this
-repository's citations are wrong" and would be #1918's own failure committed against this report.
+That is 13 of the 32 that are JUDGED AT ALL, and the coverage figure belongs beside it: 103
+citations are recorded `unadjudicable`, a large majority. Quoting the 41% bare reads as "41% of
+this repository's citations are wrong" and would be #1918's own failure committed against this
+report.
 
-Those three figures are quoted here and nowhere else. The volatile ones -- the citation total and
-`missing` -- are quoted nowhere at all: both move whenever any fixture in `tests/` gains a fake
-path, and transcribing them by hand from one tree into prose describing another produced three
-separate wrong published counts before this line was written. `unadjudicable` is not in that class
-and dropping it with them was an over-correction; it held at 154 across every commit on this branch
-while the other two moved. Run the script.
+Every figure here moves when prose is edited anywhere in the repository, this file's prose
+included. Transcribing them by hand from one tree into prose describing another is how three
+separate wrong counts were published. Run the script.
 
 THAT PERCENTAGE IS A FUNCTION OF `WINDOW`, AND THE SWEEP HAS NO PLATEAU
 -----------------------------------------------------------------------
@@ -40,28 +40,26 @@ It moves about 1 point per unit near 12, and the denominator does not move at al
 between anchored and drifted:
 
     WINDOW      1      6     10     12     16     25     60    200
-    drifted  63.2%  57.9%  52.6%  47.4%  44.7%  42.1%  28.9%  21.1%
+    drifted  56.2%  53.1%  46.9%  40.6%  37.5%  34.4%  25.0%  21.9%
 
 There is no plateau, so quote the number with its window, never bare. The one WINDOW-INDEPENDENT
-statement available is the floor: **8 of the 38 adjudicable citations survive any window** -- 7
-whose named symbol is not in the target file at all, plus the one past EOF, which has no symbol and
-is wrong regardless. `WINDOW = 12` is a choice, not a measurement, and it is the constant a reader
-should attack first.
+statement available is the floor: **7 of the 32 adjudicable citations survive any window**, each
+naming a symbol that is not in the target file at all. `WINDOW = 12` is a choice, not a
+measurement, and it is the constant a reader should attack first.
 
-Those figures were 19 / 39 and 9 until review found that `CLAUDE.md` is a tracked symlink to
-`AGENTS.md`: one paragraph, two tracked paths, counted twice. `content_duplicates` now finds that
-by inode rather than by guessing which names collide, and the numbers above are the deduplicated
-ones.
+`content_duplicates` dedupes by inode, and every figure here is deduplicated. Do not replace it
+with a name check: `CLAUDE.md` is a tracked symlink to `AGENTS.md`, so one paragraph sits at two
+tracked paths and was counted twice.
 
 WHY THE SYMBOL IS THE DISCRIMINATOR
 -----------------------------------
-Checking "is the line number inside the file" is almost useless. Of every citation in this
-repository exactly ONE points past EOF, and two of three "in range" citations sampled at random landed on blank lines. A
-drifted citation almost always still points somewhere.
+Checking "is the line number inside the file" is almost useless: a drifted citation almost always
+still points somewhere, and in-range says nothing about what is there. The repository currently
+has no citation past EOF at all.
 
-That single row is also why the EOF test runs BEFORE the symbol gate in `measure`. Gated on a
-symbol, as it was first written, the one certainly-broken citation in the repository was filed as
-`unadjudicable` and this paragraph rested on a finding the instrument did not report.
+The EOF test still runs BEFORE the symbol gate in `measure`, and must keep doing so. Gated on a
+symbol, as it was first written, a citation past EOF carrying no symbol beside it is filed
+`unadjudicable` -- the one certainly-broken class in the taxonomy, recorded as unjudged.
 
 So a citation is adjudicable exactly when the prose around it names a symbol in backticks. Then the
 question has an answer: is that symbol within +/-WINDOW lines of the cited line? A citation with no
@@ -765,10 +763,10 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 18 rows in the standing backlog one is a withdrawn claim (#2112). The"
-            + "\n    other 17 contain both kinds, and two independent hand-reads disagreed about"
-            + "\n    which rows fall in which -- so no proportion here is worth acting on. Read the"
-            + "\n    line."
+            + "\n    Of the 13 rows in the standing backlog (#2112 recorded one more, a"
+            + "\n    withdrawn claim, whose prose has since been deleted) two independent"
+            + "\n    hand-reads disagreed about which fall in which kind -- so no proportion"
+            + "\n    here is worth acting on. Read the line."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

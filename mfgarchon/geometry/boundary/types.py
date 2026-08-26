@@ -352,7 +352,7 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
         # Two further spellings exist and are deliberately NOT accepted: `geometry/base.py:739`
         # emits "v_min" for axis 4, and `adjoint/operators.py::_get_axis_name` emits "x_1_min" for
         # dim > 3. Both resolved to axis 0 before and to None now, and neither reaches this function
-        # -- they are dict keys. `tensor_grid.py:1889` is a fifth, independent regex resolver that
+        # -- they are dict keys. `tensor_grid.py` carries a fifth, independent regex resolver that
         # `mark_region` uses instead of this one. So "one resolver" is true of the path this
         # function serves and not of the tree; the rest is #1936's ground.
         for prefix in ("axis", "dim"):

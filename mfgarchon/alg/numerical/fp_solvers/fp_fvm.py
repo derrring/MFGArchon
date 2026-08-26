@@ -547,7 +547,7 @@ class FPFVMSolver(BaseFPSolver):
 
             if source_term is not None:
                 # `.reshape(shape)` for the same reason: FDM ravels the return and reshapes it
-                # (`fp_fdm_time_stepping.py:611`), so a callback returning one value per point is
+                # (`fp_fdm_time_stepping.py`), so a callback returning one value per point is
                 # accepted there. Without this, FVM accepted ONLY a grid-shaped return, so even a
                 # caller obeying the argument convention above still failed here (#2019).
                 # `k*dt`, where FPFDMSolver uses `(k+1)*dt` and says "implicit". That divergence

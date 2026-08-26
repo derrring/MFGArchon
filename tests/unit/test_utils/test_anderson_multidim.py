@@ -9,7 +9,7 @@ Issue:
 
 Fix Location:
     mfgarchon/alg/numerical/coupling/anderson_acceleration.py
-    (~~mfgarchon/utils/numerical/anderson_acceleration.py:112-207~~ [CORRECTED 2026-08-14] --
+    (~~mfgarchon/utils/numerical/anderson_acceleration.py~~ [CORRECTED 2026-08-14] --
     that shim was 23 lines and never had those, and it is now deleted as overdue since v0.21.0)
 
 Test Strategy:

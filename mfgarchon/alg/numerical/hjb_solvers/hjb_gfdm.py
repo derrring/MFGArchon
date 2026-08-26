@@ -1269,7 +1269,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         GFDM snapshots ``self.boundary_conditions`` and the preclassified
         ``_bc_segment_per_point`` map at ``__init__``; FDM instead re-reads
-        ``get_boundary_conditions()`` every solve (hjb_fdm.py:319). When the
+        ``get_boundary_conditions()`` every solve (``HJBFDMSolver``). When the
         coupling layer resolves a provider per Picard iteration via
         ``problem.using_resolved_bc`` (Issue #625), it swaps
         ``geometry.boundary_conditions`` for a new object whose segments carry
