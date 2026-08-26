@@ -106,9 +106,13 @@ def update_files(new_version: str) -> list[str]:
     # the pin back the way ci.yml does.
     # Split on the repo boundary first: a forward search for `rev:` runs into the NEXT block and
     # reports that block's version, which is a misleading error rather than a wrong verdict.
+    # Anchored to a line start, so a COMMENT mentioning a version -- `# was rev: v9.9.9 before
+    # #2050` -- cannot shadow the real pin. Unanchored, this read the comment's version and denied
+    # a bump that had in fact landed correctly. It is deliberately NOT `RUFF_PIN`: this runs on the
+    # already-split block and wants the pin's own line, not the route from the repo URL to it.
     blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
     ruff_block = next((b for b in blocks if "astral-sh/ruff-pre-commit" in b), "")
-    check = re.search(r"rev:[^\S\n]*v([0-9.]+)", ruff_block)
+    check = re.search(r"^[^\S\n]*rev:[^\S\n]*v([0-9.]+)", ruff_block, flags=re.M)
     if check is None or check.group(1) != new_version:
         got = f"v{check.group(1)}" if check else "no `rev:` at all"
         raise RuntimeError(

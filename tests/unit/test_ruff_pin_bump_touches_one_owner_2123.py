@@ -210,3 +210,21 @@ def test_a_bump_to_the_version_already_pinned_writes_nothing_and_does_not_raise(
     p = _write(tmp_path, monkeypatch, _CLEAN)
     assert _urv.update_files("0.16.0") == []
     assert p.read_text() == _CLEAN
+
+
+def test_a_comment_naming_another_version_does_not_shadow_the_pin(tmp_path, monkeypatch):
+    """The postcondition reads the pin's own LINE, not the first `rev:` text in the block.
+
+    Unanchored it read a comment: with `# was rev: v9.9.9 before #2050` above the real `rev:`, the
+    bump landed correctly and `update_files` then raised "the ruff block has v9.9.9; the bump
+    matched nothing" -- denying a write that had happened, which is worse than the silent no-op
+    #2123 exists to close. It became reachable when `RUFF_PIN` widened `get_current_version`; before
+    that the CLI died one step earlier and never got here.
+    """
+    fixture = _CLEAN.replace(
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n",
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n    # was rev: v9.9.9 before #2050\n",
+    )
+    p = _write(tmp_path, monkeypatch, fixture)
+    assert _urv.update_files("0.17.0") == [".pre-commit-config.yaml"]
+    assert _revs(p.read_text()) == ["v0.17.0", "v6.0.0"]
