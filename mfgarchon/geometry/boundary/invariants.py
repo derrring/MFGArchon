@@ -61,36 +61,23 @@ def seam(field: NDArray[np.floating]) -> float:
 def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     """Relative change in total mass between the first and last time row.
 
-    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive periodic grid: the shared
-    node's two half-weights sum to one full weight, so it equals the rectangle rule over the
-    N-1 distinct nodes exactly when the seam is closed.
+    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive grid. On a periodic one the
+    shared node's two half-weights sum to one full weight; on a walled one the two end nodes carry
+    half a cell each, and ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2``.
 
-    On a WALLED endpoint-inclusive grid it is right for a different reason: there is no seam, and
-    the two end nodes carry half a cell each. ``sum(m)*dx`` over-counts them by
-    ``dx*(m[0]+m[-1])/2`` -- 3.5% on the no-flux fixture in ``test_fp_matrix_conservation.py``,
-    before any evolution.
+    WHAT THIS RETURNS WHEN THE SCHEME CONSERVES THE RECTANGLE SUM. Write the endpoint share
+    ``s = dx*(m[0]+m[-1])/2 / (sum(m)*dx)``. Then ``trapezoid == (sum(m)*dx) * (1 - s)``
+    identically, so when ``sum(m)*dx`` is held fixed -- which the no-flux FDM wall does by
+    construction -- this returns exactly ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint
+    share, and nothing else.
 
-    THE WALLED CASE IS NOT UNCONDITIONAL, and this function cannot detect the exception. The
-    ``h/2`` endpoint weight assumes ``m`` is resolvable between nodes. A density that concentrates
-    AT a wall violates that, and the rule then halves the answer instead of approximating it:
-    under pure inflow drift with no diffusion the exact solution is a Dirac at the wall carrying
-    all the mass, the discrete state becomes a single spike on node 0, and this returns 0.5 for a
-    problem that conserves 1. ``sum(m)*dx`` returns 1 there, but only by giving node 0 a full cell
-    reaching to ``-h/2``, outside the declared bounds; the finite-volume half-cell reading also
-    gives 0.5. **No quadrature on this grid is trustworthy for a boundary-concentrated measure** --
-    what control volume the endpoint node owns is an open question, not a settled convention.
-
-    So: use this where the density is RESOLVED AT THE WALL. The criterion is the wall layer, not
-    the presence of diffusion. A drift-dominated layer of width ``D/|v|`` narrower than ``h``
-    concentrates on node 0 and fails the same way with diffusion present throughout -- measured on
-    a no-flux wall at ``v = -0.8``, ``n = 51``, the reported loss climbs 5.3e-02 / 2.1e-01 /
-    4.6e-01 as the cell Peclet number ``|v|h/D`` goes 0.13 / 0.80 / 12.8, while ``sum(m)*dx`` stays
-    at 1e-14 throughout. There is no threshold at which "diffusive" starts protecting anything; it
-    approaches the halving limit continuously. Zero-drift diffusion, this file's own fixture, is
-    resolved by construction.
-
-    Where a wall-concentrated state is the point of the test, report the state, not a single mass
-    number.
+    So resolution at the wall is a property of the STATE, not of the setup. Neither "diffusive" nor
+    "zero drift" implies it; both admit states concentrated on an end node, where this halves rather
+    than approximates and no quadrature on this grid has a defensible answer -- ``sum(m)*dx`` reads
+    full only by giving the end node a cell reaching outside the declared bounds, and the
+    finite-volume half-cell reading agrees with the trapezoid. Compute ``s`` at both ends before
+    trusting the single number; where it moves, report the state instead. Measurements and the
+    cases that fix the scope are in PR #2142.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
