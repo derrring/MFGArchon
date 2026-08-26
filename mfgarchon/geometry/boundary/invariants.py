@@ -64,6 +64,11 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     ``np.trapezoid`` is the right quadrature on an endpoint-inclusive periodic grid: the shared
     node's two half-weights sum to one full weight, so it equals the rectangle rule over the
     N-1 distinct nodes exactly when the seam is closed.
+
+    It is also the right quadrature on a WALLED endpoint-inclusive grid, for a different reason:
+    there is no seam, and the two end nodes carry half a cell each. ``sum(m)*dx`` over-counts them
+    by ``dx*(m[0]+m[-1])/2`` -- 3.5% on the no-flux fixture in
+    ``test_fp_matrix_conservation.py``, before any evolution.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
