@@ -62,10 +62,13 @@
   On the `2·dx`-separation family, this closes the last live member: #1972 fixed `ghost_cells.py`'s
   Neumann ghost, #2067 (PR #2125) fixed the two copies in `_compat.py`, and
   `high_order_ghost_neumann`'s `order<4` arm already raises rather than computing. **The vertex half
-  of that convention is not settled by any of them** — #2129 records that the evidence #1972 cites
-  for the `dx` separation, a linear field, cannot discriminate it, and the measurement there says
-  the retired `2·dx` mirror is a full order better at a vertex wall. This fix rests on its own
-  oracle, the exact profile `rho(s) = rho(wall)·exp(v_n·s/D)`, not on that citation.
+  of that convention is not settled by any of them** — and an earlier revision of this fragment
+  cited #2129 for why, which was wrong; that issue is closed as invalid. The vertex half belongs to
+  **#1904** and **#1935**, both open and both `priority: high`: the package's only grid class builds
+  `np.linspace(lo, hi, N)`, so the wall is a node, and the no-flux ghost is cell-centred on a
+  node-centred grid — measured there, the wall Laplacian converges to half the true value. This fix
+  rests on its own oracle, the exact profile `rho(s) = rho(wall)·exp(v_n·s/D)`, and not on any
+  citation about the Neumann ghost.
 
   Not addressed, and filed rather than folded in: after this change the branch computes the same
   value as `ghost_cell_robin(alpha=v_n, beta=−D, g=0)` to 1e−16 on both centrings, which is the
