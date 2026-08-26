@@ -440,6 +440,20 @@ def ghost_cell_fp_no_flux(
         # above. The corrected form is linear in dx and has no pole; it still goes negative under
         # strong inward drift at dx > D/|v_n|, which is a resolution requirement rather than a
         # blow-up.
+        #
+        # ORDER, stated because the correction does not equalise the two centrings. The exact
+        # no-flux profile is rho(x) = rho_i*exp(v_n*x/D), so the exact ghost is rho_i*exp(v_n*dx/D)
+        # and each form is a rational approximation to exp(z), z = v_n*dx/D. Measured against it:
+        #
+        #     old vertex   (1+z)/(1-z) = 1 + 2z + ...   O(dx),   rate 1.06
+        #     this branch  1 + z                        O(dx^2), rate 2.01
+        #     cell-centred (1+z/2)/(1-z/2)              O(dx^3), rate 3.04   <- Pade(1,1) of exp
+        #
+        # The old form's leading term is 2z where it must be z, which is the "flux exactly twice
+        # what the condition requires" this issue reports -- it is inconsistent, not merely coarse.
+        # This branch is consistent and still one order below the cell-centred one, because a
+        # signature carrying only `interior_value` admits no centred difference at the node. That
+        # is a property of the interface, not something to fix here.
         numerator = D + v_n * dx
         denominator = D
     else:

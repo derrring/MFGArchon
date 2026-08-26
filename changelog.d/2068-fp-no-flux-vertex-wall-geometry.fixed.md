@@ -37,6 +37,21 @@
   flux is twice what the condition requires" the issue found. Reverting the branch turns five tests
   red; the `drift = 0` case survives, correctly, because every form returns `rho_interior` there.
 
+  **The correction does not make the two centrings equivalent, and the fragment says so rather than
+  leaving it to be discovered.** The exact no-flux profile is `rho(x) = rho_i·exp(v_n·x/D)`, so each
+  form is a rational approximation to `exp(z)` at `z = v_n·dx/D`. Measured against it:
+
+  | form | as a series | error | measured rate |
+  |:-----|:------------|:------|--------------:|
+  | retired vertex | `(1+z)/(1−z) = 1 + 2z + …` | `O(dx)` | 1.06 |
+  | this branch | `1 + z` | `O(dx²)` | 2.01 |
+  | cell-centred | `(1+z/2)/(1−z/2)`, the Padé(1,1) of `exp` | `O(dx³)` | 3.04 |
+
+  The retired form's leading term is `2z` where it must be `z` — it was **inconsistent**, not merely
+  coarse. The corrected branch is consistent and remains one order below the cell-centred one,
+  because a signature carrying only `interior_value` admits no centred difference at the node. That
+  is a property of the interface and is not changed here.
+
   This closes the last live member of the `2·dx`-separation family: #1972 fixed `ghost_cells.py`,
   #2067 fixed the two copies in `_compat.py`, and `high_order_ghost_neumann`'s `order<4` arm already
   raises rather than computing.

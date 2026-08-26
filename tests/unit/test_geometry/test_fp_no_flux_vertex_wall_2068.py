@@ -20,6 +20,8 @@ The tests below are deliberately NOT the defining equation rearranged -- asserti
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 import numpy as np
@@ -98,3 +100,41 @@ def test_zero_drift_reduces_to_the_neumann_ghost(grid_type):
     """
     got = ghost_cell_fp_no_flux(1.7, 0.0, _D, 0.1, 1.0, grid_type=grid_type)
     assert got == pytest.approx(ghost_cell_neumann(1.7, 0.0, 0.1), abs=1e-15)
+
+
+def test_the_vertex_ghost_converges_to_the_exact_no_flux_profile():
+    """The analytic oracle, independent of any discretisation in this module.
+
+    `v*rho - D*drho/dx = 0` integrates to `rho(x) = rho(0)*exp(v*x/D)`, so the exact ghost one step
+    outside a max wall is `rho_i*exp(v_n*dx/D)`. Each form here is a rational approximation to
+    `exp(z)` at `z = v_n*dx/D`:
+
+        retired vertex   (1+z)/(1-z) = 1 + 2z + ...   O(dx)     <- leading term is 2z, not z
+        this branch      1 + z                        O(dx^2)
+        cell-centred     (1+z/2)/(1-z/2)              O(dx^3)   <- the Pade(1,1) of exp
+
+    So the retired form was INCONSISTENT, not merely coarse, and this branch is consistent while
+    remaining one order below the cell-centred one. The bound below is 1.8, which the corrected
+    branch clears at a measured 2.01 and the retired one fails at 1.06.
+    """
+    v_n, d, rho_i = 0.5, 0.125, 1.0
+    errors = []
+    for dx in (0.05, 0.025, 0.0125, 0.00625):
+        exact = rho_i * np.exp(v_n * dx / d)
+        got = ghost_cell_fp_no_flux(rho_i, v_n, d, dx, 1.0, grid_type=GridType.VERTEX_CENTERED)
+        errors.append(abs(got - exact))
+
+    rates = [np.log2(a / b) for a, b in itertools.pairwise(errors)]
+    assert min(rates) > 1.8, f"vertex ghost converges at {rates}, expected ~2"
+
+    # The control: the cell-centred branch must stay a full order above, or the two have been
+    # collapsed into one formula rather than each given its own geometry.
+    cell_errors = [
+        abs(
+            ghost_cell_fp_no_flux(rho_i, v_n, d, dx, 1.0, grid_type=GridType.CELL_CENTERED)
+            - rho_i * np.exp(v_n * dx / d)
+        )
+        for dx in (0.05, 0.025, 0.0125, 0.00625)
+    ]
+    cell_rates = [np.log2(a / b) for a, b in itertools.pairwise(cell_errors)]
+    assert min(cell_rates) > 2.8, f"cell-centred converges at {cell_rates}, expected ~3"
