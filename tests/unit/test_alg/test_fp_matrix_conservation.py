@@ -80,11 +80,54 @@ class TestFPProductionConservation:
         relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"periodic zero-drift mass not conserved: relerr {relerr:.2e}"
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "The FP no-flux wall is built to conserve the RECTANGLE sum, not the mass. "
+            "Fixing the wall stencil makes this pass; delete the marker then."
+        ),
+    )
     def test_mass_conserved_no_flux_zero_drift(self):
-        M, dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
-        mass = M.sum(axis=1) * dx
-        relerr = abs(mass[-1] - mass[0]) / mass[0]
+        """Same quadrature as the periodic test above, for the same reason -- and it FAILS.
+
+        This asserted `M.sum(axis=1) * dx` directly below a docstring explaining why that
+        quadrature is wrong on this grid (#1822). The rectangle rule over-reports by exactly the
+        endpoint half-weights: `dx*(m[0]+m[-1])/2 = 0.035` at t=0, matched to 1e-12, so it calls a
+        datum of mass 1 a datum of mass 1.035 before anything has evolved. It then reads
+        1.29e-14 drift, because the live wall assembly
+        (`fp_fdm_bc.add_boundary_no_flux_entries_conservative`) is designed to hold column sum =
+        1/dt, which conserves that rectangle sum exactly.
+
+        Under the owner's quadrature the same solve loses 5.77e-3 of its mass, and the loss is
+        O(h): 5.77e-3 / 3.00e-3 / 1.53e-3 / 7.71e-4 at n = 41 / 81 / 161 / 321.
+
+        The wall Laplacian is the cause and is separately measured: on `u = cos(pi x)`, where
+        `u'(0) = 0` holds exactly, the column-conservative wall row converges to HALF of
+        `u''(0)` -- order 0.00 -- while the node-centred row `[-2, 2]/h^2` gives order 2.00
+        (interior control 6.8e-16). That is #1904 / #1935.
+
+        Marked xfail rather than pinned to the wrong number: pinning 5.77e-3 would make the
+        defect a specification, and `strict=True` makes fixing the wall trip this test, so the
+        failure message is the instruction.
+        """
+        M, _dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
+        x = np.linspace(0.0, 1.0, M.shape[1])
+        relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"no-flux zero-drift mass not conserved: relerr {relerr:.2e}"
+
+    def test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass(self):
+        """The assertion the test above used to make, kept as what it actually measures.
+
+        `sum(m)*dx` is the cell-centred integral; this grid is node-centred, so the mass is the
+        trapezoid. Holding this to machine precision is nonetheless a real structural guard -- it
+        is what a broken wall stencil would break -- so it stays, under a name that does not
+        claim to be measuring mass. It goes red when the wall is made node-centred, and that is
+        the intended signal, not a regression.
+        """
+        M, dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
+        rect = M.sum(axis=1) * dx
+        relerr = abs(rect[-1] - rect[0]) / rect[0]
+        assert relerr < 1e-12, f"no-flux rectangle sum not conserved: relerr {relerr:.2e}"
 
     def test_density_stays_positive(self):
         # an M-matrix implicit step keeps a positive initial density positive
@@ -128,19 +171,44 @@ class TestNeumannBCImplicitFP:
     After the fix, neumann routes to the same no-flux boundary handler as no_flux.
     """
 
-    def test_mass_conserved_neumann_zero_value_zero_drift(self):
-        """neumann_bc(0) implicit step must conserve total mass to ~1e-10.
+    def test_neumann_zero_value_step_conserves_the_rectangle_sum(self):
+        """The #1250 pinning test, under the name of what it measures.
 
-        This is the primary pinning test for Issue #1250.  On the buggy code the
-        boundary rows are assembled as absorbing sinks and mass falls ~3% over 5 steps.
+        `neumann_bc(0)` is the same wall as `no_flux_bc`, so this is the twin of
+        `test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass` above and inherits
+        its reading: `sum(m)*dx` is the cell-centred integral, and this grid is node-centred.
+
+        The #1250 signal is undamaged by the rename -- the absorbing-wall bug it pins drops the
+        rectangle sum ~3% over 5 steps, which this still catches at 1e-10. What the rename gives
+        up is the claim that 1e-10 here means mass was conserved; under the trapezoid the same
+        solve loses 5.8e-3, recorded on the xfail above.
         """
         M, dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
-        mass = M.sum(axis=1) * dx
-        relerr = abs(mass[-1] - mass[0]) / mass[0]
+        rect = M.sum(axis=1) * dx
+        relerr = abs(rect[-1] - rect[0]) / rect[0]
         assert relerr < 1e-10, (
-            f"neumann zero-drift mass not conserved (Issue #1250): relerr {relerr:.2e} "
+            f"neumann zero-drift rectangle sum not conserved (Issue #1250): relerr {relerr:.2e} "
             f"(expected <1e-10; >3e-3 indicates the absorbing-wall bug is active)"
         )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Same wall as no-flux, same defect: the stencil conserves the rectangle sum, not the "
+            "mass. Fixing the wall makes this pass; delete the marker then."
+        ),
+    )
+    def test_mass_conserved_neumann_zero_value_zero_drift(self):
+        """The twin of the no-flux xfail above; `neumann_bc(0)` is the same physical wall.
+
+        `test_neumann_matches_no_flux_implicit` below already asserts the two produce byte-identical
+        histories, so these two xfails cannot diverge: whatever fixes one fixes both, and if only
+        one flips, that test goes red first.
+        """
+        M, _dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
+        x = np.linspace(0.0, 1.0, M.shape[1])
+        relerr = mass_drift(M, x)
+        assert relerr < 1e-12, f"neumann zero-drift mass not conserved: relerr {relerr:.2e}"
 
     def test_neumann_matches_no_flux_implicit(self):
         """neumann_bc(0) and no_flux_bc must produce byte-identical mass histories.
