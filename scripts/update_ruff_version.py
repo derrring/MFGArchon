@@ -19,8 +19,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import requests
-
 
 def get_current_version() -> str:
     """Get current ruff version from .pre-commit-config.yaml."""
@@ -45,6 +43,12 @@ def get_current_version() -> str:
 def get_latest_version() -> str:
     """Get latest ruff version from GitHub API."""
     try:
+        # Imported here, not at module scope: `requests` is in neither pyproject.toml nor
+        # environment.yml (control: scipy is in both), and it reaches this environment only through
+        # conda and Sphinx. A module-scope import made every consumer of this file need a package
+        # nothing declares -- which #2123's own test was the first to notice, by failing collection.
+        import requests
+
         response = requests.get("https://api.github.com/repos/astral-sh/ruff/releases/latest", timeout=10)
         response.raise_for_status()
         version = response.json()["tag_name"].lstrip("v")
@@ -74,16 +78,40 @@ def update_files(new_version: str) -> list[str]:
     # Update .pre-commit-config.yaml
     config_path = Path(".pre-commit-config.yaml")
     content = config_path.read_text()
-    updated = re.sub(r"(astral-sh/ruff-pre-commit\s+rev:\s*)v[0-9.]+", rf"\1v{new_version}", content)
+    # `[^\S\n]*\n(?:[^\S\n]*#[^\n]*\n)*` rather than `\s+`: a comment between the `repo:` line
+    # and its `rev:` is valid YAML and `\s+` cannot span it, so the substitution silently matched
+    # nothing and `main()` printed "No files needed updating" and exited 0. The workflow's `sed`
+    # handles that shape correctly, so the two bumpers disagreed on it. (#2123)
+    updated = re.sub(
+        r"(astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*#[^\n]*\n)*[^\S\n]*rev:[^\S\n]*)v[0-9.]+",
+        rf"\1v{new_version}",
+        content,
+    )
 
     if updated != content:
         config_path.write_text(updated)
         files_updated.append(".pre-commit-config.yaml")
 
+    # Postcondition, because a regex that matches nothing is indistinguishable from a version that
+    # was already current -- and `main()` only calls this when they differ, so "nothing changed"
+    # here is always a defect and never a no-op. Reads the pin back the way ci.yml does.
+    # Split on the repo boundary first: a forward search for `rev:` runs into the NEXT block and
+    # reports that block's version, which is a misleading error rather than a wrong verdict.
+    blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
+    ruff_block = next((b for b in blocks if "astral-sh/ruff-pre-commit" in b), "")
+    check = re.search(r"rev:[^\S\n]*v([0-9.]+)", ruff_block)
+    if check is None or check.group(1) != new_version:
+        got = f"v{check.group(1)}" if check else "no `rev:` at all"
+        raise RuntimeError(
+            f"after asking for v{new_version} the ruff block has {got}; the bump matched nothing. "
+            f"Check the shape of the ruff block in {config_path}."
+        )
+
     # #2123: there is no second pin. This used to rewrite a `ruff==` line in
     # `modern_quality.yml`; that line moved out, the file now says "Ruff formatting and linting
     # (covered by ci.yml quick-checks)" and contains `ruff==` zero times, and `ci.yml` holds no pin
-    # either -- it reads the version out of `.pre-commit-config.yaml` at runtime (`ci.yml:79`).
+    # either -- ci.yml's quick-checks job READS the version out of `.pre-commit-config.yaml` at
+    # runtime, in its `RUFF_VERSION=$(grep ...)` line.
     # A bumper that touches more than the one owner is how the owner stops being one.
     return files_updated
 
@@ -168,6 +196,8 @@ def main():
             if args.update:
                 # Fetch release notes
                 try:
+                    import requests  # lazy, see get_latest_version
+
                     response = requests.get(
                         f"https://api.github.com/repos/astral-sh/ruff/releases/tags/v{latest}",
                         timeout=10,

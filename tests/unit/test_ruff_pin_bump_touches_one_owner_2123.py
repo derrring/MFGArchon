@@ -1,34 +1,37 @@
-"""#2123: the ruff bump must touch the ruff pin and nothing else.
+"""#2123: the ruff bump must touch the ruff pin, nothing else, and never silently do nothing.
 
 `.pre-commit-config.yaml` carries two `rev:` lines -- `astral-sh/ruff-pre-commit` and
 `pre-commit/pre-commit-hooks`. The monthly workflow's `sed` was unanchored, and `s///` applies once
-PER LINE, so a bump set `pre-commit-hooks` to the ruff version too: a tag that does not exist, so
-`pre-commit` could fetch no hook environment and the bot's own PR opened with every hook broken.
+PER LINE, so a bump set `pre-commit-hooks` to the ruff version: a tag that does not exist. Measured
+by the reviewer against real `pre-commit` 4.6.1 -- `pre-commit run --all-files` exits 3 and the
+healthy hook, listed first, never runs; naming only the healthy hook fails too, because it dies
+during repo initialization. `git push` is then blocked for every contributor. And no workflow runs
+`pre-commit`, so the bot's own PR checks would have been GREEN.
 
-The workflow half cannot be unit-tested from here -- it is a `sed` in a GitHub Actions step -- and
-carries its own guard instead: it aborts if the bump changes more than one line. This file pins the
-half that IS reachable, `scripts/update_ruff_version.py`, whose regex was already anchored and had
-nothing asserting it.
-
-The fixture is checked against the real file, so it cannot drift into testing a shape the repository
-no longer has.
+The workflow half cannot be unit-tested from here -- it is a `sed` in an Actions step -- and carries
+its own guard, which re-reads the pin the way `ci.yml` does rather than counting lines. This file
+pins the reachable half, `scripts/update_ruff_version.py`.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+_REPO = Path(__file__).resolve().parents[2]
+_REPO_CONFIG = _REPO / ".pre-commit-config.yaml"
 
-from update_ruff_version import update_files
+# `spec_from_file_location`, the idiom nine test files in this repo already use for a `scripts/`
+# module. A module-scope `sys.path.insert` has no precedent here and would reopen the path the gate
+# closes with `PYTHONSAFEPATH=1` for every xdist worker.
+_spec = importlib.util.spec_from_file_location("_urv", _REPO / "scripts" / "update_ruff_version.py")
+_urv = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_urv)
 
-_REPO_CONFIG = Path(__file__).resolve().parents[2] / ".pre-commit-config.yaml"
-
-_FIXTURE = """repos:
+_CLEAN = """repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0
     hooks:
@@ -40,80 +43,118 @@ _FIXTURE = """repos:
 """
 
 
-def test_the_fixture_still_matches_the_shape_of_the_real_config():
-    """The control on the fixture. Two repos, two `rev:` lines -- if that stops being true the
-    test below is exercising a shape this repository does not have."""
-    real = _REPO_CONFIG.read_text()
-    assert real.count("astral-sh/ruff-pre-commit") == 1
-    assert len(re.findall(r"^\s*rev:\s*v[0-9.]+", real, flags=re.M)) >= 2, (
-        "the defect needs a second `rev:` line to exist; without one this test proves nothing"
+def _write(tmp_path, monkeypatch, text: str) -> Path:
+    monkeypatch.chdir(tmp_path)
+    p = tmp_path / ".pre-commit-config.yaml"
+    p.write_text(text)
+    return p
+
+
+def _revs(text: str) -> list[str]:
+    return re.findall(r"^\s*rev:\s*(v[0-9.]+)", text, flags=re.M)
+
+
+def test_the_module_imports_without_requests():
+    """The blocker this PR nearly shipped. `requests` is in neither pyproject.toml nor
+    environment.yml (control: scipy is in both) and reaches this environment only through conda and
+    Sphinx, so a module-scope `import requests` made every consumer of that file need an undeclared
+    package. This test file was the first thing to need it, and collection failed.
+
+    Reaching this line at all is the assertion: `_urv` is imported at module scope above.
+    """
+    assert callable(_urv.update_files)
+    src = (_REPO / "scripts" / "update_ruff_version.py").read_text()
+    assert not re.search(r"^import requests", src, flags=re.M), (
+        "requests must stay inside the functions that use it until something declares it"
     )
+
+
+def test_the_fixture_and_the_real_config_have_the_same_shape():
+    """A control on the fixture, comparing it to the real file rather than only asserting about one.
+
+    Both must have exactly one ruff repo and at least two `rev:` lines -- without a second one the
+    defect cannot exist and every test below proves nothing.
+    """
+    real = _REPO_CONFIG.read_text()
+    assert real.count("astral-sh/ruff-pre-commit") == _CLEAN.count("astral-sh/ruff-pre-commit") == 1
+    assert len(_revs(real)) >= 2, "the defect needs a second `rev:` line to exist"
+    assert len(_revs(_CLEAN)) >= 2, "so does the fixture"
 
 
 def test_the_bump_leaves_every_other_rev_alone(tmp_path, monkeypatch):
     """The pin. An unanchored expression sets BOTH lines, which is the shipped defect."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".pre-commit-config.yaml").write_text(_FIXTURE)
+    p = _write(tmp_path, monkeypatch, _CLEAN)
+    _urv.update_files("0.17.0")
+    out = p.read_text()
 
-    update_files("0.17.0")
-    out = (tmp_path / ".pre-commit-config.yaml").read_text()
-
-    assert "rev: v0.17.0" in out, "the ruff pin must move"
-    assert "rev: v6.0.0" in out, (
+    assert _revs(out) == ["v0.17.0", "v6.0.0"], (
         "pre-commit-hooks must not move -- an unanchored `s/rev: v[0-9.]+/` sets it to the ruff "
-        "version, a tag that does not exist, and pre-commit then fetches nothing"
+        "version, a tag that does not exist, and pre-commit then fetches no hook at all"
     )
-    changed = [(a, b) for a, b in zip(_FIXTURE.splitlines(), out.splitlines(), strict=True) if a != b]
+    changed = [(a, b) for a, b in zip(_CLEAN.splitlines(), out.splitlines(), strict=True) if a != b]
     assert len(changed) == 1, f"expected exactly one changed line, got {changed}"
-
-
-def test_the_unanchored_form_is_what_this_rejects():
-    """Names the defect rather than only the fix, so the assertion above has a stated counterexample.
-
-    Not a test of production code -- it applies the retired expression to the fixture and shows it
-    hits both lines. If this ever stops hitting two, the defect has changed shape and the pin above
-    needs re-deriving rather than trusting.
-    """
-    unanchored = [
-        (a, re.sub(r"rev: v[0-9.]+", "rev: v0.17.0", a, count=1))
-        for a in _FIXTURE.splitlines()
-        if re.sub(r"rev: v[0-9.]+", "rev: v0.17.0", a, count=1) != a
-    ]
-    assert len(unanchored) == 2, f"the retired expression should hit both `rev:` lines, hit {unanchored}"
-
-
-def test_the_bumper_no_longer_reaches_for_a_pin_that_moved(tmp_path, monkeypatch):
-    """#2123's other half: `modern_quality.yml` held a `ruff==` line that moved out of it.
-
-    `ci.yml` holds no pin either -- it reads the version out of `.pre-commit-config.yaml` at
-    runtime -- so there is exactly one owner and the bumper must report exactly one file.
-    """
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".pre-commit-config.yaml").write_text(_FIXTURE)
-    (tmp_path / ".github" / "workflows").mkdir(parents=True)
-    decoy = tmp_path / ".github" / "workflows" / "modern_quality.yml"
-    decoy.write_text("jobs:\n  x:\n    steps:\n      - run: pip install ruff==0.16.0\n")
-
-    written = update_files("0.17.0")
-
-    assert written == [".pre-commit-config.yaml"], f"the bumper must touch one owner, touched {written}"
-    assert "ruff==0.16.0" in decoy.read_text(), "a file that is not the owner must be left alone"
 
 
 @pytest.mark.parametrize("version", ["0.17.0", "1.0.0", "0.16.1"])
 def test_the_real_config_takes_the_bump_on_one_line(tmp_path, monkeypatch, version):
-    """Against the repository's own file rather than the fixture, so the two cannot diverge."""
-    monkeypatch.chdir(tmp_path)
+    """Against the repository's own file, so the fixture and reality cannot diverge silently."""
     before = _REPO_CONFIG.read_text()
-    (tmp_path / ".pre-commit-config.yaml").write_text(before)
-
-    update_files(version)
-    after = (tmp_path / ".pre-commit-config.yaml").read_text()
+    p = _write(tmp_path, monkeypatch, before)
+    _urv.update_files(version)
+    after = p.read_text()
 
     changed = [(a, b) for a, b in zip(before.splitlines(), after.splitlines(), strict=True) if a != b]
     assert len(changed) == 1, f"expected exactly one changed line, got {changed}"
     assert changed[0][1].strip() == f"rev: v{version}"
-    # and it is the ruff one: the line above the changed line names the repo
     lines = after.splitlines()
-    idx = lines.index(changed[0][1])
-    assert "ruff-pre-commit" in lines[idx - 1], f"the changed rev belongs to {lines[idx - 1].strip()}"
+    assert "ruff-pre-commit" in lines[lines.index(changed[0][1]) - 1], "the changed rev must be ruff's"
+
+
+def test_a_comment_between_repo_and_rev_does_not_silently_no_op(tmp_path, monkeypatch):
+    """A shape the two bumpers used to disagree on, and the Python one failed SILENT.
+
+    A comment between the `repo:` line and its `rev:` is valid YAML. `\\s+` cannot span it, so the
+    substitution matched nothing, `update_files` returned `[]`, and `main()` printed "No files
+    needed updating" and exited 0 -- while the workflow's `sed` handled the same file correctly.
+    """
+    fixture = _CLEAN.replace(
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n",
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n    # pinned monthly by check-ruff-updates.yml\n",
+    )
+    p = _write(tmp_path, monkeypatch, fixture)
+    assert _urv.update_files("0.17.0") == [".pre-commit-config.yaml"]
+    assert _revs(p.read_text()) == ["v0.17.0", "v6.0.0"]
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("no rev in the ruff block", _CLEAN.replace("    rev: v0.16.0\n", "", 1)),
+        (
+            "rev before repo",
+            "repos:\n  - rev: v0.16.0\n    repo: https://github.com/astral-sh/ruff-pre-commit\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n",
+        ),
+    ],
+)
+def test_a_bump_that_matches_nothing_raises_instead_of_reporting_success(name, text, tmp_path, monkeypatch):
+    """`main()` only calls this when the versions differ, so "nothing changed" is always a defect.
+
+    Both shapes defeat a guard that merely counts changed lines -- the workflow's `sed` range lands
+    on `pre-commit-hooks` in each and changes exactly one line -- which is why that guard reads the
+    pin back instead of counting. This is the same invariant on the Python side.
+    """
+    _write(tmp_path, monkeypatch, text)
+    with pytest.raises(RuntimeError, match="matched nothing"):
+        _urv.update_files("0.17.0")
+
+
+def test_the_bumper_no_longer_reaches_for_a_pin_that_moved(tmp_path, monkeypatch):
+    """`modern_quality.yml` held a `ruff==` line that moved out of it, and `ci.yml` holds no pin --
+    it reads the version out of `.pre-commit-config.yaml` at runtime. One live owner, one edit."""
+    _write(tmp_path, monkeypatch, _CLEAN)
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    decoy = tmp_path / ".github" / "workflows" / "modern_quality.yml"
+    decoy.write_text("jobs:\n  x:\n    steps:\n      - run: pip install ruff==0.16.0\n")
+
+    assert _urv.update_files("0.17.0") == [".pre-commit-config.yaml"]
+    assert "ruff==0.16.0" in decoy.read_text(), "a file that is not the owner must be left alone"
