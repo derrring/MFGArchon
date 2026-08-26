@@ -58,8 +58,12 @@
   `ZeroFluxCalculator` constructed on a vertex grid** — it returns 1.4 where it returned 2.333333
   on the numbers above. The path is public and exported; it has no consumer in this repository
   (`use_zero_flux=True` is passed nowhere). `VERTEX_CENTERED` also appears in no example, notebook
-  or benchmark — **and neither does `CELL_CENTERED`**, so that pair says nothing about reachability;
-  what does is that no production caller passes either. Nothing here breaks. Same shape and same file as
+  or benchmark — **and neither does `CELL_CENTERED`**, so that pair says nothing about reachability.
+  What does: the **eight** sites in `mfgarchon/` that pass `grid_type=` all forward the
+  `CELL_CENTERED` default, and the two string→enum conversions require the literal
+  `"vertex_centered"`, which appears in `mfgarchon/` only inside those conversions and one getter —
+  never as an argument. So no vertex config is constructed in production, and nothing here breaks.
+  Same shape and same file as
   `changelog.d/2064-robin-vertex-branch.fixed.md`.
 
   On the `2·dx`-separation family, this closes the last live member: #1972 fixed `ghost_cells.py`'s
