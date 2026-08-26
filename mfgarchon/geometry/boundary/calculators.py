@@ -444,7 +444,10 @@ class ZeroFluxCalculator:
     For advection-diffusion equations, this ensures the total flux
     J = v*rho - D*grad(rho) vanishes at the boundary, preserving mass conservation.
 
-    Formula: u_ghost = (2D + v*dx) / (2D - v*dx) * u_interior
+    Formula, and it depends on `grid_type` -- this line named only the cell-centred one until
+    #2068:
+        cell-centred:   u_ghost = (2D + v*dx) / (2D - v*dx) * u_interior     (2nd order)
+        vertex-centred: u_ghost = (D + v*dx) / D * u_interior                (1st order)
 
     Physical meaning: No mass/probability crosses the boundary.
     Use cases:

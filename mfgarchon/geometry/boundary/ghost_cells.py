@@ -372,6 +372,18 @@ def ghost_cell_fp_no_flux(
             v_n * (rho_ghost + rho_interior)/2 = D * (rho_ghost - rho_interior)/dx
             rho_ghost = rho_interior * (2D + v_n*dx) / (2D - v_n*dx)
 
+        Vertex-centered, where the wall IS the interior node, so the wall density is
+        rho_interior rather than a face average (#2068):
+            v_n * rho_interior = D * (rho_ghost - rho_interior)/dx
+            rho_ghost = rho_interior * (D + v_n*dx) / D
+
+        THE TWO ARE NOT THE SAME ORDER. The exact zero-flux profile is
+        rho(s) = rho(wall)*exp(v_n*s/D) along the outward normal, so each form is a rational
+        approximation to exp(z), z = v_n*dx/D: the cell-centered one is its Pade[1/1] and
+        imposes the condition to SECOND order; the vertex one is the truncated series 1 + z
+        and imposes it to FIRST. A second-order vertex ghost needs two interior values and
+        this signature carries one.
+
         Physical interpretation:
             - When v_n > 0 (outflow): rho_ghost > rho_interior (diffusion opposes outflow)
             - When v_n < 0 (inflow): rho_ghost < rho_interior (diffusion opposes inflow)
@@ -417,10 +429,45 @@ def ghost_cell_fp_no_flux(
     v_n = drift_velocity * outward_normal_sign  # Normal velocity (positive = outward)
 
     if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centered: boundary at grid point
-        # rho_ghost = rho_interior * (D + v_n*dx) / (D - v_n*dx)
+        # Vertex-centred: the wall IS the interior node, which is why `ghost_cell_dirichlet`
+        # returns `g` there unmodified. So the wall density is rho_interior -- not a face average
+        # between ghost and interior -- and the separation is dx, the geometry #1972 settled for
+        # this module:
+        #     v_n * rho_interior = D * (rho_ghost - rho_interior) / dx
+        #     => rho_ghost = rho_interior * (D + v_n*dx) / D
+        #
+        # ~~(D + v_n*dx) / (D - v_n*dx)~~ [CORRECTED, #2068]. That form is consistent only with
+        # rho_face = (rho_g + rho_i)/2 AND drho/dn = (rho_g - rho_i)/(2*dx) -- a wall midway
+        # between ghost and interior at separation 2*dx, which is the cell-centred geometry, not
+        # this one. It is the #1972 pathology in a second function: self-consistent with a wrong
+        # wall position, so it satisfies its own stencil while leaving a flux residual that does
+        # NOT converge. Measured at D = 0.125, rho = 1, v_x = +0.5, max wall, the residual froze
+        # at -0.5 = -v_x*rho across dx from 0.1 down to 0.00625 while the cell-centred branch was
+        # machine zero at every one. The corrected form is exact in this geometry and O(dx) if
+        # evaluated with a face average.
+        #
+        # It also removes a pole. The old form is singular at dx = D/v_n -- HALF the cell-centred
+        # limit 2D/v_n, because the wrong geometry doubles the effective step -- and returns a
+        # NEGATIVE density past it: 499 at dx = 0.249 and -501 at dx = 0.251 for the numbers
+        # above. The corrected form is linear in dx and has no pole; it still goes negative under
+        # strong inward drift at dx > D/|v_n|, which is a resolution requirement rather than a
+        # blow-up.
+        #
+        # ORDER, stated because the correction does not equalise the two centrings. The exact
+        # no-flux profile is rho(x) = rho_i*exp(v_n*x/D), so the exact ghost is rho_i*exp(v_n*dx/D)
+        # and each form is a rational approximation to exp(z), z = v_n*dx/D. Measured against it:
+        #
+        #     old vertex   (1+z)/(1-z) = 1 + 2z + ...   O(dx),   rate 1.06
+        #     this branch  1 + z                        O(dx^2), rate 2.01
+        #     cell-centred (1+z/2)/(1-z/2)              O(dx^3), rate 3.04   <- Pade(1,1) of exp
+        #
+        # The old form's leading term is 2z where it must be z, which is the "flux exactly twice
+        # what the condition requires" this issue reports -- it is inconsistent, not merely coarse.
+        # This branch is consistent and still one order below the cell-centred one, because a
+        # signature carrying only `interior_value` admits no centred difference at the node. That
+        # is a property of the interface, not something to fix here.
         numerator = D + v_n * dx
-        denominator = D - v_n * dx
+        denominator = D
     else:
         # Cell-centered: boundary at cell face
         # rho_ghost = rho_interior * (2*D + v_n*dx) / (2*D - v_n*dx)
