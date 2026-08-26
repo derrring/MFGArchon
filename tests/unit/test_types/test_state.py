@@ -310,7 +310,8 @@ def test_plot_convergence_falls_back_when_matplotlib_is_missing(capsys, monkeypa
     matplotlib is a hard RUNTIME dependency -- `[project] dependencies` carries `matplotlib>=3.8`,
     not a dev extra -- so the `try` always succeeded and the branch is unreachable in any correct
     installation, not merely unreached here. It becomes reachable only once #2089 drops matplotlib
-    from `dependencies`, which is the reason the fallback deserves a test at all. Its assertion was `isinstance(plot_succeeded, bool)` over a variable assigned
+    from `dependencies`, which is the reason the fallback deserves a test at all. Its assertion
+    was `isinstance(plot_succeeded, bool)` over a variable assigned
     only literal `True`/`False`, which cannot fail. Reaching the branch takes a monkeypatch.
     """
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
