@@ -61,23 +61,27 @@ def seam(field: NDArray[np.floating]) -> float:
 def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     """Relative change in total mass between the first and last time row.
 
-    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive grid. On a periodic one the
-    shared node's two half-weights sum to one full weight; on a walled one the two end nodes carry
-    half a cell each, and ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2``.
+    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid, and that half
+    is unconditional: the shared node's two half-weights sum to one full weight whatever the state
+    is. On a WALLED endpoint-inclusive grid the two end nodes carry half a cell each and
+    ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2`` -- true of the weights, but which
+    quadrature is the mass there depends on the state, below.
 
     WHAT THIS RETURNS WHEN THE SCHEME CONSERVES THE RECTANGLE SUM. Write the endpoint share
     ``s = dx*(m[0]+m[-1])/2 / (sum(m)*dx)``. Then ``trapezoid == (sum(m)*dx) * (1 - s)``
-    identically, so when ``sum(m)*dx`` is held fixed -- which the no-flux FDM wall does by
-    construction -- this returns exactly ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint
-    share, and nothing else.
+    identically, so when ``sum(m)*dx`` is held fixed this returns exactly
+    ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint share, and nothing else. Check that
+    condition rather than assuming it -- "the no-flux FDM wall" is four walls dispatched by
+    ``advection_scheme``, and the ``gradient_*`` pair holds the TRAPEZOID fixed instead, so there
+    this returns 1e-14 while the share moves 6e-03.
 
     So resolution at the wall is a property of the STATE, not of the setup. Neither "diffusive" nor
     "zero drift" implies it; both admit states concentrated on an end node, where this halves rather
     than approximates and no quadrature on this grid has a defensible answer -- ``sum(m)*dx`` reads
     full only by giving the end node a cell reaching outside the declared bounds, and the
     finite-volume half-cell reading agrees with the trapezoid. Compute ``s`` at both ends before
-    trusting the single number; where it moves, report the state instead. Measurements and the
-    cases that fix the scope are in PR #2142.
+    trusting the single number; where it moves, report the state instead. The cases that fix the
+    scope, and the four-wall table, are in PR #2142's description.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
