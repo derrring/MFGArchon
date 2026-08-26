@@ -61,9 +61,10 @@ def seam(field: NDArray[np.floating]) -> float:
 def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     """Relative change in total mass between the first and last time row.
 
-    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid, and that half
-    is unconditional: the shared node's two half-weights sum to one full weight whatever the state
-    is. On a WALLED endpoint-inclusive grid the two end nodes carry half a cell each and
+    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid: the shared
+    node's two half-weights sum to one full weight, so it equals the rectangle rule over the N-1
+    distinct nodes exactly WHEN THE SEAM IS CLOSED -- two half-weights sum to one full weight only
+    when they weight one value. ``seam()`` in this module is the check. On a WALLED endpoint-inclusive grid the two end nodes carry half a cell each and
     ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2`` -- true of the weights, but which
     quadrature is the mass there depends on the state, below.
 
@@ -72,15 +73,18 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     identically, so when ``sum(m)*dx`` is held fixed this returns exactly
     ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint share, and nothing else. Check that
     condition rather than assuming it -- "the no-flux FDM wall" is four walls dispatched by
-    ``advection_scheme``, and the ``gradient_*`` pair holds the TRAPEZOID fixed instead, so there
-    this returns 1e-14 while the share moves 6e-03.
+    ``advection_scheme``. ``divergence_*`` holds ``sum(m)*dx`` fixed. ``gradient_*`` holds the
+    trapezoid fixed AT ZERO DRIFT ONLY -- there this returns 1e-14 while the share moves 6e-03 --
+    and under wall-normal drift holds neither: ``FPFDMSolver.__init__`` raises a ``UserWarning``
+    measuring -23.6% at cell Peclet 0.19 and -99.97% at 0.89, and calls the loss unbounded (#2007).
 
     So resolution at the wall is a property of the STATE, not of the setup. Neither "diffusive" nor
     "zero drift" implies it; both admit states concentrated on an end node, where this halves rather
     than approximates and no quadrature on this grid has a defensible answer -- ``sum(m)*dx`` reads
     full only by giving the end node a cell reaching outside the declared bounds, and the
     finite-volume half-cell reading agrees with the trapezoid. Compute ``s`` at both ends before
-    trusting the single number; where it moves, report the state instead. The cases that fix the
+    trusting the single number -- ``s`` of the FIRST and LAST time rows, which is what this
+    compares; where it moves, report the state instead. The cases that fix the
     scope, and the four-wall table, are in PR #2142's description.
     """
     arr = np.asarray(field)
