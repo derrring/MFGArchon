@@ -372,6 +372,18 @@ def ghost_cell_fp_no_flux(
             v_n * (rho_ghost + rho_interior)/2 = D * (rho_ghost - rho_interior)/dx
             rho_ghost = rho_interior * (2D + v_n*dx) / (2D - v_n*dx)
 
+        Vertex-centered, where the wall IS the interior node, so the wall density is
+        rho_interior rather than a face average (#2068):
+            v_n * rho_interior = D * (rho_ghost - rho_interior)/dx
+            rho_ghost = rho_interior * (D + v_n*dx) / D
+
+        THE TWO ARE NOT THE SAME ORDER. The exact zero-flux profile is
+        rho(s) = rho(wall)*exp(v_n*s/D) along the outward normal, so each form is a rational
+        approximation to exp(z), z = v_n*dx/D: the cell-centered one is its Pade[1/1] and
+        imposes the condition to SECOND order; the vertex one is the truncated series 1 + z
+        and imposes it to FIRST. A second-order vertex ghost needs two interior values and
+        this signature carries one.
+
         Physical interpretation:
             - When v_n > 0 (outflow): rho_ghost > rho_interior (diffusion opposes outflow)
             - When v_n < 0 (inflow): rho_ghost < rho_interior (diffusion opposes inflow)

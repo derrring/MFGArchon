@@ -51,44 +51,63 @@ def test_the_two_centrings_agree_to_leading_order_in_dx(drift):
     )
 
 
-def test_the_vertex_flux_residual_converges_under_refinement():
-    """The property the defect violated. The residual is evaluated in the VERTEX geometry.
+def test_the_vertex_ghost_stays_within_the_truncation_bound_of_the_exact_profile():
+    """Replaces a test that could not fail. The first version of this file asserted
 
-    The wall is the node, so the wall density is `rho_interior` and the separation is `dx`. Under
-    the retired form this residual froze at `-v_x*rho = -0.5` from `dx = 0.1` to `dx = 0.00625`
-    while the cell-centred control below was machine zero at every one -- which is what put the
-    defect in the branch rather than in the harness.
+        v_n*rho_i - D*(rho_g - rho_i)/dx == 0
+
+    which is the implemented formula rearranged: substitute `rho_g = rho_i*(D + v_n*dx)/D` and it
+    is identically zero in exact arithmetic, at every `dx`, including `dx = 1e6`. It measured
+    floating-point associativity. Worse, it REJECTED the exact ghost `rho_i*exp(z)` (residual
+    -3.8e-01) and rejected the strictly more accurate Pade form -- so it was a characterization
+    test pinning `1 + z` while its own docstring disclaimed being one.
+
+    The oracle is the exact zero-flux profile, which no discretisation in this module produces:
+    `rho(s) = rho(wall)*exp(v_n*s/D)` along the outward normal, so the exact ghost one step out is
+    `rho_i*exp(z)` at `z = v_n*dx/D`. The vertex arm is the truncated series `1 + z`, whose error
+    is `z^2/2 + O(z^3)`; the bound below carries 50% headroom on that leading term.
+
+    It admits anything at least this accurate -- the exact profile and the Pade form both pass --
+    and rejects the retired `(1+z)/(1-z)`, which is the Pade of `exp(2z)` and fails at every
+    resolution by one to two orders.
+    """
+    v_n, d, rho_i = 0.5, 0.125, 1.0
+    for dx in (0.1, 0.05, 0.025, 0.0125):
+        z = v_n * dx / d
+        got = ghost_cell_fp_no_flux(rho_i, v_n, d, dx, 1.0, grid_type=GridType.VERTEX_CENTERED)
+        error = abs(got - rho_i * np.exp(z))
+        assert error <= 1.5 * z**2 / 2 * rho_i, (
+            f"dx={dx}: |ghost - rho_i*exp(z)| = {error:.3e}, past the O(z^2) bound "
+            f"{1.5 * z**2 / 2 * rho_i:.3e}. The retired form fails here by 1-2 orders."
+        )
+
+
+def test_the_ghost_stays_bounded_across_the_retired_forms_pole():
+    """Why the correction is not merely more accurate: the retired form was singular.
+
+    `(D + v_n*dx)/(D - v_n*dx)` blows up at `dx = D/v_n` -- HALF the cell-centred `2D/v_n`, because
+    the wrong geometry doubles the effective step -- and past it returns a negative density, which
+    is not a small error in a Fokker-Planck solve. Measured there: `+499.0` at `dx = 0.249` and
+    `-501.0` at `dx = 0.251`.
+
+    The assertion is a BOUND, not the fix's exact values, so it does not punish a better formula.
+    Across the same window the corrected `1 + z` gives at most 2.0, the exact `exp(z)` 2.72 and the
+    Pade form 2.99; only the retired one leaves the bound, by two orders.
+
+    NOT asserted, deliberately: that the corrected form goes negative under strong INWARD drift at
+    `z < -1`. It does -- `z = -4` gives `-3.0` where the exact profile gives `0.0183` -- and an
+    earlier version of this test asserted `inward < 0.0`, which turns a resolution bound into a
+    contract and makes a positivity-preserving successor read as a regression. The bound is in the
+    fragment instead.
     """
     v_x = 0.5
-    for dx in (0.1, 0.05, 0.025, 0.0125, 0.00625):
+    pole = _D / v_x
+    for dx in (0.8 * pole, 0.996 * pole, pole, 1.004 * pole, 1.2 * pole):
         g = ghost_cell_fp_no_flux(_RHO, v_x, _D, dx, 1.0, grid_type=GridType.VERTEX_CENTERED)
-        residual = v_x * _RHO - _D * (g - _RHO) / dx
-        assert residual == pytest.approx(0.0, abs=1e-12), f"dx={dx}: J.n = {residual:.6f}"
-
-        # the control that puts a failure in the vertex branch and not in this loop
-        gc = ghost_cell_fp_no_flux(_RHO, v_x, _D, dx, 1.0, grid_type=GridType.CELL_CENTERED)
-        control = v_x * (gc + _RHO) / 2 - _D * (gc - _RHO) / dx
-        assert control == pytest.approx(0.0, abs=1e-12), f"harness is wrong, not the branch: {control}"
-
-
-def test_the_old_vertex_form_had_a_pole_at_half_the_cell_centred_limit():
-    """Not a restatement: it is why the correction is not merely more accurate.
-
-    `(D + v_n*dx)/(D - v_n*dx)` is singular at `dx = D/v_n` -- half the cell-centred `2D/v_n`,
-    because the wrong geometry doubles the effective step -- and returns a NEGATIVE density past
-    it. A negative density is not a small error in a Fokker-Planck solve. The corrected form is
-    linear in `dx`, so it has no pole; it still turns negative under strong INWARD drift beyond
-    `dx > D/|v_n|`, which is a resolution requirement and is asserted here so the difference is
-    not mistaken for unconditional positivity.
-    """
-    v_x = 0.5
-    for dx in (0.2, 0.249, 0.251, 0.3, 1.0):
-        g = ghost_cell_fp_no_flux(_RHO, v_x, _D, dx, 1.0, grid_type=GridType.VERTEX_CENTERED)
-        assert np.isfinite(g), f"outward drift, dx={dx}: ghost={g} -- the old form poles at 0.25"
-        assert g > 0.0, f"outward drift, dx={dx}: ghost={g} -- a density must stay positive"
-
-    inward = ghost_cell_fp_no_flux(_RHO, -v_x, _D, 1.0, 1.0, grid_type=GridType.VERTEX_CENTERED)
-    assert inward < 0.0, "the linear form still has a positivity limit; it is a resolution bound"
+        assert np.isfinite(g), f"dx={dx}: ghost={g}"
+        assert 0.0 < g <= 10.0 * _RHO, (
+            f"dx={dx} (retired pole at {pole}): ghost={g}. The retired form gives +499 / -501 here."
+        )
 
 
 @pytest.mark.parametrize("grid_type", [GridType.CELL_CENTERED, GridType.VERTEX_CENTERED])
@@ -124,6 +143,8 @@ def test_the_vertex_ghost_converges_to_the_exact_no_flux_profile():
         got = ghost_cell_fp_no_flux(rho_i, v_n, d, dx, 1.0, grid_type=GridType.VERTEX_CENTERED)
         errors.append(abs(got - exact))
 
+    if max(errors) < 1e-14:
+        return  # an exact ghost has no rate to measure, and must not fail a convergence test
     rates = [np.log2(a / b) for a, b in itertools.pairwise(errors)]
     assert min(rates) > 1.8, f"vertex ghost converges at {rates}, expected ~2"
 
@@ -136,5 +157,7 @@ def test_the_vertex_ghost_converges_to_the_exact_no_flux_profile():
         )
         for dx in (0.05, 0.025, 0.0125, 0.00625)
     ]
+    if max(cell_errors) < 1e-14:
+        return
     cell_rates = [np.log2(a / b) for a, b in itertools.pairwise(cell_errors)]
     assert min(cell_rates) > 2.8, f"cell-centred converges at {cell_rates}, expected ~3"

@@ -52,6 +52,21 @@
   because a signature carrying only `interior_value` admits no centred difference at the node. That
   is a property of the interface and is not changed here.
 
-  This closes the last live member of the `2·dx`-separation family: #1972 fixed `ghost_cells.py`,
-  #2067 fixed the two copies in `_compat.py`, and `high_order_ghost_neumann`'s `order<4` arm already
-  raises rather than computing.
+  **BREAKING for `ghost_cell_fp_no_flux(..., grid_type=VERTEX_CENTERED)` and for
+  `ZeroFluxCalculator` constructed on a vertex grid** — it returns 1.4 where it returned 2.333333
+  on the numbers above. The path is public and exported; it has no consumer in this repository
+  (`use_zero_flux=True` is passed nowhere, and `VERTEX_CENTERED` appears in no example, notebook or
+  benchmark), so nothing here breaks. Same shape and same file as
+  `changelog.d/2064-robin-vertex-branch.fixed.md`.
+
+  On the `2·dx`-separation family: `#1972` fixed `ghost_cells.py`'s Neumann ghost,
+  `high_order_ghost_neumann`'s `order<4` arm already raises rather than computing, and this is the
+  last live member **in this file**. Two copies remain live in `_compat.py`; #2067 is in review as
+  PR #2125 and is not merged, so nothing here should be read as asserting they are fixed.
+
+  Not addressed, and filed rather than folded in: after this change the branch computes the same
+  value as `ghost_cell_robin(alpha=v_n, beta=−D, g=0)` to 1e−16 on both centrings, which is the
+  duplication class this repository keeps closing. It is not collapsed here because the owner
+  *raises* where this function's `1e-12` guard silently returns `interior_value`, and at `D → 0`
+  delegating produces a negative density on the cell branch — a behaviour change that deserves its
+  own change and its own review.
