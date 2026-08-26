@@ -1,8 +1,10 @@
 - **`scripts/check_citations.py` — measures `path.py:NNN` citations in prose that no longer point at
   what they name** (Issue #2102). A line number in a document is a claim with an expiry date, and
   nothing marked it when it stopped being true. Measured on this repository: **13 of 32 adjudicable
-  citations (41%) name a symbol that is not within 12 lines of the cited line**, worst in
-  `mfgarchon/` source comments — the class outside every checker in `scripts/`. That percentage is a
+  citations (41%) name a symbol that is not within 12 lines of the cited line**. It is spread across
+  `tests/` (6 of 13), `changelog.d/` (5 of 11) and `mfgarchon/` (1 of 3) — the last being the class
+  outside every checker in `scripts/`, and the one with the LOWEST rate, not the highest. That
+  percentage is a
   function of the window and has no plateau (56% at 1 line, 22% at 200); 7 rows survive any window,
   each naming a symbol that is not in the target file at all. Checking only "is the line inside the
   file" is nearly useless: a drifted citation almost always still points somewhere, and the
