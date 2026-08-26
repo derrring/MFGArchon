@@ -4,8 +4,9 @@ The inversion is what creates the cycle that blocks decoupling, and that is why 
 
 ~~Every heavy package enters through one line~~ and ~~`import mfgarchon` is 4.89s~~ [RETRACTED
 2026-08-14, see #1930] — both were refuted by measurement after this file was written. It is not
-a single entry point: with that line cut, torch arrives through `utils/__init__.py` →
-`utils/geometry.py` instead of `:30` → `adjoint_validation.py`. `utils/__init__.py` is an
+a single entry point: with that line cut, torch arrives through `utils/__init__.py`'s
+`from .geometry import` → `utils/geometry.py`, instead of its `from .adjoint_validation import`
+→ `adjoint_validation.py`. `utils/__init__.py` is an
 18-import, 106-name re-export hub, so cutting edges one at a time is a treadmill — all three
 planned cuts applied together moved the total 4.31s → 4.62s, which is to say not at all.
 

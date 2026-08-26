@@ -180,7 +180,8 @@ def test_a_citation_past_EOF_is_drifted_even_with_NO_symbol_named(tmp_path):
     """Gated on a symbol, as it was first written, the ONE certainly-broken citation in this
     repository was filed `unadjudicable` -- and the module docstring rested its central argument on
     a finding the shipped instrument did not report. The real case: `geometry/boundary/protocols.py`
-    cites line 2664 of `applicator_fdm.py`, a file with 2182 lines.
+    cites line 2664 of `applicator_fdm.py`, which has never been anywhere near that long. (No
+    count here: this PR cut a line from that file, which would have rotted one.)
 
     Written that way on purpose. Spelled as a citation, this docstring BECOMES another instance of
     the defect it describes -- measured, it landed in `drifted` and moved the number the ratchet

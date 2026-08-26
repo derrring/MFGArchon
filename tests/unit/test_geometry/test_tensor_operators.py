@@ -88,8 +88,8 @@ class TestDiagonalTensorEqualsScalar:
         #
         # Note which weight lands on which axis: sigma_x = 0.2 is the tensor's FIRST index but it
         # multiplies the Laplacian along ARRAY AXIS 1, because _tensor_diffusion_2d unpacks
-        # `Ny, Nx = u.shape` (tensor_calculus.py). The nD branch (tensor_calculus.py
-        # onward) uses the opposite convention -- tensor axis i acts on array axis i.
+        # `Ny, Nx = u.shape` (tensor_calculus.py). The nD branch, `_tensor_diffusion_nd`,
+        # uses the opposite convention -- tensor axis i acts on array axis i.
         lap_axis0 = (np.roll(m, -1, axis=0) - 2 * m + np.roll(m, 1, axis=0)) / dx**2
         lap_axis1 = (np.roll(m, -1, axis=1) - 2 * m + np.roll(m, 1, axis=1)) / dy**2
         # Measured: max deviation 2.1e-14 (worst over 300 random draws) against a signal of
