@@ -38,12 +38,13 @@
   #1972, not here. An earlier revision of this fragment cited #2129 for the claim that #1972's
   stated evidence cannot discriminate its own change. **That claim was wrong and #2129 is closed as
   invalid**: #1972 replaced `interior_value + {1,2}·dx·g·sign`, which reads the FIRST interior, and
-  a linear field separates that from the shipped rule in 6 of 12 combinations. The `u_next ∓ 2·dx·g`
+  a linear field separates that from the shipped rule in 6 of 12 combinations — #1972's own
+  population, 2 centrings × 2 walls × slopes {3, −1.7, 0}. The `u_next ∓ 2·dx·g`
   mirror a linear field cannot separate is the one removed HERE, from `_compat.py`. The order table
   above is about that one and stands.
 
   What the vertex half of this convention actually rests on is **#1904** and **#1935**, both open
-  and both `priority: high`: the package's only grid class builds `np.linspace(lo, hi, N)`, so the
+  and both `priority: high`: the grid class the FDM path constructs builds `np.linspace(lo, hi, N)`, so the
   wall is a node, and the no-flux ghost is cell-centred on a node-centred grid.
 
   Both Neumann branches (`_compute_ghost_pair` and `_compute_single_ghost`) now call

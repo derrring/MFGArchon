@@ -64,7 +64,7 @@
   `high_order_ghost_neumann`'s `order<4` arm already raises rather than computing. **The vertex half
   of that convention is not settled by any of them** — and an earlier revision of this fragment
   cited #2129 for why, which was wrong; that issue is closed as invalid. The vertex half belongs to
-  **#1904** and **#1935**, both open and both `priority: high`: the package's only grid class builds
+  **#1904** and **#1935**, both open and both `priority: high`: the grid class the FDM path constructs builds
   `np.linspace(lo, hi, N)`, so the wall is a node, and the no-flux ghost is cell-centred on a
   node-centred grid — measured there, the wall Laplacian converges to half the true value. This fix
   rests on its own oracle, the exact profile `rho(s) = rho(wall)·exp(v_n·s/D)`, and not on any
