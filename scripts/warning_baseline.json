@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. Regenerate with --write-baseline.",
-  "occurrences_when_written": 5022,
+  "occurrences_when_written": 5045,
   "identities": [
     "<string>\tUserWarning\tMeshData with dimension=N is experimenta",
     "mfgarchon/alg/numerical/gfdm_components/gfdm_strategies.py\tUserWarning\tHybrid neighborhood: N/N points (N.N%) h",
@@ -17,7 +17,6 @@
     "mfgarchon/factory/scheme_factory.py\tUserWarning\tHJBGFDMSolver: no `monotonicity_scheme` ",
     "mfgarchon/geometry/graph/network_geometry.py\tFutureWarning\tInput has data type intN, but the output",
     "mfgarchon/operators/differential/function_gradient.py\tRuntimeWarning\tinvalid value encountered in subtract",
-    "mfgarchon/types/state.py\tUserWarning\tFigureCanvasAgg is non-interactive, and ",
     "mfgarchon/utils/convergence/convergence_monitors.py\tUserWarning\tWasserstein computation failed: operands",
     "mfgarchon/utils/deprecation.py\tUserWarning\tFPNetworkSolver: network diffusion defau",
     "mfgarchon/utils/deprecation.py\tUserWarning\tTensorProductGrid with dimension=N requi",

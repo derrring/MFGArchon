@@ -9,6 +9,8 @@ Tests internal state representations including:
 - Type aliases (ResidualHistory, IterationCallback)
 """
 
+import sys
+
 import pytest
 
 import numpy as np
@@ -281,29 +283,87 @@ def test_convergence_info_immutability():
         info.converged = False  # type: ignore
 
 
-@pytest.mark.unit
-def test_convergence_info_plot_convergence_no_matplotlib(capsys):
-    """Test ConvergenceInfo.plot_convergence() without matplotlib."""
-    # This test assumes matplotlib might not be available in test environment
-    # or we're testing the fallback path
-    info = ConvergenceInfo(
+def _info() -> ConvergenceInfo:
+    """Non-round and non-collinear in log space, and both properties are load-bearing.
+
+    #2090's first defect: the fixture was `[1e-1, 1e-3, 1e-5]`, three exact powers of ten with a
+    constant ratio, so `semilogy` could render nothing but a straight line -- the "convergence
+    history" reported as making no sense. It is also what let the plotting test below pass over a
+    method plotting a hardcoded literal: a fixture of round constants cannot separate
+    `self.residual_history` from the same three numbers written inline. Measured with the old
+    fixture, that mutation left all 25 tests in this file green.
+    """
+    return ConvergenceInfo(
         converged=True,
         iterations=3,
-        final_residual=1e-5,
-        residual_history=[1e-1, 1e-3, 1e-5],
+        final_residual=6.2e-3,
+        residual_history=[0.37, 4.1e-2, 6.2e-3],
         convergence_reason="done",
     )
 
-    # plot_convergence() should not raise even without matplotlib
-    # It may silently return or print a message
+
+@pytest.mark.unit
+def test_plot_convergence_falls_back_when_matplotlib_is_missing(capsys, monkeypatch):
+    """#2090: the fallback branch this test's predecessor was NAMED for had never run.
+
+    It was `test_..._no_matplotlib`, documented as testing the path "without matplotlib", and
+    matplotlib is a hard RUNTIME dependency -- `[project] dependencies` carries `matplotlib>=3.8`,
+    not a dev extra -- so the `try` always succeeded and the branch is unreachable in any correct
+    installation, not merely unreached here. It becomes reachable only once #2089 drops matplotlib
+    from `dependencies`, which is the reason the fallback deserves a test at all. Its assertion
+    was `isinstance(plot_succeeded, bool)` over a variable assigned
+    only literal `True`/`False`, which cannot fail. Reaching the branch takes a monkeypatch.
+    """
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
+    _info().plot_convergence()
+    assert "Matplotlib not available" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_plot_convergence_plots_the_residual_history_it_was_given(monkeypatch):
+    """The path that actually runs. Asserts the FIGURE, not that nothing raised.
+
+    `plt.show()` is stubbed rather than allowed: under the headless backend conftest selects it
+    only warns, but asserting on a call that is a no-op by configuration pins the configuration
+    instead of the method. The stub also records that it was called, which is the behaviour #2089
+    will remove.
+    """
+    import matplotlib.pyplot as plt
+
+    shown: list[bool] = []
+    monkeypatch.setattr(plt, "show", lambda *a, **k: shown.append(True))
+
+    info = _info()
     try:
         info.plot_convergence()
-        plot_succeeded = True
-    except ImportError:
-        plot_succeeded = False  # Acceptable: matplotlib not available
+        fig = plt.gcf()
+        (line,) = fig.axes[0].get_lines()
+        assert list(line.get_ydata()) == info.residual_history
+        assert fig.axes[0].get_yscale() == "log", "a residual history is plotted on a log axis"
+        assert fig.axes[0].get_title() == "Convergence History"
+        assert shown == [True], "the library method still calls show(); #2089 removes it"
+    finally:
+        plt.close("all")
 
-    # Either path is valid - the test verifies no unexpected exception
-    assert isinstance(plot_succeeded, bool)
+
+@pytest.mark.unit
+def test_an_import_error_from_inside_matplotlib_is_not_reported_as_matplotlib_missing(monkeypatch):
+    """This is the pin for narrowing the `except` to the import statement.
+
+    The old form wrapped the whole body, so an `ImportError` raised by matplotlib itself -- which
+    `plt.figure()` does on a backend whose own dependency is absent, cairo being the case #2091's
+    file names -- printed "Matplotlib not available for plotting". That message names the one
+    package that IS installed, so the reader looks in the wrong place. Without this test the
+    narrowing passes either way and pins nothing.
+    """
+    import matplotlib.pyplot as plt
+
+    def _raise(*_a, **_k):
+        raise ImportError("cannot import name 'cairo'")
+
+    monkeypatch.setattr(plt, "figure", _raise)
+    with pytest.raises(ImportError, match="cairo"):
+        _info().plot_convergence()
 
 
 # ===================================================================

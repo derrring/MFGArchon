@@ -68,18 +68,23 @@ class ConvergenceInfo(NamedTuple):
 
     def plot_convergence(self) -> None:
         """Plot convergence history."""
+        # The except covers the IMPORT only. Wrapping the body reported any ImportError raised
+        # from inside matplotlib -- `plt.figure()` on a backend whose own dependency is missing
+        # raises one -- as "Matplotlib not available", which is both wrong and unactionable: it
+        # names the one package that IS installed. #2090.
         try:
             import matplotlib.pyplot as plt
-
-            plt.figure(figsize=(8, 6))
-            plt.semilogy(self.residual_history)
-            plt.xlabel("Iteration")
-            plt.ylabel("Residual")
-            plt.title("Convergence History")
-            plt.grid(True)
-            plt.show()
         except ImportError:
             print("Matplotlib not available for plotting")
+            return
+
+        plt.figure(figsize=(8, 6))
+        plt.semilogy(self.residual_history)
+        plt.xlabel("Iteration")
+        plt.ylabel("Residual")
+        plt.title("Convergence History")
+        plt.grid(True)
+        plt.show()
 
 
 class SolverStatistics(NamedTuple):
