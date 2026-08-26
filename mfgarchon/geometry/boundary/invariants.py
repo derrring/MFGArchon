@@ -61,31 +61,38 @@ def seam(field: NDArray[np.floating]) -> float:
 def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     """Relative change in total mass between the first and last time row.
 
-    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid: the shared
-    node's two half-weights sum to one full weight, so it equals the rectangle rule over the N-1
-    distinct nodes exactly WHEN THE SEAM IS CLOSED -- two half-weights sum to one full weight only
-    when they weight one value. ``seam()`` in this module is the check. On a WALLED endpoint-inclusive grid the two end nodes carry half a cell each and
+    ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid: it equals the
+    rectangle rule over the N-1 distinct nodes exactly WHEN THE SEAM IS CLOSED, because two
+    half-weights sum to one full weight only when they weight one value. ``seam()`` in this module
+    is the check. On a WALLED endpoint-inclusive grid the two end nodes carry half a cell each and
     ``sum(m)*dx`` over-counts them by ``dx*(m[0]+m[-1])/2`` -- true of the weights, but which
     quadrature is the mass there depends on the state, below.
 
     WHAT THIS RETURNS WHEN THE SCHEME CONSERVES THE RECTANGLE SUM. Write the endpoint share
     ``s = dx*(m[0]+m[-1])/2 / (sum(m)*dx)``. Then ``trapezoid == (sum(m)*dx) * (1 - s)``
     identically, so when ``sum(m)*dx`` is held fixed this returns exactly
-    ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint share, and nothing else. Check that
-    condition rather than assuming it -- "the no-flux FDM wall" is four walls dispatched by
-    ``advection_scheme``. ``divergence_*`` holds ``sum(m)*dx`` fixed. ``gradient_*`` holds the
-    trapezoid fixed AT ZERO DRIFT ONLY -- there this returns 1e-14 while the share moves 6e-03 --
-    and under wall-normal drift holds neither: ``FPFDMSolver.__init__`` raises a ``UserWarning``
-    measuring -23.6% at cell Peclet 0.19 and -99.97% at 0.89, and calls the loss unbounded (#2007).
+    ``|(1-s_last)/(1-s_first) - 1|``: the change in endpoint share, and nothing else.
+
+    CHECK THAT CONDITION RATHER THAN ASSUMING IT. It is one line -- ``M.sum(axis=1)*dx`` at the
+    first and last rows -- and no scheme name substitutes for it. Measured on the no-flux wall,
+    which is four walls dispatched by ``advection_scheme``:
+
+    - ``divergence_*`` holds it to 1e-15 under a SCALAR sigma at any drift, 1-D and 2-D, and loses
+      it under a spatially varying ``volatility_field``: 4.3e-02 on a 0.05|0.40 step, scaling
+      smoothly with the variation, machine-zero for a constant ARRAY -- so it is the variation and
+      not the array (#1183).
+    - ``gradient_*`` holds the trapezoid instead, AT ZERO DRIFT ONLY, where this returns 1e-14
+      while the share moves 6e-03. Under wall-normal drift it holds neither, and
+      ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet
+      0.19, -99.97% at 0.89 (#2007).
 
     So resolution at the wall is a property of the STATE, not of the setup. Neither "diffusive" nor
     "zero drift" implies it; both admit states concentrated on an end node, where this halves rather
     than approximates and no quadrature on this grid has a defensible answer -- ``sum(m)*dx`` reads
     full only by giving the end node a cell reaching outside the declared bounds, and the
-    finite-volume half-cell reading agrees with the trapezoid. Compute ``s`` at both ends before
-    trusting the single number -- ``s`` of the FIRST and LAST time rows, which is what this
-    compares; where it moves, report the state instead. The cases that fix the
-    scope, and the four-wall table, are in PR #2142's description.
+    finite-volume half-cell reading agrees with the trapezoid. Compare ``s`` of the FIRST and LAST
+    time rows before trusting the single number; where it moves, report the state instead. The
+    cases that fix the scope, and the four-wall table, are in PR #2142's description.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
