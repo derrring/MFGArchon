@@ -417,10 +417,31 @@ def ghost_cell_fp_no_flux(
     v_n = drift_velocity * outward_normal_sign  # Normal velocity (positive = outward)
 
     if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centered: boundary at grid point
-        # rho_ghost = rho_interior * (D + v_n*dx) / (D - v_n*dx)
+        # Vertex-centred: the wall IS the interior node, which is why `ghost_cell_dirichlet`
+        # returns `g` there unmodified. So the wall density is rho_interior -- not a face average
+        # between ghost and interior -- and the separation is dx, the geometry #1972 settled for
+        # this module:
+        #     v_n * rho_interior = D * (rho_ghost - rho_interior) / dx
+        #     => rho_ghost = rho_interior * (D + v_n*dx) / D
+        #
+        # ~~(D + v_n*dx) / (D - v_n*dx)~~ [CORRECTED, #2068]. That form is consistent only with
+        # rho_face = (rho_g + rho_i)/2 AND drho/dn = (rho_g - rho_i)/(2*dx) -- a wall midway
+        # between ghost and interior at separation 2*dx, which is the cell-centred geometry, not
+        # this one. It is the #1972 pathology in a second function: self-consistent with a wrong
+        # wall position, so it satisfies its own stencil while leaving a flux residual that does
+        # NOT converge. Measured at D = 0.125, rho = 1, v_x = +0.5, max wall, the residual froze
+        # at -0.5 = -v_x*rho across dx from 0.1 down to 0.00625 while the cell-centred branch was
+        # machine zero at every one. The corrected form is exact in this geometry and O(dx) if
+        # evaluated with a face average.
+        #
+        # It also removes a pole. The old form is singular at dx = D/v_n -- HALF the cell-centred
+        # limit 2D/v_n, because the wrong geometry doubles the effective step -- and returns a
+        # NEGATIVE density past it: 499 at dx = 0.249 and -501 at dx = 0.251 for the numbers
+        # above. The corrected form is linear in dx and has no pole; it still goes negative under
+        # strong inward drift at dx > D/|v_n|, which is a resolution requirement rather than a
+        # blow-up.
         numerator = D + v_n * dx
-        denominator = D - v_n * dx
+        denominator = D
     else:
         # Cell-centered: boundary at cell face
         # rho_ghost = rho_interior * (2*D + v_n*dx) / (2*D - v_n*dx)
