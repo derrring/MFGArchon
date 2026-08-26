@@ -44,7 +44,8 @@
   above is about that one and stands.
 
   What the vertex half of this convention actually rests on is **#1904** and **#1935**, both open
-  and both `priority: high`: the grid class the FDM path constructs builds `np.linspace(lo, hi, N)`, so the
+  and both `priority: high`: `TensorProductGrid` — the only concrete `CartesianGrid` subclass —
+  builds `np.linspace(lo, hi, N)`, so the
   wall is a node, and the no-flux ghost is cell-centred on a node-centred grid.
 
   Both Neumann branches (`_compute_ghost_pair` and `_compute_single_ghost`) now call

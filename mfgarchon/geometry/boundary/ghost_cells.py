@@ -110,7 +110,7 @@ def ghost_cell_neumann(
     # the sign errors lived.
     #
     # Verified exact on 12 combinations (2 centrings x 2 walls x slopes 3, -1.7, 0) against
-    # `u = a*x`, which any CONSISTENT first-order ghost rule reproduces exactly; O(h^2) on
+    # `u = a*x`, which any consistent first-order ghost rule reproduces exactly; O(h^2) on
     # `u = x^2`. The word `consistent` is #1972's own -- it is in that commit's message and was
     # dropped on the way into this file. Without it the clause is false, and its counterexample is
     # the rule #1972 removed: 6 of the 8 non-zero-slope ghosts it produces are wrong. (#2129, which

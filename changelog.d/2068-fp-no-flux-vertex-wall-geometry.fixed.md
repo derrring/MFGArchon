@@ -32,8 +32,10 @@
   **The pins are external oracles, not the defining equation rearranged.** Asserting
   `v_n·rho_i == D·(rho_g − rho_i)/dx` would restate the fix, which is how the retired convention
   survived elsewhere. Instead: the two centrings discretise the same continuous condition, so their
-  leading correction in `dx` must agree — measured 0.99375 for the corrected branch against
-  **2.01266** for the retired one at `dx = 3.125e−3`, the factor of two being exactly the "diffusive
+  leading correction in `dx` must agree. The quantity is each vertex form's ghost increment over the
+  **cell-centred branch's** — `(ρ_g − ρ_i)/(ρ_g^cell − ρ_i)`, closed forms `1 − z/2` and
+  `2(1 − z/2)/(1 − z)` at `z = v_n·dx/D` — measured 0.993750 for the corrected branch against
+  **2.012658** for the retired one at `dx = 3.125e−3`, the factor of two being exactly the "diffusive
   flux is twice what the condition requires" the issue found. Reverting the branch turns six tests
   red; the `drift = 0` case survives, correctly, because every form returns `rho_interior` there.
 
@@ -55,8 +57,9 @@
   **BREAKING for `ghost_cell_fp_no_flux(..., grid_type=VERTEX_CENTERED)` and for
   `ZeroFluxCalculator` constructed on a vertex grid** — it returns 1.4 where it returned 2.333333
   on the numbers above. The path is public and exported; it has no consumer in this repository
-  (`use_zero_flux=True` is passed nowhere, and `VERTEX_CENTERED` appears in no example, notebook or
-  benchmark), so nothing here breaks. Same shape and same file as
+  (`use_zero_flux=True` is passed nowhere). `VERTEX_CENTERED` also appears in no example, notebook
+  or benchmark — **and neither does `CELL_CENTERED`**, so that pair says nothing about reachability;
+  what does is that no production caller passes either. Nothing here breaks. Same shape and same file as
   `changelog.d/2064-robin-vertex-branch.fixed.md`.
 
   On the `2·dx`-separation family, this closes the last live member: #1972 fixed `ghost_cells.py`'s
@@ -64,7 +67,8 @@
   `high_order_ghost_neumann`'s `order<4` arm already raises rather than computing. **The vertex half
   of that convention is not settled by any of them** — and an earlier revision of this fragment
   cited #2129 for why, which was wrong; that issue is closed as invalid. The vertex half belongs to
-  **#1904** and **#1935**, both open and both `priority: high`: the grid class the FDM path constructs builds
+  **#1904** and **#1935**, both open and both `priority: high`: `TensorProductGrid` — the only
+  concrete `CartesianGrid` subclass — builds
   `np.linspace(lo, hi, N)`, so the wall is a node, and the no-flux ghost is cell-centred on a
   node-centred grid — measured there, the wall Laplacian converges to half the true value. This fix
   rests on its own oracle, the exact profile `rho(s) = rho(wall)·exp(v_n·s/D)`, and not on any
