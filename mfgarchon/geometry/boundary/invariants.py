@@ -89,7 +89,9 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
       the variation and machine-zero for a constant ARRAY, so it is the variation and not the
       array (#1183). It costs ``gradient_*`` the trapezoid too, 4.4e-02.
     - Under a SCALAR sigma the families differ. ``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
-      any drift, measured to cell Peclet 87, in 1-D and 2-D.
+      any drift -- measured to cell Peclet 87 in 1-D, and to about 3.5 in 2-D, where the sum has to
+      be taken directly: THIS FUNCTION IS 1-D ONLY and raises on an n-D field, as does
+      ``bc_residual`` through it. ``seam`` handles n-D.
     - ``gradient_*`` holds the trapezoid instead, and only at zero drift, where this returns 1e-14
       while the share moves 6e-03. Under wall-normal drift it holds neither, and
       ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet
