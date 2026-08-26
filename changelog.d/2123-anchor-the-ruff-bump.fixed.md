@@ -49,7 +49,11 @@
   the `repo:` line and its `rev:` is valid YAML, and `\s+` cannot span it — so the substitution
   matched nothing, `update_files` returned `[]`, and `main()` printed *"No files needed updating"*
   and exited 0, while the workflow's `sed` handled the same file correctly. The pattern now tolerates
-  comment lines, and `update_files` **checks its own postcondition**: `main()` only calls it when the
+  comment lines — **which inverts the asymmetry rather than closing it**: `ci.yml`'s reader,
+  `local_ci.sh`'s and the new guard all return empty on that shape, so a config written that way
+  already fails `quick-checks` on every PR, and the Python bumper is now the one tolerant reader.
+  Refusing is the defensible side to be on; the bumper being alone on the other is worth knowing.
+  and `update_files` **checks its own postcondition**: `main()` only calls it when the
   versions differ, so "nothing changed" is always a defect and never a no-op, and it now raises with
   the shape named. Each of the three has its own pin — reverting the anchor reddens 6 of 10, deleting
   the postcondition 2, narrowing the pattern back to `\s+` 1.
@@ -73,5 +77,6 @@
   **"Exactly one owner" is qualified.** `uv.lock` materialises `ruff 0.13.1` against a pin of
   `0.16.0` — already drifted by three minors. Nothing reads it (`uv sync` appears zero times;
   `setup_development.sh` uses `uv pip install -e`, which ignores the lock), so it is dormant rather
-  than live, but `.gitignore:86` keeps it tracked "for reproducible research environments" and that
-  claim no longer holds. Filed separately.
+  than live, but `.gitignore` keeps it tracked with the comment *"Keep uv.lock tracked for
+  reproducible research environments"*, and that claim no longer holds. (Cited by its text rather
+  than its line, for the reason two paragraphs up.) Filed separately.

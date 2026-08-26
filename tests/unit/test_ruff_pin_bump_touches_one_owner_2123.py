@@ -137,7 +137,11 @@ def test_a_comment_between_repo_and_rev_does_not_silently_no_op(tmp_path, monkey
     ],
 )
 def test_a_bump_that_matches_nothing_raises_instead_of_reporting_success(name, text, tmp_path, monkeypatch):
-    """`main()` only calls this when the versions differ, so "nothing changed" is always a defect.
+    """A bump that matched nothing must raise, and the postcondition is what makes that sound.
+
+    NOT because "main() only calls this when the versions differ" -- `--force` does not compare and
+    calls straight through. The check is on the resulting VALUE of the pin, so `--force` to the
+    current version writes nothing and passes, while a shape the pattern misses raises.
 
     Both shapes defeat a guard that merely counts changed lines -- the workflow's `sed` range lands
     on `pre-commit-hooks` in each and changes exactly one line -- which is why that guard reads the

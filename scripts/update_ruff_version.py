@@ -92,9 +92,11 @@ def update_files(new_version: str) -> list[str]:
         config_path.write_text(updated)
         files_updated.append(".pre-commit-config.yaml")
 
-    # Postcondition, because a regex that matches nothing is indistinguishable from a version that
-    # was already current -- and `main()` only calls this when they differ, so "nothing changed"
-    # here is always a defect and never a no-op. Reads the pin back the way ci.yml does.
+    # Postcondition. NOT "main() only calls this when the versions differ" -- `--force` does not
+    # compare, it calls straight through, so `--force 0.16.0` on a config already at 0.16.0
+    # legitimately writes nothing. What makes this sound is that it checks the resulting VALUE of
+    # the pin, not whether a write happened: already-current passes, matched-nothing raises. Reads
+    # the pin back the way ci.yml does.
     # Split on the repo boundary first: a forward search for `rev:` runs into the NEXT block and
     # reports that block's version, which is a misleading error rather than a wrong verdict.
     blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
