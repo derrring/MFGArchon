@@ -62,11 +62,30 @@ jobs:
         run: |
           LATEST="${{ steps.latest.outputs.version }}"
 
-          # Update .pre-commit-config.yaml
-          sed -i "s/rev: v[0-9.]\+/rev: v$LATEST/" .pre-commit-config.yaml
+          # ANCHORED to the ruff repo (#2123). Unanchored, this rewrote EVERY `rev:` line --
+          # `.pre-commit-config.yaml` also pins `pre-commit/pre-commit-hooks`, and `sed`'s `s///`
+          # applies once PER LINE, not per file. Simulated at LATEST=0.17.0, the old expression set
+          # pre-commit-hooks from v6.0.0 to v0.17.0, a tag that does not exist, so `pre-commit`
+          # could not fetch ANY hook environment and the bot's own PR opened with every hook broken.
+          # It has not fired yet only because it runs on needs_update, and no bot PR has merged
+          # since that second `rev:` line was added.
+          sed -i "/astral-sh\/ruff-pre-commit/,/rev:/ s/rev: v[0-9.]\+/rev: v$LATEST/" .pre-commit-config.yaml
 
-          # Update CI workflow
-          sed -i "s/ruff==[0-9.]\+/ruff==$LATEST/" .github/workflows/modern_quality.yml
+          # The guard, because an anchored expression can come unanchored again in one edit and
+          # nothing downstream would notice: a broken pin fails at `pre-commit install-hooks`, in
+          # the bot's PR, not here.
+          changed=$(git diff --numstat .pre-commit-config.yaml | awk '{print $1}')
+          if [ "${changed:-0}" != "1" ]; then
+            echo "::error::the ruff bump changed ${changed:-0} lines in .pre-commit-config.yaml, expected exactly 1"
+            git diff .pre-commit-config.yaml
+            exit 1
+          fi
+
+          # No second pin to update. `modern_quality.yml` was sed'd here for a `ruff==` line that
+          # moved out of it -- that file now says "Ruff formatting and linting (covered by ci.yml
+          # quick-checks)" and contains the string zero times, so the step was a no-op. `ci.yml`
+          # holds no pin either: it READS the version out of `.pre-commit-config.yaml` at runtime
+          # (`ci.yml:79`). One owner, one edit. (#2123)
 
           echo "Updated ruff version to $LATEST"
 

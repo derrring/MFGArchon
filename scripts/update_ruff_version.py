@@ -67,8 +67,8 @@ def compare_versions(current: str, latest: str) -> str:
         return "ahead"
 
 
-def update_files(new_version: str) -> None:
-    """Update ruff version in configuration files."""
+def update_files(new_version: str) -> list[str]:
+    """Update ruff version in configuration files. Returns the paths it wrote."""
     files_updated = []
 
     # Update .pre-commit-config.yaml
@@ -80,17 +80,11 @@ def update_files(new_version: str) -> None:
         config_path.write_text(updated)
         files_updated.append(".pre-commit-config.yaml")
 
-    # Update .github/workflows/modern_quality.yml
-    workflow_path = Path(".github/workflows/modern_quality.yml")
-
-    if workflow_path.exists():
-        content = workflow_path.read_text()
-        updated = re.sub(r"ruff==[0-9.]+", f"ruff=={new_version}", content)
-
-        if updated != content:
-            workflow_path.write_text(updated)
-            files_updated.append(".github/workflows/modern_quality.yml")
-
+    # #2123: there is no second pin. This used to rewrite a `ruff==` line in
+    # `modern_quality.yml`; that line moved out, the file now says "Ruff formatting and linting
+    # (covered by ci.yml quick-checks)" and contains `ruff==` zero times, and `ci.yml` holds no pin
+    # either -- it reads the version out of `.pre-commit-config.yaml` at runtime (`ci.yml:79`).
+    # A bumper that touches more than the one owner is how the owner stops being one.
     return files_updated
 
 
