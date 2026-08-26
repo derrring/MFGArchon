@@ -715,12 +715,12 @@ class TestHJBFDMSolverGhostValueBC:
 
         ghosts = get_ghost_values_nd(field, bc, spacing)
 
-        # For no-flux (Neumann g=0): use reflection formula (Issue #542 fix)
-        # ghost[k] = interior[g-1-k] where g=1
-        # Left boundary (axis 0): ghost = field[1, :] (reflection of next interior)
-        np.testing.assert_allclose(ghosts[(0, 0)], np.array([4.0, 5.0, 6.0]))
-        # Right boundary (axis 0): ghost = field[0, :] (reflection of next interior)
-        np.testing.assert_allclose(ghosts[(0, 1)], np.array([1.0, 2.0, 3.0]))
+        # No-flux is `du/dn = 0`, so `ghost_cell_neumann` gives `u_int + dx*0` -- the ADJACENT
+        # interior row, mirrored about the wall. #2067: this asserted `field[1]` / `field[-2]`,
+        # the retired `2*dx` form measured off the second interior row, which disagrees with the
+        # owner on any field that is not constant along the axis.
+        np.testing.assert_allclose(ghosts[(0, 0)], field[0, :])
+        np.testing.assert_allclose(ghosts[(0, 1)], field[-1, :])
 
     def test_get_ghost_values_nd_periodic(self):
         """Test get_ghost_values_nd for periodic BC."""

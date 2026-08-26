@@ -151,16 +151,111 @@ def test_a_robin_condition_without_coefficients_refuses():
     ("name", "factory", "expected"),
     [
         ("dirichlet", lambda: dirichlet_bc(dimension=1, value=2.5), (2.5, -1.6)),
-        ("neumann", lambda: neumann_bc(dimension=1, value=0.7), (2.75, 5.55)),
+        # #2067: was (2.75, 5.55), the retired `u[1] - 2*dx*g` / `u[-2] + 2*dx*g` form. The
+        # branch now delegates to `ghost_cell_neumann`, so both walls read `u_int + dx*g`.
+        ("neumann", lambda: neumann_bc(dimension=1, value=0.7), (2.675, 6.775)),
         ("periodic", lambda: periodic_bc(dimension=1), (6.6, 2.5)),
     ],
 )
 def test_the_other_members_are_byte_identical(name, factory, expected):
     """#1955 pinned this function byte-identical across the module's deletion, over five cases.
-    This change touches only the ROBIN branch, and these are the members that must prove it."""
+
+    #2067 moved the `neumann` row: the branch stopped restating `u_next -/+ 2*dx*g` and now calls
+    `ghost_cell_neumann`. The other two rows are what still prove the rest of the function is
+    untouched. This row is not decoration either -- it is ONE OF TWO assertions separating the `dx`
+    separation from the `2*dx` vertex mirror, the other being
+    `test_hjb_fdm_solver.py::TestHJBFDMSolverGhostValueBC::test_get_ghost_values_nd_neumann`, which
+    separates them at `g = 0` where `u_next != u_int`. Measured: the vertex-mirror mutation reddens
+    exactly those two and nothing else. The linear-field oracle below cannot do it, because
+    `u_neighbor + 2*dx*(du/dn)` reproduces a linear field exactly too."""
     bc = factory()
     bc.domain_bounds = _BOUNDS
     ghosts = _ghosts(bc)
 
     assert _scalar(ghosts[(0, 0)]) == pytest.approx(expected[0])
     assert _scalar(ghosts[(0, 1)]) == pytest.approx(expected[1])
+
+
+@pytest.mark.parametrize("slope", [3.0, -1.7, 0.0])
+def test_a_neumann_wall_reproduces_a_linear_field_exactly(slope):
+    """#2067: an EXTERNAL oracle, because agreement with `ghost_cell_neumann` is now tautological.
+
+    The branch used to restate its own arithmetic in the expectation, which is what let it hold a
+    retired convention through two reviews. A linear field is the oracle any first-order ghost rule
+    must reproduce exactly, and it discriminates BOTH things that were wrong:
+
+    - the convention. `du/dn` at the low wall of `u = slope*x` is `-slope`; the old branch read `g`
+      as `du/dx` and applied it with opposite signs, so feeding `du/dn` inverted the low wall.
+    - the separation. The old form measured across `2*dx` from the SECOND interior cell, so it
+      disagreed with the owner even at `g = 0`. On a CELL-CENTRED grid at dx = 0.1: 0.300 on
+      `u = 3x`, 0.500 on `u = sin(2*pi*x)`. Only a constant field agrees, which is why the
+      `slope = 0` case below cannot carry this test on its own and the other two are not
+      decoration. (0.588 is the same quantity on a VERTEX layout, where the nodes sit at j*dx;
+      `u = 3x` gives 0.300 on either, which is how the mismatched pair went unnoticed.)
+    """
+    dx = 0.25
+    x = np.arange(5) * dx
+    u = slope * x
+    for wall, index, dudn in ((0, 0, -slope), (1, -1, +slope)):
+        bc = neumann_bc(dimension=1, value=dudn)
+        bc.domain_bounds = _BOUNDS
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ghosts = get_ghost_values_nd(u, bc, (dx,))
+        exact = slope * (x[index] - dx if wall == 0 else x[index] + dx)
+        assert _scalar(ghosts[(0, wall)]) == pytest.approx(exact, abs=1e-12), (
+            f"wall {wall}: ghost must continue u = {slope}*x exactly"
+        )
+
+
+@pytest.mark.parametrize("slope", [3.0, -1.7])
+def test_a_neumann_face_on_a_MIXED_boundary_reproduces_a_linear_field(slope):
+    """#2067: the OTHER Neumann branch. Without this it had zero discrimination in 6610 tests.
+
+    `_compute_ghost_pair` handles a uniform BoundaryConditions; a non-uniform one routes each face
+    through `_compute_single_ghost`, whose Neumann branch this PR also changed. Measured before
+    adding this: replacing that branch's whole body with `return 12345.0` turned **nothing** red at
+    full suite scope. `test_a_robin_condition_without_coefficients_refuses` executes the line and
+    asserts nothing about its value -- a covered line with no discrimination.
+
+    The oracle is the same linear field the uniform test uses, for the same reason: agreement with
+    `ghost_cell_neumann` is tautological once the branch calls it.
+
+    WHAT IT DOES NOT CATCH, measured rather than assumed: replacing the branch with the `2*dx`
+    VERTEX MIRROR `u_neighbor + 2*dx*g` reddens nothing here, because that form also reproduces a
+    linear field exactly. What it does catch, 2 nodes each: a constant body, reading `g` as `du/dx`,
+    the `2*dx` separation off `u_int`, and the old left-wall form `u_neighbor - 2*dx*g`. The vertex
+    mirror is separated only by the two characterization rows, one of them in another file.
+    """
+    dx = 0.25
+    x = np.arange(5) * dx
+    u = slope * x
+    bc = BoundaryConditions(
+        segments=[
+            # du/dn at the min wall of u = slope*x is -slope; the max wall is Dirichlet so the two
+            # faces cannot be uniform and each one goes through `_compute_single_ghost`.
+            BCSegment(name="lo", bc_type=BCType.NEUMANN, value=-slope, boundary="x_min"),
+            BCSegment(name="hi", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    bc.domain_bounds = _BOUNDS
+
+    # The premise, asserted rather than assumed. A uniform BoundaryConditions takes
+    # `_compute_ghost_pair` and never reaches the branch under test -- the idiom
+    # `test_a_robin_condition_without_coefficients_refuses` established seventy lines up, after its
+    # own first version passed for exactly that reason. Without this line a future widening of
+    # `is_uniform` silently reroutes the test, leaves it green, and evaporates the pin.
+    assert not bc.is_uniform, "a uniform BC routes through _compute_ghost_pair, not the branch here"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        ghosts = get_ghost_values_nd(u, bc, (dx,))
+
+    assert _scalar(ghosts[(0, 0)]) == pytest.approx(slope * (x[0] - dx), abs=1e-12), (
+        "the mixed-boundary Neumann face must continue u = slope*x exactly"
+    )
+    # the Dirichlet face too: a single-wall assertion cannot see a per-face routing break
+    assert _scalar(ghosts[(0, 1)]) == pytest.approx(2 * 0.0 - u[-1], abs=1e-12), (
+        "the Dirichlet face must be untouched by the Neumann branch"
+    )

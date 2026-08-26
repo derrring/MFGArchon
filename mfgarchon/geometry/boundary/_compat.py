@@ -36,7 +36,7 @@ from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 
 # GhostCellConfig moved to ghost_cells.py (canonical location).
 # Re-exported here for backward compatibility.
-from .ghost_cells import GhostCellConfig, ghost_cell_robin
+from .ghost_cells import GhostCellConfig, ghost_cell_neumann, ghost_cell_robin
 from .types import BCType
 
 logger = get_logger(__name__)
@@ -107,7 +107,7 @@ def get_ghost_values_nd(
 
     The ghost values are derived from BC type:
     - Dirichlet: u_ghost = 2*g - u_interior (cell-centered)
-    - Neumann/No-flux: u_ghost = u_next_interior (reflection for central diff)
+    - Neumann/No-flux: u_ghost = u_interior + dx*g, g = du/dn (`ghost_cell_neumann` owns it)
     - Periodic: u_ghost = u_opposite_boundary
 
     Supports mixed BCs where different boundaries have different types.
@@ -241,7 +241,6 @@ def get_ghost_values_nd(
                 dx,
                 time,
                 config,
-                "left",
                 alpha_l,
                 beta_l,
             )
@@ -258,7 +257,6 @@ def get_ghost_values_nd(
                 dx,
                 time,
                 config,
-                "right",
                 alpha_r,
                 beta_r,
             )
@@ -315,8 +313,19 @@ def _compute_ghost_pair(
             return 2 * g - u_int_left, 2 * g - u_int_right
 
     elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-        # Issue #542 fix: Use reflection formula for central difference
-        return u_next_left - 2 * dx * g, u_prev_right + 2 * dx * g
+        # #2067: `ghost_cell_neumann` owns this, the same way `ghost_cell_robin` owns the branch
+        # below since #1961. What was here read `g` as du/dx -- one signed value applied with
+        # OPPOSITE signs at the two walls -- while passing the same `g` to `ghost_cell_robin`,
+        # which reads du/dn. Whichever convention a caller held, one of the two branches was
+        # wrong at the low wall.
+        #
+        # It also used the retired `2*dx` separation off the SECOND interior cell, so it diverged
+        # from the owner at g = 0 too: measured on a no-flux wall, 0.3 on `u = 3x` and 0.588 on
+        # `u = sin(2*pi*x)`. Only a constant field agreed, which is why nothing noticed.
+        return (
+            ghost_cell_neumann(u_int_left, g, dx),
+            ghost_cell_neumann(u_int_right, g, dx),
+        )
 
     elif bc_type == BCType.ROBIN:
         # #1961: this returned the adjacent interior cell -- the impermeable-wall mirror -- for
@@ -339,7 +348,6 @@ def _compute_single_ghost(
     dx: float,
     time: float,
     config: GhostCellConfig,
-    side: str,
     alpha: float = 1.0,
     beta: float = 0.0,
 ) -> NDArray:
@@ -353,7 +361,6 @@ def _compute_single_ghost(
         dx: Grid spacing
         time: Current time
         config: Ghost cell configuration
-        side: "left" or "right"
     """
     g = bc_value if bc_value is not None else 0.0
     if callable(g):
@@ -372,13 +379,11 @@ def _compute_single_ghost(
             return 2 * g - u_int
 
     elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-        # Issue #542 fix: Reflection formula for central difference
-        # Left: ghost = u[1] - 2*dx*g
-        # Right: ghost = u[-2] + 2*dx*g
-        if side == "left":
-            return u_neighbor - 2 * dx * g
-        else:
-            return u_neighbor + 2 * dx * g
+        # #2067, same as the sibling branch in `_compute_ghost_pair`. The `side` parameter this
+        # function took existed only to undo the du/dx sign; du/dn already carries the wall's
+        # direction, so the owner needs no side argument and neither does this. It is gone with
+        # the arithmetic that needed it -- nothing else in this function read it.
+        return ghost_cell_neumann(u_int, g, dx)
 
     elif bc_type == BCType.ROBIN:
         # #1961: this returned the adjacent interior cell for every coefficient pair. See the
