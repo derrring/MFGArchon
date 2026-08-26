@@ -284,11 +284,20 @@ def test_convergence_info_immutability():
 
 
 def _info() -> ConvergenceInfo:
+    """Non-round and non-collinear in log space, and both properties are load-bearing.
+
+    #2090's first defect: the fixture was `[1e-1, 1e-3, 1e-5]`, three exact powers of ten with a
+    constant ratio, so `semilogy` could render nothing but a straight line -- the "convergence
+    history" reported as making no sense. It is also what let the plotting test below pass over a
+    method plotting a hardcoded literal: a fixture of round constants cannot separate
+    `self.residual_history` from the same three numbers written inline. Measured with the old
+    fixture, that mutation left all 25 tests in this file green.
+    """
     return ConvergenceInfo(
         converged=True,
         iterations=3,
-        final_residual=1e-5,
-        residual_history=[1e-1, 1e-3, 1e-5],
+        final_residual=6.2e-3,
+        residual_history=[0.37, 4.1e-2, 6.2e-3],
         convergence_reason="done",
     )
 
@@ -298,8 +307,10 @@ def test_plot_convergence_falls_back_when_matplotlib_is_missing(capsys, monkeypa
     """#2090: the fallback branch this test's predecessor was NAMED for had never run.
 
     It was `test_..._no_matplotlib`, documented as testing the path "without matplotlib", and
-    matplotlib is a declared dev dependency -- so the `try` always succeeded and the branch was
-    never entered. Its assertion was `isinstance(plot_succeeded, bool)` over a variable assigned
+    matplotlib is a hard RUNTIME dependency -- `[project] dependencies` carries `matplotlib>=3.8`,
+    not a dev extra -- so the `try` always succeeded and the branch is unreachable in any correct
+    installation, not merely unreached here. It becomes reachable only once #2089 drops matplotlib
+    from `dependencies`, which is the reason the fallback deserves a test at all. Its assertion was `isinstance(plot_succeeded, bool)` over a variable assigned
     only literal `True`/`False`, which cannot fail. Reaching the branch takes a monkeypatch.
     """
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)

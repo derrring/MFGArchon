@@ -9,8 +9,11 @@
   reader to the wrong place and swallows the real one.
 
   The test was `test_convergence_info_plot_convergence_no_matplotlib`, documented as testing the
-  path "without matplotlib". matplotlib is a declared dev dependency, so the `try` always succeeded
-  and **the branch the test was named for had never run**. Its assertion was
+  path "without matplotlib". matplotlib is a hard **runtime** dependency — `[project] dependencies`
+  carries `matplotlib>=3.8`, not a dev extra — so the `try` always succeeded and **the branch the
+  test was named for is unreachable in any correct installation**, not merely unreached in the dev
+  environment. It becomes reachable only once #2089 drops matplotlib from `dependencies`, which is
+  the reason the fallback deserves a test. Its assertion was
   `assert isinstance(plot_succeeded, bool)` over a variable assigned only literal `True` and
   `False` — it could not fail, in any state of the code.
 
@@ -37,8 +40,17 @@
   The sibling entry from `test_headless_backend_2090.py` stays, because that test calls `show()` on
   purpose to prove it returns.
 
+  The fixture changed with them, and that closes the issue's **first** defect. It was
+  `[1e-1, 1e-3, 1e-5]` — three exact powers of ten, constant ratio, so `semilogy` could render
+  nothing but the straight line the user reported as making no sense. It was also what let the
+  plotting test pass over a method that plotted a hardcoded literal: measured, replacing
+  `self.residual_history` with `[1e-1, 1e-3, 1e-5]` left all 25 tests in the file green. With
+  `[0.37, 4.1e-2, 6.2e-3]` that mutation turns the plotting test red.
+
   Not changed here: the method still ends in a bare `plt.show()`, and `SolverResult` already has
-  the shape this one lacks — `plot_convergence(save_path=..., show=False, log_scale=...)` returning
-  a figure, with ten tests exercising it. Under #2089's policy this method goes away rather than
+  the shape this one lacks — `plot_convergence(save_path=..., show=..., log_scale=...)` returning a
+  figure, with **8** test methods exercising it across 9 call sites. Its `show` defaults to `True`,
+  so the contrast is an *optional* show, not a non-showing default. Under #2089's policy this
+  method goes away rather than
   being taught the sibling's signature, so the divergence is recorded there instead of half-closed
   here. The new plotting test asserts `show()` **was** called, so #2089 trips it deliberately.
