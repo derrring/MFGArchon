@@ -80,8 +80,17 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     gives 0.5. **No quadrature on this grid is trustworthy for a boundary-concentrated measure** --
     what control volume the endpoint node owns is an open question, not a settled convention.
 
-    So: use this where the density is resolved at the wall, which is every diffusive case. Where a
-    wall-concentrated state is the point of the test, report the state, not a single mass number.
+    So: use this where the density is RESOLVED AT THE WALL. The criterion is the wall layer, not
+    the presence of diffusion. A drift-dominated layer of width ``D/|v|`` narrower than ``h``
+    concentrates on node 0 and fails the same way with diffusion present throughout -- measured on
+    a no-flux wall at ``v = -0.8``, ``n = 51``, the reported loss climbs 5.3e-02 / 2.1e-01 /
+    4.6e-01 as the cell Peclet number ``|v|h/D`` goes 0.13 / 0.80 / 12.8, while ``sum(m)*dx`` stays
+    at 1e-14 throughout. There is no threshold at which "diffusive" starts protecting anything; it
+    approaches the halving limit continuously. Zero-drift diffusion, this file's own fixture, is
+    resolved by construction.
+
+    Where a wall-concentrated state is the point of the test, report the state, not a single mass
+    number.
     """
     arr = np.asarray(field)
     if arr.ndim == 1:
