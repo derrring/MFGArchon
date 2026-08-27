@@ -27,14 +27,32 @@ jobs:
       - name: Get current ruff version
         id: current
         run: |
-          CURRENT_VERSION=$(grep -A 1 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml | grep 'rev:' | sed 's/.*v//' | tr -d ' ')
+          CURRENT_VERSION=$(python scripts/update_ruff_version.py --print-current)
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current ruff version: $CURRENT_VERSION"
 
       - name: Get latest ruff version
         id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_VERSION=$(curl -s https://api.github.com/repos/astral-sh/ruff/releases/latest | jq -r .tag_name | sed 's/v//')
+          # Authenticated (#2134): unauthenticated api.github.com is 60 requests/hour per IP,
+          # shared across GitHub-hosted runners. A rate-limited body carries no `tag_name`, so
+          # `jq -r` prints the string "null", which compares unequal to the pinned version and
+          # sends the next step into `pip install ruff==null` -- an error naming pip, once a
+          # month, on a schedule nobody reads.
+          LATEST_VERSION=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/astral-sh/ruff/releases/latest | jq -r .tag_name | sed 's/v//')
+
+          # The shape check is the half that survives the token expiring or the limit moving:
+          # refuse a non-version here, where the diagnostic can name the API, instead of three
+          # steps downstream where it names pip.
+          case "$LATEST_VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::latest ruff tag came back as '${LATEST_VERSION:-<empty>}', not a version -- rate limit or an API change, not a ruff release"
+               exit 1 ;;
+          esac
+
           echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           echo "Latest ruff version: $LATEST_VERSION"
 
@@ -62,14 +80,14 @@ jobs:
         run: |
           LATEST="${{ steps.latest.outputs.version }}"
 
-          # ANCHORED to the ruff repo (#2123). Unanchored, this rewrote EVERY `rev:` line --
-          # `.pre-commit-config.yaml` also pins `pre-commit/pre-commit-hooks`, and `sed`'s `s///`
-          # applies once PER LINE, not per file. Simulated at LATEST=0.17.0, the old expression set
-          # pre-commit-hooks from v6.0.0 to v0.17.0, a tag that does not exist, so `pre-commit`
-          # could not fetch ANY hook environment and the bot's own PR opened with every hook broken.
-          # It has not fired yet only because it runs on needs_update, and no bot PR has merged
-          # since that second `rev:` line was added.
-          sed -i "/astral-sh\/ruff-pre-commit/,/rev:/ s/rev: v[0-9.]\+/rev: v$LATEST/" .pre-commit-config.yaml
+          # Through the owner (#2135). This step used to carry its own `sed` bumper, which made two
+          # writers for one quantity, and they disagreed: `sed`'s range handled a comment between
+          # `repo:` and `rev:` while the script's `\\s+` did not, so which one ran decided whether the
+          # bump landed. #2123 then had to be fixed twice, once on each side, and the second fix is
+          # only present here because someone noticed. `--force` writes `.pre-commit-config.yaml`
+          # and nothing else -- the same single file the `sed` touched -- and raises if the pin does
+          # not read back as asked.
+          python scripts/update_ruff_version.py --force "$LATEST"
 
           # The guard, because an anchored expression comes unanchored again in one edit and
           # nothing downstream notices: a broken pin fails at `pre-commit install-hooks`, in the
@@ -81,8 +99,7 @@ jobs:
           # precedes its `repo:`, and a ruff block with no `rev:` at all; in both the range lands on
           # pre-commit-hooks and changes exactly one line. Re-reading the pin the way ci.yml does
           # rules out both.
-          bumped=$(grep -A1 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
-                   | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+          bumped=$(python scripts/update_ruff_version.py --print-current || true)
           if [ "$bumped" != "$LATEST" ]; then
             echo "::error::after the bump the ruff pin reads '${bumped:-<unreadable>}', expected '$LATEST'"
             git diff .pre-commit-config.yaml

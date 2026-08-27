@@ -74,7 +74,7 @@ jobs:
         # went red on four README files nobody had touched, on every open PR at once.
         # `|| RUFF_VERSION=""` matters: the runner shell is `bash -e {0}`, so a failing
         # substitution would abort here and the guard below would never print anything.
-        RUFF_VERSION=$(grep -A1 'repos:.*ruff-pre-commit\|astral-sh/ruff-pre-commit' .pre-commit-config.yaml | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_VERSION="")
+        RUFF_VERSION=$(python scripts/update_ruff_version.py --print-current) || RUFF_VERSION=""
         if [ -z "$RUFF_VERSION" ]; then
           echo "::error::could not read the ruff pin from .pre-commit-config.yaml"
           exit 1

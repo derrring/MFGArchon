@@ -28,7 +28,22 @@ from pathlib import Path
 #
 # It cannot run past the ruff block: the repeated group matches only blank or comment lines, so any
 # other key (`hooks:`, the next `- repo:`) ends the match without a `rev:`.
-RUFF_PIN = r"astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*(?:#[^\n]*)?\n)*[^\S\n]*rev:[^\S\n]*"
+# The route from the ruff block's own `repo:` LINE to its `rev:`. Anchored at `^` and through the
+# full `- repo: <url>` declaration, not from a bare occurrence of the URL: a comment mentioning
+# `astral-sh/ruff-pre-commit` inside an EARLIER block satisfied the bare form, and since `re.sub`
+# replaces every match, `update_files` then rewrote that block's `rev:` too -- `pre-commit-hooks`
+# went from v6.0.0 to the ruff version, a tag that does not exist, so `pre-commit` could fetch no
+# hook environment at all. That is #2123's damage reached from the reader's side, and the
+# postcondition did NOT catch it: the corruption made the block it inspected read the value it was
+# asked for. `get_current_version` was fooled the same way and returned 6.0.0 for a pin of 0.16.0.
+# Traced, not inferred: run against that config, the pre-#2139 code rewrote both `rev:` lines and
+# raised nothing. Used with `re.M` at every site -- without it `^` matches only the file start and
+# this silently degrades to matching nothing. (#2139)
+RUFF_PIN = (
+    r"^[^\S\n]*-[^\S\n]*repo:[^\S\n]*https://github\.com/astral-sh/ruff-pre-commit[^\S\n]*\n"
+    r"(?:[^\S\n]*(?:#[^\n]*)?\n)*"
+    r"[^\S\n]*rev:[^\S\n]*"
+)
 
 
 def get_current_version() -> str:
@@ -36,16 +51,20 @@ def get_current_version() -> str:
     config_path = Path(".pre-commit-config.yaml")
 
     if not config_path.exists():
-        print("❌ Error: .pre-commit-config.yaml not found")
+        # stderr, not stdout: `--print-current` is the machine-readable interface four callers
+        # parse, and a diagnostic on stdout is captured as the VALUE. `RUFF_VERSION=$(... ||
+        # RUFF_VERSION="")` in ci.yml then reads non-empty, its `-z` guard stays quiet, and the
+        # error text flows downstream as a version -- the same shape as #2134.
+        print("❌ Error: .pre-commit-config.yaml not found", file=sys.stderr)
         sys.exit(1)
 
     content = config_path.read_text()
 
     # Find ruff version
-    match = re.search(RUFF_PIN + r"v([0-9.]+)", content)
+    match = re.search(RUFF_PIN + r"v([0-9.]+)", content, flags=re.M)
 
     if not match:
-        print("❌ Error: Could not find ruff version in .pre-commit-config.yaml")
+        print("❌ Error: Could not find ruff version in .pre-commit-config.yaml", file=sys.stderr)
         sys.exit(1)
 
     return match.group(1)
@@ -93,7 +112,7 @@ def update_files(new_version: str) -> list[str]:
     # YAML and `\s+` cannot span it, so the substitution silently matched nothing and `main()`
     # printed "No files needed updating" and exited 0. The workflow's `sed` handles that shape
     # correctly, so the two bumpers disagreed on it. (#2123)
-    updated = re.sub(f"({RUFF_PIN})v[0-9.]+", rf"\1v{new_version}", content)
+    updated = re.sub(f"({RUFF_PIN})v[0-9.]+", rf"\1v{new_version}", content, flags=re.M)
 
     if updated != content:
         config_path.write_text(updated)
@@ -111,7 +130,13 @@ def update_files(new_version: str) -> list[str]:
     # a bump that had in fact landed correctly. It is deliberately NOT `RUFF_PIN`: this runs on the
     # already-split block and wants the pin's own line, not the route from the repo URL to it.
     blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
-    ruff_block = next((b for b in blocks if "astral-sh/ruff-pre-commit" in b), "")
+    # Anchored to the block's own `repo:` line, not to a substring of the block. A COMMENT naming
+    # the ruff URL in an EARLIER block -- `# kept in step with astral-sh/ruff-pre-commit` -- won the
+    # substring test, so the verifier read that block's `rev:`. Reproduced: with that comment on
+    # `pre-commit-hooks`, the check read v6.0.0 against a real pin of v0.16.0; removing the comment
+    # restored it. (#2139)
+    block_is_ruff = re.compile(r"^\s*-\s*repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s*$", re.M)
+    ruff_block = next((b for b in blocks if block_is_ruff.search(b)), "")
     check = re.search(r"^[^\S\n]*rev:[^\S\n]*v([0-9.]+)", ruff_block, flags=re.M)
     if check is None or check.group(1) != new_version:
         got = f"v{check.group(1)}" if check else "no `rev:` at all"
@@ -149,11 +174,23 @@ def run_formatting() -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Update ruff version across repository")
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--print-current",
+        action="store_true",
+        help="Print the pinned version to stdout and exit -- the one reader. Every other place "
+        "that wants this version calls this instead of writing its own expression (#2135).",
+    )
     group.add_argument("--check", action="store_true", help="Check for updates only")
     group.add_argument("--update", action="store_true", help="Check and apply updates")
     group.add_argument("--force", metavar="VERSION", help="Force update to specific version")
 
     args = parser.parse_args()
+
+    # Before the banner and before any network call: this is the machine-readable exit that every
+    # other reader of the pin shells out to, so anything else on stdout makes it unparseable.
+    if args.print_current:
+        print(get_current_version())
+        return
 
     print("🔍 Ruff Version Manager\n")
 

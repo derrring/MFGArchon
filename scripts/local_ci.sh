@@ -261,8 +261,9 @@ check() {
 # resolved to the repo's PARENT whenever the script was invoked as `./local_ci.sh` from scripts/.
 # RUFF_PIN came back empty and the version WARN silently never fired -- which matters now that
 # the ruff version is printed in the tail as merge evidence.
-RUFF_PIN=$(grep -A1 'astral-sh/ruff-pre-commit' "$PWD/.pre-commit-config.yaml" 2>/dev/null \
-  | grep -oE 'rev: v[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || RUFF_PIN="")
+# One reader (#2135): `grep -A1` sees only the line after the repo URL, so a comment between
+# `repo:` and `rev:` -- which the bumper deliberately writes -- silently returned empty here.
+RUFF_PIN=$("$PY" -P "$PWD/scripts/update_ruff_version.py" --print-current 2>/dev/null) || RUFF_PIN=""
 RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s in the gate interpreter, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
