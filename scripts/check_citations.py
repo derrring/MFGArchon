@@ -142,6 +142,24 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# `sys.path` explicitly, and APPENDED rather than inserted. The gate runs the suite under
+# `PYTHONSAFEPATH=1` (`scripts/local_ci.sh`), which every subprocess inherits, and under it the
+# interpreter does NOT prepend a script's own directory -- so a plain `import git_env` raises
+# ModuleNotFoundError there while passing when this file is run by hand. Found exactly that way:
+# fifteen tests green in isolation, red in the full suite. Appended so `scripts/` sits after the
+# stdlib and a future file in here cannot shadow it.
+sys.path.append(str(Path(__file__).resolve().parent))
+
+# Must follow the `sys.path` line above.
+from git_env import scrub_process_env
+
+# Before anything runs git. Every call here passes `-C <root>` or `-C <tmp>`, which sets the
+# working directory and does NOT override `GIT_DIR` -- so under the pre-push hook, which exports
+# it, `--self-test`'s throwaway `git init` / `git add -A` operated on the developer's checkout and
+# the measurement path read a repository nobody named. Scrubbed at the process level rather than
+# per call: a per-call `env=` is correct only at the sites that were edited. (#2152, #2085)
+scrub_process_env()
+
 EXEMPT_DIRS = {"archive", ".git", "node_modules", ".venv", "build", "dist"}
 EXEMPT_FILES = {Path("CHANGELOG.md")}
 

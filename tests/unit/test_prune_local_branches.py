@@ -18,7 +18,7 @@ one of those failures was a disagreement between what git does and what the scri
 `absorbed()` returns 0 = absorbed, 1 = not absorbed, 2 = no content difference at all.
 """
 
-import os
+import importlib.util
 import subprocess
 from pathlib import Path
 
@@ -26,40 +26,18 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "prune_local_branches.sh"
 
-# Git exports these to hooks, and they beat both `-C` and `cwd=` (Issue #2085): with `GIT_DIR`
-# set, `git -C <tmp> commit` commits into the repository GIT_DIR names, not into <tmp>. Run from
-# the pre-push hook, this file therefore committed `a.txt` onto the developer's branch and wrote
-# its own `user.email=t@t` into their config -- the fixture below looks isolated and was not.
-# Stripping them makes the isolation these tests already intend real rather than nominal.
-_GIT_ENV_LEAKS = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_CEILING_DIRECTORIES",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-    # `GIT_CONFIG` acts as an implicit `--file`, so `git -C <tmp> config ...` rewrites the file it
-    # names -- symptom 2 of #2085 reproduces through it even with GIT_DIR scrubbed.
-    "GIT_CONFIG",
-    # `git init` copies `$GIT_TEMPLATE_DIR/hooks/` into every repository it creates. An ambient
-    # value plants hooks that then execute during this fixture's `git commit`, and
-    # `GIT_CONFIG_GLOBAL=os.devnull` below does not neutralise it -- that only covers
-    # `init.templateDir`, the config spelling of the same thing.
-    "GIT_TEMPLATE_DIR",
+# The list and both scrub forms have one owner, `scripts/git_env.py`. They were private to this
+# file when #2085 was fixed here, and #2152 is what that cost: the same failure in
+# `check_citations.py` and its tests, which could not reach a private copy. Loaded by path because
+# `scripts/` is not a package and putting it on `sys.path` would make `scripts/test_discrimination.py`
+# importable as a top-level `test_discrimination`.
+_GIT_ENV = importlib.util.module_from_spec(
+    importlib.util.spec_from_file_location(
+        "_mfgarchon_git_env_prune", Path(__file__).resolve().parents[2] / "scripts" / "git_env.py"
+    )
 )
-
-
-def _isolated_env():
-    """Environment for every git subprocess here: no inherited repository, no ambient config."""
-    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_LEAKS}
-    # Each throwaway repo sets its own `user.*`. Reading the developer's global config would make
-    # the verdicts depend on it, and the incident above was in part a write that reached it.
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
-    env["GIT_CONFIG_SYSTEM"] = os.devnull
-    return env
+_GIT_ENV.__loader__.exec_module(_GIT_ENV)
+_isolated_env = _GIT_ENV.isolated_env
 
 
 def _git(repo, *args, **kw):

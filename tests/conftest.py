@@ -6,6 +6,7 @@ used across the entire test suite.
 """
 
 import contextlib
+import importlib.util
 import logging
 import os
 import shutil
@@ -57,6 +58,30 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.factory import lq_mfg_initial_density, lq_mfg_terminal_cost
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+
+# Issue #2152: `git -C <tmp>` does not override `GIT_DIR`, and git exports `GIT_DIR` to every hook
+# it runs -- including the pre-push hook this suite is invoked from. Every fixture that builds a
+# throwaway repository then operated on the checkout being pushed while looking isolated at each
+# call site. Scrubbed once here rather than threaded through the ~20 `subprocess.run(["git", ...])`
+# sites, because a per-call scrub protects only the sites someone remembered to edit and the next
+# fixture is written by someone with no reason to know any of this.
+#
+# The variable list has one owner, `scripts/git_env.py`, loaded by path because `scripts/` is not
+# a package and is not on `sys.path` under pytest. Config is left alone: blanking the global config
+# changes how git resolves `safe.directory`, and the tests that want that isolation ask for it.
+_GIT_ENV = importlib.util.module_from_spec(
+    importlib.util.spec_from_file_location(
+        "_mfgarchon_git_env", Path(__file__).resolve().parents[1] / "scripts" / "git_env.py"
+    )
+)
+_GIT_ENV.__loader__.exec_module(_GIT_ENV)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_inherited_git_repository():
+    """Drop the redirecting git variables for the whole session, before any fixture runs."""
+    _GIT_ENV.scrub_process_env()
+
 
 # =============================================================================
 # Default Components for Testing (Issue #670, #673: explicit specification required)
