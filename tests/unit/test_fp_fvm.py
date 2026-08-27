@@ -21,6 +21,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_problem import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +50,14 @@ def make_problem_2d(Nx, Ny, T, Nt, sigma, bounds=((0.0, 1.0), (0.0, 1.0))):
 
 
 def normalized_gaussian_1d(x, x0, s0):
+    """Normalised on the grid's own measure (#2145), which is what the FVM now conserves.
+
+    `g.sum() * dx` gives both wall nodes a full cell on an endpoint-inclusive grid; the FVM used to
+    conserve exactly that, over a domain of length L + dx, at first order. It now takes its control
+    volumes from `quadrature_weights_1d` and is second order on a domain of length L.
+    """
     g = np.exp(-((x - x0) ** 2) / (2 * s0**2))
-    dx = x[1] - x[0]
-    return g / (g.sum() * dx)
+    return g / float(quadrature_weights_1d(x) @ g)
 
 
 def analytic_gaussian_adv_diff(x, t, x0, s0, v0, diffusion):
@@ -69,13 +75,12 @@ def test_gate1_mass_conservation_1d_free(reconstruction):
     N, T, Nt, sigma = 81, 0.2, 40, 0.4
     prob, geom = make_problem_1d(N, T, Nt, sigma)
     x = geom.coordinates[0]
-    dx = x[1] - x[0]
     m0 = normalized_gaussian_1d(x, 0.5, 0.12)
 
     solver = FPFVMSolver(prob, reconstruction=reconstruction)
     M = solver.solve_fp_system(m0)
 
-    mass = M.sum(axis=1) * dx
+    mass = np.asarray(geom.integrate(M))
     drift = float(np.max(np.abs(mass - mass[0])))
     assert drift < 1e-12, f"[{reconstruction}] free-diffusion mass drift {drift:.2e}"
 
@@ -86,14 +91,13 @@ def test_gate1_mass_conservation_1d_advective_diffusive(reconstruction):
     N, T, Nt, sigma = 81, 0.2, 40, 0.3
     prob, geom = make_problem_1d(N, T, Nt, sigma)
     x = geom.coordinates[0]
-    dx = x[1] - x[0]
     m0 = normalized_gaussian_1d(x, 0.5, 0.12)
     drift = 0.6 * np.ones((Nt + 1, N))  # constant velocity, node-centered
 
     solver = FPFVMSolver(prob, reconstruction=reconstruction)
     M = solver.solve_fp_system(m0, drift_field=drift)
 
-    mass = M.sum(axis=1) * dx
+    mass = np.asarray(geom.integrate(M))
     mass_drift = float(np.max(np.abs(mass - mass[0])))
     assert mass_drift < 1e-12, f"[{reconstruction}] adv-diff mass drift {mass_drift:.2e}"
 
@@ -104,10 +108,9 @@ def test_gate1_mass_conservation_2d(reconstruction):
     Nx, Ny, T, Nt, sigma = 31, 31, 0.15, 30, 0.3
     prob, geom = make_problem_2d(Nx, Ny, T, Nt, sigma)
     x, y = geom.coordinates
-    dx, dy = x[1] - x[0], y[1] - y[0]
     X, Y = np.meshgrid(x, y, indexing="ij")
     g = np.exp(-(((X - 0.5) ** 2) + (Y - 0.5) ** 2) / (2 * 0.12**2))
-    m0 = g / (g.sum() * dx * dy)
+    m0 = g / float(geom.integrate(g))
 
     drift = np.zeros((Nt + 1, Nx, Ny, 2))
     drift[..., 0] = 0.5  # vx
@@ -116,7 +119,7 @@ def test_gate1_mass_conservation_2d(reconstruction):
     solver = FPFVMSolver(prob, reconstruction=reconstruction)
     M = solver.solve_fp_system(m0, drift_field=drift)
 
-    mass = M.sum(axis=(1, 2)) * dx * dy
+    mass = np.asarray(geom.integrate(M))
     mass_drift = float(np.max(np.abs(mass - mass[0])))
     assert mass_drift < 1e-12, f"[{reconstruction}] 2D mass drift {mass_drift:.2e}"
 
@@ -292,13 +295,12 @@ def test_potential_field_drives_coupling_velocity():
     N, T, Nt, sigma = 81, 0.2, 40, 0.3
     prob, geom = make_problem_1d(N, T, Nt, sigma)
     x = geom.coordinates[0]
-    dx = x[1] - x[0]
     m0 = normalized_gaussian_1d(x, 0.5, 0.12)
     U = np.tile((x**2).reshape(1, -1), (Nt + 1, 1))  # smooth quadratic potential
 
     solver = FPFVMSolver(prob, reconstruction="upwind")
     M = solver.solve_fp_system(m0, potential_field=U)
-    mass = M.sum(axis=1) * dx
+    mass = np.asarray(geom.integrate(M))
     assert float(np.max(np.abs(mass - mass[0]))) < 1e-12
     assert M.min() >= -1e-14
 

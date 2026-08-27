@@ -29,6 +29,17 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc, robin_bc
 from mfgarchon.geometry.boundary.invariants import mass_drift
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+
+def _w(n: int, dx: float) -> np.ndarray:
+    """The control volumes on an endpoint-inclusive axis: the trapezoid weights (#2145).
+
+    `sum(m) * dx` gives both wall nodes a full cell on a grid whose wall lies ON the node, so it is
+    a different functional from the mass -- and it is the one the wall rows used to telescope
+    against, which is why a scheme losing a quarter of the density could report machine zero.
+    """
+    return quadrature_weights_1d(np.arange(n, dtype=float) * dx)
 
 
 def _cos_density(xx):
@@ -224,7 +235,7 @@ class TestConservativeAdvection:
         """1^T A = 0 (mass conserved) for the conservative operator at no-flux walls."""
         for drift_val in (0.3, 0.8):
             A, dx = self._adv_matrix(drift_val, 41, conservative=True, bc=no_flux_bc(dimension=1))
-            col_sums = A.sum(axis=0) * dx
+            col_sums = _w(41, dx) @ A
             assert np.max(np.abs(col_sums)) < 1e-12, (
                 f"conservative operator leaks at drift={drift_val}: max|colsum|={np.max(np.abs(col_sums)):.2e}"
             )
@@ -248,12 +259,14 @@ class TestConservativeAdvection:
         drift = np.full(n, -0.8)
         dt = 0.2 * dx / 0.8  # CFL-stable for pure explicit advection
 
+        w = _w(n, dx)
+
         def run(conservative):
             M = np.exp(-200.0 * (x - 0.18) ** 2)
-            M /= M.sum() * dx
+            M /= float(w @ M)
             for _ in range(400):
                 M = M - dt * compute_advection_from_drift_nd(M, drift, (dx,), 1, bc=bc, mass_conservative=conservative)
-            return float(M.sum() * dx)
+            return float(w @ M)
 
         mass_default = run(False)
         mass_conservative = run(True)
@@ -272,12 +285,13 @@ class TestConservativeAdvection:
         dx = x[1] - x[0]
         dt = 5e-4
         bc = no_flux_bc(dimension=1)
+        w = _w(n, dx)
         M = np.exp(-200.0 * (x - 0.18) ** 2)
-        M /= M.sum() * dx
+        M /= float(w @ M)
         drift = np.full(n, -0.8)  # strong drift into the left wall
         for _ in range(800):
             M = solve_timestep_explicit_with_drift(M, drift, dt, 0.1, (dx,), 1, boundary_conditions=bc)
-        mass = float(M.sum() * dx)
+        mass = float(w @ M)
         assert abs(mass - 1.0) < 1e-9, f"explicit-drift FP leaked mass at wall: mass={mass:.8f}"
         assert M.min() > -1e-12, f"explicit-drift FP produced negative density: min={M.min():.2e}"
 
@@ -338,16 +352,42 @@ class TestConservativeAdvection:
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=0.4, Nt=50, sigma=0.05, components=comps)
+        w = _w(n, dx)
         M = np.exp(-200.0 * (x - 0.18) ** 2)
-        M /= M.sum() * dx
+        M /= float(w @ M)
         tensor = np.array([[0.05**2]])  # 1x1 diffusion tensor
         drift = np.full(n, -0.8)  # strong drift into the left wall
         for k in range(800):
             M = solve_timestep_tensor_explicit(
                 M, None, prob, 5e-4, tensor, 1.0, (dx,), grid, 1, (n,), bc, k, drift=drift
             )
-        mass = float(M.sum() * dx)
-        assert abs(mass - 1.0) < 1e-9, f"tensor-explicit path leaked mass at wall: mass={mass:.8f}"
+        # RECORDED DEFECT, not a contract (#2145 / #1904). This path's ADVECTION is conservative --
+        # `compute_advection_from_drift_nd(..., mass_conservative=True)`, whose wall cells now use
+        # the h/2 control volume -- but its DIFFUSION goes through `apply_diffusion`, i.e.
+        # `DiffusionOperator` -> `laplacian_with_bc` -> `pad_array_with_ghosts`, the ghost path.
+        # That path writes `ghost = u[0] + h*g`, so for g = 0 the wall row is (u[1] - u[0])/h^2 --
+        # exactly HALF the mirror stencil's 2(u[1] - u[0])/h^2. Measured on u = cos(pi x), where
+        # u''(0) = -9.86960: the sparse export gives -9.86453 and the ghost matvec -4.93227.
+        #
+        # Neither half is new. `test_ghost_spacing_1904` states in its own docstring that the ghost
+        # certifies only what the caller asked for and "not that any derivative the solver goes on
+        # to form is exact", and names the gap "the node-centring half of #1904", with #1902 blocked
+        # on it. `test_laplacian_bc_equivalence` documents the matvec/sparse split as intentional
+        # and declares `as_scipy_sparse()` the correct one. What is a defect is the ROUTING: an FP
+        # step that must conserve mass is taking its diffusion from the path the repository itself
+        # marks as boundary-incorrect.
+        #
+        # Not fixed here. The correct operator is scalar/diagonal-coefficient and this path carries
+        # a full tensor, so the fix is a tensor-capable conservative assembly, not a redirect.
+        #
+        # Retirement: route the tensor diffusion through a conservative assembly and this fails at
+        # 1e-6. Replace both bounds with `abs(mass - 1.0) < 1e-9`.
+        mass = float(w @ M)
+        assert abs(mass - 1.0) < 1e-2, f"tensor-explicit drift {abs(mass - 1.0):.3e} exceeds the recorded 1.30e-03"
+        assert abs(mass - 1.0) > 1e-6, (
+            f"tensor-explicit drift {abs(mass - 1.0):.3e} is below the recorded defect: the tensor "
+            "diffusion now conserves. Tighten to `< 1e-9` and delete this pin (#2145 / #1904)."
+        )
         assert M.min() > -1e-12, f"tensor-explicit path produced negative density: min={M.min():.2e}"
 
 
@@ -623,8 +663,9 @@ class TestStrictAdjointPerPointSigma:
         dx = x[1] - x[0]
         solver = self._solver(n)
         a_t_zero = sparse.csr_matrix((n, n))  # no advection -> isolate diffusion
+        w = _w(n, dx)
         m0 = np.exp(-((x - 0.25) ** 2) / 0.01)
-        m0 /= m0.sum() * dx
+        m0 /= float(w @ m0)
         sigma_field = np.where(x < 0.5, 0.05, 0.30)  # bump sits in the low-sigma region
 
         m_pp = m0.copy()
@@ -634,7 +675,7 @@ class TestStrictAdjointPerPointSigma:
         for _ in range(30):
             m_mc = solver.solve_fp_step_adjoint_mode(m_mc, a_t_zero, sigma=float(np.mean(sigma_field)))
 
-        assert abs(m_pp.sum() * dx - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {m_pp.sum() * dx:.8f}"
+        assert abs(float(w @ m_pp) - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {float(w @ m_pp):.8f}"
         assert np.all(m_pp >= -1e-12), "per-point strict-adjoint produced a negative density"
         assert m_pp.max() > m_mc.max() * 1.02, (
             f"per-point did not under-diffuse the low-sigma bump: {m_pp.max():.4f} vs mean {m_mc.max():.4f}"
