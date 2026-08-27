@@ -337,6 +337,21 @@ The one case for running it by hand: you need to *read* its diagnostics (discrim
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
 
+⚠️ **In a `git worktree` the gate measures two different trees.** Measured 2026-08-27 in a throwaway
+worktree, with a control assertion that fired:
+
+| step | reads |
+|---|---|
+| `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` — the suite | **the worktree.** pytest inserts the rootdir at `sys.path[0]` (`tests/__init__.py` exists), and setuptools' editable install only *appends* its finder to `sys.meta_path`, so `PathFinder` wins |
+| `"$PY" scripts/foo.py` — every ratchet | **the main checkout.** `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder resolves the import to the original tree |
+
+Seven files under `scripts/` import `mfgarchon`, `check_doc_api.py` among them, and that one runs
+under `--fast`. So a lane's `GATE GREEN` is half its own tree and half whichever branch the main
+checkout happens to be on, and nothing in the output says which. Before running a gate from a
+worktree, give it its own environment (`uv venv && uv pip install -e .` inside the worktree) or
+export `PYTHONPATH=<worktree>` for the ratchet steps. `MFG_PYTHON` does not fix it: it chooses the
+interpreter, not the tree.
+
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
 **CI shape — the full suite runs LOCALLY, not on GitHub (2026-07-19):**
