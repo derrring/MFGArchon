@@ -665,6 +665,62 @@ class TensorProductGrid(
             boundary_conditions=self._boundary_conditions,
         )
 
+    def quadrature_weights(self, dimension_idx: int = 0) -> NDArray:
+        """The control volume each node owns along one axis. THE OWNER of the grid's measure.
+
+        This grid is ENDPOINT_INCLUSIVE -- ``x[0]`` and ``x[-1]`` lie ON the boundary -- so the two
+        end nodes own HALF a cell each and the interior nodes own a full one:
+
+            w[0]  = (x[1] - x[0]) / 2
+            w[i]  = (x[i+1] - x[i-1]) / 2
+            w[-1] = (x[-1] - x[-2]) / 2
+
+        Those are the trapezoid weights, exactly, and they are the measure on this grid.
+        ``sum(m) * dx`` is a DIFFERENT functional: it gives each end node a full cell reaching
+        outside the declared bounds and over-counts the total by ``dx*(m[0]+m[-1])/2`` -- 3.5% on a
+        standard fixture, before anything evolves. Decided in #2145; the evidence, both costs and
+        the census of sites that answered it the other way are there.
+
+        Written on coordinates rather than on a single ``dx``, so it is correct on a non-uniform
+        grid as well. Callers that need a total should use :meth:`integrate` rather than reducing
+        these by hand -- the point of this method is that no caller holds a position on the
+        quadrature.
+        """
+        if dimension_idx >= self._dimension:
+            raise ValueError(f"dimension_idx {dimension_idx} out of range for a {self._dimension}-D grid")
+        x = np.asarray(self.coordinates[dimension_idx], dtype=float)
+        if x.size < 2:
+            raise ValueError(f"axis {dimension_idx} has {x.size} node(s); a measure needs at least two")
+        w = np.empty_like(x)
+        w[0] = (x[1] - x[0]) / 2.0
+        w[-1] = (x[-1] - x[-2]) / 2.0
+        w[1:-1] = (x[2:] - x[:-2]) / 2.0
+        return w
+
+    def integrate(self, field: NDArray) -> NDArray | float:
+        """Integrate ``field`` over this grid, with this grid's own weights.
+
+        Accepts a spatial field shaped like the grid, or a stack whose TRAILING axes are spatial --
+        a ``(time, *spatial)`` history integrates to one value per time row, which is the shape
+        every mass-conservation check wants.
+
+        The weights are the tensor product of :meth:`quadrature_weights` along each axis, so a
+        corner node owns ``prod(h_d / 2)`` and the identity holds in any dimension.
+        """
+        arr = np.asarray(field, dtype=float)
+        spatial = tuple(self._Nx_points)
+        nd = len(spatial)
+        if arr.ndim < nd or tuple(arr.shape[-nd:]) != spatial:
+            raise ValueError(
+                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} "
+                f"do not match the grid {spatial}; integrate() reduces the TRAILING axes so that a "
+                f"(time, *spatial) history returns one value per time row"
+            )
+        weights = self.quadrature_weights(0)
+        for d in range(1, nd):
+            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
+
     def volume_element(self, multi_index: Sequence[int] | None = None) -> float:
         """
         Compute volume element (dx·dy·dz) at grid point.

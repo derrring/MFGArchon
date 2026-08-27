@@ -1,0 +1,163 @@
+"""The grid owns the measure: `quadrature_weights` and `integrate` (#2145).
+
+Before this, every caller that wanted a total mass chose a quadrature itself -- a census found 169
+rectangle-form sites across 55 files -- and the choice was invisible at each one. These tests pin
+the weights to the grid's own geometry rather than to a formula a caller remembers, so a future
+cell-centred grid changes the weights and no caller changes at all.
+
+Each test states the mutation that reddens it, because a weight test that passes under the wrong
+weights pins nothing.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary.invariants import mass_drift
+
+
+def _grid(n=21, dim=1, hi=1.0):
+    return TensorProductGrid(
+        bounds=[(0.0, hi)] * dim,
+        Nx_points=[n] * dim,
+        boundary_conditions=no_flux_bc(dimension=dim),
+    )
+
+
+class TestWeightsAreTheGeometry:
+    def test_end_nodes_own_half_a_cell(self):
+        """The whole of #2145 in one assertion. Mutation: `w[0] = x[1]-x[0]` reddens it."""
+        g = _grid(n=5)
+        w = g.quadrature_weights()
+        h = 0.25
+        assert w[0] == pytest.approx(h / 2)
+        assert w[-1] == pytest.approx(h / 2)
+        assert np.allclose(w[1:-1], h)
+
+    def test_the_weights_sum_to_the_interval(self):
+        """An external oracle, not a restatement: the measure of the domain is its length.
+
+        `sum(m)*dx` fails this by exactly one cell -- 5 nodes at h=0.25 give 1.25, not 1.0 -- which
+        is the 3.5%-on-a-fixture error in its clearest form.
+        """
+        g = _grid(n=5)
+        assert g.quadrature_weights().sum() == pytest.approx(1.0)
+        assert np.full(5, 0.25).sum() == pytest.approx(1.25)  # the rectangle rule, for contrast
+
+    def test_a_non_uniform_grid_gets_its_own_weights(self):
+        """Written on coordinates, not on a single dx, so a graded grid is not a special case.
+
+        Mutation: any formula using `spacing[0]` reddens this, because a graded grid has no single
+        spacing -- `spacing` is None and the widest cell here is 169x the narrowest (measured).
+        """
+        xs = np.linspace(0.0, 1.0, 9) ** 3.0
+        g = TensorProductGrid(
+            bounds=[(0.0, 1.0)],
+            Nx_points=[9],
+            spacing_type="custom",
+            custom_coordinates=[xs],
+            boundary_conditions=no_flux_bc(dimension=1),
+        )
+        assert not g.is_uniform
+        w = g.quadrature_weights()
+        assert w.sum() == pytest.approx(1.0)
+        assert np.diff(xs).max() / np.diff(xs).min() > 20  # the control: it really is graded (169.0)
+
+    def test_a_single_node_axis_is_refused(self):
+        """A one-node axis has no measure. Returning 0.0 or dx would both be inventions."""
+        g = _grid(n=2)
+        assert g.quadrature_weights().sum() == pytest.approx(1.0)  # two nodes is the minimum
+        with pytest.raises(ValueError, match="at least two"):
+            TensorProductGrid(
+                bounds=[(0.0, 1.0)],
+                Nx_points=[1],
+                boundary_conditions=no_flux_bc(dimension=1),
+            ).quadrature_weights()
+
+
+class TestIntegrate:
+    def test_it_integrates_a_linear_field_exactly(self):
+        """The trapezoid is exact on linears, so this is an external oracle rather than a
+        comparison against another implementation of the same rule."""
+        g = _grid(n=7)
+        x = np.asarray(g.coordinates[0])
+        assert g.integrate(3.0 * x + 1.0) == pytest.approx(3.0 / 2 + 1.0)
+
+    def test_a_corner_owns_the_product_of_half_cells(self):
+        """nD is the tensor product, and the corner is where a per-axis rule would go wrong."""
+        g = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 2.0)],
+            Nx_points=[5, 5],
+            boundary_conditions=no_flux_bc(dimension=2),
+        )
+        wx, wy = g.quadrature_weights(0), g.quadrature_weights(1)
+        assert wx[0] * wy[0] == pytest.approx((0.25 / 2) * (0.5 / 2))
+        assert g.integrate(np.ones((5, 5))) == pytest.approx(2.0)  # the area, exactly
+
+    def test_a_time_history_reduces_only_the_trailing_axes(self):
+        """What every mass check wants: one value per time row."""
+        g = _grid(n=5)
+        m = 1.0 + 0.4 * np.cos(2 * np.pi * np.asarray(g.coordinates[0]))
+        out = g.integrate(np.vstack([m, 2 * m, 3 * m]))
+        assert out.shape == (3,)
+        assert out == pytest.approx([1.0, 2.0, 3.0])
+
+    def test_a_shape_that_is_not_this_grid_is_refused(self):
+        """Silently broadcasting a wrong-shaped field is how a mass number stops describing the
+        solve it is reported for."""
+        g = TensorProductGrid(
+            bounds=[(0.0, 1.0)] * 2,
+            Nx_points=[5, 5],
+            boundary_conditions=no_flux_bc(dimension=2),
+        )
+        with pytest.raises(ValueError, match="do not match the grid"):
+            g.integrate(np.ones(5))
+
+
+class TestMassDriftUsesTheOwner:
+    def test_the_grid_path_and_the_axis_path_agree_in_1d(self):
+        """Five call sites pass an axis; they must not change meaning. Mutation: give the grid
+        rectangle weights and this splits."""
+        g = _grid(n=21)
+        x = np.asarray(g.coordinates[0])
+        m = 1.0 + 0.4 * np.cos(2 * np.pi * x)
+        field = np.vstack([m, 1.01 * m])
+        assert mass_drift(field, g) == pytest.approx(mass_drift(field, x))
+        assert mass_drift(field, g) == pytest.approx(0.01)
+
+    def test_it_works_in_2d_through_the_grid(self):
+        """#2144: this raised `TypeError` on any n-D field, so `bc_residual` could not evaluate a
+        no-flux FP residual in 2-D at all."""
+        g = TensorProductGrid(
+            bounds=[(0.0, 1.0)] * 2,
+            Nx_points=[11, 11],
+            boundary_conditions=no_flux_bc(dimension=2),
+        )
+        m = np.ones((11, 11))
+        assert mass_drift(np.stack([m, 1.05 * m]), g) == pytest.approx(0.05)
+
+    def test_an_nd_field_with_axis_coordinates_is_refused_by_name(self):
+        """The old failure was `TypeError: only 0-dimensional arrays can be converted`, which names
+        neither the cause nor the remedy."""
+        g = TensorProductGrid(
+            bounds=[(0.0, 1.0)] * 2,
+            Nx_points=[11, 11],
+            boundary_conditions=no_flux_bc(dimension=2),
+        )
+        m = np.ones((11, 11))
+        with pytest.raises(ValueError, match="pass the grid instead"):
+            mass_drift(np.stack([m, m]), np.asarray(g.coordinates[0]))
+
+    def test_a_zero_initial_mass_is_refused_and_so_is_a_non_finite_one(self):
+        """`initial == 0.0` was an exact float comparison, so a denormal passed it and the function
+        returned 1e+300 instead of refusing (#2144)."""
+        g = _grid(n=5)
+        z = np.zeros(5)
+        with pytest.raises(ValueError, match="undefined or meaningless"):
+            mass_drift(np.vstack([z, np.ones(5)]), g)
+        with pytest.raises(ValueError, match="undefined or meaningless"):
+            mass_drift(np.vstack([np.full(5, np.nan), np.ones(5)]), g)

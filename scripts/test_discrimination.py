@@ -161,7 +161,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/geometry/grids/tensor_grid.py",
         old="                (bounds[i][1] - bounds[i][0]) / (self._Nx_points[i] - 1) if self._Nx_points[i] > 1 else 0.0",
         new="                (bounds[i][1] - bounds[i][0]) / self._Nx_points[i] if self._Nx_points[i] > 1 else 0.0  # MUTATED: L/n instead of L/(n-1)",
-        owner='uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs["Dx"] reads it (:484), cell volume ',
+        owner='uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs["Dx"] reads it, cell volume ',
         verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11",
     ),
     Mutation(
