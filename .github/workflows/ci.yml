@@ -13,7 +13,8 @@ on:
       - 'tests/**/*.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
-      - '.pre-commit-config.yaml'   # decides which ruff this workflow installs
+      - '.pre-commit-config.yaml'
+      - 'scripts/update_ruff_version.py'   # decides which ruff this workflow installs
 
   # Full checks on main branch pushes
   push:
@@ -23,7 +24,8 @@ on:
       - 'tests/**/*.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
-      - '.pre-commit-config.yaml'   # decides which ruff this workflow installs
+      - '.pre-commit-config.yaml'
+      - 'scripts/update_ruff_version.py'   # decides which ruff this workflow installs
 
   # Comprehensive checks on releases
   release:

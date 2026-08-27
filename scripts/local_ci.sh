@@ -262,8 +262,13 @@ check() {
 # RUFF_PIN came back empty and the version WARN silently never fired -- which matters now that
 # the ruff version is printed in the tail as merge evidence.
 # One reader (#2135): `grep -A1` sees only the line after the repo URL, so a comment between
-# `repo:` and `rev:` -- which the bumper deliberately writes -- silently returned empty here.
-RUFF_PIN=$("$PY" -P "$PWD/scripts/update_ruff_version.py" --print-current 2>/dev/null) || RUFF_PIN=""
+# `repo:` and `rev:` -- valid YAML, and ordinary in a config this comment-dense -- silently
+# returned empty here. (Not "the bumper writes that comment": it writes none, it only preserves
+# what is there. The claim was in this comment and in a commit message, and was false.)
+# No `2>/dev/null`: the reader's diagnostics are the point. Suppressed, an unreadable config makes
+# RUFF_PIN empty, and BOTH version WARNs -- this one and the merge-evidence line in the tail --
+# silently stop firing, which is verbatim the failure the paragraph above says was fixed.
+RUFF_PIN=$("$PY" -P "$PWD/scripts/update_ruff_version.py" --print-current) || RUFF_PIN=""
 RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s in the gate interpreter, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \

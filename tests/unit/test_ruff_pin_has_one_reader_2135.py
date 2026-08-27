@@ -1,115 +1,149 @@
-"""The ruff pin has one reader, and it survives a comment between `repo:` and `rev:`.
+"""#2135: one reader and one writer for the ruff version pinned in `.pre-commit-config.yaml`.
 
-`.pre-commit-config.yaml` holds the ruff version, and it was read from six places in five
-different expressions. Four of them were `grep -A1`, which sees only the line immediately after
-the repo URL -- so a comment there, which the *writer* (`RUFF_PIN` in `update_ruff_version.py`)
-deliberately tolerates, silently breaks four of the five readers.
+Six sites read that version through five different expressions, and two wrote it. They disagreed
+on what a ruff block may look like -- a comment between `repo:` and `rev:` is valid YAML that the
+script's expression spans and every `grep -A1` misses -- so the writer could land a bump the
+verifiers then read as absent, and #2123 had to be fixed once on each writer.
 
-That asymmetry is #2135. The writer accepts a shape the verifiers reject, so a config the bumper
-produces can be one the gate and the CI cannot read, and the failure is a version that reads as
-empty rather than an error.
+**The first version of this file pinned a spelling, not the property.** It searched three named
+files for `grep -A\\s?1.*ruff-pre-commit`, which is exactly the four expressions the fix deleted.
+Independent review wrote twelve second implementations that all passed it: `grep -A2`,
+`grep --after-context=1`, `awk`, `yq`, `perl -pi`, `python -c`, a `sed -i` reached through a
+variable, `sed ... > tmp && mv tmp config`, and the same expressions placed in `nightly.yml`, in a
+new `scripts/*.sh`, or in a `.yaml` rather than `.yml`. A test that can only fail on the instance
+already fixed is the inert kind `AGENTS.md` names.
 
-These two tests are the acceptance criterion for the consolidation:
-
-  - `test_every_reader_survives_a_comment_in_the_block` exercises the behaviour;
-  - `test_no_hand_rolled_reader_survives` counts, because behaviour passing while a fifth
-    expression sits in a workflow nobody runs locally is how this came back.
+What replaces it is a population and a predicate. The population is every file under `scripts/` and
+`.github/`; the predicate is "names where the pin lives AND pipes it through a text tool or edits
+it in place". That cannot be dodged by changing tool, flag spelling, or file, because a reader has
+to name the thing it reads. Exceptions are an explicit allowlist with reasons, not regex holes, and
+`test_the_scan_can_see_the_owners_call_sites` is the sentinel: a glob that stops selecting files
+reports zero violations, which reads exactly like clean code.
 """
-
-from __future__ import annotations
 
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "update_ruff_version.py"
+OWNER_REL = "scripts/update_ruff_version.py"
 
-_WITH_COMMENT = """repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id: trailing-whitespace
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # bumped monthly by check-ruff-updates.yml
-    rev: v0.16.0
-    hooks:
-      - id: ruff
-"""
+# Where the pin lives. A reader or writer must name one of these; there is no way around it.
+MENTIONS = re.compile(r"\.pre-commit-config\.yaml|ruff-pre-commit")
+# Pulling a value out of a text file, by any of the tools anyone would reach for.
+EXTRACTS = re.compile(r"\b(grep|awk|sed|yq|jq|perl|cut|tr|head|tail)\b|python3?\s+-c|\brev:")
+# Editing it in place, including the two-step forms that are not `sed -i`.
+WRITES = re.compile(
+    r"\bsed\s+-i|\bperl\s+-pi\b|\byq\s+-i\b|\bwrite_text\b|\btee\b"
+    r"|open\([^)]*[\"']w[\"']|\.write\(|\bmv\s+\S+\s+\S*pre-commit-config"
+)
+GOES_THROUGH_OWNER = re.compile(r"update_ruff_version")
+
+# Every exception is a line and a reason. Adding one should take an argument, not a regex tweak.
+ALLOWED = [
+    (
+        "git diff --numstat",
+        "counts changed lines; its `awk` consumes numstat output, not the YAML",
+    ),
+]
+
+SCANNED_SUFFIXES = {".py", ".sh", ".yml", ".yaml", ".toml", ""}
+
+
+def _candidate_lines():
+    """Every non-comment line under scripts/ and .github/ that touches the pin, minus the owner."""
+    found = []
+    files = 0
+    for root in (REPO / "scripts", REPO / ".github"):
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
+                continue
+            rel = str(path.relative_to(REPO))
+            files += 1
+            try:
+                lines = path.read_text().splitlines()
+            except (UnicodeDecodeError, OSError):
+                continue
+            for n, line in enumerate(lines, 1):
+                if line.lstrip().startswith("#") or not MENTIONS.search(line):
+                    continue
+                if not (EXTRACTS.search(line) or WRITES.search(line)):
+                    continue
+                found.append((rel, n, line.strip()))
+    return files, found
+
+
+def test_the_scan_can_see_the_owners_call_sites():
+    """The sentinel. Without it every assertion below passes on an empty population.
+
+    `scripts/check_single_source.py` in this repository raises rather than reporting a count when
+    its globs select nothing, and says why in its docstring: a broken search pattern returns 0 hits,
+    and 0 hits reads exactly like clean code. The same hazard is here -- one wrong `rglob` and the
+    two tests below go green over any number of second implementations.
+    """
+    files, _ = _candidate_lines()
+    assert files > 20, f"the scan selected {files} files under scripts/ and .github/ -- glob broken"
+
+    calls = [
+        (str(p.relative_to(REPO)), n)
+        for root in (REPO / "scripts", REPO / ".github")
+        for p in root.rglob("*")
+        if p.is_file() and p.suffix in SCANNED_SUFFIXES
+        for n, line in enumerate(p.read_text(errors="ignore").splitlines(), 1)
+        if "--print-current" in line and not line.lstrip().startswith("#")
+    ]
+    assert len(calls) >= 3, (
+        f"only {len(calls)} call sites of `--print-current` are visible to this scan; "
+        "the owner has four, so the scan is not reading what it thinks it is"
+    )
+
+
+def test_nothing_outside_the_owner_reads_or_writes_the_pin_directly():
+    _, found = _candidate_lines()
+    violations = [
+        f"{rel}:{n}  {line[:100]}"
+        for rel, n, line in found
+        if rel != OWNER_REL and not GOES_THROUGH_OWNER.search(line) and not any(a in line for a, _ in ALLOWED)
+    ]
+    assert not violations, (
+        "these reach into .pre-commit-config.yaml instead of calling "
+        f"`{OWNER_REL} --print-current` / `--force`:\n  " + "\n  ".join(violations)
+    )
 
 
 def test_every_reader_survives_a_comment_in_the_block(tmp_path):
-    """One reader, and a comment between `repo:` and `rev:` does not hide the pin from it."""
-    cfg = tmp_path / ".pre-commit-config.yaml"
-    cfg.write_text(_WITH_COMMENT)
+    """The behavioural half: the shape the two bumpers disagreed on (#2123).
 
+    A comment between `repo:` and `rev:` is valid YAML. The script's expression spans it; every
+    `grep -A1` returns empty on it. Whichever ran decided whether a bump landed.
+    """
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n"
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+        "    # kept in step with the version in uv.lock\n"
+        "    rev: v0.16.0\n"
+        "    hooks:\n"
+        "      - id: ruff\n"
+    )
     out = subprocess.run(
         [sys.executable, str(SCRIPT), "--print-current"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
     )
-    assert out.returncode == 0, out.stdout + out.stderr
-    assert out.stdout.strip() == "0.16.0", f"the pin reads {out.stdout.strip()!r} through the owner; the comment hid it"
-
-    # Control: the same reader on the same config without the comment. If this fails the
-    # fixture is wrong, not the reader.
-    cfg.write_text(_WITH_COMMENT.replace("    # bumped monthly by check-ruff-updates.yml\n", ""))
-    clean = subprocess.run(
-        [sys.executable, str(SCRIPT), "--print-current"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert clean.stdout.strip() == "0.16.0", clean.stdout + clean.stderr
-
-
-def test_no_hand_rolled_reader_survives():
-    """Nothing outside the owner reads the pin with its own expression."""
-    hand_rolled = []
-    for path in [
-        REPO / "scripts" / "local_ci.sh",
-        REPO / ".github" / "workflows" / "ci.yml",
-        REPO / ".github" / "workflows" / "check-ruff-updates.yml",
-    ]:
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            if re.search(r"grep\s+-A\s?1.*ruff-pre-commit", line):
-                hand_rolled.append(f"{path.relative_to(REPO)}:{n}")
-
-    assert not hand_rolled, (
-        "these read the ruff pin with their own expression instead of asking the owner "
-        f"(`{SCRIPT.relative_to(REPO)} --print-current`): " + ", ".join(hand_rolled)
-    )
-
-
-# The pin's WRITE side, same argument as the read side above. `.github/workflows/` carried its own
-# `sed -i` bumper, so one quantity had two writers; they disagreed on whether a comment may sit
-# between `repo:` and `rev:`, and #2123 had to be fixed once on each. A second writer is invisible
-# until the two disagree, which is why this is a test and not a review note.
-WRITES_THE_CONFIG = re.compile(r"sed\s+-i.*pre-commit-config", re.I)
-
-
-def test_the_config_has_one_writer():
-    hand_rolled = []
-    for path in [*sorted((REPO / ".github" / "workflows").glob("*.yml")), REPO / "scripts" / "local_ci.sh"]:
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            if WRITES_THE_CONFIG.search(line):
-                hand_rolled.append(f"{path.relative_to(REPO)}:{n}")
-    assert not hand_rolled, (
-        "these write .pre-commit-config.yaml directly instead of calling the owner "
-        f"(`{SCRIPT.relative_to(REPO)} --force VERSION`): " + ", ".join(hand_rolled)
-    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "0.16.0"
 
 
 def test_a_failure_leaves_stdout_empty(tmp_path):
     """stdout is the data channel; a diagnostic on it is captured as the value.
 
-    Four call sites now parse this command, and three of them read it inside `$(...)`. A shell
-    reading `RUFF_VERSION=$(... ) || RUFF_VERSION=""` gets the *stdout* of a failing run, so an
-    error message printed there arrives as a non-empty string, the `-z` guard downstream stays
-    quiet, and the text flows on as a version. That is #2134's shape reached by a different route:
-    a value nobody validated because the thing that produced it looked like it had succeeded.
+    All four call sites read this command inside `$(...)`. Three pair it with a fallback outside the
+    substitution (`$(cmd) || VAR=""`), which clears the capture on a non-zero exit, so for them this
+    is prophylactic. `check-ruff-updates.yml`'s post-bump read is the one that is not: `$(cmd ||
+    true)` captures the stdout of a failing run, and a diagnostic there would arrive as a version.
     """
     out = subprocess.run(
         [sys.executable, str(SCRIPT), "--print-current"],
@@ -118,8 +152,30 @@ def test_a_failure_leaves_stdout_empty(tmp_path):
         text=True,
     )
     assert out.returncode != 0, "a missing config must fail, not return something usable"
-    assert out.stdout.strip() == "", (
-        f"stdout must stay empty on failure, got {out.stdout.strip()!r} -- a caller reading "
-        "`$(...)` would take that as the version"
-    )
+    assert out.stdout.strip() == "", f"stdout must stay empty on failure, got {out.stdout.strip()!r}"
     assert "pre-commit-config" in out.stderr, "the diagnostic must still reach stderr"
+
+
+def test_no_call_site_puts_the_fallback_inside_the_substitution():
+    """The regression this PR introduced and fixed mid-flight, which nothing else pins.
+
+    `RUFF_VERSION=$(cmd || VAR="")` cannot see the exit status: the `||` runs inside the subshell,
+    so the assignment captures whatever the failing command left on stdout. Non-empty, so a `-z`
+    guard downstream stays quiet and the text travels on as a version -- #2134's shape, reached from
+    the caller's side. The correct form puts the `||` outside: `VAR=$(cmd) || VAR=""`.
+    """
+    bad = re.compile(r"\$\([^)]*\|\|[^)]*=[^)]*\)")
+    offenders = []
+    for path in [
+        *sorted((REPO / ".github" / "workflows").glob("*.yml")),
+        REPO / "scripts" / "local_ci.sh",
+    ]:
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if "update_ruff_version" in line and bad.search(line):
+                offenders.append(f"{path.relative_to(REPO)}:{n}  {line.strip()[:100]}")
+    assert not offenders, (
+        "the `||` fallback is inside the command substitution, where it cannot see the exit "
+        "status and captures stdout instead:\n  " + "\n  ".join(offenders)
+    )

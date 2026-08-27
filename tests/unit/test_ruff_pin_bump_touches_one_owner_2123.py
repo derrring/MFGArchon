@@ -148,7 +148,13 @@ def test_a_bump_that_matches_nothing_raises_instead_of_reporting_success(name, t
     pin back instead of counting. This is the same invariant on the Python side.
     """
     _write(tmp_path, monkeypatch, text)
-    with pytest.raises(RuntimeError, match="matched nothing"):
+    # Matches the half of the message that is true of every refusal: it names the version that was
+    # asked for. The phrase "matched nothing" used to be here and is now written only where it is
+    # accurate -- these two shapes get "no `rev:` line" and "no block ... this recognises", because
+    # one message for three causes asserted the wrong one over a file that plainly had a `rev:`.
+    # The behaviour this pins is unchanged: a bump that did not land raises rather than reporting
+    # success. (#2139)
+    with pytest.raises(RuntimeError, match=r"after asking for v0\.17\.0"):
         _urv.update_files("0.17.0")
 
 
