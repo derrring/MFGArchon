@@ -339,7 +339,12 @@ def test_one_newton_step_reduces_the_mfg_residual():
 
     U, M, info = solver.solve(max_iterations=1, tolerance=0.0, verbose=False)
     final_residual = solver.mfg_residual.compute_residual_norm(U, M)
-    relative_mass = M.sum(axis=1) / M[0].sum()
+    # On the geometry's own measure (#2145). `M.sum(axis=1)` is the counting measure, which gives
+    # both wall nodes a full cell on an endpoint-inclusive grid -- and at Nx_points=5 the two wall
+    # nodes are half the grid, so the two functionals are far apart here. Measured before the
+    # change: 1.0013 and 1.0075 against a target of 1.
+    mass = np.asarray(problem.geometry.integrate(M), dtype=float)
+    relative_mass = mass / mass[0]
 
     # Not asserted: info["picard_iterations"] -- newton_mfg_solver.py:341 sets it to the
     # constructor argument, never to a count of executed iterations, so asserting 0 after
