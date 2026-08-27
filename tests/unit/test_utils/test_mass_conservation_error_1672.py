@@ -69,8 +69,21 @@ def test_the_coupled_solve_reports_the_quantity_it_documents(scheme):
     problem = _problem(sigma=1.0)
     result = problem.solve(scheme=scheme, max_iterations=5, verbose=False)
 
-    spatial_axes = tuple(range(1, result.M.ndim))
-    mass = np.sum(result.M, axis=spatial_axes)
+    # #2145: the quantity is the integral on THIS grid, whose end nodes hold half a cell each --
+    # not `sum(M)`, which is a different functional and is the one the no-flux wall happens to
+    # conserve by construction. Before this, the field reported 1e-15 on a solve losing 1e-03 of
+    # its actual mass, and this test confirmed the 1e-15.
+    #
+    # The weights are written out HERE rather than taken from `geometry.integrate`, deliberately:
+    # the assertion below is that the production path agrees with an INDEPENDENTLY derived value,
+    # and calling the same owner on both sides would make it a tautology. This is the one place a
+    # second derivation of the formula is the point rather than the defect.
+    x = np.asarray(problem.geometry.coordinates[0], dtype=float)
+    w = np.empty_like(x)
+    w[0] = (x[1] - x[0]) / 2.0
+    w[-1] = (x[-1] - x[-2]) / 2.0
+    w[1:-1] = (x[2:] - x[:-2]) / 2.0
+    mass = np.asarray(result.M, dtype=float) @ w
     expected = float(np.max(np.abs(mass / mass[0] - 1.0)))
 
     assert result.mass_conservation_error is not None, "the coupling path did not measure it"

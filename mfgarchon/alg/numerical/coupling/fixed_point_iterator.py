@@ -962,8 +962,18 @@ class FixedPointIterator(BaseCouplingIterator):
                 # in would suggest the answer depends on it.
                 self.problem.geometry.volume_element()
 
-                spatial_axes = tuple(range(1, self.M.ndim))
-                mass_per_step = np.sum(self.M, axis=spatial_axes)
+                # #2145: the geometry owns the measure and it does NOT cancel out of the ratio.
+                # The comment above is right about a UNIFORM cell measure and wrong about this one:
+                # the end nodes hold half a cell each, so `sum(M)` and the grid's integral are
+                # different functionals, and at a no-flux wall one is conserved and the other is
+                # not. Reporting the ratio of the wrong one is how a solve reports perfect
+                # conservation of a quantity nobody asked about.
+                integrate = getattr(self.problem.geometry, "integrate", None)
+                if callable(integrate):
+                    mass_per_step = np.asarray(integrate(self.M), dtype=float)
+                else:
+                    spatial_axes = tuple(range(1, self.M.ndim))
+                    mass_per_step = np.sum(self.M, axis=spatial_axes)
                 initial_mass = float(mass_per_step[0])
                 if not np.isfinite(initial_mass) or initial_mass <= 0.0:
                     raise ValueError(
