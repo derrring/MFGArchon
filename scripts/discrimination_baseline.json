@@ -1,16 +1,13 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 6420,
-    "commit": "27124db1",
+    "collected": 6633,
+    "commit": "caa03b2a",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ]
-  },
-  "_notes": {
-    "bc_uniform_dispatch_reads_as_mixed": "43 -> 12 on 2026-08-22, and the fall is the FIX rather than a regression. #2042 made the per-face ghost path forward a uniform BC's single segment instead of rebuilding a partial copy, so the two paths now agree where they used to diverge (Robin became a bit-identical Dirichlet; a callable Neumann value became its static default). The 31 tests that stopped killing this mutation were detecting THAT DIVERGENCE. They did not get weaker -- the thing they detected got smaller. Attributed by A/B on the same mutation and anchor: 43 on main, 12 with #2042, product code the only difference. What still kills it is the order > 2 path, which #2042 did not touch and which the mutation's `verify` probe uses. GENERAL POINT, and the reason this note exists rather than a bare number: fixing a defect can LOWER a discrimination score, because the defect was what made the convention observable. The ratchet reads any fall as a regression and cannot see that difference -- only a note can."
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
@@ -19,7 +16,7 @@
       "status": "ok"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 10,
+      "kill_count": 11,
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "status": "ok"
     },
@@ -34,22 +31,22 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 163,
+      "kill_count": 168,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 29,
+      "kill_count": 30,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 129,
+      "kill_count": 127,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
     "fv_upwind_donor_cell_swapped": {
-      "kill_count": 6,
+      "kill_count": 8,
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
       "status": "ok"
     },
@@ -69,18 +66,13 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 57,
-      "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs[\"Dx\"] reads it (:484), cell volume ",
+      "kill_count": 58,
+      "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 22,
+      "kill_count": 21,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "status": "ok"
-    },
-    "m_initial_1d_counting_measure": {
-      "kill_count": 18,
-      "owner": "m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
       "status": "ok"
     },
     "mass_drift_reported_as_deviation_from_one": {
@@ -99,7 +91,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 41,
+      "kill_count": 40,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
       "status": "ok"
     },
@@ -123,8 +115,13 @@
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
       "status": "ok"
     },
+    "quadrature_wall_node_counting_measure": {
+      "kill_count": 74,
+      "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
+      "status": "ok"
+    },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 8,
+      "kill_count": 7,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
