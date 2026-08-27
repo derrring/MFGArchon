@@ -721,6 +721,35 @@ class TensorProductGrid(
             weights = np.multiply.outer(weights, self.quadrature_weights(d))
         return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
+    def integrate_boundary(self, field: NDArray, axis: int) -> NDArray | float:
+        """Integrate over the boundary face whose normal is ``axis``.
+
+        A face is a grid one dimension lower and its own end nodes hold half a cell each, for the
+        same reason the volume's do -- so ``sum(face) * dx`` over-counts a face exactly as
+        ``sum(m) * dx`` over-counts the volume (#2145). The face of a 1-D grid is a point, whose
+        measure is 1.
+
+        ``field`` is the face, shaped like the grid with ``axis`` removed; trailing axes are
+        reduced, so a ``(time, *face)`` history gives one value per row.
+        """
+        if not 0 <= axis < self._dimension:
+            raise ValueError(f"axis {axis} out of range for a {self._dimension}-D grid")
+        face_shape = tuple(n for d, n in enumerate(self._Nx_points) if d != axis)
+        arr = np.asarray(field, dtype=float)
+        nd = len(face_shape)
+        if nd == 0:
+            return arr
+        if arr.ndim < nd or tuple(arr.shape[-nd:]) != face_shape:
+            raise ValueError(
+                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} do "
+                f"not match the face {face_shape} of axis {axis}"
+            )
+        axes = [d for d in range(self._dimension) if d != axis]
+        weights = self.quadrature_weights(axes[0])
+        for d in axes[1:]:
+            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
+
     def volume_element(self, multi_index: Sequence[int] | None = None) -> float:
         """
         Compute volume element (dx·dy·dz) at grid point.
