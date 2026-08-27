@@ -219,7 +219,6 @@ class TestCoupledHJBFP2DBasic:
         # drifts 2.1e-4 here purely from the half-weighted boundary rows).  The FP step does not
         # renormalise (#1683), so this measures physics.  Measured 3.33e-16; the same fixture with
         # Dirichlet walls leaks 1.33e-2.
-        dx = xg[1] - xg[0]
         # The geometry's own measure (#2145): the corner owns a quarter cell, each edge a half.
         mass = np.asarray(problem.geometry.integrate(M), dtype=float)
         assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, f"no-flux mass leak: {mass}"

@@ -31,6 +31,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 _NX, _NT, _T, _SIG = 20, 8, 1.0, 0.15
 
@@ -132,8 +133,13 @@ def test_k1_matches_single_population_fp_convention():
     m_diff = np.linalg.norm(M_mp - M_sp) / (np.linalg.norm(M_sp) + 1e-12)
     assert u_diff < 1e-4, f"K=1 multi-pop U {u_diff * 100:.3f}% off single-pop (FP convention re-forked?)"
     assert m_diff < 1e-4, f"K=1 multi-pop density {m_diff * 100:.3f}% off single-pop (FP convention re-forked?)"
-    # mass conservation preserved
-    assert np.allclose(M_mp.sum(axis=-1), M_mp[0].sum(), rtol=1e-6)
+    # Mass conservation, on the geometry's own measure (#2145). `sum(axis=-1)` is a bare nodal sum
+    # -- the counting measure, which gives both wall nodes a full cell on an endpoint-inclusive
+    # grid. Measured before the change: 5.0107 -> 5.1364 over the horizon, 2.5% of "drift" that was
+    # the endpoint share moving as the density reached the wall.
+    w = quadrature_weights_1d(np.linspace(0.0, 1.0, M_mp.shape[-1]))
+    mass = (M_mp * w).sum(axis=-1)
+    assert np.allclose(mass, mass[0], rtol=1e-6), f"K=1 multi-pop did not conserve mass: {mass}"
 
 
 def test_nonfdm_backend_multipop_fails_loud():
