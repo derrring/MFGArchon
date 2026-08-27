@@ -95,8 +95,7 @@ class TestFDMSolversMFGIntegration:
         # 8.882e-16 on this exact configuration, so 1e-12 is a machine-precision pin with three
         # orders of margin, and it fires on any break of the flux-integral consistency of the FP
         # matrix rows at the walls (pointwise ghost-cell extrapolation does NOT guarantee it).
-        dx = problem.geometry.get_grid_spacing()[0]
-        mass = np.sum(M * dx, axis=1)
+        mass = np.asarray(problem.geometry.integrate(M), dtype=float)  # the grid's measure (#2145)
         drift = np.max(np.abs(mass / mass[0] - 1))
         assert drift < 1e-12, f"no-flux mass leak: {drift:.3e}"
 
@@ -142,8 +141,16 @@ class TestFDMSolversMFGIntegration:
         # test_fdm_solution_non_negativity conserves to 8.9e-16 on the same solver, so the
         # periodic FP assembly is NOT conservative to machine precision. This assertion documents
         # that gap rather than hiding it; tightening it is a product question, not a test one.
+        #
+        # PERIODIC KEEPS ITS OWN MEASURE, and it is not the trapezoid `geometry.integrate` returns.
+        # On this endpoint-inclusive grid x[0] and x[-1] are ONE physical point, so the torus has
+        # N-1 distinct cells of full width and the rule is `sum(m[:-1]) * dx` (#1822 removes the
+        # repeat in the solver for the same reason). The two agree exactly on a field that satisfies
+        # the periodicity and differ by (m[-1] - m[0])/2 on one that does not -- so routing this row
+        # through `integrate` measured 9.754e-03 of inconsistency, not of leak. `integrate` is
+        # BC-blind by design; the no-flux rows above are the ones it is right for.
         dx = problem.geometry.get_grid_spacing()[0]
-        mass = np.sum(M * dx, axis=1)
+        mass = M[:, :-1].sum(axis=1) * dx
         drift = np.max(np.abs(mass / mass[0] - 1))
         assert drift < 1e-3, f"periodic mass leak: {drift:.3e}"
 
@@ -204,8 +211,7 @@ class TestFDMSolversCoupling:
         # a machine-precision pin with three orders of margin, and unlike the old `is not None` it
         # separates a wrong answer of the right shape from a right one.
         _U, M = result[:2]
-        dx = problem.geometry.get_grid_spacing()[0]
-        mass = np.sum(M * dx, axis=1)
+        mass = np.asarray(problem.geometry.integrate(M), dtype=float)  # the grid's measure (#2145)
         drift = np.max(np.abs(mass / mass[0] - 1))
         assert drift < 1e-12, f"no-flux mass leak: {drift:.3e}"
 
