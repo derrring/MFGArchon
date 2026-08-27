@@ -242,16 +242,15 @@ and both move — the baseline was re-recorded six times in the month to 2026-08
 
 **And the fraction mostly measures the mutation list.** When that list went from six conventions to
 twenty-four the fraction rose about two and a half times; holding the list at the original six and
-recomputing against the current tree moves it by a twentieth of that. Almost the whole rise is the
+recomputing against the current tree barely moves it at all. Almost the whole rise is the
 list growing, so the aggregate is not a reading about the suite's health at all.
 
 **Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
 held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
-`scripts/discrimination_baseline.json` holds per-convention kill counts, and **summing them
-over-counts**, because a test that kills more than one mutation appears in each — the overlap was 8
-of 220 when six conventions were tracked and is 173 of 753 now, so the sum is currently off by three
-percentage points against what the gate prints. The distinct-test figure is derivable only from
-`scripts/discrimination_killmatrix.json`, which is the artifact the gate reads.
+`scripts/discrimination_baseline.json` holds the per-convention kill counts — the vector. The
+distinct-test figure the gate prints is in `scripts/discrimination_killmatrix.json` and nowhere
+else; summing the baseline's counts does not give it, because a test that kills several mutations is
+counted in each.
 Of the 65 tests whose *names* claim `single_source` / `cross_path` / `_agree`, **39 are inert** —
 [#1715's comment of 2026-07-27](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
 not its body, which says the prevalence "is not established". That figure stays written here because
