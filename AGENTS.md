@@ -231,19 +231,35 @@ function.)
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
-"Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
-conventions the discrimination ratchet tracks are noticed by **212 distinct tests** out of 5,872 —
-**3.6%** react when the physics the library exists to get right is broken, so **96.4% notice
-nothing**. (The baseline's kill counts sum to 220; 8 tests are killed by more than one mutation, so
-the sum over-counts and the honest figure is the lower one. Current numbers from
-`scripts/discrimination_baseline.json` + `discrimination_killmatrix.json`, measured at `db3496f9`;
-`./scripts/local_ci.sh` prints them beside the suite result and flags the denominator when it moves.)
-Of the tests whose *names* claim `single_source` / `cross_path` / `_agree`, **60% are inert** —
+"Add a test" is **not** the default close-out for a fix here. Most of this suite does not react when
+the physics the library exists to get right is broken, and the conventions that are defended are
+defended very unevenly — some by a single-digit number of tests, some by over a hundred.
+
+**The current numbers are not written here, on purpose.** `./scripts/local_ci.sh` prints them beside
+the suite result, with its own staleness flag when the suite has moved since the baseline was
+recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
+and both move — the baseline was re-recorded six times in the month to 2026-08-22.
+
+**And the fraction mostly measures the mutation list.** When that list went from six conventions to
+twenty-four the fraction rose about two and a half times; holding the list at the original six and
+recomputing against the current tree barely moves it at all. Almost the whole rise is the
+list growing, so the aggregate is not a reading about the suite's health at all.
+
+**Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
+held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
+`scripts/discrimination_baseline.json` holds the per-convention kill counts — the vector. The
+distinct-test figure the gate prints is in `scripts/discrimination_killmatrix.json` and nowhere
+else; summing the baseline's counts does not give it, because a test that kills several mutations is
+counted in each.
+Of the 65 tests whose *names* claim `single_source` / `cross_path` / `_agree`, **39 are inert** —
 [#1715's comment of 2026-07-27](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
-not its body, which says the prevalence "is not established". **Inert is not the same as worthless**,
+not its body, which says the prevalence "is not established". That figure stays written here because
+nothing recomputes it: the sweep's `AGREEMENT_SHAPED` regex selects a different, wider population
+(308 tests, of which 193 were inert), so 39-of-65 is a dated hand measurement over a named set and
+not a number that moves with the tree. **Inert is not the same as worthless**,
 and that distinction has cost real time: all five tests #1715 names are genuine cross-path pins —
-delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on six
-conventions *because those conventions are not what they pin*. The deletable set is the
+delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on the
+conventions the ratchet tracked *because those conventions are not what they pin*. The deletable set is the
 **structurally tautological** one, found by reading, not the inert one, found by counting (#1901). And
 the yield runs the other way too: #1660's 17 nightly "failures" resolved as 8 fixture rot from the
 #1442 drift migration, 2 tests measuring the wrong quantity, 7 timeouts — **zero** product
