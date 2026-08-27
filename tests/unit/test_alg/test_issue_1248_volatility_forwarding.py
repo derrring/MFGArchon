@@ -125,9 +125,14 @@ class TestD1SolveMustForwardVolatilityField:
         result = problem.solve()
         assert result.M is not None
         assert result.M.shape[0] == Nt + 1
-        # Basic mass-conservation sanity check (loose tolerance for solver variation)
-        total_mass = result.M[-1].sum() / Nx
-        assert abs(total_mass - 1.0) < 0.3, f"Scalar-sigma solve: final mass = {total_mass:.4f}, expected ~1.0"
+        # Mass conservation, on the geometry's own measure and against the mass the solve STARTED
+        # with. Two things were wrong with `result.M[-1].sum() / Nx` compared to 1.0 at tolerance
+        # 0.3: `sum()/Nx` is a point average, not an integral on any grid, and after #1887 the
+        # library no longer rescales `m_initial`, so 1.0 was a property of the old constructor
+        # rather than of this solve. A 30% band around a number nothing produces is not a check.
+        mass = np.asarray(geo.integrate(result.M), dtype=float)
+        drift = float(np.max(np.abs(mass / mass[0] - 1.0)))
+        assert drift < 1e-9, f"scalar-sigma solve did not conserve mass: drift {drift:.3e}"
 
 
 # ---------------------------------------------------------------------------

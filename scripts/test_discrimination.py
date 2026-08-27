@@ -181,12 +181,23 @@ MUTATIONS: list[Mutation] = [
         verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
     ),
     Mutation(
-        name="m_initial_1d_counting_measure",
-        path="mfgarchon/core/mfg_problem.py",
-        old="            # 1D normalization (original)\n            dx = self._get_spacing() or 1.0",
-        new="            # 1D normalization (original)\n            dx = 1.0  # MUTATED: normaliser ignores the grid spacing (counting measure)",
-        owner="m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
-        verify="abs(float(np.sum(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).m_initial)) - 1.0) < 1e-9",
+        name="quadrature_wall_node_counting_measure",
+        path="mfgarchon/utils/numerical/quadrature.py",
+        old="    w[0] = (x[1] - x[0]) / 2.0\n    w[-1] = (x[-1] - x[-2]) / 2.0",
+        new="    w[0] = x[1] - x[0]  # MUTATED: wall node owns a full cell (counting measure)\n    w[-1] = x[-1] - x[-2]",
+        owner=(
+            "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is "
+            "endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. "
+            "Those weights are also the control volumes the conservative FP schemes telescope "
+            "against, which is why this is one convention and not two (#2145). Sole owner: "
+            "`mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, "
+            "`mass_drift`, the FV advection kernel and the FDM wall rows. "
+            "SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's "
+            "normalisation dispatch -- #1887 removed that rescale (the library validates the "
+            "initial mass and does not change it), so that anchor no longer exists. The convention "
+            "it defended survived and moved here; the mutation follows it."
+        ),
+        verify="abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12",
     ),
     Mutation(
         name="mass_drift_reported_as_deviation_from_one",
@@ -504,6 +515,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary import periodic_bc   # _VERIFY_PRELUDE line 301 currently imports only `neumann_bc` from this module; it must become `from mfgarchon.geometry.boundary import neumann_bc, periodic_bc`
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.operators.differential.advection import AdvectionOperator
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 from mfgarchon.operators.stencils.finite_difference import gradient_upwind
 from mfgarchon.types import NumericalScheme
 
