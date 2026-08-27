@@ -205,7 +205,7 @@ MUTATIONS: list[Mutation] = [
         old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
         new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: absolute deviation from 1.0",
         owner='`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `max|mass(t)/mass(0) - 1|`, not deviation from a 1.0 target (#1672). Documented at `mfgarchon/utils/solver_result.py:41` -- "mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the" -- and argued a',
-        verify="MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.5",
+        verify="MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1",  # 0.5 until #2145/#1887: under the mutation this reads |mass - 1|, and the library no longer rescales m_initial, so it is |0.546 - 1| = 0.454 rather than something above 0.5. Clean reads 1.22e-15, so 0.1 separates by 14 orders.,
     ),
     Mutation(
         name="particle_mass_counting_measure",
@@ -253,7 +253,7 @@ MUTATIONS: list[Mutation] = [
         old="            flux = np.where(v_face >= 0.0, v_face * md[..., :-1], v_face * md[..., 1:])",
         new="            flux = np.where(v_face >= 0.0, v_face * md[..., 1:], v_face * md[..., :-1])  # MUTATED: donor cell swapped",
         owner="the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-        verify="float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 2.0",
+        verify="float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0",  # 2.0 until #2145: index 0 is the WALL cell, whose divisor went from h to the control volume h/2, so the clean value moved 1.0 -> 2.0 and the mutated one 2.0 -> 4.0. The control was reading TRUE on the clean tree and the sweep called the mutation ineffective.,
     ),
     Mutation(
         name="periodic_wrap_endpoint_inverted",
