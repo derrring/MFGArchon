@@ -44,6 +44,7 @@ from mfgarchon.geometry.protocols import (
     SupportsRegionMarking,
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -689,13 +690,7 @@ class TensorProductGrid(
         if dimension_idx >= self._dimension:
             raise ValueError(f"dimension_idx {dimension_idx} out of range for a {self._dimension}-D grid")
         x = np.asarray(self.coordinates[dimension_idx], dtype=float)
-        if x.size < 2:
-            raise ValueError(f"axis {dimension_idx} has {x.size} node(s); a measure needs at least two")
-        w = np.empty_like(x)
-        w[0] = (x[1] - x[0]) / 2.0
-        w[-1] = (x[-1] - x[-2]) / 2.0
-        w[1:-1] = (x[2:] - x[:-2]) / 2.0
-        return w
+        return quadrature_weights_1d(x)
 
     def integrate(self, field: NDArray) -> NDArray | float:
         """Integrate ``field`` over this grid, with this grid's own weights.
