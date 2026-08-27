@@ -345,19 +345,21 @@ a blocking meta-path finder over every step, its control firing on the one impor
 | step | reads |
 |---|---|
 | the suite, `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` | the **worktree** — pytest puts the tree root at `sys.path[0]` because `tests/__init__.py` exists, and setuptools' finder only *appends* to `sys.meta_path`, so `PathFinder` answers first. Remove that `__init__.py` and it flips |
-| 12 of the 15 `scripts/*.py` invocations | the **worktree** — they never import the package. Two are pointed there by a flag (`--path mfgarchon` at `:476`, `--path .` at `:484`); five anchor on `Path(__file__).resolve().parent.parent`, which is stronger than CWD; the rest inherit the gate's own `cd`. `check_doc_api.py` is among them and says why in its docstring: "no imports … everything here is read off the source tree" |
+| 12 of the 15 `scripts/*.py` invocations | the **worktree** — they never import the package. Two are pointed there by a flag (`--path mfgarchon` at `:476`, `--path .` at `:484`); two anchor the tree on `Path(__file__).resolve().parent.parent`, which is stronger than CWD; the other eight inherit the gate's own `cd`, three of them using a one-level `Path(__file__)` only to find their baseline JSON while `--root`/`--path` still default to `"."`. `check_doc_api.py` is among them and says why in its docstring: "no imports … everything here is read off the source tree" |
 | 3 invocations, across 2 scripts: `check_internal_deprecation.py --self-test` (the only importer under `--fast`) and `capability_matrix.py` twice in the full gate | the **main checkout** — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers |
 
-**Count the importers two ways, because neither count contains the other.** By AST over
-`scripts/*.py`, five import the package — `audit_deprecated_symbols`, `capability_matrix`,
-`check_circular_imports`, `check_internal_deprecation`, `generate_deprecation_guide` — six if you
-recurse, adding `validation/hjb_1d_bc_gradient.py`. `grep -l 'import mfgarchon' scripts/*.py` gives
-seven, and the two sets differ by four files in both directions. The grep adds three the AST cannot
-see: one line of prose in `check_doc_api.py`, a string `exec`'d at `run_health_check.py:101`, and a
-subprocess at `test_discrimination.py:455` — two of those three are real imports. The AST adds
-`capability_matrix.py`, which the grep misses because it only ever writes `from mfgarchon`. Neither
-instrument alone answers "does this step import the package"; the one that does is a blocking
-meta-path finder run over the actual invocation.
+**No static count answers "does this step import the package", and the reason is not that greps are
+sloppy.** By AST over `scripts/*.py`, five import it — `audit_deprecated_symbols`,
+`capability_matrix`, `check_circular_imports`, `check_internal_deprecation`,
+`generate_deprecation_guide` — six recursively, adding `validation/hjb_1d_bc_gradient.py`.
+`grep -l 'import mfgarchon' scripts/*.py` gives seven, differing in both directions: it adds a line
+of prose in `check_doc_api.py`, a string `exec`'d in-process at `run_health_check.py:101`, and a
+child-process import at `test_discrimination.py:455`, while missing `capability_matrix.py`, which
+only ever writes `from mfgarchon`. Widen the pattern to `'import mfgarchon|from mfgarchon'` and it
+gives eight and contains both sets — so that asymmetry is a property of the narrow pattern, not a
+lesson about instruments. The lesson is `capability_census.py:78`, `importlib.import_module(package)`:
+a real in-process import that **no** text pattern and **no** AST import-scan can see. What answers
+the question is a blocking meta-path finder run over the actual invocation.
 
 **Set both, for different reasons.** `PYTHONPATH=<worktree>` fixes the tree — it lands on
 `sys.path`, which `PathFinder` reads before the appended editable finder (measured as a single
@@ -381,7 +383,8 @@ The gate names this failure while it happens, in a line that reads as a nag:
 code: that function is 17 lines because it checks a **subprocess** it is about to spawn, while
 `check_internal_deprecation.py:134` and `capability_matrix.py:157` import in-process and need three
 different lines — resolve `mfgarchon.__file__`, compare against `Path(__file__).parent.parent`,
-refuse. Note also that `test_discrimination.py` is not itself a gate step: `local_ci.sh` names it
+refuse — and keep the `.resolve()` the prior art has, which this prescription otherwise drops.
+Note also that `test_discrimination.py` is not itself a gate step: `local_ci.sh` names it
 only in comments (`:235`, `:567`), so the prior art currently guards nothing the gate runs.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
