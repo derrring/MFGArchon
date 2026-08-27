@@ -48,17 +48,22 @@ def _default_components():
 
 
 def _row_masses(result, problem):
-    """Discrete mass per time row, sum_j m_j * dx.
+    """Mass per time row, on the grid's own measure.
 
     Every problem in this file uses ``no_flux_bc``, so the continuum FP equation conserves
-    int m dx exactly and the discrete scheme conserves the node sum. This is the external law
-    the block iterators are checked against below: it is computed from the grid spacing alone,
-    not from the iterate, so a uniformly degraded solve cannot move both sides together.
+    int m dx exactly. This is the external law the block iterators are checked against below, and
+    it still comes from the GEOMETRY rather than from the iterate -- a uniformly degraded solve
+    cannot move both sides together, which is what that mattered for.
 
-    Only the node sum is conserved -- the trapezoid integral of the same iterate drifts by
-    6.2e-03 over the time rows, because it drops half the two wall nodes.
+    What changed is which functional (#2145). This read ``sum(m)*dx`` and said so, adding that
+    "only the node sum is conserved -- the trapezoid integral of the same iterate drifts by
+    6.2e-03, because it drops half the two wall nodes". The second half was the finding and the
+    first half was the wrong conclusion drawn from it: the end nodes DO own half a cell, on an
+    endpoint-inclusive grid that is what the integral is, and the 6.2e-03 was the FP wall losing
+    real mass rather than the trapezoid being the wrong ruler. The wall now owns the half cell too,
+    so this reads machine zero and ``sum(m)*dx`` is the one that drifts.
     """
-    return result.M.sum(axis=1) * problem.geometry.spacing[0]
+    return problem.geometry.integrate(np.asarray(result.M, dtype=float))
 
 
 class TestBlockIteratorBasic:

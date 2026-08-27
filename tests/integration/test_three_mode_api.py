@@ -68,9 +68,10 @@ def _assert_is_a_plausible_solution(result, problem, *, mass_rtol: float = 1e-9)
     assert (M >= -1e-12).all(), f"density went negative: min(M) = {M.min():.3e}"
     assert U.std() > 1e-6, "U is constant; a solver returning a fixed array would pass every other check"
 
-    bounds = problem.geometry.get_bounds()
-    dx = (bounds[1][0] - bounds[0][0]) / (M.shape[1] - 1)
-    mass = M.sum(axis=1) * dx
+    # #2145: the geometry owns the measure. `sum(m)*dx` gives the two wall nodes a full cell each
+    # on an endpoint-inclusive grid and is a different functional -- the one the FP wall used to
+    # conserve while losing real mass.
+    mass = np.asarray(problem.geometry.integrate(M), dtype=float)
     drift = float(np.abs(mass - mass[0]).max())
     assert drift <= mass_rtol * max(abs(float(mass[0])), 1.0), (
         f"mass drifted by {drift:.3e} over the horizon (t0={mass[0]:.6f}, "
