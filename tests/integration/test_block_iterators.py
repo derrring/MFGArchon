@@ -38,10 +38,32 @@ def _default_hamiltonian():
     )
 
 
-def _default_components():
+# The grid every problem in this file uses. Named because the fixture now needs it BEFORE building
+# the problem, to normalise its own initial density.
+_GRID_BOUNDS = [(0.0, 1.0)]
+_GRID_POINTS = [21]
+
+
+def _unit_mass_gaussian(grid):
+    """A Gaussian scaled to integrate to 1 on `grid`, by the CALLER (#1887).
+
+    `MFGProblem` used to rescale whatever `m_initial` returned, so this fixture could hand in a raw
+    Gaussian of mass 0.5605 and the tests below could assert `mass[0] == 1`. That rescale is gone:
+    the library validates and reports, and normalising is the caller's job. So the fixture does it,
+    which also makes this file a worked example of the new contract rather than a casualty of it.
+
+    Scaled with the grid's own measure (#2145), so `mass[0] == 1` below is a real assertion about
+    this density and not a restatement of whichever quadrature the library happens to use.
+    """
+    raw_at = lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2)  # noqa: E731
+    total = float(grid.integrate(raw_at(np.asarray(grid.coordinates[0]))))
+    return lambda x: raw_at(x) / total
+
+
+def _default_components(grid):
     """Default MFGComponents for testing (Issue #670: explicit specification required)."""
     return MFGComponents(
-        m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),  # Gaussian centered at 0.5
+        m_initial=_unit_mass_gaussian(grid),
         u_terminal=lambda x: 0.0,  # Zero terminal cost
         hamiltonian=_default_hamiltonian(),
     )
@@ -73,7 +95,7 @@ class TestBlockIteratorBasic:
     def simple_problem(self):
         """Create a simple 1D MFG problem for testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=0.2, components=_default_components(geometry))
         return problem
 
     @pytest.fixture
@@ -195,7 +217,7 @@ class TestBlockIteratorConvergence:
     def convergence_problem(self):
         """Problem sized for convergence testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[25], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.4, Nt=12, sigma=0.18, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.4, Nt=12, sigma=0.18, components=_default_components(geometry))
         return problem
 
     @pytest.mark.slow
@@ -258,7 +280,7 @@ class TestBlockIteratorParameters:
     def param_problem(self):
         """Small problem for parameter testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components(geometry))
         return problem
 
     def test_no_damping(self, param_problem):
@@ -341,7 +363,7 @@ class TestBlockVsFixedPoint:
     def comparison_problem(self):
         """Problem for comparison testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components(geometry))
         return problem
 
     def test_gauss_seidel_similar_to_fixed_point(self, comparison_problem):

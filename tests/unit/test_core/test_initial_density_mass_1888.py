@@ -1,29 +1,37 @@
-"""`m(0, .)` must integrate to 1 under the geometry's own volume element.
+"""`MFGProblem` reports `m(0, .)`'s mass on the geometry's measure, and does not change it.
 
-`MFGProblem` normalises `m_initial` by dividing by its discrete integral. It used to compute that
-integral's cell volume itself, as `prod((b - a) / n)` from `self.spatial_discretization` -- an
-attribute that means the INTERVAL count when passed to the constructor and the NODE count when it
-comes from a geometry. Under the first reading the expression is exactly the spacing; under the
-second it is one interval too many. So the same 11x11 grid gave mass 1.0 through
-`spatial_discretization=[10, 10]` and 1.21 through `geometry=TensorProductGrid(Nx_points=[11, 11])`.
-The normaliser now asks the geometry, so both agree.
+**The subject of this file changed with #1887.** It used to assert that the initial density
+*integrates to 1*, because `MFGProblem` divided `m_initial` by its discrete integral. That rescale
+is gone: normalising is the caller's job, and the library's job is to say what it received. So the
+property under test is now *the mass is reported and the density is untouched*, and the old
+assertion -- `== 1.0` -- would be wrong, since a caller may legitimately hand in a sub-probability
+density or one population's share.
 
-**What this file is, and is not.** It is a consistency pin between the normaliser and
-`geometry.get_grid_spacing()`, which is the fork that produced the defect. It is **not** an external
-oracle on the cell volume: the normaliser divides by `sum(m) * V` and this file multiplies by the
-same `V` from the same accessor, so `V` cancels and the assertion holds for any spacing the accessor
-returns. Verified -- monkeypatching `get_grid_spacing` to `L/n` leaves this file at 7 passed. That
-the convention itself is `L/(n-1)` is pinned elsewhere, by tests carrying literal spacing values,
-which do go red under that mutation.
+**What this file was, in its author's own words, and why that changes too.** It said:
 
-Why 5943 tests did not catch the fork. Mass conservation is measured as *drift from the initial
-mass*, deliberately and correctly, since drift is the physical property -- and a ratio is invariant
-to the cell measure, so the whole mass-oracle family is blind to the initial value. See
-`tests/unit/test_utils/test_mass_conservation_error_1672.py`, whose docstring recorded this exact
-fork on 2026-07-21 and set it out of scope without filing an issue.
+    It is **not** an external oracle on the cell volume: the normaliser divides by `sum(m) * V` and
+    this file multiplies by the same `V` from the same accessor, so `V` cancels and the assertion
+    holds for any spacing the accessor returns. Verified -- monkeypatching `get_grid_spacing` to
+    `L/n` leaves this file at 7 passed.
+
+That was true and it is the reason the oracle below is written by hand. The reported mass now comes
+from `geometry.integrate`, so computing the expected value the same way would be the identical
+tautology one layer along. The weights are therefore spelled out here, from the coordinates. This is
+the one place in the migration where a second derivation of the formula is the point rather than the
+defect -- everywhere else, #2145's owner is called.
+
+**Two things the original defect record should keep.** The fork it was written for -- an attribute
+meaning the INTERVAL count from the constructor and the NODE count from a geometry, so the same
+11x11 grid measured 1.0 one way and 1.21 the other -- is still pinned, by
+`test_both_construction_paths_agree` below. And the reason 5943 tests missed it stands unchanged:
+mass conservation is measured as *drift from the initial mass*, correctly, and a ratio is invariant
+to the cell measure, so the whole mass-oracle family is blind to the initial value. This file is
+where that blindness is covered.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import pytest
 
@@ -36,68 +44,176 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 
-def _problem(dimension: int, n: int) -> MFGProblem:
+def _gaussian(dimension: int):
     def m0(x):
         arr = np.asarray(x)
         r2 = np.sum((arr - 0.5) ** 2, axis=-1) if dimension > 1 else (arr - 0.5) ** 2
         return np.exp(-30 * r2)
 
-    return MFGProblem(
-        geometry=TensorProductGrid(
-            bounds=[(0.0, 1.0)] * dimension,
-            Nx_points=[n] * dimension,
-            boundary_conditions=no_flux_bc(dimension=dimension),
-        ),
-        Nt=4,
-        T=0.2,
-        sigma=0.4,
-        components=MFGComponents(
-            m_initial=m0,
-            u_terminal=lambda x: 0.0,
-            hamiltonian=SeparableHamiltonian(
-                control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+    return m0
+
+
+def _problem(dimension: int, n: int, m0=None) -> MFGProblem:
+    with warnings.catch_warnings():
+        # Tier 3 fires on this fixture by construction -- a Gaussian's integral is not 1 -- and the
+        # warning itself is asserted in `TestTheThreeTiers`, not incidentally here.
+        warnings.filterwarnings("ignore", message="initial density mass")
+        return MFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)] * dimension,
+                Nx_points=[n] * dimension,
+                boundary_conditions=no_flux_bc(dimension=dimension),
             ),
-        ),
-    )
-
-
-def _mass(problem: MFGProblem) -> float:
-    """Integrate with the geometry's own volume element, not the normaliser's."""
-    return float(np.sum(np.asarray(problem.m_initial, dtype=float)) * np.prod(problem.geometry.get_grid_spacing()))
-
-
-@pytest.mark.parametrize(("dimension", "n"), [(1, 11), (1, 21), (2, 11), (2, 15), (2, 21), (3, 9)])
-def test_the_initial_density_integrates_to_one(dimension: int, n: int):
-    """The 1-D rows are the control: they take a different branch and were always correct.
-
-    Without them, a regression that broke both branches equally would leave this file green in the
-    only way that matters -- every row failing for the same reason reads as a bad fixture.
-    """
-    assert _mass(_problem(dimension, n)) == pytest.approx(1.0, rel=1e-12)
-
-
-def test_both_construction_paths_agree():
-    """The fork was between two ways of building the same grid, so the pin has to compare them.
-
-    `== 1.0` on one path cannot see a disagreement between paths, and the previous version of this
-    test asserted only that the mass is *not* the old value -- which is implied by the rows above
-    and so could never be the sole failure. This builds the identical 11x11 and 9x9x9 grids through
-    both public constructors and requires them to agree, which is the property that was violated:
-    1.0 against 1.21 in 2-D and 1.0 against 1.4238 in 3-D, measured on the revision before the fix.
-    """
-    for dimension, intervals in ((2, 10), (3, 8)):
-        via_geometry = _problem(dimension, intervals + 1)
-        via_bounds = MFGProblem(
-            spatial_bounds=[(0.0, 1.0)] * dimension,
-            spatial_discretization=[intervals] * dimension,
             Nt=4,
             T=0.2,
             sigma=0.4,
-            components=via_geometry.components,
+            components=MFGComponents(
+                m_initial=m0 or _gaussian(dimension),
+                u_terminal=lambda x: 0.0,
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0),
+                    coupling=lambda m: m,
+                    coupling_dm=lambda m: 1.0,
+                ),
+            ),
         )
-        assert np.allclose(via_geometry.geometry.get_grid_spacing(), via_bounds.geometry.get_grid_spacing()), (
-            "the two constructors were meant to describe the same grid"
+
+
+def _mass_by_hand(problem: MFGProblem) -> float:
+    """The trapezoid weights, written out, deliberately not taken from the owner.
+
+    See the module docstring: the reported value comes from `geometry.integrate`, so an oracle that
+    called it too would cancel exactly as the old `V` did and hold for any weights the grid returns.
+    """
+    m = np.asarray(problem.m_initial, dtype=float)
+    weights = None
+    for coords in problem.geometry.coordinates:
+        x = np.asarray(coords, dtype=float)
+        w = np.empty_like(x)
+        w[0] = (x[1] - x[0]) / 2.0
+        w[-1] = (x[-1] - x[-2]) / 2.0
+        w[1:-1] = (x[2:] - x[:-2]) / 2.0
+        weights = w if weights is None else np.multiply.outer(weights, w)
+    return float((m * weights).sum())
+
+
+class TestTheReportedMass:
+    @pytest.mark.parametrize(("dimension", "n"), [(1, 11), (1, 21), (2, 11), (2, 15), (2, 21), (3, 9)])
+    def test_it_matches_an_independently_derived_integral(self, dimension: int, n: int):
+        """The 1-D rows are the control: they take a different measurement branch.
+
+        Without them a regression that broke every branch equally would leave this file failing in
+        the only way that reads as a bad fixture rather than as a defect.
+        """
+        problem = _problem(dimension, n)
+        assert problem.initial_mass == pytest.approx(_mass_by_hand(problem), rel=1e-12)
+        assert problem.initial_mass_measure == "grid"
+
+    @pytest.mark.parametrize("dimension", [1, 2])
+    def test_the_density_is_handed_back_unchanged(self, dimension: int):
+        """#1887's subject in one assertion: the library must not substitute a nearby object.
+
+        Mutation: restore `self.m_initial /= integral` and this goes red while every mass-drift
+        oracle in the repository stays green, which is exactly how the rescale survived.
+        """
+        n = 11
+        problem = _problem(dimension, n)
+        axis = np.linspace(0.0, 1.0, n)
+        grid = np.stack(np.meshgrid(*([axis] * dimension), indexing="ij"), axis=-1) if dimension > 1 else axis
+        expected = _gaussian(dimension)(grid)
+        assert np.allclose(np.asarray(problem.m_initial), expected, rtol=0, atol=0)
+        assert problem.initial_mass != pytest.approx(1.0, rel=1e-6), (
+            "this fixture's Gaussian does not integrate to 1; if it now does, the rescale is back"
         )
-        assert _mass(via_geometry) == pytest.approx(_mass(via_bounds), rel=1e-12)
+
+    def test_both_construction_paths_agree(self):
+        """The #1888 fork was between two ways of building the same grid, so the pin compares them.
+
+        It was 1.0 against 1.21 in 2-D and 1.0 against 1.4238 in 3-D on the revision before the fix.
+        Reported mass rather than normalised mass now, but the same property.
+        """
+        for dimension, intervals in ((2, 10), (3, 8)):
+            via_geometry = _problem(dimension, intervals + 1)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="initial density mass")
+                via_bounds = MFGProblem(
+                    spatial_bounds=[(0.0, 1.0)] * dimension,
+                    spatial_discretization=[intervals] * dimension,
+                    Nt=4,
+                    T=0.2,
+                    sigma=0.4,
+                    components=via_geometry.components,
+                )
+            assert np.allclose(via_geometry.geometry.get_grid_spacing(), via_bounds.geometry.get_grid_spacing()), (
+                "the two constructors were meant to describe the same grid"
+            )
+            assert via_geometry.initial_mass == pytest.approx(via_bounds.initial_mass, rel=1e-12)
+
+
+class TestTheThreeTiers:
+    """#1887's decision, one test per tier. Only tier 3 presumes a target of 1."""
+
+    def test_tier_1_refuses_a_negative_density(self):
+        with pytest.raises(ValueError, match="negative"):
+            _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
+
+    def test_tier_1_refuses_a_zero_density(self):
+        with pytest.raises(ValueError, match="mass|positive"):
+            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
+
+    def test_tier_3_warns_off_one_and_says_how_to_silence_it(self):
+        """The message must carry the number, the measure, and the remedy. A bare "mass is not 1"
+        recreates the invisible convention the report exists to remove (#2145)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            MFGProblem(
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)],
+                    Nx_points=[11],
+                    boundary_conditions=no_flux_bc(dimension=1),
+                ),
+                Nt=4,
+                T=0.2,
+                sigma=0.4,
+                components=MFGComponents(
+                    m_initial=_gaussian(1),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(
+                        control_cost=QuadraticControlCost(control_cost=1.0),
+                        coupling=lambda m: m,
+                        coupling_dm=lambda m: 1.0,
+                    ),
+                ),
+            )
+        messages = [str(w.message) for w in caught if "initial density mass" in str(w.message)]
+        assert messages, "tier 3 did not fire on a density whose integral is not 1"
+        assert "grid" in messages[0], "the warning must name the measure, not just the number"
+        assert "Silence" in messages[0] or "silence" in messages[0]
+
+    def test_tier_3_is_silent_on_a_density_that_already_integrates_to_one(self):
+        """The tolerance is not a licence: a correctly normalised density must warn zero times, or
+        the warning becomes noise and gets filtered along with the tiers that matter."""
+        n = 11
+        axis = np.linspace(0.0, 1.0, n)
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        raw = _gaussian(1)(axis)
+        normalised = raw / grid.integrate(raw)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            problem = MFGProblem(
+                geometry=grid,
+                Nt=4,
+                T=0.2,
+                sigma=0.4,
+                components=MFGComponents(
+                    m_initial=lambda x: np.interp(np.asarray(x), axis, normalised),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(
+                        control_cost=QuadraticControlCost(control_cost=1.0),
+                        coupling=lambda m: m,
+                        coupling_dm=lambda m: 1.0,
+                    ),
+                ),
+            )
+        assert problem.initial_mass == pytest.approx(1.0, rel=1e-12)
+        assert not [w for w in caught if "initial density mass" in str(w.message)]

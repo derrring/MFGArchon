@@ -80,16 +80,10 @@ class TestFPProductionConservation:
         relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"periodic zero-drift mass not conserved: relerr {relerr:.2e}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "The FP no-flux wall is built to conserve the RECTANGLE sum, not the mass. "
-            "Fixing the wall stencil makes this pass; delete the marker then."
-        ),
-    )
     def test_mass_conserved_no_flux_zero_drift(self):
-        """Same quadrature as the periodic test above, for the same reason -- and it FAILS.
+        """Same quadrature as the periodic test above, for the same reason. It now PASSES.
 
+        History, because the number it reads went from 5.77e-03 to 1e-14 without this file moving.
         This asserted `M.sum(axis=1) * dx` directly below a docstring explaining why that
         quadrature is wrong on this grid (#1822). The rectangle rule over-reports by exactly the
         endpoint half-weights: `dx*(m[0]+m[-1])/2 = 0.035` at t=0, matched to 1e-12, so it calls a
@@ -106,28 +100,22 @@ class TestFPProductionConservation:
         `u''(0)` -- order 0.00 -- while the node-centred row `[-2, 2]/h^2` gives order 2.00
         (interior control 6.8e-16). That is #1904 / #1935.
 
-        Marked xfail rather than pinned to the wrong number: pinning 5.77e-3 would make the
-        defect a specification, and `strict=True` makes fixing the wall trip this test, so the
-        failure message is the instruction.
+        It was marked `xfail(strict=True)` rather than pinned to 5.77e-3, because pinning the wrong
+        number would have made the defect a specification. #2145 gave the wall node the half cell it
+        owns, the test flipped to `XPASS(strict)`, and the marker is gone -- which is the retirement
+        condition working as designed, with the failure message as the instruction.
+
+        It has also INHERITED the #1250 signal. A rectangle-sum guard used to sit beside this one
+        and catch the absorbing-wall regression by a ~3% drop over 5 steps; that guard asserted a
+        functional the corrected wall no longer conserves, so it is retired. An absorbing wall loses
+        real mass, so it moves this check too -- and this one cannot be satisfied by a wall that
+        conserves the wrong thing, which is what let #1250's defect class survive beside a green
+        conservation test in the first place.
         """
         M, _dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
         x = np.linspace(0.0, 1.0, M.shape[1])
         relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"no-flux zero-drift mass not conserved: relerr {relerr:.2e}"
-
-    def test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass(self):
-        """The assertion the test above used to make, kept as what it actually measures.
-
-        `sum(m)*dx` is the cell-centred integral; this grid is node-centred, so the mass is the
-        trapezoid. Holding this to machine precision is nonetheless a real structural guard -- it
-        is what a broken wall stencil would break -- so it stays, under a name that does not
-        claim to be measuring mass. It goes red when the wall is made node-centred, and that is
-        the intended signal, not a regression.
-        """
-        M, dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
-        rect = M.sum(axis=1) * dx
-        relerr = abs(rect[-1] - rect[0]) / rect[0]
-        assert relerr < 1e-12, f"no-flux rectangle sum not conserved: relerr {relerr:.2e}"
 
     def test_density_stays_positive(self):
         # an M-matrix implicit step keeps a positive initial density positive
@@ -171,39 +159,13 @@ class TestNeumannBCImplicitFP:
     After the fix, neumann routes to the same no-flux boundary handler as no_flux.
     """
 
-    def test_neumann_zero_value_step_conserves_the_rectangle_sum(self):
-        """The #1250 pinning test, under the name of what it measures.
-
-        `neumann_bc(0)` is the same wall as `no_flux_bc`, so this is the twin of
-        `test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass` above and inherits
-        its reading: `sum(m)*dx` is the cell-centred integral, and this grid is node-centred.
-
-        The #1250 signal is undamaged by the rename -- the absorbing-wall bug it pins drops the
-        rectangle sum ~3% over 5 steps, which this still catches at 1e-10. What the rename gives
-        up is the claim that 1e-10 here means mass was conserved; under the trapezoid the same
-        solve loses 5.8e-3, recorded on the xfail above.
-        """
-        M, dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
-        rect = M.sum(axis=1) * dx
-        relerr = abs(rect[-1] - rect[0]) / rect[0]
-        assert relerr < 1e-10, (
-            f"neumann zero-drift rectangle sum not conserved (Issue #1250): relerr {relerr:.2e} "
-            f"(expected <1e-10; >3e-3 indicates the absorbing-wall bug is active)"
-        )
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Same wall as no-flux, same defect: the stencil conserves the rectangle sum, not the "
-            "mass. Fixing the wall makes this pass; delete the marker then."
-        ),
-    )
     def test_mass_conserved_neumann_zero_value_zero_drift(self):
-        """The twin of the no-flux xfail above; `neumann_bc(0)` is the same physical wall.
+        """The twin of the no-flux test above; `neumann_bc(0)` is the same physical wall.
 
         `test_neumann_matches_no_flux_implicit` below already asserts the two produce byte-identical
-        histories, so these two xfails cannot diverge: whatever fixes one fixes both, and if only
-        one flips, that test goes red first.
+        histories, so these two cannot diverge: whatever fixes one fixes both, and if only one moves,
+        that test goes red first. Both were `xfail(strict=True)` until #2145 corrected the wall;
+        both flipped together, as that identity predicts.
         """
         M, _dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
         x = np.linspace(0.0, 1.0, M.shape[1])
