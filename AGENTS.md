@@ -347,10 +347,17 @@ worktree, with a control assertion that fired:
 
 Seven files under `scripts/` import `mfgarchon`, `check_doc_api.py` among them, and that one runs
 under `--fast`. So a lane's `GATE GREEN` is half its own tree and half whichever branch the main
-checkout happens to be on, and nothing in the output says which. Before running a gate from a
-worktree, give it its own environment (`uv venv && uv pip install -e .` inside the worktree) or
-export `PYTHONPATH=<worktree>` for the ratchet steps. `MFG_PYTHON` does not fix it: it chooses the
-interpreter, not the tree.
+checkout happens to be on, and nothing in the output says which. Export `PYTHONPATH=<worktree>` for
+the ratchet steps.
+
+Do **not** reach for `MFG_PYTHON` or a fresh `uv venv` in the worktree instead. `MFG_PYTHON` chooses
+the interpreter, not the tree, and choosing the wrong one turns the whole run into noise: measured
+2026-08-27, pointing it at `.venv` (pytest 8.4.1, ruff 0.13.1) against the gate's own
+`mfg_env` (pytest 9.1.1, ruff 0.16.0) reported six warning identities GONE and one NEW and went
+`GATE RED` on a two-file documentation diff -- among them `PytestRemovedIn10Warning`, a class
+pytest 8 cannot emit. The one line that named the cause was already in the output and reads as a
+nag: `WARN ruff 0.13.1 ran, but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal,
+not a note.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 
