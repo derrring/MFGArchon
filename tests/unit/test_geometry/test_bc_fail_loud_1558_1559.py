@@ -126,8 +126,19 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
     n_points, n_steps = 61, 20
     xs = np.linspace(0.0, 1.0, n_points)
 
-    def final_density(boundary_conditions):
+    # Off-centre so the near wall is reached long before the far one; a centred bump would reach both
+    # walls together and the two BCs would look alike. Shared by both solves on purpose -- that is
+    # what makes the comparison below a comparison. Its normalisation is deliberately left as the
+    # rectangle: what the assertions check is that each scheme TRANSPORTS this mass on its own
+    # measure, and normalising it on either measure would bake one of the two into the fixture.
+    m_initial_shared = np.exp(-((xs - 0.12) ** 2) / (2 * 0.05**2))
+    m_initial_shared /= m_initial_shared.sum()
+
+    geometry_of: dict[str, TensorProductGrid] = {}
+
+    def final_density(label, boundary_conditions):
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_points], boundary_conditions=boundary_conditions)
+        geometry_of[label] = geometry
         components = MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.0,
@@ -138,14 +149,12 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
             ),
         )
         problem = MFGProblem(geometry=geometry, T=0.4, Nt=n_steps, sigma=0.35, components=components)
-        # Off-centre so the near wall is reached long before the far one; a centred bump would
-        # reach both walls together and the two BCs would look alike.
-        m_initial = np.exp(-((xs - 0.12) ** 2) / (2 * 0.05**2))
-        m_initial /= m_initial.sum()
-        return FPFDMSolver(problem).solve_fp_system(m_initial, potential_field=np.zeros((n_steps + 1, n_points)))[-1]
+        return FPFDMSolver(problem).solve_fp_system(
+            m_initial_shared, potential_field=np.zeros((n_steps + 1, n_points))
+        )[-1]
 
-    reflecting = final_density(no_flux_bc(dimension=1))
-    wrapping = final_density(periodic_bc(dimension=1))
+    reflecting = final_density("no-flux", no_flux_bc(dimension=1))
+    wrapping = final_density("periodic", periodic_bc(dimension=1))
 
     far_wall = slice(-5, None)
     assert wrapping[far_wall].sum() > 100 * reflecting[far_wall].sum(), (
@@ -159,24 +168,48 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
         f"the two boundary conditions must differ by O(1) over the field, not at the margin; got {relative_l1:.1%}"
     )
 
-    # The conserved functional is not the same for the two BCs, and using one rule for both is
-    # what this pair of lines used to do (#1822). Under no-flux all 61 nodes are distinct cells
-    # and the rectangle rule is what the scheme telescopes. Under periodic on this
-    # endpoint-inclusive grid x[0] and x[-1] are one physical point, so the rectangle rule counts
-    # it twice -- it reports 1.0257 for a density whose mass is 1, and would read a correct solve
-    # as a 2.6% leak. Trapezoid is the rule there: the shared node's two half-weights sum to one.
-    quadrature = {"no-flux": np.sum, "periodic": lambda d: float(np.trapezoid(d, xs)) / (xs[1] - xs[0])}
+    # The conserved functional is not the same for the two BCs, and using one rule for both is what
+    # this pair of lines used to do (#1822). The periodic half of that reasoning was right and is
+    # kept below. The no-flux half said "all 61 nodes are distinct cells, so the rectangle rule is
+    # what the scheme telescopes", and #2145 is the finding that it is not: `TensorProductGrid` is
+    # endpoint-inclusive, so the two wall nodes own HALF a cell each and the wall control volume is
+    # h/2. The trapezoid weights are those control volumes, which is why the flux telescopes against
+    # them. Measured on this fixture, over the same solve:
+    #
+    #     no-flux   trapezoid   0.996248972 -> 0.996248972     conserved to nine digits
+    #     no-flux   rectangle   1.000000000 -> 1.021759        2.2% "leak" that is the quadrature
+    #     periodic  60-cell     1.000000000 -> 1.000000000     conserved
+    #
+    # Under periodic x[0] and x[-1] are ONE physical point, so the torus has 60 cells and the rule
+    # is `sum(m[:-1]) * dx`. On a field that actually satisfies the periodicity that equals the
+    # trapezoid exactly; the two differ by (m[-1] - m[0])/2, and `m_initial` here is a bump at
+    # x = 0.12 with m[0] = 7.5e-03 against m[-1] = 7.3e-69 -- so the initial condition handed to the
+    # periodic solver is NOT periodic, the two rules disagree by 3.75e-03 on it, and only the 60-cell
+    # rule is conserved. The solve returns a consistent field (|m[0] - m[-1]| = 0 exactly at T), so
+    # after one step they agree again. `geometry.integrate` is BC-blind and returns the trapezoid,
+    # which is therefore right for anything coming OUT of a periodic solve and wrong for an
+    # inconsistent initial condition going in.
+    #
+    # The assertion is CONSERVATION, not `== 1`. It read `== 1` before, and both rows passed only
+    # because `m_initial` is rectangle-normalised and its right tail is 7e-69: move the bump to the
+    # far wall and the periodic row fails on a correct solve. What the scheme owes is that it
+    # transports whatever mass it was given (#1887) -- 1 is a property of this fixture, not of the
+    # Fokker-Planck equation.
+    quadrature = {
+        "no-flux": lambda d: float(geometry_of["no-flux"].integrate(d)),
+        "periodic": lambda d: float(np.sum(d[:-1])) * (xs[1] - xs[0]),
+    }
 
     for name, density in (("no-flux", reflecting), ("periodic", wrapping)):
         assert np.all(np.isfinite(density)), f"{name} produced a non-finite density"
         assert density.min() >= -1e-12, f"{name} produced a negative density: {density.min():.3e}"
         # Two-sided. Without this the assertions above are one-sided -- ANY corruption that makes
         # the two BCs differ MORE passes. Measured: routing the no-flux wall to the interior
-        # handler leaks 54% of its mass (0.461 instead of 1.0) and makes the test greener,
-        # ratio 340 -> 617. Residuals here are 3.9e-15 and 4.4e-16, so this has five orders of
-        # margin over the tolerance.
-        mass = quadrature[name](density)
-        assert abs(mass - 1.0) < 1e-10, (
-            f"{name} did not conserve mass: {mass:.6f}. A leak makes the two BCs "
-            f"differ more, so the comparison above would read it as success."
+        # handler leaks 54% of its mass and makes the test greener, ratio 340 -> 617.
+        rule = quadrature[name]
+        mass, mass_0 = rule(density), rule(m_initial_shared)
+        assert abs(mass - mass_0) < 1e-9 * abs(mass_0), (
+            f"{name} did not conserve mass on its own measure: {mass:.9f} against an initial "
+            f"{mass_0:.9f}. A leak makes the two BCs differ more, so the comparison above would "
+            f"read it as success."
         )

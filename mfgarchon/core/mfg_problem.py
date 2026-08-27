@@ -882,15 +882,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.spatial_bounds = spatial_bounds
         self.spatial_discretization = spatial_discretization
 
-        # Spatial shape from geometry (actual grid size, not discretization)
-        # For grids with resolution N, actual points = N+1 per dimension
-        if dimension == 1:
-            self.spatial_shape = (spatial_discretization[0] + 1,)
-        elif dimension == 2 or dimension == 3:
-            self.spatial_shape = tuple(n + 1 for n in spatial_discretization)
-        else:
-            # For TensorProductGrid, use num_spatial_points from geometry
-            self.spatial_shape = (geometry.num_spatial_points,)
+        # The geometry owns the grid shape, as this comment always said. The three branches that
+        # stood here recomputed it: the first two from `spatial_discretization` (agreeing with the
+        # geometry by arithmetic, and identical to each other), the third from
+        # `num_spatial_points`, which is a COUNT and not a shape -- so at d >= 4 this constructor
+        # produced (prod(Nx),) where the `geometry=` constructor produced (Nx, Nx, Nx, Nx). #1888's
+        # fork, one dimension further out, and undetectable until a caller checked the shape.
+        self.spatial_shape = tuple(geometry.get_grid_shape())
 
         # Time domain
         self.T: float = T

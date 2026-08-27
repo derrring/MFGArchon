@@ -131,8 +131,21 @@ class TestTheReportedMass:
 
         It was 1.0 against 1.21 in 2-D and 1.0 against 1.4238 in 3-D on the revision before the fix.
         Reported mass rather than normalised mass now, but the same property.
+
+        **d = 4 is here because the fork was still open there**, and this migration is what found it.
+        `MFGProblem.__init__` set `spatial_shape` from `spatial_discretization` at d <= 3 and from
+        `geometry.num_spatial_points` above it -- a count, not a shape -- so `spatial_bounds=` built
+        a flat (14641,) density where `geometry=` built (11, 11, 11, 11). Nothing in the repository
+        compared a field against the grid shape, so it went unseen; `geometry.integrate` was the
+        first caller that did, and it refused. Both constructors now read `get_grid_shape()`.
+
+        What this still discriminates after that consolidation: the interval-to-point conversion,
+        `Nx_points = [n + 1 for n in spatial_discretization]`. Both paths reaching the same owner
+        makes the SHAPE agreement structural, so the assertion that carries weight is that the two
+        argument conventions describe the same grid. Mutation -- drop the `+ 1` -- and every
+        dimension below fails on the spacing assertion.
         """
-        for dimension, intervals in ((2, 10), (3, 8)):
+        for dimension, intervals in ((2, 10), (3, 8), (4, 6)):
             via_geometry = _problem(dimension, intervals + 1)
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="initial density mass")
@@ -147,6 +160,13 @@ class TestTheReportedMass:
             assert np.allclose(via_geometry.geometry.get_grid_spacing(), via_bounds.geometry.get_grid_spacing()), (
                 "the two constructors were meant to describe the same grid"
             )
+            expected_shape = (intervals + 1,) * dimension
+            assert via_bounds.spatial_shape == expected_shape, (
+                f"{dimension}-D: spatial_shape is a SHAPE, not a point count -- "
+                f"a flat (prod,) here is the d >= 4 fork this row was added for"
+            )
+            assert via_geometry.spatial_shape == expected_shape
+            assert np.asarray(via_bounds.m_initial).shape == expected_shape
             assert via_geometry.initial_mass == pytest.approx(via_bounds.initial_mass, rel=1e-12)
 
 
