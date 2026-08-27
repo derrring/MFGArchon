@@ -231,19 +231,23 @@ function.)
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
-"Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
-conventions the discrimination ratchet tracks are noticed by **212 distinct tests** out of 5,872 —
-**3.6%** react when the physics the library exists to get right is broken, so **96.4% notice
-nothing**. (The baseline's kill counts sum to 220; 8 tests are killed by more than one mutation, so
-the sum over-counts and the honest figure is the lower one. Current numbers from
-`scripts/discrimination_baseline.json` + `discrimination_killmatrix.json`, measured at `db3496f9`;
-`./scripts/local_ci.sh` prints them beside the suite result and flags the denominator when it moves.)
-Of the tests whose *names* claim `single_source` / `cross_path` / `_agree`, **60% are inert** —
+"Add a test" is **not** the default close-out for a fix here. Most of this suite does not react when
+the physics the library exists to get right is broken, and the conventions that are defended are
+defended very unevenly — some by a single-digit number of tests, some by over a hundred.
+
+**The numbers are not written here on purpose.** `scripts/discrimination_baseline.json` holds the
+per-convention kill counts and `./scripts/local_ci.sh` prints the current figures beside the suite
+result. A fraction copied into this file goes stale the day the mutation list or the suite moves, and
+both move: the same fraction was 3.6% over six conventions and 9.03% over twenty-four, with nothing
+about the code changing in between. Read the vector, not a percentage — an aggregate over the whole
+suite cannot show a convention with two defenders, which is the thing you would act on (#2148).
+Most of the tests whose *names* claim `single_source` / `cross_path` / `_agree` turn out to be inert —
+the proportion is in
 [#1715's comment of 2026-07-27](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
 not its body, which says the prevalence "is not established". **Inert is not the same as worthless**,
 and that distinction has cost real time: all five tests #1715 names are genuine cross-path pins —
-delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on six
-conventions *because those conventions are not what they pin*. The deletable set is the
+delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on the
+conventions the ratchet tracked *because those conventions are not what they pin*. The deletable set is the
 **structurally tautological** one, found by reading, not the inert one, found by counting (#1901). And
 the yield runs the other way too: #1660's 17 nightly "failures" resolved as 8 fixture rot from the
 #1442 drift migration, 2 tests measuring the wrong quantity, 7 timeouts — **zero** product
