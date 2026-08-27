@@ -368,8 +368,8 @@ but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
 
 `scripts/test_discrimination.py:452-468` already solves this for one script (#1677, "prove the
 process under measurement imports what we mutate"). Port the refusal, not the code: that function is
-17 lines because it checks a **subprocess** it is about to spawn, while `check_internal_deprecation.py:134`
-and `capability_matrix.py:157` import in-process and need three lines — resolve `mfgarchon.__file__`,
+17 lines because it checks a **subprocess** it is about to spawn, while `check_internal_deprecation.py`
+and `capability_matrix.py` import in-process and need three lines — resolve `mfgarchon.__file__`,
 compare against `Path(__file__).resolve().parent.parent`, refuse. `test_discrimination.py` is not
 itself a gate step (`local_ci.sh` names it only at `:235` and `:567`, both comments), so the prior
 art currently guards nothing the gate runs.
