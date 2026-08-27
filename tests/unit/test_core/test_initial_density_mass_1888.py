@@ -178,7 +178,7 @@ class TestTheThreeTiers:
             _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
 
     def test_tier_1_refuses_a_zero_density(self):
-        with pytest.raises(ValueError, match="mass|positive"):
+        with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
             _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
 
     def test_tier_3_warns_off_one_and_says_how_to_silence_it(self):

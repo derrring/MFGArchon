@@ -353,13 +353,29 @@ def add_boundary_no_flux_entries_divergence_centered(
             u_plus = u_flat[flat_idx_plus]
             u_center = u_flat[flat_idx]
 
+            # Node 0 owns HALF a cell, [0, dx/2], because this grid is endpoint-inclusive and the
+            # wall lies ON the node (#2145). The divergence is the net flux over the CONTROL VOLUME,
+            # so it is F_{1/2} / (dx/2) and not F_{1/2} / dx -- which is what the line below this
+            # block used to say in words and in code. Dividing by the full cell halves every wall
+            # row: the scheme then telescopes against rectangle weights instead of the trapezoid
+            # weights that ARE these control volumes, so it conserved `sum(m)*dx` exactly and the
+            # true mass not at all. Measured on the #1975 census fixture (sigma 0.3, drift 3.2,
+            # 81 nodes, 200 steps of 1e-3 at a drifted wall), rectangle / trapezoid drift:
+            #
+            #     divergence_centered   before   -0.00000%  /  -25.45389%
+            #     divergence_centered   after   +37.00513%  /   -0.00000%
+            #
+            # so a quarter of the true mass was going missing while the test that watched it
+            # reported machine zero. `divergence_upwind` in fp_fdm_bc.py had the same defect and
+            # the same shape, -19.26153% there.
+            wall_vol = dx / 2.0
+
             # Diffusion (conservative flux formulation):
             # For flux-based scheme: F_{1/2} = -D*(m_1 - m_0)/dx, F_{-1/2} = 0
-            # Matrix contribution: +D/dx² to diagonal, -D/dx² to off-diagonal
-            diagonal_value += D / dx_sq
+            diagonal_value += D / (dx * wall_vol)
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_plus)
-            data_values.append(-D / dx_sq)
+            data_values.append(-D / (dx * wall_vol))
 
             # Velocity at node 1 for the shared face F_{1/2}. It MUST use the same central
             # stencil the interior handler uses for node 1 (whose neighbors 0 and 2 exist),
@@ -374,17 +390,17 @@ def add_boundary_no_flux_entries_divergence_centered(
                 v_plus = -coupling_coefficient * (u_plus - u_center) / dx
 
             # Centered flux at right face only: F_{1/2} = (v_1*m_1 + v_0*m_0)/2
-            # But F_{-1/2} = 0, so divergence = F_{1/2} / dx
-            # Contribution: v_plus * m_plus / (2*dx) + v_center * m_center / (2*dx)
+            # But F_{-1/2} = 0, so divergence = F_{1/2} / wall_vol
+            # Contribution: v_plus * m_plus / (2*wall_vol) + v_center * m_center / (2*wall_vol)
 
             # Velocity at node 0
             v_center = -coupling_coefficient * (u_plus - u_center) / dx  # one-sided
 
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_plus)
-            data_values.append(v_plus / (2 * dx))
+            data_values.append(v_plus / (2 * wall_vol))
 
-            diagonal_value += v_center / (2 * dx)
+            diagonal_value += v_center / (2 * wall_vol)
 
         elif at_right_boundary:
             # Right boundary: F_{N+1/2} = 0 (no-flux), only interior flux F_{N-1/2}
@@ -395,13 +411,15 @@ def add_boundary_no_flux_entries_divergence_centered(
             u_minus = u_flat[flat_idx_minus]
             u_center = u_flat[flat_idx]
 
+            # Node N owns half a cell too; see the left-wall block above for the derivation (#2145).
+            wall_vol = dx / 2.0
+
             # Diffusion (conservative flux formulation):
             # For flux-based scheme: F_{N-1/2} = -D*(m_N - m_{N-1})/dx, F_{N+1/2} = 0
-            # Matrix contribution: +D/dx² to diagonal, -D/dx² to off-diagonal
-            diagonal_value += D / dx_sq
+            diagonal_value += D / (dx * wall_vol)
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_minus)
-            data_values.append(-D / dx_sq)
+            data_values.append(-D / (dx * wall_vol))
 
             # Velocity at node N-2 for the shared face F_{N-1/2}. Use the same central
             # stencil the interior handler uses for node N-2 (whose neighbors N-3 and N-1
@@ -416,16 +434,16 @@ def add_boundary_no_flux_entries_divergence_centered(
                 v_minus = -coupling_coefficient * (u_center - u_minus) / dx
 
             # Centered flux at left face only: -F_{N-1/2} = -(v_N*m_N + v_{N-1}*m_{N-1})/2
-            # Contribution: -v_minus * m_minus / (2*dx) - v_center * m_center / (2*dx)
+            # Contribution: -v_minus * m_minus / (2*wall_vol) - v_center * m_center / (2*wall_vol)
 
             # Velocity at node N
             v_center = -coupling_coefficient * (u_center - u_minus) / dx  # one-sided
 
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_minus)
-            data_values.append(-v_minus / (2 * dx))
+            data_values.append(-v_minus / (2 * wall_vol))
 
-            diagonal_value += -v_center / (2 * dx)
+            diagonal_value += -v_center / (2 * wall_vol)
 
     # Add diagonal entry
     row_indices.append(flat_idx)
