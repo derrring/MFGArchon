@@ -361,10 +361,21 @@ class AdvectionOperator(LinearOperator):
                     # The repeated cell carries cell 0's divergence, because it IS cell 0.
                     dvar = np.concatenate([dvar, dvar[..., : n_full - span]], axis=-1)
             else:
-                # No-flux walls: zero flux through both boundary faces.
-                dvar[..., 0] = flux[..., 0] / h
+                # No-flux walls: zero flux through both boundary faces, over a control volume of
+                # h/2 -- the grid is endpoint-inclusive, so the wall lies ON the end node and that
+                # node owns half a cell (#2145). The periodic branch above keeps `/h` because
+                # #1822 already removed the repeated cell, leaving a torus of N-1 full cells.
+                #
+                # This MUST match every other operator acting on the same field. Measured while it
+                # did not: fixing the Laplacian's wall rows alone, on the explicit-drift FP step
+                # with strong drift into a wall, left diffusion on h/2 and advection on h, and the
+                # step then conserved NEITHER measure -- rectangle 1.00000000 -> 0.40908779 and
+                # trapezoid 0.99988 -> 0.28460 over 800 steps, where before it had at least held
+                # the rectangle exactly. The control volume is one convention; a scheme is only
+                # conservative when all of its operators use the same one.
+                dvar[..., 0] = flux[..., 0] / (h / 2.0)
                 dvar[..., 1:-1] = (flux[..., 1:] - flux[..., :-1]) / h
-                dvar[..., -1] = -flux[..., -1] / h
+                dvar[..., -1] = -flux[..., -1] / (h / 2.0)
             div += np.moveaxis(dvar, -1, d)
         return div
 

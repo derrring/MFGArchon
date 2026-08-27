@@ -250,27 +250,15 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
         f"(periodic default gives O(0.1); a diffusion tail is ~4e-5)"
     )
     # Conservative FV advection (#1184) conserves mass exactly even under strong wall-directed drift.
-    # RECORDED DEFECT, not a contract (#2145). This path is `FPFDMSolver` with a CALLABLE drift,
-    # which routes its advection through the finite-volume kernel `fp_fvm_flux.axis_flux_divergence`
-    # (#1184). That kernel divides every cell's flux difference by `dx`, which is right for
-    # `FPFVMSolver` -- whose module docstring says it interprets the grid's nodes AS CELL CENTRES,
-    # so every cell really is dx wide -- and wrong here, where the nodes are nodes and the two wall
-    # nodes own dx/2. So this one solver runs its diffusion on node control volumes and its
-    # advection on cell-centred ones. Measured on this fixture: rectangle drift 8.882e-16,
-    # trapezoid drift 2.388e-05, and the initial normalisation does not move either figure.
-    #
-    # Left recorded rather than fixed because the two callers genuinely differ and forcing one
-    # control volume onto the shared kernel would silently break the FVM solver. The bound below is
-    # the measured value with one digit of headroom; it is NOT a tolerance anyone chose.
-    #
-    # Retirement: give the kernel its control volumes and this assertion fails at 1e-4. Replace it
-    # with `< 1e-9 * mass[0]`, which is what the other conservation checks in this file use.
+    # The defect pin that stood here is retired, by its own retirement condition. It recorded that
+    # this path -- `FPFDMSolver` with a CALLABLE drift -- routed its advection through the FV kernel
+    # `fp_fvm_flux.axis_flux_divergence`, which divided every cell by `dx` while this solver's
+    # diffusion used node control volumes, leaving a trapezoid drift of 2.388e-05. The kernel now
+    # takes its control volumes from `quadrature_weights_1d`, the pin tripped at 1.110e-15, and its
+    # message said to replace it with the bound the rest of this file uses.
     mass = _mass(grid, M)
-    drift = abs(mass[-1] - mass[0]) / abs(mass[0])
-    assert drift < 1e-4, f"drift {drift:.3e} exceeds the recorded 2.388e-05 -- something else moved"
-    assert drift > 1e-6, (
-        f"drift {drift:.3e} is below the recorded defect: the FV advection kernel now agrees with "
-        "the node control volumes. Tighten this to `< 1e-9 * mass[0]` and delete this pin (#2145)."
+    assert abs(mass[-1] - mass[0]) < 1e-9 * abs(mass[0]), (
+        f"mass not conserved: {mass[-1]:.8f} against an initial {mass[0]:.8f}"
     )
     # Mass should pile toward the LEFT wall (where the leftward drift transports it).
     assert M[-1, 0] > M[-1, -1], "leftward drift did not pile mass at the left wall"

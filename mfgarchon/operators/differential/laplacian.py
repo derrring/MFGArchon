@@ -355,19 +355,37 @@ class LaplacianOperator(LinearOperator):
                 cols_list.append(ii + stride)
                 vals_list.append(f_hi_i / h2)
 
-                # Wall cells: only the single interior-facing face (zero flux through the wall)
+                # Wall cells: only the single interior-facing face (zero flux through the wall),
+                # divided by the WALL CONTROL VOLUME h/2 rather than h (#2145). The grid is
+                # endpoint-inclusive, so the wall lies ON the end node and that node owns [0, h/2].
+                # The extra factor 2 is `h / (h/2)`.
+                #
+                # This is what made the flag's documented trade-off look real. The two branches
+                # differ only in these four lines, and each is EXACTLY conservative -- for a
+                # different measure. Measured on n = 5, 9, 21 with w the trapezoid weights:
+                #
+                #     -1/h^2 (this branch, before)   max|1^T L| = 0        max|w^T L| = 2 / 4 / 10
+                #     -2/h^2 (the ghost branch)      max|1^T L| = 16/64/400  max|w^T L| = 0
+                #
+                # `1^T L = 0` is column conservation under UNIFORM weights, i.e. it conserves
+                # `sum(m)`, which is not the mass on this grid. So the "1st-order wall accuracy"
+                # this branch was paying was not the price of conservation -- it was the price of
+                # the wrong measure, and #1904 / #1935 measured the same halving as wall order 0.00
+                # against 2.00. With the correct volume the stencil is both `w^T L = 0` and second
+                # order, and the trade-off the flag documents does not exist.
+                wall_scale = 2.0
                 rows_list.append(amin)
                 cols_list.append(amin)
-                vals_list.append(-f_hi_min / h2)
+                vals_list.append(-wall_scale * f_hi_min / h2)
                 rows_list.append(amin)
                 cols_list.append(amin + stride)
-                vals_list.append(f_hi_min / h2)
+                vals_list.append(wall_scale * f_hi_min / h2)
                 rows_list.append(amax)
                 cols_list.append(amax)
-                vals_list.append(-f_lo_max / h2)
+                vals_list.append(-wall_scale * f_lo_max / h2)
                 rows_list.append(amax)
                 cols_list.append(amax - stride)
-                vals_list.append(f_lo_max / h2)
+                vals_list.append(wall_scale * f_lo_max / h2)
 
             elif bc_type in ("neumann", "no_flux"):
                 # ALL points get diagonal -2/h² (interior and boundary)
