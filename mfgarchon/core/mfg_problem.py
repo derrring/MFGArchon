@@ -2193,7 +2193,21 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         m = np.asarray(self.m_initial)
         integrate = getattr(self.geometry, "integrate", None)
         if self.dimension != "network" and callable(integrate):
-            return float(integrate(m)), "grid"
+            try:
+                return float(integrate(m)), "grid"
+            except ValueError as exc:
+                # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
+                # refuses because a one-node axis has no measure -- returning 0 or dx would both be
+                # inventions. That refusal is right, but its message names neither this problem nor
+                # `m_initial`, so re-raise with both. Found by independent review of #2145: on a
+                # 1-point grid `MFGProblem` used to construct and now did not, with a diagnostic a
+                # caller could not act on.
+                raise ValueError(
+                    f"cannot measure m_initial on this geometry: {exc}. A "
+                    f"{type(self.geometry).__name__} with a one-node axis has zero extent, so it "
+                    "carries no measure and no Fokker-Planck problem is posed on it. Give the axis "
+                    "at least two points."
+                ) from exc
         if self.dimension == "network":
             return float(np.sum(m)), "node-sum"
         if self.dimension == 1:

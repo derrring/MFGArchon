@@ -44,6 +44,14 @@ if TYPE_CHECKING:
 IterationCallback = Callable[[int, np.ndarray, np.ndarray, float, float], bool | None]
 
 
+class _MassNotMeasurableError(Exception):
+    """Internal: the geometry cannot express a total mass, so no conservation error exists.
+
+    A private sentinel rather than reusing ValueError, because the surrounding block raises
+    ValueError deliberately when a completed solve has non-positive mass, and that one must escape.
+    """
+
+
 class FixedPointIterator(BaseCouplingIterator):
     """
     Fixed-point iterator for MFG systems with full feature support.
@@ -970,7 +978,19 @@ class FixedPointIterator(BaseCouplingIterator):
                 # conservation of a quantity nobody asked about.
                 integrate = getattr(self.problem.geometry, "integrate", None)
                 if callable(integrate):
-                    mass_per_step = np.asarray(integrate(self.M), dtype=float)
+                    try:
+                        mass_per_step = np.asarray(integrate(self.M), dtype=float)
+                    except ValueError:
+                        # `integrate` refuses a geometry that has no measure -- a single-node axis
+                        # is the case that exists -- and it raises ValueError, which the handler
+                        # below deliberately does not catch because the non-positive-mass raise
+                        # further down is a fail-loud that must escape. Narrowed to this call so the
+                        # two ValueErrors stay distinguishable: an unmeasurable geometry reports
+                        # "not measured", a solve that produced a non-positive mass still raises.
+                        # Found by independent review of #2145: without this, a completed solve on a
+                        # one-point grid threw from result construction.
+                        mass_conservation_error = None
+                        raise _MassNotMeasurableError from None
                 else:
                     spatial_axes = tuple(range(1, self.M.ndim))
                     mass_per_step = np.sum(self.M, axis=spatial_axes)
@@ -981,7 +1001,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         "mass conservation is undefined and the solve that produced it is already wrong"
                     )
                 mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
-            except (AttributeError, NotImplementedError):
+            except (AttributeError, NotImplementedError, _MassNotMeasurableError):
                 # A geometry without a volume element cannot express the integral; None says
                 # "not measured" rather than fabricating a zero.
                 mass_conservation_error = None

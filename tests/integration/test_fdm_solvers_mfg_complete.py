@@ -136,11 +136,16 @@ class TestFDMSolversMFGIntegration:
         assert np.all(np.isfinite(M))
 
         # A closed domain has no boundary to leak through, so total mass is invariant in time.
-        # Measured on this exact configuration: 3.603e-04, deterministic to the last digit across
-        # runs, so 1e-3 has 2.8x margin. Note the size of that residual -- the no-flux path in
-        # test_fdm_solution_non_negativity conserves to 8.9e-16 on the same solver, so the
-        # periodic FP assembly is NOT conservative to machine precision. This assertion documents
-        # that gap rather than hiding it; tightening it is a product question, not a test one.
+        #
+        # ~~Measured on this exact configuration: 3.603e-04 ... so 1e-3 has 2.8x margin ... the
+        # periodic FP assembly is NOT conservative to machine precision.~~ That paragraph described
+        # the OLD functional and was left standing when #2145 changed which one this line measures.
+        # Independent review caught it: on the torus rule below the residual is 1.110e-15, so a 1e-3
+        # bound sat about 1e12 above it and constrained nothing. The 3.603e-04 was real -- it is
+        # what `M.sum(axis=1)*dx` over all 41 nodes still measures on this same solve -- but it was
+        # the rectangle counting the shared seam node twice, not the periodic assembly leaking.
+        # So the gap that paragraph documented does not exist: the periodic FP assembly IS
+        # conservative to machine precision, on the measure the torus actually has.
         #
         # PERIODIC KEEPS ITS OWN MEASURE, and it is not the trapezoid `geometry.integrate` returns.
         # On this endpoint-inclusive grid x[0] and x[-1] are ONE physical point, so the torus has
@@ -152,7 +157,7 @@ class TestFDMSolversMFGIntegration:
         dx = problem.geometry.get_grid_spacing()[0]
         mass = M[:, :-1].sum(axis=1) * dx
         drift = np.max(np.abs(mass / mass[0] - 1))
-        assert drift < 1e-3, f"periodic mass leak: {drift:.3e}"
+        assert drift < 1e-12, f"periodic mass leak: {drift:.3e}"  # measured 1.110e-15, ~900x margin
 
     @pytest.mark.slow
     @pytest.mark.xfail(reason="Unified BC API not fully integrated with 1D FDM solver")

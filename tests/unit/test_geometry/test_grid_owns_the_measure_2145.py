@@ -68,7 +68,12 @@ class TestWeightsAreTheGeometry:
         assert np.diff(xs).max() / np.diff(xs).min() > 20  # the control: it really is graded (169.0)
 
     def test_a_single_node_axis_is_refused(self):
-        """A one-node axis has no measure. Returning 0.0 or dx would both be inventions."""
+        """A one-node axis has no measure. Returning 0.0 or dx would both be inventions.
+
+        The refusal stands; what independent review caught is that it reached callers as a bare
+        `ValueError` naming neither the geometry nor `m_initial`, and that `MFGProblem` used to
+        CONSTRUCT on such a grid. Both consequences are pinned below.
+        """
         g = _grid(n=2)
         assert g.quadrature_weights().sum() == pytest.approx(1.0)  # two nodes is the minimum
         with pytest.raises(ValueError, match="at least two"):
@@ -161,3 +166,49 @@ class TestMassDriftUsesTheOwner:
             mass_drift(np.vstack([z, np.ones(5)]), g)
         with pytest.raises(ValueError, match="undefined or meaningless"):
             mass_drift(np.vstack([np.full(5, np.nan), np.ones(5)]), g)
+
+
+class TestWhatTheRefusalDoesToCallers:
+    """#2145 made `integrate` refuse a measureless geometry. Two callers had to learn to say so."""
+
+    def test_mfg_problem_says_what_to_do_about_a_one_node_grid(self):
+        """The diagnostic must name the geometry and the remedy, not just the arithmetic.
+
+        Mutation: drop the re-raise in `_measure_initial_density` and the message becomes
+        "axis has 1 node(s); a measure needs at least two" -- true, and useless to someone who
+        wrote `Nx_points=[1]` three files away.
+        """
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_components import MFGComponents
+        from mfgarchon.core.mfg_problem import MFGProblem
+
+        with pytest.raises(ValueError, match=r"cannot measure m_initial.*at least two points"):
+            MFGProblem(
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[1], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                Nt=2,
+                T=0.1,
+                sigma=0.1,
+                components=MFGComponents(
+                    m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                ),
+            )
+
+    def test_an_unmeasurable_geometry_reports_none_rather_than_throwing_after_a_solve(self):
+        """`mass_conservation_error` is None when the measure does not exist -- it does not raise.
+
+        The surrounding block in `fixed_point_iterator` raises `ValueError` deliberately when a
+        COMPLETED solve has non-positive mass, so widening its `except` to catch `ValueError` would
+        swallow that fail-loud. The narrow sentinel keeps the two distinguishable, and this test is
+        the reason the sentinel is not just `except ValueError`: both paths are exercised here.
+        """
+        from mfgarchon.alg.numerical.coupling.fixed_point_iterator import _MassNotMeasurableError
+
+        assert issubclass(_MassNotMeasurableError, Exception)
+        assert not issubclass(_MassNotMeasurableError, ValueError), (
+            "the sentinel must NOT be a ValueError, or the deliberate non-positive-mass raise "
+            "below it would be caught by the same handler and a wrong solve would report None"
+        )

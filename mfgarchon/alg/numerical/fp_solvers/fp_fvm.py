@@ -630,13 +630,17 @@ if __name__ == "__main__":
     prob = MFGProblem(geometry=geom, T=0.1, Nt=50, sigma=0.3, components=comps)
 
     x = _np.linspace(0.0, 1.0, 101)
-    dx = x[1] - x[0]
+    # The grid's own measure (#2145), on both sides. This solver takes its control volumes from the
+    # grid now, so `sum(m)*dx` is a different functional from the one it conserves: measured on this
+    # exact fixture, trapezoid drift 1.554e-15 against rectangle 8.544e-05 -- and before #2145 the
+    # two were the other way round. Found red by independent review, because an inline smoke test
+    # runs under `python <file>` and never under the gate.
     m_init = _np.exp(-((x - 0.5) ** 2) / (2 * 0.1**2))
-    m_init /= m_init.sum() * dx
+    m_init /= float(geom.integrate(m_init))
 
     solver = FPFVMSolver(prob, reconstruction="muscl")
     M = solver.solve_fp_system(m_init)
-    mass = M.sum(axis=1) * dx
+    mass = _np.asarray(geom.integrate(M), dtype=float)
     drift = float(_np.max(_np.abs(mass - mass[0])))
     print(f"  shape={M.shape}, mass drift={drift:.2e}, min={M.min():.2e}")
     assert drift < 1e-12, f"mass drift too large: {drift:.2e}"

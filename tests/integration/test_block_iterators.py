@@ -52,8 +52,16 @@ def _unit_mass_gaussian(grid):
     the library validates and reports, and normalising is the caller's job. So the fixture does it,
     which also makes this file a worked example of the new contract rather than a casualty of it.
 
-    Scaled with the grid's own measure (#2145), so `mass[0] == 1` below is a real assertion about
-    this density and not a restatement of whichever quadrature the library happens to use.
+    Scaled with the grid's own measure (#2145). **What `mass[0] == 1` below can and cannot see**:
+    this fixture divides by `grid.integrate(raw)` and the assertion measures `grid.integrate(M[0])`,
+    so the weights cancel identically and that line is blind to a wrong quadrature -- scaling
+    `quadrature_weights_1d` by 2 leaves both tests green. It pins that the SOLVER handed row 0 back
+    untouched, which is a real property and the one #1887 made checkable, and nothing more.
+
+    The quadrature is pinned next door, by the DRIFT assertion on the same rows: a drift is
+    invariant to a scale but not to a change of SHAPE in the weights, so the rectangle-rule mutation
+    reddens this file at 7.212e-03 / 6.188e-03. An earlier version of this docstring claimed the
+    `== 1` line itself was that check; independent review measured it and it is not.
     """
     raw_at = lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2)  # noqa: E731
     total = float(grid.integrate(raw_at(np.asarray(grid.coordinates[0]))))

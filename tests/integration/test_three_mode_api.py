@@ -171,20 +171,30 @@ class TestSafeMode:
             verbose=False,
         )
 
-        # `FPSLSolver` is the FORWARD semi-Lagrangian and it conserves the NODAL SUM, not the
-        # mass (#2145). Splatting scatters each node's mass to its neighbours with weights that
-        # sum to 1, so `sum_i m_i` is exact by construction -- the counting measure, which equals
-        # the mass only on a mesh of equal control volumes. This grid is endpoint-inclusive, so
-        # the two wall nodes own half a cell each and moving mass onto them changes the mass
-        # without changing the sum. Measured on this fixture: nodal sum holds to 3.3e-16 while
-        # the mass moves 4.104e-03, and it moves ONCE -- the density reaches the wall in the
-        # first step and then holds. The 1-iteration / 5 / 40 sequence is 2.052e-03 / 3.976e-03 /
-        # 4.104e-03, converging on m_initial's rectangle mass exactly.
+        # `FPSLSolver` conserves the NODAL SUM, not the mass (#2145), for TWO reasons, and an
+        # earlier version of this note gave only the first.
+        #
+        # 1. Splatting. The forward semi-Lagrangian scatters each node's mass to its neighbours
+        #    with weights summing to 1, so `sum_i m_i` is exact by construction -- the counting
+        #    measure, which equals the mass only on a mesh of equal control volumes. This grid is
+        #    endpoint-inclusive, so the wall nodes own half a cell and moving mass onto them
+        #    changes the mass without changing the sum.
+        # 2. **Its diffusion.** `fp_semi_lagrangian_adjoint.py:437-465` hand-writes the zero-flux
+        #    Crank-Nicolson wall as `L[0] = (m[1]-m[0])/dx^2` -- the old half stencil, a fifth copy
+        #    of the wall the rest of #2145 fixed. Independent review measured it with ZERO
+        #    velocity, so splatting displaces nothing: rectangle drift 1.8e-14, trapezoid drift
+        #    8.56e-03. So the diffusion alone accounts for most of what this test sees, and the
+        #    splat-only account was wrong.
         #
         # RECORDED, not accepted. `nodal_sum=True` pins the invariant the scheme does have, so a
-        # genuine leak still reddens this -- a loosened tolerance alone would not.
-        # Retirement: splat `w_i * m_i` and divide by `w_j` on arrival, and this drops to the
-        # 1e-9 default. That is a change to the scheme, not a redirect, so it is not made here.
+        # genuine leak still reddens this: verified by injecting `m_star * (1 - 1e-6)` into
+        # `splat_linear_1d`, which turns both SL sites red; the floor is 3e-10 per step.
+        # Retirement needs BOTH halves -- splat `w_i * m_i` and divide by `w_j` on arrival, AND
+        # give that Crank-Nicolson wall row the h/2 control volume. Fixing only the splat leaves
+        # the larger term. Both are changes to the scheme, not redirects, so neither is made here.
+        # This site: safe mode, SL_LINEAR, 5 Picard iterations. Measured mass drift 3.976e-03
+        # (the 1 / 5 / 40-iteration sequence is 2.052e-03 / 3.976e-03 / 4.104e-03, converging on
+        # m_initial's rectangle mass exactly).
         _assert_is_a_plausible_solution(result, problem, mass_rtol=1e-2, nodal_sum=True)
 
     def test_safe_mode_string_scheme(self):
@@ -284,20 +294,32 @@ class TestExpertMode:
                 verbose=True,  # Verbose needed for logger warning
             )
 
-        # `FPSLSolver` is the FORWARD semi-Lagrangian and it conserves the NODAL SUM, not the
-        # mass (#2145). Splatting scatters each node's mass to its neighbours with weights that
-        # sum to 1, so `sum_i m_i` is exact by construction -- the counting measure, which equals
-        # the mass only on a mesh of equal control volumes. This grid is endpoint-inclusive, so
-        # the two wall nodes own half a cell each and moving mass onto them changes the mass
-        # without changing the sum. Measured on this fixture: nodal sum holds to 3.3e-16 while
-        # the mass moves 4.104e-03, and it moves ONCE -- the density reaches the wall in the
-        # first step and then holds. The 1-iteration / 5 / 40 sequence is 2.052e-03 / 3.976e-03 /
-        # 4.104e-03, converging on m_initial's rectangle mass exactly.
+        # `FPSLSolver` conserves the NODAL SUM, not the mass (#2145), for TWO reasons, and an
+        # earlier version of this note gave only the first.
+        #
+        # 1. Splatting. The forward semi-Lagrangian scatters each node's mass to its neighbours
+        #    with weights summing to 1, so `sum_i m_i` is exact by construction -- the counting
+        #    measure, which equals the mass only on a mesh of equal control volumes. This grid is
+        #    endpoint-inclusive, so the wall nodes own half a cell and moving mass onto them
+        #    changes the mass without changing the sum.
+        # 2. **Its diffusion.** `fp_semi_lagrangian_adjoint.py:437-465` hand-writes the zero-flux
+        #    Crank-Nicolson wall as `L[0] = (m[1]-m[0])/dx^2` -- the old half stencil, a fifth copy
+        #    of the wall the rest of #2145 fixed. Independent review measured it with ZERO
+        #    velocity, so splatting displaces nothing: rectangle drift 1.8e-14, trapezoid drift
+        #    8.56e-03. So the diffusion alone accounts for most of what this test sees, and the
+        #    splat-only account was wrong.
         #
         # RECORDED, not accepted. `nodal_sum=True` pins the invariant the scheme does have, so a
-        # genuine leak still reddens this -- a loosened tolerance alone would not.
-        # Retirement: splat `w_i * m_i` and divide by `w_j` on arrival, and this drops to the
-        # 1e-9 default. That is a change to the scheme, not a redirect, so it is not made here.
+        # genuine leak still reddens this: verified by injecting `m_star * (1 - 1e-6)` into
+        # `splat_linear_1d`, which turns both SL sites red; the floor is 3e-10 per step.
+        # Retirement needs BOTH halves -- splat `w_i * m_i` and divide by `w_j` on arrival, AND
+        # give that Crank-Nicolson wall row the h/2 control volume. Fixing only the splat leaves
+        # the larger term. Both are changes to the scheme, not redirects, so neither is made here.
+        # This site is NOT the safe-mode one and its number is different: expert mode pairs a
+        # non-dual `HJBFDMSolver` with `FPSLSolver` for 2 iterations, and the measured drift is
+        # 4.2201e-02 -- an order of magnitude larger, which is what the 1e-1 bound is for. An
+        # earlier version pasted the safe-mode paragraph here verbatim, so this site carried
+        # numbers from a different solve and nothing explained its tolerance.
         _assert_is_a_plausible_solution(solve_result, problem, mass_rtol=1e-1, nodal_sum=True)
 
     def test_expert_mode_partial_injection_raises_error(self):
