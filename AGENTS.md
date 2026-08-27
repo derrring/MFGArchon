@@ -337,27 +337,40 @@ The one case for running it by hand: you need to *read* its diagnostics (discrim
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
 
-⚠️ **In a `git worktree` the gate measures two different trees.** Measured 2026-08-27 in a throwaway
-worktree, with a control assertion that fired:
+⚠️ **From a `git worktree` the gate measures two trees at once, and says which for neither.** Most
+steps read the worktree; three read the main checkout, because they `import mfgarchon` and the
+editable install's finder is hard-wired to `/Users/zvezda/code/mfgarchon`. Measured 2026-08-27 with
+a blocking meta-path finder over every step, its control firing on the one importer under `--fast`:
 
 | step | reads |
 |---|---|
-| `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` — the suite | **the worktree.** pytest inserts the rootdir at `sys.path[0]` (`tests/__init__.py` exists), and setuptools' editable install only *appends* its finder to `sys.meta_path`, so `PathFinder` wins |
-| `"$PY" scripts/foo.py` — every ratchet | **the main checkout.** `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder resolves the import to the original tree |
+| the suite, `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` | the **worktree** — pytest puts the tree root at `sys.path[0]` because `tests/__init__.py` exists, and setuptools' finder only *appends* to `sys.meta_path`, so `PathFinder` answers first. Remove that `__init__.py` and it flips |
+| 12 of the 15 `scripts/*.py` steps | the **worktree** — they never import the package; they walk `--path .` from the gate's own `cd`, `check_doc_api.py` among them ("no imports … everything here is read off the source tree") |
+| `check_internal_deprecation.py --self-test` (the only importer under `--fast`), and `capability_matrix.py` twice in the full gate | the **main checkout** — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers |
 
-Seven files under `scripts/` import `mfgarchon`, `check_doc_api.py` among them, and that one runs
-under `--fast`. So a lane's `GATE GREEN` is half its own tree and half whichever branch the main
-checkout happens to be on, and nothing in the output says which. Export `PYTHONPATH=<worktree>` for
-the ratchet steps.
+Five files under `scripts/` import the package by AST count (`audit_deprecated_symbols`,
+`capability_matrix`, `check_circular_imports`, `check_internal_deprecation`,
+`generate_deprecation_guide`). A text grep gives seven and is wrong: three of its hits are prose
+about imports inside `check_doc_api.py`, the one script that refuses to import on purpose.
 
-Do **not** reach for `MFG_PYTHON` or a fresh `uv venv` in the worktree instead. `MFG_PYTHON` chooses
-the interpreter, not the tree, and choosing the wrong one turns the whole run into noise: measured
-2026-08-27, pointing it at `.venv` (pytest 8.4.1, ruff 0.13.1) against the gate's own
-`mfg_env` (pytest 9.1.1, ruff 0.16.0) reported six warning identities GONE and one NEW and went
-`GATE RED` on a two-file documentation diff -- among them `PytestRemovedIn10Warning`, a class
-pytest 8 cannot emit. The one line that named the cause was already in the output and reads as a
-nag: `WARN ruff 0.13.1 ran, but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal,
-not a note.
+**Set both, for different reasons.** `PYTHONPATH=<worktree>` fixes the tree — it lands on
+`sys.path`, which `PathFinder` reads before the appended editable finder (measured as a single
+variable: without it the importer resolves to the main checkout, with it to the worktree, controls
+firing both ways). `MFG_PYTHON=/opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python` fixes
+the interpreter, and it is **not** optional in a lane with a virtualenv active: the gate's own
+`CANDIDATES=(python python3 <mfg_env>)` tries PATH first, so an activated `.venv` is selected and
+satisfies the probe in full — pytest 8.4.1 against the gate's 9.1.1, ruff 0.13.1 against the pinned
+0.16.0. That combination reports six warning identities GONE and one NEW over a two-file
+documentation diff and goes `GATE RED`, one of the six being `PytestRemovedIn10Warning`, a class
+pytest 8 cannot emit. Do not build the worktree a fresh `uv venv` — that is what produces the
+wrong-interpreter arrangement in the first place.
+
+The gate names this failure while it happens, in a line that reads as a nag:
+`WARN ruff 0.13.1 ran, but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
+
+`scripts/test_discrimination.py`'s `_assert_import_is_the_mutated_tree()` already solves this for
+one script (#1677: "prove the process under measurement imports what we mutate"). Any step that
+imports the package and reports a number should carry the same three lines.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 

@@ -1,17 +1,18 @@
-Document which tree `./scripts/local_ci.sh` reads when it runs from a `git worktree`, because the
-answer differs between the suite step and the ratchet steps.
+Document which tree `./scripts/local_ci.sh` reads when it runs from a `git worktree`: most steps
+read the worktree, three read the main checkout.
 
-Measured in a throwaway worktree with a control assertion that fired: the suite step
-(`PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto`) reads the worktree, because pytest inserts
-the rootdir at `sys.path[0]` -- `tests/__init__.py` exists -- and setuptools' editable install only
-appends its finder to `sys.meta_path`, so `PathFinder` resolves first. Every `"$PY" scripts/*.py`
-ratchet reads the main checkout instead: there `sys.path[0]` is the worktree's `scripts/`, which
-holds no `mfgarchon`, so the editable finder answers with the original tree.
+The suite step reads the worktree, because pytest puts the tree root at `sys.path[0]` -- there is a
+`tests/__init__.py` -- and setuptools' editable install only appends its finder to `sys.meta_path`,
+so `PathFinder` answers first. Twelve of the fifteen `scripts/*.py` steps also read the worktree:
+they never import the package, they walk `--path .` from the gate's own `cd`. The three that do
+import -- `check_internal_deprecation.py --self-test` under `--fast`, and `capability_matrix.py`
+twice in the full gate -- resolve through the editable finder, which is hard-wired to the original
+checkout. Measured with a blocking meta-path finder over every step, its control firing on the
+importer.
 
-Seven files under `scripts/` import the package, `check_doc_api.py` among them, and that one runs
-under `--fast`. A lane's `GATE GREEN` is therefore half its own tree and half whichever branch the
-main checkout is on, with nothing in the output naming which. The fix is per-worktree isolation --
-its own environment, or `PYTHONPATH` for the ratchet steps -- not `MFG_PYTHON`, which selects the
-interpreter and not the tree.
+A lane must set both `PYTHONPATH=<worktree>`, which fixes the tree, and `MFG_PYTHON` pointed at the
+gate's own environment, which fixes the interpreter: the gate's candidate search tries PATH first,
+so an activated virtualenv is selected and its older pytest and ruff turn a documentation diff into
+a red gate.
 
 Documentation only; no behaviour changes.
