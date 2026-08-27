@@ -34,6 +34,19 @@ def _problem(n=41, nt=40):
     return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, sigma=0.3, coupling_coefficient=0.5)
 
 
+def _mass(grid, field):
+    """Mass on the grid's own measure (#2145), for one field or a whole (time, x) history.
+
+    Every `sum(m) * dx` in this file was the cell-centred integral, and `TensorProductGrid` is
+    node-centred: the wall lies ON x_0, so the two end nodes own half a cell each and the measure is
+    the trapezoid. Those weights ARE the control volumes the divergence-form flux telescopes
+    against. Measuring the rectangle while the scheme conserves the trapezoid is not a small
+    mismatch -- on the #1975 census fixture the divergence family lost a quarter of the true mass
+    while the rectangle read machine zero.
+    """
+    return np.asarray(grid.integrate(np.asarray(field, dtype=float)), dtype=float)
+
+
 def test_fdm_centered_routes_to_conservative_divergence_centered():
     """The centered scheme's FP must be the conservative divergence form, not the
     non-conservative gradient form."""
@@ -52,7 +65,6 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     prob = _problem(n=n, nt=nt)
     _, fp = create_paired_solvers(prob, NumericalScheme.FDM_CENTERED)
     x = np.linspace(0.0, 1.0, n)
-    dx = x[1] - x[0]
     # Issue #1632: `drift_field=<ndarray>` is the VELOCITY channel, and `divergence_centered`
     # does not read it -- so the drift this test believed it was applying was discarded and the
     # solve ran at zero drift. The boundary face flux the docstring describes was never
@@ -72,10 +84,10 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     # gives 3.390e-03 and the RIGHT wall 3.390e-03 -- symmetric, where before it was 3.001e-02
     # and 3.664e-15 (blind).
     m0 = np.exp(-200 * (x - 0.05) ** 2) + np.exp(-200 * (x - 0.95) ** 2)
-    m0 /= m0.sum() * dx
+    m0 /= float(_mass(prob.geometry, m0))
 
     traj = fp.solve_fp_system(m0, potential_field=potential)
-    mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
+    mass = _mass(prob.geometry, traj)
     assert np.all(np.isfinite(traj))
     assert np.max(np.abs(mass - mass[0])) < 1e-12, (
         f"mass drift {np.max(np.abs(mass - mass[0])):.2e} (no-flux must conserve to machine precision)"
@@ -94,14 +106,13 @@ def test_gradient_centered_still_available_and_leaks():
         )
     assert fp.advection_scheme == "gradient_centered"
     x = np.linspace(0.0, 1.0, n)
-    dx = x[1] - x[0]
     # Issue #1632: same correction as above -- `drift_field=<ndarray>` is the velocity channel
     # and `gradient_centered` does not read it, so this drift was discarded too.
     potential = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
     m0 = np.exp(-40 * (x - 0.35) ** 2)
-    m0 /= m0.sum() * dx
+    m0 /= float(_mass(prob.geometry, m0))
     traj = fp.solve_fp_system(m0, potential_field=potential)
-    mass = np.array([traj[k].sum() * dx for k in range(nt + 1)])
+    mass = _mass(prob.geometry, traj)
     assert np.max(np.abs(mass - mass[0])) > 1e-3, "gradient_centered is expected to violate conservation"
 
 
@@ -123,27 +134,54 @@ def test_gradient_scheme_warns_only_under_no_flux(scheme):
     assert not [w for w in rec if "Issue #1075" in str(w.message)]
 
 
-def test_gradient_leaks_even_with_zero_drift():
-    """Issue #1075 diagnosis: the gradient-scheme no-flux leak is dominated by the boundary
-    DIFFUSION discretization (point-value Neumann Laplacian), not advection -- so it leaks
-    even with zero drift, while the conservative scheme stays at machine precision."""
+def test_the_two_families_coincide_exactly_at_zero_drift():
+    """At zero drift the two wall conditions ARE the same condition, so the schemes must agree.
+
+    **This test asserted the opposite and #2145 refuted it.** It claimed the gradient scheme's
+    no-flux leak "is dominated by the boundary DIFFUSION discretization ... so it leaks even with
+    zero drift, while the conservative scheme stays at machine precision", and pinned
+    `mass_grad > 1e-3` against `mass_div < 1e-12`. Both halves were the rectangle's endpoint share
+    moving, not mass leaving. Measured on this fixture with `U = 0`:
+
+        divergence_centered   rectangle drift 1.330e-02    trapezoid drift 1.665e-15
+        gradient_centered     rectangle drift 1.330e-02    trapezoid drift 1.665e-15
+
+    Identical -- and not merely in mass: `max|div - grad|` over the whole trajectory is 0.000e+00,
+    bit-identical. It cannot be otherwise. With `J = v*m - D*grad(m)` and `v = 0`, `J.n = 0` and
+    `d_n m = 0` are the same equation, so the two schemes assemble the same matrix. The contrast
+    this file wants is real but lives under DRIFT, where the conditions separate; #1975's census
+    measures it there (-76% against -2e-12% at drift 3.2).
+
+    So the property under test is the coincidence itself, which is a sharper statement than the
+    inequality it replaces: a scheme that drifts apart from its counterpart at zero velocity has
+    broken the wall condition in a way no leak threshold would name.
+    """
     n, nt = 81, 60
     x = np.linspace(0.0, 1.0, n)
-    dx = x[1] - x[0]
+    prob_zero = _problem(n=n, nt=nt)
+    grid_zero = prob_zero.geometry
     m0 = np.exp(-200 * (x - 0.05) ** 2)
-    m0 /= m0.sum() * dx
+    m0 /= float(_mass(grid_zero, m0))
     U_zero = np.zeros((nt + 1, n))  # zero drift => pure diffusion at the wall
 
-    _, fp_div = create_paired_solvers(_problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED)
-    mass_div = np.array([t.sum() * dx for t in fp_div.solve_fp_system(m0, potential_field=U_zero)])
-    assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12
+    _, fp_div = create_paired_solvers(prob_zero, NumericalScheme.FDM_CENTERED)
+    traj_div = np.asarray(fp_div.solve_fp_system(m0, potential_field=U_zero))
+    mass_div = _mass(grid_zero, traj_div)
+    assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12, "the conservative scheme must conserve"
 
     with pytest.warns(UserWarning, match="Issue #1075"):
         _, fp_grad = create_paired_solvers(
             _problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
         )
-    mass_grad = np.array([t.sum() * dx for t in fp_grad.solve_fp_system(m0, potential_field=U_zero)])
-    assert np.max(np.abs(mass_grad - mass_grad[0])) > 1e-3  # leaks under pure diffusion
+    traj_grad = np.asarray(fp_grad.solve_fp_system(m0, potential_field=U_zero))
+    mass_grad = _mass(grid_zero, traj_grad)
+    assert np.max(np.abs(mass_grad - mass_grad[0])) < 1e-12, (
+        "gradient_centered must conserve at zero drift too -- d_n m = 0 IS J.n = 0 when v = 0"
+    )
+    assert np.array_equal(traj_div, traj_grad), (
+        f"the two schemes must be identical at zero drift, where their wall conditions coincide; "
+        f"max|div - grad| = {np.max(np.abs(traj_div - traj_grad)):.3e}"
+    )
 
 
 @pytest.mark.integration
@@ -152,12 +190,18 @@ def test_fdm_centered_coupled_solve_conserves_mass():
     prob = _problem(n=31, nt=20)
     res = prob.solve(scheme=NumericalScheme.FDM_CENTERED, max_iterations=120, tolerance=1e-6, verbose=False)
     M = np.asarray(res.M)
-    x = np.linspace(0.0, 1.0, 31)
-    dx = x[1] - x[0]
     assert np.all(np.isfinite(M))
     # The #1149 bug leaked ~57% (terminal mass ~0.43). With the conservative scheme AND the
     # boundary-flux fix the coupled solve conserves mass to ~machine precision.
-    assert abs(M[-1].sum() * dx - 1.0) < 1e-9, f"terminal mass {M[-1].sum() * dx:.8f} (centered must conserve)"
+    #
+    # The target is the INITIAL mass, not 1. `_problem` hands over an unnormalised Gaussian and
+    # #1887 removed the rescale that used to turn it into a probability density, so `== 1` would now
+    # pin a property of nothing. It also never belonged here: mass 1 is a property of the initial
+    # condition, and what the scheme owes is that it transports whatever it was given.
+    mass = _mass(prob.geometry, M)
+    assert abs(mass[-1] - mass[0]) < 1e-9 * abs(mass[0]), (
+        f"terminal mass {mass[-1]:.8f} against an initial {mass[0]:.8f} (centered must conserve)"
+    )
 
 
 @pytest.mark.integration
@@ -184,9 +228,9 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
     )
     prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=0.05, components=comps)
     x = np.linspace(0.0, 1.0, n)
-    dx = x[1] - x[0]
+    dx = x[1] - x[0]  # the partial-region screen below is still a plain rectangle sum
     m0 = np.exp(-((x - 0.5) ** 2) / 0.01)
-    m0 /= m0.sum() * dx
+    m0 /= float(_mass(grid, m0))
     # callable drift signature is (t, grid, density); constant leftward velocity toward x=0
     M = FPFDMSolver(prob).solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.full(n, -0.3))
     assert np.all(np.isfinite(M))
@@ -197,12 +241,36 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
     # (#1184) retains the mass the old scheme leaked and is slightly more diffusive, so the tail
     # (~4e-5) is fatter than the pre-#1184 leaking scheme (<1e-5) but still ~1e4x below the O(0.1)
     # periodic-wrap level this test guards against.
+    # A partial-region sum, not a full-domain integral, so it keeps the rectangle: only one of its
+    # two ends is a wall node, and the threshold is an order-of-magnitude screen against O(0.1),
+    # four orders above the ~4e-5 it measures. #2145 changes this by less than the last printed digit.
     far_right_mass = M[-1, int(0.7 * n) :].sum() * dx
     assert far_right_mass < 1e-3, (
         f"mass wrapped through the no-flux wall: far-right (x>=0.7) mass {far_right_mass:.3e} "
         f"(periodic default gives O(0.1); a diffusion tail is ~4e-5)"
     )
     # Conservative FV advection (#1184) conserves mass exactly even under strong wall-directed drift.
-    assert abs(M[-1].sum() * dx - 1.0) < 1e-9, f"mass not conserved: {M[-1].sum() * dx:.8f}"
+    # RECORDED DEFECT, not a contract (#2145). This path is `FPFDMSolver` with a CALLABLE drift,
+    # which routes its advection through the finite-volume kernel `fp_fvm_flux.axis_flux_divergence`
+    # (#1184). That kernel divides every cell's flux difference by `dx`, which is right for
+    # `FPFVMSolver` -- whose module docstring says it interprets the grid's nodes AS CELL CENTRES,
+    # so every cell really is dx wide -- and wrong here, where the nodes are nodes and the two wall
+    # nodes own dx/2. So this one solver runs its diffusion on node control volumes and its
+    # advection on cell-centred ones. Measured on this fixture: rectangle drift 8.882e-16,
+    # trapezoid drift 2.388e-05, and the initial normalisation does not move either figure.
+    #
+    # Left recorded rather than fixed because the two callers genuinely differ and forcing one
+    # control volume onto the shared kernel would silently break the FVM solver. The bound below is
+    # the measured value with one digit of headroom; it is NOT a tolerance anyone chose.
+    #
+    # Retirement: give the kernel its control volumes and this assertion fails at 1e-4. Replace it
+    # with `< 1e-9 * mass[0]`, which is what the other conservation checks in this file use.
+    mass = _mass(grid, M)
+    drift = abs(mass[-1] - mass[0]) / abs(mass[0])
+    assert drift < 1e-4, f"drift {drift:.3e} exceeds the recorded 2.388e-05 -- something else moved"
+    assert drift > 1e-6, (
+        f"drift {drift:.3e} is below the recorded defect: the FV advection kernel now agrees with "
+        "the node control volumes. Tighten this to `< 1e-9 * mass[0]` and delete this pin (#2145)."
+    )
     # Mass should pile toward the LEFT wall (where the leftward drift transports it).
     assert M[-1, 0] > M[-1, -1], "leftward drift did not pile mass at the left wall"
