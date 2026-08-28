@@ -199,14 +199,26 @@ MUTATIONS: list[Mutation] = [
         ),
         verify="abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12",
     ),
-    Mutation(
-        name="mass_drift_reported_as_deviation_from_one",
-        path="mfgarchon/alg/numerical/coupling/fixed_point_iterator.py",
-        old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
-        new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: absolute deviation from 1.0",
-        owner='`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `max|mass(t)/mass(0) - 1|`, not deviation from a 1.0 target (#1672). Documented at `mfgarchon/utils/solver_result.py:41` -- "mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the" -- and argued a',
-        verify="MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1",  # 0.5 until #2145/#1887: under the mutation this reads |mass - 1|, and the library no longer rescales m_initial, so it is |0.546 - 1| = 0.454 rather than something above 0.5. Clean reads 1.22e-15, so 0.1 separates by 14 orders.,
-    ),
+    # `mass_drift_reported_as_deviation_from_one` LIVES ON `fix/1887-validate-do-not-normalise`,
+    # not here, and this note is the hand-off. It mutates `SolverResult.mass_conservation_error`
+    # from `|mass(t)/mass(0) - 1|` to `|mass(t) - 1|` (#1672's drift semantics). On THIS contract
+    # `MFGProblem` normalises `m_initial`, so `mass(0) == 1` on every path that reaches the iterator
+    # and the two expressions are the SAME NUMBER -- the convention is true, documented, and has no
+    # observable consequence, so no test can separate them and the sweep correctly called it
+    # INEFFECTIVE. Removing a defect pin from the list is not something to do quietly, which is why
+    # this is written out: the ratchet refuses to record an INEFFECTIVE entry precisely so that the
+    # choice between "fix it" and "move it" gets made rather than sedimented.
+    #
+    # It is live on the #1887 branch, where the constructor stops rescaling and `mass(0)` is
+    # whatever the caller handed in: |0.546 - 1| = 0.454 under the mutation against 1.22e-15 clean.
+    # Merging that branch reinstates it, and this list will conflict there, which is the forcing
+    # function -- a silent re-add is exactly what would drop.
+    #
+    # One path could make it observable here and is deliberately NOT used, because its reachability
+    # is unestablished: the constructor's `uniform-cell` / `point-average` fallbacks normalise
+    # `sum(m)*dx` (or `sum(m)/N`) to 1 while `fixed_point_iterator`'s own fallback measures
+    # `np.sum(M)`, so a geometry with a spacing but no `integrate` would report `mass(0) = 1/dx`.
+    # That mismatch is worth an issue on its own; it is not a licence to keep a pin alive here.
     Mutation(
         name="particle_mass_counting_measure",
         path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
