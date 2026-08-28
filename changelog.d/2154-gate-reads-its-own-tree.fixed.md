@@ -21,7 +21,11 @@
   `resolve()`d path with symlinks followed while `$PWD` is the logical path the caller arrived by;
   compared unresolved, any repository reached through a symlinked parent fails on a correct run.
   Controlled through a real symlink: no false refusal, and the direct path still passes.
-- **Recorded, not fixed here:** five scripts import the package and the gate invokes two of them.
-  The other three — `audit_deprecated_symbols.py`, `check_circular_imports.py`,
-  `generate_deprecation_guide.py` — still read the main checkout when run by hand from a worktree.
+- **Recorded, not fixed here:** at least seven scripts import the package and the gate invokes two.
+  The others — `audit_deprecated_symbols.py`, `check_circular_imports.py`,
+  `generate_deprecation_guide.py`, plus `capability_census.py` (`importlib.import_module`) and
+  `run_health_check.py` (`exec("import mfgarchon")`), neither of which any import-shaped text or AST
+  scan can see — still read the main checkout when run by hand from a worktree. My first count said
+  five and missed exactly the two `AGENTS.md` warns about eight lines above the paragraph this PR
+  rewrote.
   They produce reports rather than verdicts.

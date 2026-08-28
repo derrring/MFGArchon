@@ -365,7 +365,7 @@ every step and a path audit over their reads, both controlled in each direction:
 | the suite, `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` | the **worktree** — pytest puts the tree root at `sys.path[0]` because `tests/__init__.py` exists, and setuptools' finder only *appends* to `sys.meta_path`, so `PathFinder` answers first. Remove that `__init__.py` and it flips |
 | 6 of the 12 `scripts/*.py` invocations that never import | the **worktree**, by flag (`:476`, `:484`), by `Path(__file__).resolve().parent.parent` (`:570`), or by the gate's own `cd` |
 | 4 more — the `--self-test` runs at `:471` | **neither tree**: they build a synthetic corpus in a `TemporaryDirectory`. (`:558` and `:569` not measured; both read a baseline beside the script) |
-| 3 invocations across 2 scripts — `check_internal_deprecation.py --self-test`, the only importer under `--fast`, and `capability_matrix.py` twice in the full gate | **was** the main checkout — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers and its MAPPING is hard-wired to the original tree. Now the worktree, because the gate exports `PYTHONPATH="$PWD"` immediately after it `cd`s to the repository root, and `PathFinder` reads it before that finder. What this cost while it was live: three capability cells `UNSUPPORTED -> FAIL` and a `GATE RED` on a branch none of the changed code belonged to (2026-08-28) |
+| 3 invocations across 2 scripts — `check_internal_deprecation.py --self-test`, the only importer under `--fast`, and `capability_matrix.py` twice in the full gate | **was** the main checkout — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers and its MAPPING is hard-wired to the original tree. Now the worktree, because the gate now binds `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"` onto its `scripts/*.py` invocations through one array, and `PathFinder` reads it before that finder. Deliberately not an `export`: `-P` removes CWD from `sys.path` but not `PYTHONPATH`, so an exported root re-arms the `-m` shadowing that the `-P` on the ruff/mypy/pytest invocations exists to prevent — measured, a planted `ruff/` at the root answered `-P -m ruff --version`. What this cost while it was live: four capability cells moved — three `UNSUPPORTED -> FAIL` and one `PASS -> FAIL` — and a `GATE RED` on a branch none of the changed code belonged to (2026-08-28). Those figures are a snapshot of another lane's working tree and are not re-derivable later |
 
 **No static count tells you which steps import.** `capability_census.py:78` is
 `importlib.import_module(package)` — a real in-process import that no import-shaped text pattern and
@@ -373,9 +373,10 @@ no AST import-scan can see. Run the blocking finder over the actual invocation i
 
 **Set `MFG_PYTHON`. `PYTHONPATH` is no longer yours to remember.** The gate exports it for
 itself (#2154), which is what makes the pre-push hook usable from a worktree at all: the hook
-inherits the environment of `git push` and cannot set a variable for its own benefit, so a rule
-that said "set PYTHONPATH" and a rule that said "let the hook run the gate" could not both be
-followed. `MFG_PYTHON=<mfg_env>` stays, because interpreter selection is a judgement the gate
+inherits the environment of `git push`, so the only invocation satisfying both rules was
+`PYTHONPATH=<worktree> MFG_PYTHON=<gate python> git push` — which was written nowhere. Other routes
+existed (a wrapper in `scripts/gate_hook.sh`, direnv, a shell profile); none was documented, which
+is the actual defect. There is no `git config` mechanism for hook environments. `MFG_PYTHON=<mfg_env>` stays, because interpreter selection is a judgement the gate
 cannot make for you, and is not optional when a virtualenv is active — the gate's own
 `CANDIDATES=(python python3 <mfg_env>)` tries PATH first, so an activated `.venv` is selected and
 satisfies the probe in full, at pytest 8.4.1 against the gate's 9.1.1 and ruff 0.13.1 against the
@@ -388,13 +389,13 @@ risking them.
 The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff 0.13.1 ran,
 but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
 
-`scripts/test_discrimination.py:452-468` already solves this for one script (#1677, "prove the
-process under measurement imports what we mutate"). Port the refusal, not the code: that function is
-17 lines because it checks a **subprocess** it is about to spawn, while `check_internal_deprecation.py`
-and `capability_matrix.py` import in-process and need three lines — resolve `mfgarchon.__file__`,
-compare against `Path(__file__).resolve().parent.parent`, refuse. `test_discrimination.py` is not
-itself a gate step (`local_ci.sh` names it only at `:235` and `:567`, both comments), so the prior
-art currently guards nothing the gate runs.
+[SUPERSEDED 2026-08-28] SUPERSEDED-BY: the `PYS` array and the `gate package` refusal in
+`scripts/local_ci.sh` (#2154). This paragraph prescribed porting a per-script refusal into
+`check_internal_deprecation.py` and `capability_matrix.py`. The gate now binds the tree onto every
+`scripts/*.py` invocation from one array and refuses centrally, so a per-script check would be a
+second owner for one property. `scripts/test_discrimination.py`'s `_assert_import_is_the_mutated_tree`
+(#1677, "prove the process under measurement imports what we mutate") remains the prior art and still
+guards the subprocess it spawns, which the central refusal does not reach.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 

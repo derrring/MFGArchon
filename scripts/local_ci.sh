@@ -14,16 +14,6 @@ FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 cd "$(dirname "$0")/.."
 
-# Every `"$PY" scripts/X.py` below puts `scripts/` on sys.path[0], not this root -- and `scripts/`
-# holds no `mfgarchon`, so the import falls through PathFinder to setuptools' editable finder,
-# whose mapping is hard-wired to the ORIGINAL checkout. From a `git worktree` the capability matrix
-# and the deprecation self-test therefore measure a DIFFERENT tree, on whatever branch it happens
-# to be sitting on. Observed 2026-08-28: three capability cells UNSUPPORTED->FAIL and GATE RED on a
-# branch none of it belonged to. Exported once here rather than passed at each call site, because a
-# per-site fix is correct only where someone remembered to edit and the failure mode is the next
-# one. `_EditableFinder` sits AFTER `PathFinder` in sys.meta_path, so a PYTHONPATH entry wins, and
-# PYTHONPATH survives both `-P` and PYTHONSAFEPATH=1, which the suite step needs. (#2154)
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 # Resolve the interpreter and the linter EXPLICITLY, because this script's callers do not agree
 # on the environment. Interactively it is run from an activated conda env, where bare `python`
@@ -227,6 +217,28 @@ fi
 # above uses `-P` for the same reason.
 RUFF=("$PY" -P -m ruff)
 
+# `"$PY" scripts/X.py` puts `scripts/` on sys.path[0], not this root -- and `scripts/` holds no
+# `mfgarchon`, so the import falls through PathFinder to setuptools' editable finder, whose mapping
+# is hard-wired to the ORIGINAL checkout. From a `git worktree` the capability matrix and the
+# deprecation self-test therefore measured a DIFFERENT tree, on whatever branch it was sitting on.
+# Observed 2026-08-28: four capability cells moved (three UNSUPPORTED->FAIL, one PASS->FAIL) and
+# GATE RED on a branch none of that code belonged to. (#2154)
+#
+# NOT `export`. An exported PYTHONPATH reaches every child, including the three `-P -m` tool
+# invocations -- and `-P` removes CWD from sys.path but not PYTHONPATH, so the root would be back on
+# it. That is exactly the hole the `-P` on `RUFF=` two hundred lines below exists to close: measured,
+# with the root exported, a planted `ruff/` package at the root answers `-P -m ruff --version`, and
+# `PYTHONSAFEPATH=1 -P -m pytest` too -- the guard added *because* `-P` does not reach xdist workers.
+# It also defeats `resolved_python`'s scratch-directory probe, whose whole design is that an empty
+# `mfgarchon/__init__.py` must not satisfy it.
+#
+# So the path is bound to the invocations that import the package and to nothing else. Still one
+# owner -- this array -- so the argument against a per-call-site fix does not apply: what varies here
+# is not "did someone remember", it is which of two deliberately different launch shapes is wanted.
+# No `-P` on it: `capability_matrix.py` imports `capability_census` as a SIBLING out of `scripts/`,
+# which needs `scripts/` at sys.path[0], and `-P` would remove it.
+PYS=(env "PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}" "$PY")
+
 # Print what was measured, at the head for a live run and again beside the verdict, because the
 # PR template asks a human to paste the LAST lines and a head-only line never reaches them.
 # This line is the only tell for a forged interpreter, so it has to be in the pasted evidence.
@@ -234,24 +246,38 @@ printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
 # WHICH TREE, beside which interpreter -- from a worktree they are different questions. #2146
-# measured this and wrote it in AGENTS.md, where nothing checks it against a run. This REFUSES
-# rather than notes: a gate that imported a tree it is not gating should not return a verdict at
-# all, and every line below it would be about that other tree. `unknown` is a different failure
-# (no importable package) which the interpreter probe above already owns, so it is not refused here.
-# `-P` is what makes this probe measure the right thing. Without it `-c` puts CWD on sys.path[0],
-# CWD is this root, and the probe finds the local package however broken the resolution is for the
-# scripts -- a proxy that cannot fail. With `-P` it resolves exactly as `"$PY" scripts/X.py` does,
-# where sys.path[0] is `scripts/` and holds no package. Verified against the script form: both
-# answer the main checkout with PYTHONPATH unset, both answer this tree with it set.
-GATE_PKG=$("$PY" -P -c 'import mfgarchon,pathlib;print(pathlib.Path(mfgarchon.__file__).resolve().parent)' 2>/dev/null || echo unknown)
+# measured this and wrote it in AGENTS.md, where nothing checks it against a run.
+#
+# The probe runs the way the scripts run, which took two corrections. `"$PY" -c` puts CWD on
+# sys.path[0] and CWD is this root, so it finds the local package however broken the resolution is
+# for the scripts -- a proxy that cannot fail, and it kept reporting the right tree with the fix
+# removed. `-P -c` fixes that half and breaks the other: it drops `scripts/` from sys.path, which
+# `capability_matrix.py` needs for its sibling import, so the probe would run in a configuration the
+# real script cannot. `cd scripts` reproduces both entries -- `scripts/` at sys.path[0] from the
+# launch, this root from PYS -- which is what `"$PY" scripts/X.py` gets.
+GATE_PKG=$( (cd scripts && "${PYS[@]}" -c 'import mfgarchon,pathlib;print(pathlib.Path(mfgarchon.__file__).resolve().parent)') 2>/dev/null || echo unknown )
 printf 'gate package     : %s\n' "$GATE_PKG"
-# `pwd -P`, not `$PWD`: the probe reports a `pathlib.resolve()`d path with symlinks followed,
-# while `$PWD` is the logical path the caller arrived by. Compared unresolved, a repository
-# reached through any symlinked parent fails this on a correct run.
-if [[ "$GATE_PKG" != unknown && "$GATE_PKG" != "$(pwd -P)"/* ]]; then
-  printf '\033[31mFAIL\033[0m the gate imported mfgarchon from %s\n' "$GATE_PKG"
-  printf '     but it is gating %s. Every verdict below would be about the other tree. (#2154)\n' "$PWD"
-  exit 1
+# `pwd -P`, not `$PWD`, on BOTH sides: the probe reports a `resolve()`d path with symlinks followed,
+# and comparing it against the logical path fails on a correct tree reached through any symlinked
+# parent. Exact equality, not a prefix: the worktrees live at `.claude/worktrees/` INSIDE the main
+# checkout, so `is under` would admit a main-checkout gate that imported a worktree's package.
+#
+# `cannot_run`, not a red gate. The message says every verdict below would be about another tree --
+# that is "nothing was measured", which is what `cannot_run` is for and what its exit 2 means to
+# `gate_hook.sh`. Through `exit 1` the operator reads "your code is bad" and the hook's summary drops
+# the second line entirely. The mutated-tree guard twenty lines down made the same call for the same
+# reason. `unknown` is deliberately not refused: pass 2 of `resolved_python` DISOWNS the no-package
+# case on purpose -- "Refusing here would turn a broken package into an environment-failure verdict"
+# -- so refusing it here would overrule that decision from a different file.
+if [[ "$GATE_PKG" != unknown && "$GATE_PKG" != "$(pwd -P)/mfgarchon" ]]; then
+  cannot_run "the gate imported mfgarchon from $GATE_PKG
+but it is gating $(pwd -P). Every verdict below would be about the other tree, so none is produced.
+From a worktree this is #2154: the scripts resolve through setuptools' editable finder, whose
+mapping names the original checkout, unless this tree is on their PYTHONPATH -- which the PYS array
+above puts there. Reaching this line means the tree has no importable mfgarchon of its own: check
+that you are in the repository root and that the package directory is present.
+(cannot_run's closing advice below is about the interpreter and does not apply here; its remedy is
+fixed text shared by every caller.)"
 fi
 
 # A discrimination sweep mutates production source in place and restores it in a `finally`.
@@ -299,7 +325,7 @@ check() {
 # No `2>/dev/null`: the reader's diagnostics are the point. Suppressed, an unreadable config makes
 # RUFF_PIN empty, and BOTH version WARNs -- this one and the merge-evidence line in the tail --
 # silently stop firing, which is verbatim the failure the paragraph above says was fixed.
-RUFF_PIN=$("$PY" -P "$PWD/scripts/update_ruff_version.py" --print-current) || RUFF_PIN=""
+RUFF_PIN=$("${PYS[@]}" -P "$PWD/scripts/update_ruff_version.py" --print-current) || RUFF_PIN=""
 RUFF_HAVE=$("${RUFF[@]}" --version 2>/dev/null | awk '{print $2}')
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s in the gate interpreter, but .pre-commit-config.yaml pins %s -- formatting may disagree with CI\n' \
@@ -505,12 +531,12 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
 for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings; do
-  "$PY" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
+  "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
 
 step "Fail-fast ratchet"
-"$PY" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
+"${PYS[@]}" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
 
 # Docs are the one artefact nothing else runs: this suite never imports a doc example, so a
@@ -518,7 +544,7 @@ check $? "no new silent fallbacks vs baseline"
 # Pure AST, no imports -- importing would make the count depend on which optional
 # dependencies are installed, and would drift with the environment rather than with the docs.
 step "Doc-API ratchet"
-"$PY" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
+"${PYS[@]}" scripts/check_doc_api.py --path . --check-baseline scripts/doc_api_baseline.json
 check $? "docs teach no more missing API than the baseline records"
 
 # CLAUDE.md names three quantities that must have exactly one owner (diffusion_from_volatility,
@@ -528,7 +554,7 @@ check $? "docs teach no more missing API than the baseline records"
 # returns 0 hits, which reads exactly like clean code, so the checker refuses to report a verdict
 # when its own sentinels do not fire.
 step "Single-source ratchet"
-"$PY" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
+"${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
 
 # Over 200 `path.py:NNN` citations sit in tracked prose and nothing checked them; 19 of the 39 that
@@ -547,7 +573,7 @@ check $? "no new site restating a single-owner quantity"
 # That is the cost this buys the coverage with, and it is why the failure names the citations and
 # prints the command rather than only moving a number.
 step "Citation ratchet"
-"$PY" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
+"${PYS[@]}" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
 check $? "no citation newly entered the review queue, and none left it unrecorded"
 
 if [[ $FAST -eq 0 ]]; then
@@ -558,10 +584,10 @@ if [[ $FAST -eq 0 ]]; then
   # the baseline records it, so a fix cannot land without saying so.
   step "Capability matrix (public solve surface vs external oracles)"
   # 92s, so it sits in the slow tier beside the matrix it guards rather than with the fast four.
-  "$PY" scripts/capability_matrix.py --self-test
+  "${PYS[@]}" scripts/capability_matrix.py --self-test
   check $? "the capability cells still go red under injected drift"
 
-  "$PY" scripts/capability_matrix.py --check-baseline scripts/capability_baseline.json
+  "${PYS[@]}" scripts/capability_matrix.py --check-baseline scripts/capability_baseline.json
   check $? "no capability change vs baseline"
 
   step "Test suite (CI marker set, xdist parallel, no coverage)"
@@ -592,7 +618,7 @@ if [[ $FAST -eq 0 ]]; then
 
   # Suppressing the listing without this is a regression in attention, not a fix: it makes ignoring
   # 5,000 warnings cheaper. This is what makes the suppression honest. (#2119)
-  "$PY" scripts/check_warnings.py
+  "${PYS[@]}" scripts/check_warnings.py
   check $? "no warning identity appeared or vanished unrecorded"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'
@@ -603,8 +629,8 @@ fi
 # means anything. Reports, does not gate -- measuring it costs a full suite run per mutation,
 # so the gating lives in the weekly `test_discrimination.py --check-baseline` tier. (#1901)
 if [[ $FAST -eq 0 ]]; then
-  "$PY" scripts/report_discrimination.py || true
-  "$PY" scripts/check_assertion_strength.py || true
+  "${PYS[@]}" scripts/report_discrimination.py || true
+  "${PYS[@]}" scripts/check_assertion_strength.py || true
 fi
 
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
