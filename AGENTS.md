@@ -231,19 +231,35 @@ function.)
 
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
-"Add a test" is **not** the default close-out for a fix here. Measured on this repo: the six load-bearing
-conventions the discrimination ratchet tracks are noticed by **212 distinct tests** out of 5,872 —
-**3.6%** react when the physics the library exists to get right is broken, so **96.4% notice
-nothing**. (The baseline's kill counts sum to 220; 8 tests are killed by more than one mutation, so
-the sum over-counts and the honest figure is the lower one. Current numbers from
-`scripts/discrimination_baseline.json` + `discrimination_killmatrix.json`, measured at `db3496f9`;
-`./scripts/local_ci.sh` prints them beside the suite result and flags the denominator when it moves.)
-Of the tests whose *names* claim `single_source` / `cross_path` / `_agree`, **60% are inert** —
+"Add a test" is **not** the default close-out for a fix here. Most of this suite does not react when
+the physics the library exists to get right is broken, and the conventions that are defended are
+defended very unevenly — some by a single-digit number of tests, some by over a hundred.
+
+**The current numbers are not written here, on purpose.** `./scripts/local_ci.sh` prints them beside
+the suite result, with its own staleness flag when the suite has moved since the baseline was
+recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
+and both move — the baseline was re-recorded six times in the month to 2026-08-22.
+
+**And the fraction mostly measures the mutation list.** When that list went from six conventions to
+twenty-four the fraction rose about two and a half times; holding the list at the original six and
+recomputing against the current tree barely moves it at all. Almost the whole rise is the
+list growing, so the aggregate is not a reading about the suite's health at all.
+
+**Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
+held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
+`scripts/discrimination_baseline.json` holds the per-convention kill counts — the vector. The
+distinct-test figure the gate prints is in `scripts/discrimination_killmatrix.json` and nowhere
+else; summing the baseline's counts does not give it, because a test that kills several mutations is
+counted in each.
+Of the 65 tests whose *names* claim `single_source` / `cross_path` / `_agree`, **39 are inert** —
 [#1715's comment of 2026-07-27](https://github.com/derrring/MFGArchon/issues/1715#issuecomment-5090690985),
-not its body, which says the prevalence "is not established". **Inert is not the same as worthless**,
+not its body, which says the prevalence "is not established". That figure stays written here because
+nothing recomputes it: the sweep's `AGREEMENT_SHAPED` regex selects a different, wider population
+(308 tests, of which 193 were inert), so 39-of-65 is a dated hand measurement over a named set and
+not a number that moves with the tree. **Inert is not the same as worthless**,
 and that distinction has cost real time: all five tests #1715 names are genuine cross-path pins —
-delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on six
-conventions *because those conventions are not what they pin*. The deletable set is the
+delegation shims, builder-vs-operator GFDM weights, Newton-vs-Picard agreement — inert on the
+conventions the ratchet tracked *because those conventions are not what they pin*. The deletable set is the
 **structurally tautological** one, found by reading, not the inert one, found by counting (#1901). And
 the yield runs the other way too: #1660's 17 nightly "failures" resolved as 8 fixture rot from the
 #1442 drift migration, 2 tests measuring the wrong quantity, 7 timeouts — **zero** product
@@ -336,6 +352,50 @@ re-running a gate it had just watched go green. The ladder for this repo is:
 The one case for running it by hand: you need to *read* its diagnostics (discrimination fraction,
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
+
+⚠️ **From a `git worktree` the gate names the tree it measured, and refuses if it is the wrong
+one.** `gate package : <path>` sits beside `gate interpreter`, in the head and in the pasted tail,
+and `scripts/local_ci.sh` exits before any check when that path is not under the tree being gated
+(#2154). The table below is the resolution that made the guard necessary — the state *before* the
+gate exported `PYTHONPATH` for itself. Measured 2026-08-27 with a blocking meta-path finder over
+every step and a path audit over their reads, both controlled in each direction:
+
+| step | reads |
+|---|---|
+| the suite, `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` | the **worktree** — pytest puts the tree root at `sys.path[0]` because `tests/__init__.py` exists, and setuptools' finder only *appends* to `sys.meta_path`, so `PathFinder` answers first. Remove that `__init__.py` and it flips |
+| 6 of the 12 `scripts/*.py` invocations that never import | the **worktree**, by flag (`:476`, `:484`), by `Path(__file__).resolve().parent.parent` (`:570`), or by the gate's own `cd` |
+| 4 more — the `--self-test` runs at `:471` | **neither tree**: they build a synthetic corpus in a `TemporaryDirectory`. (`:558` and `:569` not measured; both read a baseline beside the script) |
+| 3 invocations across 2 scripts — `check_internal_deprecation.py --self-test`, the only importer under `--fast`, and `capability_matrix.py` twice in the full gate | **was** the main checkout — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers and its MAPPING is hard-wired to the original tree. Now the worktree, because the gate now binds `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"` onto its `scripts/*.py` invocations through one array, and `PathFinder` reads it before that finder. Deliberately not an `export`: `-P` removes CWD from `sys.path` but not `PYTHONPATH`, so an exported root re-arms the `-m` shadowing that the `-P` on the ruff/mypy/pytest invocations exists to prevent — measured, a planted `ruff/` at the root answered `-P -m ruff --version`. What this cost while it was live: four capability cells moved — three `UNSUPPORTED -> FAIL` and one `PASS -> FAIL` — and a `GATE RED` on a branch none of the changed code belonged to (2026-08-28). Those figures are a snapshot of another lane's working tree and are not re-derivable later |
+
+**No static count tells you which steps import.** `capability_census.py:78` is
+`importlib.import_module(package)` — a real in-process import that no import-shaped text pattern and
+no AST import-scan can see. Run the blocking finder over the actual invocation instead.
+
+**Set `MFG_PYTHON`. `PYTHONPATH` is no longer yours to remember.** The gate exports it for
+itself (#2154), which is what makes the pre-push hook usable from a worktree at all: the hook
+inherits the environment of `git push`, so the only invocation satisfying both rules was
+`PYTHONPATH=<worktree> MFG_PYTHON=<gate python> git push` — which was written nowhere. Other routes
+existed (a wrapper in `scripts/gate_hook.sh`, direnv, a shell profile); none was documented, which
+is the actual defect. There is no `git config` mechanism for hook environments. `MFG_PYTHON=<mfg_env>` stays, because interpreter selection is a judgement the gate
+cannot make for you, and is not optional when a virtualenv is active — the gate's own
+`CANDIDATES=(python python3 <mfg_env>)` tries PATH first, so an activated `.venv` is selected and
+satisfies the probe in full, at pytest 8.4.1 against the gate's 9.1.1 and ruff 0.13.1 against the
+pinned 0.16.0. That combination reports six warning identities GONE and one NEW over a two-file
+documentation diff and goes `GATE RED`, one of the six being `PytestRemovedIn10Warning`, which
+pytest 8 cannot emit. Do not build the worktree a fresh `uv venv`: `uv.lock` is tracked, last touched
+2026-03-26, and pins exactly that toolchain — a fresh venv reproduces the wrong versions rather than
+risking them.
+
+The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff 0.13.1 ran,
+but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
+
+[SUPERSEDED 2026-08-28] SUPERSEDED-BY: the `PYS` array and the `gate package` refusal in
+`scripts/local_ci.sh` (#2154). This paragraph prescribed porting a per-script refusal into
+`check_internal_deprecation.py` and `capability_matrix.py`. The gate now binds the tree onto every
+`scripts/*.py` invocation from one array and refuses centrally, so a per-script check would be a
+second owner for one property. `scripts/test_discrimination.py`'s `_assert_import_is_the_mutated_tree`
+(#1677, "prove the process under measurement imports what we mutate") remains the prior art and still
+guards the subprocess it spawns, which the central refusal does not reach.
 
 ⚠️ `local_ci.sh` runs `-n auto` (xdist parallel) + skip `slow` for you. If you invoke pytest by hand, match that: a bare `pytest tests/` is *serial* and includes `@slow`, which takes **hours** (not a hang — Issue #1522). A 900s per-test `timeout` (pytest-timeout) is the safety net for a genuine infinite loop. Set `MFG_PYTHON` if `python` is not the env you want.
 

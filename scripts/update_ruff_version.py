@@ -28,7 +28,54 @@ from pathlib import Path
 #
 # It cannot run past the ruff block: the repeated group matches only blank or comment lines, so any
 # other key (`hooks:`, the next `- repo:`) ends the match without a `rev:`.
-RUFF_PIN = r"astral-sh/ruff-pre-commit[^\S\n]*\n(?:[^\S\n]*(?:#[^\n]*)?\n)*[^\S\n]*rev:[^\S\n]*"
+# The route from the ruff block's own `repo:` LINE to its `rev:`.
+#
+# Anchored at `^` through the full `- repo: <url>` declaration, not from a bare occurrence of the
+# URL: a comment mentioning `astral-sh/ruff-pre-commit` inside an EARLIER block satisfied the bare
+# form, and since `re.sub` replaces every match, `update_files` then rewrote that block's `rev:`
+# too -- `pre-commit-hooks` went from v6.0.0 to the ruff version, a tag that does not exist, so
+# `pre-commit` could fetch no hook environment at all. `get_current_version` was fooled the same
+# way and returned 6.0.0 for a pin of 0.16.0, and the post-bump check did not fire, because the
+# corruption wrote the asked-for version into the block it inspected. (#2139)
+#
+# The optional pieces are not decoration. Anchoring is a NARROWING on every axis the anchor adds,
+# and the first version of this took four shapes away from the expressions it replaced -- a quoted
+# URL, a `.git` suffix, a trailing comment on the `repo:` line, and `http://` were all read by the
+# old `grep -A1` and refused here. Each is ordinary YAML that `pre-commit` itself accepts, and the
+# trailing-comment shape is unremarkable in a config as comment-dense as this one. Measured against
+# both replaced expressions over a shape table; the table is in `tests/unit/test_ruff_block_selected_by_repo_line_2139.py`.
+#
+# Used with `re.M` at every site -- without it `^` matches only the file start and this degrades to
+# matching nothing.
+RUFF_PIN = (
+    r"^[^\S\n]*-[^\S\n]*repo:[^\S\n]*"
+    r"[\"']?https?://github\.com/astral-sh/ruff-pre-commit(?:\.git)?[\"']?"
+    r"[^\S\n]*(?:#[^\n]*)?\n"
+    r"(?:[^\S\n]*(?:#[^\n]*)?\n)*"
+    r"[^\S\n]*rev:[^\S\n]*"
+)
+
+# What counts as a version, in one place. `--force` validates its argument against this BEFORE
+# writing, and the reader validates what it read. Previously neither did: `RUFF_PIN + r"v([0-9.]+)"`
+# accepted anything made of digits and dots, so `rev: v.` printed `.` and `rev: v0.16` printed
+# `0.16` into a `pip install ruff==` three steps downstream -- the expression this replaced required
+# three components, so consolidating onto one reader had QUIETLY DROPPED a check. And `--force`
+# wrote its argument to disk before the postcondition looked at it, so `--force abc` left
+# `rev: vabc` behind and `--force '\g<0>'` expanded as a regex backreference. (#2134's shape,
+# reached from the read side and from the argument side.)
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+
+
+def _require_version(value: str, source: str) -> str:
+    """Return `value` without a leading `v`, or exit 1 naming what was wrong and where it came from."""
+    stripped = value.strip().lstrip("v")
+    if not VERSION.match(stripped):
+        print(
+            f"\u274c Error: {source} is {value!r}, which is not an N.N.N version",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return stripped
 
 
 def get_current_version() -> str:
@@ -36,19 +83,25 @@ def get_current_version() -> str:
     config_path = Path(".pre-commit-config.yaml")
 
     if not config_path.exists():
-        print("❌ Error: .pre-commit-config.yaml not found")
+        # stderr, not stdout. `--print-current` is the machine-readable interface four callers
+        # parse, and stdout is its data channel: whatever lands there is the value. Three of the
+        # four call sites clear it on a non-zero exit (`$(cmd) || VAR=""`), so for them this is
+        # prophylactic rather than load-bearing -- `check-ruff-updates.yml`'s post-bump read is the
+        # one that does not, because `$(cmd || true)` captures the stdout of a failing run.
+        print("❌ Error: .pre-commit-config.yaml not found", file=sys.stderr)
         sys.exit(1)
 
     content = config_path.read_text()
-
-    # Find ruff version
-    match = re.search(RUFF_PIN + r"v([0-9.]+)", content)
+    match = re.search(RUFF_PIN + r"[\"']?v?([^\s\"'#]+)", content, flags=re.M)
 
     if not match:
-        print("❌ Error: Could not find ruff version in .pre-commit-config.yaml")
+        print(
+            "❌ Error: no ruff `rev:` reachable from the ruff `repo:` line in .pre-commit-config.yaml",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    return match.group(1)
+    return _require_version(match.group(1), "the ruff pin in .pre-commit-config.yaml")
 
 
 def get_latest_version() -> str:
@@ -93,7 +146,11 @@ def update_files(new_version: str) -> list[str]:
     # YAML and `\s+` cannot span it, so the substitution silently matched nothing and `main()`
     # printed "No files needed updating" and exited 0. The workflow's `sed` handles that shape
     # correctly, so the two bumpers disagreed on it. (#2123)
-    updated = re.sub(f"({RUFF_PIN})v[0-9.]+", rf"\1v{new_version}", content)
+    # The optional quote group carries `rev: "v0.16.0"` through: `RUFF_PIN` stops at the colon, so
+    # without it the substitution meets `"` and matches nothing on a shape the reader accepts.
+    # `new_version` reaches the replacement template already validated by `_require_version`, so it
+    # cannot carry a backreference.
+    updated = re.sub(f"({RUFF_PIN})([\"']?)v?[0-9.]+", rf"\1\2v{new_version}", content, flags=re.M)
 
     if updated != content:
         config_path.write_text(updated)
@@ -102,8 +159,14 @@ def update_files(new_version: str) -> list[str]:
     # Postcondition. NOT "main() only calls this when the versions differ" -- `--force` does not
     # compare, it calls straight through, so `--force 0.16.0` on a config already at 0.16.0
     # legitimately writes nothing. What makes this sound is that it checks the resulting VALUE of
-    # the pin, not whether a write happened: already-current passes, matched-nothing raises. Reads
-    # the pin back the way ci.yml does.
+    # the pin, not whether a write happened: already-current passes, matched-nothing raises.
+    #
+    # What it does NOT still do, since #2135 gave the reader and the writer one expression: reach a
+    # bad-config case before `get_current_version` does. `main()` reads first, and any shape that
+    # defeats this defeats that, with a clearer message. Its live domain is now a bump that wrote
+    # something other than what was asked -- which `_require_version` also narrows. It is kept as an
+    # independent re-read of the artifact rather than of the write's return value, and the comment
+    # above it should not be read as claiming more than that.
     # Split on the repo boundary first: a forward search for `rev:` runs into the NEXT block and
     # reports that block's version, which is a misleading error rather than a wrong verdict.
     # Anchored to a line start, so a COMMENT mentioning a version -- `# was rev: v9.9.9 before
@@ -111,20 +174,38 @@ def update_files(new_version: str) -> list[str]:
     # a bump that had in fact landed correctly. It is deliberately NOT `RUFF_PIN`: this runs on the
     # already-split block and wants the pin's own line, not the route from the repo URL to it.
     blocks = re.split(r"\n(?=\s*-\s*repo:)", config_path.read_text())
-    ruff_block = next((b for b in blocks if "astral-sh/ruff-pre-commit" in b), "")
-    check = re.search(r"^[^\S\n]*rev:[^\S\n]*v([0-9.]+)", ruff_block, flags=re.M)
-    if check is None or check.group(1) != new_version:
-        got = f"v{check.group(1)}" if check else "no `rev:` at all"
+    # Anchored to the block's own `repo:` line, not to a substring of the block. A COMMENT naming
+    # the ruff URL in an EARLIER block -- `# kept in step with astral-sh/ruff-pre-commit` -- won the
+    # substring test, so the verifier read that block's `rev:`. Reproduced: with that comment on
+    # `pre-commit-hooks`, the check read v6.0.0 against a real pin of v0.16.0; removing the comment
+    # restored it. (#2139)
+    block_is_ruff = re.compile(
+        r"^[^\S\n]*-[^\S\n]*repo:[^\S\n]*[\"']?https?://github\.com/astral-sh/"
+        r"ruff-pre-commit(?:\.git)?[\"']?[^\S\n]*(?:#[^\n]*)?$",
+        re.M,
+    )
+    ruff_block = next((b for b in blocks if block_is_ruff.search(b)), None)
+    # Two distinct causes, two distinct messages. One message for both asserted the wrong one: a
+    # block this pattern failed to recognise was reported as "no `rev:` at all" over a file that
+    # plainly had one, sending the reader to inspect the half that was fine.
+    if ruff_block is None:
         raise RuntimeError(
-            f"after asking for v{new_version} the ruff block has {got}; the bump matched nothing. "
-            f"Check the shape of the ruff block in {config_path}."
+            f"after asking for v{new_version} no block in {config_path} has a ruff `repo:` line "
+            f"this recognises. The bump may have landed; the check cannot see it."
+        )
+    check = re.search(r"^[^\S\n]*rev:[^\S\n]*[\"']?v?([0-9.]+)", ruff_block, flags=re.M)
+    if check is None:
+        raise RuntimeError(f"after asking for v{new_version} the ruff block in {config_path} has no `rev:` line.")
+    if check.group(1) != new_version:
+        raise RuntimeError(
+            f"after asking for v{new_version} the ruff block has v{check.group(1)}; the bump matched nothing."
         )
 
     # #2123: there is no second pin. This used to rewrite a `ruff==` line in
     # `modern_quality.yml`; that line moved out, the file now says "Ruff formatting and linting
     # (covered by ci.yml quick-checks)" and contains `ruff==` zero times, and `ci.yml` holds no pin
-    # either -- ci.yml's quick-checks job READS the version out of `.pre-commit-config.yaml` at
-    # runtime, in its `RUFF_VERSION=$(grep ...)` line.
+    # either -- ci.yml's quick-checks job READS the version at runtime, by calling this script's
+    # `--print-current` (#2135; before that it had its own `grep` here).
     # A bumper that touches more than the one owner is how the owner stops being one.
     return files_updated
 
@@ -149,11 +230,23 @@ def run_formatting() -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Update ruff version across repository")
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--print-current",
+        action="store_true",
+        help="Print the pinned version to stdout and exit -- the one reader. Every other place "
+        "that wants this version calls this instead of writing its own expression (#2135).",
+    )
     group.add_argument("--check", action="store_true", help="Check for updates only")
     group.add_argument("--update", action="store_true", help="Check and apply updates")
     group.add_argument("--force", metavar="VERSION", help="Force update to specific version")
 
     args = parser.parse_args()
+
+    # Before the banner and before any network call: this is the machine-readable exit that every
+    # other reader of the pin shells out to, so anything else on stdout makes it unparseable.
+    if args.print_current:
+        print(get_current_version())
+        return
 
     print("🔍 Ruff Version Manager\n")
 
@@ -161,9 +254,14 @@ def main():
     current = get_current_version()
     print(f"📌 Current version: v{current}")
 
-    if args.force:
+    # `is not None`, not truthiness: `--force ""` satisfies argparse's required group but is
+    # falsy, so it used to fall through this branch entirely and exit 0 having done nothing.
+    if args.force is not None:
         # Force specific version
-        target_version = args.force.lstrip("v")
+        # Validated BEFORE anything is written. Previously the argument went straight into a
+        # regex REPLACEMENT template, so `--force '\\g<0>'` expanded as a backreference, and
+        # `--force abc` left `rev: vabc` on disk before the postcondition raised over it.
+        target_version = _require_version(args.force, "--force")
         print(f"🎯 Forcing update to: v{target_version}")
 
         files_updated = update_files(target_version)

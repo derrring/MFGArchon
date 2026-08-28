@@ -6,6 +6,7 @@ used across the entire test suite.
 """
 
 import contextlib
+import importlib.util
 import logging
 import os
 import shutil
@@ -57,6 +58,35 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.factory import lq_mfg_initial_density, lq_mfg_terminal_cost
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+
+# Issue #2152: `git -C <tmp>` does not override `GIT_DIR`, and a `pre-push` hook run from a LINKED
+# WORKTREE has it set, pointing at the checkout being pushed. (Not "every hook": measured on git
+# 2.50.1, a push from the main checkout or a subdirectory of it exports no `GIT_DIR` at all. The
+# lanes in `.claude/worktrees/` are linked worktrees, which is why this fires for them and for
+# nothing else.) Every fixture that builds a throwaway repository then operated on that checkout
+# while looking isolated at each call site.
+#
+# Scrubbed once, here, rather than threaded through the ~20 `subprocess.run(["git", ...])` sites: a
+# per-call scrub protects only the sites someone remembered to edit, and the next fixture is
+# written by someone with no reason to know any of this.
+#
+# At MODULE level, not in a fixture. A session-scoped autouse fixture is instantiated at the first
+# test *body*, and measured with a probe plugin, `GIT_DIR` is still set through `pytest_configure`,
+# `pytest_sessionstart`, collection, and into `pytest_runtestloop`. No test module runs git at
+# import today -- an AST sweep over every module-level statement in `tests/` finds zero -- but the
+# argument for scrubbing the process rather than the call sites applies to collection too. conftest
+# is loaded before collection and separately in every xdist worker, which is the same property the
+# `MPLBACKEND` block above relies on.
+#
+# The variable list has one owner, `scripts/git_env.py`, loaded by path because `scripts/` is not a
+# package and a path cannot be shadowed by an earlier `sys.path` entry.
+_GIT_ENV_SPEC = importlib.util.spec_from_file_location(
+    "_mfgarchon_git_env", Path(__file__).resolve().parents[1] / "scripts" / "git_env.py"
+)
+_GIT_ENV = importlib.util.module_from_spec(_GIT_ENV_SPEC)
+_GIT_ENV_SPEC.loader.exec_module(_GIT_ENV)
+_GIT_ENV.scrub_process_env()
+
 
 # =============================================================================
 # Default Components for Testing (Issue #670, #673: explicit specification required)
