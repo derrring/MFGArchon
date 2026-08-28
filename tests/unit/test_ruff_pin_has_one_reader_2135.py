@@ -75,6 +75,55 @@ def _candidate_lines():
     return files, found
 
 
+# A lock file records the ruff it resolved. That is a version of the pin living outside the owner,
+# and unlike the call sites above it cannot be caught by scanning `scripts/` and `.github/`.
+_LOCK_RUFF = re.compile(r'^name = "ruff"\nversion = "([^"]+)"', re.M)
+
+_LOCK_WITH_RUFF = """version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "ruff"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+
+def _pinned_in_pre_commit() -> str:
+    block = (REPO / ".pre-commit-config.yaml").read_text()
+    match = re.search(r"ruff-pre-commit(?:\.git)?[^\n]*\n(?:\s*#[^\n]*\n)*\s*rev:\s*v?([0-9][^\s#]*)", block)
+    assert match, "no ruff rev found in .pre-commit-config.yaml"
+    return match.group(1)
+
+
+def test_a_tracked_lock_does_not_become_a_second_pin():
+    """#2138/#2147: `uv.lock` recorded ruff 0.13.1 against this file's 0.16.0.
+
+    An interpreter carrying that toolchain went `GATE RED` on a two-file documentation diff, and the
+    only line naming the cause was a WARN in ~800 lines of output. The lock is untracked as of #2138;
+    #2167 will generate a current one, and this is what stops it coming back as a fourth spelling of
+    the pin.
+
+    The control is not optional. With no lock present the assertion below is vacuous, and a vacuous
+    assertion passes just as loudly when the extractor is broken -- so the extractor is first made to
+    find a version in a lock that has one.
+    """
+    assert _LOCK_RUFF.search(_LOCK_WITH_RUFF).group(1) == "0.13.1"
+
+    lock = REPO / "uv.lock"
+    if not lock.is_file():
+        return
+    found = _LOCK_RUFF.search(lock.read_text())
+    if not found:
+        return
+    pin = _pinned_in_pre_commit()
+    assert found.group(1) == pin, (
+        f"uv.lock resolves ruff {found.group(1)} against the {pin} pinned in "
+        ".pre-commit-config.yaml. Two pins for one tool; the gate runs one and warns about the "
+        "other. Regenerate the lock, or see #2147."
+    )
+
+
 def test_the_scan_can_see_the_owners_call_sites():
     """The sentinel. Without it every assertion below passes on an empty population.
 
