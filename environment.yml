@@ -36,10 +36,22 @@ dependencies:
   - tqdm>=4.0             # Progress bars (used throughout package)
 
   # Development tools (modern unified tooling)
-  - pytest>=7.0          # Testing framework
+  # EXACT, not a floor -- trial policy from #2147. The test is whether a tracked baseline changes
+  # when this tool's version changes. It does: `scripts/warning_baseline.json` records 224 warning
+  # identities and the gate fails on drift, and the set a run can emit is a property of the pytest
+  # version. pytest 8 against 9 reported six identities GONE and one NEW over a two-file
+  # documentation diff and went GATE RED, one of the six being `PytestRemovedIn10Warning`, which
+  # pytest 8 cannot emit. For numpy, scipy, matplotlib and the rest nothing stores their output, so
+  # a floor is right there and pinning them would fight contributors' environments for nothing.
+  - pytest=9.1.1         # Testing framework -- exact, see above
   - pytest-benchmark     # Performance testing
+  # Deliberately still a floor. ruff's output IS baselined, so by the test above it belongs in the
+  # exact column -- and it already HAS an exact pin, in `.pre-commit-config.yaml`, which `ci.yml`
+  # reads and `check-ruff-updates.yml` bumps monthly. A second `==` here would be a second owner for
+  # one value, which is what #2135 spent a day removing. 49 releases in twelve months is the reason
+  # not to pin it twice, not a reason to leave it unpinned.
   - ruff>=0.6.0          # Fast unified linting and formatting (replaces black+isort+flake8)
-  - mypy>=1.5            # Type checking
+  - mypy>=1.5            # Type checking -- floor; see pyproject for why not exact
   - pre-commit>=2.0      # Pre-commit hooks
 
   # Documentation

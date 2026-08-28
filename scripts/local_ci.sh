@@ -275,6 +275,40 @@ if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
     "$RUFF_HAVE" "$RUFF_PIN"
 fi
 
+# The same comparison for every tool whose OUTPUT this gate stores as a baseline (#2147). A floor
+# lets the oracle change underneath the gate, and the way that announces itself is a wall of red on
+# an unrelated PR: `scripts/warning_baseline.json` records 224 warning identities and the set a run
+# can emit is a property of the pytest version, and "type-checks clean" is clean against one mypy
+# check set. Measured: pytest 8 against 9 reported six identities GONE and one NEW over a two-file
+# documentation diff and went GATE RED, one of the six being `PytestRemovedIn10Warning`, which
+# pytest 8 cannot emit -- and the only line naming the cause was about ruff.
+#
+# The population is pyproject's dev extra, so a third pin added there is covered without editing
+# this. ruff is deliberately not in it: it has one owner already, in `.pre-commit-config.yaml`,
+# and a second `==` would be a second owner for one value.
+TOOL_DRIFT=$("$PY" -P -c '
+import importlib.metadata as md, pathlib, re, tomllib
+spec = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+for req in spec["project"]["optional-dependencies"]["dev"]:
+    m = re.fullmatch(r"([A-Za-z0-9_.-]+)==([0-9][^ ]*)", req.strip())
+    if not m:
+        continue
+    name, want = m.groups()
+    try:
+        have = md.version(name)
+    except Exception:
+        continue
+    if have != want:
+        print(name, have, want)
+' 2>/dev/null) || TOOL_DRIFT=""
+if [[ -n "$TOOL_DRIFT" ]]; then
+  while read -r _n _have _want; do
+    [[ -z "$_n" ]] && continue
+    printf '\033[33mWARN\033[0m %s %s in the gate interpreter, but pyproject pins %s -- the baselines were recorded against %s\n' \
+      "$_n" "$_have" "$_want" "$_want"
+  done <<< "$TOOL_DRIFT"
+fi
+
 step "Ruff format"
 # WHOLE REPO, not `mfgarchon/`. Format coverage used to stop exactly where most changes land, and
 # the failure is silent -- an unformatted file produces no signal anywhere in the pipeline. It bit
@@ -584,6 +618,12 @@ printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || ec
 # pasted evidence. Same rule that put the interpreter line here.
 if [[ -n "$RUFF_PIN" && -n "$RUFF_HAVE" && "$RUFF_PIN" != "$RUFF_HAVE" ]]; then
   printf '\033[33mWARN\033[0m ruff %s ran, but .pre-commit-config.yaml pins %s\n' "$RUFF_HAVE" "$RUFF_PIN"
+fi
+if [[ -n "$TOOL_DRIFT" ]]; then
+  while read -r _n _have _want; do
+    [[ -z "$_n" ]] && continue
+    printf '\033[33mWARN\033[0m %s %s ran, but pyproject pins %s\n' "$_n" "$_have" "$_want"
+  done <<< "$TOOL_DRIFT"
 fi
 if [[ $fail -eq 0 ]]; then
   printf '\033[32mGATE GREEN\033[0m -- safe to push.\n'

@@ -134,7 +134,12 @@ all = [
 
 # Development tools (not user-facing)
 dev = [
-    "pytest>=7.0",
+    # Exact, not a floor. See `environment.yml` for the argument; in one line: the gate stores
+    # this tool's OUTPUT as a baseline (`scripts/warning_baseline.json`, 224 warning
+    # identities), so the version is part of the oracle rather than a compatibility
+    # constraint. pytest 8 -> 9 changed which identities a run can emit and turned a
+    # two-file documentation diff into a GATE RED. Trial policy, #2147.
+    "pytest==9.1.1",
     "pytest-cov>=4.0",
     "pytest-benchmark",
     "pytest-xdist>=3.5",
@@ -148,6 +153,11 @@ dev = [
     # was buying nothing and costing every unrelated fix in 2.2+. The three sites that motivated
     # it lived in `config/omegaconf_manager.py` and went with #1687; the reasoning is kept
     # because the typeshed overload has not changed and the next omitted step will hit it.
+    # Deliberately a floor, unlike pytest. The criterion admits it -- "type-checks clean" is clean
+    # against one version's check set -- but the baseline it guards is one subpackage, not a
+    # 224-entry call-site census, and pinning a type checker suppresses the new checks that find
+    # real defects. The cost of floating is a red gate on an unrelated PR; the cost of pinning is
+    # not finding things, which nobody reports. (#2147)
     "mypy>=1.5",
     "pre-commit>=2.0",
     "types-setuptools",

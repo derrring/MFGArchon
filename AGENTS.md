@@ -323,8 +323,41 @@ gh pr create --title "…" --body "Fixes #N" --label "priority: medium,area: alg
 ```
 Feature process: issue (labelled) → branch → core code in `mfgarchon/<sub>` → examples → tests → docs → benchmarks → label PR to match.
 
-### Ruff pinning
-Pin the ruff version (reproducible formatting, no surprise CI failures). Monthly automated update via GitHub Action, or `python scripts/update_ruff_version.py`.
+### Tool pinning — exact only where a tracked baseline is keyed on the tool
+
+**The test is decidable:** *does a tracked baseline change when this tool's version changes, and is
+that dependence deliberate?* Both halves matter — the first alone would pin far too much.
+
+| tool | pinned | where | why |
+|---|---|---|---|
+| ruff | `v0.16.0` | `.pre-commit-config.yaml` — **one owner**, read by `ci.yml`, bumped monthly by `check-ruff-updates.yml` | the formatted state of 941 files *is* the baseline |
+| pytest | `==9.1.1` | `pyproject.toml` `[dev]` + `environment.yml` | `warning_baseline.json` keys each identity on `(origin file, class, message)` **by design** — one deprecated API called from 153 test files is 153 identities, and that count going down is the migration it tracks. pytest computes the origin attribution, so a major upgrade moves some of them: measured, 8 → 9 moved **6 of 224** |
+| mypy | floor `>=1.5` | — | the criterion admits it, the second half does not: the baseline is one subpackage type-checking clean, and pinning a type checker suppresses the new checks that find real defects |
+| numpy, scipy, matplotlib, jax, … | floors | `pyproject.toml`, `environment.yml` | nothing stores their output |
+
+**A version-dependent red is usually a defect in the check, not a reason to pin.** That is the
+default and it was tested here: the census was measured before pinning, and the alternatives were
+rejected on numbers, not taste. Scoping it to `mfgarchon`-origin identities would delete 194 that
+come from our own test files. Excluding `site-packages` would delete three real findings and one of
+our own warnings whose frame is inside pytest. Re-keying without the origin file collapses 224 to 44
+and destroys the call-site count that is the point. What is left is a 2.7% coupling in a check whose
+value is elsewhere, and a pin makes the moment of re-recording chosen rather than an ambush on an
+unrelated PR.
+
+ruff is **not** pinned a second time in `pyproject.toml`. It already has an owner and an automated
+bump; a `ruff==` in the dev extra would be a second site restating one value, which is what
+`scripts/check_single_source.py` exists for and what #2135 removed. Forty-nine ruff releases in
+twelve months is the reason not to pin it twice, not a reason to leave it unpinned.
+
+`scripts/local_ci.sh` compares every `==` pin in the dev extra against what the gate interpreter has
+and prints a `WARN` per mismatch, in the head and in the pasted tail. Treat those as refusals. The
+population is the dev extra itself, so a second exact pin is covered without editing the gate.
+
+**Trial policy, #2147.** The known cost: pytest moved seven times last year and
+`.github/dependabot.yml` already watches pip weekly, so bumps arrive as PRs where re-recording the
+affected identities is a deliberate act. The known limit: the exact pin lives in published metadata,
+where the conventional home would be a lock file. `uv.lock` is that home and is currently five
+months stale with `uv lock --check` exiting 1 — unresolved, and the other half of #2147.
 
 ### `.gitignore` — targeted patterns (preserve valuable code) ⚠️
 Root-level only: `/*.png`, `/*_analysis.py` (not global `*.png`). Always `!examples/**/*.py`, `!tests/**/*.py`, `!docs/**/*.md`.
