@@ -331,9 +331,15 @@ class TestConservativeAdvection:
         expected = np.array([0.0, 0.818693, 0.938069, -0.938069, -0.818693, 0.0])
         np.testing.assert_allclose(r[::2], expected, atol=1e-6)
 
-    def test_tensor_explicit_path_conserves_at_wall(self):
-        """The second opted-in production site (solve_timestep_tensor_explicit, tensor-diffusion
-        explicit path) also conserves mass when strong drift piles density against a no-flux wall."""
+    def test_tensor_explicit_path_records_its_wall_drift(self):
+        """This path does NOT conserve mass, and the body below records how much (#2145 / #1904).
+
+        The name and this docstring said "also conserves mass" over a body that pins a defect. Its
+        advection is conservative -- `compute_advection_from_drift_nd(mass_conservative=True)`, wall
+        cells on the h/2 control volume -- but its diffusion goes through `apply_diffusion`, i.e.
+        the ghost path, whose wall row is half the mirror stencil. The two-sided band below brackets
+        the measured 1.30e-03 and carries its own retirement condition.
+        """
         from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_tensor_explicit
 
         n = 51

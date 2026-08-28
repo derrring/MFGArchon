@@ -190,8 +190,17 @@ class TestSafeMode:
         # genuine leak still reddens this: verified by injecting `m_star * (1 - 1e-6)` into
         # `splat_linear_1d`, which turns both SL sites red; the floor is 3e-10 per step.
         # Retirement needs BOTH halves -- splat `w_i * m_i` and divide by `w_j` on arrival, AND
-        # give that Crank-Nicolson wall row the h/2 control volume. Fixing only the splat leaves
-        # the larger term. Both are changes to the scheme, not redirects, so neither is made here.
+        # give that Crank-Nicolson wall row the h/2 control volume. Fixing one is measurably worse
+        # than fixing neither, which is why this is recorded rather than half-done. Giving only the
+        # diffusion its control volume, on a transported fixture:
+        #
+        #     as shipped              rectangle 8.882e-16 (exact)   trapezoid 6.361e-02
+        #     diffusion half fixed    rectangle 7.662e-02           trapezoid 6.033e-03
+        #
+        # so the scheme goes from conserving one functional exactly to conserving none. (At ZERO
+        # velocity the splat displaces nothing and the half-fix does conserve, 3.997e-15 -- which is
+        # why the regime has to be named before that measurement means anything.) Both are changes
+        # to the scheme, not redirects, so neither is made here.
         # This site: safe mode, SL_LINEAR, 5 Picard iterations. Measured mass drift 3.976e-03
         # (the 1 / 5 / 40-iteration sequence is 2.052e-03 / 3.976e-03 / 4.104e-03, converging on
         # m_initial's rectangle mass exactly).
@@ -313,8 +322,17 @@ class TestExpertMode:
         # genuine leak still reddens this: verified by injecting `m_star * (1 - 1e-6)` into
         # `splat_linear_1d`, which turns both SL sites red; the floor is 3e-10 per step.
         # Retirement needs BOTH halves -- splat `w_i * m_i` and divide by `w_j` on arrival, AND
-        # give that Crank-Nicolson wall row the h/2 control volume. Fixing only the splat leaves
-        # the larger term. Both are changes to the scheme, not redirects, so neither is made here.
+        # give that Crank-Nicolson wall row the h/2 control volume. Fixing one is measurably worse
+        # than fixing neither, which is why this is recorded rather than half-done. Giving only the
+        # diffusion its control volume, on a transported fixture:
+        #
+        #     as shipped              rectangle 8.882e-16 (exact)   trapezoid 6.361e-02
+        #     diffusion half fixed    rectangle 7.662e-02           trapezoid 6.033e-03
+        #
+        # so the scheme goes from conserving one functional exactly to conserving none. (At ZERO
+        # velocity the splat displaces nothing and the half-fix does conserve, 3.997e-15 -- which is
+        # why the regime has to be named before that measurement means anything.) Both are changes
+        # to the scheme, not redirects, so neither is made here.
         # This site is NOT the safe-mode one and its number is different: expert mode pairs a
         # non-dual `HJBFDMSolver` with `FPSLSolver` for 2 iterations, and the measured drift is
         # 4.2201e-02 -- an order of magnitude larger, which is what the 1e-1 bound is for. An

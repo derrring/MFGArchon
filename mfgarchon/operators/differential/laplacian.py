@@ -105,20 +105,38 @@ class LaplacianOperator(LinearOperator):
             bc: Boundary conditions (None for periodic/wrap)
             order: Discretization order (currently only order=2 supported)
             time: Time for time-dependent BCs (default 0.0)
-            mass_conservative: Affects ONLY ``as_scipy_sparse()`` under a no-flux/Neumann BC
-                (Issue #1184). Default ``False`` keeps the 2nd-order-accurate ghost-mirror
-                stencil (diag ``-2/h²``, wall neighbor ``+2/h²``; row-conservative but NOT
-                column-conservative -- it leaks mass when used as the implicit FP system
-                matrix, because ``1ᵀL ≠ 0``). ``True`` emits the finite-volume zero-flux
-                stencil (wall diag ``-1/h²``, neighbor ``+1/h²``), which is BOTH row- and
-                column-conservative (``1ᵀL = 0``), so the implicit diffusion solve conserves
-                mass exactly -- at the cost of 1st-order wall accuracy. The FP mass path sets
-                this; HJB/elliptic consumers (matvec, accuracy-critical) leave it ``False``.
+            mass_conservative: Gates ``coefficient_field`` only. It used to select between two
+                wall stencils and no longer does: since #2145 both emit ``diag -2/h²,
+                neighbor +2/h²`` and ``as_scipy_sparse()`` returns byte-identical matrices
+                whenever ``coefficient_field is None`` (with a field, ``__init__`` refuses
+                ``False``, so the other branch is unreachable rather than different).
+
+                **The trade-off this argument used to document does not exist.** It said
+                ``False`` "leaks mass ... because ``1ᵀL ≠ 0``" and ``True`` conserves "at the
+                cost of 1st-order wall accuracy". Both branches were exactly conservative, for
+                different measures, and the one described as leaking was the one conserving the
+                real mass. ``1ᵀL = 0`` is column conservation under UNIFORM weights -- it
+                conserves ``sum(m)``, and this grid is endpoint-inclusive, so the wall lies ON
+                the end node, that node owns ``h/2``, and the measure is the trapezoid. The
+                statement that holds is ``wᵀL = 0``. Measured on n = 5/9/21:
+
+                    -1/h² (the old "conservative")  max|1ᵀL| = 0          max|wᵀL| = 2/4/10
+                    -2/h² (the old "leaking")       max|1ᵀL| = 16/64/400  max|wᵀL| = 0
+
+                And the accuracy half was worse than "1st-order": the old wall row converged to
+                exactly HALF of ``u''``, order 0.00, error → π²/2 at every resolution. That is
+                #1904's "converges to HALF the true value" and #1935's wall order 0.00 against
+                2.00. The cost was never the price of conservation; it was the price of the
+                wrong measure.
+
+                The argument is kept because ``coefficient_field`` requires it and five
+                production sites pass it; removing it is a breaking API change, not a cleanup.
             coefficient_field: Optional per-point diffusion field ``D(x)`` (same shape as the
                 field) for a spatially-varying ``∇·(D∇·)`` (Issue #1183). Only honored by
                 ``as_scipy_sparse()`` with ``mass_conservative=True``: the stencil uses the
                 face-averaged ``D_{i+1/2} = ½(D_i + D_{i+1})``, so the flux telescopes and
-                ``1ᵀL = 0`` holds even for varying ``D`` (a *point-value* ``D_i·Δ`` would leak).
+                ``wᵀL = 0`` holds even for varying ``D`` (a *point-value* ``D_i·Δ`` would leak).
+                Measured on a varying field: ``max|1ᵀL| = 89.52``, ``max|wᵀL| = 1.78e-15``.
                 ``None`` (default) builds the unit Laplacian (caller multiplies by a scalar ``D``).
 
         Raises:
@@ -324,8 +342,10 @@ class LaplacianOperator(LinearOperator):
 
             if bc_type in ("neumann", "no_flux") and self.mass_conservative:
                 # Finite-volume zero-flux stencil (Issue #1184): omit the ghost face at the
-                # wall so each cell's row telescopes against its neighbors' columns -> BOTH
-                # row- and column-conservative (1ᵀL = 0), 1st-order accurate at the wall.
+                # wall so each cell's row telescopes against its neighbours' columns. Since
+                # #2145 that telescoping is against the CONTROL VOLUMES (wᵀL = 0, not 1ᵀL = 0)
+                # and the wall row is second order -- see the `mass_conservative` argument
+                # docstring, and the derivation at the wall block below.
                 # Each face carries the face-averaged diffusion D_{i+1/2} = ½(D_i + D_{i+1})
                 # (Issue #1183); with no coefficient_field every face coefficient is 1 (the
                 # caller multiplies the unit Laplacian by a scalar D -> byte-identical).

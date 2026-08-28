@@ -101,8 +101,12 @@ def axis_flux_divergence(
         Cell averages, shape ``(*spatial_shape)``.
     alpha_int : np.ndarray
         Interface velocity at the ``N-1`` interior faces along ``axis`` (shape = ``m`` with the
-        ``axis`` length reduced by one). Sharing this per-face velocity between neighboring cells
-        is what makes the column sums vanish (mass conservation).
+        ``axis`` length reduced by one). Sharing this per-face velocity between neighbouring cells
+        is what makes the fluxes telescope. What they telescope AGAINST is the control volumes, so
+        the vanishing statement is ``wᵀ(divergence) = 0`` with ``w`` the trapezoid weights, not
+        ``1ᵀ(divergence) = 0`` (#2145): on an endpoint-inclusive grid the two end nodes own half a
+        cell each, and the uniform-weight version is a statement about ``sum(m)``, which is a
+        different functional from the mass.
     axis : int
         Axis along which to compute the flux divergence.
     dx : float

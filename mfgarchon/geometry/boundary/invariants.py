@@ -88,10 +88,16 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating] | Any) -> fl
       (``divergence_*``) and 4.5e-02 (``gradient_*``) on a 0.05|0.40 step, scaling smoothly with
       the variation and machine-zero for a constant ARRAY, so it is the variation and not the
       array (#1183). It costs ``gradient_*`` the trapezoid too, 4.4e-02.
-    - Under a SCALAR sigma the families differ. ``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
-      any drift -- measured to cell Peclet 87 in 1-D, and to about 3.5 in 2-D, where the sum has to
-      be taken directly: THIS FUNCTION IS 1-D ONLY and raises on an n-D field, as does
-      ``bc_residual`` through it. ``seam`` handles n-D.
+    - Under a SCALAR sigma the families differ. ~~``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
+      any drift~~ **[SUPERSEDED 2026-08-28 by #2145]** -- it holds the TRAPEZOID to 1e-14 at any
+      drift, and `sum(m)*dx` not at all: measured on the #1975 census fixture, +25.37733% rectangle
+      against -1.98e-12% trapezoid. The old sentence was true of the old wall, whose control volume
+      was a full cell; the wall rows now divide by ``h/2`` and telescope against the trapezoid
+      weights, which ARE those control volumes.
+    - ~~THIS FUNCTION IS 1-D ONLY and raises on an n-D field~~ **[SUPERSEDED 2026-08-28 by #2145]**:
+      it accepts a grid and works in n-D through ``geometry.integrate``. It still refuses an n-D
+      field with 1-D AXIS COORDINATES, by name, because that pair has no measure. ``bc_residual``
+      follows it; ``seam`` handled n-D already.
     - ``gradient_*`` holds the trapezoid instead, and only at zero drift, where this returns 1e-14
       while the share moves 6e-03. Under wall-normal drift it holds neither, and
       ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet

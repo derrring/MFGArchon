@@ -564,7 +564,8 @@ def solve_timestep_explicit_with_drift(
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
     if varying_sigma:
         # Issue #1183: per-point variable-coefficient diffusion. Bake the field D(x)=sigma(x)^2/2
-        # into a conservative finite-volume Laplacian (face-averaged D_{i+1/2}, 1ᵀL=0 preserved),
+        # into a conservative finite-volume Laplacian (face-averaged D_{i+1/2}, wᵀL=0 preserved --
+        # the weighted statement since #2145; 1ᵀL is the uniform-weight one and does not hold),
         # so a non-uniform sigma is honored per point instead of collapsed to its mean.
         d_field = diffusion_from_volatility(sigma_arr, kind="field")
         L_matrix = LaplacianOperator(
@@ -997,7 +998,7 @@ def solve_fp_nd_full_system(
             from mfgarchon.operators.differential.laplacian import LaplacianOperator
 
             # mass_conservative=True: cached implicit-FP diffusion matrix must conserve mass
-            # at no-flux walls (column-conservative stencil; Issue #1184).
+            # at no-flux walls (control-volume-weighted column conservation, wᵀL = 0; #1184/#2145).
             _L_op = LaplacianOperator(
                 spacings=list(spacing), field_shape=shape, bc=boundary_conditions, mass_conservative=True
             )

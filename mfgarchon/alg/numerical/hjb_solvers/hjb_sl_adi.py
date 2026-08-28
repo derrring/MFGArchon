@@ -581,6 +581,14 @@ def thomas_solve_batched(
 
     # Build full diagonal arrays with boundary modifications
     main_diag = np.full(N, main_coef)
+    # NOTE (#1904 node-centring half, surfaced by #2145's wall census): these two rows carry HALF
+    # the interior coefficient (`1 + theta*alpha` against `1 + 2*theta*alpha`), which is the same
+    # half-a-wall stencil #2145 corrected in the FP assemblies. Here the consequence is ACCURACY,
+    # not conservation -- the HJB is not a conservation law, so there is no measure to telescope
+    # against and no mass to lose; what a halved wall row costs is the order there, which #1935
+    # measured at 0.00 against 2.00 on the FP side. Left as-is deliberately: #2145 is scoped to the
+    # measure and the FP walls, and changing an HJB wall stencil moves every value function in the
+    # library. Recorded so the census is complete rather than silently short.
     main_diag[0] = 1.0 + theta * alpha  # Neumann BC
     main_diag[-1] = 1.0 + theta * alpha  # Neumann BC
 

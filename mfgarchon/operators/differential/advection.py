@@ -166,8 +166,13 @@ class AdvectionOperator(LinearOperator):
             mass_conservative: If True (only for ``form="divergence"``, ``scheme="upwind"``),
                 use a finite-volume flux-difference discretisation that is discretely
                 mass-conservative at no-flux walls — the advective flux through a no-flux
-                boundary face is set to zero, so ``1ᵀA = 0`` (column-conservative) and a
-                density piled against a wall by strong drift does not leak (Issue #1184).
+                boundary face is set to zero, so ``wᵀA = 0`` and a density piled against a wall
+                by strong drift does not leak (Issue #1184, measure corrected by #2145).
+                ``w`` is the control-volume vector, i.e. the trapezoid weights: the wall lies ON
+                the end node on an endpoint-inclusive grid, so that node owns ``h/2`` and the
+                wall rows divide by it. ~~``1ᵀA = 0``~~ is the uniform-weight statement, which
+                says ``sum(m)`` is conserved -- a different functional. Measured at a no-flux
+                wall: ``max|1ᵀA| = 4.39`` (1-D) and ``17.06`` (2-D) against ``max|wᵀA| = 0``.
                 Default ``False`` keeps the node-based ``gradient_upwind`` divergence
                 (byte-identical), which is conservative in the interior but leaks
                 ``±(v·m)`` at no-flux walls. Mirrors ``LaplacianOperator.mass_conservative``
@@ -305,9 +310,14 @@ class AdvectionOperator(LinearOperator):
         (``v_{i+1/2}`` = node-average), then ``div_i = (F_{i+1/2} - F_{i-1/2}) / h``. The
         flux telescopes, so the column sum equals the net boundary-face flux:
 
-        - **No-flux BC**: the two wall faces are set to zero flux -> ``1ᵀA = 0`` exactly
-          (mass conserved even when strong drift piles density against the wall).
-        - **Periodic (bc=None)**: the wrap face closes the telescope -> ``1ᵀA = 0``.
+        - **No-flux BC**: the two wall faces are set to zero flux, and the two wall CELLS are
+          divided by their control volume ``h/2`` rather than ``h`` -> ``wᵀA = 0`` exactly, with
+          ``w`` the trapezoid weights (mass conserved even when strong drift piles density
+          against the wall). #2145; ``1ᵀA`` is 4.39 in 1-D and 17.06 in 2-D and is not the
+          statement that holds.
+        - **Periodic (bc=None)**: every cell on the torus is full width once #1822 drops the
+          repeated node, so the wrap face closes the telescope and ``1ᵀA = 0`` there -- the two
+          agree because the weights are uniform on a torus.
 
         Only no-flux / Neumann / reflecting / periodic boundaries are supported here (the
         FP use case); other BCs would need an inflow flux and should not opt in.

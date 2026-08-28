@@ -71,7 +71,9 @@ def add_interior_entries_divergence_upwind(
     - Flux at interface: F_{i+1/2} = alpha_{i+1/2} * m_upwind
     - Divergence: (F_{i+1/2} - F_{i-1/2}) / dx
 
-    This ensures column sums = 1/dt (mass conservation by construction).
+    This ensures the CONTROL-VOLUME-WEIGHTED column sums are 1/dt (#2145): the wall rows divide by
+    dx/2, so the flux telescopes against the trapezoid weights. The unweighted version of that
+    sentence held for the old wall and does not hold now.
     The flux entering cell i from cell i-1 is exactly the flux leaving cell i-1.
 
     Mathematical formulation (1D example):
@@ -132,7 +134,8 @@ def add_interior_entries_divergence_upwind(
 
         # Diffusion contribution (centered differences) - same as gradient FDM
         # -D * (m_{i+1} - 2m_i + m_{i-1}) / dx^2
-        # This is inherently conservative (Laplacian has zero column sums)
+        # Inherently conservative: the Laplacian's column sums vanish against the control volumes
+        # (wᵀL = 0 since #2145; interior rows are unaffected -- only the wall rows moved)
         diagonal_value += 2 * D / dx_sq
 
         if has_plus or is_periodic:

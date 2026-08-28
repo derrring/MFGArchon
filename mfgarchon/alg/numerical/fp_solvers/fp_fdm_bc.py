@@ -243,7 +243,10 @@ def add_boundary_no_flux_entries_conservative(
     For conservative scheme:
     - Boundary flux F_{boundary} = 0 (enforced exactly)
     - Interior flux uses standard upwind selection
-    - This maintains column sum = 1/dt even at boundaries
+    - The wall row is divided by the wall CONTROL VOLUME ``dx/2``, not ``dx`` (#2145), so the
+      flux telescopes against the trapezoid weights. ~~This maintains column sum = 1/dt even at
+      boundaries~~ -- that is the uniform-weight statement and it no longer holds; the weighted
+      one does. Measured at a drifted wall: rectangle +25.37733%, trapezoid -1.98e-12%.
     """
     # Diagonal term (time derivative)
     diagonal_value = 1.0 / dt
