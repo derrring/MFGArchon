@@ -87,7 +87,10 @@ dependencies = [
 #   pip install mfgarchon[core]    -> minimal (CI, Docker, embedding)
 #   pip install mfgarchon[nn]      -> + PyTorch (live), gymnasium/SB3 (frozen RL only)
 #   pip install mfgarchon[all]     -> + JAX, performance, everything
-#   pip install mfgarchon[dev]     -> development tools
+#
+# Development tooling is NOT an extra -- see [dependency-groups] below:
+#   pip install -e . --group dev   -> development tools
+#   pip install -e . --group docs  -> documentation build
 
 [project.optional-dependencies]
 
@@ -133,6 +136,36 @@ all = [
 ]
 
 # Development tools (not user-facing)
+# Convex-optimisation solvers. `joint_socp.py` raises ImportError without cvxpy
+# (joint_socp.py:573). nightly.yml referenced a `numerical` extra for 3.5 months
+# while it did not exist, so the SOCP gate failed on ImportError every night and
+# burned one of ten --maxfail slots (Issue #1658).
+numerical = [
+    "cvxpy>=1.4",
+]
+
+# Optional: URLs for your project
+[project.urls]
+Homepage = "https://github.com/derrring/mfgarchon"
+Repository = "https://github.com/derrring/mfgarchon"
+# Bug-Tracker = "https://github.com/derrring/mfgarchon/issues"
+
+# =============================================================================
+# Development tooling (PEP 735) -- NOT published metadata
+# =============================================================================
+# These are not extras, and the distinction is the point. An extra is part of the
+# installable interface -- a user must be able to request a backend by name from a
+# published wheel -- so every compute backend stays in [project.optional-dependencies].
+# Nobody installs this package in order to get its linter. Dependency groups are
+# read from the source tree and never reach the built distribution's metadata, so
+# they cannot be requested by a downstream install -- which is exactly right for
+# tooling, and exactly wrong for a backend. Getting the two backwards makes the
+# backends uninstallable (Issue #2167).
+#
+#   pip install -e . --group dev      (pip >= 25.1; CI upgrades pip first)
+#   uv sync --group dev
+#   uv pip install -e . --group dev
+[dependency-groups]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -154,26 +187,12 @@ dev = [
     "types-psutil",
 ]
 
-# Documentation (not user-facing)
-# Convex-optimisation solvers. `joint_socp.py` raises ImportError without cvxpy
-# (joint_socp.py:573). nightly.yml referenced a `numerical` extra for 3.5 months
-# while it did not exist, so the SOCP gate failed on ImportError every night and
-# burned one of ten --maxfail slots (Issue #1658).
-numerical = [
-    "cvxpy>=1.4",
-]
-
+# Documentation. Not user-facing: nobody installs this package to build its docs.
 docs = [
     "sphinx>=7.0",
     "sphinx-rtd-theme",
     "nbsphinx",
 ]
-
-# Optional: URLs for your project
-[project.urls]
-Homepage = "https://github.com/derrring/mfgarchon"
-Repository = "https://github.com/derrring/mfgarchon"
-# Bug-Tracker = "https://github.com/derrring/mfgarchon/issues"
 
 # --- Setuptools specific configuration ---
 # This tells setuptools to automatically find packages in the current directory.
@@ -313,7 +332,7 @@ exclude_lines = [
 # Ruff Configuration (Unified Linting and Formatting)
 # =============================================================================
 # Modern unified tooling - 10-100x faster than legacy tools
-# Install with: pip install mfgarchon[dev]
+# Install with: pip install -e . --group dev
 
 [tool.ruff]
 line-length = 120
