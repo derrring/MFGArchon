@@ -243,11 +243,26 @@ def _density(result) -> np.ndarray:
 
 
 def _mass_drift(result, problem) -> dict:
-    """Total mass per time slice, and its maximum excursion from t=0."""
+    """Total mass per time slice, and its maximum excursion from t=0.
+
+    On the GEOMETRY'S OWN MEASURE (#2145). This computed `M.sum(axis=1) * dx`, the cell-centred
+    integral, on a grid that is endpoint-inclusive: the wall lies ON x_0, so the two end nodes own
+    half a cell each and the measure is the trapezoid. Those weights are also the control volumes
+    the conservative schemes telescope against, which is why one functional is conserved and the
+    other is not -- and this oracle was reading the other one.
+
+    It said so out loud when #2145 landed: `fvm_muscl/mass_conservation` went PASS -> FAIL against
+    the baseline, and the annotation in `capability_baseline.json` still read "Mass is conserved to
+    1.2e-15" for a cell then measuring 3.976e-03. Recording that FAIL would have filed "the FVM does
+    not conserve mass" as the expected state. An oracle that measures the wrong functional answers
+    the matrix's question -- can this configuration solve at all -- about a different library.
+
+    `integrate` reduces the trailing axes, so a (time, *spatial) history gives one value per row and
+    the 2-D cells need no separate branch; the previous code took `M.shape[1]` and a single bound
+    pair, so it was 1-D by construction and the 2-D cells were reading a 1-D spacing.
+    """
     M = _density(result)
-    bounds = problem.geometry.get_bounds()
-    dx = (bounds[1][0] - bounds[0][0]) / (M.shape[1] - 1)
-    mass = M.sum(axis=1) * dx
+    mass = np.asarray(problem.geometry.integrate(M), dtype=float)
     return {
         "mass_t0": float(mass[0]),
         "mass_max": float(mass.max()),
@@ -479,8 +494,9 @@ def _mass_conservation_2d_cell(scheme_name: str):
 
         def verdict():
             M = _apply_mutation(np.asarray(result.M, dtype=float))
-            dv = (1.0 / 10) ** 2  # 11 points per axis on the unit square
-            mass = M.reshape(M.shape[0], -1).sum(axis=1) * dv
+            # The grid's own measure (#2145) -- and in 2-D the corner owns a QUARTER cell, which a
+            # single `dv` cannot express however it is chosen.
+            mass = np.asarray(problem.geometry.integrate(M), dtype=float)
             art = {
                 "mass_t0": float(mass[0]),
                 "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
@@ -593,8 +609,7 @@ def _fvm_mass_cell():
 
         def verdict():
             M = _density(result)
-            dx = problem.geometry.get_grid_spacing()[0]
-            mass = M.sum(axis=1) * dx
+            mass = np.asarray(problem.geometry.integrate(M), dtype=float)  # the grid's measure (#2145)
             art = {
                 "mass_t0": float(mass[0]),
                 "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
@@ -686,11 +701,10 @@ def _regime_switching_cell():
         result = iterator.solve()
 
         def verdict():
-            dx = problems[0].geometry.get_grid_spacing()[0]
             per_regime = []
             for k, dens in enumerate(result.densities):
                 M = _apply_mutation(np.asarray(dens, dtype=float))
-                mass = M.sum(axis=1) * dx
+                mass = np.asarray(problems[0].geometry.integrate(M), dtype=float)  # #2145
                 per_regime.append(
                     {
                         "regime": k,
