@@ -353,24 +353,30 @@ The one case for running it by hand: you need to *read* its diagnostics (discrim
 capability baseline, fail-fast counts) rather than just pass. Then run it, and push with
 `--no-verify` only if the working tree has not moved since.
 
-⚠️ **From a `git worktree` the gate measures more than one tree and names none of them.** Measured
-2026-08-27 with a blocking meta-path finder over every step and a path audit over their reads, both
-controlled in each direction:
+⚠️ **From a `git worktree` the gate names the tree it measured, and refuses if it is the wrong
+one.** `gate package : <path>` sits beside `gate interpreter`, in the head and in the pasted tail,
+and `scripts/local_ci.sh` exits before any check when that path is not under the tree being gated
+(#2154). The table below is the resolution that made the guard necessary — the state *before* the
+gate exported `PYTHONPATH` for itself. Measured 2026-08-27 with a blocking meta-path finder over
+every step and a path audit over their reads, both controlled in each direction:
 
 | step | reads |
 |---|---|
 | the suite, `PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto` | the **worktree** — pytest puts the tree root at `sys.path[0]` because `tests/__init__.py` exists, and setuptools' finder only *appends* to `sys.meta_path`, so `PathFinder` answers first. Remove that `__init__.py` and it flips |
 | 6 of the 12 `scripts/*.py` invocations that never import | the **worktree**, by flag (`:476`, `:484`), by `Path(__file__).resolve().parent.parent` (`:570`), or by the gate's own `cd` |
 | 4 more — the `--self-test` runs at `:471` | **neither tree**: they build a synthetic corpus in a `TemporaryDirectory`. (`:558` and `:569` not measured; both read a baseline beside the script) |
-| 3 invocations across 2 scripts — `check_internal_deprecation.py --self-test`, the only importer under `--fast`, and `capability_matrix.py` twice in the full gate | the **main checkout** — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers and its MAPPING is hard-wired to the original tree |
+| 3 invocations across 2 scripts — `check_internal_deprecation.py --self-test`, the only importer under `--fast`, and `capability_matrix.py` twice in the full gate | **was** the main checkout — `sys.path[0]` is the worktree's `scripts/`, which holds no `mfgarchon`, so the editable finder answers and its MAPPING is hard-wired to the original tree. Now the worktree, because the gate exports `PYTHONPATH="$PWD"` immediately after it `cd`s to the repository root, and `PathFinder` reads it before that finder. What this cost while it was live: three capability cells `UNSUPPORTED -> FAIL` and a `GATE RED` on a branch none of the changed code belonged to (2026-08-28) |
 
 **No static count tells you which steps import.** `capability_census.py:78` is
 `importlib.import_module(package)` — a real in-process import that no import-shaped text pattern and
 no AST import-scan can see. Run the blocking finder over the actual invocation instead.
 
-**Set both flags, for different reasons.** `PYTHONPATH=<worktree>` fixes the tree: it lands on
-`sys.path`, which `PathFinder` reads before the appended editable finder. `MFG_PYTHON=<mfg_env>`
-fixes the interpreter, and is not optional when a virtualenv is active — the gate's own
+**Set `MFG_PYTHON`. `PYTHONPATH` is no longer yours to remember.** The gate exports it for
+itself (#2154), which is what makes the pre-push hook usable from a worktree at all: the hook
+inherits the environment of `git push` and cannot set a variable for its own benefit, so a rule
+that said "set PYTHONPATH" and a rule that said "let the hook run the gate" could not both be
+followed. `MFG_PYTHON=<mfg_env>` stays, because interpreter selection is a judgement the gate
+cannot make for you, and is not optional when a virtualenv is active — the gate's own
 `CANDIDATES=(python python3 <mfg_env>)` tries PATH first, so an activated `.venv` is selected and
 satisfies the probe in full, at pytest 8.4.1 against the gate's 9.1.1 and ruff 0.13.1 against the
 pinned 0.16.0. That combination reports six warning identities GONE and one NEW over a two-file

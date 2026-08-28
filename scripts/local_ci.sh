@@ -14,6 +14,17 @@ FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 cd "$(dirname "$0")/.."
 
+# Every `"$PY" scripts/X.py` below puts `scripts/` on sys.path[0], not this root -- and `scripts/`
+# holds no `mfgarchon`, so the import falls through PathFinder to setuptools' editable finder,
+# whose mapping is hard-wired to the ORIGINAL checkout. From a `git worktree` the capability matrix
+# and the deprecation self-test therefore measure a DIFFERENT tree, on whatever branch it happens
+# to be sitting on. Observed 2026-08-28: three capability cells UNSUPPORTED->FAIL and GATE RED on a
+# branch none of it belonged to. Exported once here rather than passed at each call site, because a
+# per-site fix is correct only where someone remembered to edit and the failure mode is the next
+# one. `_EditableFinder` sits AFTER `PathFinder` in sys.meta_path, so a PYTHONPATH entry wins, and
+# PYTHONPATH survives both `-P` and PYTHONSAFEPATH=1, which the suite step needs. (#2154)
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+
 # Resolve the interpreter and the linter EXPLICITLY, because this script's callers do not agree
 # on the environment. Interactively it is run from an activated conda env, where bare `python`
 # and `ruff` resolve. The pre-push hook is not: pre-commit invokes it with its own PATH, conda
@@ -222,6 +233,26 @@ RUFF=("$PY" -P -m ruff)
 printf 'gate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
+# WHICH TREE, beside which interpreter -- from a worktree they are different questions. #2146
+# measured this and wrote it in AGENTS.md, where nothing checks it against a run. This REFUSES
+# rather than notes: a gate that imported a tree it is not gating should not return a verdict at
+# all, and every line below it would be about that other tree. `unknown` is a different failure
+# (no importable package) which the interpreter probe above already owns, so it is not refused here.
+# `-P` is what makes this probe measure the right thing. Without it `-c` puts CWD on sys.path[0],
+# CWD is this root, and the probe finds the local package however broken the resolution is for the
+# scripts -- a proxy that cannot fail. With `-P` it resolves exactly as `"$PY" scripts/X.py` does,
+# where sys.path[0] is `scripts/` and holds no package. Verified against the script form: both
+# answer the main checkout with PYTHONPATH unset, both answer this tree with it set.
+GATE_PKG=$("$PY" -P -c 'import mfgarchon,pathlib;print(pathlib.Path(mfgarchon.__file__).resolve().parent)' 2>/dev/null || echo unknown)
+printf 'gate package     : %s\n' "$GATE_PKG"
+# `pwd -P`, not `$PWD`: the probe reports a `pathlib.resolve()`d path with symlinks followed,
+# while `$PWD` is the logical path the caller arrived by. Compared unresolved, a repository
+# reached through any symlinked parent fails this on a correct run.
+if [[ "$GATE_PKG" != unknown && "$GATE_PKG" != "$(pwd -P)"/* ]]; then
+  printf '\033[31mFAIL\033[0m the gate imported mfgarchon from %s\n' "$GATE_PKG"
+  printf '     but it is gating %s. Every verdict below would be about the other tree. (#2154)\n' "$PWD"
+  exit 1
+fi
 
 # A discrimination sweep mutates production source in place and restores it in a `finally`.
 # That survives an exception and SIGINT; it does not survive SIGKILL or a harness timeout, and
@@ -579,6 +610,7 @@ fi
 printf '\ngate interpreter : %s (%s)\n' "$PY" "$("$PY" -V 2>&1)"
 printf 'gate ruff        : %s\n' "$("${RUFF[@]}" --version 2>&1)"
 printf 'gate mypy        : %s\n' "$("$PY" -P -m mypy --version 2>/dev/null || echo unknown)"
+printf 'gate package     : %s\n' "$GATE_PKG"
 # Reprinted here, not only at the head: a version-mismatched run and a matched run otherwise
 # produce byte-identical tails, so the comparison this WARN performs is not recoverable from the
 # pasted evidence. Same rule that put the interpreter line here.
