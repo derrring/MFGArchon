@@ -18,6 +18,15 @@ identities GONE, inviting the reader to record the loss as progress.
 
 So: a check, in both directions.
 
+The two directions have different lifespans, and saying so here is the point of this paragraph.
+IMPORTED-BUT-UNDECLARED compares the package against `pyproject.toml` and outlives any packaging
+decision. DECLARED-BUT-MISSING compares `pyproject.toml` against `environment.yml`, and #2167
+deletes that file: `pyproject.toml` + `uv.lock` become the single owner, and swapping the BLAS
+implementation -- the one thing conda does that PyPI cannot -- turns out not to need a second
+manifest, because `uv pip install` leaves a conda-installed numpy alone. When that lands, delete
+the second direction with the file. It is here because `environment.yml` is still the only
+onboarding path the documentation names, and it was broken.
+
   IMPORTED-BUT-UNDECLARED  a third-party module `mfgarchon/` imports that `pyproject.toml`
                            declares nowhere -- the #1687 shape, a fresh install away from breaking
   DECLARED-BUT-MISSING     a runtime dependency in `pyproject.toml` absent from `environment.yml`

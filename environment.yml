@@ -1,3 +1,15 @@
+# [SUPERSEDED-ON-ARRIVAL 2026-08-29]
+# SUPERSEDED-BY: #2167 -- `pyproject.toml` + `uv.lock` become the single dependency owner and this
+# file is deleted. It is reconciled here (#2164) rather than left broken because it is still the
+# only onboarding path the documentation points at, and an environment built from it could not run
+# the suite. Do not add dependencies here: add them to `pyproject.toml`, which owns the list.
+#
+# Swapping the BLAS implementation does NOT require this file. conda supplies the substrate and
+# `pyproject.toml` still supplies the dependencies -- `uv pip install` leaves a conda-installed
+# numpy alone:
+#     conda create -n mfg-mkl python=3.12 "libblas=*=*mkl" numpy scipy
+#     uv pip install -e ".[all,dev]" --python <that env>
+
 name: mfg_env
 channels:
   - conda-forge
@@ -36,10 +48,10 @@ dependencies:
   # because cvxpy and torch were absent. (#1687 did this reconciliation for `pyproject.toml` and
   # only for it; this is the same list arriving at the other manifest.)
   - cvxpy>=1.4             # Constrained optimisation (mfgarchon + tests)
-  - scikit-fem>=8.0        # FEM assembly (imported as `skfem`)
-  - meshio>=5.0            # Mesh I/O
+  - scikit-fem>=9.0        # FEM assembly (imported as `skfem`)
+  - meshio>=5.3            # Mesh I/O
   - networkx>=3.0          # Network geometry
-  - osqp>=0.6              # QP solver behind the monotone schemes
+  - osqp>=1.0              # QP solver behind the monotone schemes
   - nbformat>=5.0          # The package WRITES notebooks
   - pyyaml>=6.0            # `config/io.py` imports it at module level
   - rich>=13.0             # Progress bars -- the `tqdm` alias in utils/progress.py points here
@@ -61,7 +73,7 @@ dependencies:
   - nbsphinx             # Jupyter notebook docs
 
   # System utilities
-  - psutil>=5.9          # System monitoring
+  - psutil>=7.2.2          # System monitoring
   - memory_profiler      # Memory profiling
   - line_profiler        # Line-by-line profiling
 
@@ -71,6 +83,6 @@ dependencies:
 
   # Additional pip packages
   - pip:
-    - pydantic>=2.0      # Data validation
-    - igraph>=0.10       # Graph algorithms
+    - pydantic>=2.12.5,<3.0      # Data validation
+    - igraph>=0.10.0       # Graph algorithms
     - typing-inspection  # Runtime type inspection

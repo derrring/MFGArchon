@@ -29,3 +29,15 @@
   Absence of an import is not absence of use — `line-profiler` and `memory-profiler` are invoked as
   `kernprof` and `mprof` and are correctly declared without ever being imported. That direction
   needs a human.
+- **Six version floors also disagreed, `environment.yml` looser at every one**: `meshio>=5.0` against
+  `>=5.3`, `osqp>=0.6` against `>=1.0`, `psutil>=5.9` against `>=7.2.2`, `scikit-fem>=8.0` against
+  `>=9.0`, `pydantic>=2.0` against `>=2.12.5,<3.0`, `igraph>=0.10` against `>=0.10.0`. A conda
+  environment could satisfy the file while failing what `pyproject.toml` requires. Aligned once, by
+  hand — deliberately **not** given a check, because #2167 deletes the file and a floor checker would
+  be machinery built for a rival that is scheduled to go.
+- **The file is marked `[SUPERSEDED-ON-ARRIVAL]` with a forward pointer to #2167**, at the top where
+  a list view and an editor tab show it, and it says not to add dependencies there. It is reconciled
+  rather than left broken because it is still the only onboarding path the documentation names — an
+  environment built from it could not run the suite, which is what produced the #2158 measurement.
+  The header also carries the two-line conda recipe that replaces it, since the reason people
+  reached for conda — swapping the BLAS implementation — does not need a second manifest.
