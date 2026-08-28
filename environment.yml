@@ -23,23 +23,36 @@ dependencies:
   - h5py>=3.9             # HDF5 files
 
   # Interactive computing
-  - jupyter>=1.0
-  - jupyterlab>=4.0
-  - ipython>=8.12
 
   # Visualization
   - plotly>=5.17          # Interactive plotting
   - bokeh>=3.3            # Advanced visualizations
-  - seaborn>=0.13         # Statistical plotting
 
   # Progress and utilities
-  - tqdm>=4.0             # Progress bars (used throughout package)
+
+  # Declared because the PACKAGE IMPORTS THEM. This file listed none of these while
+  # `pyproject.toml` did, so an environment built from here alone cannot run the library or its
+  # suite -- measured: 6630 test outcomes against 6724, with 66 tests skipped or not collected
+  # because cvxpy and torch were absent. (#1687 did this reconciliation for `pyproject.toml` and
+  # only for it; this is the same list arriving at the other manifest.)
+  - cvxpy>=1.4             # Constrained optimisation (mfgarchon + tests)
+  - scikit-fem>=8.0        # FEM assembly (imported as `skfem`)
+  - meshio>=5.0            # Mesh I/O
+  - networkx>=3.0          # Network geometry
+  - osqp>=0.6              # QP solver behind the monotone schemes
+  - nbformat>=5.0          # The package WRITES notebooks
+  - pyyaml>=6.0            # `config/io.py` imports it at module level
+  - rich>=13.0             # Progress bars -- the `tqdm` alias in utils/progress.py points here
 
   # Development tools (modern unified tooling)
   - pytest>=7.0          # Testing framework
   - pytest-benchmark     # Performance testing
   - ruff>=0.6.0          # Fast unified linting and formatting (replaces black+isort+flake8)
   - mypy>=1.5            # Type checking
+  - pytest-xdist>=3.5    # `-n auto`, which the gate uses
+  - pytest-timeout>=2.1  # `pytest.ini` sets `timeout = 900` under --strict-config, so this is
+                         # not optional: without it collection fails with "Unknown config option"
+  - pytest-cov>=4.0      # Coverage
   - pre-commit>=2.0      # Pre-commit hooks
 
   # Documentation
@@ -60,5 +73,4 @@ dependencies:
   - pip:
     - pydantic>=2.0      # Data validation
     - igraph>=0.10       # Graph algorithms
-    - texttable          # Text tables
     - typing-inspection  # Runtime type inspection
