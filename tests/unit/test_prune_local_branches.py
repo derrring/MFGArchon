@@ -29,14 +29,13 @@ _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "prune_local_branche
 # The list and both scrub forms have one owner, `scripts/git_env.py`. They were private to this
 # file when #2085 was fixed here, and #2152 is what that cost: the same failure in
 # `check_citations.py` and its tests, which could not reach a private copy. Loaded by path because
-# `scripts/` is not a package and putting it on `sys.path` would make `scripts/test_discrimination.py`
-# importable as a top-level `test_discrimination`.
-_GIT_ENV = importlib.util.module_from_spec(
-    importlib.util.spec_from_file_location(
-        "_mfgarchon_git_env_prune", Path(__file__).resolve().parents[2] / "scripts" / "git_env.py"
-    )
+# `scripts/` is not a package, and a path cannot be shadowed by an earlier `sys.path` entry --
+# a decoy `git_env.py` on PYTHONPATH silently replaces the scrub when the name is imported instead.
+_GIT_ENV_SPEC = importlib.util.spec_from_file_location(
+    "_mfgarchon_git_env_prune", Path(__file__).resolve().parents[2] / "scripts" / "git_env.py"
 )
-_GIT_ENV.__loader__.exec_module(_GIT_ENV)
+_GIT_ENV = importlib.util.module_from_spec(_GIT_ENV_SPEC)
+_GIT_ENV_SPEC.loader.exec_module(_GIT_ENV)
 _isolated_env = _GIT_ENV.isolated_env
 
 
