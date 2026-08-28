@@ -6,10 +6,12 @@ used across the entire test suite.
 """
 
 import contextlib
+import importlib.metadata
 import importlib.util
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -785,6 +787,29 @@ __all__ = ["validate_mfg_solution"]
 #
 # Off unless asked: writing a file on every ad-hoc `pytest` run would be a side effect nobody
 # asked for, and a gate that silently rewrites its own input is how a ratchet stops ratcheting.
+#: The distributions recorded in every warning census, one owner for the list. Distribution
+#: names, not import names -- `scikit-fem` imports as `skfem`.
+TOOLCHAIN_NAMES = ("pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy", "osqp")
+
+
+def _installed_version(name: str) -> str | None:
+    """The installed version of one distribution, or None if it is not installed.
+
+    `importlib.metadata.version` returns the FIRST match in sys.path order and is silent about
+    the rest, so a stale .dist-info beside a current one records a version no code in the run
+    used -- osqp and ruff each carry two records here today. A wrong version here is worse than
+    no version: it invents a package move, or hides a real one behind a stale pair. So count
+    them, and refuse to pick.
+    """
+    try:
+        seen = sorted({d.metadata["Version"] for d in importlib.metadata.distributions(name=name)})
+    except Exception:  # a corrupt METADATA is not absence, and must not be recorded as one
+        return "unreadable"
+    if not seen:
+        return None
+    return seen[0] if len(seen) == 1 else "ambiguous:" + "|".join(seen)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     out = os.environ.get("MFGARCHON_WARNING_CENSUS")
     if not out or os.environ.get("PYTEST_XDIST_WORKER"):
@@ -859,10 +884,31 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # writes a plausible 2-identity census; fed to the ratchet it reports 223 GONE and tells the
     # reader to re-baseline, which would destroy the baseline. Two such files were found on this
     # machine. `check_warnings.py` refuses a census whose `tests_run` is implausibly small.
+    # The toolchain, for attribution rather than for gating (#2158). When the identity set moves,
+    # the report could say THAT it moved and never WHY -- and the one time that mattered, a GATE RED
+    # was attributed to pytest when five of its six moved identities came from elsewhere: cvxpy and
+    # torch absent (tests skipped or not collected), numpy 2.2.6 against 2.4.6, and a solver
+    # convergence difference. The only line naming a cause was about ruff.
+    #
+    # Each name carries its own warrant, and they are not the same strength. MEASURED moving an
+    # identity in that comparison: cvxpy and torch (absent, so their tests skipped or were not
+    # collected -- three of the six), numpy (2.2.6 against 2.4.6), pytest (9 added the check).
+    # OWNS identities outright in the baseline, so a bump moves their text with no inference:
+    # scikit-fem (3 of 224), osqp (the `OSQP failed: ...` text is the solver's own status string,
+    # and `OSQP_AVAILABLE` selects a different warning entirely). CO-VARYING only: scipy, named in
+    # that comparison inside a disjunction with numpy and owning no identity, and python, the axis
+    # that moved furthest (3.13 -> 3.12) with no single identity attributed to it.
+    # Absent is recorded as null, which is itself a cause.
+    toolchain = {
+        "python": ".".join(str(n) for n in sys.version_info[:3]),
+        **{name: _installed_version(name) for name in TOOLCHAIN_NAMES},
+    }
+
     payload = {
         "identities": sorted(census),
         "occurrences": sum(census.values()),
         "tests_run": sum(len(terminalreporter.stats.get(k, [])) for k in ("passed", "failed", "xfailed", "skipped")),
+        "toolchain": toolchain,
     }
     try:
         target = Path(out)
