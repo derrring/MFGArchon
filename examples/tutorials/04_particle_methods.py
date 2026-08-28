@@ -45,9 +45,18 @@ if __name__ == "__main__":
     )
 
     model = Model(hamiltonian=hamiltonian, sigma=0.15)
+
+    # The caller normalises: the library measures the mass and reports it, but does not rescale your
+    # density (Issue #1887). `grid.integrate` is the grid's own measure -- on this endpoint-inclusive
+    # grid the two wall nodes own half a cell each, so it is not `sum(m) * dx` (Issue #2145).
+    def bump(x):
+        return np.exp(-50 * (x - 0.5) ** 2)
+
+    bump_mass = float(grid.integrate(bump(np.asarray(grid.coordinates[0]))))
+
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
+        m_initial=lambda x: bump(x) / bump_mass,
         T=1.0,
     )
 
