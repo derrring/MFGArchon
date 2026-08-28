@@ -2115,27 +2115,26 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
         # Check 2: Non-zero mass (must have some mass to normalize)
-        # #2145: the initial density is normalised ON THE GEOMETRY'S OWN MEASURE. This block used
-        # `sum(m) * dx`, the cell-centred integral, while `TensorProductGrid` is endpoint-inclusive:
-        # the wall lies ON x_0, so the two end nodes own half a cell each and the measure is the
-        # trapezoid. Normalising with one functional while the FP wall conserves the other is how a
-        # solve reports perfect conservation of a quantity nobody asked about.
+        # #1887: VALIDATE, DO NOT NORMALISE. This block used to rescale whatever `m_initial`
+        # returned so that a discrete integral came out 1, silently. A user who writes
+        # `m_initial=lambda x: np.exp(-10*(x-0.5)**2)` hands in a function whose integral is about
+        # 0.56 and got back something else with nothing said -- the same shape as silent clipping,
+        # which this repository has already decided against. Normalising is the caller's job; the
+        # library's job is to say what it received.
         #
-        # `_measure_initial_density` names the measure it used, because these branches are genuinely
-        # different objects rather than fallbacks of one -- a network has no cell volume and an
-        # unstructured geometry has no quadrature -- and a number without its measure is the
-        # invisible convention #2145 exists to remove.
+        # #2145: on the GEOMETRY'S OWN MEASURE. `TensorProductGrid` is endpoint-inclusive, so the
+        # two wall nodes own half a cell each and the integral is the trapezoid. Reporting
+        # `sum(m)*dx` here while the FP wall conserves the trapezoid would put the two ends of every
+        # conservation check on different measures.
         #
-        # WHETHER TO NORMALISE AT ALL is a separate question and a separate change: see
-        # `fix/1887-validate-do-not-normalise`, which replaces this rescale with validate-and-report
-        # on the grounds that a sub-probability density or one population's share is a legitimate
-        # initial condition and silently rescaling it is the same shape as silent clipping. That
-        # change moves what `f(m)` is evaluated at, so it has to carry the ~30 `examples/` files
-        # that hand in a raw Gaussian; bundling it here was what put those out of step.
+        # Three tiers, and only the third presumes a target of 1 -- which is why the third is the
+        # one that can be silenced and the one a split-population design may move. `mass = 1` is not
+        # a law of the FP equation; it conserves whatever it starts with, and split populations each
+        # carry a share by design.
         mass, measure = self._measure_initial_density()
 
-        # Issue #672, fail fast: refuse what cannot be a density before rescaling it.
-        m_arr = np.asarray(self.m_initial, dtype=float)
+        # TIER 1 -- refuse. No legitimate case, and the solve would be meaningless.
+        m_arr = np.asarray(self.m_initial)
         if not np.isfinite(m_arr).all():
             raise ValueError(
                 f"m_initial has {int((~np.isfinite(m_arr)).sum())} non-finite entries. A density "
@@ -2152,9 +2151,34 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "integrate to a positive value. Check your m_initial function in MFGComponents."
             )
 
-        self.m_initial = m_arr / mass
+        self.initial_mass = float(mass)
         self.initial_mass_measure = measure
-        self.initial_mass = 1.0
+
+        # TIER 2 -- report, always, WITH THE MEASURE. This is the tier that closes #1887's first
+        # cost: a miscoded `m_initial` never announced itself, and the fix is to report the number
+        # rather than to demand a particular one. Naming the measure is not decoration -- a bare
+        # number would recreate the invisible convention the report exists to remove.
+        from mfgarchon.utils.mfg_logging import get_logger
+
+        get_logger(__name__).info(
+            "initial density mass %.6g (%s measure); the library does not rescale it", mass, measure
+        )
+
+        # TIER 3 -- warn, and only here is a target of 1 assumed. Silence with
+        # `warnings.filterwarnings("ignore", message="initial density mass")` when a sub-probability
+        # density or a per-population share is intended.
+        if abs(mass - 1.0) > self._INITIAL_MASS_TOLERANCE:
+            import warnings
+
+            warnings.warn(
+                f"initial density mass {mass:.6g} on the {measure} measure, not 1. The library no "
+                f"longer rescales it (#1887), so the solve runs with this mass and f(m) is "
+                f"evaluated at these values. Intended for a sub-probability density or one "
+                f"population's share? Silence this warning. Otherwise normalise before handing it "
+                f"over: m_initial = raw / <integral of raw>.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     _INITIAL_MASS_TOLERANCE: ClassVar[float] = 1e-8
 

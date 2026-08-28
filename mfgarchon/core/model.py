@@ -87,6 +87,21 @@ class Conditions:
     This preserves orthogonality with Domain -- the same conditions
     work on any grid resolution.
 
+    The conversion is one-way and it already happens: `MFGProblem` evaluates the
+    callable once at construction and stores an array on `problem.m_initial`,
+    while `conditions.m_initial` keeps the callable. Measured, a callable and the
+    equivalent array produce element-wise identical internal state -- so this rule
+    is not about the representation the solvers see. It is about what THIS object
+    holds: a callable is `m_0(x)` on the continuum, an array is already a
+    projection onto one grid, and a Conditions holding a grid is a Conditions that
+    is no longer orthogonal to Domain.
+
+    A density with no closed form -- a KDE, a measured histogram, a previous
+    solve's output -- currently has no v1.0 expression. `lambda _x: snapshot` does
+    NOT work: the signature validator evaluates it and refuses the array it gets
+    back. That gap is real and wants a constructor that ADMITS it is grid-bound,
+    not a relaxation of this rule.
+
     Callable signature:
         1D: f(x) where x shape (N,), returns (N,)
         nD: f(x) where x shape (N, d), returns (N,)
@@ -105,7 +120,15 @@ class Conditions:
         if self.m_initial is not None and not callable(self.m_initial):
             raise TypeError(
                 f"m_initial must be callable, got {type(self.m_initial).__name__}. "
-                "Use a function: m_initial=lambda x: np.exp(-5*(x-0.5)**2)"
+                "Conditions holds m_0(x) on the continuum; an array is already a projection onto "
+                "one grid, and holding one here would make Conditions grid-bound. "
+                "Use a function: m_initial=lambda x: np.exp(-5*(x-0.5)**2). "
+                "Note it must integrate to 1 on YOUR grid -- the library validates and reports the "
+                "mass but does not rescale it (#1887) -- so divide by "
+                "`domain.integrate(f(domain.coordinates[0]))` when you build it. "
+                "If your density has no closed form (a KDE, a histogram, a previous solve), there "
+                "is no v1.0 way to pass it yet; `lambda _x: array` is rejected by the signature "
+                "check, not accepted."
             )
         if self.u_terminal is not None and not callable(self.u_terminal):
             raise TypeError(
