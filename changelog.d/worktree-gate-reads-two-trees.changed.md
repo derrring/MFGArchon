@@ -10,8 +10,9 @@ under `--fast`, and `capability_matrix.py` twice in the full gate -- resolve thr
 finder, which is hard-wired to the original checkout. Measured with a blocking meta-path finder over every step, its control firing on the
 importer.
 
-A lane must set both `PYTHONPATH=<worktree>`, which fixes the tree, and `MFG_PYTHON` pointed at the
-gate's own environment, which fixes the interpreter: the gate's candidate search tries PATH first,
+[AMENDED by #2154, same release] `PYTHONPATH` is no longer the caller's to set: the gate binds it
+onto its own `scripts/*.py` invocations. What remains true is the interpreter half. A lane must set
+`MFG_PYTHON` pointed at the gate's own environment: the gate's candidate search tries PATH first,
 so an activated virtualenv is selected and its older pytest and ruff turn a documentation diff into
 a red gate.
 
