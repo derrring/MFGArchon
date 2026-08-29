@@ -201,6 +201,9 @@ else
     done
   fi
   [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff and mypy.
+ruff is deliberately absent from the dev group -- its version has one owner and is read at runtime.
+Install the pinned one the way ci.yml does:
+    pip install \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
 $(probe_err)"
 fi
 

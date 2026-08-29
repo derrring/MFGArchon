@@ -171,7 +171,13 @@ dev = [
     "pytest-benchmark",
     "pytest-xdist>=3.5",
     "pytest-timeout>=2.1",
-    "ruff>=0.6.0",
+    # ruff is deliberately NOT here. Its version has one owner, `.pre-commit-config.yaml`, and one
+    # writer, `scripts/update_ruff_version.py`; consumers READ it at runtime rather than restating
+    # it -- `ci.yml` does exactly that at its quick-checks job, `pip install "ruff==$(python
+    # scripts/update_ruff_version.py --print-current)"`. #2123 removed the last second pin for this
+    # reason, and this file's entry would be another: a resolver takes the newest release satisfying
+    # a floor, so `uv.lock` would carry a ruff the gate warns about (measured: 0.16.5 against the
+    # pinned 0.16.0). Install it the way ci.yml does; `scripts/setup_development.sh` does.
     # No upper bound. There was one, pinned at `<2.2` because mypy 2.2.0 rejects valid
     # `list[str]` slices under the `strict_optional` this project turns on for `config` -- a
     # typeshed overload declaring a slice's step `SupportsIndex` with no `| None`, still unfixed

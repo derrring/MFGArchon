@@ -60,6 +60,10 @@ setup_uv_environment() {
     # Install package in development mode
     log_info "Installing MFGarchon in development mode..."
     uv pip install -e . --group dev
+    # ruff is not in the dev group: its version has one owner and is read at runtime. Same shape as
+    # `ci.yml`'s quick-checks job. A bare `uv pip install ruff` takes whatever is newest and the gate
+    # then warns that formatting may disagree with CI.
+    uv pip install "ruff==$(python scripts/update_ruff_version.py --print-current)"
 
     # Install pre-commit hooks
     if command_exists pre-commit; then
@@ -85,6 +89,7 @@ setup_pip_environment() {
     # Install package in development mode
     log_info "Installing MFGarchon in development mode..."
     pip install -e . --group dev
+    pip install "ruff==$(python scripts/update_ruff_version.py --print-current)"
 
     # Install pre-commit hooks
     if command_exists pre-commit; then
