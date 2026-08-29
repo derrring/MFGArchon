@@ -109,7 +109,13 @@ def lq_mfg_initial_density():
         Callable that computes initial density at position x
 
     Note:
-        MFGProblem will automatically normalize the density to integrate to 1.
+        This density is NOT normalised, and `MFGProblem` will not normalise it for you (#1887):
+        it measures the mass, names the measure it used, warns if the mass is not 1, and leaves
+        your array alone. Measured on the unit interval it integrates to 0.381352 at Nx=11 and
+        0.375982 at Nx=101 -- the grid dependence there is the quadrature converging, not the
+        density changing. If you want a probability density, divide by `grid.integrate(...)`
+        yourself, and note that doing so changes the problem: the coupling f(m) is then evaluated
+        at about 2.66 times these values.
 
     Example:
         >>> problem = MFGProblem(
