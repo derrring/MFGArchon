@@ -137,8 +137,11 @@ def test_the_real_tree_is_clean_and_the_self_test_agrees():
     assert _CM.main.__module__ == "_check_manifests"
 
 
-def test_the_name_maps_are_not_identity():
-    for name, target in {**_CM.CONDA_TO_PYPI, **_CM.IMPORT_TO_DISTRIBUTION}.items():
+def test_the_name_map_is_not_identity():
+    """`CONDA_TO_PYPI` went with `environment.yml` in #2167: there is no second manifest to
+    normalise against, so a conda-to-PyPI rename had nothing left to rename."""
+    assert not hasattr(_CM, "CONDA_TO_PYPI"), "the conda name map outlived the manifest it served"
+    for name, target in _CM.IMPORT_TO_DISTRIBUTION.items():
         assert name != target, f"{name!r} maps to itself"
 
 

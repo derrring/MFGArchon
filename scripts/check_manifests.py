@@ -1,40 +1,19 @@
 #!/usr/bin/env python3
-"""Both manifests must declare what the package actually imports.
-
-Two failures, one shape, both already in this repository's history.
+"""Every unguarded third-party import must be declared in `pyproject.toml`.
 
 `pyyaml` was imported at module level by `config/io.py` and declared nowhere. It arrived
 transitively -- from omegaconf and from jupyterlab's dependency chain -- so removing those in one
 change would have broken `load_solver_config` on a fresh install (#1687). Nothing detected that; it
 was found by reading.
 
-`jupyter`, `jupyterlab` and `seaborn` were removed from `pyproject.toml` by that same issue, on the
-stated criterion of zero imports across the package, tests, examples and benchmarks. They stayed in
-`environment.yml`, which also never gained the eight packages the library imports and `pyproject`
-declares. An environment built from that file could not run the library: measured 2026-08-28, 6630
-test outcomes against 6724, with 66 tests skipped or not collected because cvxpy and torch were
-absent -- and the warning ratchet then reported the warnings those tests would have emitted as
-identities GONE, inviting the reader to record the loss as progress.
+**Unguarded only, and that is the whole check.** A module-level
+`try: import cvxpy / except ImportError: HAVE_CVXPY = False` cannot break an install: the module
+sets a flag and carries on. Gating those is how a check acquires false findings that teach people to
+ignore it. Guarded-and-undeclared is reported, never gated.
 
-So: a check, in both directions.
-
-The two directions have different lifespans, and saying so here is the point of this paragraph.
-IMPORTED-BUT-UNDECLARED compares the package against `pyproject.toml` and outlives any packaging
-decision. DECLARED-BUT-MISSING compares `pyproject.toml` against `environment.yml`, and #2167
-deletes that file: `pyproject.toml` + `uv.lock` become the single owner, and swapping the BLAS
-implementation -- the one thing conda does that PyPI cannot -- turns out not to need a second
-manifest, because `uv pip install` leaves a conda-installed numpy alone. When that lands, delete
-the second direction with the file. It is here because `environment.yml` is still the only
-onboarding path the documentation names, and it was broken.
-
-  IMPORTED-BUT-UNDECLARED  a third-party module `mfgarchon/` imports that `pyproject.toml`
-                           declares nowhere -- the #1687 shape, a fresh install away from breaking
-  DECLARED-BUT-MISSING     a runtime dependency in `pyproject.toml` absent from `environment.yml`
-                           -- the shape that produced the 6630-outcome run
-
-This does NOT decide whether an unused declaration should be removed. Absence of an import is not
-absence of use: `line-profiler` and `memory-profiler` are invoked as `kernprof` and `mprof` and are
-correctly declared without ever being imported. That direction needs a human and is out of scope.
+The second direction this once had -- `pyproject.toml` against `environment.yml` -- went with that
+file in #2167. `pyproject.toml` + `uv.lock` are the one dependency owner now, so there is no second
+manifest to disagree with.
 """
 
 from __future__ import annotations
@@ -48,21 +27,12 @@ import sys
 import tomllib
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "mfgarchon"
 
 #: Distributions whose import name this environment cannot resolve, with the reason. Every entry
 #: is a claim that has to stay true, so the self-test asserts the mapping still fails for each --
 #: an entry that starts resolving is a stale exemption and says so.
-#: conda spellings that differ from the PyPI distribution name. Applied symmetrically by
-#: `_normalise` so the two manifests compare on one vocabulary. PyPI `pytorch` is a 1.0.2 placeholder
-#: from 2019; the real distribution is `torch`. Dies with `environment.yml` in #2167.
-CONDA_TO_PYPI = {
-    "pytorch": "torch",
-}
-
 #: Import names whose distribution is spelled differently. Only needed when the distribution is not
 #: installed, because `packages_distributions()` answers for the ones that are. Each entry is
 #: asserted still necessary by `--self-test`: the fallback uses the import name, so an entry whose
@@ -78,7 +48,7 @@ IMPORT_TO_DISTRIBUTION = {
 def _normalise(spec: str) -> str:
     """A requirement or conda spec to a comparable distribution name."""
     name = re.split(r"[<>=!~\[;]", spec, maxsplit=1)[0].strip().lower().replace("_", "-")
-    return CONDA_TO_PYPI.get(name, name)
+    return name
 
 
 def _catches_import_error(handler: ast.ExceptHandler) -> bool:
@@ -169,14 +139,6 @@ def _declared(pyproject: dict) -> set[str]:
     return declared
 
 
-def _conda(environment: dict) -> set[str]:
-    names = {_normalise(x) for x in environment["dependencies"] if isinstance(x, str)}
-    for entry in environment["dependencies"]:
-        if isinstance(entry, dict):
-            names |= {_normalise(x) for x in entry.get("pip", [])}
-    return names
-
-
 def _undeclared(package: Path, declared: set[str]) -> tuple[list[str], list[str]]:
     """(gated, advisory): unguarded third-party imports no manifest declares, and guarded ones.
 
@@ -213,26 +175,8 @@ def _self_test() -> int:
     """Both directions on synthetic manifests, plus the exemptions, driven through the real checks."""
     failures: list[str] = []
 
-    if _normalise("pytorch>=2.0") != "torch":
-        failures.append("the conda/PyPI name map is not applied by _normalise")
     if _normalise("scikit-fem>=8.0") != "scikit-fem" or _normalise("PyYAML") != "pyyaml":
         failures.append("_normalise does not fold case or extras")
-
-    # Each map entry must still be NEEDED, which is a claim about the manifests and the import
-    # names -- not about what happens to be installed here. The previous version asked whether a
-    # distribution literally named `pytorch` was installed, which is unrelated: it stayed green when
-    # the exemption was made dead by renaming the conda entry, and when the entry was deleted
-    # outright. Worse, installing the 1.0.2 PyPI placeholder -- the hazard the map exists for --
-    # made it advise deleting the guard.
-    conda_names = _conda(yaml.safe_load((ROOT / "environment.yml").read_text()))
-    for conda_name, pypi_name in CONDA_TO_PYPI.items():
-        if conda_name == pypi_name:
-            failures.append(f"CONDA_TO_PYPI[{conda_name!r}] maps a name to itself")
-        if _normalise(conda_name) not in conda_names:
-            failures.append(
-                f"CONDA_TO_PYPI[{conda_name!r}] is unused: environment.yml no longer names it, so the "
-                "entry has outlived its reason and should be deleted"
-            )
 
     # An IMPORT_TO_DISTRIBUTION entry is needed only when the import name would NOT resolve on its
     # own. The fallback in `_undeclared` uses the import name, so an entry whose import name is
@@ -281,7 +225,7 @@ def _self_test() -> int:
     print(
         "self-test OK: both directions fire on synthetic manifests, the real tree is clean, "
         f"the verdict does not move with the environment, and all "
-        f"{len(CONDA_TO_PYPI) + len(IMPORT_TO_DISTRIBUTION)} name-map entries are still needed"
+        f"{len(IMPORT_TO_DISTRIBUTION)} name-map entries are still needed"
     )
     return 0
 
@@ -296,21 +240,13 @@ def main() -> int:
         return _self_test()
 
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    environment = yaml.safe_load((ROOT / "environment.yml").read_text())
     declared = _declared(pyproject)
-    conda = _conda(environment) | {"python", "pip"}
 
     undeclared, optional = _undeclared(PACKAGE, declared)
-    runtime = {_normalise(x) for x in pyproject["project"].get("dependencies", [])}
-    absent = sorted(runtime - conda)
 
     if args.json:
-        print(
-            json.dumps(
-                {"undeclared": undeclared, "guarded_and_undeclared": optional, "absent_from_conda": absent}, indent=2
-            )
-        )
-        return 1 if (undeclared or absent) else 0
+        print(json.dumps({"undeclared": undeclared, "guarded_and_undeclared": optional}, indent=2))
+        return 1 if undeclared else 0
 
     rc = 0
     if undeclared:
@@ -319,13 +255,6 @@ def main() -> int:
             print(f"    {item}")
         print("    Declare each in `pyproject.toml`, in the extra that matches how it is imported.")
         rc = 1
-    if absent:
-        print(f"\nDECLARED BUT MISSING FROM environment.yml ({len(absent)}):")
-        for item in absent:
-            print(f"    {item}")
-        print("    An environment built from that file cannot run the package. Add them, or move")
-        print("    the dependency out of `[project.dependencies]` if it is not really runtime.")
-        rc = 1
     if optional:
         print(f"\nGUARDED AND UNDECLARED ({len(optional)}) -- reported, never gated:")
         for item in optional:
@@ -333,9 +262,7 @@ def main() -> int:
         print("    Each is behind a module-level `try: import .. except ImportError`, so its absence")
         print("    cannot break an install. Declaring them in an extra would still be an improvement.")
     if rc == 0:
-        print(
-            "manifests agree: every third-party import is declared, and every runtime dependency is in environment.yml"
-        )
+        print("manifests agree: every unguarded third-party import is declared in pyproject.toml")
     return rc
 
 

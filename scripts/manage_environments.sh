@@ -43,16 +43,22 @@ check_conda() {
 # Function to create development environment
 create_dev_env() {
     print_info "Creating development environment (mfg_dev)..."
-
-    conda env create -f environment.yml -n mfg_dev || {
+    # `environment.yml` is gone (#2167): `pyproject.toml` + `uv.lock` are the one dependency owner.
+    # conda still supplies the SUBSTRATE -- an interpreter and a BLAS-linked numpy/scipy -- which is
+    # the one thing PyPI wheels cannot vary, and `uv pip install` leaves a conda-installed numpy
+    # alone. Pick a libblas variant your platform has: conda-forge builds accelerate, newaccelerate,
+    # openblas, blis and netlib on osx-arm64, and mkl on linux-64/osx-64/win-64 only.
+    conda create -y -n mfg_dev -c conda-forge python=3.12 numpy scipy || {
         print_warning "Environment creation failed, trying update..."
-        conda env update -f environment.yml -n mfg_dev
+        conda install -y -n mfg_dev -c conda-forge python=3.12 numpy scipy
     }
 
     print_status "Activating environment and installing MFGarchon..."
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate mfg_dev
-    pip install -e .
+    pip install -e . --group dev
+    # ruff has one owner, read at runtime -- see pyproject.toml's dev group and ci.yml quick-checks.
+    pip install "ruff==$(python scripts/update_ruff_version.py --print-current)"
 
     print_status "Development environment ready!"
 }
