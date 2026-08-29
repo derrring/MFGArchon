@@ -48,7 +48,7 @@ INSTALL = re.compile(r"\b(?:pip\s+install|uv\s+(?:pip\s+install|sync|run|add|exp
 #: Where an install command can live. Extension-free entries are deliberate: `Makefile` has no
 #: suffix, and restricting to a suffix list is how a population predicate silently loses a file.
 ROOTS = (".github", "scripts", "docs")
-FILES = ("Makefile", "README.md", "pyproject.toml", "CONTRIBUTING.md")
+FILES = ("Makefile", "README.md", "pyproject.toml", "CONTRIBUTING.md", "environment.yml")
 
 
 def _declared() -> tuple[set[str], set[str]]:
@@ -131,7 +131,7 @@ def test_the_scan_covers_every_root_it_claims_to():
                 f"the scan selected nothing from {root}/ -- the population shrank, and a scan that "
                 "sees fewer files reports fewer violations, which reads as a clean repository"
             )
-    for name in ("Makefile", "README.md", "pyproject.toml"):
+    for name in ("Makefile", "README.md", "pyproject.toml", "environment.yml"):
         if (REPO / name).is_file():
             assert name in examined, f"the scan lost {name}"
     assert any(f.startswith("mfgarchon/") for f in examined), "the package glob selected nothing"

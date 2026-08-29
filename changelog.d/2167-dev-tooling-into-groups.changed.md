@@ -66,3 +66,10 @@
 - `numerical` no longer carries a `# Development tools (not user-facing)` header — it is in
   `[project.optional-dependencies]` precisely because it is user-facing. The header belonged to `dev`,
   which moved.
+- **`environment.yml` joins the scanned population.** It carries install commands in its header, and
+  being outside the scan is what let a cross-PR defect through: #2166's recipe reads
+  `-e ".[all,dev]"`, which this change makes an extra that does not exist — `WARNING: … does not
+  provide the extra 'dev'`, exit 0. Each PR was green alone and nothing checked the pair. Verified by
+  real `git merge` of all five branches, not by overlaying archives: an archive overlay silently
+  restores the second branch's copy of files the first one changed, and gave the wrong answer twice
+  before that was noticed.
