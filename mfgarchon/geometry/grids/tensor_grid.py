@@ -44,6 +44,7 @@ from mfgarchon.geometry.protocols import (
     SupportsRegionMarking,
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -665,37 +666,84 @@ class TensorProductGrid(
             boundary_conditions=self._boundary_conditions,
         )
 
-    def volume_element(self, multi_index: Sequence[int] | None = None) -> float:
+    def quadrature_weights(self, dimension_idx: int = 0) -> NDArray:
+        """The control volume each node owns along one axis. THE OWNER of the grid's measure.
+
+        This grid is ENDPOINT_INCLUSIVE -- ``x[0]`` and ``x[-1]`` lie ON the boundary -- so the two
+        end nodes own HALF a cell each and the interior nodes own a full one:
+
+            w[0]  = (x[1] - x[0]) / 2
+            w[i]  = (x[i+1] - x[i-1]) / 2
+            w[-1] = (x[-1] - x[-2]) / 2
+
+        Those are the trapezoid weights, exactly, and they are the measure on this grid.
+        ``sum(m) * dx`` is a DIFFERENT functional: it gives each end node a full cell reaching
+        outside the declared bounds and over-counts the total by ``dx*(m[0]+m[-1])/2`` -- 3.5% on a
+        standard fixture, before anything evolves. Decided in #2145; the evidence, both costs and
+        the census of sites that answered it the other way are there.
+
+        Written on coordinates rather than on a single ``dx``, so it is correct on a non-uniform
+        grid as well. Callers that need a total should use :meth:`integrate` rather than reducing
+        these by hand -- the point of this method is that no caller holds a position on the
+        quadrature.
         """
-        Compute volume element (dx·dy·dz) at grid point.
+        if dimension_idx >= self._dimension:
+            raise ValueError(f"dimension_idx {dimension_idx} out of range for a {self._dimension}-D grid")
+        x = np.asarray(self.coordinates[dimension_idx], dtype=float)
+        return quadrature_weights_1d(x)
 
-        Args:
-            multi_index: Optional grid point index (for non-uniform grids)
+    def integrate(self, field: NDArray) -> NDArray | float:
+        """Integrate ``field`` over this grid, with this grid's own weights.
 
-        Returns:
-            Volume element (1D: dx, 2D: dx·dy, 3D: dx·dy·dz)
+        Accepts a spatial field shaped like the grid, or a stack whose TRAILING axes are spatial --
+        a ``(time, *spatial)`` history integrates to one value per time row, which is the shape
+        every mass-conservation check wants.
+
+        The weights are the tensor product of :meth:`quadrature_weights` along each axis, so a
+        corner node owns ``prod(h_d / 2)`` and the identity holds in any dimension.
         """
-        if self.is_uniform:
-            return float(np.prod(self.spacing))
-        else:
-            # For non-uniform grids, need local spacing
-            if multi_index is None:
-                raise ValueError("multi_index required for non-uniform grids")
+        arr = np.asarray(field, dtype=float)
+        spatial = tuple(self._Nx_points)
+        nd = len(spatial)
+        if arr.ndim < nd or tuple(arr.shape[-nd:]) != spatial:
+            raise ValueError(
+                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} "
+                f"do not match the grid {spatial}; integrate() reduces the TRAILING axes so that a "
+                f"(time, *spatial) history returns one value per time row"
+            )
+        weights = self.quadrature_weights(0)
+        for d in range(1, nd):
+            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
-            vol = 1.0
-            for i in range(self._dimension):
-                spacings = self.get_spacing(i)
-                idx = multi_index[i]
-                # Use average of left and right spacing
-                if idx == 0:
-                    local_spacing = spacings[0]
-                elif idx == self._Nx_points[i] - 1:
-                    local_spacing = spacings[-1]
-                else:
-                    local_spacing = 0.5 * (spacings[idx - 1] + spacings[idx])
-                vol *= local_spacing
+    def integrate_boundary(self, field: NDArray, axis: int) -> NDArray | float:
+        """Integrate over the boundary face whose normal is ``axis``.
 
-            return vol
+        A face is a grid one dimension lower and its own end nodes hold half a cell each, for the
+        same reason the volume's do -- so ``sum(face) * dx`` over-counts a face exactly as
+        ``sum(m) * dx`` over-counts the volume (#2145). The face of a 1-D grid is a point, whose
+        measure is 1.
+
+        ``field`` is the face, shaped like the grid with ``axis`` removed; trailing axes are
+        reduced, so a ``(time, *face)`` history gives one value per row.
+        """
+        if not 0 <= axis < self._dimension:
+            raise ValueError(f"axis {axis} out of range for a {self._dimension}-D grid")
+        face_shape = tuple(n for d, n in enumerate(self._Nx_points) if d != axis)
+        arr = np.asarray(field, dtype=float)
+        nd = len(face_shape)
+        if nd == 0:
+            return arr
+        if arr.ndim < nd or tuple(arr.shape[-nd:]) != face_shape:
+            raise ValueError(
+                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} do "
+                f"not match the face {face_shape} of axis {axis}"
+            )
+        axes = [d for d in range(self._dimension) if d != axis]
+        weights = self.quadrature_weights(axes[0])
+        for d in axes[1:]:
+            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
     # ============================================================================
     # Geometry ABC implementation (data interface)

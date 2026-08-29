@@ -46,6 +46,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -263,6 +265,20 @@ class FluxDiagnostics:
 
             return np.stack(alpha_components, axis=-1)
 
+    def _axis_weights(self, axis: int, n: int) -> NDArray:
+        """The control volume each node owns along ``axis``, from the one owner (#2145).
+
+        This class holds a spacing and no grid, so the coordinates are rebuilt -- exact for the
+        uniform spacing it is constructed with, and the weights depend only on differences, so the
+        origin does not matter. It calls ``quadrature_weights_1d`` rather than writing the formula
+        again: a second derivation is what #2145 found in 169 places.
+
+        ``sum(f) * dx`` is NOT this, and the difference is not a rounding detail: it gives the two
+        end nodes a full cell each and over-counts by ``dx*(f[0]+f[-1])/2``. On a boundary face that
+        is the same error one dimension down, which is why the face integrals below use it too.
+        """
+        return quadrature_weights_1d(np.arange(n, dtype=float) * float(self.spacing[axis]))
+
     def _compute_flux_1d(
         self,
         m: NDArray,
@@ -279,8 +295,8 @@ class FluxDiagnostics:
         """
         dx = self.spacing[0]
 
-        # Total mass
-        total_mass = float(np.sum(m) * dx)
+        # Total mass, on the grid's own measure (#2145)
+        total_mass = float(np.dot(np.asarray(m, dtype=float), self._axis_weights(0, m.shape[0])))
 
         # Diffusion coefficient handling
         D_left = D if np.isscalar(D) else D[0]
@@ -338,8 +354,11 @@ class FluxDiagnostics:
         """
         dx, dy = self.spacing
 
-        # Total mass
-        total_mass = float(np.sum(m) * dx * dy)
+        # Total mass, on the grid's own measure (#2145): the tensor product of the per-axis
+        # weights, so a corner owns (h_x/2)(h_y/2) rather than a full cell.
+        w_x = self._axis_weights(0, m.shape[0])
+        w_y = self._axis_weights(1, m.shape[1])
+        total_mass = float(np.einsum("ij,i,j->", np.asarray(m, dtype=float), w_x, w_y))
 
         # Handle velocity field shape
         if alpha.ndim == 2:
@@ -362,37 +381,37 @@ class FluxDiagnostics:
         dm_dx_left = (m[1, :] - m[0, :]) / dx
         adv_left = -alpha_x[0, :] * m[0, :]  # -α_x because normal is -x
         diff_left = D_val * dm_dx_left  # D*∂m/∂x, outward is -x so sign flips
-        J_left = float(np.sum(adv_left + diff_left) * dy)
+        J_left = float(np.dot(adv_left + diff_left, w_y))
         boundary_fluxes["left"] = J_left
-        total_advection += float(np.sum(adv_left) * dy)
-        total_diffusion += float(np.sum(diff_left) * dy)
+        total_advection += float(np.dot(adv_left, w_y))
+        total_diffusion += float(np.dot(diff_left, w_y))
 
         # Right boundary (x=L): outward normal = (+1, 0)
         dm_dx_right = (m[-1, :] - m[-2, :]) / dx
         adv_right = alpha_x[-1, :] * m[-1, :]
         diff_right = -D_val * dm_dx_right
-        J_right = float(np.sum(adv_right + diff_right) * dy)
+        J_right = float(np.dot(adv_right + diff_right, w_y))
         boundary_fluxes["right"] = J_right
-        total_advection += float(np.sum(adv_right) * dy)
-        total_diffusion += float(np.sum(diff_right) * dy)
+        total_advection += float(np.dot(adv_right, w_y))
+        total_diffusion += float(np.dot(diff_right, w_y))
 
         # Bottom boundary (y=0): outward normal = (0, -1)
         dm_dy_bottom = (m[:, 1] - m[:, 0]) / dy
         adv_bottom = -alpha_y[:, 0] * m[:, 0]
         diff_bottom = D_val * dm_dy_bottom
-        J_bottom = float(np.sum(adv_bottom + diff_bottom) * dx)
+        J_bottom = float(np.dot(adv_bottom + diff_bottom, w_x))
         boundary_fluxes["bottom"] = J_bottom
-        total_advection += float(np.sum(adv_bottom) * dx)
-        total_diffusion += float(np.sum(diff_bottom) * dx)
+        total_advection += float(np.dot(adv_bottom, w_x))
+        total_diffusion += float(np.dot(diff_bottom, w_x))
 
         # Top boundary (y=L): outward normal = (0, +1)
         dm_dy_top = (m[:, -1] - m[:, -2]) / dy
         adv_top = alpha_y[:, -1] * m[:, -1]
         diff_top = -D_val * dm_dy_top
-        J_top = float(np.sum(adv_top + diff_top) * dx)
+        J_top = float(np.dot(adv_top + diff_top, w_x))
         boundary_fluxes["top"] = J_top
-        total_advection += float(np.sum(adv_top) * dx)
-        total_diffusion += float(np.sum(diff_top) * dx)
+        total_advection += float(np.dot(adv_top, w_x))
+        total_diffusion += float(np.dot(diff_top, w_x))
 
         # Net flux (sum of all boundary fluxes, all pointing outward)
         net_flux = sum(boundary_fluxes.values())

@@ -15,6 +15,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_term_nd
 from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
 def _setup_2d(n=12):
@@ -34,7 +35,14 @@ class TestCoupledAdvectionConservation:
         M, U, spacing = _setup_2d()
         bc = no_flux_bc(dimension=2)
         adv = compute_advection_term_nd(M, U, 1.0, spacing, 2, bc, mass_conservative=True)
-        total = float(np.sum(adv))  # uniform spacing → ∝ ∫ div(αm) dx
+        # Against the CONTROL VOLUMES (#2145), not a bare sum. The divergence theorem gives
+        # `int div(alpha m) = 0` when the wall flux vanishes, and the discrete integral on an
+        # endpoint-inclusive grid is `sum_i w_i (div)_i`, with the wall nodes owning half a cell per
+        # axis and the corner a quarter. A bare sum weights every node equally, so it tests a
+        # different functional -- the one the wall rows used to telescope against while the scheme
+        # lost real mass.
+        w1 = quadrature_weights_1d(np.arange(M.shape[0], dtype=float) * spacing[0])
+        total = float(np.sum(np.multiply.outer(w1, w1) * adv))
         assert abs(total) < 1e-10, (
             f"conservative FV advection must integrate to ~0 under no-flux (zero wall flux), got {total:.3e}"
         )

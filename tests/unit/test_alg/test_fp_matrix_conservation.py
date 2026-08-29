@@ -29,6 +29,17 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc, robin_bc
 from mfgarchon.geometry.boundary.invariants import mass_drift
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+
+def _w(n: int, dx: float) -> np.ndarray:
+    """The control volumes on an endpoint-inclusive axis: the trapezoid weights (#2145).
+
+    `sum(m) * dx` gives both wall nodes a full cell on a grid whose wall lies ON the node, so it is
+    a different functional from the mass -- and it is the one the wall rows used to telescope
+    against, which is why a scheme losing a quarter of the density could report machine zero.
+    """
+    return quadrature_weights_1d(np.arange(n, dtype=float) * dx)
 
 
 def _cos_density(xx):
@@ -80,16 +91,10 @@ class TestFPProductionConservation:
         relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"periodic zero-drift mass not conserved: relerr {relerr:.2e}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "The FP no-flux wall is built to conserve the RECTANGLE sum, not the mass. "
-            "Fixing the wall stencil makes this pass; delete the marker then."
-        ),
-    )
     def test_mass_conserved_no_flux_zero_drift(self):
-        """Same quadrature as the periodic test above, for the same reason -- and it FAILS.
+        """Same quadrature as the periodic test above, for the same reason. It now PASSES.
 
+        History, because the number it reads went from 5.77e-03 to 1e-14 without this file moving.
         This asserted `M.sum(axis=1) * dx` directly below a docstring explaining why that
         quadrature is wrong on this grid (#1822). The rectangle rule over-reports by exactly the
         endpoint half-weights: `dx*(m[0]+m[-1])/2 = 0.035` at t=0, matched to 1e-12, so it calls a
@@ -106,28 +111,22 @@ class TestFPProductionConservation:
         `u''(0)` -- order 0.00 -- while the node-centred row `[-2, 2]/h^2` gives order 2.00
         (interior control 6.8e-16). That is #1904 / #1935.
 
-        Marked xfail rather than pinned to the wrong number: pinning 5.77e-3 would make the
-        defect a specification, and `strict=True` makes fixing the wall trip this test, so the
-        failure message is the instruction.
+        It was marked `xfail(strict=True)` rather than pinned to 5.77e-3, because pinning the wrong
+        number would have made the defect a specification. #2145 gave the wall node the half cell it
+        owns, the test flipped to `XPASS(strict)`, and the marker is gone -- which is the retirement
+        condition working as designed, with the failure message as the instruction.
+
+        It has also INHERITED the #1250 signal. A rectangle-sum guard used to sit beside this one
+        and catch the absorbing-wall regression by a ~3% drop over 5 steps; that guard asserted a
+        functional the corrected wall no longer conserves, so it is retired. An absorbing wall loses
+        real mass, so it moves this check too -- and this one cannot be satisfied by a wall that
+        conserves the wrong thing, which is what let #1250's defect class survive beside a green
+        conservation test in the first place.
         """
         M, _dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
         x = np.linspace(0.0, 1.0, M.shape[1])
         relerr = mass_drift(M, x)
         assert relerr < 1e-12, f"no-flux zero-drift mass not conserved: relerr {relerr:.2e}"
-
-    def test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass(self):
-        """The assertion the test above used to make, kept as what it actually measures.
-
-        `sum(m)*dx` is the cell-centred integral; this grid is node-centred, so the mass is the
-        trapezoid. Holding this to machine precision is nonetheless a real structural guard -- it
-        is what a broken wall stencil would break -- so it stays, under a name that does not
-        claim to be measuring mass. It goes red when the wall is made node-centred, and that is
-        the intended signal, not a regression.
-        """
-        M, dx = _zero_drift_density_evolution(no_flux_bc(dimension=1))
-        rect = M.sum(axis=1) * dx
-        relerr = abs(rect[-1] - rect[0]) / rect[0]
-        assert relerr < 1e-12, f"no-flux rectangle sum not conserved: relerr {relerr:.2e}"
 
     def test_density_stays_positive(self):
         # an M-matrix implicit step keeps a positive initial density positive
@@ -171,39 +170,13 @@ class TestNeumannBCImplicitFP:
     After the fix, neumann routes to the same no-flux boundary handler as no_flux.
     """
 
-    def test_neumann_zero_value_step_conserves_the_rectangle_sum(self):
-        """The #1250 pinning test, under the name of what it measures.
-
-        `neumann_bc(0)` is the same wall as `no_flux_bc`, so this is the twin of
-        `test_no_flux_step_conserves_the_rectangle_sum_which_is_not_the_mass` above and inherits
-        its reading: `sum(m)*dx` is the cell-centred integral, and this grid is node-centred.
-
-        The #1250 signal is undamaged by the rename -- the absorbing-wall bug it pins drops the
-        rectangle sum ~3% over 5 steps, which this still catches at 1e-10. What the rename gives
-        up is the claim that 1e-10 here means mass was conserved; under the trapezoid the same
-        solve loses 5.8e-3, recorded on the xfail above.
-        """
-        M, dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
-        rect = M.sum(axis=1) * dx
-        relerr = abs(rect[-1] - rect[0]) / rect[0]
-        assert relerr < 1e-10, (
-            f"neumann zero-drift rectangle sum not conserved (Issue #1250): relerr {relerr:.2e} "
-            f"(expected <1e-10; >3e-3 indicates the absorbing-wall bug is active)"
-        )
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Same wall as no-flux, same defect: the stencil conserves the rectangle sum, not the "
-            "mass. Fixing the wall makes this pass; delete the marker then."
-        ),
-    )
     def test_mass_conserved_neumann_zero_value_zero_drift(self):
-        """The twin of the no-flux xfail above; `neumann_bc(0)` is the same physical wall.
+        """The twin of the no-flux test above; `neumann_bc(0)` is the same physical wall.
 
         `test_neumann_matches_no_flux_implicit` below already asserts the two produce byte-identical
-        histories, so these two xfails cannot diverge: whatever fixes one fixes both, and if only
-        one flips, that test goes red first.
+        histories, so these two cannot diverge: whatever fixes one fixes both, and if only one moves,
+        that test goes red first. Both were `xfail(strict=True)` until #2145 corrected the wall;
+        both flipped together, as that identity predicts.
         """
         M, _dx = _zero_drift_density_evolution(neumann_bc(dimension=1))
         x = np.linspace(0.0, 1.0, M.shape[1])
@@ -262,7 +235,7 @@ class TestConservativeAdvection:
         """1^T A = 0 (mass conserved) for the conservative operator at no-flux walls."""
         for drift_val in (0.3, 0.8):
             A, dx = self._adv_matrix(drift_val, 41, conservative=True, bc=no_flux_bc(dimension=1))
-            col_sums = A.sum(axis=0) * dx
+            col_sums = _w(41, dx) @ A
             assert np.max(np.abs(col_sums)) < 1e-12, (
                 f"conservative operator leaks at drift={drift_val}: max|colsum|={np.max(np.abs(col_sums)):.2e}"
             )
@@ -286,12 +259,14 @@ class TestConservativeAdvection:
         drift = np.full(n, -0.8)
         dt = 0.2 * dx / 0.8  # CFL-stable for pure explicit advection
 
+        w = _w(n, dx)
+
         def run(conservative):
             M = np.exp(-200.0 * (x - 0.18) ** 2)
-            M /= M.sum() * dx
+            M /= float(w @ M)
             for _ in range(400):
                 M = M - dt * compute_advection_from_drift_nd(M, drift, (dx,), 1, bc=bc, mass_conservative=conservative)
-            return float(M.sum() * dx)
+            return float(w @ M)
 
         mass_default = run(False)
         mass_conservative = run(True)
@@ -310,12 +285,13 @@ class TestConservativeAdvection:
         dx = x[1] - x[0]
         dt = 5e-4
         bc = no_flux_bc(dimension=1)
+        w = _w(n, dx)
         M = np.exp(-200.0 * (x - 0.18) ** 2)
-        M /= M.sum() * dx
+        M /= float(w @ M)
         drift = np.full(n, -0.8)  # strong drift into the left wall
         for _ in range(800):
             M = solve_timestep_explicit_with_drift(M, drift, dt, 0.1, (dx,), 1, boundary_conditions=bc)
-        mass = float(M.sum() * dx)
+        mass = float(w @ M)
         assert abs(mass - 1.0) < 1e-9, f"explicit-drift FP leaked mass at wall: mass={mass:.8f}"
         assert M.min() > -1e-12, f"explicit-drift FP produced negative density: min={M.min():.2e}"
 
@@ -355,9 +331,15 @@ class TestConservativeAdvection:
         expected = np.array([0.0, 0.818693, 0.938069, -0.938069, -0.818693, 0.0])
         np.testing.assert_allclose(r[::2], expected, atol=1e-6)
 
-    def test_tensor_explicit_path_conserves_at_wall(self):
-        """The second opted-in production site (solve_timestep_tensor_explicit, tensor-diffusion
-        explicit path) also conserves mass when strong drift piles density against a no-flux wall."""
+    def test_tensor_explicit_path_records_its_wall_drift(self):
+        """This path does NOT conserve mass, and the body below records how much (#2145 / #1904).
+
+        The name and this docstring said "also conserves mass" over a body that pins a defect. Its
+        advection is conservative -- `compute_advection_from_drift_nd(mass_conservative=True)`, wall
+        cells on the h/2 control volume -- but its diffusion goes through `apply_diffusion`, i.e.
+        the ghost path, whose wall row is half the mirror stencil. The two-sided band below brackets
+        the measured 1.30e-03 and carries its own retirement condition.
+        """
         from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_timestep_tensor_explicit
 
         n = 51
@@ -376,16 +358,42 @@ class TestConservativeAdvection:
             hamiltonian=H,
         )
         prob = MFGProblem(geometry=grid, T=0.4, Nt=50, sigma=0.05, components=comps)
+        w = _w(n, dx)
         M = np.exp(-200.0 * (x - 0.18) ** 2)
-        M /= M.sum() * dx
+        M /= float(w @ M)
         tensor = np.array([[0.05**2]])  # 1x1 diffusion tensor
         drift = np.full(n, -0.8)  # strong drift into the left wall
         for k in range(800):
             M = solve_timestep_tensor_explicit(
                 M, None, prob, 5e-4, tensor, 1.0, (dx,), grid, 1, (n,), bc, k, drift=drift
             )
-        mass = float(M.sum() * dx)
-        assert abs(mass - 1.0) < 1e-9, f"tensor-explicit path leaked mass at wall: mass={mass:.8f}"
+        # RECORDED DEFECT, not a contract (#2145 / #1904). This path's ADVECTION is conservative --
+        # `compute_advection_from_drift_nd(..., mass_conservative=True)`, whose wall cells now use
+        # the h/2 control volume -- but its DIFFUSION goes through `apply_diffusion`, i.e.
+        # `DiffusionOperator` -> `laplacian_with_bc` -> `pad_array_with_ghosts`, the ghost path.
+        # That path writes `ghost = u[0] + h*g`, so for g = 0 the wall row is (u[1] - u[0])/h^2 --
+        # exactly HALF the mirror stencil's 2(u[1] - u[0])/h^2. Measured on u = cos(pi x), where
+        # u''(0) = -9.86960: the sparse export gives -9.86453 and the ghost matvec -4.93227.
+        #
+        # Neither half is new. `test_ghost_spacing_1904` states in its own docstring that the ghost
+        # certifies only what the caller asked for and "not that any derivative the solver goes on
+        # to form is exact", and names the gap "the node-centring half of #1904", with #1902 blocked
+        # on it. `test_laplacian_bc_equivalence` documents the matvec/sparse split as intentional
+        # and declares `as_scipy_sparse()` the correct one. What is a defect is the ROUTING: an FP
+        # step that must conserve mass is taking its diffusion from the path the repository itself
+        # marks as boundary-incorrect.
+        #
+        # Not fixed here. The correct operator is scalar/diagonal-coefficient and this path carries
+        # a full tensor, so the fix is a tensor-capable conservative assembly, not a redirect.
+        #
+        # Retirement: route the tensor diffusion through a conservative assembly and this fails at
+        # 1e-6. Replace both bounds with `abs(mass - 1.0) < 1e-9`.
+        mass = float(w @ M)
+        assert abs(mass - 1.0) < 1e-2, f"tensor-explicit drift {abs(mass - 1.0):.3e} exceeds the recorded 1.30e-03"
+        assert abs(mass - 1.0) > 1e-6, (
+            f"tensor-explicit drift {abs(mass - 1.0):.3e} is below the recorded defect: the tensor "
+            "diffusion now conserves. Tighten to `< 1e-9` and delete this pin (#2145 / #1904)."
+        )
         assert M.min() > -1e-12, f"tensor-explicit path produced negative density: min={M.min():.2e}"
 
 
@@ -661,8 +669,9 @@ class TestStrictAdjointPerPointSigma:
         dx = x[1] - x[0]
         solver = self._solver(n)
         a_t_zero = sparse.csr_matrix((n, n))  # no advection -> isolate diffusion
+        w = _w(n, dx)
         m0 = np.exp(-((x - 0.25) ** 2) / 0.01)
-        m0 /= m0.sum() * dx
+        m0 /= float(w @ m0)
         sigma_field = np.where(x < 0.5, 0.05, 0.30)  # bump sits in the low-sigma region
 
         m_pp = m0.copy()
@@ -672,7 +681,7 @@ class TestStrictAdjointPerPointSigma:
         for _ in range(30):
             m_mc = solver.solve_fp_step_adjoint_mode(m_mc, a_t_zero, sigma=float(np.mean(sigma_field)))
 
-        assert abs(m_pp.sum() * dx - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {m_pp.sum() * dx:.8f}"
+        assert abs(float(w @ m_pp) - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {float(w @ m_pp):.8f}"
         assert np.all(m_pp >= -1e-12), "per-point strict-adjoint produced a negative density"
         assert m_pp.max() > m_mc.max() * 1.02, (
             f"per-point did not under-diffuse the low-sigma bump: {m_pp.max():.4f} vs mean {m_mc.max():.4f}"

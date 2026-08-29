@@ -25,6 +25,7 @@ from mfgarchon.geometry.boundary import (
     no_flux_bc,
     periodic_bc,
 )
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
 def _default_hamiltonian():
@@ -1247,8 +1248,14 @@ class TestFPFDMSolverCallableDrift:
 
         # Both callables return constants, so the combined dispatch has exact laws to answer to.
         # Without them these assertions hold for a solver that ignores the drift callable entirely.
-        mass = M.sum(axis=1)
-        com = (M * x_grid).sum(axis=1) / mass
+        #
+        # Weighted by the control volumes (#2145). A bare sum is the cell-centred integral and this
+        # grid is node-centred, so it is a different functional from the mass -- and the centre of
+        # mass is a ratio of two integrals, which needs the same weights in both to be a spatial
+        # average at all.
+        w = quadrature_weights_1d(x_grid)
+        mass = (M * w).sum(axis=1)
+        com = (M * w * x_grid).sum(axis=1) / mass
 
         # No-flux walls: mass is conserved. Measured drift 9.1e-15 relative, ~1e5 inside rtol.
         np.testing.assert_allclose(mass, mass[0], rtol=1e-9)
@@ -1260,7 +1267,7 @@ class TestFPFDMSolverCallableDrift:
         M_reversed = solver.solve_fp_system(
             m_initial, drift_field=reversed_drift, volatility_field=simple_diffusion, show_progress=False
         )
-        com_reversed = (M_reversed * x_grid).sum(axis=1) / M_reversed.sum(axis=1)
+        com_reversed = (M_reversed * w * x_grid).sum(axis=1) / (M_reversed * w).sum(axis=1)
         assert com[-1] + com_reversed[-1] == pytest.approx(2 * com[0], abs=1e-9)
 
     def test_callable_drift_2d(self):
@@ -1299,9 +1306,11 @@ class TestFPFDMSolverCallableDrift:
         # The callable returns drift[0] = 0.3 and drift[1] = 0.0, so the component mapping is
         # checkable exactly and the swap of the two components -- which the shape assertion above
         # cannot see -- is what these three catch.
-        total = M.sum(axis=(1, 2))
-        com_x = (M * X).sum(axis=(1, 2)) / total
-        com_y = (M * Y).sum(axis=(1, 2)) / total
+        # Control volumes (#2145): the corner owns a quarter cell, each edge a half.
+        w2 = np.multiply.outer(quadrature_weights_1d(x_coords), quadrature_weights_1d(y_coords))
+        total = (M * w2).sum(axis=(1, 2))
+        com_x = (M * w2 * X).sum(axis=(1, 2)) / total
+        com_y = (M * w2 * Y).sum(axis=(1, 2)) / total
 
         # No-flux walls on both axes: mass is conserved. Measured 2.2e-16 relative.
         np.testing.assert_allclose(total, total[0], rtol=1e-9)
@@ -1338,7 +1347,9 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         comps = MFGComponents(m_initial=m_init, u_terminal=lambda xx: np.asarray(xx) * 0.0, hamiltonian=H)
         prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, sigma=0.1, components=comps)
         m0 = m_init(x)
-        m0 /= m0.sum() * dx
+        # Normalised on the control volumes (#2145), which is what the scheme conserves; the
+        # rectangle would make `mass == 1` a statement about a different functional.
+        m0 /= float(quadrature_weights_1d(x) @ m0)
         # callable drift routes through the explicit path (signature (t, grid, density))
         traj = FPFDMSolver(prob).solve_fp_system(
             m0, drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma_field
@@ -1359,7 +1370,10 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         )
         m_meancollapse, _ = self._solve(float(np.mean(sigma_field)), bump_center=0.25)
 
-        assert abs(m_perpoint.sum() * dx - 1.0) < 1e-9, f"per-point diffusion leaked mass: {m_perpoint.sum() * dx:.8f}"
+        # On the control volumes (#2145); `_solve` returns the spacing and the grid is uniform, so
+        # the weights are dx*(1/2, 1, ..., 1, 1/2).
+        w = quadrature_weights_1d(np.arange(m_perpoint.size, dtype=float) * dx)
+        assert abs(float(w @ m_perpoint) - 1.0) < 1e-9, f"per-point diffusion leaked mass: {float(w @ m_perpoint):.8f}"
         assert np.all(m_perpoint >= -1e-12), "per-point diffusion produced a negative density"
         # The low-sigma bump diffuses LESS than the mean would -> a higher retained peak.
         assert m_perpoint.max() > m_meancollapse.max() * 1.02, (
@@ -1373,7 +1387,7 @@ class TestVaryingSigmaExplicitDriftPerPoint:
             warnings.simplefilter("always")
             m, dx = self._solve(np.full(41, 0.1))
         assert not [w for w in caught if "1183" in str(w.message)]
-        assert abs(m.sum() * dx - 1.0) < 1e-9
+        assert abs(float(quadrature_weights_1d(np.arange(m.size, dtype=float) * dx) @ m) - 1.0) < 1e-9
 
 
 class TestFPFDMSolverCFLDiagnostic:

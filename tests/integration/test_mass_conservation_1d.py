@@ -44,20 +44,18 @@ def _default_components():
     )
 
 
-def compute_total_mass(density: np.ndarray, dx: float) -> float:
+def compute_total_mass(density: np.ndarray, grid) -> float:
+    """Total mass on the grid's own measure (#2145).
+
+    This was `np.sum(density) * dx`, justified in its own docstring as "consistent with
+    FPParticleSolver normalization which uses np.sum(density) * dx". That consistency was the
+    problem: two components agreeing on one convention is not evidence the convention is right, and
+    this one is not. `TensorProductGrid` is endpoint-inclusive, so the wall lies ON x_0 and the two
+    end nodes own half a cell each -- the measure is the trapezoid, and those weights ARE the
+    control volumes the conservative FP schemes telescope against. The rectangle over-counts by
+    `dx*(m[0]+m[-1])/2`, so it read a correct solve as drifting and a wall losing real mass as exact.
     """
-    Compute total mass integral m(x)dx using rectangular rule.
-
-    Consistent with FPParticleSolver normalization which uses np.sum(density) * dx.
-
-    Args:
-        density: Density array
-        dx: Grid spacing
-
-    Returns:
-        Total mass
-    """
-    return float(np.sum(density) * dx)
+    return float(grid.integrate(np.asarray(density, dtype=float)))
 
 
 class TestMassConservation1D:
@@ -111,9 +109,9 @@ class TestMassConservation1D:
 
         m_solution = result.M
 
-        dx = problem.geometry.get_grid_spacing()[0]
+        grid = problem.geometry
         Nt_points = problem.Nt + 1
-        masses = np.array([compute_total_mass(m_solution[t_idx, :], dx) for t_idx in range(Nt_points)])
+        masses = np.array([compute_total_mass(m_solution[t_idx, :], grid) for t_idx in range(Nt_points)])
 
         initial_mass = masses[0]
         print("\n=== FP Particle + HJB FDM Mass Conservation ===")
@@ -162,9 +160,9 @@ class TestMassConservation1D:
 
         m_solution = result.M
 
-        dx = problem.geometry.get_grid_spacing()[0]
+        grid = problem.geometry
         Nt_points = problem.Nt + 1
-        masses = np.array([compute_total_mass(m_solution[t_idx, :], dx) for t_idx in range(Nt_points)])
+        masses = np.array([compute_total_mass(m_solution[t_idx, :], grid) for t_idx in range(Nt_points)])
 
         initial_mass = masses[0]
         print("\n=== FP Particle + HJB GFDM Mass Conservation ===")
@@ -216,14 +214,14 @@ class TestMassConservation1D:
         # Issue #1567: no try/except -> skip; a solver raise must fail this cross-solver test.
         result_2 = mfg_solver_2.solve(max_iterations=50, tolerance=1e-3)
 
-        dx = problem.geometry.get_grid_spacing()[0]
+        grid = problem.geometry
         Nt_points = problem.Nt + 1
         masses_fdm = []
         masses_gfdm = []
 
         for t_idx in range(Nt_points):
-            mass_fdm = compute_total_mass(result_1.M[t_idx, :], dx)
-            mass_gfdm = compute_total_mass(result_2.M[t_idx, :], dx)
+            mass_fdm = compute_total_mass(result_1.M[t_idx, :], grid)
+            mass_gfdm = compute_total_mass(result_2.M[t_idx, :], grid)
             masses_fdm.append(mass_fdm)
             masses_gfdm.append(mass_gfdm)
 
@@ -274,9 +272,9 @@ class TestMassConservation1D:
         # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
         result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
 
-        dx = problem.geometry.get_grid_spacing()[0]
+        grid = problem.geometry
         Nt_points = problem.Nt + 1
-        masses = np.array([compute_total_mass(result.M[t, :], dx) for t in range(Nt_points)])
+        masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)])
         max_error = np.max(np.abs(masses - 1.0))
 
         print(f"\nParticles: {num_particles}, Max mass error: {max_error:.6e}")
@@ -336,9 +334,9 @@ class TestMassConservation1D:
             # Issue #1567: no try/except -> skip; a solver raise must fail this mass-conservation test.
             result = mfg_solver.solve(max_iterations=50, tolerance=1e-4, return_structured=True)
 
-            dx = problem.geometry.get_grid_spacing()[0]
+            grid = problem.geometry
             Nt_points = problem.Nt + 1
-            masses = [compute_total_mass(result.M[t, :], dx) for t in range(Nt_points)]
+            masses = [compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)]
             max_error = np.max(np.abs(np.array(masses) - 1.0))
 
             print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max error = {max_error:.6e}")
@@ -374,8 +372,8 @@ class TestMassConservation1D:
         mfg_solver = FixedPointIterator(prob, hjb_solver=HJBFDMSolver(prob), fp_solver=FPFDMSolver(prob))
         result = mfg_solver.solve(max_iterations=3, tolerance=1e-4)
 
-        dx = prob.geometry.get_grid_spacing()[0]
-        masses = np.array([compute_total_mass(result.M[t, :], dx) for t in range(nt + 1)])
+        grid = prob.geometry
+        masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(nt + 1)])
         drift = np.max(np.abs(masses - masses[0])) / masses[0]
         assert drift < 1e-10, f"coupled FDM mass drift {drift:.2e} across time (no-flux must conserve)"
 
@@ -406,12 +404,14 @@ class TestExplicitDriftNoFluxDiffusionConservation:
         )
         prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
         solver = FPFDMSolver(prob)
-        dx = 1.0 / (n - 1)
         m0 = np.exp(-30 * (x - 0.5) ** 2)
-        m0 /= m0.sum() * dx
+        m0 /= compute_total_mass(m0, grid)
         # callable (zero) drift routes through the explicit-drift path; pure diffusion
         M = solver.solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma)
-        mass = M.sum(axis=1) * dx
+        # The drift is zero, so the FV advection kernel contributes nothing and only the node-based
+        # diffusion runs. That is why this stays at machine precision on the grid measure where the
+        # DRIFTED case in test_fdm_centered_conservation records 2.388e-05 (#2145/#1184).
+        mass = np.asarray(grid.integrate(M), dtype=float)
         rel = abs(mass[-1] - mass[0]) / mass[0]
         assert rel < 1e-12, f"explicit-drift pure-diffusion no-flux mass leak {rel:.2e} (was ~0.84%)"
 

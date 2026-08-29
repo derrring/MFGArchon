@@ -57,6 +57,11 @@ def test_an_unmeasured_field_is_none_not_zero():
     )
 
 
+def result_geometry_integral(problem, result):
+    """The production measure applied to the same trajectory, for the ULP comparison above."""
+    return problem.geometry.integrate(np.asarray(result.M, dtype=float))
+
+
 @pytest.mark.parametrize("scheme", [NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED])
 def test_the_coupled_solve_reports_the_quantity_it_documents(scheme):
     """The reported value must equal the drift computed independently.
@@ -69,12 +74,40 @@ def test_the_coupled_solve_reports_the_quantity_it_documents(scheme):
     problem = _problem(sigma=1.0)
     result = problem.solve(scheme=scheme, max_iterations=5, verbose=False)
 
-    spatial_axes = tuple(range(1, result.M.ndim))
-    mass = np.sum(result.M, axis=spatial_axes)
+    # #2145: the quantity is the integral on THIS grid, whose end nodes hold half a cell each --
+    # not `sum(M)`, which is a different functional and is the one the no-flux wall happens to
+    # conserve by construction. Before this, the field reported 1e-15 on a solve losing 1e-03 of
+    # its actual mass, and this test confirmed the 1e-15.
+    #
+    # The weights are written out HERE rather than taken from `geometry.integrate`, deliberately:
+    # the assertion below is that the production path agrees with an INDEPENDENTLY derived value,
+    # and calling the same owner on both sides would make it a tautology. This is the one place a
+    # second derivation of the formula is the point rather than the defect.
+    x = np.asarray(problem.geometry.coordinates[0], dtype=float)
+    w = np.empty_like(x)
+    w[0] = (x[1] - x[0]) / 2.0
+    w[-1] = (x[-1] - x[-2]) / 2.0
+    w[1:-1] = (x[2:] - x[:-2]) / 2.0
+    mass = np.asarray(result.M, dtype=float) @ w
     expected = float(np.max(np.abs(mass / mass[0] - 1.0)))
 
     assert result.mass_conservation_error is not None, "the coupling path did not measure it"
-    assert result.mass_conservation_error == pytest.approx(expected, rel=1e-12, abs=0)
+
+    # The claim is that the production path integrates with the SAME measure as the hand-written
+    # weights, so compare the INTEGRALS -- they agree to 2.220e-16 on a mass of 1.0, one ULP.
+    owner = np.asarray(result_geometry_integral(problem, result), dtype=float)
+    assert float(np.max(np.abs(mass - owner))) < 1e-14 * abs(float(mass[0])), (
+        "the reported mass and an independently weighted one disagree by more than rounding"
+    )
+
+    # The DRIFT is a ratio of two numbers within an ULP of each other, so at this magnitude it is
+    # pure rounding and its last digits are not reproducible across two summation orders: the hand
+    # path reads 3.330669e-15 and the production path 3.108624e-15 on the same solve. Comparing
+    # those at `rel=1e-12, abs=0` compares noise to noise -- it passed only until the constructor's
+    # normaliser moved by a few ULP, which is not a fact about mass conservation. The floor below is
+    # the honest statement at this magnitude; the case where the quantity is meaningful is covered
+    # by `test_a_solve_that_loses_mass_reports_an_order_one_error`, which is why that control exists.
+    assert result.mass_conservation_error == pytest.approx(expected, rel=1e-12, abs=1e-14)
 
 
 def test_a_solve_that_loses_mass_reports_an_order_one_error():

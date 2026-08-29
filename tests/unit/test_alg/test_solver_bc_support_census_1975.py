@@ -202,8 +202,13 @@ def _run(scheme: str) -> tuple[float, float]:
     h = grid.get_grid_spacing()[0]
     x = np.linspace(0.0, 1.0, _NX)
     m = np.exp(-50 * (x - 0.5) ** 2)
-    m /= m.sum() * h
-    m0 = m.sum() * h
+    # On the grid's own measure (#2145), both here and below. `m.sum() * h` is the cell-centred
+    # integral, and this grid is node-centred: the wall lies ON x_0, so the two end nodes own half
+    # a cell each and the measure is the trapezoid. Those weights ARE the control volumes the
+    # divergence-form flux telescopes against, which is why the drift below is machine zero on
+    # this measure and not on the other one.
+    m /= float(grid.integrate(m))
+    m0 = float(grid.integrate(m))
 
     for _ in range(_STEPS):
         m = solve_timestep_full_nd(
@@ -220,7 +225,7 @@ def _run(scheme: str) -> tuple[float, float]:
             boundary_conditions=no_flux_bc(dimension=1),
             advection_scheme=scheme,
         )
-    return 100.0 * (m.sum() * h - m0) / m0, (m[-1] - m[-2]) / h
+    return 100.0 * (float(grid.integrate(m)) - m0) / m0, (m[-1] - m[-2]) / h
 
 
 @pytest.mark.parametrize("scheme", ["divergence_upwind", "divergence_centered"])
@@ -232,6 +237,22 @@ def test_the_conservative_schemes_conserve_mass_at_a_drifted_wall(scheme):
     scheme's internals, so it cannot go tautological the way a declaration census can.
 
     `divergence_upwind` is the default.
+
+    **The measure moved with #2145 and the verdict moved with it.** This read `sum(m) * h`, the
+    cell-centred integral, and both schemes conserved that to machine zero -- because their wall
+    rows divided the flux divergence by a full cell `dx` instead of the wall control volume `dx/2`,
+    which is exactly the error that makes a node-centred scheme telescope against rectangle weights.
+    Over this fixture the true (trapezoid) mass was meanwhile going missing:
+
+        scheme                 rectangle    trapezoid
+        divergence_upwind      -0.00000%    -19.26153%    <- before #2145
+        divergence_centered    -0.00000%    -25.45389%    <- before #2145
+        divergence_upwind     +25.37733%     -1.98e-12%   <- after
+        divergence_centered   +37.00513%     -2.44e-12%   <- after
+
+    A quarter of the mass, under a test reporting machine zero. The tolerance below is unchanged
+    because it did not need to move: the residual has six orders of margin under it either way,
+    which is the point -- the tolerance was never what was wrong.
     """
     drift_pct, dmdx = _run(scheme)
     assert abs(drift_pct) < 1e-6, f"{scheme} leaked {drift_pct:.4f}% at a wall with normal drift"

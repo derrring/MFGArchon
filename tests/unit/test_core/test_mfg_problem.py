@@ -263,7 +263,14 @@ def test_mfg_problem_with_custom_potential():
 
 @pytest.mark.unit
 def test_mfg_problem_with_custom_initial_density():
-    """Test MFGProblem with custom initial density function."""
+    """The custom density arrives normalised ON THE GRID MEASURE, not on `sum(m) * dx` (#2145).
+
+    This asserted that `m_initial` came back divided by `sum(m) * dx`, computing that normaliser the
+    same way the constructor did -- a restatement of the constructor's arithmetic rather than a check
+    on it, satisfied by any quadrature the accessor returned. The shape of the assertion is now the
+    one that can tell the two normalisers apart: the grid's own integral is 1 AND the rectangle sum
+    is not, which is only possible for one of them.
+    """
 
     def custom_initial(x):
         return np.exp(-10 * (x - 0.5) ** 2)
@@ -279,13 +286,17 @@ def test_mfg_problem_with_custom_initial_density():
     problem = MFGProblem(geometry=geometry, components=components)
 
     assert problem.is_custom is True
-    # Check initial density was set using custom function and normalized
-    expected_unnormalized = np.exp(-10 * (problem.geometry.get_spatial_grid() - 0.5) ** 2)
-    # Normalize expected (same way as in MFGProblem.__init__)
-    integral = np.sum(expected_unnormalized) * problem.geometry.get_grid_spacing()[0]
-    expected = expected_unnormalized / integral
-    # Flatten both arrays for comparison (problem stores as 2D column vector)
-    assert np.allclose(np.ravel(problem.m_initial), np.ravel(expected))
+    m = np.ravel(np.asarray(problem.m_initial, dtype=float))
+    raw = np.ravel(np.exp(-10 * (problem.geometry.get_spatial_grid() - 0.5) ** 2))
+    assert np.allclose(m / m.max(), raw / raw.max(), rtol=1e-12, atol=0), (
+        "the density's SHAPE must survive; only its scale is the constructor's business"
+    )
+    assert float(problem.geometry.integrate(m)) == pytest.approx(1.0, rel=1e-12)
+    dx = float(problem.geometry.get_grid_spacing()[0])
+    assert float(m.sum() * dx) != pytest.approx(1.0, rel=1e-6), (
+        "if the rectangle sum is also 1 the normaliser is the cell-centred integral again (#2145)"
+    )
+    assert problem.initial_mass_measure == "grid"
 
 
 @pytest.mark.unit
@@ -393,7 +404,12 @@ def test_mfg_problem_validates_negative_m_initial():
 
 @pytest.mark.unit
 def test_mfg_problem_validates_zero_mass_m_initial():
-    """Test that zero-mass m_initial raises ValueError (Issue #672: Fail Fast)."""
+    """A zero-mass density is still refused (#672), and the refusal now names its measure (#2145).
+
+    The regex moved with #1887's tier 1. It pins the two things that make the message actionable --
+    the mass it measured and the measure it used -- rather than the old wording, because a number
+    with no named measure is the invisible convention the three tiers exist to remove.
+    """
     geometry = default_geometry()
     # Invalid: zero everywhere
     components = MFGComponents(
@@ -402,7 +418,7 @@ def test_mfg_problem_validates_zero_mass_m_initial():
         u_terminal=lambda x: 0.0,
     )
 
-    with pytest.raises(ValueError, match="m_initial has zero or negligible total mass"):
+    with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
         MFGProblem(geometry=geometry, components=components)
 
 

@@ -67,6 +67,22 @@ def _uniform_density() -> np.ndarray:
     return m0 / m0.sum()
 
 
+def _mass_drift(result: np.ndarray, problem: MFGProblem) -> float:
+    """Relative drift of the mass, on the grid's own measure (#2145).
+
+    These assertions read `result[-1].sum() == 1` before: the bare node sum, which the FP no-flux
+    wall used to conserve because it gave the wall node a full cell. It owns half a cell, so the
+    conserved functional is the trapezoid and the node sum is not it.
+
+    Written as a DRIFT rather than as `== 1` for the reason #1887 gives: `mass = 1` is not a law of
+    the FP equation, which conserves whatever it starts with. `_uniform_density` happens to sum to
+    1, and pinning that number instead of the drift would fail the day the fixture changes for an
+    unrelated reason.
+    """
+    mass = np.asarray(problem.geometry.integrate(np.asarray(result, dtype=float)), dtype=float)
+    return float(np.max(np.abs(mass / mass[0] - 1.0)))
+
+
 def _velocity(vx: float = 0.0, vy: float = 0.0) -> np.ndarray:
     vel = np.zeros((NT + 1, 2, N, N))
     vel[:, 0, ...] = vx
@@ -86,13 +102,14 @@ def test_velocity_channel_runs_for_both_senses(sense, scheme):
     before testing membership, so keying it on the raw scheme name would silently un-do the
     widening for anyone spelling the scheme the old way.
     """
+    problem = _problem(sense)
     result = solve_fp_nd_full_system(
-        _uniform_density(), None, _problem(sense), velocity_field=_velocity(vx=0.3), advection_scheme=scheme
+        _uniform_density(), None, problem, velocity_field=_velocity(vx=0.3), advection_scheme=scheme
     )
 
     assert result.shape == (NT + 1, N, N)
     assert np.isfinite(result).all()
-    assert result[-1].sum() == pytest.approx(1.0, abs=1e-9), "no-flux walls must conserve mass"
+    assert _mass_drift(result, problem) == pytest.approx(0.0, abs=1e-9), "no-flux walls must conserve mass"
 
 
 def test_maximize_still_rejected_on_the_u_channel():
@@ -107,10 +124,11 @@ def test_u_channel_unchanged_for_minimize():
     u_solution = np.zeros((NT + 1, N, N))
     u_solution[:] = np.add.outer(np.linspace(0.0, 1.0, N) ** 2, np.zeros(N))
 
-    result = solve_fp_nd_full_system(_uniform_density(), u_solution, _problem())
+    problem = _problem()
+    result = solve_fp_nd_full_system(_uniform_density(), u_solution, problem)
 
     assert np.isfinite(result).all()
-    assert result[-1].sum() == pytest.approx(1.0, abs=1e-9)
+    assert _mass_drift(result, problem) == pytest.approx(0.0, abs=1e-9)
 
 
 @pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])

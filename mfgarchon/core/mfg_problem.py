@@ -882,15 +882,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.spatial_bounds = spatial_bounds
         self.spatial_discretization = spatial_discretization
 
-        # Spatial shape from geometry (actual grid size, not discretization)
-        # For grids with resolution N, actual points = N+1 per dimension
-        if dimension == 1:
-            self.spatial_shape = (spatial_discretization[0] + 1,)
-        elif dimension == 2 or dimension == 3:
-            self.spatial_shape = tuple(n + 1 for n in spatial_discretization)
-        else:
-            # For TensorProductGrid, use num_spatial_points from geometry
-            self.spatial_shape = (geometry.num_spatial_points,)
+        # The geometry owns the grid shape, as this comment always said. The three branches that
+        # stood here recomputed it: the first two from `spatial_discretization` (agreeing with the
+        # geometry by arithmetic, and identical to each other), the third from
+        # `num_spatial_points`, which is a COUNT and not a shape -- so at d >= 4 this constructor
+        # produced (prod(Nx),) where the `geometry=` constructor produced (Nx, Nx, Nx, Nx). #1888's
+        # fork, one dimension further out, and undetectable until a caller checked the shape.
+        self.spatial_shape = tuple(geometry.get_grid_shape())
 
         # Time domain
         self.T: float = T
@@ -2117,61 +2115,90 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
         # Check 2: Non-zero mass (must have some mass to normalize)
-        if np.sum(self.m_initial) < 1e-15:
+        # #2145: the initial density is normalised ON THE GEOMETRY'S OWN MEASURE. This block used
+        # `sum(m) * dx`, the cell-centred integral, while `TensorProductGrid` is endpoint-inclusive:
+        # the wall lies ON x_0, so the two end nodes own half a cell each and the measure is the
+        # trapezoid. Normalising with one functional while the FP wall conserves the other is how a
+        # solve reports perfect conservation of a quantity nobody asked about.
+        #
+        # `_measure_initial_density` names the measure it used, because these branches are genuinely
+        # different objects rather than fallbacks of one -- a network has no cell volume and an
+        # unstructured geometry has no quadrature -- and a number without its measure is the
+        # invisible convention #2145 exists to remove.
+        #
+        # WHETHER TO NORMALISE AT ALL is a separate question and a separate change: see
+        # `fix/1887-validate-do-not-normalise`, which replaces this rescale with validate-and-report
+        # on the grounds that a sub-probability density or one population's share is a legitimate
+        # initial condition and silently rescaling it is the same shape as silent clipping. That
+        # change moves what `f(m)` is evaluated at, so it has to carry the ~30 `examples/` files
+        # that hand in a raw Gaussian; bundling it here was what put those out of step.
+        mass, measure = self._measure_initial_density()
+
+        # Issue #672, fail fast: refuse what cannot be a density before rescaling it.
+        m_arr = np.asarray(self.m_initial, dtype=float)
+        if not np.isfinite(m_arr).all():
             raise ValueError(
-                "m_initial has zero or negligible total mass. "
-                "Initial density must integrate to a positive value. "
-                "Check your m_initial function in MFGComponents."
+                f"m_initial has {int((~np.isfinite(m_arr)).sum())} non-finite entries. A density "
+                "that is not finite everywhere has no mass and no solve."
+            )
+        if (m_arr < 0.0).any():
+            raise ValueError(
+                f"m_initial goes negative (min {float(m_arr.min()):.3e}). A density is non-negative "
+                "by definition; a negative initial condition is a coding error, not a small one."
+            )
+        if not np.isfinite(mass) or mass <= 0.0:
+            raise ValueError(
+                f"m_initial has total mass {mass!r} on the {measure} measure. Initial density must "
+                "integrate to a positive value. Check your m_initial function in MFGComponents."
             )
 
-        # Normalize initial density
+        self.m_initial = m_arr / mass
+        self.initial_mass_measure = measure
+        self.initial_mass = 1.0
+
+    _INITIAL_MASS_TOLERANCE: ClassVar[float] = 1e-8
+
+    def _measure_initial_density(self) -> tuple[float, str]:
+        """The initial density's total mass, and the name of the measure that produced it.
+
+        The name is returned rather than assumed because these branches are genuinely different
+        objects, not fallbacks of one: a network has no cell volume at all, and an unstructured
+        geometry has no quadrature. Reporting a number without saying which of them produced it is
+        what #1887 calls the invisible convention.
+        """
+        m = np.asarray(self.m_initial)
+        integrate = getattr(self.geometry, "integrate", None)
+        if self.dimension != "network" and callable(integrate):
+            try:
+                return float(integrate(m)), "grid"
+            except ValueError as exc:
+                # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
+                # refuses because a one-node axis has no measure -- returning 0 or dx would both be
+                # inventions. That refusal is right, but its message names neither this problem nor
+                # `m_initial`, so re-raise with both. Found by independent review of #2145: on a
+                # 1-point grid `MFGProblem` used to construct and now did not, with a diagnostic a
+                # caller could not act on.
+                raise ValueError(
+                    f"cannot measure m_initial on this geometry: {exc}. A "
+                    f"{type(self.geometry).__name__} with a one-node axis has zero extent, so it "
+                    "carries no measure and no Fokker-Planck problem is posed on it. Give the axis "
+                    "at least two points."
+                ) from exc
         if self.dimension == "network":
-            # Network/graph: discrete probability mass, sum = 1
-            # No cell volume - just normalize sum to 1
-            integral_m_initial = np.sum(self.m_initial)
-        elif self.dimension == 1:
-            # 1D normalization (original)
+            return float(np.sum(m)), "node-sum"
+        if self.dimension == 1:
             dx = self._get_spacing() or 1.0
-            integral_m_initial = np.sum(self.m_initial) * dx
-        elif self.spatial_bounds is not None and self.spatial_discretization is not None:
-            # n-D normalization: sum(m) * prod(dx_i), with dx_i from the geometry.
-            #
-            # This used to recompute the cell volume as prod((b - a) / n) from
-            # `self.spatial_discretization`, and that attribute does not mean one thing.
-            # Constructed with `spatial_discretization=`, it holds the INTERVAL count (:834 builds
-            # `Nx_points = [n + 1 for n in spatial_discretization]`), and `(b - a) / n` is then
-            # exactly the spacing -- that path was always correct. Constructed with `geometry=`,
-            # `tensor_grid.py:474` puts the NODE count there instead, and `(b - a) / n` is then the
-            # spacing of one interval too many. Measured on main, same 11x11 grid and the same
-            # `[0.1, 0.1]` spacing both ways: mass 1.0 through `spatial_discretization=[10, 10]`
-            # and 1.21 through `Nx_points=[11, 11]`, and 1.0 vs 1.4238 in 3-D at n=9. The offset on
-            # the geometry path is (n/(n-1))^d, so it shrinks like d/n and reads as a
-            # first-order-convergent error rather than as a bug; mass is conserved from there, so
-            # every drift oracle stayed green over an initial condition 21% too heavy, and
-            # `coupling=lambda m: m` was correspondingly stronger than the source says.
-            #
-            # The dual meaning is the actual defect and this does not close it -- it stops reading
-            # the attribute, which makes this site immune and leaves every other reader exposed.
-            #
-            # Recomputing it here at all was the defect. The geometry owns the spacing.
+            return float(np.sum(m) * dx), "uniform-cell"
+        if self.spatial_bounds is not None and self.spatial_discretization is not None:
             spacing = self.geometry.get_grid_spacing() if self.geometry is not None else None
             if spacing is None:
                 raise ValueError(
-                    "n-D initial-density normalization needs the grid spacing, and this geometry "
+                    "measuring the initial density needs the grid spacing, and this geometry "
                     f"({type(self.geometry).__name__}) does not provide one, although it declared "
-                    "spatial_bounds and spatial_discretization. Normalizing against a spacing this "
-                    "code invents is what produced the (n/(n-1))^d mass error it replaces."
+                    "spatial_bounds and spatial_discretization."
                 )
-            dx_prod = float(np.prod(spacing))
-            integral_m_initial = np.sum(self.m_initial) * dx_prod
-        else:
-            # For unstructured/implicit geometries: use uniform normalization
-            # This is a rough approximation - for accurate integration, use proper
-            # quadrature rules based on the geometry type
-            integral_m_initial = np.sum(self.m_initial) / self.num_spatial_points
-
-        if integral_m_initial > 1e-10:
-            self.m_initial /= integral_m_initial
+            return float(np.sum(m) * float(np.prod(spacing))), "uniform-cell"
+        return float(np.sum(m) / self.num_spatial_points), "point-average"
 
     # Issue #670: _setup_default_initial_density() removed - m_initial must be explicit
 

@@ -19,10 +19,17 @@ iteration. That coupled path had no CI coverage. These tests lock it in:
    coupled fixed point is stiff and is not required to converge here -- as in
    ``test_coupled_hjb_fp_2d.py`` -- so only mass/finiteness are asserted.)
 
-Mass convention: ``FPFVMSolver`` conserves the rectangular cell-sum ``sum(M) * prod(dx)``
-(the flux telescopes over cells), NOT the trapezoidal integral (which half-weights the wall
-cells and therefore drifts as mass moves toward a boundary). All mass checks below use the
-rectangular cell-sum, matching the solver's invariant and the unit tests.
+Mass convention: the geometry's own measure, ``geometry.integrate`` (#2145). This file used to
+state the opposite -- "``FPFVMSolver`` conserves the rectangular cell-sum ``sum(M) * prod(dx)``
+... NOT the trapezoidal integral (which half-weights the wall cells and therefore drifts as mass
+moves toward a boundary)" -- and the observation was right while the diagnosis was inverted. The
+trapezoid half-weights the wall nodes *because they own half a cell*: ``TensorProductGrid`` is
+endpoint-inclusive, so the wall lies ON the end node. The rectangle was what drifted, and the FVM
+conserved it exactly only because its own control volumes made the same assumption, tiling a
+domain of length ``L + dx``. Read back from the uniform equilibrium of a no-flux diffusion solve,
+that gave an effective domain of exactly ``1 + h`` at every resolution, and first-order accuracy
+in a scheme documented second order. The solver now takes its control volumes from the grid, so
+the invariant these checks match is the mass.
 """
 
 from __future__ import annotations
@@ -107,17 +114,15 @@ def _rel_l2(a: np.ndarray, b: np.ndarray, dx: float) -> float:
 @pytest.fixture(scope="module")
 def fvm_1d():
     prob = _build_problem_1d()
-    dx = prob.geometry.get_grid_spacing()[0]
     result = prob.solve(scheme=NumericalScheme.FVM_MUSCL, max_iterations=40, tolerance=1e-4)
-    return result, dx
+    return result, prob.geometry
 
 
 @pytest.fixture(scope="module")
 def fdm_1d():
     prob = _build_problem_1d()
-    dx = prob.geometry.get_grid_spacing()[0]
     result = prob.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=40, tolerance=1e-4)
-    return result, dx
+    return result, prob.geometry
 
 
 # ===========================================================================
@@ -127,7 +132,7 @@ def fdm_1d():
 @pytest.mark.integration
 def test_1d_fvm_coupled_converges(fvm_1d):
     """FVM_MUSCL + HJB-FDM Picard loop reaches tol in a sane iteration count, error decreasing."""
-    result, _dx = fvm_1d
+    result, _geom = fvm_1d
 
     eh = np.asarray(result.error_history_M, dtype=float)
     assert eh.size >= 2, "error history too short to assess convergence"
@@ -143,14 +148,13 @@ def test_1d_fvm_coupled_converges(fvm_1d):
 @pytest.mark.mathematical
 def test_1d_fvm_coupled_mass_conserved_and_positive(fvm_1d):
     """Cell-sum mass is conserved to ~machine precision at every step; density stays non-negative."""
-    result, dx = fvm_1d
+    result, geom = fvm_1d
     M = result.M
 
     assert np.all(np.isfinite(M)), "density contains non-finite values"
-    # FVM conserves the rectangular cell-sum (flux telescoping), not the trapezoidal integral.
-    mass = M.sum(axis=1) * dx
+    mass = np.asarray(geom.integrate(M))
     mass_drift = float(np.max(np.abs(mass - mass[0])))
-    assert mass_drift < 1e-10, f"cell-sum mass drift {mass_drift:.3e} (expected ~1e-15)"
+    assert mass_drift < 1e-10, f"mass drift {mass_drift:.3e} on the grid measure (expected ~1e-15)"
     # MUSCL minmod limiter -> no negative-density ringing.
     assert M.min() >= -1e-12, f"density went negative: {M.min():.3e}"
 
@@ -162,10 +166,15 @@ def test_1d_fvm_coupled_mass_conserved_and_positive(fvm_1d):
 @pytest.mark.integration
 def test_1d_fvm_fdm_agreement(fvm_1d, fdm_1d):
     """FVM_MUSCL and FDM_UPWIND solve the same LQ MFG; converged U and M agree to a few percent."""
-    res_fvm, dx = fvm_1d
-    res_fdm, dx_fdm = fdm_1d
-    assert dx == dx_fdm
+    res_fvm, geom = fvm_1d
+    res_fdm, geom_fdm = fdm_1d
+    assert np.allclose(geom.get_grid_spacing(), geom_fdm.get_grid_spacing()), (
+        "the two schemes must be compared on the same grid"
+    )
 
+    # `_rel_l2` is a RATIO of two L2 norms taken with the same weight, so the weight cancels and
+    # the spacing here is a scale factor, not a measure. Left as dx (#2145 does not reach it).
+    dx = float(geom.get_grid_spacing()[0])
     rel_m = _rel_l2(res_fvm.M, res_fdm.M, dx)
     rel_u = _rel_l2(res_fvm.U, res_fdm.U, dx)
     rel_m_terminal = _rel_l2(res_fvm.M[-1], res_fdm.M[-1], dx)
@@ -207,7 +216,6 @@ def test_2d_fvm_coupled_mass_conserved_finite():
         boundary_conditions=no_flux_bc(dimension=2),
     )
     prob = MFGProblem(geometry=geom, T=0.2, Nt=10, sigma=0.1, components=components)
-    dx, dy = prob.geometry.get_grid_spacing()
 
     hjb = HJBFDMSolver(prob, solver_type="fixed_point", damping_factor=0.8, max_newton_iterations=50)
     fp = FPFVMSolver(prob, reconstruction="muscl")
@@ -219,9 +227,9 @@ def test_2d_fvm_coupled_mass_conserved_finite():
     grid_shape = prob.geometry.get_grid_shape()
     assert M.shape == (prob.Nt + 1, *grid_shape), f"unexpected M shape {M.shape}"
     assert np.all(np.isfinite(M)), "2D density contains non-finite values"
-    mass = M.sum(axis=(1, 2)) * dx * dy
+    mass = np.asarray(prob.geometry.integrate(M))
     mass_drift = float(np.max(np.abs(mass - mass[0])))
-    assert mass_drift < 1e-10, f"2D cell-sum mass drift {mass_drift:.3e} (expected ~1e-15)"
+    assert mass_drift < 1e-10, f"2D mass drift {mass_drift:.3e} on the grid measure (expected ~1e-15)"
     assert M.min() >= -1e-12, f"2D density went negative: {M.min():.3e}"
 
 

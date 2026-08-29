@@ -161,7 +161,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/geometry/grids/tensor_grid.py",
         old="                (bounds[i][1] - bounds[i][0]) / (self._Nx_points[i] - 1) if self._Nx_points[i] > 1 else 0.0",
         new="                (bounds[i][1] - bounds[i][0]) / self._Nx_points[i] if self._Nx_points[i] > 1 else 0.0  # MUTATED: L/n instead of L/(n-1)",
-        owner='uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim (tensor_grid.py:823 `return self.spacing`), get_spacing() indexes it (:607), legacy_1d_attrs["Dx"] reads it (:484), cell volume ',
+        owner='uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs["Dx"] reads it, cell volume ',
         verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11",
     ),
     Mutation(
@@ -181,21 +181,44 @@ MUTATIONS: list[Mutation] = [
         verify="TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE",
     ),
     Mutation(
-        name="m_initial_1d_counting_measure",
-        path="mfgarchon/core/mfg_problem.py",
-        old="            # 1D normalization (original)\n            dx = self._get_spacing() or 1.0",
-        new="            # 1D normalization (original)\n            dx = 1.0  # MUTATED: normaliser ignores the grid spacing (counting measure)",
-        owner="m(0,.) integrates to 1 under the geometry's own volume element, not under the counting measure -- the 1-D branch of the four-way normalisation dispatch at mfg_problem.py:1996-2042. Owner established by #1888 (`tests/unit/test_core/test_initial_density_mass_1888.py`), whose module docstring records t",
-        verify="abs(float(np.sum(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).m_initial)) - 1.0) < 1e-9",
+        name="quadrature_wall_node_counting_measure",
+        path="mfgarchon/utils/numerical/quadrature.py",
+        old="    w[0] = (x[1] - x[0]) / 2.0\n    w[-1] = (x[-1] - x[-2]) / 2.0",
+        new="    w[0] = x[1] - x[0]  # MUTATED: wall node owns a full cell (counting measure)\n    w[-1] = x[-1] - x[-2]",
+        owner=(
+            "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is "
+            "endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. "
+            "Those weights are also the control volumes the conservative FP schemes telescope "
+            "against, which is why this is one convention and not two (#2145). Sole owner: "
+            "`mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, "
+            "`mass_drift`, the FV advection kernel and the FDM wall rows. "
+            "SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's "
+            "normalisation dispatch -- #1887 removed that rescale (the library validates the "
+            "initial mass and does not change it), so that anchor no longer exists. The convention "
+            "it defended survived and moved here; the mutation follows it."
+        ),
+        verify="abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12",
     ),
-    Mutation(
-        name="mass_drift_reported_as_deviation_from_one",
-        path="mfgarchon/alg/numerical/coupling/fixed_point_iterator.py",
-        old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
-        new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: absolute deviation from 1.0",
-        owner='`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `max|mass(t)/mass(0) - 1|`, not deviation from a 1.0 target (#1672). Documented at `mfgarchon/utils/solver_result.py:41` -- "mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the" -- and argued a',
-        verify="MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.5",
-    ),
+    # `mass_drift_reported_as_deviation_from_one` LIVES ON `fix/1887-validate-do-not-normalise`,
+    # not here, and this note is the hand-off. It mutates `SolverResult.mass_conservation_error`
+    # from `|mass(t)/mass(0) - 1|` to `|mass(t) - 1|` (#1672's drift semantics). On THIS contract
+    # `MFGProblem` normalises `m_initial`, so `mass(0) == 1` on every path that reaches the iterator
+    # and the two expressions are the SAME NUMBER -- the convention is true, documented, and has no
+    # observable consequence, so no test can separate them and the sweep correctly called it
+    # INEFFECTIVE. Removing a defect pin from the list is not something to do quietly, which is why
+    # this is written out: the ratchet refuses to record an INEFFECTIVE entry precisely so that the
+    # choice between "fix it" and "move it" gets made rather than sedimented.
+    #
+    # It is live on the #1887 branch, where the constructor stops rescaling and `mass(0)` is
+    # whatever the caller handed in: |0.546 - 1| = 0.454 under the mutation against 1.22e-15 clean.
+    # Merging that branch reinstates it, and this list will conflict there, which is the forcing
+    # function -- a silent re-add is exactly what would drop.
+    #
+    # One path could make it observable here and is deliberately NOT used, because its reachability
+    # is unestablished: the constructor's `uniform-cell` / `point-average` fallbacks normalise
+    # `sum(m)*dx` (or `sum(m)/N`) to 1 while `fixed_point_iterator`'s own fallback measures
+    # `np.sum(M)`, so a geometry with a spacing but no `integrate` would report `mass(0) = 1/dx`.
+    # That mismatch is worth an issue on its own; it is not a licence to keep a pin alive here.
     Mutation(
         name="particle_mass_counting_measure",
         path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
@@ -242,7 +265,7 @@ MUTATIONS: list[Mutation] = [
         old="            flux = np.where(v_face >= 0.0, v_face * md[..., :-1], v_face * md[..., 1:])",
         new="            flux = np.where(v_face >= 0.0, v_face * md[..., 1:], v_face * md[..., :-1])  # MUTATED: donor cell swapped",
         owner="the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-        verify="float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 2.0",
+        verify="float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0",  # 2.0 until #2145: index 0 is the WALL cell, whose divisor went from h to the control volume h/2, so the clean value moved 1.0 -> 2.0 and the mutated one 2.0 -> 4.0. The control was reading TRUE on the clean tree and the sweep called the mutation ineffective.,
     ),
     Mutation(
         name="periodic_wrap_endpoint_inverted",
@@ -504,6 +527,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary import periodic_bc   # _VERIFY_PRELUDE line 301 currently imports only `neumann_bc` from this module; it must become `from mfgarchon.geometry.boundary import neumann_bc, periodic_bc`
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.operators.differential.advection import AdvectionOperator
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 from mfgarchon.operators.stencils.finite_difference import gradient_upwind
 from mfgarchon.types import NumericalScheme
 

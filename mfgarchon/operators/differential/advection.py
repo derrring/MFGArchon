@@ -166,8 +166,13 @@ class AdvectionOperator(LinearOperator):
             mass_conservative: If True (only for ``form="divergence"``, ``scheme="upwind"``),
                 use a finite-volume flux-difference discretisation that is discretely
                 mass-conservative at no-flux walls — the advective flux through a no-flux
-                boundary face is set to zero, so ``1ᵀA = 0`` (column-conservative) and a
-                density piled against a wall by strong drift does not leak (Issue #1184).
+                boundary face is set to zero, so ``wᵀA = 0`` and a density piled against a wall
+                by strong drift does not leak (Issue #1184, measure corrected by #2145).
+                ``w`` is the control-volume vector, i.e. the trapezoid weights: the wall lies ON
+                the end node on an endpoint-inclusive grid, so that node owns ``h/2`` and the
+                wall rows divide by it. ~~``1ᵀA = 0``~~ is the uniform-weight statement, which
+                says ``sum(m)`` is conserved -- a different functional. Measured at a no-flux
+                wall: ``max|1ᵀA| = 4.39`` (1-D) and ``17.06`` (2-D) against ``max|wᵀA| = 0``.
                 Default ``False`` keeps the node-based ``gradient_upwind`` divergence
                 (byte-identical), which is conservative in the interior but leaks
                 ``±(v·m)`` at no-flux walls. Mirrors ``LaplacianOperator.mass_conservative``
@@ -305,9 +310,14 @@ class AdvectionOperator(LinearOperator):
         (``v_{i+1/2}`` = node-average), then ``div_i = (F_{i+1/2} - F_{i-1/2}) / h``. The
         flux telescopes, so the column sum equals the net boundary-face flux:
 
-        - **No-flux BC**: the two wall faces are set to zero flux -> ``1ᵀA = 0`` exactly
-          (mass conserved even when strong drift piles density against the wall).
-        - **Periodic (bc=None)**: the wrap face closes the telescope -> ``1ᵀA = 0``.
+        - **No-flux BC**: the two wall faces are set to zero flux, and the two wall CELLS are
+          divided by their control volume ``h/2`` rather than ``h`` -> ``wᵀA = 0`` exactly, with
+          ``w`` the trapezoid weights (mass conserved even when strong drift piles density
+          against the wall). #2145; ``1ᵀA`` is 4.39 in 1-D and 17.06 in 2-D and is not the
+          statement that holds.
+        - **Periodic (bc=None)**: every cell on the torus is full width once #1822 drops the
+          repeated node, so the wrap face closes the telescope and ``1ᵀA = 0`` there -- the two
+          agree because the weights are uniform on a torus.
 
         Only no-flux / Neumann / reflecting / periodic boundaries are supported here (the
         FP use case); other BCs would need an inflow flux and should not opt in.
@@ -361,10 +371,21 @@ class AdvectionOperator(LinearOperator):
                     # The repeated cell carries cell 0's divergence, because it IS cell 0.
                     dvar = np.concatenate([dvar, dvar[..., : n_full - span]], axis=-1)
             else:
-                # No-flux walls: zero flux through both boundary faces.
-                dvar[..., 0] = flux[..., 0] / h
+                # No-flux walls: zero flux through both boundary faces, over a control volume of
+                # h/2 -- the grid is endpoint-inclusive, so the wall lies ON the end node and that
+                # node owns half a cell (#2145). The periodic branch above keeps `/h` because
+                # #1822 already removed the repeated cell, leaving a torus of N-1 full cells.
+                #
+                # This MUST match every other operator acting on the same field. Measured while it
+                # did not: fixing the Laplacian's wall rows alone, on the explicit-drift FP step
+                # with strong drift into a wall, left diffusion on h/2 and advection on h, and the
+                # step then conserved NEITHER measure -- rectangle 1.00000000 -> 0.40908779 and
+                # trapezoid 0.99988 -> 0.28460 over 800 steps, where before it had at least held
+                # the rectangle exactly. The control volume is one convention; a scheme is only
+                # conservative when all of its operators use the same one.
+                dvar[..., 0] = flux[..., 0] / (h / 2.0)
                 dvar[..., 1:-1] = (flux[..., 1:] - flux[..., :-1]) / h
-                dvar[..., -1] = -flux[..., -1] / h
+                dvar[..., -1] = -flux[..., -1] / (h / 2.0)
             div += np.moveaxis(dvar, -1, d)
         return div
 

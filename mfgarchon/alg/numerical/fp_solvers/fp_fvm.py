@@ -1,21 +1,34 @@
 """Conservative Finite Volume Method (FVM) solver for the Fokker-Planck equation (Issue #422).
 
-The FVM solver evolves *cell averages* ``m_bar_i`` of the density on a structured
-(tensor-product) grid, whose nodes are interpreted as cell centers with uniform spacing
-``dx`` (so ``m_bar_i`` approximates the point value ``m(x_i)`` to ``O(dx^2)``). The
-semi-discrete update is the flux-difference form
+The FVM solver is **vertex-centred** (#2145): the unknowns sit on the grid's nodes and each node
+owns its dual cell. `TensorProductGrid` builds `linspace(lo, hi, N)`, so the wall lies ON the end
+node and that node owns ``h/2`` while an interior node owns ``h``. Those volumes are the trapezoid
+weights, which is why `grid.integrate` is the measure this scheme conserves. The semi-discrete
+update is the flux-difference form over the control volume ``V_i``
 
 .. math::
 
-    \\frac{d \\bar m_i}{dt} = -\\frac{F_{i+1/2} - F_{i-1/2}}{\\Delta x},
+    \\frac{d m_i}{dt} = -\\frac{F_{i+1/2} - F_{i-1/2}}{V_i},
     \\qquad
     F_{i+1/2} = \\alpha_{i+1/2}\\, m_{i+1/2} - D\\,\\frac{m_{i+1} - m_i}{\\Delta x}.
 
-The interface velocity ``alpha_{i+1/2}`` is *shared* by the two cells that touch the face, so
-the divergence telescopes and the total mass ``sum_i m_bar_i dx`` is conserved to machine
-precision for no-flux / periodic boundaries. This is the higher-order extension of the
-conservative divergence-upwind FDM stencil
-(:mod:`fp_fdm_alg_divergence_upwind`); see Issue #422.
+The interface velocity ``alpha_{i+1/2}`` is *shared* by the two cells that touch the face, so the
+divergence telescopes and the total mass ``grid.integrate(m)`` is conserved to machine precision
+for no-flux / periodic boundaries. This is the higher-order extension of the conservative
+divergence-upwind FDM stencil (:mod:`fp_fdm_alg_divergence_upwind`); see Issue #422.
+
+**What this paragraph used to say, and what it cost.** It read "whose nodes are interpreted as cell
+centers with uniform spacing ``dx``" and "the total mass ``sum_i m_bar_i dx`` is conserved". The
+node PLACEMENT was never cell-centred -- line 318 builds the nodes on the declared bounds -- so the
+solver combined vertex placement with cell-centred volumes, and its ``N`` cells tiled a domain of
+length ``L + dx``. Read back from the uniform equilibrium of a no-flux diffusion solve, where the
+steady value is total mass / domain length, the effective domain was exactly ``1 + h`` at every
+resolution: 1.050000 / 1.025000 / 1.012500 / 1.006250 for h = 0.05 / 0.025 / 0.0125 / 0.00625. In
+``d`` dimensions the inflation compounds as ``(1 + h/L)^d``. The cost was an order: against the
+analytic ``1 + 0.5 cos(pi x) exp(-D pi^2 t)`` with ``dt ~ dx^2``, MUSCL converged at 0.91/0.96 with
+the error maximal at the wall (8.85e-03 against the FDM's 8.67e-05) and decaying inward. It now
+converges at 2.00/2.00 and is byte-identical to the divergence-form FDM on pure diffusion, which is
+what "the higher-order extension of" always claimed.
 
 Reconstruction (``reconstruction`` ctor arg):
 
@@ -33,8 +46,9 @@ Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 Time stepping: IMEX by Strang operator splitting -- explicit (CFL-bounded, sub-cycled)
 MUSCL/upwind advection on each half step, implicit (backward-Euler) central diffusion in the
 middle. Both sub-operators are individually mass-conserving (advection telescopes; the implicit
-diffusion uses the conservative finite-volume Laplacian with ``1^T L = 0``), so the composite
-step conserves mass exactly. The diffusion solve is an M-matrix, so positivity is preserved.
+diffusion uses the conservative finite-volume Laplacian, whose weighted column sums vanish,
+``w^T L = 0`` -- ``1^T L = 0`` is the uniform-weight statement and is not the one that holds on
+this grid, #2145), so the composite step conserves mass exactly. The diffusion solve is an M-matrix, so positivity is preserved.
 
 Diffusion ``D`` comes from the single-source converter ``diffusion_from_volatility`` (``D =
 sigma^2/2``), matching the other FP solvers.
@@ -630,13 +644,17 @@ if __name__ == "__main__":
     prob = MFGProblem(geometry=geom, T=0.1, Nt=50, sigma=0.3, components=comps)
 
     x = _np.linspace(0.0, 1.0, 101)
-    dx = x[1] - x[0]
+    # The grid's own measure (#2145), on both sides. This solver takes its control volumes from the
+    # grid now, so `sum(m)*dx` is a different functional from the one it conserves: measured on this
+    # exact fixture, trapezoid drift 1.554e-15 against rectangle 8.544e-05 -- and before #2145 the
+    # two were the other way round. Found red by independent review, because an inline smoke test
+    # runs under `python <file>` and never under the gate.
     m_init = _np.exp(-((x - 0.5) ** 2) / (2 * 0.1**2))
-    m_init /= m_init.sum() * dx
+    m_init /= float(geom.integrate(m_init))
 
     solver = FPFVMSolver(prob, reconstruction="muscl")
     M = solver.solve_fp_system(m_init)
-    mass = M.sum(axis=1) * dx
+    mass = _np.asarray(geom.integrate(M), dtype=float)
     drift = float(_np.max(_np.abs(mass - mass[0])))
     print(f"  shape={M.shape}, mass drift={drift:.2e}, min={M.min():.2e}")
     assert drift < 1e-12, f"mass drift too large: {drift:.2e}"

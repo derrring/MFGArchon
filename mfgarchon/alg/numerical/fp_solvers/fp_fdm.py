@@ -691,7 +691,8 @@ class FPFDMSolver(BaseFPSolver):
 
             where:
             - A_advection_T: Advection matrix from HJB solver (transposed)
-            - D: Diffusion matrix (built internally, symmetric so D = D^T)
+            - D: Diffusion matrix (built internally; symmetric for a CONSTANT diffusion, and
+              self-adjoint in the control-volume inner product in general -- see the Note)
             - I: Identity matrix
 
         Args:
@@ -714,9 +715,19 @@ class FPFDMSolver(BaseFPSolver):
             >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, A_hjb.T)
 
         Note:
-            The diffusion operator is symmetric (D = D^T), so using this method
-            with A_hjb.T ensures the full spatial operator satisfies L_FP = L_HJB^T
-            for the advection part while diffusion remains adjoint-consistent by symmetry.
+            ~~The diffusion operator is symmetric (D = D^T)~~ **[CORRECTED 2026-08-28, #2145]**.
+            It is self-adjoint in the CONTROL-VOLUME inner product, `W D` symmetric with
+            `W = diag(w)`, which is the statement a non-uniform control volume admits: the wall
+            rows carry `2/h²` where their neighbours' columns carry `1/h²`, so plain `D = Dᵀ`
+            would require the equal-volume mesh this grid is not. Measured on the varying-sigma
+            path: `max|D - Dᵀ|` 0.0 before #2145, 197.02 after; `max|WD - (WD)ᵀ|` is 0.0.
+
+            Using this method with A_hjb.T therefore gives `L_FP = L_HJB^T` for the advection
+            part, while the diffusion half is adjoint-consistent in `L²(w)` rather than in the
+            unweighted inner product. Independent review measured this whole path and found it
+            conserves NEITHER measure, on this revision and on its predecessor alike (-13.54%
+            rectangle, -15.29% trapezoid, byte-identical), because `A_HJB` has row sums of 60 --
+            so the symmetry argument was not what was carrying it.
 
         See Also:
             - Issue #622: Strict Achdou adjoint mode implementation

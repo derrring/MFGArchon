@@ -129,8 +129,18 @@ def validate_mfg_solution(U: NDArray[np.floating], M: NDArray[np.floating], stri
         # Check mass conservation
         if M.ndim >= 2:
             # Compute total mass at each time step
-            dx = 1.0 / (M.shape[1] - 1) if M.shape[1] > 1 else 1.0
-            total_masses = np.sum(M, axis=1) * dx
+            # #2145: the grid's measure, not `sum(m)*dx`. The end nodes hold half a cell each.
+            # This function has no geometry, so it keeps the [0,1] assumption it already made --
+            # harmless here because a uniform rescale of the weights cancels in the ratio below,
+            # while the CHOICE of functional does not: one of the two is conserved at a no-flux
+            # wall and the other is not, which is the whole of #2145.
+            from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+            if M.shape[1] > 1:
+                w = quadrature_weights_1d(np.linspace(0.0, 1.0, M.shape[1]))
+                total_masses = M @ w
+            else:
+                total_masses = np.sum(M, axis=1)
 
             mass_variation = np.std(total_masses) / np.mean(total_masses) * 100
             validation_results["diagnostics"]["mass_conservation_error"] = mass_variation

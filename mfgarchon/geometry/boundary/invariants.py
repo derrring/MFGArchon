@@ -23,7 +23,7 @@ Two kinds of residual, and confusing them is the recurring error:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -58,7 +58,7 @@ def seam(field: NDArray[np.floating]) -> float:
     return float(np.abs(arr[:, 0] - arr[:, -1]).max())
 
 
-def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
+def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating] | Any) -> float:
     """Relative change in total mass between the first and last time row.
 
     ``np.trapezoid`` is the right quadrature on an endpoint-inclusive PERIODIC grid: it equals the
@@ -88,10 +88,16 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
       (``divergence_*``) and 4.5e-02 (``gradient_*``) on a 0.05|0.40 step, scaling smoothly with
       the variation and machine-zero for a constant ARRAY, so it is the variation and not the
       array (#1183). It costs ``gradient_*`` the trapezoid too, 4.4e-02.
-    - Under a SCALAR sigma the families differ. ``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
-      any drift -- measured to cell Peclet 87 in 1-D, and to about 3.5 in 2-D, where the sum has to
-      be taken directly: THIS FUNCTION IS 1-D ONLY and raises on an n-D field, as does
-      ``bc_residual`` through it. ``seam`` handles n-D.
+    - Under a SCALAR sigma the families differ. ~~``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
+      any drift~~ **[SUPERSEDED 2026-08-28 by #2145]** -- it holds the TRAPEZOID to 1e-14 at any
+      drift, and `sum(m)*dx` not at all: measured on the #1975 census fixture, +25.37733% rectangle
+      against -1.98e-12% trapezoid. The old sentence was true of the old wall, whose control volume
+      was a full cell; the wall rows now divide by ``h/2`` and telescope against the trapezoid
+      weights, which ARE those control volumes.
+    - ~~THIS FUNCTION IS 1-D ONLY and raises on an n-D field~~ **[SUPERSEDED 2026-08-28 by #2145]**:
+      it accepts a grid and works in n-D through ``geometry.integrate``. It still refuses an n-D
+      field with 1-D AXIS COORDINATES, by name, because that pair has no measure. ``bc_residual``
+      follows it; ``seam`` handled n-D already.
     - ``gradient_*`` holds the trapezoid instead, and only at zero drift, where this returns 1e-14
       while the share moves 6e-03. Under wall-normal drift it holds neither, and
       ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet
@@ -108,10 +114,27 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating]) -> float:
     arr = np.asarray(field)
     if arr.ndim == 1:
         raise ValueError("mass_drift needs a (time, space) field; a single row has no drift")
-    initial = float(np.trapezoid(arr[0], x))
-    if initial == 0.0:
-        raise ValueError("initial mass is zero; the relative drift would be undefined")
-    return abs(float(np.trapezoid(arr[-1], x)) / initial - 1.0)
+
+    # `x` may be the coordinates of a 1-D axis, or a GRID. The grid path is the one owner of the
+    # measure (`TensorProductGrid.quadrature_weights`, #2145) and is what makes this work in n-D;
+    # the coordinate path stays because five call sites pass an axis and `np.trapezoid` computes
+    # the same weights on it. Passing a grid is the form to prefer -- an n-D field has no single
+    # `x` to hand over, which is why this used to raise on one.
+    integrate = getattr(x, "integrate", None)
+    if callable(integrate):
+        totals = np.asarray(integrate(arr), dtype=float)
+    else:
+        if arr.ndim > 2:
+            raise ValueError(
+                f"mass_drift got a {arr.ndim - 1}-D spatial field with axis coordinates; pass the "
+                f"grid instead so the measure has one owner (grid.integrate handles n-D)"
+            )
+        totals = np.array([float(np.trapezoid(arr[0], x)), float(np.trapezoid(arr[-1], x))])
+
+    initial = float(totals[0])
+    if not np.isfinite(initial) or initial == 0.0:
+        raise ValueError(f"initial mass is {initial!r}; the relative drift would be undefined or meaningless")
+    return abs(float(totals[-1]) / initial - 1.0)
 
 
 def bc_residual(

@@ -252,13 +252,17 @@ class TestFictitiousPlayFPDriftConvention:
         result = solver.solve(max_iterations=10, tolerance=1e-10, verbose=False)
         assert np.all(result.M >= -1e-6)
 
-        # External oracle: no-flux walls conserve total mass, and get_m_init() is normalised to
-        # sum*dx == 1, so every time row must still integrate to 1.  Independent of the scheme:
-        # the FP step does NOT renormalise (#1683 removed that repair), so this measures physics.
-        # Measured here: 8.88e-16.  The same configuration with Dirichlet walls leaks 1.58e-2.
-        dx = problem.geometry.get_grid_spacing()[0]
-        mass = result.M.sum(axis=1) * dx
-        assert np.max(np.abs(mass - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
+        # External oracle: no-flux walls conserve total mass, so every time row must integrate to
+        # what row 0 did. Independent of the scheme: the FP step does NOT renormalise (#1683
+        # removed that repair), so this measures physics. The same configuration with Dirichlet
+        # walls leaks 1.58e-2.
+        #
+        # Two things moved. The measure is the geometry's own (#2145) -- `sum*dx` is the
+        # cell-centred integral and this grid is node-centred. And the TARGET is row 0, not 1:
+        # #1887 removed the constructor's rescale, so `get_m_init()` returns what the caller
+        # wrote and `== 1` would pin the fixture rather than the conservation law.
+        mass = np.asarray(problem.geometry.integrate(result.M), dtype=float)
+        assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +288,17 @@ class TestBlockIteratorFPDriftConvention:
         assert np.all(np.isfinite(result.M))
         assert np.all(result.M >= -1e-6)
 
-        # External oracle: no-flux walls conserve total mass, and get_m_init() is normalised to
-        # sum*dx == 1, so every time row must still integrate to 1.  Independent of the scheme:
-        # the FP step does NOT renormalise (#1683 removed that repair), so this measures physics.
-        # Measured here: 1.55e-15.  The same configuration with Dirichlet walls leaks 1.58e-2.
-        dx = problem.geometry.get_grid_spacing()[0]
-        mass = result.M.sum(axis=1) * dx
-        assert np.max(np.abs(mass - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
+        # External oracle: no-flux walls conserve total mass, so every time row must integrate to
+        # what row 0 did. Independent of the scheme: the FP step does NOT renormalise (#1683
+        # removed that repair), so this measures physics. The same configuration with Dirichlet
+        # walls leaks 1.58e-2.
+        #
+        # Two things moved. The measure is the geometry's own (#2145) -- `sum*dx` is the
+        # cell-centred integral and this grid is node-centred. And the TARGET is row 0, not 1:
+        # #1887 removed the constructor's rescale, so `get_m_init()` returns what the caller
+        # wrote and `== 1` would pin the fixture rather than the conservation law.
+        mass = np.asarray(problem.geometry.integrate(result.M), dtype=float)
+        assert np.max(np.abs(mass / mass[0] - 1.0)) < 1e-12, f"no-flux mass leak: masses {mass}"
 
     def test_block_heuristic_vs_resolve_for_nonsmooth_h_and_driftfield_only_solver(self):
         """CORE PINNING TEST for BlockIterator bug: heuristic vs resolve_fp_drift_kwargs diverge.

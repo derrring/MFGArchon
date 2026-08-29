@@ -243,7 +243,10 @@ def add_boundary_no_flux_entries_conservative(
     For conservative scheme:
     - Boundary flux F_{boundary} = 0 (enforced exactly)
     - Interior flux uses standard upwind selection
-    - This maintains column sum = 1/dt even at boundaries
+    - The wall row is divided by the wall CONTROL VOLUME ``dx/2``, not ``dx`` (#2145), so the
+      flux telescopes against the trapezoid weights. ~~This maintains column sum = 1/dt even at
+      boundaries~~ -- that is the uniform-weight statement and it no longer holds; the weighted
+      one does. Measured at a drifted wall: rectangle +25.37733%, trapezoid -1.98e-12%.
     """
     # Diagonal term (time derivative)
     diagonal_value = 1.0 / dt
@@ -318,17 +321,30 @@ def add_boundary_no_flux_entries_conservative(
             u_plus = u_flat[flat_idx_plus]
             u_center = u_flat[flat_idx]
 
-            # Diffusion (conservative flux formulation):
-            # For flux-based scheme: F_{1/2} = -D*(m_1 - m_0)/dx, F_{-1/2} = 0
-            # Divergence: (F_{1/2} - F_{-1/2})/dx = -D*(m_1 - m_0)/dx²
-            # Matrix contribution: +D/dx² to diagonal, -D/dx² to off-diagonal
-            # Note: This differs from Laplacian-based (factor of 2) because we
-            # compute face fluxes, not point Laplacians. See Issue #668 discussion.
-            diagonal_value += D / (dx * dx)
+            # THE WALL NODE OWNS HALF A CELL (#1904 / #1935). `TensorProductGrid` is
+            # node-centred -- it puts x_0 exactly ON the wall -- so node 0's control volume is
+            # [0, h/2], not [-h/2, h/2]. Dividing the flux divergence by `dx` gave the wall node a
+            # full cell reaching to -h/2, outside the domain, and halved every wall row: that is
+            # #1904's "converges to HALF the true value" and #1935's measured order 0.00.
+            #
+            # F_{1/2} = -D*(m_1 - m_0)/dx and F_{-1/2} = 0, over the volume dx/2:
+            #   (F_{1/2} - F_{-1/2}) / (dx/2) = -2*D*(m_1 - m_0)/dx**2
+            #
+            # The consequence is the point, not a side effect. The trapezoid weights ARE these
+            # control volumes -- h/2 at each end node, h inside -- so with the correct volume the
+            # flux telescopes against THEM and the scheme conserves the trapezoid mass exactly,
+            # which on a node-centred grid is the mass. It no longer conserves `sum(m)*dx`, the
+            # cell-centred integral this grid does not have. Conservation is a property of the
+            # right control volume here, not something the stencil is bent to enforce.
+            #
+            # Correct in nD including corners: the face areas cancel against the volume, leaving
+            # each dimension divided by its own width, which is what this per-dimension loop does.
+            wall_vol = dx / 2.0
+            diagonal_value += D / (dx * wall_vol)
 
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_plus)
-            data_values.append(-D / (dx * dx))
+            data_values.append(-D / (dx * wall_vol))
 
             # Conservative flux advection: only F_{1/2}, no F_{-1/2} (zero flux at boundary)
             # Issue #919: interface_velocity[d][i] = face velocity at (i+1/2)
@@ -339,15 +355,16 @@ def add_boundary_no_flux_entries_conservative(
 
             if alpha_right >= 0:
                 # Outflow to right
-                diagonal_value += alpha_right / dx
+                diagonal_value += alpha_right / wall_vol
             else:
                 # Inflow from right
                 row_indices.append(flat_idx)
                 col_indices.append(flat_idx_plus)
-                data_values.append(alpha_right / dx)
+                data_values.append(alpha_right / wall_vol)
 
-            # Note: NO contribution from left flux - it's exactly zero (no-flux BC)
-            # This is key for mass conservation at boundaries
+            # NO contribution from the left flux -- it is exactly zero (no-flux BC), which is what
+            # makes the telescoping exact. The advection divides by the same half volume as the
+            # diffusion above: it is the same control volume, not a separate convention.
 
         elif at_right_boundary:
             # Right boundary: F_{N+1/2} = 0 (no-flux), only interior flux F_{N-1/2}
@@ -358,15 +375,13 @@ def add_boundary_no_flux_entries_conservative(
             u_minus = u_flat[flat_idx_minus]
             u_center = u_flat[flat_idx]
 
-            # Diffusion (conservative flux formulation):
-            # For flux-based scheme: F_{N-1/2} = -D*(m_N - m_{N-1})/dx, F_{N+1/2} = 0
-            # Divergence: (F_{N+1/2} - F_{N-1/2})/dx = D*(m_N - m_{N-1})/dx²
-            # Matrix contribution: +D/dx² to diagonal, -D/dx² to off-diagonal
-            diagonal_value += D / (dx * dx)
+            # Half-cell volume at the wall, for the reason given in the left branch.
+            wall_vol = dx / 2.0
+            diagonal_value += D / (dx * wall_vol)
 
             row_indices.append(flat_idx)
             col_indices.append(flat_idx_minus)
-            data_values.append(-D / (dx * dx))
+            data_values.append(-D / (dx * wall_vol))
 
             # Conservative flux advection: only -F_{N-1/2}, no F_{N+1/2} (zero flux at boundary)
             # Issue #919: interface_velocity[d][i-1] = face velocity at (i-1/2)
@@ -379,12 +394,12 @@ def add_boundary_no_flux_entries_conservative(
                 # Inflow from left
                 row_indices.append(flat_idx)
                 col_indices.append(flat_idx_minus)
-                data_values.append(-alpha_left / dx)
+                data_values.append(-alpha_left / wall_vol)
             else:
                 # Outflow to left
-                diagonal_value += -alpha_left / dx
+                diagonal_value += -alpha_left / wall_vol
 
-            # Note: NO contribution from right flux - it's exactly zero (no-flux BC)
+            # NO contribution from the right flux -- exactly zero, same half volume as above.
 
     # Add diagonal entry
     row_indices.append(flat_idx)

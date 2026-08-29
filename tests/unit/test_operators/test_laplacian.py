@@ -14,6 +14,21 @@ from scipy.sparse.linalg import LinearOperator
 
 from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, periodic_bc
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+
+def _control_volumes(n, h, dim):
+    """The control volumes on an endpoint-inclusive grid: the trapezoid weights (#2145).
+
+    Flattened and tensor-producted for nD, so the corner carries `(h/2)^dim` -- which is what makes
+    `w^T L = 0` a statement about the corner as well as the edges.
+    """
+    w1 = quadrature_weights_1d(np.arange(n, dtype=float) * h)
+    w = w1
+    for _ in range(dim - 1):
+        w = np.multiply.outer(w, w1)
+    return np.asarray(w).ravel()
+
 
 # =============================================================================
 # Fixtures
@@ -398,26 +413,61 @@ class TestLaplacianMassConservative:
         A = A.toarray() if hasattr(A, "toarray") else np.asarray(A)
         return float(np.max(np.abs(A.sum(axis=1)))), float(np.max(np.abs(A.sum(axis=0)))), A
 
-    def test_default_noflux_is_row_but_not_column_conservative(self):
-        """The default (2nd-order ghost-mirror) stencil has zero row sums but NONZERO column
-        sums at the walls -- this is the leak the flag exists to fix."""
+    def test_unweighted_column_sums_are_nonzero_and_that_is_not_a_leak(self):
+        """`1^T L != 0` at the walls, and #2145 is the finding that this was never the defect.
+
+        This test asserted the opposite: that the nonzero unweighted column sum "is the leak the
+        flag exists to fix". `1^T L = 0` is column conservation under UNIFORM weights -- it says the
+        operator conserves `sum(m)`, and on an endpoint-inclusive grid `sum(m)` is not the mass. The
+        wall lies ON the end node, which owns half a cell, so the measure is the trapezoid and the
+        statement that matters is `w^T L = 0`. Measured, 1-D n=41 and 2-D n=11:
+
+            max|1^T L|    1.600e+03    2.000e+02
+            max|w^T L|    9.379e-14    2.051e-15
+
+        Both branches of `mass_conservative` are exactly conservative -- for different measures --
+        and the branch that conserved the right one was the branch documented as leaking. What it
+        cost to believe otherwise: the FV branch divided its wall rows by a full cell, which is
+        #1904's "converges to HALF the true value" and #1935's wall order 0.00 against 2.00, and the
+        flag's docstring recorded that halving as "the cost of 1st-order wall accuracy" -- a price
+        paid for conservation that the correct volume gives for free.
+        """
         n, h = 51, 1.0 / 50
-        rmax, cmax, _ = self._sums(LaplacianOperator([h], (n,), bc=no_flux_bc(dimension=1)))
-        assert rmax < 1e-9, f"default row sums should be 0, got {rmax:.2e}"
-        assert cmax > 1.0 / h**2 / 2, f"default must show the column-sum defect, got {cmax:.2e}"
+        rmax, cmax, A = self._sums(LaplacianOperator([h], (n,), bc=no_flux_bc(dimension=1)))
+        w = _control_volumes(n, h, 1)
+        assert rmax < 1e-9, f"row sums should be 0, got {rmax:.2e}"
+        assert cmax > 1.0 / h**2 / 2, (
+            f"the unweighted column sum must stay nonzero, got {cmax:.2e}. If it vanishes, the wall "
+            "rows are back on a full cell and the operator is conserving sum(m) again."
+        )
+        assert float(np.max(np.abs(w @ A))) < 1e-10, "the WEIGHTED column sum is the one that must vanish"
 
     @pytest.mark.parametrize("dim", [1, 2])
-    def test_conservative_noflux_row_and_column_sums_zero(self, dim):
-        """mass_conservative=True emits the FV zero-flux stencil: BOTH row and column sums
-        vanish, so the implicit FP diffusion solve conserves mass exactly."""
+    def test_conservative_noflux_is_row_conservative_and_w_column_conservative(self, dim):
+        """Row sums vanish, and the column sums vanish AGAINST THE CONTROL VOLUMES (#2145).
+
+        2-D is here for the corner, whose volume is the product `(h/2)(h/2)`; a scheme that got the
+        edges right and the corner wrong would pass in 1-D.
+        """
         n = 41 if dim == 1 else 11
         h = 1.0 / (n - 1)
         bc = no_flux_bc(dimension=dim)
         L = LaplacianOperator([h] * dim, (n,) * dim, bc=bc, mass_conservative=True)
-        rmax, cmax, A = self._sums(L)
-        assert rmax < 1e-10, f"{dim}D conservative row sums must be 0, got {rmax:.2e}"
-        assert cmax < 1e-10, f"{dim}D conservative column sums must be 0, got {cmax:.2e}"
-        assert np.allclose(A, A.T), "FV no-flux Laplacian must be symmetric"
+        rmax, _, A = self._sums(L)
+        w = _control_volumes(n, h, dim)
+        assert rmax < 1e-10, f"{dim}D row sums must be 0, got {rmax:.2e}"
+        wcol = float(np.max(np.abs(w @ A)))
+        assert wcol < 1e-10, f"{dim}D weighted column sums must be 0, got {wcol:.2e}"
+        # SELF-ADJOINT IN L^2(w), not plain-symmetric. `A` is not symmetric -- the wall row carries
+        # 2/h^2 where its neighbour's column carries 1/h^2 -- and asserting `A == A.T` would demand
+        # the equal-volume mesh this grid is not. `W A` symmetric is the statement that survives a
+        # non-uniform control volume, and it is what makes the discrete Dirichlet energy
+        # `m^T W A m` well defined. Measured: max|A - A.T| = 1.600e+03 / 1.000e+02 against
+        # max|WA - (WA)^T| = 9.237e-14 / 6.661e-16.
+        WA = w[:, None] * A
+        assert float(np.max(np.abs(WA - WA.T))) < 1e-10, (
+            f"{dim}D no-flux Laplacian must be self-adjoint in the control-volume inner product"
+        )
 
     def test_default_unchanged_by_flag_off(self):
         """mass_conservative=False (default) is byte-identical to the pre-#1184 stencil:
@@ -463,7 +513,12 @@ class TestLaplacianVariableCoefficient:
         np.testing.assert_allclose(baked, d0 * unit, atol=1e-14)
 
     def test_varying_field_is_column_conservative(self):
-        """1ᵀL = 0 for a spatially varying D (a point-value scheme would have colsum != 0)."""
+        """`w^T L = 0` for a spatially varying D (a point-value scheme would not vanish).
+
+        The measure moved with #2145: the face-averaged flux telescopes against the CONTROL VOLUMES,
+        which are the trapezoid weights, not against uniform ones. Measured here: max|1^T L| = 72,
+        max|w^T L| = 4.130e-15.
+        """
         n, h = 41, 1.0 / 40
         x = np.linspace(0.0, 1.0, n)
         d_field = np.where(x < 0.5, 0.02**2 / 2, 0.30**2 / 2)
@@ -472,7 +527,7 @@ class TestLaplacianVariableCoefficient:
             .as_scipy_sparse()
             .toarray()
         )
-        assert np.max(np.abs(A.sum(axis=0))) < 1e-12
+        assert np.max(np.abs(_control_volumes(n, h, 1) @ A)) < 1e-12
 
     def test_varying_field_2d_column_conservative(self):
         n, h = 11, 1.0 / 10
@@ -484,7 +539,7 @@ class TestLaplacianVariableCoefficient:
             .as_scipy_sparse()
             .toarray()
         )
-        assert np.max(np.abs(A.sum(axis=0))) < 1e-11
+        assert np.max(np.abs(_control_volumes(n, h, 2) @ A)) < 1e-11
 
     def test_coefficient_field_requires_mass_conservative(self):
         """coefficient_field is only assembled in the conservative branch -> reject otherwise."""

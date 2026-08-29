@@ -89,13 +89,22 @@ class TestWarmStartNameError1285:
         ).solve(max_iterations=2, tolerance=1e-10)
         assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
 
-        # U_terminal and M_initial are exactly the two names that were undefined on the warm
-        # path in #1285, so pin the data each one supplies.  u_terminal is 0, and M_initial is
-        # normalised to unit mass -- whereas the warm M array carries mass 0.1, so a warm branch
-        # that used it in place of M_initial would fail this by 10x.
+        # U_terminal and M_initial are exactly the two names that were undefined on the warm path
+        # in #1285, so pin the data each one supplies. u_terminal is 0, and row 0 must carry the
+        # PROBLEM's initial density -- whereas the warm M array carries mass 0.1, so a warm branch
+        # that used it in place of M_initial fails this by a factor of ~5.5.
+        #
+        # The target used to be 1.0, on `sum * dx`. Both halves moved: #1887 removed the
+        # constructor's rescale, so `m_initial` is whatever the caller wrote (0.553142 here), and
+        # #2145 makes the measure the geometry's. Comparing against the problem's own initial mass
+        # keeps the discrimination this line exists for and stops it pinning a normalisation that
+        # no longer happens.
         np.testing.assert_allclose(result.U[-1], 0.0, atol=1e-12)
-        dx = problem.geometry.spacing[0]
-        np.testing.assert_allclose(result.M[0].sum() * dx, 1.0, atol=1e-10)
+        expected_mass = float(problem.geometry.integrate(np.asarray(problem.m_initial, dtype=float)))
+        assert abs(expected_mass - 0.1) > 0.1, (
+            f"the fixture stopped separating M_initial from the warm array's mass 0.1: {expected_mass:.6f}"
+        )
+        np.testing.assert_allclose(float(problem.geometry.integrate(result.M[0])), expected_mass, atol=1e-10)
 
     def test_fictitious_play_iterator_warm_start(self):
         """FictitiousPlayIterator.solve() must complete without NameError on warm path."""
@@ -125,6 +134,8 @@ class TestWarmStartNameError1285:
         ).solve(max_iterations=2, tolerance=1e-10)
         assert np.max(np.abs(result.U - cold.U)) > 1e-3, "warm-start arrays were ignored"
 
+        # Same as the fixed-point case above: row 0 carries the problem's initial density, measured
+        # on the geometry's measure, against a warm array whose mass is 0.1 (#1887 / #2145).
         np.testing.assert_allclose(result.U[-1], 0.0, atol=1e-12)
-        dx = problem.geometry.spacing[0]
-        np.testing.assert_allclose(result.M[0].sum() * dx, 1.0, atol=1e-10)
+        expected_mass = float(problem.geometry.integrate(np.asarray(problem.m_initial, dtype=float)))
+        np.testing.assert_allclose(float(problem.geometry.integrate(result.M[0])), expected_mass, atol=1e-10)

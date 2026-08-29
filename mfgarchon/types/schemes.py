@@ -165,7 +165,8 @@ class NumericalScheme(Enum):
     MESHLESS_GALERKIN = "meshless_galerkin"
 
     # Conservative finite-volume FP schemes (Issue #422). Mass-exact by construction (flux
-    # telescoping -> column sums = 0), so no renormalization is needed. FP-only: paired with the
+    # telescoping against the control volumes -> wᵀ(div) = 0, #2145), so no renormalization is
+    # needed. FP-only: paired with the
     # upwind HJB-FDM solver (there is no HJB-FVM partner yet), so the family-match duality check
     # is intentionally relaxed in the factory.
     FVM_UPWIND = "fvm_upwind"  # 1st-order upwind flux

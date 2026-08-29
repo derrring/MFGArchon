@@ -647,9 +647,14 @@ class ConvergenceWrapper:
 
             # Add mass tracking
             if M.shape[0] > 1:
-                dx = (x_grid[-1] - x_grid[0]) / (len(x_grid) - 1)
-                initial_mass = np.sum(M[0, :]) * dx
-                final_mass = np.sum(M[-1, :]) * dx
+                # #2145: the grid's own measure, from the coordinates already in hand. The end
+                # nodes hold half a cell each, so `sum(m)*dx` is a different functional and reports
+                # a different drift -- the two disagree by dx*(m[0]+m[-1])/2 at every step.
+                from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+                w = quadrature_weights_1d(x_grid)
+                initial_mass = float(np.dot(M[0, :], w))
+                final_mass = float(np.dot(M[-1, :], w))
                 mass_change = abs(final_mass - initial_mass) / initial_mass * 100
 
                 advanced_info["mass_change_percent"] = mass_change

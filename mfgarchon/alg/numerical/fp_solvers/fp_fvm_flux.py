@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
 ZERO_FLUX_BC = frozenset({"no_flux", "neumann", "reflecting"})
 
 
@@ -99,8 +101,12 @@ def axis_flux_divergence(
         Cell averages, shape ``(*spatial_shape)``.
     alpha_int : np.ndarray
         Interface velocity at the ``N-1`` interior faces along ``axis`` (shape = ``m`` with the
-        ``axis`` length reduced by one). Sharing this per-face velocity between neighboring cells
-        is what makes the column sums vanish (mass conservation).
+        ``axis`` length reduced by one). Sharing this per-face velocity between neighbouring cells
+        is what makes the fluxes telescope. What they telescope AGAINST is the control volumes, so
+        the vanishing statement is ``wᵀ(divergence) = 0`` with ``w`` the trapezoid weights, not
+        ``1ᵀ(divergence) = 0`` (#2145): on an endpoint-inclusive grid the two end nodes own half a
+        cell each, and the uniform-weight version is a statement about ``sum(m)``, which is a
+        different functional from the mass.
     axis : int
         Axis along which to compute the flux divergence.
     dx : float
@@ -175,7 +181,27 @@ def axis_flux_divergence(
             "Dirichlet advection is deferred (Issue #422 scope note)."
         )
 
-    div = (f_full[..., 1:] - f_full[..., :-1]) / dx
+    if periodic:
+        # Every cell on the torus is dx wide. #1822 already removed the repeated cell above, which
+        # is the same "one cell too long" error the zero-flux branch carries -- fixed on this side
+        # in 2026-07 and not on the other.
+        div = (f_full[..., 1:] - f_full[..., :-1]) / dx
+    else:
+        # ZERO FLUX: the wall lies ON the end nodes, because `TensorProductGrid` is
+        # endpoint-inclusive. So nodes 0 and n-1 own HALF a cell each and the control volumes are
+        # the trapezoid weights (#2145) -- which is what `quadrature_weights_1d` returns, and the
+        # reason `grid.integrate` is the measure these fluxes telescope against.
+        #
+        # Dividing all n by dx tiles a domain of length n*dx = L + dx instead of L. Measured before
+        # this change, on pure diffusion to equilibrium at no-flux, the uniform steady value read
+        # back an effective domain of exactly 1 + h at every resolution (1.050000 / 1.025000 /
+        # 1.012500 / 1.006250 for h = 0.05 / 0.025 / 0.0125 / 0.00625), and the L-inf error against
+        # `1 + 0.5 cos(pi x) exp(-D pi^2 t)` converged at order 0.91/0.96 -- first order, in a
+        # scheme documented second order -- with the error maximal at the wall (8.85e-03 against
+        # the FDM's 8.67e-05, 102x) and decaying inward, the signature of a wall control volume
+        # rather than an interior truncation error.
+        volumes = quadrature_weights_1d(np.arange(n, dtype=float) * dx)
+        div = (f_full[..., 1:] - f_full[..., :-1]) / volumes
     if repeats:
         # Restore the caller's shape: the repeated cell carries cell 0's divergence, because it
         # IS cell 0. Written back rather than left stale so the field stays periodic by
