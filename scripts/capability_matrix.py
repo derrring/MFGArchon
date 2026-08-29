@@ -957,9 +957,13 @@ def print_report(results: dict) -> None:
 # recorded it as inert. Its independence claim is weaker than it reads -- two discretisations
 # agreeing on an uncoupled problem is not the same statement -- but the cell does have a coupling
 # it can feel.
-COUPLING_INERT_BASELINE = {
-    "fvm_muscl/mass_conservation",
-}
+# Emptied by #1887. `fvm_muscl/mass_conservation` was inert on the coupling because the constructor
+# rescaled every initial density to mass 1, so the fixture's coupling strength was pinned whatever
+# the caller wrote. With the rescale gone the cell's density carries the mass the fixture actually
+# specifies, the coupling moves with it, and the self-test sees the cell go red under injected
+# coupling drift. Removed here rather than left listed: a name in this set is a claim that the cell
+# CANNOT feel its coupling, and that claim is now false.
+COUPLING_INERT_BASELINE: set[str] = set()
 
 
 def _seam_probes():

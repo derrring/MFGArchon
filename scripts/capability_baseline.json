@@ -5,52 +5,68 @@
       "artifact": {
         "exception": "ValueError",
         "library_said": {
-          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 2
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
         },
-        "message": "FP solver: at timestep 2/10, advection_scheme='divergence_centered': density went to -2.762e-01. Clipping it to zero would fabricate 5.722% of the total mass, so the solve is stopped rather than repor"
+        "message": "FP solver: at timestep 1/10, advection_scheme='divergence_centered': density went to -3.391e-03. Clipping it to zero would fabricate 0.062% of the total mass, so the solve is stopped rather than repor"
       },
-      "intended": "INTENDED \u2014 not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate 5.722% of the mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it.",
       "status": "UNSUPPORTED"
     },
     "fdm_centered_2d/mass_conservation": {
       "artifact": {
-        "exception": "ValueError",
-        "message": "FP solver: at timestep 3/6, advection_scheme='divergence_centered': density went to -1.817e-01. Clipping it to zero would fabricate 0.722% of the total mass, so the solve is stopped rather than report"
+        "all_finite": true,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_t0": 0.10468126796431428,
+        "max_rel_drift": 1.3257183522600603e-16,
+        "min_density": 3.059023205018258e-07,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865, and this cell now fails EARLIER than the other two. With the inner Newton closing (PR #1864), the solve reaches the FP step, where divergence_centered drives the density to -6.618e-01 at timestep 2/6 and the mass-fabrication gate (#1683) refuses it -- the same refusal its 1-D sibling records, and INTENDED there. Whether this cell is a #1865 instance or a well-posedness problem of its own is unsettled. See also #1866: NumericalScheme.FDM_CENTERED leaves the HJB on upwind gradients, so this cell's HJB solve is identical to fdm_upwind_2d's and only the FP half is centered. [MEASURED PRE-#1888] Re-measured at the corrected initial mass, the refusal moves to timestep 3/6 at a density of -1.817e-01 and 0.722% fabricated mass, from 2/6, -6.618e-01 and 2.329%. The refusal itself is unchanged and so is the reading of it; only the operating point moved.",
-      "status": "UNSUPPORTED"
+      "status": "FAIL"
     },
     "fdm_upwind/mass_conservation": {
       "artifact": {
         "all_finite": true,
         "library_said": {
-          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 39
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 12,
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
         },
-        "mass_max": 1.0000000000000002,
-        "mass_t0": 1.0000000000000002,
-        "max_drift": 1.2212453270876722e-15,
-        "min_density": 0.007498923710795448,
+        "mass_max": 0.5459505243936867,
+        "mass_t0": 0.5459505243936865,
+        "max_drift": 2.220446049250313e-16,
+        "min_density": 0.0025651583868754406,
         "picard_converged": false,
         "picard_iterations": 5,
-        "tolerance": 1.0000000000000003e-09
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT -- #1873/#1878. Mass is conserved to 1.2e-15, but the coupled iteration does not reach a fixed point: `picard_converged: false` after 5 sweeps, and it does not converge at 100, 200 or 400 either (final errors 2.3e-04, 4.1e-03, 4.0e-03, not descending). Red from 2026-08-11, when `picard_converged` entered the verdict (#1891). It was PASS before that on the mass oracle alone, which holds on whatever drift field the FP step is handed. The inner Newton's half is #1878; the residual there has more than one root and a line search converges to a non-viscosity branch.",
       "status": "FAIL"
     },
     "fdm_upwind_2d/mass_conservation": {
       "artifact": {
-        "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 1.33e+02)"
+        "all_finite": true,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_t0": 0.10468126796431428,
+        "max_rel_drift": 2.6514367045201206e-16,
+        "min_density": 3.059023205018258e-07,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865. The inner-solver half of #1745 is fixed (PR #1864: the finite-difference Jacobian straddled the upwind kink). Twelve of the thirteen inner Newton solves in this cell now converge in 4-7 iterations, final residuals 4.881e-12 to 7.433e-07. The thirteenth -- the first backward step of the third Picard sweep -- has no root within reach: scipy.optimize.least_squares(method='trf') on the same residual from the same x0 also fails, ending at 3.58 after 12100 evaluations with the iterate 2.4e+04 away. What remains is the COUPLED iteration diverging: measured at the FP call site -- max|U| of the value function handed to the FP solve, and the peak of the density it returns -- 1.86 -> 37.35 and 34.9 -> 101 over the two available sweeps. Name the instrument, because the iterator's own iteration_callback reports the DAMPED iterate and gives half of these (0.93 -> 19.14 at damping 0.5); both are correct and they are not the same quantity. 3, 5 or 10 outer iterations end identically. Not dimension-specific -- the same parameters in 1-D give max|U| 0.489 -> 0.507, and 2-D converges at coupling x0.1, or at high enough sigma -- but that bound moves with the outer budget and is not a property of sigma alone. At this cell's own max_iterations=3: 0.40 and 0.45 fail, 0.50 / 0.55 / 0.60 / 1.00 pass. At max_iterations=5, 0.50 fails too (residual 9.88e+00) and the bound is 0.55. More sweeps is more opportunity to diverge, which is the shape of the defect rather than a surprise. Read the residual as a coupled-iteration number, not an inner-solver one. [MEASURED PRE-#1888] The inner-Newton counts and the scipy least_squares trace above were taken when this fixture's initial mass was 1.21 rather than 1, so the coupling was 21% stronger than its source says. The qualitative finding survives -- the cell still raises ConvergenceError at every Picard budget -- but the residual it now reports is 1.33e+02 against the 2.95e+01 recorded then, and the individual solve counts have not been re-run. Do not cite the numbers above without re-measuring; #1865 carries the corrected picture.",
-      "status": "UNSUPPORTED"
+      "status": "FAIL"
     },
     "fvm_muscl/mass_conservation": {
       "artifact": {
         "all_finite": true,
-        "mass_t0": 0.9999999999999998,
-        "max_rel_drift": 2.2204460492503136e-16,
-        "min_density": 7.271016423279045e-05,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_t0": 0.32549037008076837,
+        "max_rel_drift": 3.410924336562282e-16,
+        "min_density": 2.3679814680665632e-05,
         "picard_converged": true,
         "picard_iterations": 18,
         "tolerance": 1e-06
@@ -59,24 +75,34 @@
     },
     "fvm_muscl_2d/mass_conservation": {
       "artifact": {
-        "exception": "ConvergenceError",
-        "message": "newton solver failed to converge after 30 iterations (residual: 3.46e+01)"
+        "all_finite": true,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_t0": 0.10468126796431428,
+        "max_rel_drift": 7.954310113560362e-16,
+        "min_density": 3.059023205018258e-07,
+        "picard_converged": false,
+        "picard_iterations": 3,
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT \u2014 #1865, the same coupled divergence as fdm_upwind_2d: this cell shares HJBFDMSolver, and SL_LINEAR, which does not, passes. [MEASURED PRE-#1888] Residual re-measured at the corrected initial mass: 3.46e+01, from 1.15e+02. The cell still fails and still shares HJBFDMSolver with fdm_upwind_2d, which is the note's point.",
-      "status": "UNSUPPORTED"
+      "status": "FAIL"
     },
     "fvm_vs_fdm/agreement": {
       "artifact": {
         "all_finite": true,
         "fdm_picard_converged": true,
-        "fdm_picard_iterations": 17,
+        "fdm_picard_iterations": 18,
         "fvm_picard_converged": true,
         "fvm_picard_iterations": 18,
-        "rel_l2_M": 0.04890580973631817,
-        "rel_l2_M_terminal": 0.04285356047380676,
-        "rel_l2_U": 0.027229780657619235,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 2
+        },
+        "rel_l2_M": 0.010296278671606917,
+        "rel_l2_M_terminal": 0.009800749520840405,
+        "rel_l2_U": 0.006857743743920726,
         "tolerance": 0.07,
-        "worst": 0.04890580973631817
+        "worst": 0.010296278671606917
       },
       "status": "PASS"
     },
@@ -85,67 +111,71 @@
         "exception": "NotImplementedError",
         "library_said": {
           "UserWarning: HJBGFDMSolver: no `monotonicity_scheme` specified; defaulting to 'none' (no QP correction). This produces bare": 2,
-          "UserWarning: Hybrid neighborhood: N/N points (N%) had fewer than k=N neighbors within delta=N Used k-NN fallback.": 1
+          "UserWarning: Hybrid neighborhood: N/N points (N%) had fewer than k=N neighbors within delta=N Used k-NN fallback.": 1,
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
         },
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
-      "intended": "ABSENT BY DESIGN \u2014 not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue \u2014 the cell exists so that doing so cannot land unnoticed.",
       "status": "UNSUPPORTED"
     },
     "regime_switching/non_negativity": {
       "artifact": {
         "all_finite": true,
         "library_said": {
-          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 42
+          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 10,
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 2
         },
-        "max_rel_drift": 0.0888200989332657,
-        "min_density": 0.0008425476627731638,
+        "max_rel_drift": 0.08882009893326642,
+        "min_density": 0.0001086693884882064,
         "picard_converged": false,
         "picard_iterations": 3,
         "regimes": [
           {
             "all_finite": true,
-            "max_rel_drift": 0.0888200989332657,
-            "min_density": 0.0008425476627731638,
+            "max_rel_drift": 0.08882009893326642,
+            "min_density": 0.0001086693884882064,
             "regime": 0
           },
           {
             "all_finite": true,
-            "max_rel_drift": 0.08602951245459423,
-            "min_density": 0.0011239694836673332,
+            "max_rel_drift": 0.08602951245459413,
+            "min_density": 0.00017890687096579514,
             "regime": 1
           }
         ],
         "tolerance": 1e-06
       },
-      "intended": "DEFECT \u2014 #1798, and NOT the defect this cell recorded before. The solve now RUNS: #1681 is fixed and both regime densities are strictly positive (min 8.4e-04), where this cell previously raised at the mass-fabrication gate every run. What fails is the cell's own oracle, which gates PER-REGIME mass drift at 1e-6. A regime's mass is not conserved in a Markov-switching model -- the generator transfers it. For this cell's Q the stationary distribution is [2/3, 1/3] against equal initial masses, so the measured 8.9%/8.6% is approximately RIGHT, not approximately wrong; integrating the FP system over the no-flux domain leaves M(t) = M(0) expm(Qt), and the run tracks it to 2.2e-03. The conserved quantity is the sum over regimes: 1.4e-03 here, 8.0e-04 by 30 Picard iterations, 6.7e-04 at Nt=80. Do NOT turn this PASS by relaxing 1e-6 to fit the measurement -- #1767 named that route as one the matrix exists to catch; #1798 records the three honest replacements. Note for the next regeneration: this is the first FAIL cell, so _note_still_applies drops this annotation as soon as any of these floats move, exactly as that function's docstring predicts. That is the safe direction, but it means the note is not durable here the way an exception-shaped one is.",
       "status": "FAIL"
     },
     "sl_linear/mass_conservation": {
       "artifact": {
         "all_finite": true,
-        "mass_max": 1.0000000000000007,
-        "mass_t0": 1.0000000000000002,
-        "max_drift": 4.440892098500626e-16,
-        "min_density": 0.00466345594426523,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_max": 0.5499265164906068,
+        "mass_t0": 0.5459505243936865,
+        "max_drift": 0.003975992096920233,
+        "min_density": 0.0025651566854981247,
         "picard_converged": false,
         "picard_iterations": 5,
-        "tolerance": 1.0000000000000003e-09
+        "tolerance": 1e-09
       },
-      "intended": "DEFECT -- #1873/#1880. `picard_converged: false` after 5 sweeps; unlike its FDM sibling all four criterion arms are above tolerance and the density arm is not descending (never below 0.357). #1880 has the mechanism: SL_LINEAR amplifies asymmetry 2.75x per sweep on a symmetric fixture. Red from 2026-08-11 for the same reason as the row above.",
       "status": "FAIL"
     },
     "sl_linear_2d/mass_conservation": {
       "artifact": {
         "all_finite": true,
-        "mass_t0": 0.9999999999999999,
-        "max_rel_drift": 5.551115123125784e-16,
-        "min_density": 2.9212271516776556e-06,
+        "library_said": {
+          "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
+        },
+        "mass_t0": 0.10468126796431428,
+        "max_rel_drift": 0.028804761642077202,
+        "min_density": 3.059023205018258e-07,
         "picard_converged": false,
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
-      "intended": "DEFECT -- #1865. `picard_converged: false` at its 3-sweep budget, and the budget is why this cell is the one member of the family whose convergence flag does not move under the coupling mutations of #1892 -- it exhausts the budget at every scale. Red from 2026-08-11. It DOES converge given more sweeps: measured here, converged=True at iteration 32 with budgets of 35 and 60, which `capability_matrix.py` recorded less precisely as \"it converges at 35 sweeps in ~3s\" -- 35 is the BUDGET and 32 is the count, so the two notes were never the same number and this one asserted an agreement that did not hold. Corrected 2026-08-21 in both places. (That statement sits in `_picard_verdict`'s docstring, some sixty lines BELOW `_solved`, not twenty above it; the module docstring says nothing about convergence.) So the cell is red on its budget rather than on the scheme, and raising the budget is a deliberate decision about what the matrix costs -- #1865.",
       "status": "FAIL"
     }
   }

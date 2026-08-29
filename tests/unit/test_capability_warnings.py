@@ -238,7 +238,15 @@ def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
 
     newton = {k: v for k, v in said.items() if "inner Newton did not converge" in k}
     assert newton, f"the recorded warnings no longer mention the inner Newton: {said}"
-    assert sum(newton.values()) == 39, f"expected 39 non-convergence warnings (#1878), got {newton}"
+    # 39 until #1887, now 12, and the drop is the point rather than a number to bump. The constructor
+    # used to rescale every initial density to mass 1; this fixture's density has mass 0.1047, so the
+    # coupling f(m) = c*m was being evaluated at ten times the values the fixture specifies. Weaken
+    # the coupling and the inner Newton converges more often -- 39 -> 12 warnings on the same solve.
+    #
+    # So #1878 has not been fixed; its fixture got easier. The `assert newton` above is what keeps
+    # the interesting event failing this test: if the count reaches zero, either #1878 moved or the
+    # fixture stopped exercising it, and both want reading.
+    assert sum(newton.values()) == 12, f"expected 12 non-convergence warnings (#1878 under #1887), got {newton}"
 
     assert cell["artifact"]["picard_converged"] is False, (
         "the coupled solve now converges; that is #1878/#1873 moving and this file must be updated "
