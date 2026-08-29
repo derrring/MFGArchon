@@ -195,11 +195,13 @@ def test_a_tracked_lock_does_not_become_a_second_pin():
     An interpreter carrying that toolchain went `GATE RED` on a two-file documentation diff, and the
     only line naming the cause was a WARN in ~800 lines of output. The lock is untracked as of #2138.
 
-    **This is dormant today and will fire the first time #2167 generates a lock — correctly.**
-    `pyproject.toml` declares `ruff>=0.6.0` with no upper bound while the pre-commit pin is bumped
-    monthly, so a resolver takes the newest and the two agree only on the day of a bump: measured,
-    a real `uv lock` on this tree resolves 0.16.5 against the pinned 0.16.0. The remedy is #2172,
-    not regeneration, which yields 0.16.5 again.
+    **Dormant, and deliberately so as of #2172.** `uv.lock` is now tracked and contains no ruff at
+    all: ruff left the dev group because its version has one owner read at runtime, so a resolver
+    never sees it. That is what makes this assertion unreachable, and the reason is worth stating —
+    an unreachable guard read as dead invites deletion. It fires if anyone puts ruff back into a
+    resolvable position, which is the state it was written for: measured before #2172, a real
+    `uv lock` resolved 0.16.5 against the pinned 0.16.0, because a floor lets the resolver take the
+    newest while the pin moves monthly.
 
     The control is not optional. With no lock present the loop below is vacuous, and a vacuous
     assertion passes just as loudly when the extractor is broken.
