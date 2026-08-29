@@ -199,26 +199,42 @@ MUTATIONS: list[Mutation] = [
         ),
         verify="abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12",
     ),
-    # `mass_drift_reported_as_deviation_from_one` LIVES ON `fix/1887-validate-do-not-normalise`,
-    # not here, and this note is the hand-off. It mutates `SolverResult.mass_conservation_error`
-    # from `|mass(t)/mass(0) - 1|` to `|mass(t) - 1|` (#1672's drift semantics). On THIS contract
-    # `MFGProblem` normalises `m_initial`, so `mass(0) == 1` on every path that reaches the iterator
-    # and the two expressions are the SAME NUMBER -- the convention is true, documented, and has no
-    # observable consequence, so no test can separate them and the sweep correctly called it
-    # INEFFECTIVE. Removing a defect pin from the list is not something to do quietly, which is why
-    # this is written out: the ratchet refuses to record an INEFFECTIVE entry precisely so that the
-    # choice between "fix it" and "move it" gets made rather than sedimented.
-    #
-    # It is live on the #1887 branch, where the constructor stops rescaling and `mass(0)` is
-    # whatever the caller handed in: |0.546 - 1| = 0.454 under the mutation against 1.22e-15 clean.
-    # Merging that branch reinstates it, and this list will conflict there, which is the forcing
-    # function -- a silent re-add is exactly what would drop.
-    #
-    # One path could make it observable here and is deliberately NOT used, because its reachability
-    # is unestablished: the constructor's `uniform-cell` / `point-average` fallbacks normalise
-    # `sum(m)*dx` (or `sum(m)/N`) to 1 while `fixed_point_iterator`'s own fallback measures
-    # `np.sum(M)`, so a geometry with a spacing but no `integrate` would report `mass(0) = 1/dx`.
-    # That mismatch is worth an issue on its own; it is not a licence to keep a pin alive here.
+    Mutation(
+        name="mass_drift_reported_as_deviation_from_one",
+        path="mfgarchon/alg/numerical/coupling/fixed_point_iterator.py",
+        old="                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))",
+        new="                mass_conservation_error = float(np.max(np.abs(mass_per_step - 1.0)))  # MUTATED: deviation from 1, not drift from the initial mass",
+        owner=(
+            "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, "
+            "`|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, "
+            "which is the only site that writes the field. "
+            "The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, "
+            "so `mass(0)` is whatever the caller handed in and the two expressions are different "
+            "numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves "
+            "whatever it started with -- so measuring against 1 reports a caller's modelling "
+            "decision as a solver defect. "
+            "REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where "
+            "this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so "
+            "`mass(0) == 1` on every path reaching the iterator and no test can separate the two "
+            "expressions. The hand-off named a merge conflict as its forcing function; splitting "
+            "#1887 onto its own branch removed the conflict and the re-add dropped silently, which "
+            "is the outcome that note predicted by name. Independent review of PR #2174 caught it."
+        ),
+        verify=(
+            "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], "
+            "boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=0.5, "
+            "components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), "
+            "u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian("
+            "control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, "
+            "coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, "
+            "verbose=False).mass_conservation_error > 0.1"
+        ),
+    ),
+    # NOT used as the anchor, because its reachability is unestablished: the constructor's
+    # `uniform-cell` / `point-average` fallbacks normalise `sum(m)*dx` (or `sum(m)/N`) to 1 while
+    # `fixed_point_iterator` measures through `geometry.integrate`, so a geometry with a spacing but
+    # no `integrate` reports a mass that is not the one the constructor validated. That mismatch is
+    # tracked separately; it is not part of this mutation's anchor.
     Mutation(
         name="particle_mass_counting_measure",
         path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
