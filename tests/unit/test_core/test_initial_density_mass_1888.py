@@ -171,13 +171,54 @@ class TestTheReportedMass:
 
 
 class TestTheThreeTiers:
-    """#1887's decision, one test per tier. Only tier 3 presumes a target of 1."""
+    """#1887's decision. Only tier 3 presumes a target of 1, and only tier 3 is new.
 
-    def test_tier_1_refuses_a_negative_density(self):
-        with pytest.raises(ValueError, match="negative"):
+    **Tier 1 owns ONE case, not three.** The first version of this class had a test per branch and
+    all of them passed on the pre-#1887 tree, which means they pinned nothing about this change --
+    found by independent review of #2174. The reason is not test weakness but duplication: the
+    refusal ladder already had owners upstream, and tier 1 restated two of them.
+
+    Measured, by constructing each case and reading which exception actually arrives:
+
+        negative     ValueError       from Check 1, "m_initial contains negative values"
+        non-finite   ValidationError  from validate_finite -- not even a ValueError
+        zero mass    ValueError       from tier 1
+
+    So tier 1's negative and non-finite branches were unreachable, and the tests below now assert
+    the real owner and the real exception type. Both still pass on the base branch, deliberately:
+    they document a pre-existing ladder rather than claiming coverage of this change. The tests that
+    discriminate #1887 are `test_the_density_is_handed_back_unchanged` and
+    `test_tier_3_warns_off_one_and_says_how_to_silence_it`.
+    """
+
+    def test_a_negative_density_is_refused_by_check_1_not_by_tier_1(self):
+        """Pre-existing owner, named so the duplicate does not come back.
+
+        Mutation: disable Check 1 and this fails on the `match=` pattern rather than on DID NOT
+        RAISE -- measured. `x - 0.5` on [0, 1] integrates to exactly 0 by symmetry, so the density
+        falls through to tier 1's mass check and raises "total mass 0.0 on the grid measure"
+        instead. That is a property of THIS fixture, not of the ladder: a density that is negative
+        somewhere but still has positive total mass has no owner once Check 1 is gone, which is why
+        the check that survived is the one upstream and not the one this branch nearly kept.
+        """
+        with pytest.raises(ValueError, match=r"m_initial contains negative values"):
             _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
 
-    def test_tier_1_refuses_a_zero_density(self):
+    def test_a_non_finite_density_raises_ValidationError_and_not_ValueError(self):
+        """The exception TYPE is the discriminating half, and it is not the obvious one.
+
+        `validate_finite` raises `ValidationError`, whose MRO is [ValidationError, Exception] -- it
+        is not a `ValueError`. Any caller catching `ValueError` to mean "bad initial density" misses
+        this case entirely, which is worth pinning independently of who raises it.
+        """
+        from mfgarchon.utils.validation import ValidationError
+
+        assert not issubclass(ValidationError, ValueError)
+        with pytest.raises(ValidationError, match=r"NaN or Inf"):
+            _problem(1, 11, m0=lambda x: np.where(np.asarray(x) > 0.4, np.nan, 1.0))
+
+    def test_tier_1_refuses_a_zero_mass_density(self):
+        """The one case tier 1 actually owns, and the only one that reaches it."""
         with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
             _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
 

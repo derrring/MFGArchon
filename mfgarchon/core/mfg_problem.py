@@ -2133,18 +2133,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # carry a share by design.
         mass, measure = self._measure_initial_density()
 
-        # TIER 1 -- refuse. No legitimate case, and the solve would be meaningless.
-        m_arr = np.asarray(self.m_initial)
-        if not np.isfinite(m_arr).all():
-            raise ValueError(
-                f"m_initial has {int((~np.isfinite(m_arr)).sum())} non-finite entries. A density "
-                "that is not finite everywhere has no mass and no solve."
-            )
-        if (m_arr < 0.0).any():
-            raise ValueError(
-                f"m_initial goes negative (min {float(m_arr.min()):.3e}). A density is non-negative "
-                "by definition; a negative initial condition is a coding error, not a small one."
-            )
+        # TIER 1 -- refuse. One branch, because the other two already have owners upstream and
+        # restating them here made a dead branch look load-bearing: a negative density is refused
+        # by Check 1 above ("m_initial contains negative values"), and a non-finite one by
+        # `validate_finite`, which raises ValidationError -- not even the same exception type this
+        # tier would have used. Measured: of the three cases a duplicated tier 1 claimed to own,
+        # only a non-positive mass ever reached it. Found by independent review of #2174.
         if not np.isfinite(mass) or mass <= 0.0:
             raise ValueError(
                 f"m_initial has total mass {mass!r} on the {measure} measure. Initial density must "
