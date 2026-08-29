@@ -82,6 +82,11 @@ if __name__ == "__main__":
 
     conditions = Conditions(
         u_terminal=terminal_cost,
+        # `initial_density` sums four Gaussian blobs and integrates to 2.578562 on this
+        # 15x15 grid over [0,10]^2 -- ABOVE 1, unlike the 1-D tutorials. The library measures
+        # the mass, names the measure, and warns, but does not rescale it (#1887). In 2-D the
+        # over-unit case is easy to reach by accident, which is exactly why the warning
+        # exists: it is the difference between a deliberate choice and a miscoded density.
         m_initial=initial_density,
         T=2.0,
     )
