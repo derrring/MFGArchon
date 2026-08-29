@@ -44,14 +44,6 @@ if TYPE_CHECKING:
 IterationCallback = Callable[[int, np.ndarray, np.ndarray, float, float], bool | None]
 
 
-class _MassNotMeasurableError(Exception):
-    """Internal: the geometry cannot express a total mass, so no conservation error exists.
-
-    A private sentinel rather than reusing ValueError, because the surrounding block raises
-    ValueError deliberately when a completed solve has non-positive mass, and that one must escape.
-    """
-
-
 class FixedPointIterator(BaseCouplingIterator):
     """
     Fixed-point iterator for MFG systems with full feature support.
@@ -933,20 +925,20 @@ class FixedPointIterator(BaseCouplingIterator):
             )
 
         # Issue #1672: the field defaulted to 0.0 and nothing on this path wrote it, so every
-        # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case
-        # whose mass reached 6378 (Issue #1671). Measured here, where M and the geometry are
-        # both in hand, using the geometry's own volume element rather than a second
-        # hand-rolled dx so the quantity has one owner.
-        # Measured as DRIFT from the initial mass, not as deviation from 1.0. Those differ
-        # whenever the cell measure that normalised m0 is not the one the geometry reports, and
-        # they do differ today: MFGProblem._initialize_functions normalises with
-        # prod(L_i / Nx_points_i) while volume_element() returns prod(L_i / (Nx_points_i - 1)) --
-        # points against intervals. Against a 1.0 target that fork reports (N/(N-1))**d - 1, which
-        # is 21% on an 11-point 2D grid whose mass is in fact flat to 4e-16, and which shrinks
-        # like d/N so it reads as a first-order-convergent "mass error" -- the same
-        # silent-value-faking-a-rate shape as the 0.0 this field used to report. A ratio is
-        # invariant to the choice of measure and is what the field's name claims to quantify.
-        # The normalisation fork itself is pre-existing and tracked separately.
+        # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case whose
+        # mass reached 6378 (Issue #1671). Measured here, where M and the geometry are both in hand,
+        # through the geometry's own integral rather than a second hand-rolled dx, so the measure
+        # has one owner.
+        #
+        # Measured as DRIFT from the initial mass, not as deviation from 1.0. A ratio is what the
+        # field's name claims to quantify, and 1.0 is not a property of the Fokker-Planck equation --
+        # it conserves whatever it started with, and what that is belongs to the caller.
+        #
+        # The ratio is invariant to a UNIFORM rescaling of the measure and not to this one: the end
+        # nodes hold half a cell each (#2145), so `sum(M)` and the grid's integral weight the walls
+        # differently, and at a no-flux wall the density piles up exactly there. Reporting the ratio
+        # of the counting sum is how a solve reports perfect conservation of a quantity nobody asked
+        # about.
         mass_conservation_error: float | None
         if not fp_output_available:
             # Issue #1717: no FP step completed in this solve, so self.M is not this solve's
@@ -963,48 +955,41 @@ class FixedPointIterator(BaseCouplingIterator):
             # fabricating a zero.
             mass_conservation_error = None
         else:
-            try:
-                # Called as a gate, not as a factor: a geometry with no volume element cannot express
-                # a total mass, so no conservation error is meaningful for it. A uniform cell measure
-                # cancels out of the ratio below, so it is deliberately not multiplied in -- writing it
-                # in would suggest the answer depends on it.
-                self.problem.geometry.volume_element()
-
-                # #2145: the geometry owns the measure and it does NOT cancel out of the ratio.
-                # The comment above is right about a UNIFORM cell measure and wrong about this one:
-                # the end nodes hold half a cell each, so `sum(M)` and the grid's integral are
-                # different functionals, and at a no-flux wall one is conserved and the other is
-                # not. Reporting the ratio of the wrong one is how a solve reports perfect
-                # conservation of a quantity nobody asked about.
-                integrate = getattr(self.problem.geometry, "integrate", None)
-                if callable(integrate):
-                    try:
-                        mass_per_step = np.asarray(integrate(self.M), dtype=float)
-                    except ValueError:
-                        # `integrate` refuses a geometry that has no measure -- a single-node axis
-                        # is the case that exists -- and it raises ValueError, which the handler
-                        # below deliberately does not catch because the non-positive-mass raise
-                        # further down is a fail-loud that must escape. Narrowed to this call so the
-                        # two ValueErrors stay distinguishable: an unmeasurable geometry reports
-                        # "not measured", a solve that produced a non-positive mass still raises.
-                        # Found by independent review of #2145: without this, a completed solve on a
-                        # one-point grid threw from result construction.
-                        mass_conservation_error = None
-                        raise _MassNotMeasurableError from None
-                else:
-                    spatial_axes = tuple(range(1, self.M.ndim))
-                    mass_per_step = np.sum(self.M, axis=spatial_axes)
-                initial_mass = float(mass_per_step[0])
-                if not np.isfinite(initial_mass) or initial_mass <= 0.0:
-                    raise ValueError(
-                        f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
-                        "mass conservation is undefined and the solve that produced it is already wrong"
-                    )
-                mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
-            except (AttributeError, NotImplementedError, _MassNotMeasurableError):
-                # A geometry without a volume element cannot express the integral; None says
-                # "not measured" rather than fabricating a zero.
+            # #2157: the gate used to be `geometry.volume_element()` -- a different method from the
+            # one that supplies the number. Only `TensorProductGrid` had it, and only
+            # `TensorProductGrid` has `integrate`, so it was a spelling of "is this a
+            # TensorProductGrid" that would have refused any future geometry able to integrate.
+            # It now asks the question the comment always claimed to ask.
+            integrate = getattr(self.problem.geometry, "integrate", None)
+            if not callable(integrate):
+                # No measure, so no total mass, so no conservation error to report. None says "not
+                # measured"; 0.0 would be a valid measurement and must not stand in for one.
+                #
+                # The `np.sum(M)` fallback that used to sit here went with the old gate. Reaching it
+                # required a geometry with a volume element and no integral, which no class in this
+                # package has -- and it was the counting measure #2145 removed everywhere else.
                 mass_conservation_error = None
+            else:
+                try:
+                    mass_per_step = np.asarray(integrate(self.M), dtype=float)
+                except (ValueError, NotImplementedError):
+                    # `integrate` refuses a geometry that has no measure -- a single-node axis is the
+                    # case that exists. Found by independent review of #2145: without this, a
+                    # completed solve on a one-point grid threw from result construction.
+                    #
+                    # The try is narrowed to this ONE call, which is what lets the deliberate
+                    # non-positive-mass raise below live outside it and escape. That used to need a
+                    # private `_MassNotMeasurableError` to climb out of a wider try; the sentinel is
+                    # gone because the structure now carries the distinction instead of a class.
+                    mass_conservation_error = None
+                else:
+                    initial_mass = float(mass_per_step[0])
+                    if not np.isfinite(initial_mass) or initial_mass <= 0.0:
+                        raise ValueError(
+                            f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
+                            "mass conservation is undefined and the solve that produced it is already wrong"
+                        )
+                    mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
 
         # Construct result
         result = SolverResult(
