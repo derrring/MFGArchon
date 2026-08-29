@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 5048,
+  "occurrences_when_written": 5917,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -8,7 +8,11 @@
     "scipy": "1.18.0",
     "scikit-fem": "12.0.1",
     "torch": "2.12.0",
-    "cvxpy": "1.9.2"
+    "cvxpy": "1.9.2",
+    "osqp": "1.1.3",
+    "platform": "darwin-arm64",
+    "numpy-blas": "blas",
+    "scipy-blas": "blas"
   },
   "identities": [
     "<string>\tUserWarning\tMeshData with dimension=N is experimenta",
@@ -320,6 +324,7 @@
     "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_geometry/test_geometry_extended.py\tDeprecationWarning\tapply_boundary_conditions is deprecated ",
     "tests/unit/test_geometry/test_grid_owns_the_measure_2145.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
+    "tests/unit/test_geometry/test_grid_owns_the_measure_2145.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_geometry/test_provider_robin_coefficient_refused_1979.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
