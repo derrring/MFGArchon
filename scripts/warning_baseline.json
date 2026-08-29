@@ -1,6 +1,15 @@
 {
-  "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. Regenerate with --write-baseline.",
-  "occurrences_when_written": 5931,
+  "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
+  "occurrences_when_written": 5048,
+  "toolchain_when_written": {
+    "python": "3.12.13",
+    "pytest": "9.1.1",
+    "numpy": "2.4.6",
+    "scipy": "1.18.0",
+    "scikit-fem": "12.0.1",
+    "torch": "2.12.0",
+    "cvxpy": "1.9.2"
+  },
   "identities": [
     "<string>\tUserWarning\tMeshData with dimension=N is experimenta",
     "mfgarchon/alg/numerical/gfdm_components/gfdm_strategies.py\tUserWarning\tHybrid neighborhood: N/N points (N.N%) h",

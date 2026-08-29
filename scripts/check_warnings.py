@@ -92,6 +92,10 @@ def _self_test() -> int:
     and drive one case through `main()` so nothing between census-load and comparison is uncovered.
     This is the shape `check_citations.py` already uses in this directory.
     """
+    # Rebound below so the attribution cases can drive `main()` against a baseline carrying a
+    # known `toolchain_when_written`; restored in a `finally`.
+    global BASELINE
+
     import contextlib
     import io
     import tempfile
@@ -165,7 +169,15 @@ def _self_test() -> int:
         # A realistic `tests_run`, so the floor can be strict. An earlier version omitted it, which
         # forced `census.get("tests_run")` to tolerate a missing key -- the control's shape making
         # the guard accept exactly the class of file the guard exists to reject.
-        census.write_text(json.dumps({"identities": sorted([*base, *probes]), "occurrences": 0, "tests_run": 6639}))
+        #
+        # Anchored to `MIN_TESTS`, not to a literal and not to a field of the baseline. It was the
+        # literal 6639, which rotted when the baseline was regenerated; it was then rewritten to read
+        # `tests_run_when_written` -- a field withdrawn with that band, see #2165 -- and when the
+        # band was added on top of that field this case began
+        # exiting 2 for a reason it was not testing -- a live case, silently voided by a later change
+        # in the same file. A control must not depend on the thing being controlled.
+        healthy = MIN_TESTS * 2
+        census.write_text(json.dumps({"identities": sorted([*base, *probes]), "occurrences": 0, "tests_run": healthy}))
         argv = sys.argv
         try:
             sys.argv = ["check_warnings.py", "--census", str(census)]
@@ -175,6 +187,29 @@ def _self_test() -> int:
             sys.argv = argv
         if rc != 1:
             failures.append(f"through main(): an appeared identity must exit 1, got {rc}")
+
+        # The floor's LOCATION, not just its sign. `tests_run: 0` against `MIN_TESTS * 2` proves
+        # only `0 < MIN_TESTS`, a tautology for any positive floor -- measured, the case survived
+        # MIN_TESTS at 1, 2, 50 and 6000, and at 6000 a legitimate 10% suite shrink is refused with
+        # a red no warning fix can clear. The literal here is the deliberate-change gate, the same
+        # device as the pinned key sets: moving the floor must edit this line.
+        if MIN_TESTS != 500:
+            failures.append(f"MIN_TESTS moved to {MIN_TESTS}; if that is intended, update this case")
+        for ran, want_rc in ((MIN_TESTS - 1, 2), (MIN_TESTS, 0), (MIN_TESTS + 1, 0)):
+            census.write_text(json.dumps({"identities": sorted(base), "occurrences": 0, "tests_run": ran}))
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = main()
+            except Exception as exc:
+                failures.append(f"the floor case at tests_run={ran} raised {type(exc).__name__}: {exc}")
+                continue
+            finally:
+                sys.argv = argv
+            if rc != want_rc:
+                failures.append(
+                    f"a census of {ran} outcomes against the {MIN_TESTS} floor must exit {want_rc}, got {rc}"
+                )
 
         # Below the floor: a collect-only census must be REFUSED, not reported as 225 vanished.
         census.write_text(json.dumps({"identities": [], "occurrences": 0, "tests_run": 0}))
@@ -187,17 +222,294 @@ def _self_test() -> int:
         if rc != 2:
             failures.append(f"through main(): a census below the {MIN_TESTS} floor must exit 2, got {rc}")
 
+        real_baseline, tmp_baseline = BASELINE, Path(tmp) / "baseline.json"
+        try:
+            # The guard is fed by --write-baseline, and testing the guard does not test the feeding.
+            # Deleting the field from the writer left every case above green: the temp baselines
+            # carry it by hand, so nothing noticed that a REAL regenerated baseline would not.
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(base),
+                        "occurrences": 7,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.2.6"},
+                    }
+                )
+            )
+            BASELINE = tmp_baseline
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census), "--write-baseline"]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    main()
+            finally:
+                sys.argv = argv
+            written = json.loads(tmp_baseline.read_text())
+            # The attribution cases below build their baselines by hand, so deleting this field from
+            # the writer would leave them all green.
+            # Every guard fed by --write-baseline needs its round trip asserted here, not only its
+            # behaviour asserted from a hand-built fixture.
+            if written.get("toolchain_when_written") != {"numpy": "2.2.6"}:
+                failures.append(
+                    "--write-baseline must record `toolchain_when_written`, or a later diff cannot "
+                    f"say what else moved; got {written.get('toolchain_when_written')!r}"
+                )
+
+            # Attribution (#2158). Driven through main(), not through _compare directly: the delta
+            # is computed in main(), so a direct call would leave that computation uncovered and
+            # deleting it would stay green.
+            tmp_baseline.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(base),
+                        "toolchain_when_written": {"numpy": "2.2.6", "torch": "2.12.0", "pytest": "9.1.1"},
+                    }
+                )
+            )
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        # numpy moved, torch went absent, pytest did not move.
+                        "toolchain": {"numpy": "2.4.6", "torch": None, "pytest": "9.1.1"},
+                    }
+                )
+            )
+            BASELINE = tmp_baseline
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            attributed = sink.getvalue()
+            for want in ("numpy", "2.2.6 -> 2.4.6", "torch", "<absent>"):
+                if want not in attributed:
+                    failures.append(f"attribution: an identity moved and the report omits {want!r}")
+            if "pytest" in attributed.split("The toolchain also moved")[-1]:
+                failures.append("attribution: an UNCHANGED tool is being listed as drift")
+
+            # And silent when nothing else moved, or the block becomes decoration on every run.
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.2.6", "torch": "2.12.0", "pytest": "9.1.1"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            if "The toolchain also moved" in sink.getvalue():
+                failures.append("attribution: reported drift when the toolchain was identical")
+
+            # A package that APPEARED must not carry the note about tests that did not run. That
+            # note is the only line telling the reader what to do, and under an appearance it says
+            # the opposite of what happened.
+            tmp_baseline.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(base),
+                        "toolchain_when_written": {"numpy": "2.2.6", "torch": None, "pytest": "9.1.1"},
+                    }
+                )
+            )
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.2.6", "torch": "2.12.0", "pytest": "9.1.1"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            report = sink.getvalue()
+            if "-> 2.12.0" not in report:
+                failures.append("attribution: a package that appeared must still be reported")
+            if "went absent" in report:
+                failures.append("attribution: the 'went absent' note printed under a package that APPEARED")
+
+            # A name recorded on one side only is a schema difference, never a package moving.
+            # Measured on the real artifact before this was fixed: a 5-field baseline against a
+            # 7-field census reported cvxpy and scikit-fem as having appeared, both installed and
+            # unchanged throughout -- a wrong answer wearing the authority of a measurement.
+            tmp_baseline.write_text(
+                json.dumps({"identities": sorted(base), "toolchain_when_written": {"numpy": "2.2.6"}})
+            )
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.4.6", "cvxpy": "1.9.2"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            report = sink.getvalue()
+            if any("cvxpy" in line for line in report.splitlines() if "->" in line):
+                failures.append("attribution: a name on one side only was reported as a version move")
+            if "Recorded on one side only" not in report or "cvxpy" not in report:
+                failures.append("attribution: a schema difference must be reported, not dropped")
+
+            # A baseline predating the field is not a schema difference per name -- it says nothing
+            # about any of them. Listing all eight is the noise this block removes, not reports.
+            tmp_baseline.write_text(json.dumps({"identities": sorted(base)}))
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.4.6", "cvxpy": "1.9.2"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            report = sink.getvalue()
+            if "The toolchain also moved" in report:
+                failures.append("attribution: a baseline predating the field must not produce a delta")
+            # A census carrying an unresolved marker must not reach the shared artifact, and the
+            # permission half is not optional: a guard that refuses everything passes the refusal
+            # case alone. Driven through main(), because the guard lives on the --write-baseline
+            # path and the earlier version of this rule was asserted in a test file instead.
+            for label, toolchain, want_rc, want_written in [
+                ("an ambiguous version", {"numpy": "ambiguous:2.2.6|2.4.6"}, 2, False),
+                ("an unreadable METADATA", {"numpy": "unreadable"}, 2, False),
+                ("a clean toolchain", {"numpy": "2.4.6"}, 0, True),
+            ]:
+                tmp_baseline.write_text(json.dumps({"identities": sorted(base)}))
+                census.write_text(
+                    json.dumps(
+                        {"identities": sorted(base), "occurrences": 3, "tests_run": 6714, "toolchain": toolchain}
+                    )
+                )
+                BASELINE = tmp_baseline
+                try:
+                    sys.argv = ["check_warnings.py", "--census", str(census), "--write-baseline"]
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        rc = main()
+                finally:
+                    sys.argv = argv
+                if rc != want_rc:
+                    failures.append(f"--write-baseline with {label} must exit {want_rc}, got {rc}")
+                written = json.loads(tmp_baseline.read_text()).get("toolchain_when_written")
+                if bool(written) != want_written:
+                    failures.append(
+                        f"--write-baseline with {label}: wrote {written!r}, expected written={want_written}"
+                    )
+
+            # A schema difference is not a move, and must not print under a heading that says it is.
+            tmp_baseline.write_text(
+                json.dumps({"identities": sorted(base), "toolchain_when_written": {"numpy": "2.4.6"}})
+            )
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.4.6", "osqp": "1.1.3"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            report = sink.getvalue()
+            if "The toolchain also moved" in report:
+                failures.append("a pure schema difference must not print under a heading claiming a move")
+            if "Recorded on one side only" not in report or "osqp" not in report:
+                failures.append("a pure schema difference must still be reported")
+
+            # A malformed toolchain is a schema error, not a warnings regression.
+            # Non-EMPTY non-dicts only: `or {}` folds an empty list into the same "no toolchain
+            # recorded" state as `None` and a pre-field census, which is right and must keep working.
+            for label, payload in [("a list", ["numpy"]), ("a string", "numpy==2")]:
+                census.write_text(
+                    json.dumps({"identities": sorted(base), "occurrences": 0, "tests_run": 6714, "toolchain": payload})
+                )
+                try:
+                    sys.argv = ["check_warnings.py", "--census", str(census)]
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        rc = main()
+                except Exception as exc:
+                    failures.append(f"a toolchain that is {label} raised {type(exc).__name__} instead of exiting 2")
+                    continue
+                finally:
+                    sys.argv = argv
+                if rc != 2:
+                    failures.append(f"a toolchain that is {label} must exit 2, got {rc}")
+
+            # The provenance guard had no case: deleting it turns a written diagnostic into a KeyError.
+            census.write_text(json.dumps({"identities": sorted(base), "occurrences": 0}))
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = main()
+            # A case that raises is a case that did not run. Recorded rather than propagating: an
+            # unhandled exception here kills every case after it and reports a traceback where the
+            # reader needs a diagnostic.
+            except Exception as exc:
+                failures.append(f"a census with no `tests_run` raised {type(exc).__name__}: {exc}")
+                rc = 2
+            finally:
+                sys.argv = argv
+            if rc != 2:
+                failures.append(f"a census with no `tests_run` must exit 2, got {rc}")
+
+        finally:
+            BASELINE = real_baseline
+
     if failures:
         for line in failures:
             print(f"self-test FAILED: {line}", file=sys.stderr)
         return 1
     print(
-        f"self-test OK: both directions fire with the right message, no-change is silent, main() agrees ({len(base)} identities)"
+        f"self-test OK: both directions fire with the right message, no-change is silent, "
+        f"attribution names a move and only a move, main() agrees ({len(base)} identities)"
     )
     return 0
 
 
-def _compare(now: set[str], was: set[str], occurrences: int) -> int:
+def _compare(
+    now: set[str], was: set[str], occurrences: int, drift: list | None = None, unrecorded: list | None = None
+) -> int:
     """The one comparison. No quiet mode: a control that skips the caller's return is not one."""
     appeared = sorted(now - was)
     left = sorted(was - now)
@@ -214,6 +526,27 @@ def _compare(now: set[str], was: set[str], occurrences: int) -> int:
         for identity in left:
             print(f"    {identity.replace(chr(9), '  |  ')}")
         print("    Re-baseline with --write-baseline so a later regression cannot hide behind this.")
+    # Printed only when the set actually moved. On a run where nothing moved it would be noise;
+    # at the moment it moved it is the difference between "pytest did this" and knowing better.
+    if drift:
+        print("\nThe toolchain also moved since the baseline was written:")
+        width = max(len(name) for name, _, _ in drift)
+        for name, before, after in drift:
+            print(f"    {name:{width}} {before or '<absent>'} -> {after or '<absent>'}")
+        # Only when something actually went absent. Printed under a package that APPEARED it says
+        # the opposite of what happened, and it is the only line telling the reader what to do.
+        if any(before and not after for _, before, after in drift):
+            print("    A package that went absent means its tests did not run, so the warnings they")
+            print("    emit are missing rather than fixed. Attribute before recording anything.")
+    # A SEPARATE block with its own heading. Printed under "The toolchain also moved" it contradicted
+    # itself three lines later -- and that was the shape this change actually ships, a seven-name
+    # baseline against an eight-name census, so it fired on the first red gate after merge.
+    if unrecorded:
+        print("\nRecorded on one side only, so nothing about them can be compared:")
+        print(f"    {', '.join(unrecorded)}")
+        print("    A baseline/census schema difference -- one was written by a different conftest.py.")
+        print("    It says nothing about whether those packages moved. Re-baselining clears it.")
+
     print(f"\n{len(now)} identities now, {len(was)} in the baseline. Occurrences reported, not gated.")
     return 1
 
@@ -262,19 +595,49 @@ def main() -> int:
             print(identity.replace("\t", "  |  "))
         return 0
 
+    # The markers `_installed_version` invents when it cannot give one answer. Written into the
+    # shared baseline they become a permanent fabricated attribution line on every other machine:
+    # `osqp ambiguous:1.1.1|1.1.3 -> 1.1.3` for a package that never moved. The guard for this was
+    # written in the TEST and not in the code, while the code path that reaches the committed
+    # artifact -- the one the report itself prints as the remedy -- had none.
+    UNRESOLVED = ("ambiguous:", "unreadable")
+
     if args.write_baseline:
+        poisoned = sorted(
+            f"{name}={value}"
+            for name, value in (census.get("toolchain") or {}).items()
+            if isinstance(value, str) and value.startswith(UNRESOLVED)
+        )
+        if poisoned:
+            print(
+                "CANNOT RUN: this census carries toolchain values that name a broken environment\n"
+                "rather than a version, and --write-baseline would commit them:\n"
+                + "".join(f"    {item}\n" for item in poisoned)
+                + "Every other machine would then read a move that never happened. Fix the\n"
+                "environment -- `ambiguous:` means two .dist-info records for one distribution,\n"
+                "`unreadable` means a corrupt METADATA -- and regenerate, or write the baseline\n"
+                "somewhere the environment is clean.",
+                file=sys.stderr,
+            )
+            return 2
+
         BASELINE.write_text(
             json.dumps(
                 {
                     "_comment": (
-                        "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised "
-                        "text[:40]) -- NOT "
-                        "line numbers, which move under any edit, and NOT occurrence counts, which jitter "
-                        "run to run. Bidirectional: a new identity is a regression, a removed one is "
-                        "progress that must be recorded here. `occurrences` is reported, never gated. "
-                        "Regenerate with --write-baseline."
+                        "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) "
+                        "-- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run "
+                        "to run. Bidirectional: a new identity is a regression, a removed one is progress that must b"
+                        "e recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribu"
+                        "tion for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` "
+                        "cannot be written here, because it would name a broken environment rather than a version. Re"
+                        "generate with --write-baseline."
                     ),
                     "occurrences_when_written": census["occurrences"],
+                    # Attribution, not a gate. Recorded so a later diff can say what ELSE moved:
+                    # the one time it mattered, six identities were attributed to pytest and five
+                    # came from cvxpy and torch being absent, numpy, and solver convergence.
+                    "toolchain_when_written": census.get("toolchain", {}),
                     "identities": sorted(now),
                 },
                 indent=2,
@@ -288,8 +651,37 @@ def main() -> int:
         print(f"CANNOT RUN: no baseline at {BASELINE}. Write one with --write-baseline.", file=sys.stderr)
         return 2
 
-    was = set(json.loads(BASELINE.read_text())["identities"])
-    return _compare(now, was, census["occurrences"])
+    recorded = json.loads(BASELINE.read_text())
+    was = set(recorded["identities"])
+
+    # Attribution, computed and reported, never gated. Only a name recorded on BOTH sides can
+    # have moved. A name on one side only is a schema difference -- this list grew, or the census
+    # came from an older conftest.py -- and printing it as `<absent> -> 1.9.2` names an installed,
+    # unchanged package as the cause. That is worse than the standing guess it replaced, because it
+    # wears the authority of a measurement. Measured on this PR's own baseline: a 5-field baseline
+    # against a 7-field census reported cvxpy and scikit-fem as having appeared, both installed and
+    # unchanged throughout.
+    before, after = recorded.get("toolchain_when_written") or {}, census.get("toolchain") or {}
+    # Every other malformed-census class here gets a message and exit 2. A non-dict reached the
+    # comparison as a raw TypeError, which `local_ci.sh` then reports as a warnings regression --
+    # a schema error wearing the label of the thing this script gates.
+    for label, value in (("baseline's toolchain_when_written", before), ("census's toolchain", after)):
+        if not isinstance(value, dict):
+            print(
+                f"CANNOT RUN: the {label} is {type(value).__name__}, not an object. That is a\n"
+                "malformed artifact, not a warnings regression. Regenerate it.",
+                file=sys.stderr,
+            )
+            return 2
+    shared = set(before) & set(after)
+    drift = [(name, before[name], after[name]) for name in sorted(shared) if before[name] != after[name]]
+    # A side that is WHOLLY absent -- a baseline predating the field, or a census from a run that
+    # recorded none -- says nothing about any package, so nothing about it is one-sided. Without
+    # this an old baseline lists every recorded name as "one side only" the moment the identity set
+    # moves: eight lines of noise, which is the exact class this block exists to remove.
+    unrecorded = sorted(set(before) ^ set(after)) if (before and after) else []
+
+    return _compare(now, was, census["occurrences"], drift, unrecorded)
 
 
 if __name__ == "__main__":

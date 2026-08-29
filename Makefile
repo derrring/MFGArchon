@@ -39,6 +39,6 @@ clean:
 	rm -rf build/ dist/ htmlcov/ .coverage
 
 install:
-	pip install -e ".[dev]"
+	pip install -e . --group dev
 
 .DEFAULT_GOAL := help

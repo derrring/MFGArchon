@@ -114,7 +114,11 @@ print(f"Memory: {sum(len(c) for c in coords)} values")  # Nx + Ny + Nz
 
 # Spacing
 dx, dy = grid.spacing  # For 2D
-volume = grid.volume_element()  # dx * dy * dz
+
+# What each node actually owns. The grid is endpoint-inclusive, so the two end
+# nodes of every axis own half a cell -- the measure is the trapezoid, not dx*dy.
+w_x = grid.quadrature_weights(0)  # shape (Nx,); sums to Lx, not to Nx*dx
+mass = grid.integrate(m)          # integral over the domain get_bounds() reports
 ```
 
 ### Meshgrid for Computations
@@ -354,7 +358,7 @@ X, Y = grid.meshgrid(indexing='ij')
 
 # Initial density
 m0 = np.exp(-((X - L/4)**2 + (Y - L/4)**2) / 2)
-m0 /= (np.sum(m0) * grid.volume_element())
+m0 /= grid.integrate(m0)
 
 # Terminal cost
 g = 0.5 * ((X - L/2)**2 + (Y - L/2)**2)

@@ -197,18 +197,64 @@ class TestWhatTheRefusalDoesToCallers:
                 ),
             )
 
-    def test_an_unmeasurable_geometry_reports_none_rather_than_throwing_after_a_solve(self):
-        """`mass_conservation_error` is None when the measure does not exist -- it does not raise.
+    def test_the_gate_is_integrate_and_the_non_positive_raise_still_escapes(self):
+        """Two outcomes through one `try`, separated by structure rather than by an exception class.
 
-        The surrounding block in `fixed_point_iterator` raises `ValueError` deliberately when a
-        COMPLETED solve has non-positive mass, so widening its `except` to catch `ValueError` would
-        swallow that fail-loud. The narrow sentinel keeps the two distinguishable, and this test is
-        the reason the sentinel is not just `except ValueError`: both paths are exercised here.
+        The gate on this block used to be `geometry.volume_element()` -- a different method from the
+        one that supplies the number, and present on exactly the class that has `integrate`, so it
+        was a spelling of "is this a TensorProductGrid" (#2157). It is now `integrate` itself, which
+        is what `MFGProblem` has always gated on.
+
+        The `except` used to be wide enough that the deliberate non-positive-mass `raise ValueError`
+        sat inside it, and a private `_MassNotMeasurableError` existed only to climb out. The try is
+        now narrowed to the `integrate` call and the raise lives outside it, so the sentinel is gone.
+        Both outcomes are exercised here against a real completed solve:
+
+        Mutation -- widen the `except` to `except Exception`, or move the raise back inside the try,
+        and the second half stops raising and returns `None`.
         """
-        from mfgarchon.alg.numerical.coupling.fixed_point_iterator import _MassNotMeasurableError
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+        from mfgarchon.core.mfg_components import MFGComponents
+        from mfgarchon.core.mfg_problem import MFGProblem
+        from mfgarchon.types import NumericalScheme
 
-        assert issubclass(_MassNotMeasurableError, Exception)
-        assert not issubclass(_MassNotMeasurableError, ValueError), (
-            "the sentinel must NOT be a ValueError, or the deliberate non-positive-mass raise "
-            "below it would be caught by the same handler and a wrong solve would report None"
+        def _fresh():
+            return MFGProblem(
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[9], boundary_conditions=no_flux_bc(dimension=1)
+                ),
+                Nt=3,
+                T=0.05,
+                sigma=0.3,
+                components=MFGComponents(
+                    m_initial=lambda x: np.exp(-30.0 * (np.asarray(x, dtype=float) - 0.5) ** 2),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                ),
+            )
+
+        # Control: the unpatched fixture reports a NUMBER. Without this the two halves below would
+        # both pass on a solve that never reached the block at all.
+        control = _fresh().solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
+        assert control.mass_conservation_error is not None, (
+            "the gate refused a plain TensorProductGrid -- the two halves below prove nothing"
         )
+
+        def _refuses(_field):
+            raise ValueError("this geometry has no measure")
+
+        refusing = _fresh()
+        refusing.geometry.integrate = _refuses
+        result = refusing.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
+        assert result.mass_conservation_error is None, (
+            "a geometry that cannot integrate must report 'not measured', not a fabricated number"
+        )
+        assert result.M is not None, "and the solve itself must still return its result"
+
+        def _reports_zero_mass(field):
+            return np.zeros(np.asarray(field, dtype=float).shape[0])
+
+        wrong = _fresh()
+        wrong.geometry.integrate = _reports_zero_mass
+        with pytest.raises(ValueError, match="non-positive or non-finite total mass"):
+            wrong.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
