@@ -59,6 +59,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e . --group dev
+          # 16 test files invoke `scripts/local_ci.sh`, which needs ruff; ruff is not in the dev
+          # group because its version has one owner read at runtime (#2172). Same shape as
+          # ci.yml's quick-checks job. Reading the owner is why five call sites are not five pins.
+          RUFF_PIN=$(python scripts/update_ruff_version.py --print-current) || RUFF_PIN=""
+          if [ -z "$RUFF_PIN" ]; then echo "::error::could not read the ruff pin"; exit 1; fi
+          pip install "ruff==$RUFF_PIN"
 
       - name: Import smoke
         run: |

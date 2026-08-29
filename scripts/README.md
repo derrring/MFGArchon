@@ -83,6 +83,11 @@ Research and experimental API/type system design work.
 ## Legacy Environment Management
 
 ### `manage_environments.sh`
+
+> `create-dev` builds a conda **substrate** (interpreter plus BLAS-linked numpy/scipy) and installs
+> the project from `pyproject.toml`; `environment.yml` no longer exists (#2167). `create-performance`
+> reads `conda_performance.yml`, which was deleted in `dc47e5f7` and has been broken since — not
+> fixed here, and not caused here.
 Multi-environment management script for conda environments.
 
 **Usage:**

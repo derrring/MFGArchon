@@ -182,6 +182,11 @@ if [[ -n "${MFG_PYTHON+x}" ]]; then
   PY=$(resolved_python "$MFG_PYTHON") \
     || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
 $(probe_modules) plus ruff and mypy, probed from a scratch directory outside the source tree.
+ruff is deliberately absent from the dev group (#2172): its version has one owner,
+.pre-commit-config.yaml, and is read at runtime. 'uv sync' and 'uv venv' install no pip, so use
+whichever installer that environment has:
+    uv pip install \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
+    pip install     \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
 $(probe_err)
 It is set explicitly, so it is used or nothing is: this does NOT fall back to another interpreter."
 else
@@ -201,6 +206,11 @@ else
     done
   fi
   [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff and mypy.
+ruff is deliberately absent from the dev group (#2172): its version has one owner,
+.pre-commit-config.yaml, and is read at runtime. 'uv sync' and 'uv venv' install no pip, so use
+whichever installer that environment has:
+    uv pip install \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
+    pip install     \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
 $(probe_err)"
 fi
 
@@ -310,7 +320,7 @@ check() {
 }
 
 # This script calls itself the authoritative gate, so it must not run whatever ruff happens to
-# be on PATH. pyproject/environment.yml specify `ruff>=0.6.0` -- a floor, not a pin -- so a
+# be on PATH. The ruff pin has one owner, `.pre-commit-config.yaml`; nothing restates it, so a
 # contributor who installs today gets a different formatter from the one CI and pre-commit use,
 # and goes red on files they never touched. Warn rather than fail: an unexpected version is a
 # real signal, but blocking the whole gate on it would be worse than running it.
@@ -560,7 +570,7 @@ check $? "docs teach no more missing API than the baseline records"
 # those is how a check acquires false findings that teach people to ignore it.
 step "Manifest ratchet"
 "${PYS[@]}" scripts/check_manifests.py
-check $? "every unguarded import is declared, and every runtime dependency is in environment.yml"
+check $? "every unguarded import is declared in pyproject.toml"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json

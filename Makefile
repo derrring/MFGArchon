@@ -19,6 +19,7 @@ test-fast:
 	pytest -m "not slow" -x
 
 lint:
+	@command -v ruff >/dev/null || { echo 'ruff is not installed: it has one owner and is read at runtime (#2172).'; echo '  uv pip install "ruff==$$(python scripts/update_ruff_version.py --print-current)"'; exit 1; }
 	ruff check mfgarchon/
 
 type-check:
@@ -28,6 +29,7 @@ coverage:
 	pytest --cov=mfgarchon --cov-report=html --cov-report=term
 
 format:
+	@command -v ruff >/dev/null || { echo 'ruff is not installed: it has one owner and is read at runtime (#2172).'; echo '  uv pip install "ruff==$$(python scripts/update_ruff_version.py --print-current)"'; exit 1; }
 	ruff format mfgarchon/ tests/ examples/
 
 clean:

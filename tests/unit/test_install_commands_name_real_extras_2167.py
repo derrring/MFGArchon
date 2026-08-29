@@ -143,6 +143,49 @@ def test_the_scan_covers_every_root_it_claims_to():
     assert "dev" in groups, "the `dev` group is installed by CI and the scan did not see it"
 
 
+def test_every_job_that_runs_the_suite_installs_the_pinned_ruff():
+    """ruff is not in the dev group (#2172), and 16 test files invoke `scripts/local_ci.sh`.
+
+    The dependency chain is `workflow -> pytest -> test -> local_ci.sh -> ruff`, so a workflow that
+    runs the suite needs ruff while never mentioning it. Searching the workflows for `ruff` cannot
+    see that — measured: the search said only one job ran ruff, and three jobs then went red on the
+    runner with `No module named ruff`, because the tests they run invoke the gate.
+
+    Not "installs ruff" but "installs the PINNED ruff": a bare `pip install ruff` takes whatever is
+    newest, which is the drift `ci.yml:74` records having already happened once. Reading
+    `--print-current` is why five call sites are not five pins — they all read one owner.
+    """
+    import yaml
+
+    # One exemption, with its reason, not a loosened matcher. The bumper installs the CANDIDATE
+    # version on purpose -- validating a proposed bump is the whole job -- so requiring it to read
+    # `--print-current` would require it to test the version it is trying to replace.
+    exempt = {"check-ruff-updates.yml::check-ruff-updates"}
+
+    offenders, seen_exempt = [], set()
+    for wf in sorted((REPO / ".github" / "workflows").glob("*.y*ml")):
+        for job_name, job in (yaml.safe_load(wf.read_text()).get("jobs") or {}).items():
+            key = f"{wf.name}::{job_name}"
+            runs = "\n".join(step.get("run") or "" for step in (job.get("steps") or []))
+            if "pytest" not in runs:
+                continue
+            if key in exempt:
+                seen_exempt.add(key)
+                continue
+            if 'pip install "ruff==$' in runs or "pip install 'ruff==$" in runs:
+                continue
+            offenders.append(key)
+    # An exemption for a job that no longer exists is a stale claim, and the set is small enough
+    # that letting it rot silently is a choice rather than an oversight.
+    assert seen_exempt == exempt, f"exemption names a job that no longer runs the suite: {exempt - seen_exempt}"
+    assert not offenders, (
+        "these jobs run the test suite without installing the pinned ruff, and 16 test files invoke "
+        f"scripts/local_ci.sh, which needs it: {offenders}. Add, reading the one owner:\n"
+        "    RUFF_PIN=$(python scripts/update_ruff_version.py --print-current)\n"
+        '    pip install "ruff==$RUFF_PIN"'
+    )
+
+
 def test_every_job_that_installs_a_group_upgrades_pip_first():
     """`--group` is pip >= 25.1, and the runner's bundled pip may be older.
 
