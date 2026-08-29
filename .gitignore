@@ -83,14 +83,13 @@ type_system_temp.py
 
 #===============UV PACKAGE MANAGER (OPTIONAL)==============
 # UV files are optional - repository supports both pip and UV
-# uv.lock is NOT tracked. It was, until #2138: five months stale, failing
-# `uv lock --check`, missing four declared runtime dependencies, read by no script
-# or workflow, and the source of a GATE RED whose entire cause was its toolchain.
-# #2167 makes `pyproject.toml` + `uv.lock` the single dependency owner and will
-# generate a current one; until then a tracked lock that nothing reads is a
-# reproducibility claim with nothing behind it.
-uv.lock
-# and ignore UV cache and temporary files
+# uv.lock was tracked until #2138: five months stale, failing `uv lock --check`,
+# missing four declared runtime dependencies, read by no script or workflow, and the
+# source of a GATE RED whose entire cause was its toolchain. It is deleted, NOT
+# ignored -- #2167 makes `pyproject.toml` + `uv.lock` the single dependency owner and
+# will track a current one, so ignoring it here would be a decision that issue has to
+# find and undo. A regenerated lock shows up untracked, which is the right prompt.
+# Ignore only the cache and temporary files:
 .uv_cache/
 uv_cache/
 .uvx/
