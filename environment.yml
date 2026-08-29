@@ -1,3 +1,21 @@
+# [SUPERSEDED-ON-ARRIVAL 2026-08-29]
+# SUPERSEDED-BY: #2167 -- `pyproject.toml` + `uv.lock` become the single dependency owner and this
+# file is deleted. It is reconciled here (#2164) rather than left broken because it is still the
+# path `scripts/manage_environments.sh` builds, and an environment built from it could not run the
+# suite. (README, CONTRIBUTING, AGENTS.md and docs/ mention this file zero times -- they say
+# `pip install -e .` -- so "the documented onboarding path" would be an overstatement.) Do not add
+# dependencies here: add them to `pyproject.toml`, which owns the list.
+#
+# Swapping the BLAS implementation does NOT require this file. conda supplies the substrate and
+# `pyproject.toml` still supplies the dependencies -- `uv pip install` leaves a conda-installed
+# numpy alone:
+#     conda create -n mfg-blis -c conda-forge python=3.12 "libblas=*=*blis" numpy scipy
+#     uv pip install -e ".[all]" --group dev --python <that env>
+#
+# Pick the variant your platform HAS. conda-forge builds libblas against accelerate,
+# newaccelerate, openblas, blis and netlib on osx-arm64 -- and **mkl is not among them**, because
+# MKL is x86-only. mkl exists for linux-64, osx-64 and win-64.
+
 name: mfg_env
 channels:
   - conda-forge
@@ -23,23 +41,36 @@ dependencies:
   - h5py>=3.9             # HDF5 files
 
   # Interactive computing
-  - jupyter>=1.0
-  - jupyterlab>=4.0
-  - ipython>=8.12
 
   # Visualization
   - plotly>=5.17          # Interactive plotting
   - bokeh>=3.3            # Advanced visualizations
-  - seaborn>=0.13         # Statistical plotting
 
   # Progress and utilities
-  - tqdm>=4.0             # Progress bars (used throughout package)
+
+  # Declared because the PACKAGE IMPORTS THEM. This file listed none of these while
+  # `pyproject.toml` did, so an environment built from here alone cannot run the library or its
+  # suite -- measured: 6630 test outcomes against 6724, with 66 tests skipped or not collected
+  # because cvxpy and torch were absent. (#1687 did this reconciliation for `pyproject.toml` and
+  # only for it; this is the same list arriving at the other manifest.)
+  - cvxpy>=1.4             # Constrained optimisation (mfgarchon + tests)
+  - scikit-fem>=9.0        # FEM assembly (imported as `skfem`)
+  - meshio>=5.3            # Mesh I/O
+  - networkx>=3.0          # Network geometry
+  - osqp>=1.0              # QP solver behind the monotone schemes
+  - nbformat>=5.0          # The package WRITES notebooks
+  - pyyaml>=6.0            # `config/io.py` imports it at module level
+  - rich>=13.0             # Progress bars -- the `tqdm` alias in utils/progress.py points here
 
   # Development tools (modern unified tooling)
   - pytest>=7.0          # Testing framework
   - pytest-benchmark     # Performance testing
   - ruff>=0.6.0          # Fast unified linting and formatting (replaces black+isort+flake8)
   - mypy>=1.5            # Type checking
+  - pytest-xdist>=3.5    # `-n auto`, which the gate uses
+  - pytest-timeout>=2.1  # `pytest.ini` sets `timeout = 900` under --strict-config, so this is
+                         # not optional: without it collection fails with "Unknown config option"
+  - pytest-cov>=4.0      # Coverage
   - pre-commit>=2.0      # Pre-commit hooks
 
   # Documentation
@@ -48,7 +79,7 @@ dependencies:
   - nbsphinx             # Jupyter notebook docs
 
   # System utilities
-  - psutil>=5.9          # System monitoring
+  - psutil>=7.2.2          # System monitoring
   - memory_profiler      # Memory profiling
   - line_profiler        # Line-by-line profiling
 
@@ -58,7 +89,6 @@ dependencies:
 
   # Additional pip packages
   - pip:
-    - pydantic>=2.0      # Data validation
-    - igraph>=0.10       # Graph algorithms
-    - texttable          # Text tables
+    - pydantic>=2.12.5,<3.0      # Data validation
+    - igraph>=0.10.0       # Graph algorithms
     - typing-inspection  # Runtime type inspection

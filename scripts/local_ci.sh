@@ -530,7 +530,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -553,6 +553,15 @@ check $? "docs teach no more missing API than the baseline records"
 # records it. Exit 2 is distinct from exit 1 on purpose -- a search pattern that stops matching
 # returns 0 hits, which reads exactly like clean code, so the checker refuses to report a verdict
 # when its own sentinels do not fire.
+# `pyyaml` was imported at module level by `config/io.py` and declared nowhere, arriving
+# transitively; dropping the packages that carried it would have raised ImportError on a fresh
+# install (#1687). Nothing detected that -- it was found by reading. Only UNGUARDED module-level
+# imports are gated: a `try: import x / except ImportError` cannot break an install, and gating
+# those is how a check acquires false findings that teach people to ignore it.
+step "Manifest ratchet"
+"${PYS[@]}" scripts/check_manifests.py
+check $? "every unguarded import is declared, and every runtime dependency is in environment.yml"
+
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
