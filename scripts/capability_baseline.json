@@ -9,6 +9,7 @@
         },
         "message": "FP solver: at timestep 1/10, advection_scheme='divergence_centered': density went to -3.391e-03. Clipping it to zero would fabricate 0.062% of the total mass, so the solve is stopped rather than repor"
       },
+      "intended": "INTENDED - not a defect. The mass-fabrication gate (#1683) correctly refuses this configuration: divergence_centered at this cell Peclet is not positivity-preserving and the clip would fabricate mass. Turning this PASS by loosening the gate is the defect that campaign removed. Fix by picking a well-posed configuration, or leave it. [RE-ADJUDICATED 2026-08-29 for #1887] The refusal is unchanged; the operating point moved because #1887 stopped rescaling the fixture's density. The gate now fires at timestep 1/10 on a density of -3.391e-03, fabricating 0.062% of the mass, against 5.722% in the note as written. A SMALLER fabricated fraction is not a partial fix: the scheme is still not positivity-preserving and the gate still refuses, which is the whole of the note's claim. Reading 0.062% as progress toward PASS is the misreading this addendum exists to stop.",
       "status": "UNSUPPORTED"
     },
     "fdm_centered_2d/mass_conservation": {
@@ -24,6 +25,7 @@
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
+      "intended": "REWRITTEN 2026-08-29 for #1887 - the previous note described an exception this cell no longer raises, so it was not carried forward. It read: the mass-fabrication gate (#1683) refuses at timestep 3/6 on a density of -1.817e-01, fabricating 0.722%, a #1865 instance or a well-posedness problem of its own, unsettled. That refusal does not happen at the fixture's own initial mass: the cell now RUNS to completion, and UNSUPPORTED -> FAIL is a move UPWARD. min_density is +3.059e-07 - strictly positive, so there is nothing for the gate to refuse - and max_rel_drift is 1.326e-16. What fails now is picard_converged: false at a 3-sweep smoke budget. Whether it converges given a real budget is UNMEASURED. #1865 remains the tracker and is NOT resolved by this; the divergence-centered positivity problem is a function of the operating point and reappears at a heavier coupling. See #1866: NumericalScheme.FDM_CENTERED leaves the HJB on upwind gradients, so this cell's HJB solve is identical to fdm_upwind_2d's and only the FP half is centered - which is why all three 2-D cells moved together.",
       "status": "FAIL"
     },
     "fdm_upwind/mass_conservation": {
@@ -41,6 +43,7 @@
         "picard_iterations": 5,
         "tolerance": 1e-09
       },
+      "intended": "DEFECT - #1873/#1878. Mass is conserved to machine precision, but the coupled iteration does not reach a fixed point: `picard_converged: false` after 5 sweeps, and it does not converge at 100, 200 or 400 either (final errors 2.3e-04, 4.1e-03, 4.0e-03, not descending). Red from 2026-08-11, when `picard_converged` entered the verdict (#1891). It was PASS before that on the mass oracle alone, which holds on whatever drift field the FP step is handed. The inner Newton's half is #1878; the residual there has more than one root and a line search converges to a non-viscosity branch. [RE-ADJUDICATED 2026-08-29 for #1887] Status, mechanism and issue attribution all unchanged: picard_converged false at 5 sweeps, max_drift 2.220e-16, mass_t0 0.5459505243936865 (the fixture's own mass, no longer rescaled). The inner-Newton non-convergence warning count is 12. #1878 has NOT moved - the fixture got easier, because the coupling f(m) = c*m is now evaluated at 0.546x. Do not read 12 as progress on #1878.",
       "status": "FAIL"
     },
     "fdm_upwind_2d/mass_conservation": {
@@ -56,6 +59,7 @@
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
+      "intended": "REWRITTEN 2026-08-29 for #1887 - the previous note described a ConvergenceError this cell no longer raises. It read: twelve of thirteen inner Newton solves converge, the thirteenth has no root within reach (scipy least_squares from the same x0 also fails, ending at 3.58 after 12100 evaluations), and the COUPLED iteration diverges, max|U| 1.86 -> 37.35 and density peak 34.9 -> 101 over two sweeps. At the fixture's own initial mass the solve completes: UNSUPPORTED -> FAIL is UPWARD. max_rel_drift 2.651e-16, min_density +3.059e-07, picard_converged false at 3 sweeps. The divergence was measured at coupling strength 1; the fixture specifies 0.10468126796431428, so #1865 is NOT resolved - it is out of reach of this cell as currently configured. Verified by independent review of PR #2174 under a shim restoring the old rescale: the ConvergenceError returns, residual 1.35e+02 against the pre-#1887 artifact's 1.33e+02.",
       "status": "FAIL"
     },
     "fvm_muscl/mass_conservation": {
@@ -86,6 +90,7 @@
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
+      "intended": "REWRITTEN 2026-08-29 for #1887 - the previous note described an exception this cell no longer raises. It read: the same coupled divergence as fdm_upwind_2d, residual 3.46e+01 (from 1.15e+02 before #1888), sharing HJBFDMSolver with that cell while SL_LINEAR, which does not share it, passes. At the fixture's own initial mass the solve completes: UNSUPPORTED -> FAIL is UPWARD. max_rel_drift 7.954e-16, min_density +3.059e-07, picard_converged false at 3 sweeps. The shared-solver argument is UNCHANGED and is still the note's point: this cell and fdm_upwind_2d moved together, in the same direction, by the same amount in min_density and picard_iterations, which is what a shared HJB solver predicts. #1865 is not resolved; independent review of PR #2174 reproduced the old ConvergenceError under a shim restoring the rescale, residual 3.46e+01, matching the committed pre-#1887 artifact exactly.",
       "status": "FAIL"
     },
     "fvm_vs_fdm/agreement": {
@@ -116,6 +121,7 @@
         },
         "message": "HJBGFDMSolver derivative_method='rbf' is not supported (Issue #1553): since #1526 the RBF branch has no working differentiation-weight builder and would reopen the #1124 obstacle seam. Use derivative_"
       },
+      "intended": "ABSENT BY DESIGN - not a regression. `HJBGFDMSolver(derivative_method='rbf')` raises NotImplementedError at construction since PR #1619, which closed #1553 by converting an AttributeError crash into a loud refusal. Do not read #1553 as the tracker for this cell: it is CLOSED and tracked the crash, not the absence. Reinstating RBF has NO open issue - the cell exists so that doing so cannot land unnoticed. [RE-ADJUDICATED 2026-08-29 for #1887] Carried VERBATIM. The status, the exception type and the refusal message are byte-identical to the pre-#1887 artifact; the only change is a UserWarning about the fixture's initial mass entering `library_said`, which is why `_note_still_applies` dropped the note. Nothing about this cell moved.",
       "status": "UNSUPPORTED"
     },
     "regime_switching/non_negativity": {
@@ -145,6 +151,7 @@
         ],
         "tolerance": 1e-06
       },
+      "intended": "DEFECT - #1798, and NOT the defect this cell recorded before. The solve RUNS: #1681 is fixed and both regime densities are strictly positive. What fails is the cell's own oracle, which gates PER-REGIME mass drift at 1e-6. A regime's mass is not conserved in a Markov-switching model - the generator transfers it. For this cell's Q the stationary distribution is [2/3, 1/3] against equal initial masses, so the measured drift is approximately RIGHT, not approximately wrong; integrating the FP system over the no-flux domain leaves M(t) = M(0) expm(Qt). The conserved quantity is the sum over regimes. Do NOT turn this PASS by relaxing 1e-6 to fit the measurement - #1767 named that route as one the matrix exists to catch. [RE-ADJUDICATED 2026-08-29 for #1887] Re-measured at the caller's own initial mass: per-regime drift 8.882% and 8.603%, against the 8.9%/8.6% the note was written from. The stationary-distribution reading is unchanged and so is the refusal to relax the tolerance. min_density 1.087e-04, still strictly positive.",
       "status": "FAIL"
     },
     "sl_linear/mass_conservation": {
@@ -161,6 +168,7 @@
         "picard_iterations": 5,
         "tolerance": 1e-09
       },
+      "intended": "DEFECT - #1873/#1880. `picard_converged: false` after 5 sweeps; unlike its FDM sibling all four criterion arms are above tolerance and the density arm is not descending. #1880 has the mechanism: SL_LINEAR amplifies asymmetry per sweep on a symmetric fixture. Red from 2026-08-11 for the same reason as fdm_upwind/mass_conservation. [RE-ADJUDICATED 2026-08-29 for #1887] Unchanged in status and mechanism. Now also failing the mass oracle outright, which it was not before: max_drift 3.976e-03 against a tolerance of 1e-09, mass_t0 0.5459505243936865 rising to 0.5499265164906068. That is SL_LINEAR's own interpolation loss, visible here rather than newly caused: the pre-#1887 fixture normalised to 1 and the same relative loss sat inside a number the cell was not gating on. The 2.75x asymmetry figure in the original note is NOT re-measured here.",
       "status": "FAIL"
     },
     "sl_linear_2d/mass_conservation": {
@@ -176,6 +184,7 @@
         "picard_iterations": 3,
         "tolerance": 1e-09
       },
+      "intended": "DEFECT - #1865. `picard_converged: false` at its 3-sweep budget, and the budget is why this cell is the one member of the family whose convergence flag does not move under the coupling mutations of #1892 - it exhausts the budget at every scale. Red from 2026-08-11. It DOES converge given more sweeps: converged=True at iteration 32 with budgets of 35 and 60. 35 is the BUDGET and 32 is the count; an earlier version of this note conflated them. So the cell is red on its budget rather than on the scheme. [RE-ADJUDICATED 2026-08-29 for #1887] Budget-bound reading unchanged: picard_iterations 3, picard_converged false. mass_t0 is now the fixture's own 0.10468126796431428 and max_rel_drift 2.880e-02. The 'converges at iteration 32' measurement was taken pre-#1887 and is NOT re-measured here; the coupling now runs at 0.105x, so that iteration count should be expected to move and must not be cited as current.",
       "status": "FAIL"
     }
   }
