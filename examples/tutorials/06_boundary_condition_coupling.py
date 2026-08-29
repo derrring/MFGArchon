@@ -48,7 +48,6 @@ from mfgarchon.geometry.boundary import (
     BCType,
     BoundaryConditions,
     neumann_bc,
-    no_flux_bc,
 )
 
 # Problem parameters (shared by both configurations)
@@ -72,26 +71,14 @@ def create_lq_model_and_conditions() -> tuple[Model, Conditions]:
         coupling_dm=lambda m: 0.5,
     )
     model = Model(hamiltonian=hamiltonian, sigma=SIGMA)
-    # The caller normalises (Issue #1887): the library reports the initial mass and does not rescale
-    # it. The scale is computed on a grid with this file's NX, which BOTH problem builders below use
-    # -- they differ in boundary condition, not in resolution. That is worth noticing: a Conditions
-    # is meant to be resolution-independent, and a scale computed on one grid is the one place where
-    # that independence is only approximate. Refine NX and the discrete mass moves off 1 by the
-    # quadrature error, converging to the continuum integral rather than staying pinned.
-    scale_grid = TensorProductGrid(
-        bounds=[(0.0, 1.0)],
-        Nx_points=[NX + 1],
-        boundary_conditions=no_flux_bc(dimension=1),
-    )
-
-    def bump(x):
-        return np.exp(-20 * (x - 0.3) ** 2)
-
-    bump_mass = float(scale_grid.integrate(bump(np.asarray(scale_grid.coordinates[0]))))
-
+    # These conditions are shared by BOTH problem builders below, which differ in boundary condition
+    # rather than resolution -- and that is why the density is left as written. The library reports
+    # its mass and does not rescale it (Issue #1887); normalising would have to pick a grid, and a
+    # Conditions that has picked a grid is no longer the resolution-independent object this API is
+    # built around.
     conditions = Conditions(
         # Stall point at x=0 (boundary) - agents want to be at left edge
-        m_initial=lambda x: bump(x) / bump_mass,
+        m_initial=lambda x: np.exp(-20 * (x - 0.3) ** 2),
         u_terminal=lambda x: x**2,  # Minimal cost at x=0
         T=T,
     )

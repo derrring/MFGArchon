@@ -72,22 +72,24 @@ if __name__ == "__main__":
     # Step 3: Define the Conditions (problem data)
     # ==============================================================================
 
-    # The initial density is a PROBABILITY density, so it has to integrate to 1 -- and the library
-    # does not do that for you (Issue #1887). It validates and reports; rescaling your data behind
-    # your back is how a miscoded `m_initial` used to go unnoticed, and a sub-probability density or
-    # one population's share is a legitimate thing to hand in.
+    # You will see a warning here, and it is not a mistake -- it is the library telling you something
+    # true about the density below. That Gaussian integrates to about 0.25 on this domain, not 1, and
+    # the library does NOT rescale it for you (Issue #1887): it measures the mass, says which measure
+    # it used, and leaves your data alone. Whether the initial mass should be 1 is YOUR modelling
+    # decision, not the library's -- a sub-probability density or one population's share is a
+    # perfectly good initial condition, and silently normalising would hide a miscoded `m_initial`
+    # exactly when you most need to see it.
     #
-    # Divide by the integral ON THIS GRID. `domain.integrate` is the grid's own measure, and on this
-    # grid it is not `sum(m) * dx`: the wall lies ON the first and last node, so those two own half a
-    # cell each (Issue #2145). Using the grid's method means you never have to know that.
-    def gaussian(x):
-        return np.exp(-50 * (x - 0.5) ** 2)
-
-    mass = float(domain.integrate(gaussian(np.asarray(domain.coordinates[0]))))
-
+    # If you want a probability density, divide by the integral before handing it over:
+    #     m0 = np.exp(-50 * (x - 0.5) ** 2)
+    #     m_initial = lambda x: np.exp(-50 * (x - 0.5) ** 2) / domain.integrate(m0)
+    # `domain.integrate` is the grid's own measure. It is not `sum(m) * dx` -- the wall lies ON the
+    # first and last node, so those two own half a cell each (Issue #2145). Note that this changes
+    # the problem: the coupling f(m) is then evaluated at four times these values, and this tutorial
+    # is left unnormalised so that its numbers stay comparable with the ones printed below.
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,  # Agents want to be at x = 0.5
-        m_initial=lambda x: gaussian(x) / mass,  # a probability density on `domain`
+        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),  # Start near center
         T=1.0,  # Time horizon
     )
 
@@ -156,7 +158,7 @@ if __name__ == "__main__":
     # Swap the Conditions component (same model, same domain)
     cond2 = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,
-        m_initial=lambda x: gaussian(x) / mass,  # the same probability density as above
+        m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
         T=2.0,
     )
     problem3 = problem.with_conditions(cond2)

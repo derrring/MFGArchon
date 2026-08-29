@@ -116,22 +116,18 @@ if __name__ == "__main__":
         """Agents want to be close to exit (x=1) at final time."""
         return (x - 1.0) ** 2
 
-    # Initial density: uniform on [0.1, 0.9], scaled to integrate to 1.
+    # Initial density: uniform on [0.1, 0.9].
     #
-    # The library does NOT rescale this for you (Issue #1887) -- it measures the mass, reports it,
-    # and warns if it is not 1. So the caller divides. The integral is taken with `grid.integrate`,
-    # the grid's own measure: on this endpoint-inclusive grid the two wall nodes own half a cell
-    # each, so it is not `sum(m) * dx` (Issue #2145). Using the grid's method means you do not have
-    # to know that.
-    def unnormalised_density(x):
-        """Uniform crowd distribution, avoiding boundaries."""
-        return np.where((x >= 0.1) & (x <= 0.9), 1.0, 0.01)
-
-    total_mass = float(grid.integrate(unnormalised_density(np.asarray(grid.coordinates[0]))))
-
+    # This does not integrate to 1, and the run will say so. The library measures the initial mass,
+    # names the measure it used, and does not rescale your density (Issue #1887) -- what the mass
+    # should be is a modelling decision, and it belongs to whoever writes `m_initial`. To make it a
+    # probability density, divide by `grid.integrate(initial_density(np.asarray(grid.coordinates[0])))`
+    # before handing it over. Left as written here: the congestion comparison further down is
+    # calibrated against these values, and normalising would change the coupling strength it measures.
     def initial_density(x):
-        """The same distribution, as a probability density on `grid`."""
-        return unnormalised_density(x) / total_mass
+        """Uniform crowd distribution, avoiding boundaries."""
+        density = np.where((x >= 0.1) & (x <= 0.9), 1.0, 0.01)
+        return density
 
     # Create custom Hamiltonian
     hamiltonian = CongestionHamiltonian(congestion_strength=congestion_strength)
