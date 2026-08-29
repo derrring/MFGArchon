@@ -1,14 +1,20 @@
 # [SUPERSEDED-ON-ARRIVAL 2026-08-29]
 # SUPERSEDED-BY: #2167 -- `pyproject.toml` + `uv.lock` become the single dependency owner and this
 # file is deleted. It is reconciled here (#2164) rather than left broken because it is still the
-# only onboarding path the documentation points at, and an environment built from it could not run
-# the suite. Do not add dependencies here: add them to `pyproject.toml`, which owns the list.
+# path `scripts/manage_environments.sh` builds, and an environment built from it could not run the
+# suite. (README, CONTRIBUTING, AGENTS.md and docs/ mention this file zero times -- they say
+# `pip install -e .` -- so "the documented onboarding path" would be an overstatement.) Do not add
+# dependencies here: add them to `pyproject.toml`, which owns the list.
 #
 # Swapping the BLAS implementation does NOT require this file. conda supplies the substrate and
 # `pyproject.toml` still supplies the dependencies -- `uv pip install` leaves a conda-installed
 # numpy alone:
-#     conda create -n mfg-mkl python=3.12 "libblas=*=*mkl" numpy scipy
+#     conda create -n mfg-blis -c conda-forge python=3.12 "libblas=*=*blis" numpy scipy
 #     uv pip install -e ".[all,dev]" --python <that env>
+#
+# Pick the variant your platform HAS. conda-forge builds libblas against accelerate,
+# newaccelerate, openblas, blis and netlib on osx-arm64 -- and **mkl is not among them**, because
+# MKL is x86-only. mkl exists for linux-64, osx-64 and win-64.
 
 name: mfg_env
 channels:
