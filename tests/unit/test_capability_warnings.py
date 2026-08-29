@@ -2,7 +2,7 @@ r"""The capability harness must not be deaf to the library it measures (#1879).
 
 `scripts/capability_matrix.py` carried a bare `warnings.filterwarnings("ignore")` at import.
 While it measured, the library could tell it nothing -- including the warning `base_hjb`
-raises 39 times in the `fdm_upwind` cell, saying in as many words that the value function
+raises repeatedly in the `fdm_upwind` cell, saying in as many words that the value function
 returned "is not a root of the discrete HJB, and the outer iteration will consume it as if
 it were" (#1878). That cell has been PASS on every run, because the mass oracle measures a
 property of the FP time-stepping that holds on whatever drift field it is handed.
@@ -120,7 +120,7 @@ def test_environment_noise_is_not_recorded():
 def test_each_cell_carries_only_its_own_warnings():
     """Attribution is the whole claim, and a single-cell fixture cannot test it.
 
-    "This cell said 39 things" is what the field asserts. Every other test here monkeypatches
+    "This cell said N things" is what the field asserts. Every other test here monkeypatches
     `CELLS` to ONE stub, so hoisting `catch_warnings` out of the per-cell loop -- which makes
     `caught` accumulate and credits every cell with its predecessors' output -- is invisible to
     all of them by construction. Measured: that mutation leaves all five green, and on a real
@@ -219,13 +219,13 @@ def test_a_quiet_cell_carries_no_field_at_all():
 def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
     """The point of #1879, pinned against the artifact it produced.
 
-    `fdm_upwind/mass_conservation` emits 39 non-convergence warnings, and the harness silenced every
+    `fdm_upwind/mass_conservation` emits non-convergence warnings, and the harness silenced every
     one of them until #1879. The count is what this file exists to keep visible.
 
     The cell is now **FAIL**, and not because the solve improved: `picard_converged` entered the
     verdict on 2026-08-11 (#1891), so a cell that does not reach a fixed point stops being PASS. It
     was PASS on the mass oracle alone, which holds on whatever drift field the FP step is handed --
-    the same fact these 39 warnings state in words. An earlier version of this test asserted
+    the same fact these warnings state in words. An earlier version of this test asserted
     `status == "PASS"` and said "if that changed, #1878 moved"; #1878 has not moved, the verdict did,
     and the two are worth keeping apart. The pin below is written so the interesting event -- the
     warnings going away, which IS #1878 moving -- still fails it.
@@ -238,10 +238,28 @@ def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
 
     newton = {k: v for k, v in said.items() if "inner Newton did not converge" in k}
     assert newton, f"the recorded warnings no longer mention the inner Newton: {said}"
-    # 39 until #1887, now 12, and the drop is the point rather than a number to bump. The constructor
-    # used to rescale every initial density to mass 1; this fixture's density has mass 0.1047, so the
-    # coupling f(m) = c*m was being evaluated at ten times the values the fixture specifies. Weaken
-    # the coupling and the inner Newton converges more often -- 39 -> 12 warnings on the same solve.
+    # 19 before #1887, 12 now, and the drop is the point rather than a number to bump. The
+    # constructor used to rescale every initial density to mass 1; THIS fixture's density integrates
+    # to 0.5459505243936865, so the coupling f(m) = c*m was being evaluated at 1.83x the values the
+    # fixture specifies. Weaken it and the inner Newton converges more often.
+    #
+    # The count is the weaker half of the measurement. What actually changed is the KIND: at mass 1
+    # the cell emitted two categories, 10 "iteration budget exhausted" and 9 "residual stopped
+    # decreasing"; at the fixture's own mass the budget-exhausted category is gone entirely and all
+    # 12 are "residual stopped decreasing". A category disappearing says more than 19 -> 12 does.
+    #
+    # Both numbers measured on this tree rather than read off a baseline, via a shim restoring the
+    # old rescale. Two earlier claims in this comment were wrong and are corrected here, both found
+    # by independent review of PR #2174:
+    #   - it said "39 until #1887". The committed 39 entered at 77a62036 (2026-08-10, #1879) and the
+    #     cell's artifact block is byte-identical from there to the #2145 branch head -- traced
+    #     across the three commits that touched capability_baseline.json since (#1888, #1893, #2040),
+    #     same mass_t0 1.0000000000000002, same 39, INCLUDING across the PASS -> FAIL status flip at
+    #     733597d1. --check-baseline compares status only, so nothing ever forced a re-measure. The
+    #     live pre-#1887 count is 19. A stale figure imported as a measured "before" is the same
+    #     defect this file exists to catch, committed while describing it.
+    #   - it said "mass 0.1047 ... ten times". 0.1047 is the three 2-D cells' mass. THIS cell's
+    #     mass_t0 is 0.5459505243936865 and the factor is 1.83.
     #
     # So #1878 has not been fixed; its fixture got easier. The `assert newton` above is what keeps
     # the interesting event failing this test: if the count reaches zero, either #1878 moved or the
@@ -253,7 +271,7 @@ def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
         "deliberately rather than adjusted to match"
     )
     assert cell["status"] != "PASS", (
-        "the cell is PASS while recording 39 inner-Newton failures and picard_converged=False -- "
+        "the cell is PASS while recording inner-Newton failures and picard_converged=False -- "
         "the verdict has stopped requiring convergence (#1891)"
     )
 
