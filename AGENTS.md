@@ -382,9 +382,12 @@ cannot make for you, and is not optional when a virtualenv is active — the gat
 satisfies the probe in full, at pytest 8.4.1 against the gate's 9.1.1 and ruff 0.13.1 against the
 pinned 0.16.0. That combination reports six warning identities GONE and one NEW over a two-file
 documentation diff and goes `GATE RED`, one of the six being `PytestRemovedIn10Warning`, which
-pytest 8 cannot emit. Do not build the worktree a fresh `uv venv`: `uv.lock` is tracked, last touched
-2026-03-26, and pins exactly that toolchain — a fresh venv reproduces the wrong versions rather than
-risking them.
+pytest 8 cannot emit. **Do not give the worktree its own virtualenv.** The hazard is the activated
+venv itself, whatever it holds: it satisfies the probe in full, so nothing about the selection looks
+wrong. `uv venv` installs nothing, so the versions come from whatever populates it, and
+`uv pip install -e . --group dev` resolves current PyPI — not the gate's set. The tracked `uv.lock`
+used to make that failure deterministic at the 2026-03 toolchain; it was deleted in #2138 and its
+absence removes the determinism, not the hazard.
 
 The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff 0.13.1 ran,
 but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
