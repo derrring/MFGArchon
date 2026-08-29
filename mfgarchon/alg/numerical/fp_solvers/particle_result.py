@@ -34,6 +34,22 @@ class FPParticleResult:
     Stores both grid-based density (for compatibility) and particle positions
     (for direct queries), enabling efficient density estimation at arbitrary points.
 
+    **The two representations do not share a mass convention, and are not interchangeable.**
+    `M_grid` carries the mass the caller handed to the solver: since #2181 `solve_fp_system` scales
+    it so that `geometry.integrate(M_grid[0])` equals the caller's initial mass, because a particle
+    method carries no mass of its own -- positions have no scale, and a KDE reconstruction returns
+    about 1 whatever went in.
+
+    `query_density` carries NO mass convention. It rebuilds a density from `particle_history` and
+    never consults `M_grid`, so its output is unaffected by that scaling, and its three methods do
+    not even agree with each other. Measured on one fixture whose `M_grid` mass is 0.300000:
+
+        kernel  2.506588      knn  0.989115      hybrid  0.290921
+
+    -- a spread of 8.6x between methods. This predates #2181, which changed only which number they
+    disagree with (`M_grid` was 1.0 before). Do not integrate a `query_density` result and read it as
+    a mass, and do not compare one against `M_grid`. Tracked separately.
+
     Attributes
     ----------
     M_grid : NDArray

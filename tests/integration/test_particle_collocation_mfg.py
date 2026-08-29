@@ -117,17 +117,26 @@ class TestHJBGFDMWithParticleFP:
         # Particle solver outputs on grid via KDE
         assert M.shape == (Nt_points, Nx_points)
 
-        # The projection returns a density, not raw particle counts: it integrates to 1 at every
-        # time. Measured max|sum(M)*Dx - 1| = 4.4e-16 (unchanged under kde_normalization="none"),
-        # so atol=1e-12 sits ~2000x above the observed error.
-        Dx = problem.geometry.get_grid_spacing()[0]
-        np.testing.assert_allclose(M.sum(axis=1) * Dx, 1.0, atol=1e-12)
+        # The projection returns a density carrying the mass that went IN, not 1 (#2181). The old
+        # form of this assertion read `sum(M) * Dx == 1.0` and its own comment recorded the reason it
+        # was not a property of the solver: "unchanged under kde_normalization='none'". That is the
+        # tell -- a particle method carries no mass, so the KDE reconstruction returned 1 whatever
+        # the input scale was, and this pinned the representation's loss. `m0` here is
+        # `ones(31)/31`, so its mass is 0.032258, and the solver now preserves it.
+        target = float(problem.geometry.integrate(m0))
+        np.testing.assert_allclose(
+            float(problem.geometry.integrate(M[0])), target, rtol=1e-12, err_msg="t=0 must carry the input mass"
+        )
 
-        # At t=0 the answer is known independently of the scheme: m0 is uniform on [0, 1], so the
-        # KDE projection must return its own input. Measured max|M[0] - 1| = 0.156 at this seed
-        # (0.083-0.156 across seeds 0/1/7/1234/20260813 at N=1000); 0.3 leaves ~2x margin over the
-        # sampling error while still catching a projection that drops the walls.
-        assert np.abs(M[0] - 1.0).max() < 0.3
+        # At t=0 the answer is known independently of the scheme: m0 is uniform, so the KDE
+        # projection must return ITS OWN INPUT -- which this comment already said, while the
+        # assertion compared against 1.0 instead of against m0. The two agreed only because the
+        # normalisation inflated a density of 1/31 to 1.
+        #
+        # Measured max|M[0] - m0| across seeds 0/1/7/1234/20260813 at N=1000: 0.0035 to 0.0050. The
+        # bound is the old 0.3 scaled by the density (0.3 * 0.032258 = 0.00968), which keeps the ~2x
+        # margin the original claimed and still catches a projection that drops the walls.
+        assert np.abs(M[0] - m0).max() < 0.00968
 
     def test_mass_conservation_particle_fp(self):
         """Test mass conservation in particle FP solver."""
@@ -160,10 +169,14 @@ class TestHJBGFDMWithParticleFP:
         assert particles.max() <= 1.0
 
         # U == 0 gives zero drift, so this is reflected Brownian motion on [0, 1], whose invariant
-        # measure is the uniform density it started from -- an oracle independent of the scheme.
-        # Measured max|M - 1| = 0.122 at this seed (0.102-0.126 across seeds at N=2000); 0.25 leaves
-        # ~2x margin over the Monte-Carlo error.
-        assert np.abs(M - 1.0).max() < 0.25
+        # measure is the uniform density it started from -- an oracle independent of the scheme. That
+        # density is `1/31 = 0.032258`, not 1: the old form of this assertion compared against 1.0,
+        # which held only because the projection normalised the mass to 1 (#2181). The oracle is
+        # unchanged; the constant it names was wrong.
+        #
+        # Measured max|M - m0| across seeds 0/1/7/1234/20260813 at N=2000: 0.0033 to 0.0048. The
+        # bound is the old 0.25 scaled by the density (0.25 * 0.032258 = 0.00806).
+        assert np.abs(M - m0[0]).max() < 0.00806
 
 
 class TestFPGFDMSolver:

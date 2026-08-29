@@ -25,33 +25,44 @@ the two questions do not interact.
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 import numpy as np
 
-from mfgarchon import MFGProblem
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver, KDENormalization
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem:
-    """A 1-D Gaussian scaled so that its integral on THIS grid is exactly `share`."""
+    """A 1-D Gaussian scaled so that its integral on THIS grid is exactly `share`.
+
+    Built on the v1.0 API rather than the legacy one so this file adds no DeprecationWarning
+    identity to the warning ratchet, and the tier-3 mass warning is filtered here rather than
+    recorded: it fires by construction on every fixture below -- a share of 0.3 is the whole point --
+    and it is pinned where it belongs, in `test_initial_density_mass_1888.py`.
+    """
     x = np.asarray(grid.coordinates[0], dtype=float)
     scale = float(grid.integrate(np.exp(-50.0 * (x - centre) ** 2))) / share
-    return MFGProblem(
-        geometry=grid,
-        Nt=4,
-        T=0.2,
-        sigma=0.4,
-        components=MFGComponents(
-            m_initial=lambda z, c=centre, k=scale: np.exp(-50.0 * (np.asarray(z) - c) ** 2) / k,
-            u_terminal=lambda z: 0.0,
-            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        ),
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass")
+        return MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                sigma=0.4,
+            ),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda z, c=centre, k=scale: np.exp(-50.0 * (np.asarray(z) - c) ** 2) / k,
+                u_terminal=lambda z: 0.0,
+                T=0.2,
+            ),
+            Nt=4,
+        )
 
 
 def _grid(n: int = 21) -> TensorProductGrid:
