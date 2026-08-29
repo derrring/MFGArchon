@@ -33,7 +33,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,numerical]" numba
+          pip install -e ".[numerical]" --group dev numba
 
       # The check prints its own reason and its own remedy, and there are now three of each: a
       # count that moved (regenerate the baseline), a production call site (stop calling it), and

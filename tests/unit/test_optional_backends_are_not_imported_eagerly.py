@@ -163,8 +163,10 @@ def test_the_probe_would_notice_an_import():
     """Positive control, on a module that is always installed.
 
     ~~`import torch`~~ [CORRECTED 2026-08-14] -- torch is optional, declared in `[all]`, and is
-    **not installed on any CI runner**: every workflow installs `-e .[dev]` or
-    `-e ".[dev,numerical]"`. This control therefore failed on nightly, on `python-compat` for
+    **not installed on any CI runner**: every workflow installs the `dev` group (`-e .[dev]` when
+    this was written, `-e . --group dev` since #2167 moved development tooling out of the published
+    extras) and at most the `numerical` extra. This control therefore failed on nightly, on
+    `python-compat` for
     3.12/3.13/3.14, and on the release tier, while `test_importing_the_package_does_not_import_torch`
     was VACUOUSLY satisfied there -- the guard discriminated only on a machine with `[all]`
     installed. Found by review; the control now uses a module the runners have.

@@ -189,7 +189,7 @@ pytest version, and the two versions in use here disagree:
 
 | pytest | what its capture handler attaches to | consequence |
 |---|---|---|
-| 8.4.1 (`uv run --extra dev`) | the root logger only | **no mfgarchon record is ever seen**, whatever the logger's creation site. Here `propagate = False` is the whole story |
+| 8.4.1 (`uv run --group dev`) | the root logger only | **no mfgarchon record is ever seen**, whatever the logger's creation site. Here `propagate = False` is the whole story |
 | 9.1.1 (the gate interpreter) | root, plus every non-propagating logger that **already exists** when `catching_logs.__enter__` runs | a logger that existed before this phase's sweep is visible; one born after it is not |
 
 That sweep runs **once per test phase** (setup / call / teardown), so the discriminator is not
