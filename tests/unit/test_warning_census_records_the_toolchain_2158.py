@@ -29,11 +29,32 @@ _CONFTEST = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_CONFTEST)
 
 
+class _WarningReport:
+    """`terminalreporter.stats["warnings"]` holds these; the hook reads `.message`.
+
+    Captured from a live run: the real stats keys are `['', 'failed', 'passed', 'skipped',
+    'warnings', 'xfailed']`. A stub with no `warnings` key leaves ~55 lines unexecuted -- the regex,
+    the site-packages/stdlib path normalisation, the digit normalisation, the 40-character
+    truncation, the kind field, the occurrence count. Seven mutations of that block survived before
+    this class existed.
+    """
+
+    def __init__(self, message):
+        self.message = message
+
+
 class _Reporter:
     """The only thing the hook reads off the terminal reporter."""
 
     def __init__(self, stats):
         self.stats = stats
+
+
+#: Four outcome classes with DISTINCT counts. `{"passed": [None] * 7}` left the other three at
+#: `stats.get(k, []) -> []` either way, so dropping `skipped`, or dropping three of the four, from
+#: the `tests_run` sum survived -- a mutation this file's own PR table listed as killed.
+_STATS = {"passed": [None] * 11, "failed": [None] * 3, "xfailed": [None] * 2, "skipped": [None] * 5}
+_TESTS_RUN = 21
 
 
 def test_an_installed_distribution_resolves():
@@ -79,7 +100,7 @@ def test_the_census_payload_carries_the_toolchain(tmp_path, monkeypatch):
     monkeypatch.setenv("MFGARCHON_WARNING_CENSUS", str(census))
     monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
 
-    _CONFTEST.pytest_terminal_summary(_Reporter({"passed": [None] * 7}), 0, None)
+    _CONFTEST.pytest_terminal_summary(_Reporter(dict(_STATS)), 0, None)
 
     payload = json.loads(census.read_text())
     # Written out rather than read from `TOOLCHAIN_NAMES`, which is the thing under test: keyed on
@@ -90,13 +111,87 @@ def test_the_census_payload_carries_the_toolchain(tmp_path, monkeypatch):
     assert payload["toolchain"]["pytest"] == pytest.__version__
     # A corrupt record is recorded as such and must never reach the artifact silently.
     assert "unreadable" not in payload["toolchain"].values()
-    assert payload["tests_run"] == 7
+    assert payload["tests_run"] == _TESTS_RUN
+
+
+@pytest.mark.parametrize(
+    ("mode", "metadata"),
+    [
+        ("no Version header", "Metadata-Version: 2.1\nName: zzprobe\n"),
+        ("empty Version value", "Metadata-Version: 2.1\nName: zzprobe\nVersion: \n"),
+        ("empty METADATA", ""),
+        ("no METADATA file", None),
+    ],
+)
+def test_a_record_that_will_not_say_its_version_is_not_an_absent_package(tmp_path, monkeypatch, mode, metadata):
+    """`importlib.metadata` swallows the read error and hands back an empty message.
+
+    Four of five corruption modes therefore returned None -- the value that means "not installed" --
+    and the report prints `numpy 2.4.6 -> <absent>` for an installed, working numpy, under the note
+    saying its tests did not run. Measured before the fix; `chmod 000`, the case `unreadable` is
+    named for, was among them.
+    """
+    record = tmp_path / "zzprobe-1.0.dist-info"
+    record.mkdir()
+    if metadata is not None:
+        (record / "METADATA").write_text(metadata)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.metadata.MetadataPathFinder.invalidate_caches()
+
+    assert _CONFTEST._installed_version("zzprobe") == "unreadable", mode
+    # The control: with no record at all the answer must still be None, or "unreadable" would just
+    # be the new name for absent.
+    assert _CONFTEST._installed_version("zzprobe-no-such-record") is None
+
+
+def test_the_census_records_the_identities_it_was_given(tmp_path, monkeypatch):
+    """The extraction block -- regex, path normalisation, digit normalisation, truncation, kind.
+
+    None of it ran before: the stub had no `warnings` key, so `stats.get("warnings", [])` was empty
+    and ~55 lines were dead. Seven mutations of that block survived, including emptying the identity
+    list outright.
+    """
+    census = tmp_path / "census.json"
+    monkeypatch.setenv("MFGARCHON_WARNING_CENSUS", str(census))
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    root = Path(_CONFTEST.__file__).resolve().parent.parent
+
+    stats = dict(_STATS)
+    stats["warnings"] = [
+        _WarningReport(f"{root}/mfgarchon/probe.py:12: DeprecationWarning: used 3 times over 45 items\n  x = 1\n"),
+        _WarningReport(f"{root}/mfgarchon/probe.py:99: DeprecationWarning: used 7 times over 12 items\n  y = 2\n"),
+        _WarningReport(f"{root}/mfgarchon/other.py:5: RuntimeWarning: divide by zero encountered in log\n"),
+        # Longer than the 40-character key. Without one, widening the truncation to 60 changes
+        # nothing observable and the mutation survives -- measured. 40 is load-bearing: the
+        # docstring beside it argues at length for 40 over 60 on stability grounds.
+        _WarningReport(
+            f"{root}/mfgarchon/long.py:1: UserWarning: "
+            "this message is deliberately longer than forty characters so the cut is visible\n"
+        ),
+    ]
+    _CONFTEST.pytest_terminal_summary(_Reporter(stats), 0, None)
+    payload = json.loads(census.read_text())
+
+    keys = sorted(payload["identities"])
+    assert len(keys) == 3, f"digits must normalise so the two probe.py warnings collapse: {keys}"
+    assert payload["occurrences"] == 4
+    # Line numbers are deliberately absent from the key -- they move under any edit.
+    assert not any(":12" in k or ":99" in k for k in keys)
+    fields = [k.split("\t") for k in keys]
+    assert [f[0] for f in fields] == ["mfgarchon/long.py", "mfgarchon/other.py", "mfgarchon/probe.py"], fields
+    assert sorted(f[1] for f in fields) == ["DeprecationWarning", "RuntimeWarning", "UserWarning"]
+    by_file = {f[0]: f[2] for f in fields}
+    assert by_file["mfgarchon/probe.py"] == "used N times over N items"
+    # The cut, pinned exactly. A `<= 40` bound passes for any wider truncation when every message
+    # in the fixture is already shorter than the limit.
+    assert by_file["mfgarchon/long.py"] == "this message is deliberately longer than"
+    assert len(by_file["mfgarchon/long.py"]) == 40
 
 
 def test_the_hook_writes_nothing_without_the_environment_variable(tmp_path, monkeypatch):
     """The control for the case above: it must be the env var doing the work, not the stub."""
     census = tmp_path / "census.json"
     monkeypatch.delenv("MFGARCHON_WARNING_CENSUS", raising=False)
-    _CONFTEST.pytest_terminal_summary(_Reporter({"passed": [None] * 7}), 0, None)
+    _CONFTEST.pytest_terminal_summary(_Reporter(dict(_STATS)), 0, None)
     assert not census.exists()
     assert not os.environ.get("MFGARCHON_WARNING_CENSUS")

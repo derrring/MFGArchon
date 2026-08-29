@@ -797,16 +797,35 @@ def _installed_version(name: str) -> str | None:
 
     `importlib.metadata.version` returns the FIRST match in sys.path order and is silent about
     the rest, so a stale .dist-info beside a current one records a version no code in the run
-    used -- osqp and ruff each carry two records here today. A wrong version here is worse than
-    no version: it invents a package move, or hides a real one behind a stale pair. So count
-    them, and refuse to pick.
+    used. `osqp` and `ruff` each carry two records in this environment; an editable reinstall adds
+    and removes a second `mfgarchon` record under you, so the population is not stable enough to
+    state a count in a comment. A wrong version here is worse than no version: it invents a package
+    move, or hides a real one behind a stale pair. So take the distinct versions, and refuse to pick
+    when there is more than one.
+
+    **A record that will not say its version is not an absent package.** `importlib.metadata`
+    swallows `PermissionError` and `FileNotFoundError` inside `read_text` and hands back an empty
+    message, so `metadata["Version"]` is None and an earlier version of this function returned None
+    -- the value that means "not installed". Four of five corruption modes did that, including
+    `chmod 000`, the one `unreadable` is named for. The report then prints `numpy 2.4.6 -> <absent>`
+    for an installed, working numpy, under the note saying its tests did not run.
     """
     try:
-        seen = sorted({d.metadata["Version"] for d in importlib.metadata.distributions(name=name)})
-    except Exception:  # a corrupt METADATA is not absence, and must not be recorded as one
+        records = list(importlib.metadata.distributions(name=name))
+    except Exception:  # the search itself failed; not an answer about the package
+        return "unreadable"
+    if not records:
+        return None
+    try:
+        # `.get`, not `[...]`. `Message.__getitem__` returns None for a missing header and emits
+        # `DeprecationWarning: Implicit None on return values is deprecated` on 3.12+ -- so reading
+        # a corrupt record the way this function exists to handle EMITS A WARNING FROM THE CENSUS
+        # WRITER ITSELF, and the ratchet duly reported a new identity originating in this file.
+        seen = sorted({v for v in (d.metadata.get("Version") for d in records) if v})
+    except Exception:
         return "unreadable"
     if not seen:
-        return None
+        return "unreadable"
     return seen[0] if len(seen) == 1 else "ambiguous:" + "|".join(seen)
 
 

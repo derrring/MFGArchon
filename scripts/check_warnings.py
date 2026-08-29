@@ -188,6 +188,29 @@ def _self_test() -> int:
         if rc != 1:
             failures.append(f"through main(): an appeared identity must exit 1, got {rc}")
 
+        # The floor's LOCATION, not just its sign. `tests_run: 0` against `MIN_TESTS * 2` proves
+        # only `0 < MIN_TESTS`, a tautology for any positive floor -- measured, the case survived
+        # MIN_TESTS at 1, 2, 50 and 6000, and at 6000 a legitimate 10% suite shrink is refused with
+        # a red no warning fix can clear. The literal here is the deliberate-change gate, the same
+        # device as the pinned key sets: moving the floor must edit this line.
+        if MIN_TESTS != 500:
+            failures.append(f"MIN_TESTS moved to {MIN_TESTS}; if that is intended, update this case")
+        for ran, want_rc in ((MIN_TESTS - 1, 2), (MIN_TESTS, 0), (MIN_TESTS + 1, 0)):
+            census.write_text(json.dumps({"identities": sorted(base), "occurrences": 0, "tests_run": ran}))
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = main()
+            except Exception as exc:
+                failures.append(f"the floor case at tests_run={ran} raised {type(exc).__name__}: {exc}")
+                continue
+            finally:
+                sys.argv = argv
+            if rc != want_rc:
+                failures.append(
+                    f"a census of {ran} outcomes against the {MIN_TESTS} floor must exit {want_rc}, got {rc}"
+                )
+
         # Below the floor: a collect-only census must be REFUSED, not reported as 225 vanished.
         census.write_text(json.dumps({"identities": [], "occurrences": 0, "tests_run": 0}))
         try:
@@ -377,6 +400,99 @@ def _self_test() -> int:
             report = sink.getvalue()
             if "The toolchain also moved" in report:
                 failures.append("attribution: a baseline predating the field must not produce a delta")
+            # A census carrying an unresolved marker must not reach the shared artifact, and the
+            # permission half is not optional: a guard that refuses everything passes the refusal
+            # case alone. Driven through main(), because the guard lives on the --write-baseline
+            # path and the earlier version of this rule was asserted in a test file instead.
+            for label, toolchain, want_rc, want_written in [
+                ("an ambiguous version", {"numpy": "ambiguous:2.2.6|2.4.6"}, 2, False),
+                ("an unreadable METADATA", {"numpy": "unreadable"}, 2, False),
+                ("a clean toolchain", {"numpy": "2.4.6"}, 0, True),
+            ]:
+                tmp_baseline.write_text(json.dumps({"identities": sorted(base)}))
+                census.write_text(
+                    json.dumps(
+                        {"identities": sorted(base), "occurrences": 3, "tests_run": 6714, "toolchain": toolchain}
+                    )
+                )
+                BASELINE = tmp_baseline
+                try:
+                    sys.argv = ["check_warnings.py", "--census", str(census), "--write-baseline"]
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        rc = main()
+                finally:
+                    sys.argv = argv
+                if rc != want_rc:
+                    failures.append(f"--write-baseline with {label} must exit {want_rc}, got {rc}")
+                written = json.loads(tmp_baseline.read_text()).get("toolchain_when_written")
+                if bool(written) != want_written:
+                    failures.append(
+                        f"--write-baseline with {label}: wrote {written!r}, expected written={want_written}"
+                    )
+
+            # A schema difference is not a move, and must not print under a heading that says it is.
+            tmp_baseline.write_text(
+                json.dumps({"identities": sorted(base), "toolchain_when_written": {"numpy": "2.4.6"}})
+            )
+            census.write_text(
+                json.dumps(
+                    {
+                        "identities": sorted(list(base)[:-1]),
+                        "occurrences": 0,
+                        "tests_run": 6714,
+                        "toolchain": {"numpy": "2.4.6", "osqp": "1.1.3"},
+                    }
+                )
+            )
+            sink = io.StringIO()
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(sink):
+                    main()
+            finally:
+                sys.argv = argv
+            report = sink.getvalue()
+            if "The toolchain also moved" in report:
+                failures.append("a pure schema difference must not print under a heading claiming a move")
+            if "Recorded on one side only" not in report or "osqp" not in report:
+                failures.append("a pure schema difference must still be reported")
+
+            # A malformed toolchain is a schema error, not a warnings regression.
+            # Non-EMPTY non-dicts only: `or {}` folds an empty list into the same "no toolchain
+            # recorded" state as `None` and a pre-field census, which is right and must keep working.
+            for label, payload in [("a list", ["numpy"]), ("a string", "numpy==2")]:
+                census.write_text(
+                    json.dumps({"identities": sorted(base), "occurrences": 0, "tests_run": 6714, "toolchain": payload})
+                )
+                try:
+                    sys.argv = ["check_warnings.py", "--census", str(census)]
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        rc = main()
+                except Exception as exc:
+                    failures.append(f"a toolchain that is {label} raised {type(exc).__name__} instead of exiting 2")
+                    continue
+                finally:
+                    sys.argv = argv
+                if rc != 2:
+                    failures.append(f"a toolchain that is {label} must exit 2, got {rc}")
+
+            # The provenance guard had no case: deleting it turns a written diagnostic into a KeyError.
+            census.write_text(json.dumps({"identities": sorted(base), "occurrences": 0}))
+            try:
+                sys.argv = ["check_warnings.py", "--census", str(census)]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = main()
+            # A case that raises is a case that did not run. Recorded rather than propagating: an
+            # unhandled exception here kills every case after it and reports a traceback where the
+            # reader needs a diagnostic.
+            except Exception as exc:
+                failures.append(f"a census with no `tests_run` raised {type(exc).__name__}: {exc}")
+                rc = 2
+            finally:
+                sys.argv = argv
+            if rc != 2:
+                failures.append(f"a census with no `tests_run` must exit 2, got {rc}")
+
         finally:
             BASELINE = real_baseline
 
@@ -412,19 +528,24 @@ def _compare(
         print("    Re-baseline with --write-baseline so a later regression cannot hide behind this.")
     # Printed only when the set actually moved. On a run where nothing moved it would be noise;
     # at the moment it moved it is the difference between "pytest did this" and knowing better.
-    if drift or unrecorded:
+    if drift:
         print("\nThe toolchain also moved since the baseline was written:")
+        width = max(len(name) for name, _, _ in drift)
         for name, before, after in drift:
-            print(f"    {name:12} {before or '<absent>'} -> {after or '<absent>'}")
+            print(f"    {name:{width}} {before or '<absent>'} -> {after or '<absent>'}")
         # Only when something actually went absent. Printed under a package that APPEARED it says
         # the opposite of what happened, and it is the only line telling the reader what to do.
         if any(before and not after for _, before, after in drift):
             print("    A package that went absent means its tests did not run, so the warnings they")
             print("    emit are missing rather than fixed. Attribute before recording anything.")
-        if unrecorded:
-            print(f"    Recorded on one side only: {', '.join(unrecorded)}")
-            print("    That is a baseline/census schema difference -- one was written by a different")
-            print("    conftest.py -- and says nothing about whether those packages moved.")
+    # A SEPARATE block with its own heading. Printed under "The toolchain also moved" it contradicted
+    # itself three lines later -- and that was the shape this change actually ships, a seven-name
+    # baseline against an eight-name census, so it fired on the first red gate after merge.
+    if unrecorded:
+        print("\nRecorded on one side only, so nothing about them can be compared:")
+        print(f"    {', '.join(unrecorded)}")
+        print("    A baseline/census schema difference -- one was written by a different conftest.py.")
+        print("    It says nothing about whether those packages moved. Re-baselining clears it.")
 
     print(f"\n{len(now)} identities now, {len(was)} in the baseline. Occurrences reported, not gated.")
     return 1
@@ -474,17 +595,43 @@ def main() -> int:
             print(identity.replace("\t", "  |  "))
         return 0
 
+    # The markers `_installed_version` invents when it cannot give one answer. Written into the
+    # shared baseline they become a permanent fabricated attribution line on every other machine:
+    # `osqp ambiguous:1.1.1|1.1.3 -> 1.1.3` for a package that never moved. The guard for this was
+    # written in the TEST and not in the code, while the code path that reaches the committed
+    # artifact -- the one the report itself prints as the remedy -- had none.
+    UNRESOLVED = ("ambiguous:", "unreadable")
+
     if args.write_baseline:
+        poisoned = sorted(
+            f"{name}={value}"
+            for name, value in (census.get("toolchain") or {}).items()
+            if isinstance(value, str) and value.startswith(UNRESOLVED)
+        )
+        if poisoned:
+            print(
+                "CANNOT RUN: this census carries toolchain values that name a broken environment\n"
+                "rather than a version, and --write-baseline would commit them:\n"
+                + "".join(f"    {item}\n" for item in poisoned)
+                + "Every other machine would then read a move that never happened. Fix the\n"
+                "environment -- `ambiguous:` means two .dist-info records for one distribution,\n"
+                "`unreadable` means a corrupt METADATA -- and regenerate, or write the baseline\n"
+                "somewhere the environment is clean.",
+                file=sys.stderr,
+            )
+            return 2
+
         BASELINE.write_text(
             json.dumps(
                 {
                     "_comment": (
-                        "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised "
-                        "text[:40]) -- NOT "
-                        "line numbers, which move under any edit, and NOT occurrence counts, which jitter "
-                        "run to run. Bidirectional: a new identity is a regression, a removed one is "
-                        "progress that must be recorded here. `occurrences` is reported, never gated. "
-                        "Regenerate with --write-baseline."
+                        "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) "
+                        "-- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run "
+                        "to run. Bidirectional: a new identity is a regression, a removed one is progress that must b"
+                        "e recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribu"
+                        "tion for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` "
+                        "cannot be written here, because it would name a broken environment rather than a version. Re"
+                        "generate with --write-baseline."
                     ),
                     "occurrences_when_written": census["occurrences"],
                     # Attribution, not a gate. Recorded so a later diff can say what ELSE moved:
@@ -515,6 +662,17 @@ def main() -> int:
     # against a 7-field census reported cvxpy and scikit-fem as having appeared, both installed and
     # unchanged throughout.
     before, after = recorded.get("toolchain_when_written") or {}, census.get("toolchain") or {}
+    # Every other malformed-census class here gets a message and exit 2. A non-dict reached the
+    # comparison as a raw TypeError, which `local_ci.sh` then reports as a warnings regression --
+    # a schema error wearing the label of the thing this script gates.
+    for label, value in (("baseline's toolchain_when_written", before), ("census's toolchain", after)):
+        if not isinstance(value, dict):
+            print(
+                f"CANNOT RUN: the {label} is {type(value).__name__}, not an object. That is a\n"
+                "malformed artifact, not a warnings regression. Regenerate it.",
+                file=sys.stderr,
+            )
+            return 2
     shared = set(before) & set(after)
     drift = [(name, before[name], after[name]) for name in sorted(shared) if before[name] != after[name]]
     # A side that is WHOLLY absent -- a baseline predating the field, or a census from a run that
