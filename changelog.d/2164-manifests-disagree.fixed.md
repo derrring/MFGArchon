@@ -91,3 +91,10 @@
   `-c conda-forge`, and says which platforms have mkl. Verified by dry-run.
 - The PR body's before-count was wrong: `origin/main` is 31 conda + 4 pip, not 32 + 3. The fourth pip
   entry was `texttable`, which this change removes.
+- **Two PRs each correct alone were wrong together.** The header's recipe read
+  `uv pip install -e ".[all,dev]"`, and #2171 turns `dev` from an extra into a PEP 735 group.
+  Measured on the merged trees: `WARNING: mfgarchon 0.22.0.dev0 does not provide the extra 'dev'`,
+  **exit 0** — the #1658 shape, in the recipe written to justify retiring this file. Neither PR's
+  guard could see it, because `environment.yml` was outside the scanned population. The recipe now
+  reads `-e ".[all]" --group dev`, and #2171's scan includes this file. This ordering is real:
+  #2171 must merge first, or the recipe names a group that does not yet exist.

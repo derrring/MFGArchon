@@ -10,7 +10,7 @@
 # `pyproject.toml` still supplies the dependencies -- `uv pip install` leaves a conda-installed
 # numpy alone:
 #     conda create -n mfg-blis -c conda-forge python=3.12 "libblas=*=*blis" numpy scipy
-#     uv pip install -e ".[all,dev]" --python <that env>
+#     uv pip install -e ".[all]" --group dev --python <that env>
 #
 # Pick the variant your platform HAS. conda-forge builds libblas against accelerate,
 # newaccelerate, openblas, blis and netlib on osx-arm64 -- and **mkl is not among them**, because
