@@ -183,7 +183,7 @@ if [[ -n "${MFG_PYTHON+x}" ]]; then
     || cannot_run "MFG_PYTHON=${MFG_PYTHON:-<empty>} is unusable: it must exist and import
 $(probe_modules) plus ruff and mypy, probed from a scratch directory outside the source tree.
 ruff is deliberately absent from the dev group (#2172): its version has one owner,
-.pre-commit-config.yaml, and is read at runtime. `uv sync` and `uv venv` install no pip, so use
+.pre-commit-config.yaml, and is read at runtime. 'uv sync' and 'uv venv' install no pip, so use
 whichever installer that environment has:
     uv pip install \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
     pip install     \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
@@ -207,7 +207,7 @@ else
   fi
   [[ -n "$PY" ]] || cannot_run "no interpreter found with $(probe_modules) plus ruff and mypy.
 ruff is deliberately absent from the dev group (#2172): its version has one owner,
-.pre-commit-config.yaml, and is read at runtime. `uv sync` and `uv venv` install no pip, so use
+.pre-commit-config.yaml, and is read at runtime. 'uv sync' and 'uv venv' install no pip, so use
 whichever installer that environment has:
     uv pip install \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"
     pip install     \"ruff==\$(python scripts/update_ruff_version.py --print-current)\"

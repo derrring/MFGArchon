@@ -8,3 +8,10 @@
 - The check that missed it was `git status --porcelain | wc -l` → 0. That answers "is anything
   uncommitted", not "did the deletion happen"; the two agree in every case except the one that
   mattered. `git diff --cached --name-status -- environment.yml` answers the question asked.
+- **The refusal message ran two commands.** Its text said ``uv sync`` and ``uv venv`` in backticks,
+  inside a double-quoted bash string — where a backtick is command substitution. So the gate's
+  cannot-run path executed `uv sync` and `uv venv`, created a `.venv`, installed 72 packages, and
+  substituted their (empty) stdout into the sentence, which rendered as *"is read at runtime.  and
+  install no pip"*. Found by rendering the message rather than reading it; a syntax check passes on
+  it, and the earlier verification of this rework had only run `bash -n`. Both sites now use single
+  quotes, and the same run confirms no `.venv` appears.
