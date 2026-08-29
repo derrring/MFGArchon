@@ -81,7 +81,7 @@ dependencies = [
 ]
 
 # ==================== OPTIONAL DEPENDENCY TIERS ====================
-# Three user-facing tiers + dev (Issue #978)
+# Four user-facing tiers (Issue #978). Development tooling is NOT among them --
 #
 #   pip install mfgarchon          -> default (batteries included)
 #   pip install mfgarchon[core]    -> minimal (CI, Docker, embedding)
@@ -135,7 +135,6 @@ all = [
     "cvxpy>=1.4",
 ]
 
-# Development tools (not user-facing)
 # Convex-optimisation solvers. `joint_socp.py` raises ImportError without cvxpy
 # (joint_socp.py:573). nightly.yml referenced a `numerical` extra for 3.5 months
 # while it did not exist, so the SOCP gate failed on ImportError every night and

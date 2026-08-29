@@ -26,7 +26,7 @@ import numpy as np
 # blocking, so the symptom is environment-dependent; the cause is not.)
 #
 # Both interpreters used with this repository default to `macosx` -- the conda env the gate runs
-# under and `uv run --extra dev` alike -- so a headless backend is not something either
+# under and `uv run --group dev` alike -- so a headless backend is not something either
 # environment supplies.
 #
 # `MPLBACKEND` is the mechanism: it is read when matplotlib is first imported, and this file is
@@ -572,7 +572,7 @@ class MFGLogCapture:
     logger. What ``caplog`` does about that differs by pytest version, and the two versions in
     use here disagree -- which is why six test modules each grew their own collector:
 
-    - pytest 8.4.1 (``uv run --extra dev``): ``catching_logs.__enter__`` attaches the capture
+    - pytest 8.4.1 (``uv run --group dev``): ``catching_logs.__enter__`` attaches the capture
       handler to the root logger only. **No mfgarchon record is visible, ever**, whatever the
       logger's creation site. On this version ``propagate = False`` is the whole story.
     - pytest 9.1.1 (the gate interpreter): it also attaches to every non-propagating logger

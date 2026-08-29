@@ -5,7 +5,7 @@ record never reaches the root logger. What `caplog` does about that is **version
 is why six test modules each grew their own record-collecting handler and why four tests written
 with plain `caplog` were red:
 
-- pytest 8.4.1 (`uv run --extra dev`): `catching_logs.__enter__` attaches its handler to the root
+- pytest 8.4.1 (`uv run --group dev`): `catching_logs.__enter__` attaches its handler to the root
   logger only, so `caplog` sees no mfgarchon record at all, whatever the creation site. On this
   version `propagate = False` is the whole cause.
 - pytest 9.1.1 (the gate interpreter): `__enter__` also attaches to every non-propagating logger

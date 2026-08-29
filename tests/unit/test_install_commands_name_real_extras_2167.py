@@ -27,10 +27,23 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: `pip install mfgarchon[a,b]`, `pip install -e ".[a,b]"`, `uv pip install -e .[a]`.
-EXTRAS = re.compile(r"""(?:mfgarchon|-e\s+["']?\.)["']?\[([A-Za-z0-9_,.\- ]+)\]""")
-#: `--group dev`, `--only-group docs`, `uv sync --group dev`.
-GROUPS = re.compile(r"--(?:only-)?group[= ]+([A-Za-z0-9_.\-]+)")
+#: An extras bracket in an install command. The subject must be this project: `mfgarchon`, or a
+#: local path (`.`, `-e .`, `"."`), optionally quoted. Review planted three spellings the first
+#: version missed -- `pip install ".[x]"` with no `-e`, a bare `pip install .[x]`, and a
+#: backslash-continued `-e \` / `".[x]"` -- and the guard reported the repository clean.
+EXTRAS = re.compile(r"""(?:mfgarchon|(?:-e\s+)?["']?\.)["']?\[([A-Za-z0-9_,.\- ]+)\]""")
+#: uv names extras with a flag rather than a bracket. `uv run --extra dev` is a HARD error once the
+#: name is a group, unlike pip's bracket form, which warns and exits zero.
+EXTRA_FLAG = re.compile(r"--extra[= ]+([A-Za-z0-9_.\-]+)")
+#: `--group dev`, `--only-group docs`, `--no-group docs`, and pip's documented `--group
+#: <[path:]group>` -- the path prefix is not part of the name.
+GROUPS = re.compile(r"--(?:only-|no-)?group[= ]+(?:[^\s:]*:)?([A-Za-z0-9_.\-]+)")
+#: A bracket only names an extra inside an install command. Without this the widened `.`-prefixed
+#: form above reads a regex character class -- `[0-9]*.[0-9]*` in a comment about version matching --
+#: as the extra `0-9`, and reads prose ABOUT a historical command as the command. Comment lines are
+#: NOT skipped: `pyproject.toml` documents its own install commands in comments, and a documented
+#: command naming an extra that does not exist is the #2170 class exactly.
+INSTALL = re.compile(r"\b(?:pip\s+install|uv\s+(?:pip\s+install|sync|run|add|export|tool\s+install))\b")
 
 #: Where an install command can live. Extension-free entries are deliberate: `Makefile` has no
 #: suffix, and restricting to a suffix list is how a population predicate silently loses a file.
@@ -46,8 +59,16 @@ def _declared() -> tuple[set[str], set[str]]:
     )
 
 
-def _scan() -> tuple[int, list[tuple[str, int, str, str]]]:
-    """Every (file, line, kind, name) an install command names. Kind is `extra` or `group`."""
+def _scan() -> tuple[list[str], list[tuple[str, int, str, str]]]:
+    """Every (file, line, kind, name) an install command names, and every file examined.
+
+    Returns the file list, not a count: `assert count > 20` was inert, because `mfgarchon/**/*.py`
+    alone supplies hundreds and the threshold could not fail while that one glob survived. Dropping
+    `scripts`, `docs` or `Makefile` from the population was silent.
+
+    Backslash continuations are joined before matching -- a command split across lines is one
+    command, and matching line by line loses the half carrying the bracket.
+    """
     paths: list[Path] = []
     for root in ROOTS:
         base = REPO / root
@@ -56,32 +77,97 @@ def _scan() -> tuple[int, list[tuple[str, int, str, str]]]:
     paths += [REPO / name for name in FILES if (REPO / name).is_file()]
     paths += sorted((REPO / "mfgarchon").rglob("*.py"))
 
-    found = []
+    found, examined = [], []
     for path in paths:
         try:
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
         rel = str(path.relative_to(REPO))
+        examined.append(rel)
+        # Join continuations, keeping the line number of the line the command STARTS on.
+        joined, start, buffer = [], 1, ""
         for n, line in enumerate(text.splitlines(), 1):
+            if not buffer:
+                start = n
+            if line.endswith("\\"):
+                buffer += line[:-1]
+                continue
+            joined.append((start, buffer + line))
+            buffer = ""
+        if buffer:
+            joined.append((start, buffer))
+
+        for n, line in joined:
+            if not INSTALL.search(line):
+                continue
             for match in EXTRAS.finditer(line):
                 for name in match.group(1).split(","):
                     if name.strip():
                         found.append((rel, n, "extra", name.strip()))
+            for match in EXTRA_FLAG.finditer(line):
+                found.append((rel, n, "extra", match.group(1)))
             for match in GROUPS.finditer(line):
                 found.append((rel, n, "group", match.group(1)))
-    return len(paths), found
+    return examined, found
 
 
-def test_the_scan_finds_the_known_call_sites():
-    """Sentinel. A glob that stops selecting files reports zero violations, which reads as clean."""
-    count, found = _scan()
-    assert count > 20, f"the scan selected only {count} files; the globs are wrong, not the repo"
+def test_the_scan_covers_every_root_it_claims_to():
+    """Sentinel, per root. A glob that stops selecting files reports zero violations, which reads
+    exactly like a clean repository.
+
+    Asserted per source rather than as a total: the previous `count > 20` could not fail while
+    `mfgarchon/**/*.py` survived, so dropping `scripts`, `docs` or `Makefile` was silent -- measured,
+    all three mutations passed.
+    """
+    examined, found = _scan()
+    # Written out, NOT read from ROOTS/FILES. Iterating the constants meant deleting an entry also
+    # deleted its check: measured, dropping `scripts`, `docs` or `Makefile` from the population
+    # passed the whole suite. A test cannot be keyed on the thing it is testing -- the third time
+    # that shape appeared in one day, twice already recorded.
+    for root in (".github", "scripts", "docs"):
+        if (REPO / root).is_dir():
+            assert any(f.startswith(root + "/") for f in examined), (
+                f"the scan selected nothing from {root}/ -- the population shrank, and a scan that "
+                "sees fewer files reports fewer violations, which reads as a clean repository"
+            )
+    for name in ("Makefile", "README.md", "pyproject.toml"):
+        if (REPO / name).is_file():
+            assert name in examined, f"the scan lost {name}"
+    assert any(f.startswith("mfgarchon/") for f in examined), "the package glob selected nothing"
+
     files = {rel for rel, _, _, _ in found}
     assert any(f.startswith(".github/workflows/") for f in files), "no workflow install command seen"
     assert "pyproject.toml" in files, "pyproject's own documented install commands not seen"
     groups = {name for _, _, kind, name in found if kind == "group"}
     assert "dev" in groups, "the `dev` group is installed by CI and the scan did not see it"
+
+
+def test_every_job_that_installs_a_group_upgrades_pip_first():
+    """`--group` is pip >= 25.1, and the runner's bundled pip may be older.
+
+    Per JOB, not per file. The first version asserted `"install --upgrade pip" in text` over the
+    whole workflow -- and `security.yml::license-compliance` is a separate job, with no `needs` and
+    no cache, that ran `--group` with no upgrade anywhere in it. The other two jobs in that file
+    carry the string, so a file-scoped assertion passed. A file-scoped test for a job-scoped
+    property.
+    """
+    import yaml
+
+    offenders = []
+    for wf in sorted((REPO / ".github" / "workflows").glob("*.y*ml")):
+        for job_name, job in (yaml.safe_load(wf.read_text()).get("jobs") or {}).items():
+            upgraded = False
+            for step in job.get("steps") or []:
+                run = step.get("run") or ""
+                if "install --upgrade pip" in run:
+                    upgraded = True
+                if "--group" in run and not upgraded:
+                    offenders.append(f"{wf.name}::{job_name}")
+    assert not offenders, (
+        "these jobs install a dependency-group without upgrading pip first, and `--group` needs "
+        f"pip >= 25.1: {offenders}. Add `python -m pip install --upgrade pip` to the job."
+    )
 
 
 #: Sites that already named an undeclared extra before this guard existed, pinned as an exact set so

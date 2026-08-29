@@ -35,3 +35,34 @@
   requires deleting its entry, because a floor would rot into a list of things fixed years ago with
   nothing to say so. Keyed by file rather than line, since a line number in a durable artifact
   expires on the next edit above it.
+- **One job ran `--group` without upgrading pip first, and the test written to prevent exactly that
+  passed vacuously.** `security.yml::license-compliance` is a separate job — no `needs`, no cache, its
+  own runner — so the upgrades in the other two jobs of that file never reached it. The check asserted
+  `"install --upgrade pip" in text` over the whole file, and those other jobs put the string there: a
+  file-scoped assertion for a job-scoped property. It now walks the YAML per job and fails naming the
+  job. Independently measured before and after: eleven `--group` sites, ten preceded by an upgrade,
+  one not; zero after.
+- **The guard was blind to three real install spellings**, found by planting them: `pip install
+  ".[x]"` with no `-e`, a bare `pip install .[x]`, and a backslash-continued `-e \` / `".[x]"`. It
+  also did not know `uv`'s flag form at all — `uv run --extra dev` is a **hard error** once `dev` is a
+  group, where pip's bracket form only warns and exits zero. Continuations are now joined before
+  matching, the subject may be any local-path spelling, and `--extra` / `--no-group` are read.
+- Four live `uv run --extra dev` sites would have hard-errored after the move: `AGENTS.md`,
+  `tests/conftest.py` ×2, `tests/unit/test_mfg_caplog.py`. That is a fifteenth call-site spelling the
+  original enumeration did not have, and it is outside the guard's scanned population as well —
+  doubly invisible until the extractor learned the flag.
+- **A bracket now only counts inside an install command.** Widening the subject to a bare `.` made the
+  scan read `[0-9]*.[0-9]*` in a comment about version matching as the extra `0-9`, and prose *about*
+  the #1658 incident as an instance of it. Comment lines are deliberately **not** skipped: `pyproject.toml`
+  documents its own install commands in comments, and a documented command naming a nonexistent extra
+  is the #2170 class exactly.
+- `--group <[path:]group>` is pip's documented syntax; the group name is the part after the colon.
+  Before, `--group pyproject.toml:dev` failed the guard by reading `pyproject.toml` as the name.
+- **The sentinel protected one of its four sources.** `assert count > 20` could not fail while
+  `mfgarchon/**/*.py` supplied hundreds, so dropping `scripts`, `docs` or `Makefile` from the
+  population was silent — measured, all three passed. It now asserts per source, with the expected
+  roots **written out rather than read from the constants they check**: iterating `ROOTS` meant
+  deleting an entry also deleted its own check. Four population mutations killed.
+- `numerical` no longer carries a `# Development tools (not user-facing)` header — it is in
+  `[project.optional-dependencies]` precisely because it is user-facing. The header belonged to `dev`,
+  which moved.
