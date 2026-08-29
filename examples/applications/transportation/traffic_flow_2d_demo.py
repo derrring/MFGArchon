@@ -104,7 +104,7 @@ def initial_density(grid):
     m0 = np.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma_init**2))
 
     # Normalize to probability distribution
-    m0 = m0 / (np.sum(m0) * grid.volume_element())
+    m0 = m0 / grid.integrate(m0)
 
     return m0
 
@@ -383,7 +383,7 @@ def main():
     print("\nDensity Statistics:")
     print(f"  - Initial max density: {solution['m'][0, :, :].max():.4f}")
     print(f"  - Final max density: {m_final.max():.4f}")
-    print(f"  - Mass conservation: {np.sum(m_final) * problem['grid'].volume_element():.4f}")
+    print(f"  - Mass conservation: {problem['grid'].integrate(m_final):.4f}")
 
     print("\nValue Function:")
     print(f"  - Min cost-to-go: {u_final.min():.4f}")

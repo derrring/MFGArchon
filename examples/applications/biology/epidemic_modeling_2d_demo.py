@@ -135,7 +135,7 @@ def initial_population_distribution(grid):
     )
 
     # Normalize to probability distribution
-    m0 = m0 / (np.sum(m0) * grid.volume_element())
+    m0 = m0 / grid.integrate(m0)
 
     return m0
 
@@ -153,7 +153,7 @@ def initial_infection_distribution(grid, I0_center, I0_fraction):
     I0 = I0_fraction * np.exp(-((X - I0_center[0]) ** 2 + (Y - I0_center[1]) ** 2) / (2 * sigma_outbreak**2))
 
     # Normalize
-    I0 = I0 / (np.sum(I0) * grid.volume_element()) * I0_fraction
+    I0 = I0 / grid.integrate(I0) * I0_fraction
 
     return I0
 
@@ -495,9 +495,7 @@ def main():
     infected_final = solution["infected"][-1, :, :]
 
     # Total infected over time
-    total_infected = [
-        np.sum(solution["infected"][n, :, :]) * problem["grid"].volume_element() for n in range(problem["Nt"] + 1)
-    ]
+    total_infected = [problem["grid"].integrate(solution["infected"][n, :, :]) for n in range(problem["Nt"] + 1)]
     peak_infections = max(total_infected)
     peak_day = total_infected.index(peak_infections) * problem["T"] / problem["Nt"]
 

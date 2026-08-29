@@ -121,7 +121,7 @@ def initial_distribution(grid):
     m0 = np.exp(-(((W - W0) ** 2) / (2 * sigma_W**2) + (Alpha - alpha0) ** 2 / (2 * sigma_alpha**2)))
 
     # Normalize to probability distribution
-    m0 = m0 / (np.sum(m0) * grid.volume_element())
+    m0 = m0 / grid.integrate(m0)
 
     return m0
 
@@ -434,7 +434,7 @@ def main():
     print("\nInvestor Distribution Statistics:")
     print(f"  - Initial max density: {solution['m'][0, :, :].max():.4f}")
     print(f"  - Final max density: {m_final.max():.4f}")
-    print(f"  - Mass conservation: {np.sum(m_final) * problem['grid'].volume_element():.4f}")
+    print(f"  - Mass conservation: {problem['grid'].integrate(m_final):.4f}")
 
     # Find optimal allocation region
     W_idx, alpha_idx = np.unravel_index(m_final.argmax(), m_final.shape)

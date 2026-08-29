@@ -745,38 +745,6 @@ class TensorProductGrid(
             weights = np.multiply.outer(weights, self.quadrature_weights(d))
         return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
-    def volume_element(self, multi_index: Sequence[int] | None = None) -> float:
-        """
-        Compute volume element (dx·dy·dz) at grid point.
-
-        Args:
-            multi_index: Optional grid point index (for non-uniform grids)
-
-        Returns:
-            Volume element (1D: dx, 2D: dx·dy, 3D: dx·dy·dz)
-        """
-        if self.is_uniform:
-            return float(np.prod(self.spacing))
-        else:
-            # For non-uniform grids, need local spacing
-            if multi_index is None:
-                raise ValueError("multi_index required for non-uniform grids")
-
-            vol = 1.0
-            for i in range(self._dimension):
-                spacings = self.get_spacing(i)
-                idx = multi_index[i]
-                # Use average of left and right spacing
-                if idx == 0:
-                    local_spacing = spacings[0]
-                elif idx == self._Nx_points[i] - 1:
-                    local_spacing = spacings[-1]
-                else:
-                    local_spacing = 0.5 * (spacings[idx - 1] + spacings[idx])
-                vol *= local_spacing
-
-            return vol
-
     # ============================================================================
     # Geometry ABC implementation (data interface)
     # ============================================================================
