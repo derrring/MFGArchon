@@ -10,6 +10,7 @@ import importlib.metadata
 import importlib.util
 import logging
 import os
+import platform
 import shutil
 import sys
 import tempfile
@@ -789,7 +790,45 @@ __all__ = ["validate_mfg_solution"]
 # asked for, and a gate that silently rewrites its own input is how a ratchet stops ratcheting.
 #: The distributions recorded in every warning census, one owner for the list. Distribution
 #: names, not import names -- `scikit-fem` imports as `skfem`.
+#:
 TOOLCHAIN_NAMES = ("pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy", "osqp")
+
+
+def _blas_of(module) -> str | None:
+    """Which BLAS `module` was BUILT against, lowercased, or None if it will not say.
+
+    Build-time metadata. Sufficient for a PyPI wheel, which bundles its BLAS, and blind in a conda
+    environment, where numpy links a generic `libblas` and this reports the string `blas` -- the
+    implementation lives in the conda build string, outside Python -- so this reports `blas` there
+    and `accelerate` after the move, which is the transition being recorded even though the first
+    value does not name an implementation.
+
+    A runtime reading via `threadpoolctl.threadpool_info()` WOULD name it (measured: `openblas
+    0.3.33` in this project's conda environment, where `show_config` says only `blas`). It is not
+    recorded, because nothing in this project installs threadpoolctl: the field would be null in the
+    environment being left AND in the one being moved to, and its thread count moves with
+    `OMP_NUM_THREADS`, which `.uvrc` sets to 4 and `ci.yml` sets to 1 -- drift on an axis nobody
+    changed, the exact reason the fuller platform string was rejected below. #2167 records what it
+    would take to add it.
+
+    Lowercased because numpy and scipy disagree on the case of the SAME implementation: measured on
+    one PyPI environment, numpy reports `accelerate` and scipy reports `Accelerate`. Compared raw
+    across a re-baseline, that reads as a package moving when nothing did.
+
+    Both modules are read because they are built independently and can genuinely differ.
+    """
+    try:
+        name = module.show_config(mode="dicts")["Build Dependencies"]["blas"]["name"]
+        # `isinstance`, not truthiness. `b"openblas".lower()` SUCCEEDS and returns bytes, so the
+        # try below never fires and `json.dumps(payload)` raises instead -- past the payload's
+        # `except OSError`, out of `pytest_terminal_summary`, taking the whole summary with it.
+        return name.lower() if isinstance(name, str) and name else None
+    # INSIDE the try, deliberately. `.lower()` outside it turns a non-string name into an
+    # AttributeError raised out of `pytest_terminal_summary`, which loses the whole census -- the
+    # failure the guard exists to prevent, reintroduced one line below the guard. A bytes name was
+    # worse still: it returned successfully and `json.dumps` then raised past the `except OSError`.
+    except Exception:  # older show_config, a build without the metadata, a non-string, or no module
+        return None
 
 
 def _installed_version(name: str) -> str | None:
@@ -918,9 +957,34 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # that comparison inside a disjunction with numpy and owning no identity, and python, the axis
     # that moved furthest (3.13 -> 3.12) with no single identity attributed to it.
     # Absent is recorded as null, which is itself a cause.
+    try:
+        import scipy
+    except ImportError:  # scipy is a hard dependency, but the census must not die if it is broken
+        scipy = None
+
     toolchain = {
         "python": ".".join(str(n) for n in sys.version_info[:3]),
         **{name: _installed_version(name) for name in TOOLCHAIN_NAMES},
+        # Not distributions, so not in TOOLCHAIN_NAMES and not read by `_installed_version`.
+        #
+        # `platform` because `python 3.12.13` does not distinguish macOS from Linux, and the BLAS a
+        # wheel carries is chosen by platform -- the same numpy version links Accelerate here and
+        # OpenBLAS on linux. `pandas.show_versions()`, `polars.show_versions()` and scikit-learn's
+        # all record it, and all three record the FULLER string (`platform.platform()`, e.g.
+        # `macOS-26.5.2-arm64-arm-64bit`). The prior art is unanimous against this granularity and
+        # saying otherwise would be a misreading of it.
+        #
+        # Coarse anyway, for one reason: the OS version selects a wheel, and the wheel's BLAS is
+        # recorded directly below. A macOS upgrade that moves numpy from OpenBLAS to Accelerate
+        # shows up as `numpy-blas` changing, which is the attribution wanted -- while the full
+        # string churns on every point update, on an axis nobody changed.
+        "platform": f"{sys.platform}-{platform.machine()}",
+        # Both modules, because they are built independently and can differ. `np` is the module-level
+        # import at the top of this file; a second `import numpy` here was redundant. No `is not None`
+        # guard on scipy: `_blas_of(None)` already answers None, so the guard was defence against a
+        # state the function handles.
+        "numpy-blas": _blas_of(np),
+        "scipy-blas": _blas_of(scipy),
     }
 
     payload = {

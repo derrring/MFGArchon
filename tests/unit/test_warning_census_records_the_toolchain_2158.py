@@ -17,6 +17,7 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -106,7 +107,24 @@ def test_the_census_payload_carries_the_toolchain(tmp_path, monkeypatch):
     # Written out rather than read from `TOOLCHAIN_NAMES`, which is the thing under test: keyed on
     # the constant, this assertion followed it and deleting `osqp` from the list survived. Each
     # name here has a warrant recorded beside the constant; changing the set must be deliberate.
-    assert set(payload["toolchain"]) == {"python", "pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy", "osqp"}
+    assert set(payload["toolchain"]) == {
+        "python",
+        "platform",
+        "pytest",
+        "numpy",
+        "scipy",
+        "scikit-fem",
+        "torch",
+        "cvxpy",
+        "osqp",
+        "numpy-blas",
+        "scipy-blas",
+    }
+    # Both halves of `platform`. Asserting only `startswith(sys.platform)` left the machine half --
+    # the axis that actually selects the wheel and hence the BLAS -- covered by nothing: dropping
+    # `platform.machine()` passed the whole suite.
+    assert payload["toolchain"]["platform"] == f"{sys.platform}-{platform.machine()}"
+    assert payload["toolchain"]["numpy-blas"] is not None, "the real numpy must report a BLAS"
     assert payload["toolchain"]["python"] == ".".join(str(n) for n in sys.version_info[:3])
     assert payload["toolchain"]["pytest"] == pytest.__version__
     # A corrupt record is recorded as such and must never reach the artifact silently.
@@ -186,6 +204,93 @@ def test_the_census_records_the_identities_it_was_given(tmp_path, monkeypatch):
     # in the fixture is already shorter than the limit.
     assert by_file["mfgarchon/long.py"] == "this message is deliberately longer than"
     assert len(by_file["mfgarchon/long.py"]) == 40
+
+
+class _FakeModule:
+    """Just enough of numpy/scipy's surface for `_blas_of`."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def show_config(self, mode="stdout"):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+def _cfg(name):
+    return {"Build Dependencies": {"blas": {"name": name}}}
+
+
+def test_the_blas_name_is_lowercased():
+    """numpy and scipy disagree on the case of the SAME implementation.
+
+    Measured on one PyPI environment: numpy reports `accelerate`, scipy reports `Accelerate`.
+    Compared raw across a re-baseline, that reads as a package moving when nothing did.
+    """
+    assert _CONFTEST._blas_of(_FakeModule(_cfg("Accelerate"))) == "accelerate"
+    assert _CONFTEST._blas_of(_FakeModule(_cfg("accelerate"))) == "accelerate"
+    assert _CONFTEST._blas_of(_FakeModule(_cfg("OpenBLAS"))) == "openblas"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        AttributeError("no show_config"),
+        KeyError("Build Dependencies"),
+        {"Build Dependencies": {}},
+        _cfg(None),
+    ],
+    ids=["no-show-config", "no-key", "no-blas-entry", "empty-name"],
+)
+def test_a_module_that_will_not_say_gives_none_rather_than_killing_the_census(payload):
+    """This runs inside `pytest_terminal_summary`. An exception here loses the whole census."""
+    assert _CONFTEST._blas_of(_FakeModule(payload)) is None
+
+
+def test_numpy_blas_reads_numpy_and_scipy_blas_reads_scipy(tmp_path, monkeypatch):
+    """Nothing bound the two fields to their modules: swapping the right-hand sides passed.
+
+    Driven THROUGH the hook, not by calling `_blas_of` twice. The swap is in the payload assembly,
+    so a test that exercises the function cannot see it -- measured, the first version of this case
+    called `_blas_of(numpy)` and `_blas_of(scipy)` directly and the mutation survived it. Testing
+    the function is not testing the wiring.
+
+    The stated warrant for reading both is that they are built independently and can differ. In the
+    one environment where they visibly do -- PyPI, numpy `accelerate` against scipy `Accelerate` --
+    lowercasing erases the difference, so a swap is invisible there too. The case that would expose
+    it is the case the pair exists for.
+    """
+    import numpy
+    import scipy
+
+    monkeypatch.setattr(numpy, "show_config", lambda mode="stdout": _cfg("NUMPYMARK"))
+    monkeypatch.setattr(scipy, "show_config", lambda mode="stdout": _cfg("SCIPYMARK"))
+    census = tmp_path / "census.json"
+    monkeypatch.setenv("MFGARCHON_WARNING_CENSUS", str(census))
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+
+    _CONFTEST.pytest_terminal_summary(_Reporter(dict(_STATS)), 0, None)
+    toolchain = json.loads(census.read_text())["toolchain"]
+    assert toolchain["numpy-blas"] == "numpymark"
+    assert toolchain["scipy-blas"] == "scipymark"
+
+
+def test_a_non_string_blas_name_does_not_kill_the_census():
+    """`.lower()` outside the try turns this into an AttributeError raised out of the summary hook.
+
+    Bytes is the worse one: it returns successfully and `json.dumps` then raises past the payload's
+    `except OSError`, eating pytest's whole summary.
+    """
+    for payload in (_cfg(1), _cfg(b"openblas"), _cfg(["openblas"]), _cfg({"a": 1})):
+        assert _CONFTEST._blas_of(_FakeModule(payload)) is None
+
+
+def test_the_real_numpy_reports_something():
+    """Positive control. Without it every case above passes on a reader that always returns None."""
+    import numpy
+
+    assert _CONFTEST._blas_of(numpy) is not None
 
 
 def test_the_hook_writes_nothing_without_the_environment_variable(tmp_path, monkeypatch):
