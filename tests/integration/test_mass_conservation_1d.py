@@ -275,11 +275,18 @@ class TestMassConservation1D:
         grid = problem.geometry
         Nt_points = problem.Nt + 1
         masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)])
-        max_error = np.max(np.abs(masses - 1.0))
+        # #2181: drift from the INITIAL mass, not deviation from 1. These two lines read
+        # `max|masses - 1.0|` until the particle solver stopped returning mass 1 whatever went in --
+        # a particle method carries no mass, so the KDE reconstruction came back at 1 regardless and
+        # this assertion was pinning the representation's loss. This fixture's density integrates to
+        # 0.546 on the grid measure, so the old form now reads about 0.454 and fails a correct
+        # solver. A ratio is what "conservation" means and is invariant to the caller's choice of
+        # initial mass, which #1887 made the caller's to make.
+        max_error = float(np.max(np.abs(masses / masses[0] - 1.0)))
 
-        print(f"\nParticles: {num_particles}, Max mass error: {max_error:.6e}")
+        print(f"\nParticles: {num_particles}, initial mass {masses[0]:.6f}, max drift: {max_error:.6e}")
 
-        assert max_error < 0.1, f"Mass error too large with {num_particles} particles"
+        assert max_error < 0.1, f"Mass drift too large with {num_particles} particles: {max_error:.6e}"
 
     @pytest.mark.slow
     def test_mass_conservation_different_initial_conditions(self, boundary_conditions):
@@ -336,10 +343,11 @@ class TestMassConservation1D:
 
             grid = problem.geometry
             Nt_points = problem.Nt + 1
-            masses = [compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)]
-            max_error = np.max(np.abs(np.array(masses) - 1.0))
+            masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)])
+            # See the note above: drift from the initial mass, not deviation from 1 (#2181).
+            max_error = float(np.max(np.abs(masses / masses[0] - 1.0)))
 
-            print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max error = {max_error:.6e}")
+            print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max drift = {max_error:.6e}")
 
             assert max_error < 0.1, f"Mass conservation failed for {name}: {max_error:.6e}"
 

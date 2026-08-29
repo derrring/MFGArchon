@@ -1310,7 +1310,95 @@ class FPParticleSolver(BaseFPSolver):
         else:
             return m_density_estimated  # Return raw KDE output on grid
 
+    def _caller_mass(self, M_initial: np.ndarray | None) -> float | None:
+        """The mass the caller handed in, on the GEOMETRY'S OWN measure (#2145).
+
+        `None` means "no target": either no density was supplied (particles were), or the geometry
+        carries no measure. A target of 0 is refused for the same reason a zero initial mass is
+        refused at construction -- there is nothing to scale to.
+        """
+        if M_initial is None:
+            return None
+        integrate = getattr(self.problem.geometry, "integrate", None)
+        if not callable(integrate):
+            return None
+        try:
+            mass = float(integrate(np.asarray(M_initial, dtype=float)))
+        except (ValueError, NotImplementedError):
+            return None
+        return mass if np.isfinite(mass) and mass > 0.0 else None
+
     def solve_fp_system(
+        self,
+        M_initial: np.ndarray | None = None,
+        drift_field: np.ndarray | Callable | None = None,
+        volatility_field: float | np.ndarray | Callable | None = None,
+        show_progress: bool | None = None,
+        drift_is_precomputed: bool = False,
+        initial_particles: np.ndarray | None = None,
+        drift_needs_density: bool = True,
+        potential_field: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Solve the FP system, and return it at the mass the caller handed in (#2181).
+
+        WHY THIS WRAPPER EXISTS. A particle method does not carry mass. `sample_from_density` draws
+        N particles from the density's SHAPE -- a set of positions has no scale -- and the KDE
+        reconstruction returns a density integrating to about 1 whatever went in. Measured: an
+        initial density of mass 0.300000 comes back as 1.000000, and it does so under
+        `kde_normalization=NONE` as well, where `_normalize_density` is never called at all. So the
+        mass is not rescaled by this solver; it is ABSENT from the intermediate representation and
+        has to be put back deliberately.
+
+        That mattered little while `MFGProblem` normalised every initial density to 1. Since #1887 it
+        does not: the caller's mass is a modelling decision the library reports as
+        `problem.initial_mass`, and a solver that silently returns a different one contradicts it --
+        by a factor of 3.33 on the fixture above, and fatally for a multi-population share, which is
+        carried by the density itself.
+
+        WHY A UNIFORM SCALE IS EXACT, not an approximation. Within one call the drift field is given,
+        so the Fokker-Planck step is linear in `m`; the solution for `c * m_0` is `c` times the
+        solution for `m_0`. Scaling the whole history by one constant is therefore the exact answer
+        for the scaled initial condition, and it is one owner rather than a correction repeated in
+        the 1-D, GPU, nD and callable-drift paths.
+
+        The target is measured with `geometry.integrate`, so the quantity this solver preserves is
+        the same functional the library reports (#2145). `kde_normalization` keeps its own meaning
+        and gains the one it should always have had: NONE leaves the KDE's own drift visible at the
+        caller's scale, INITIAL_ONLY pins t=0, ALL pins every step -- rather than all three meaning
+        "the mass is 1".
+        """
+        target = self._caller_mass(M_initial)
+        M = self._solve_fp_system_unscaled(
+            M_initial=M_initial,
+            drift_field=drift_field,
+            volatility_field=volatility_field,
+            show_progress=show_progress,
+            drift_is_precomputed=drift_is_precomputed,
+            initial_particles=initial_particles,
+            drift_needs_density=drift_needs_density,
+            potential_field=potential_field,
+        )
+        if target is None:
+            return M
+
+        # Two return types: a bare grid array, or an FPParticleResult carrying one in `M_grid`
+        # (#489). Scale the grid in place on the container rather than rebuilding it -- the particle
+        # history beside it is positions, which carry no mass and must not be touched.
+        grid = M.M_grid if isinstance(M, FPParticleResult) else M
+        if grid is None or len(grid) == 0:
+            return M
+        produced = self._caller_mass(grid[0])
+        if produced is None:
+            # The reconstruction has no measurable mass -- say nothing rather than scale by a number
+            # that is not one. Same refusal `_measure_initial_density` makes for the same reason.
+            return M
+        scaled = grid * (target / produced)
+        if isinstance(M, FPParticleResult):
+            M.M_grid = scaled
+            return M
+        return scaled
+
+    def _solve_fp_system_unscaled(
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,

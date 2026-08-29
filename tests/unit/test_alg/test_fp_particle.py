@@ -123,16 +123,38 @@ class TestFPParticleSolverBasic:
         assert np.all(np.isfinite(M))
 
         # Both assertions above are structural for a KDE (a sum of non-negative kernels), so they
-        # would survive any change to the normalisation. The integral is not: the KDE output is
-        # divided by sum(density) * dV, and every time slice must therefore carry unit mass.
-        # Measured over three runs of this unseeded 1000-particle fixture: max |mass - 1| of
-        # 4.4e-16, 2.2e-16, 1.1e-16, i.e. ~2000x inside the tolerance below. Dropping the dV from
-        # that divisor -- normalising the bare sum instead of the integral -- lands at mass = dx
-        # = 0.05. (It does not separate the three KDENormalization modes: measured, none and
-        # initial_only also come out at 4.4e-16 on this uniform datum.)
-        dx = problem.geometry.get_grid_spacing()[0]
+        # would survive any change to the normalisation. The mass is not, and what it must equal is
+        # the mass that went IN -- not 1 (#2181).
+        #
+        # This assertion used to read `M.sum(axis=1) * dx == 1.0`, and it held for a reason that was
+        # not the solver working: a particle method carries no mass. Sampling keeps the density's
+        # SHAPE, and the KDE reconstruction returns something integrating to about 1 whatever the
+        # input scale was -- under `kde_normalization=NONE` too, where `_normalize_density` is never
+        # called. So the old form pinned the REPRESENTATION'S LOSS. This fixture's m0 integrates to
+        # 0.047619 on the grid's own measure (it is `ones(21)/21`, and the trapezoid weights sum to
+        # L = 1.0); the solver now restores that, and asserting 1.0 would fail on a correct solver.
+        #
+        # Measured on the grid's measure rather than `sum * dx`: the two differ by 21/20 on a
+        # near-uniform density, and #2145 settled which one is the mass. Mutation: drop the scaling
+        # in `solve_fp_system` and t=0 reads 1.0 against a target of 0.047619.
+        target = float(problem.geometry.integrate(m0))
+        masses = np.array([float(problem.geometry.integrate(M[t])) for t in range(M.shape[0])])
         np.testing.assert_allclose(
-            M.sum(axis=1) * dx, 1.0, atol=1e-12, err_msg="KDE density must integrate to 1 against the cell volume"
+            masses[0], target, rtol=1e-12, err_msg="t=0 must carry exactly the mass handed in (#2181)"
+        )
+
+        # Later steps drift, and the tolerance is measured rather than chosen. Three unseeded runs of
+        # this 1000-particle fixture: 4.19e-03, 3.30e-03, 3.58e-03. 1e-2 leaves headroom without
+        # admitting a scale error, which would be 5% here (21/20) and an order up.
+        #
+        # The drift has a NAMED cause and is not KDE noise alone: `_normalize_density` pins
+        # `sum(M) * dx` -- the rectangle rule -- exactly, measured flat to twelve digits across every
+        # step, while the grid's own measure moves as the profile changes shape. So the solver
+        # conserves one functional exactly and the one the library reports approximately. That is
+        # #2145's defect surviving inside this solver, it is PRE-EXISTING and out of scope for
+        # #2181, and it is tracked separately -- do not "fix" this test by tightening the bound.
+        assert np.max(np.abs(masses / target - 1.0)) < 1e-2, (
+            f"mass drifted by {np.max(np.abs(masses / target - 1.0)):.2e} from the initial mass"
         )
 
 

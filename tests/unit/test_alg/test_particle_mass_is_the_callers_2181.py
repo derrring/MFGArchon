@@ -1,0 +1,131 @@
+"""The particle solver returns the mass the caller handed in, not 1 (#2181).
+
+**Why this needs its own file, and why the obvious test would have passed before the fix.** A
+particle method does not carry mass. `sample_from_density` draws N particles from the density's
+SHAPE -- a set of positions has no scale -- and the KDE reconstruction returns a density integrating
+to about 1 whatever went in. So every assertion of the form "the solved mass is 1" held, and held for
+a reason that was not the solver working.
+
+That was invisible while `MFGProblem` normalised every initial density to 1. Since #1887 it does not:
+the caller's mass is a modelling decision the library publishes as `problem.initial_mass`, and a
+solver returning a different one contradicts its own library. Measured before the fix: an initial
+density of mass 0.300000 came back as 1.000000, a factor of 3.33.
+
+**`kde_normalization` was not the cause**, which is why the first proposed fix -- change the default
+-- would have done nothing. Instrumented: under `NONE`, `_should_normalize_density()` returns False
+on every call and `_normalize_density` is never invoked, and the mass is still 1.0. All three modes
+are covered below for that reason.
+
+**Not covered here, deliberately.** `_normalize_density` pins `sum(M) * dx` -- the rectangle rule --
+exactly, while the grid's own measure drifts as the profile changes shape, so the solver conserves
+one functional exactly and the one the library reports approximately. That is pre-existing, is
+#2145's defect surviving inside this solver, and is tracked separately. These tests pin t=0, where
+the two questions do not interact.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+
+from mfgarchon import MFGProblem
+from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver, KDENormalization
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
+
+
+def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem:
+    """A 1-D Gaussian scaled so that its integral on THIS grid is exactly `share`."""
+    x = np.asarray(grid.coordinates[0], dtype=float)
+    scale = float(grid.integrate(np.exp(-50.0 * (x - centre) ** 2))) / share
+    return MFGProblem(
+        geometry=grid,
+        Nt=4,
+        T=0.2,
+        sigma=0.4,
+        components=MFGComponents(
+            m_initial=lambda z, c=centre, k=scale: np.exp(-50.0 * (np.asarray(z) - c) ** 2) / k,
+            u_terminal=lambda z: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        ),
+    )
+
+
+def _grid(n: int = 21) -> TensorProductGrid:
+    return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+
+
+@pytest.mark.parametrize("mode", [KDENormalization.ALL, KDENormalization.INITIAL_ONLY, KDENormalization.NONE])
+def test_a_sub_probability_density_keeps_its_mass(mode: KDENormalization):
+    """All three modes, because `NONE` is the one that surprises.
+
+    Mutation: delete the scaling in `solve_fp_system` and every row reads 1.000000 against a target
+    of 0.300000 -- including this parametrisation's `NONE`, where nothing normalises anything.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=0.3)
+    assert problem.initial_mass == pytest.approx(0.3, rel=1e-12), "the fixture itself must carry the mass"
+
+    solver = FPParticleSolver(problem, num_particles=2000, kde_normalization=mode)
+    M = solver.solve_fp_system(np.asarray(problem.m_initial, dtype=float))
+
+    assert float(grid.integrate(M[0])) == pytest.approx(problem.initial_mass, rel=1e-12), (
+        f"the solve returned a different mass from the one the library reports ({mode})"
+    )
+
+
+def test_a_unit_density_is_snapped_to_exactly_one():
+    """Mass 1 is where the old behaviour and the new one nearly agree -- and the gap is the point.
+
+    This started life as a positive control, on the claim that mass 1 is the case both behaviours get
+    right so the row would stay green under the mutation. **That claim was false, measured**: remove
+    the scaling and this fails at `0.9999916087845434 != 1.0`. The unscaled KDE lands NEAR 1, never
+    exactly 1, and the tolerance here is tight enough to see the difference.
+
+    So it is renamed to what it actually pins: the scaling is doing arithmetic even in the case that
+    looks like a no-op, and `problem.initial_mass` is reproduced to twelve digits rather than to
+    KDE accuracy. Kept at `rel=1e-12` deliberately -- loosening it to make the original "control"
+    story true would discard the sharper fact.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=1.0)
+    M = FPParticleSolver(problem, num_particles=2000).solve_fp_system(np.asarray(problem.m_initial, dtype=float))
+    assert float(grid.integrate(M[0])) == pytest.approx(1.0, rel=1e-12)
+
+
+def test_two_populations_keep_their_shares():
+    """The reason #1887 wanted this: a share is carried by the density, and had no other home.
+
+    `MultiPopulationProblem` holds `list[MFGProblem]` and population k's share is the integral of
+    m_k -- there is no `theta` field. Before this fix both populations came back at 1.0 and the
+    decomposition summed to 2.0, so shares existed on the FDM/FVM paths and silently not on this one.
+    """
+    grid = _grid()
+    solved = []
+    for centre, share in ((0.35, 0.3), (0.65, 0.7)):
+        problem = _problem(grid, centre, share)
+        M = FPParticleSolver(problem, num_particles=2000).solve_fp_system(np.asarray(problem.m_initial, dtype=float))
+        solved.append(float(grid.integrate(M[0])))
+
+    assert solved[0] == pytest.approx(0.3, rel=1e-12)
+    assert solved[1] == pytest.approx(0.7, rel=1e-12)
+    assert sum(solved) == pytest.approx(1.0, rel=1e-12), (
+        "the shares must still decompose; before #2181 this summed to 2.0"
+    )
+
+
+def test_particles_without_a_density_are_left_alone():
+    """No density in means no target, and the solver must not invent one.
+
+    `solve_fp_system(initial_particles=...)` supplies positions rather than a density, so there is
+    nothing to measure and the scaling is skipped. Pinned because the natural implementation --
+    scaling by `problem.initial_mass` unconditionally -- would silently impose the problem's mass on
+    a caller who deliberately did not supply one.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=0.3)
+    solver = FPParticleSolver(problem, num_particles=2000)
+    assert solver._caller_mass(None) is None
