@@ -56,6 +56,7 @@ create_dev_env() {
     print_status "Activating environment and installing MFGarchon..."
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate mfg_dev
+    python -m pip install --upgrade pip   # `--group` is pip >= 25.1; conda-forge's may be older
     pip install -e . --group dev
     # ruff has one owner, read at runtime -- see pyproject.toml's dev group and ci.yml quick-checks.
     pip install "ruff==$(python scripts/update_ruff_version.py --print-current)"

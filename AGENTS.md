@@ -386,8 +386,11 @@ pytest 8 cannot emit. **Do not give the worktree its own virtualenv.** The hazar
 venv itself, whatever it holds: it satisfies the probe in full, so nothing about the selection looks
 wrong. `uv venv` installs nothing, so the versions come from whatever populates it, and
 `uv pip install -e . --group dev` resolves current PyPI — not the gate's set. The tracked `uv.lock`
-used to make that failure deterministic at the 2026-03 toolchain; it was deleted in #2138 and its
-absence removes the determinism, not the hazard.
+used to make that failure deterministic at the 2026-03 toolchain. #2138 deleted that one for being
+five months stale and #2167 tracks a current one, so `uv sync` now reproduces the project's resolved
+set -- but not ruff, which has one owner and is installed from it (`uv pip install
+"ruff==$(python scripts/update_ruff_version.py --print-current)"`). A venv built any other way
+removes the determinism, not the hazard.
 
 The gate names the mismatch while it happens, in a line that reads as a nag: `WARN ruff 0.13.1 ran,
 but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.

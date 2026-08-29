@@ -67,13 +67,22 @@ def main():
     mypy_success, error_count, _mypy_output = run_quick_mypy()
 
     # Run Ruff check if available
+    # NOT `ruff_success = True` on absence. That branch was unreachable in a standard install until
+    # #2172 took ruff out of the dev group, and it reports overall success for a lint check that did
+    # not run -- in the repository whose gate step is named "no new silent fallbacks". A missing
+    # tool is a cannot-run, and the message has to name the fix, because `uv sync` installs no pip.
     ruff_available = subprocess.run(["which", "ruff"], capture_output=True).returncode == 0
     if ruff_available:
         print()
         ruff_success = run_ruff_check()
     else:
-        print("⚠️  Ruff not available, skipping lint check")
-        ruff_success = True
+        pin = "$(python scripts/update_ruff_version.py --print-current)"
+        print(
+            "\n❌ CANNOT RUN: ruff is not on PATH, so the lint half of this check did not run.\n"
+            "   ruff has one owner, .pre-commit-config.yaml, and is read at runtime (#2172):\n"
+            f'       uv pip install "ruff=={pin}"   # or plain `pip`, if that environment has one'
+        )
+        ruff_success = False
 
     # Summary
     total_time = time.time() - start_total

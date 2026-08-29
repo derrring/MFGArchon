@@ -30,9 +30,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "mfgarchon"
 
-#: Distributions whose import name this environment cannot resolve, with the reason. Every entry
-#: is a claim that has to stay true, so the self-test asserts the mapping still fails for each --
-#: an entry that starts resolving is a stale exemption and says so.
 #: Import names whose distribution is spelled differently. Only needed when the distribution is not
 #: installed, because `packages_distributions()` answers for the ones that are. Each entry is
 #: asserted still necessary by `--self-test`: the fallback uses the import name, so an entry whose
@@ -172,7 +169,7 @@ def _undeclared(package: Path, declared: set[str]) -> tuple[list[str], list[str]
 
 
 def _self_test() -> int:
-    """Both directions on synthetic manifests, plus the exemptions, driven through the real checks."""
+    """The one direction on a synthetic tree, plus the exemptions, driven through the real checks."""
     failures: list[str] = []
 
     if _normalise("scikit-fem>=8.0") != "scikit-fem" or _normalise("PyYAML") != "pyyaml":
@@ -214,16 +211,12 @@ def _self_test() -> int:
             "The verdict depends on what is installed."
         )
 
-    missing = sorted({"cvxpy", "rich"} - {"cvxpy"})
-    if missing != ["rich"]:
-        failures.append("set difference is not doing what the mirror check relies on")
-
     if failures:
         for line in failures:
             print(f"self-test FAILED: {line}", file=sys.stderr)
         return 1
     print(
-        "self-test OK: both directions fire on synthetic manifests, the real tree is clean, "
+        "self-test OK: the check fires on a synthetic tree, the real tree is clean, "
         f"the verdict does not move with the environment, and all "
         f"{len(IMPORT_TO_DISTRIBUTION)} name-map entries are still needed"
     )

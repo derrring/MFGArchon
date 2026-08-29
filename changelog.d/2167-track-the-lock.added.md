@@ -6,8 +6,10 @@
   lock does not declare is a hard error — `The current Python platform is not compatible with the
   lockfile's supported environments`. Restricting is exclusion, not deferral. The cost of covering
   everything is small on this project, unlike on the single-package probe that first suggested
-  otherwise: universal is 153 packages / 601 KB against darwin-only at 133 / 198 KB, and resolution
-  takes seconds either way. The 15 `nvidia-*` entries are marker-gated to linux and are not
+  otherwise: universal is 153 packages / 601 KiB, darwin+linux 151 / 492 KiB, darwin-only 132 /
+  198 KiB, and resolution takes seconds in every case. (Re-measured on this branch after review;
+  the first table had each restricted arm one package high, from a slightly different
+  `pyproject.toml`.) The 15 `nvidia-*` entries are marker-gated to linux and are not
   downloaded elsewhere.
 - The guard added in #2169 — a tracked lock must not record a ruff disagreeing with the pin — passes,
   and is now unreachable by construction: ruff left the dev group in #2172, so no resolver sees it.

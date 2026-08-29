@@ -4,9 +4,15 @@
 - **Swapping the BLAS implementation does not need a second manifest**, which was the objection that
   nearly kept the file. conda supplies a *substrate* — an interpreter and a BLAS-linked numpy/scipy,
   about thirty packages — and `pyproject.toml` still supplies the dependencies, because
-  `uv pip install` treats a conda-installed numpy as satisfying and leaves it alone (measured,
-  including under `--reinstall-package`). `scripts/manage_environments.sh`'s `create-dev` now builds
-  exactly that.
+  `uv pip install` treats a conda-installed numpy as satisfying and leaves it alone.
+  `scripts/manage_environments.sh`'s `create-dev` now builds exactly that.
+- **One qualification, measured after review said the original claim was too strong.** "Leaves it
+  alone" holds for an ordinary install and **not** under `--reinstall-package`: measured,
+  `uv pip install --reinstall-package numpy "numpy==2.4.6"` — the *same version* — replaces the
+  conda-built wheel with the PyPI one, which is precisely losing the BLAS link the substrate exists
+  to provide. An earlier version of this entry said the opposite, from a probe that passed
+  `--reinstall-package` for a *dependent* package and never for numpy itself. Do not force-reinstall
+  numpy or scipy in a substrate environment.
 - **`check_manifests.py` loses its second direction with the file it read.** `DECLARED-BUT-MISSING`
   compared `pyproject.toml` against `environment.yml`; there is no second manifest to disagree with.
   `IMPORTED-BUT-UNDECLARED` — an unguarded module-level import no manifest declares, the #1687 shape
