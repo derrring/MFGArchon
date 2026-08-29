@@ -32,7 +32,6 @@ repos:
       - id: debug-statements
       - id: check-added-large-files
         args: [--maxkb=1000]
-        exclude: ^uv\.lock$
 
   # Documentation structure validation (warning-only until consolidation complete)
   - repo: local

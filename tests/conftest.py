@@ -6,10 +6,13 @@ used across the entire test suite.
 """
 
 import contextlib
+import importlib.metadata
 import importlib.util
 import logging
 import os
+import platform
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,7 +29,7 @@ import numpy as np
 # blocking, so the symptom is environment-dependent; the cause is not.)
 #
 # Both interpreters used with this repository default to `macosx` -- the conda env the gate runs
-# under and `uv run --extra dev` alike -- so a headless backend is not something either
+# under and `uv run --group dev` alike -- so a headless backend is not something either
 # environment supplies.
 #
 # `MPLBACKEND` is the mechanism: it is read when matplotlib is first imported, and this file is
@@ -572,7 +575,7 @@ class MFGLogCapture:
     logger. What ``caplog`` does about that differs by pytest version, and the two versions in
     use here disagree -- which is why six test modules each grew their own collector:
 
-    - pytest 8.4.1 (``uv run --extra dev``): ``catching_logs.__enter__`` attaches the capture
+    - pytest 8.4.1 (``uv run --group dev``): ``catching_logs.__enter__`` attaches the capture
       handler to the root logger only. **No mfgarchon record is visible, ever**, whatever the
       logger's creation site. On this version ``propagate = False`` is the whole story.
     - pytest 9.1.1 (the gate interpreter): it also attaches to every non-propagating logger
@@ -785,6 +788,86 @@ __all__ = ["validate_mfg_solution"]
 #
 # Off unless asked: writing a file on every ad-hoc `pytest` run would be a side effect nobody
 # asked for, and a gate that silently rewrites its own input is how a ratchet stops ratcheting.
+#: The distributions recorded in every warning census, one owner for the list. Distribution
+#: names, not import names -- `scikit-fem` imports as `skfem`.
+#:
+TOOLCHAIN_NAMES = ("pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy", "osqp")
+
+
+def _blas_of(module) -> str | None:
+    """Which BLAS `module` was BUILT against, lowercased, or None if it will not say.
+
+    Build-time metadata. Sufficient for a PyPI wheel, which bundles its BLAS, and blind in a conda
+    environment, where numpy links a generic `libblas` and this reports the string `blas` -- the
+    implementation lives in the conda build string, outside Python -- so this reports `blas` there
+    and `accelerate` after the move, which is the transition being recorded even though the first
+    value does not name an implementation.
+
+    A runtime reading via `threadpoolctl.threadpool_info()` WOULD name it (measured: `openblas
+    0.3.33` in this project's conda environment, where `show_config` says only `blas`). It is not
+    recorded, because nothing in this project installs threadpoolctl: the field would be null in the
+    environment being left AND in the one being moved to, and its thread count moves with
+    `OMP_NUM_THREADS`, which `.uvrc` sets to 4 and `ci.yml` sets to 1 -- drift on an axis nobody
+    changed, the exact reason the fuller platform string was rejected below. #2167 records what it
+    would take to add it.
+
+    Lowercased because numpy and scipy disagree on the case of the SAME implementation: measured on
+    one PyPI environment, numpy reports `accelerate` and scipy reports `Accelerate`. Compared raw
+    across a re-baseline, that reads as a package moving when nothing did.
+
+    Both modules are read because they are built independently and can genuinely differ.
+    """
+    try:
+        name = module.show_config(mode="dicts")["Build Dependencies"]["blas"]["name"]
+        # `isinstance`, not truthiness. `b"openblas".lower()` SUCCEEDS and returns bytes, so the
+        # try below never fires and `json.dumps(payload)` raises instead -- past the payload's
+        # `except OSError`, out of `pytest_terminal_summary`, taking the whole summary with it.
+        return name.lower() if isinstance(name, str) and name else None
+    # INSIDE the try, deliberately. `.lower()` outside it turns a non-string name into an
+    # AttributeError raised out of `pytest_terminal_summary`, which loses the whole census -- the
+    # failure the guard exists to prevent, reintroduced one line below the guard. A bytes name was
+    # worse still: it returned successfully and `json.dumps` then raised past the `except OSError`.
+    except Exception:  # older show_config, a build without the metadata, a non-string, or no module
+        return None
+
+
+def _installed_version(name: str) -> str | None:
+    """The installed version of one distribution, or None if it is not installed.
+
+    `importlib.metadata.version` returns the FIRST match in sys.path order and is silent about
+    the rest, so a stale .dist-info beside a current one records a version no code in the run
+    used. `osqp` and `ruff` each carry two records in this environment; an editable reinstall adds
+    and removes a second `mfgarchon` record under you, so the population is not stable enough to
+    state a count in a comment. A wrong version here is worse than no version: it invents a package
+    move, or hides a real one behind a stale pair. So take the distinct versions, and refuse to pick
+    when there is more than one.
+
+    **A record that will not say its version is not an absent package.** `importlib.metadata`
+    swallows `PermissionError` and `FileNotFoundError` inside `read_text` and hands back an empty
+    message, so `metadata["Version"]` is None and an earlier version of this function returned None
+    -- the value that means "not installed". Four of five corruption modes did that, including
+    `chmod 000`, the one `unreadable` is named for. The report then prints `numpy 2.4.6 -> <absent>`
+    for an installed, working numpy, under the note saying its tests did not run.
+    """
+    try:
+        records = list(importlib.metadata.distributions(name=name))
+    except Exception:  # the search itself failed; not an answer about the package
+        return "unreadable"
+    if not records:
+        return None
+    try:
+        # `.get`, not `[...]`. `Message.__getitem__` returns None for a missing header and emits
+        # `DeprecationWarning: Implicit None on return values is deprecated` on 3.12+ -- so reading
+        # a corrupt record the way this function exists to handle EMITS A WARNING FROM THE CENSUS
+        # WRITER ITSELF, and the ratchet duly reported a new identity originating in this file.
+        seen = sorted({v for v in (d.metadata.get("Version") for d in records) if v})
+    except Exception:
+        return "unreadable"
+    if not seen:
+        return "unreadable"
+    return seen[0] if len(seen) == 1 else "ambiguous:" + "|".join(seen)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     out = os.environ.get("MFGARCHON_WARNING_CENSUS")
     if not out or os.environ.get("PYTEST_XDIST_WORKER"):
@@ -859,10 +942,56 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # writes a plausible 2-identity census; fed to the ratchet it reports 223 GONE and tells the
     # reader to re-baseline, which would destroy the baseline. Two such files were found on this
     # machine. `check_warnings.py` refuses a census whose `tests_run` is implausibly small.
+    # The toolchain, for attribution rather than for gating (#2158). When the identity set moves,
+    # the report could say THAT it moved and never WHY -- and the one time that mattered, a GATE RED
+    # was attributed to pytest when five of its six moved identities came from elsewhere: cvxpy and
+    # torch absent (tests skipped or not collected), numpy 2.2.6 against 2.4.6, and a solver
+    # convergence difference. The only line naming a cause was about ruff.
+    #
+    # Each name carries its own warrant, and they are not the same strength. MEASURED moving an
+    # identity in that comparison: cvxpy and torch (absent, so their tests skipped or were not
+    # collected -- three of the six), numpy (2.2.6 against 2.4.6), pytest (9 added the check).
+    # OWNS identities outright in the baseline, so a bump moves their text with no inference:
+    # scikit-fem (3 of 224), osqp (the `OSQP failed: ...` text is the solver's own status string,
+    # and `OSQP_AVAILABLE` selects a different warning entirely). CO-VARYING only: scipy, named in
+    # that comparison inside a disjunction with numpy and owning no identity, and python, the axis
+    # that moved furthest (3.13 -> 3.12) with no single identity attributed to it.
+    # Absent is recorded as null, which is itself a cause.
+    try:
+        import scipy
+    except ImportError:  # scipy is a hard dependency, but the census must not die if it is broken
+        scipy = None
+
+    toolchain = {
+        "python": ".".join(str(n) for n in sys.version_info[:3]),
+        **{name: _installed_version(name) for name in TOOLCHAIN_NAMES},
+        # Not distributions, so not in TOOLCHAIN_NAMES and not read by `_installed_version`.
+        #
+        # `platform` because `python 3.12.13` does not distinguish macOS from Linux, and the BLAS a
+        # wheel carries is chosen by platform -- the same numpy version links Accelerate here and
+        # OpenBLAS on linux. `pandas.show_versions()`, `polars.show_versions()` and scikit-learn's
+        # all record it, and all three record the FULLER string (`platform.platform()`, e.g.
+        # `macOS-26.5.2-arm64-arm-64bit`). The prior art is unanimous against this granularity and
+        # saying otherwise would be a misreading of it.
+        #
+        # Coarse anyway, for one reason: the OS version selects a wheel, and the wheel's BLAS is
+        # recorded directly below. A macOS upgrade that moves numpy from OpenBLAS to Accelerate
+        # shows up as `numpy-blas` changing, which is the attribution wanted -- while the full
+        # string churns on every point update, on an axis nobody changed.
+        "platform": f"{sys.platform}-{platform.machine()}",
+        # Both modules, because they are built independently and can differ. `np` is the module-level
+        # import at the top of this file; a second `import numpy` here was redundant. No `is not None`
+        # guard on scipy: `_blas_of(None)` already answers None, so the guard was defence against a
+        # state the function handles.
+        "numpy-blas": _blas_of(np),
+        "scipy-blas": _blas_of(scipy),
+    }
+
     payload = {
         "identities": sorted(census),
         "occurrences": sum(census.values()),
         "tests_run": sum(len(terminalreporter.stats.get(k, [])) for k in ("passed", "failed", "xfailed", "skipped")),
+        "toolchain": toolchain,
     }
     try:
         target = Path(out)

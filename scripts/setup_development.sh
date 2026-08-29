@@ -59,7 +59,7 @@ setup_uv_environment() {
 
     # Install package in development mode
     log_info "Installing MFGarchon in development mode..."
-    uv pip install -e ".[dev]"
+    uv pip install -e . --group dev
 
     # Install pre-commit hooks
     if command_exists pre-commit; then
@@ -84,7 +84,7 @@ setup_pip_environment() {
 
     # Install package in development mode
     log_info "Installing MFGarchon in development mode..."
-    pip install -e ".[dev]"
+    pip install -e . --group dev
 
     # Install pre-commit hooks
     if command_exists pre-commit; then

@@ -75,6 +75,149 @@ def _candidate_lines():
     return files, found
 
 
+# A lock file records the ruff it resolved. That is the pin living outside its owner, and unlike the
+# call sites this file already scans it cannot be caught by looking through `scripts/` and
+# `.github/` -- a lock is neither.
+#
+# uv writes one `[[package]]` block per resolution fork, ascending by version, so `search()` would
+# read the LOWEST ruff in the lock and pass while half the platforms install another. Measured on a
+# real forked lock during review: entries 0.16.0 and 0.16.5, `search()` returns 0.16.0, assertion
+# passes, `WARN ruff 0.16.5 ran` on those platforms. `findall`, and every entry must agree.
+_LOCK_RUFF = re.compile(r'^name = "ruff"\nversion = "([^"]+)"', re.M)
+
+_LOCK_WITH_RUFF = """version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "ruff"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+
+def _pinned_in_pre_commit(repo: Path = REPO) -> str:
+    """The pin, read through its owner.
+
+    NOT a fresh regex over `.pre-commit-config.yaml`. This file exists to enforce one reader for
+    that value, and the first version of this function was a second one -- matching a bare
+    occurrence of `ruff-pre-commit` rather than an anchored `- repo:` line, which is precisely the
+    #2139 defect already fixed in `scripts/update_ruff_version.py`. `--print-current` is the reader
+    #2151 added for exactly this.
+
+    `repo` is a parameter so a test can point it at a tree whose config distinguishes the two
+    implementations. Hardcoded to `REPO`, no assertion in this file could tell them apart: on the
+    real config both return `0.16.0`, and asserting only that the value appears somewhere in that
+    file passes for a decoy block's `rev:` too. Measured -- that mutation survived every case here.
+    """
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "--print-current"],
+        capture_output=True,
+        text=True,
+        cwd=repo,
+        check=True,
+    )
+    version = out.stdout.strip()
+    assert re.fullmatch(r"[0-9][0-9A-Za-z.\-]*", version), f"--print-current returned {version!r}"
+    return version
+
+
+def _disagreeing_ruff(lock_text: str, pin: str) -> list[str]:
+    """Every ruff version in `lock_text` that is not `pin`.
+
+    A function, not an inline expression, because the on-disk assertion is unreachable while no lock
+    is tracked -- which is always, in CI. Inline, the comparison would have no coverage at all and
+    the `search`-versus-`findall` regression below would be invisible.
+    """
+    return sorted({v for v in _LOCK_RUFF.findall(lock_text) if v != pin})
+
+
+_LOCK_FORKED = """version = 1
+
+[[package]]
+name = "ruff"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "ruff"
+version = "0.16.5"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+
+def test_a_forked_lock_is_not_read_as_its_lowest_entry():
+    """uv writes one `[[package]]` per resolution fork, ascending by version.
+
+    Measured during review on a real forked lock: `search()` returns 0.16.0, the assertion passes,
+    and the platforms resolving to 0.16.5 install a ruff the gate does not run -- the WARN-then-red
+    class #2147 is about. `[tool.uv] environments`, which #2167 plans, is what creates forks.
+    """
+    assert _disagreeing_ruff(_LOCK_FORKED, "0.16.0") == ["0.16.5"]
+    assert _disagreeing_ruff(_LOCK_FORKED, "0.16.5") == ["0.16.0"]
+    assert _disagreeing_ruff(_LOCK_WITH_RUFF, "0.13.1") == []
+    assert _disagreeing_ruff("version = 1\n", "0.16.0") == []
+
+
+def test_the_pin_reader_reads_the_ruff_block_and_not_a_decoy(tmp_path):
+    """Differential, against a config where the owner and a bare-occurrence regex disagree.
+
+    A `pre-commit-hooks` block whose comment mentions `ruff-pre-commit` is valid YAML and comes
+    first; an unanchored reader returns ITS `rev`. The owner anchors on the `- repo:` line, which is
+    what #2139 fixed. Without this case, replacing the owner call with such a regex survives every
+    other assertion in this file -- measured, not assumed.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / SCRIPT.name).write_bytes(SCRIPT.read_bytes())
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n"
+        "  - repo: https://github.com/pre-commit/pre-commit-hooks\n"
+        "    # kept in step with astral-sh/ruff-pre-commit\n"
+        "    rev: v6.0.0\n"
+        "    hooks:\n"
+        "      - id: check-yaml\n"
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+        "    rev: v0.16.0\n"
+        "    hooks:\n"
+        "      - id: ruff\n"
+    )
+    assert _pinned_in_pre_commit(tmp_path) == "0.16.0"
+
+
+def test_the_pin_reader_answers_on_the_real_config():
+    """Unconditional: the on-disk lock assertion runs only when a lock exists, which is never in CI,
+    so without this the owner call is dead code discovered broken by whoever first generates one."""
+    assert _pinned_in_pre_commit() in (REPO / ".pre-commit-config.yaml").read_text()
+
+
+def test_a_tracked_lock_does_not_become_a_second_pin():
+    """#2138/#2147: `uv.lock` recorded ruff 0.13.1 against this file's 0.16.0.
+
+    An interpreter carrying that toolchain went `GATE RED` on a two-file documentation diff, and the
+    only line naming the cause was a WARN in ~800 lines of output. The lock is untracked as of #2138.
+
+    **This is dormant today and will fire the first time #2167 generates a lock — correctly.**
+    `pyproject.toml` declares `ruff>=0.6.0` with no upper bound while the pre-commit pin is bumped
+    monthly, so a resolver takes the newest and the two agree only on the day of a bump: measured,
+    a real `uv lock` on this tree resolves 0.16.5 against the pinned 0.16.0. The remedy is #2172,
+    not regeneration, which yields 0.16.5 again.
+
+    The control is not optional. With no lock present the loop below is vacuous, and a vacuous
+    assertion passes just as loudly when the extractor is broken.
+    """
+    assert _LOCK_RUFF.findall(_LOCK_WITH_RUFF) == ["0.13.1"]
+
+    lock = REPO / "uv.lock"
+    if not lock.is_file():
+        return
+    disagreeing = _disagreeing_ruff(lock.read_text(), _pinned_in_pre_commit())
+    assert not disagreeing, (
+        f"uv.lock resolves ruff {disagreeing} against the {_pinned_in_pre_commit()} pinned in "
+        ".pre-commit-config.yaml. Two pins for one tool; the gate runs one and warns about the "
+        "other (#2147). Regenerating does not fix it -- `pyproject.toml` declares `ruff>=0.6.0` "
+        "with no upper bound, so the resolver takes the newest release. See #2172."
+    )
+
+
 def test_the_scan_can_see_the_owners_call_sites():
     """The sentinel. Without it every assertion below passes on an empty population.
 

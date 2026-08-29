@@ -262,7 +262,7 @@ def _gfdm_diffusion_field_relerr(
 @pytest.mark.tier3
 def test_hjb_gfdm_diffusion_magnitude():
     # This one genuinely needs `joint_socp`, so it genuinely needs cvxpy (the `numerical` extra).
-    # `ci.yml`'s release job installs `.[dev]` and runs `pytest tests/ -m "not manual"`, where this
+    # `ci.yml`'s release job installs `--group dev` and runs `pytest tests/ -m "not manual"`, where this
     # would fail rather than skip -- a red that says "dependency absent", not "code wrong".
     # Skipping is the honest report; the "was cvxpy actually installed?" question is answered by
     # the positive control in the workflows that DO install it, not by this test failing.
