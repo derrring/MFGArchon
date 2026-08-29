@@ -130,13 +130,19 @@ class TestGraphMFGSolverSolve:
         # strength (1.0 / 0.5 / 0.8 here). This is a genuine invariant, not a repair artefact --
         # since Issue #1683 the FP step raises on a negative solve instead of clipping and
         # renormalising, so mass is not restored behind the caller's back.
-        dx = problems[0].geometry.get_grid_spacing()[0]
+        # The geometry's own measure (#2145). The second assertion below used to read
+        # `mass[0] == 1` "under the rectangle rule"; #1887 removed the constructor's rescale, so what
+        # row 0 carries is the fixture's own density and the pin is that every node starts from the
+        # SAME mass -- which is what makes a per-node comparison meaningful at all.
+        geom = problems[0].geometry
+        masses = [np.asarray(geom.integrate(np.asarray(result.densities[k], dtype=float))) for k in range(3)]
         for k in range(3):
-            mass = result.densities[k].sum(axis=1) * dx
-            # Measured max|mass - mass[0]| = 4.4e-16 on all three nodes; 1e-12 is a ~2000x margin.
-            assert np.max(np.abs(mass - mass[0])) < 1e-12, f"node {k} leaked mass under no-flux walls"
-            # ...and the initial density is normalised to unit mass under the rectangle rule.
-            assert mass[0] == pytest.approx(1.0, abs=1e-12)
+            mass = masses[k]
+            assert np.max(np.abs(mass - mass[0])) < 1e-12 * abs(mass[0]), f"node {k} leaked mass under no-flux walls"
+            assert mass[0] == pytest.approx(masses[0][0], rel=1e-12), (
+                f"node {k} started from a different mass than node 0, so the per-node comparison "
+                "above is not comparing like with like"
+            )
 
     def test_error_history(self):
         problems, coupling, hjbs, fps = _make_3node_system()
@@ -233,11 +239,15 @@ class TestGraphMFGSolverCouplingEffect:
 
         # Per-node mass conservation under the no-flux walls (the coupling moves value between
         # nodes; it must not create or destroy density at any of them).
-        dx = problems[0].geometry.get_grid_spacing()[0]
+        # Conservation against row 0 on the grid measure (#2145 / #1887): `== 1` pinned the removed
+        # constructor rescale, and the coupling's claim is that it moves VALUE between nodes without
+        # creating or destroying density at any of them.
+        geom = problems[0].geometry
         for k in range(3):
-            mass = result.densities[k].sum(axis=1) * dx
-            # Measured max|mass - 1| = 4.4e-16; 1e-12 is a ~2000x margin.
-            assert np.max(np.abs(mass - 1.0)) < 1e-12, f"node {k} leaked mass under LaplacianCoupling"
+            mass = np.asarray(geom.integrate(np.asarray(result.densities[k], dtype=float)))
+            assert np.max(np.abs(mass - mass[0])) < 1e-12 * abs(mass[0]), (
+                f"node {k} leaked mass under LaplacianCoupling"
+            )
 
 
 class TestGraphMFGSolverGetResults:

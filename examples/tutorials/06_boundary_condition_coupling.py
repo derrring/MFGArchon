@@ -71,6 +71,11 @@ def create_lq_model_and_conditions() -> tuple[Model, Conditions]:
         coupling_dm=lambda m: 0.5,
     )
     model = Model(hamiltonian=hamiltonian, sigma=SIGMA)
+    # These conditions are shared by BOTH problem builders below, which differ in boundary condition
+    # rather than resolution -- and that is why the density is left as written. The library reports
+    # its mass and does not rescale it (Issue #1887); normalising would have to pick a grid, and a
+    # Conditions that has picked a grid is no longer the resolution-independent object this API is
+    # built around.
     conditions = Conditions(
         # Stall point at x=0 (boundary) - agents want to be at left edge
         m_initial=lambda x: np.exp(-20 * (x - 0.3) ** 2),

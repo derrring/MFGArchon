@@ -1,41 +1,32 @@
-"""`MFGProblem` normalises `m(0, .)` on the GEOMETRY'S OWN MEASURE, and the two constructors agree.
+"""`MFGProblem` reports `m(0, .)`'s mass on the geometry's measure, and does not change it.
 
-**What this file pins, and why the measure is the whole point.** The constructor rescales the
-initial density so that its discrete integral is 1. Which integral was the defect: it used
-`sum(m) * dx`, the cell-centred one, while `TensorProductGrid` is endpoint-inclusive -- the wall
-lies ON `x_0`, so the two end nodes own half a cell each and the measure is the trapezoid (#2145).
-Normalising with one functional while the FP wall conserves the other is how a solve reports
-perfect conservation of a quantity nobody asked about.
+**The subject of this file changed with #1887.** It used to assert that the initial density
+*integrates to 1*, because `MFGProblem` divided `m_initial` by its discrete integral. That rescale
+is gone: normalising is the caller's job, and the library's job is to say what it received. So the
+property under test is now *the mass is reported and the density is untouched*, and the old
+assertion -- `== 1.0` -- would be wrong, since a caller may legitimately hand in a sub-probability
+density or one population's share.
 
-So the discriminating assertion is not `mass == 1` -- it is `grid.integrate(m) == 1` **while**
-`sum(m) * dx != 1`. Only the second half can tell the two normalisers apart, and it is measured
-below rather than asserted in prose.
-
-**Why the oracle is written by hand.** The reported value comes from `geometry.integrate`, so
-computing the expected value the same way would be a tautology one layer along -- exactly the defect
-the original version of this file admitted to in its own docstring:
+**What this file was, in its author's own words, and why that changes too.** It said:
 
     It is **not** an external oracle on the cell volume: the normaliser divides by `sum(m) * V` and
     this file multiplies by the same `V` from the same accessor, so `V` cancels and the assertion
     holds for any spacing the accessor returns. Verified -- monkeypatching `get_grid_spacing` to
     `L/n` leaves this file at 7 passed.
 
-The weights are therefore spelled out here from the coordinates. Independent review measured that
-this works: mutating `quadrature_weights_1d` to the rectangle rule reddens all six rows of
-`test_it_matches_an_independently_derived_integral`, and 70 of the 346 tests that touch the owner.
+That was true and it is the reason the oracle below is written by hand. The reported mass now comes
+from `geometry.integrate`, so computing the expected value the same way would be the identical
+tautology one layer along. The weights are therefore spelled out here, from the coordinates. This is
+the one place in the migration where a second derivation of the formula is the point rather than the
+defect -- everywhere else, #2145's owner is called.
 
-**Two things the original defect record keeps.** The fork it was written for -- an attribute meaning
-the INTERVAL count from the constructor and the NODE count from a geometry, so the same 11x11 grid
-measured 1.0 one way and 1.21 the other -- is still pinned by `test_both_construction_paths_agree`,
-now including d = 4, where `spatial_shape` was a COUNT rather than a shape until this branch. And
-the reason 5943 tests missed the original is unchanged: mass conservation is measured as drift from
-the initial mass, correctly, and a ratio is invariant to the cell measure, so the whole mass-oracle
-family is blind to the initial value. This file is where that blindness is covered.
-
-**Not here:** whether the library should normalise AT ALL. `fix/1887-validate-do-not-normalise`
-replaces the rescale with validate-and-report; its tiers and its "handed back unchanged" assertions
-live on that branch, because that change moves what `f(m)` is evaluated at and has to carry the
-`examples/` tree with it.
+**Two things the original defect record should keep.** The fork it was written for -- an attribute
+meaning the INTERVAL count from the constructor and the NODE count from a geometry, so the same
+11x11 grid measured 1.0 one way and 1.21 the other -- is still pinned, by
+`test_both_construction_paths_agree` below. And the reason 5943 tests missed it stands unchanged:
+mass conservation is measured as *drift from the initial mass*, correctly, and a ratio is invariant
+to the cell measure, so the whole mass-oracle family is blind to the initial value. This file is
+where that blindness is covered.
 """
 
 from __future__ import annotations
@@ -119,31 +110,21 @@ class TestTheReportedMass:
         assert problem.initial_mass_measure == "grid"
 
     @pytest.mark.parametrize("dimension", [1, 2])
-    def test_the_normaliser_used_the_trapezoid_and_not_the_rectangle(self, dimension: int):
-        """The assertion that separates the two normalisers, which `mass == 1` cannot.
+    def test_the_density_is_handed_back_unchanged(self, dimension: int):
+        """#1887's subject in one assertion: the library must not substitute a nearby object.
 
-        `sum(m) * prod(dx)` and `grid.integrate(m)` both equal 1 after normalising by themselves, so
-        `mass == 1` holds under either and pins nothing. What tells them apart is the OTHER
-        functional: normalise on the trapezoid and the rectangle sum comes out at 1 + s, where s is
-        the endpoint share. Measured on this fixture: 1.007518 in 1-D and 1.015093 in 2-D.
-
-        Mutation: point the constructor's normaliser back at `sum(m) * dx` and both halves swap --
-        `integrate` reads 1 - s and this fails on the first assertion.
+        Mutation: restore `self.m_initial /= integral` and this goes red while every mass-drift
+        oracle in the repository stays green, which is exactly how the rescale survived.
         """
         n = 11
         problem = _problem(dimension, n)
-        m = np.asarray(problem.m_initial, dtype=float)
-        assert float(problem.geometry.integrate(m)) == pytest.approx(1.0, rel=1e-12), (
-            "the constructor must normalise on the geometry's own measure"
+        axis = np.linspace(0.0, 1.0, n)
+        grid = np.stack(np.meshgrid(*([axis] * dimension), indexing="ij"), axis=-1) if dimension > 1 else axis
+        expected = _gaussian(dimension)(grid)
+        assert np.allclose(np.asarray(problem.m_initial), expected, rtol=0, atol=0)
+        assert problem.initial_mass != pytest.approx(1.0, rel=1e-6), (
+            "this fixture's Gaussian does not integrate to 1; if it now does, the rescale is back"
         )
-        spacing = np.prod(np.asarray(problem.geometry.get_grid_spacing(), dtype=float))
-        rectangle = float(m.sum() * spacing)
-        assert rectangle != pytest.approx(1.0, rel=1e-6), (
-            f"the rectangle sum is {rectangle!r}. If it is 1, the normaliser is the cell-centred "
-            "integral again and #2145 has been reverted -- the two measures cannot BOTH be 1 on a "
-            "density whose endpoints are non-zero."
-        )
-        assert rectangle > 1.0, "the rectangle over-counts the two half-cells, so it must exceed 1"
 
     def test_both_construction_paths_agree(self):
         """The #1888 fork was between two ways of building the same grid, so the pin compares them.
@@ -189,7 +170,111 @@ class TestTheReportedMass:
             assert via_geometry.initial_mass == pytest.approx(via_bounds.initial_mass, rel=1e-12)
 
 
-# `TestTheThreeTiers` lived here and has moved to `fix/1887-validate-do-not-normalise` with the
-# behaviour it tested. On this branch the constructor still normalises, so there is no reported mass
-# to warn about and no sub-probability density to admit -- those are that change's subject, not this
-# one's. What stays here is the MEASURE, which is #2145's.
+class TestTheThreeTiers:
+    """#1887's decision. Only tier 3 presumes a target of 1, and only tier 3 is new.
+
+    **Tier 1 owns ONE case, not three.** The first version of this class had a test per branch and
+    all of them passed on the pre-#1887 tree, which means they pinned nothing about this change --
+    found by independent review of #2174. The reason is not test weakness but duplication: the
+    refusal ladder already had owners upstream, and tier 1 restated two of them.
+
+    Measured, by constructing each case and reading which exception actually arrives:
+
+        negative     ValueError       from Check 1, "m_initial contains negative values"
+        non-finite   ValidationError  from validate_finite -- not even a ValueError
+        zero mass    ValueError       from tier 1
+
+    So tier 1's negative and non-finite branches were unreachable, and the tests below now assert
+    the real owner and the real exception type. Both still pass on the base branch, deliberately:
+    they document a pre-existing ladder rather than claiming coverage of this change. The tests that
+    discriminate #1887 are `test_the_density_is_handed_back_unchanged` and
+    `test_tier_3_warns_off_one_and_says_how_to_silence_it`.
+    """
+
+    def test_a_negative_density_is_refused_by_check_1_not_by_tier_1(self):
+        """Pre-existing owner, named so the duplicate does not come back.
+
+        Mutation: disable Check 1 and this fails on the `match=` pattern rather than on DID NOT
+        RAISE -- measured. `x - 0.5` on [0, 1] integrates to exactly 0 by symmetry, so the density
+        falls through to tier 1's mass check and raises "total mass 0.0 on the grid measure"
+        instead. That is a property of THIS fixture, not of the ladder: a density that is negative
+        somewhere but still has positive total mass has no owner once Check 1 is gone, which is why
+        the check that survived is the one upstream and not the one this branch nearly kept.
+        """
+        with pytest.raises(ValueError, match=r"m_initial contains negative values"):
+            _problem(1, 11, m0=lambda x: np.asarray(x) - 0.5)
+
+    def test_a_non_finite_density_raises_ValidationError_and_not_ValueError(self):
+        """The exception TYPE is the discriminating half, and it is not the obvious one.
+
+        `validate_finite` raises `ValidationError`, whose MRO is [ValidationError, Exception] -- it
+        is not a `ValueError`. Any caller catching `ValueError` to mean "bad initial density" misses
+        this case entirely, which is worth pinning independently of who raises it.
+        """
+        from mfgarchon.utils.validation import ValidationError
+
+        assert not issubclass(ValidationError, ValueError)
+        with pytest.raises(ValidationError, match=r"NaN or Inf"):
+            _problem(1, 11, m0=lambda x: np.where(np.asarray(x) > 0.4, np.nan, 1.0))
+
+    def test_tier_1_refuses_a_zero_mass_density(self):
+        """The one case tier 1 actually owns, and the only one that reaches it."""
+        with pytest.raises(ValueError, match=r"m_initial has total mass .* on the grid measure"):
+            _problem(1, 11, m0=lambda x: np.zeros_like(np.asarray(x, dtype=float)))
+
+    def test_tier_3_warns_off_one_and_says_how_to_silence_it(self):
+        """The message must carry the number, the measure, and the remedy. A bare "mass is not 1"
+        recreates the invisible convention the report exists to remove (#2145)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            MFGProblem(
+                geometry=TensorProductGrid(
+                    bounds=[(0.0, 1.0)],
+                    Nx_points=[11],
+                    boundary_conditions=no_flux_bc(dimension=1),
+                ),
+                Nt=4,
+                T=0.2,
+                sigma=0.4,
+                components=MFGComponents(
+                    m_initial=_gaussian(1),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(
+                        control_cost=QuadraticControlCost(control_cost=1.0),
+                        coupling=lambda m: m,
+                        coupling_dm=lambda m: 1.0,
+                    ),
+                ),
+            )
+        messages = [str(w.message) for w in caught if "initial density mass" in str(w.message)]
+        assert messages, "tier 3 did not fire on a density whose integral is not 1"
+        assert "grid" in messages[0], "the warning must name the measure, not just the number"
+        assert "Silence" in messages[0] or "silence" in messages[0]
+
+    def test_tier_3_is_silent_on_a_density_that_already_integrates_to_one(self):
+        """The tolerance is not a licence: a correctly normalised density must warn zero times, or
+        the warning becomes noise and gets filtered along with the tiers that matter."""
+        n = 11
+        axis = np.linspace(0.0, 1.0, n)
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+        raw = _gaussian(1)(axis)
+        normalised = raw / grid.integrate(raw)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            problem = MFGProblem(
+                geometry=grid,
+                Nt=4,
+                T=0.2,
+                sigma=0.4,
+                components=MFGComponents(
+                    m_initial=lambda x: np.interp(np.asarray(x), axis, normalised),
+                    u_terminal=lambda x: 0.0,
+                    hamiltonian=SeparableHamiltonian(
+                        control_cost=QuadraticControlCost(control_cost=1.0),
+                        coupling=lambda m: m,
+                        coupling_dm=lambda m: 1.0,
+                    ),
+                ),
+            )
+        assert problem.initial_mass == pytest.approx(1.0, rel=1e-12)
+        assert not [w for w in caught if "initial density mass" in str(w.message)]

@@ -116,7 +116,14 @@ if __name__ == "__main__":
         """Agents want to be close to exit (x=1) at final time."""
         return (x - 1.0) ** 2
 
-    # Initial density: uniform on [0.1, 0.9]
+    # Initial density: uniform on [0.1, 0.9].
+    #
+    # This does not integrate to 1, and the run will say so. The library measures the initial mass,
+    # names the measure it used, and does not rescale your density (Issue #1887) -- what the mass
+    # should be is a modelling decision, and it belongs to whoever writes `m_initial`. To make it a
+    # probability density, divide by `grid.integrate(initial_density(np.asarray(grid.coordinates[0])))`
+    # before handing it over. Left as written here: the congestion comparison further down is
+    # calibrated against these values, and normalising would change the coupling strength it measures.
     def initial_density(x):
         """Uniform crowd distribution, avoiding boundaries."""
         density = np.where((x >= 0.1) & (x <= 0.9), 1.0, 0.01)

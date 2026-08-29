@@ -45,6 +45,11 @@ if __name__ == "__main__":
     )
 
     model = Model(hamiltonian=hamiltonian, sigma=0.15)
+
+    # The mass warning below is the library reporting, not complaining: this Gaussian integrates to
+    # about 0.25 on `grid`, and Issue #1887 stopped the constructor from quietly rescaling it. If you
+    # want a probability density, divide by `grid.integrate(...)` yourself -- and note it is not
+    # `sum(m) * dx`, because the two wall nodes own half a cell each (Issue #2145).
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,
         m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),

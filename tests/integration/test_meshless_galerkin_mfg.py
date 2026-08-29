@@ -249,7 +249,6 @@ class TestMeshlessGalerkinCoupled:
         from mfgarchon.alg.numerical.coupling import FixedPointIterator
 
         x = np.linspace(0.0, 1.0, 21)
-        dx = 1.0 / 20
 
         p_ml = _problem()
         hjb_ml, fp_ml = create_paired_solvers(
@@ -267,8 +266,14 @@ class TestMeshlessGalerkinCoupled:
         )
         M_ml = np.asarray(res_ml.M)
         assert np.all(np.isfinite(M_ml)), "coupled meshless diverged to NaN (Issue #1145 regression)"
-        mass_T = float(M_ml[-1].sum() * dx)
-        assert abs(mass_T - 1.0) < 0.05, f"coupled meshless mass not bounded: {mass_T:.4f}"
+        # Bounded around the mass it STARTED with, on the grid measure (#2145 / #1887). The 5%
+        # band is unchanged; only its centre moved, because the library no longer rescales
+        # `m_initial` to 1 and this fixture hands in a raw Gaussian.
+        mass = np.asarray(p_ml.geometry.integrate(M_ml), dtype=float)
+        mass_T, mass_0 = float(mass[-1]), float(mass[0])
+        assert abs(mass_T - mass_0) < 0.05 * abs(mass_0), (
+            f"coupled meshless mass not bounded: {mass_T:.4f} against an initial {mass_0:.4f}"
+        )
         mean_ml = float((M_ml[-1] * x).sum() / M_ml[-1].sum())
 
         # FDM reference (fast, converges) — the trusted equilibrium.

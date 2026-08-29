@@ -350,10 +350,12 @@ class TestNumericalStability:
         # a non-negativity bound passed there while the clip fabricated 0.013% of the mass per
         # firing, and "only mass can" distinguish that from a healthy solve. So assert mass.
         M = np.asarray(result.M)
-        dx = 1.0 / 40
-        mass = M.sum(axis=1) * dx
-        # Measured max|mass - mass[0]| = 2.7e-15 (mass[0] = 1.0 exactly); 1e-12 is a ~375x margin.
-        assert np.max(np.abs(mass - mass[0])) < 1e-12, "no-flux upwind FP must conserve mass"
+        # On the geometry's own measure (#2145), and against ROW 0 rather than 1 (#1887): the
+        # library no longer rescales `m_initial`, so `mass[0]` is whatever the fixture handed in and
+        # `mass[0] = 1.0 exactly` -- what the old comment here recorded -- was a property of the
+        # removed constructor rescale, not of this solve. Conservation is the claim either way.
+        mass = np.asarray(problem.geometry.integrate(M), dtype=float)
+        assert np.max(np.abs(mass - mass[0])) < 1e-12 * abs(mass[0]), "no-flux upwind FP must conserve mass"
 
         # Strict positivity, which is the discriminating form: clip_nonnegative_or_raise returns
         # np.maximum(density, 0.0), so a clipped entry is exactly 0.0 and the `>= -1e-10` bound

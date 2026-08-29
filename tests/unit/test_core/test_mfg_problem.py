@@ -263,13 +263,13 @@ def test_mfg_problem_with_custom_potential():
 
 @pytest.mark.unit
 def test_mfg_problem_with_custom_initial_density():
-    """The custom density arrives normalised ON THE GRID MEASURE, not on `sum(m) * dx` (#2145).
+    """The custom density reaches the problem UNCHANGED, and its mass is reported (#1887).
 
     This asserted that `m_initial` came back divided by `sum(m) * dx`, computing that normaliser the
-    same way the constructor did -- a restatement of the constructor's arithmetic rather than a check
-    on it, satisfied by any quadrature the accessor returned. The shape of the assertion is now the
-    one that can tell the two normalisers apart: the grid's own integral is 1 AND the rectangle sum
-    is not, which is only possible for one of them.
+    same way the constructor did. It was therefore a restatement of the constructor's arithmetic, not
+    a check on it: any quadrature the accessor returned satisfied both sides. #1887 removed the
+    rescale -- normalising is the caller's job, and a caller may legitimately hand over a
+    sub-probability density -- so the property is now that nothing was substituted.
     """
 
     def custom_initial(x):
@@ -286,15 +286,12 @@ def test_mfg_problem_with_custom_initial_density():
     problem = MFGProblem(geometry=geometry, components=components)
 
     assert problem.is_custom is True
-    m = np.ravel(np.asarray(problem.m_initial, dtype=float))
-    raw = np.ravel(np.exp(-10 * (problem.geometry.get_spatial_grid() - 0.5) ** 2))
-    assert np.allclose(m / m.max(), raw / raw.max(), rtol=1e-12, atol=0), (
-        "the density's SHAPE must survive; only its scale is the constructor's business"
+    expected = np.exp(-10 * (problem.geometry.get_spatial_grid() - 0.5) ** 2)
+    assert np.allclose(np.ravel(problem.m_initial), np.ravel(expected), rtol=0, atol=0), (
+        "m_initial was altered on the way in; #1887 removed the rescale"
     )
-    assert float(problem.geometry.integrate(m)) == pytest.approx(1.0, rel=1e-12)
-    dx = float(problem.geometry.get_grid_spacing()[0])
-    assert float(m.sum() * dx) != pytest.approx(1.0, rel=1e-6), (
-        "if the rectangle sum is also 1 the normaliser is the cell-centred integral again (#2145)"
+    assert problem.initial_mass != pytest.approx(1.0, rel=1e-6), (
+        "this Gaussian does not integrate to 1 -- if it now does, something rescaled it"
     )
     assert problem.initial_mass_measure == "grid"
 

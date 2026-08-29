@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 6631,
-    "commit": "a08cc9c6",
+    "collected": 6740,
+    "commit": "49ea0fa2",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -31,12 +31,12 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 167,
+      "kill_count": 168,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 30,
+      "kill_count": 28,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
@@ -56,7 +56,7 @@
       "status": "ok"
     },
     "godunov_branch_swap": {
-      "kill_count": 31,
+      "kill_count": 30,
       "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
       "status": "ok"
     },
@@ -66,13 +66,18 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 59,
+      "kill_count": 53,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
       "kill_count": 21,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
+      "status": "ok"
+    },
+    "mass_drift_reported_as_deviation_from_one": {
+      "kill_count": 2,
+      "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
       "status": "ok"
     },
     "neumann_low_wall_flux_sign": {
@@ -86,7 +91,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 41,
+      "kill_count": 40,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
       "status": "ok"
     },
@@ -111,12 +116,12 @@
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 75,
+      "kill_count": 74,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 8,
+      "kill_count": 7,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },

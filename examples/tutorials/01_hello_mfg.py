@@ -72,6 +72,23 @@ if __name__ == "__main__":
     # Step 3: Define the Conditions (problem data)
     # ==============================================================================
 
+    # You will see a warning here, and it is not a mistake -- it is the library telling you something
+    # true about the density below. That Gaussian integrates to about 0.25 on this domain, not 1, and
+    # the library does NOT rescale it for you (Issue #1887): it measures the mass, says which measure
+    # it used, and leaves your data alone. Whether the initial mass should be 1 is YOUR modelling
+    # decision, not the library's -- a sub-probability density or one population's share is a
+    # perfectly good initial condition, and silently normalising would hide a miscoded `m_initial`
+    # exactly when you most need to see it.
+    #
+    # If you want a probability density, divide by the integral before handing it over:
+    #     x    = domain.coordinates[0]
+    #     m0   = np.exp(-50 * (x - 0.5) ** 2)
+    #     mass = float(domain.integrate(m0))          # 0.250663 here
+    #     m_initial = lambda x: np.exp(-50 * (x - 0.5) ** 2) / mass
+    # `domain.integrate` is the grid's own measure. It is not `sum(m) * dx` -- the wall lies ON the
+    # first and last node, so those two own half a cell each (Issue #2145). Note that this changes
+    # the problem: the coupling f(m) is then evaluated at four times these values, and this tutorial
+    # is left unnormalised so that its numbers stay comparable with the ones printed below.
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,  # Agents want to be at x = 0.5
         m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),  # Start near center
