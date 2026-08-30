@@ -29,6 +29,23 @@ from mfgarchon.utils.mfg_logging import get_logger
 logger = get_logger(__name__)
 
 
+def _verdict(result: Any) -> dict[str, bool]:
+    """The solve's own convergence verdict, or `{}` when the result carries none.
+
+    One owner for the question both call sites below ask. They used to ask it of the SOLVER, via
+    an attribute no class in this package has ever assigned (#1684 item 4), which reported "did
+    not converge" for every tracked run and recorded nothing at all in the benchmark loop.
+
+    Returning `{}` rather than `{"converged": False}` is the point: absent means the verdict was
+    not measured, False means it was measured and negative. A monitoring decorator must not
+    invent the difference, and must not raise on an unfamiliar return value either -- it wraps
+    arbitrary callables and is not entitled to crash what it observes.
+    """
+    if hasattr(result, "converged"):
+        return {"converged": bool(result.converged)}
+    return {}
+
+
 @dataclass
 class PerformanceMetrics:
     """Container for comprehensive performance metrics."""
@@ -221,12 +238,16 @@ class PerformanceMonitor:
                     if track_convergence and hasattr(result, "convergence_info"):
                         convergence_info = result.convergence_info
                     elif track_convergence and args and hasattr(args[0], "iterations_run"):
-                        # For iterative solvers
+                        # For iterative solvers. The verdict lives on the RESULT, never on the solver: no class
+                        # in this package has ever assigned the attribute this used to read (#1684 item 4 --
+                        # four read sites, zero writes, while its sibling `iterations_run` is real). Read
+                        # through a defaulting getattr it reported "did not converge" for every run, converged
+                        # or not, beside a genuine iteration count. When the result carries no verdict the key
+                        # is now OMITTED rather than defaulted: absent means not measured, False means measured
+                        # and negative, and collapsing those is the defect.
                         solver = args[0]
-                        convergence_info = {
-                            "iterations": getattr(solver, "iterations_run", 0),
-                            "converged": getattr(solver, "convergence_achieved", False),
-                        }
+                        convergence_info = {"iterations": getattr(solver, "iterations_run", 0)}
+                        convergence_info.update(_verdict(result))
 
                     # Create metrics object
                     metrics = PerformanceMetrics(
@@ -478,7 +499,7 @@ def benchmark_solver(
 
             try:
                 solver = solver_class(problem, **config)
-                solver.solve()
+                result = solver.solve()
 
                 execution_time = time.time() - start_time
                 end_memory = process.memory_info().rss / 1024 / 1024
@@ -491,11 +512,12 @@ def benchmark_solver(
                     "success": True,
                 }
 
-                # Extract convergence info if available
+                # Extract convergence info if available. `solver.solve()` above used to discard its
+                # return value, and the verdict was then read off the SOLVER, which never carried
+                # one (#1684 item 4), so `converged` was never recorded here at all.
                 if hasattr(solver, "iterations_run"):
                     run_data["iterations"] = solver.iterations_run
-                if hasattr(solver, "convergence_achieved"):
-                    run_data["converged"] = solver.convergence_achieved
+                run_data.update(_verdict(result))
 
                 config_results["runs"].append(run_data)
                 times.append(execution_time)

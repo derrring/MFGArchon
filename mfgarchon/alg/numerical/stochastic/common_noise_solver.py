@@ -435,7 +435,11 @@ class CommonNoiseMFGSolver:
         # MyPy note: Factory functions return solvers with solve() -> SolverResult
         u = result.U  # type: ignore[union-attr]
         m = result.M  # type: ignore[union-attr]
-        converged = result.convergence_achieved  # type: ignore[union-attr]
+        # `SolverResult` names this field `converged`; the attribute read here before did not
+        # exist on any class in the package (#1684 item 4), so this line raised AttributeError
+        # rather than reporting a wrong verdict. It was never reached because
+        # `create_conditional_problem` fails earlier (#2191).
+        converged = result.converged  # type: ignore[union-attr]
 
         return u, m, converged
 
