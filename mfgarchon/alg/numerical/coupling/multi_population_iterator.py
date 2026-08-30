@@ -149,6 +149,10 @@ class MultiPopulationIterator:
         converged = False
         for iteration in range(max_iterations):
             M_old = [m.copy() for m in M]
+            # The value function is half of the coupled unknown and was never captured, so the
+            # convergence test below could not see it (#1684 item 5). A Picard sweep can settle m
+            # while u is still moving -- #1914 records exactly that shape.
+            U_old = [u.copy() for u in U]
 
             # Validate all populations have hamiltonian_class
             for k in range(K):
@@ -227,16 +231,28 @@ class MultiPopulationIterator:
 
                 M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
-            # Check convergence
-            errors = []
+            # Check convergence on BOTH fields. `errors` keeps its shape and type -- one float per
+            # population -- but now means the larger of the two field changes rather than m alone,
+            # which is what a reader of "Final per-population errors" already assumed it meant.
+            #
+            # Caveat stated rather than hidden: these are absolute max-norm changes, so u and m are
+            # compared against one tolerance in their own units. The single-population
+            # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel` instead. Aligning the two is a
+            # single-source question and is deliberately NOT folded in here; this change only stops
+            # the test being blind to u.
+            errors_M, errors_U, errors = [], [], []
             for k in range(K):
-                err_k = np.max(np.abs(M[k] - M_old[k]))
-                errors.append(err_k)
+                err_M_k = float(np.max(np.abs(M[k] - M_old[k])))
+                err_U_k = float(np.max(np.abs(U[k] - U_old[k])))
+                errors_M.append(err_M_k)
+                errors_U.append(err_U_k)
+                errors.append(max(err_M_k, err_U_k))
             max_error = max(errors)
 
             logger.info(
                 f"Multi-pop iter {iteration + 1}/{max_iterations}: "
-                f"max_err={max_error:.4e}, per_pop={[f'{e:.2e}' for e in errors]}"
+                f"max_err={max_error:.4e}, per_pop_m={[f'{e:.2e}' for e in errors_M]}, "
+                f"per_pop_u={[f'{e:.2e}' for e in errors_U]}"
             )
 
             if max_error < tolerance:
@@ -249,6 +265,8 @@ class MultiPopulationIterator:
             iterations=iteration + 1,
             converged=converged,
             errors=errors,
+            errors_M=errors_M,
+            errors_U=errors_U,
             population_names=self.multi_problem.population_names,
         )
 
@@ -267,17 +285,24 @@ class MultiPopulationResult:
     converged : bool
         Whether tolerance was reached.
     errors : list[float]
-        Final per-population errors.
+        Final per-population errors: for each population, the larger of the u and m
+        max-norm changes over the last sweep. Before #1684 item 5 this was m only,
+        and so was `converged`.
+    errors_M, errors_U : list[float] | None
+        The same errors split by field, so a non-converged run says WHICH field
+        failed rather than only that one did.
     population_names : list[str]
         Names of populations.
     """
 
-    def __init__(self, U, M, iterations, converged, errors, population_names):
+    def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
         self.U = U
         self.M = M
         self.iterations = iterations
         self.converged = converged
         self.errors = errors
+        self.errors_M = errors_M
+        self.errors_U = errors_U
         self.population_names = population_names
 
     def __repr__(self):
