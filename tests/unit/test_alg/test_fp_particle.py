@@ -143,16 +143,21 @@ class TestFPParticleSolverBasic:
             masses[0], target, rtol=1e-12, err_msg="t=0 must carry exactly the mass handed in (#2181)"
         )
 
-        # Later steps drift, and the tolerance is measured rather than chosen. Three unseeded runs of
-        # this 1000-particle fixture: 4.19e-03, 3.30e-03, 3.58e-03. 1e-2 leaves headroom without
-        # admitting a scale error, which would be 5% here (21/20) and an order up.
+        # Later steps drift, and the tolerance is measured rather than chosen. Four unseeded runs of
+        # this 1000-particle fixture under the default INITIAL_ONLY: 1.11e-03, 2.07e-03, 2.55e-03,
+        # 3.52e-03. 1e-2 leaves headroom without admitting a scale error, which would be 5% here
+        # (21/20) and an order up.
         #
-        # The drift has a NAMED cause and is not KDE noise alone: `_normalize_density` pins
-        # `sum(M) * dx` -- the rectangle rule -- exactly, measured flat to twelve digits across every
-        # step, while the grid's own measure moves as the profile changes shape. So the solver
-        # conserves one functional exactly and the one the library reports approximately. That is
-        # #2145's defect surviving inside this solver, it is PRE-EXISTING and out of scope for
-        # #2181, and it is tracked separately -- do not "fix" this test by tightening the bound.
+        # An earlier version of this comment claimed the drift had a named cause -- that
+        # `_normalize_density` pinned `sum(M) * dx` exactly while the grid's measure moved. That was
+        # true of a design this branch replaced twice over, and stating it after the fact is how the
+        # assertion above nearly became unfalsifiable: under the intermediate design the grid measure
+        # was pinned to 3.3e-16 and a bound of 1e-2 could not fail (#2185 review, round 4).
+        #
+        # What is true now: t=0 is pinned exactly to the caller's mass on the GRID measure, and every
+        # later slice carries one factor, so BOTH functionals drift after t=0. Neither is held flat.
+        # The bound below is on the grid measure because that is the one `problem.initial_mass` and
+        # `SolverResult.mass_conservation_error` report.
         assert np.max(np.abs(masses / target - 1.0)) < 1e-2, (
             f"mass drifted by {np.max(np.abs(masses / target - 1.0)):.2e} from the initial mass"
         )

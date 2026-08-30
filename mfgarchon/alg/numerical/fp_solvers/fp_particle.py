@@ -42,11 +42,38 @@ logger = get_logger(__name__)
 
 
 class KDENormalization(StrEnum):
-    """KDE normalization strategy for particle-based FP solvers."""
+    """How the caller's mass is put back onto each reconstructed slice.
+
+    A particle method carries no mass -- positions have no scale -- so the mass is reintroduced at
+    every reconstruction (#2181). This chooses HOW, per slice:
+
+    - ``NONE`` -- multiply by one factor calibrated on the first slice. The reconstruction's own
+      drift stays visible.
+    - ``INITIAL_ONLY`` -- pin t=0 to the caller's mass exactly, then carry the same factor. **The
+      default.**
+    - ``ALL`` -- pin every slice. Mass conservation then holds BY FIAT rather than by the scheme.
+
+    **Why ALL is no longer the default.** Since #2181 every slice is measured on the geometry's own
+    measure -- the same functional `SolverResult.mass_conservation_error` reports -- so pinning every
+    slice makes that diagnostic identically zero. Measured on a 21-point grid, 2000 particles:
+
+        ALL           4.441e-16      the renormalisation's property, not the transport's
+        INITIAL_ONLY  1.235e-02
+        NONE          1.239e-02
+
+    A solver whose conservation report is a constant cannot tell a healthy solve from a broken one,
+    which is what #1683 removed from `fp_fdm`, `fp_gfdm` and `network_solvers/fp_network`. This
+    solver was that campaign's surviving instance, named as such in #2181; before #2181 the defect
+    was hidden because ALL pinned `sum(m)*dx` while the diagnostic measured the trapezoid, so the
+    two disagreed and the number looked alive.
+
+    ALL remains available and is the right choice when the KDE's own drift is the thing you do not
+    want; it is simply not a default anyone should get without asking.
+    """
 
     NONE = "none"  # No normalization (raw KDE output)
-    INITIAL_ONLY = "initial_only"  # Normalize only at t=0
-    ALL = "all"  # Normalize at every time step (default)
+    INITIAL_ONLY = "initial_only"  # Pin t=0, carry the rest (DEFAULT since #2181)
+    ALL = "all"  # Normalize at every time step -- FIAT conservation, see the class docstring
 
 
 class KDEMethod(StrEnum):
@@ -139,7 +166,7 @@ class FPParticleSolver(BaseFPSolver):
         problem: MFGProblem,
         num_particles: int = 5000,
         kde_bandwidth: Any = "scott",
-        kde_normalization: KDENormalization | str = KDENormalization.ALL,
+        kde_normalization: KDENormalization | str = KDENormalization.INITIAL_ONLY,
         kde_method: KDEMethod | str = KDEMethod.REFLECTION,
         kde_boundary_smoothing: bool = True,
         density_mode: Literal["grid_only", "hybrid", "query_only"] = "grid_only",
@@ -1412,13 +1439,21 @@ class FPParticleSolver(BaseFPSolver):
         instead of at 1, which is the same defect wearing a better number.
 
         WHAT `kde_normalization` MEANS, measured. Before this change all three modes meant "the mass
-        is 1", which is not what any of their names say. They now mean what they say, and the modes
-        are distinguishable on every KDE method:
+        is 1", which is not what any of their names say. They now mean what they say. On the three
+        `KDEMethod` values that RUN, the modes are distinguishable (max |M_a - M_b| pointwise over
+        the history, absolute in the density, so every figure below scales with the caller's mass --
+        0.3 on this fixture):
 
             kde_method      ALL-NONE    ALL-INITIAL_ONLY   NONE-INITIAL_ONLY
             reflection      8.0e-03     7.8e-03            3.1e-04
             cic             7.7e-03     7.6e-03            6.8e-05
             standard        4.3e-02     6.1e-03            4.3e-02
+
+        Three of five, and "every method" was the wrong quantifier. `RENORMALIZATION` and `BETA`
+        raise `RuntimeError` on every CPU dispatch path for these fixtures, inside `kde_boundary`
+        and before this method is reached -- pre-existing, untouched here, and unmeasurable rather
+        than indistinguishable. And the GPU path calls `gaussian_kde_gpu_internal` unconditionally
+        and never reads `kde_method` at all, so all five values give identical histories there.
 
         Two earlier versions of this docstring were wrong about this, in opposite directions, and
         both were measured on too little. The first claimed the modes were separated; the second

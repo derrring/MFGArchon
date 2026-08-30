@@ -16,11 +16,17 @@ density of mass 0.300000 came back as 1.000000, a factor of 3.33.
 on every call and `_normalize_density` is never invoked, and the mass is still 1.0. All three modes
 are covered below for that reason.
 
-**Not covered here, deliberately.** `_normalize_density` pins `sum(M) * dx` -- the rectangle rule --
-exactly, while the grid's own measure drifts as the profile changes shape, so the solver conserves
-one functional exactly and the one the library reports approximately. That is pre-existing, is
-#2145's defect surviving inside this solver, and is tracked separately. These tests pin t=0, where
-the two questions do not interact.
+**One measure, since #2181.** `_measure` answers "what is this slice's mass" on `geometry.integrate`'s
+measure and nothing else does, so the rectangle rule no longer appears anywhere in this solver's
+accounting. An earlier version of this paragraph said the opposite -- that `sum(M) * dx` was pinned
+while the grid measure drifted -- which described a design this branch replaced, and contradicted two
+assertions the same change wrote.
+
+**The default is `INITIAL_ONLY`, not `ALL`.** Pinning every slice makes
+`SolverResult.mass_conservation_error` identically 4.4e-16: mass conservation by fiat, which is what
+#1683 removed from the FDM, GFDM and network FP paths and which this solver was the last instance of.
+So t=0 carries the caller's mass exactly and later slices carry one factor, leaving the
+reconstruction's own drift measurable.
 """
 
 from __future__ import annotations

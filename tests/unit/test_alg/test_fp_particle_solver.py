@@ -527,15 +527,34 @@ class TestFPParticleSolverHelperMethods:
 
         M_array = np.random.rand(Nx_points) * 2.0
 
-        # First call (time step 0) - should normalize
+        # Outside a solve there is no target, so the helper is a no-op (#2181). This assertion used
+        # to read `sum(normalized_0) * dx == 1.0, rtol=0.1` and, once the helper stopped normalising
+        # to 1, it was testing `np.random.rand(31) * 2.0` -- which lands outside that band 42% of the
+        # time. `conftest.py`'s `cleanup_numpy_state` reseeds from entropy after every test, and no
+        # marker excludes this file, so it was a 42%-flaky test inside the authoritative gate.
         solver._time_step_counter = 0
         normalized_0 = solver._normalize_density(M_array, dx, use_backend=False)
-        assert np.isclose(np.sum(normalized_0 * dx), 1.0, rtol=0.1)
+        assert solver._mass_target is None, "no solve has run, so there is nothing to scale to"
+        assert np.allclose(normalized_0, M_array)
 
         # Second call (time step 1) - should not normalize
         solver._time_step_counter = 1
         normalized_1 = solver._normalize_density(M_array, dx, use_backend=False)
         assert np.allclose(normalized_1, M_array)
+
+        # Inside a solve, INITIAL_ONLY pins t=0 to the caller's mass and CARRIES the same factor
+        # afterwards -- it does not stop scaling. The assertion above only holds outside a solve,
+        # where there is no target; asserting it as the whole contract is what made the sibling test
+        # below 42% flaky (#2185 review, round 4).
+        solver._mass_target = 0.3
+        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_factor = None
+        solver._time_step_counter = 0
+        pinned = solver._normalize_density(M_array, dx, use_backend=False)
+        assert float(geometry.integrate(pinned)) == pytest.approx(0.3, rel=1e-12)
+        solver._time_step_counter = 1
+        carried = solver._normalize_density(M_array, dx, use_backend=False)
+        assert not np.allclose(carried, M_array), "later slices are carried, not left alone"
 
     def test_normalize_density_all(self):
         """Test density normalization with ALL strategy."""
