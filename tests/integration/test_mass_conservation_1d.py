@@ -258,8 +258,9 @@ class TestMassConservation1D:
             # NOT "all" (#2181): ALL pins every slice to the caller's mass on the grid
             # measure -- the same functional `compute_total_mass` uses below -- so the drift
             # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
-            # fail. Measured. INITIAL_ONLY pins t=0 and lets the rest drift, which is the
-            # quantity a mass-conservation test is for.
+            # fail. Measured. NONE carries one factor calibrated on the first slice, so the
+            # reconstruction's own drift stays in the number. NOTE it is NOT a measure of particle
+            # loss -- the KDE is blind to that (#2188); it is the reconstruction's drift.
             kde_normalization="none",
             boundary_conditions=boundary_conditions,
         )
@@ -333,8 +334,9 @@ class TestMassConservation1D:
                 # NOT "all" (#2181): ALL pins every slice to the caller's mass on the grid
                 # measure -- the same functional `compute_total_mass` uses below -- so the drift
                 # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
-                # fail. Measured. INITIAL_ONLY pins t=0 and lets the rest drift, which is the
-                # quantity a mass-conservation test is for.
+                # fail. Measured. NONE carries one factor calibrated on the first slice, so the
+                # reconstruction's own drift stays in the number. NOTE it is NOT a measure of
+                # particle loss -- the KDE is blind to that (#2188); it is reconstruction drift.
                 kde_normalization="none",
                 boundary_conditions=boundary_conditions,
             )

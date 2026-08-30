@@ -95,14 +95,6 @@ class TestFPParticleSolverInitialization:
 
         assert solver.kde_normalization == KDENormalization.NONE
 
-    def test_kde_normalization_initial_only(self):
-        """Test initialization with initial-only KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem, kde_normalization=KDENormalization.NONE)
-
-        assert solver.kde_normalization == KDENormalization.NONE
-
     def test_kde_normalization_all(self):
         """Test initialization with all-step KDE normalization."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -135,14 +127,6 @@ class TestFPParticleSolverInitialization:
         with pytest.raises(TypeError, match="unexpected keyword argument 'normalize_only_initial'"):
             FPParticleSolver(problem, normalize_only_initial=True)
 
-    def test_kde_normalization_new_name_initial_only(self):
-        """New name `kde_normalization` covers the INITIAL_ONLY strategy."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        solver = FPParticleSolver(problem, kde_normalization="none")
-        assert solver.kde_normalization == KDENormalization.NONE
-
     def test_custom_boundary_conditions(self):
         """Test initialization with custom boundary conditions."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -169,18 +153,6 @@ class TestFPParticleSolverInitialization:
 
         assert solver.backend is not None
         assert solver.backend.name == "numpy"
-
-    def test_time_step_counter_initialized(self):
-        """Test that time step counter is initialized."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem)
-
-        assert solver._time_step_counter == 0
-
-
-class TestFPParticleSolverSolveFPSystem:
-    """Test the main solve_fp_system method."""
 
     def test_solve_fp_system_initial_condition(self):
         """Test that initial condition center of mass is approximately preserved."""
@@ -257,32 +229,6 @@ class TestFPParticleSolverSolveFPSystem:
         # `if self.current_strategy.name == "cpu"`), and the numpy backend must select the CPU
         # strategy. Measured: "cpu" on every run. Also drops the hasattr duck-typing check.
         assert solver.current_strategy.name == "cpu"
-
-    def test_time_step_counter_reset(self):
-        """Test that time step counter is reset on solve."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        solver._time_step_counter = 999  # Set to non-zero
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        solver.solve_fp_system(m_initial, U_solution)
-
-        # The counter drives the INITIAL_ONLY normalisation branch, so a missing reset silently
-        # disables initial-step normalisation on the second solve of a reused solver. Measured on
-        # this configuration (Nt=15 -> Nt_points=16): the counter reads 16 regardless of the 999
-        # preset. Without the reset it would read 1015.
-        assert solver._time_step_counter == problem.Nt_points, f"counter not reset: {solver._time_step_counter}"
-
-
-class TestFPParticleSolverNumericalProperties:
-    """Test numerical properties of particle FP solutions."""
 
     def test_forward_time_propagation(self):
         """Test that solution is computed for all time steps."""
@@ -520,8 +466,8 @@ class TestFPParticleSolverHelperMethods:
         # Should not normalize (return as-is)
         assert np.allclose(normalized, M_array)
 
-    def test_normalize_density_initial_only(self):
-        """Test density normalization with INITIAL_ONLY strategy."""
+    def test_normalize_density_outside_and_inside_a_solve(self):
+        """The helper is a no-op with no target, and pins to the target with one."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
         solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.NONE)
@@ -546,10 +492,9 @@ class TestFPParticleSolverHelperMethods:
         normalized_1 = solver._normalize_density(M_array, dx, use_backend=False)
         assert np.allclose(normalized_1, M_array)
 
-        # Inside a solve, INITIAL_ONLY pins t=0 to the caller's mass and CARRIES the same factor
-        # afterwards -- it does not stop scaling. The assertion above only holds outside a solve,
-        # where there is no target; asserting it as the whole contract is what made the sibling test
-        # below 42% flaky (#2185 review, round 4).
+        # Inside a solve the helper scales. The assertion above holds only OUTSIDE one, where there
+        # is no target; asserting that as the whole contract is what made a sibling 42% flaky
+        # (#2185 review, round 4).
         solver._mass_target = 0.3
         solver._mass_weights = solver._quadrature_weights()
         solver._mass_factor = None

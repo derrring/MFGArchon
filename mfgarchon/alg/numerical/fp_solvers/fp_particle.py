@@ -60,13 +60,27 @@ class KDENormalization(StrEnum):
     to differ only while a defect calibrated the factor one slice late, which deleted the t=0 -> t=1
     KDE transient from every report.
 
-    **Why NONE is the default and ALL is not.** Since #2181 every slice is measured on the
-    geometry's own measure -- the same functional `SolverResult.mass_conservation_error` reports --
-    so pinning every slice makes that diagnostic identically round-off (2.2e-16 to 6.7e-16 across
-    grids and particle counts). A solver whose conservation report is a constant cannot tell a
-    healthy solve from a broken one, which is what #1683 removed from `fp_fdm`, `fp_gfdm` and
-    `network_solvers/fp_network`; this solver was that campaign's surviving instance. ALL remains
-    available and is the right choice when the reconstruction's drift is what you do not want.
+    **Why NONE is the default and ALL is not, stated carefully because a looser version of this
+    argument was wrong.** Since #2181 every slice is measured on the geometry's own measure -- the
+    same functional `SolverResult.mass_conservation_error` reports -- so pinning every slice makes
+    that diagnostic identically round-off, 2.2e-16 to 6.7e-16 across grids and particle counts. That
+    is conservation by fiat, which #1683 removed from `fp_fdm`, `fp_gfdm` and
+    `network_solvers/fp_network`; this solver was that campaign's surviving instance.
+
+    **What NONE does NOT buy is an informative diagnostic**, and an earlier version of this docstring
+    claimed it did. The reported error under NONE is blind to particle absorption and on one pair is
+    anti-correlated with it. Measured, 21 points, Nt=20, N=2000, seed 7, only the BC differing:
+
+        no_flux    sigma 1.5    0.0% of particles lost    reports 4.9722e-02
+        dirichlet  sigma 1.5   99.6% of particles lost    reports 4.7079e-02
+
+    The KDE reconstruction integrates to about 1 whatever particle count built it, so absorption is
+    invisible to it and a carried factor preserves that invisibility. Identical numbers on `main`,
+    so this is the solver's property and neither default's: tracked as #2188.
+
+    So the case for NONE is only that it does not fabricate conservation -- not that it measures it.
+    ALL remains available and is the right choice when the reconstruction's own drift is what you do
+    not want.
     """
 
     NONE = "none"  # One calibrated factor; the reconstruction's drift stays visible. DEFAULT.
@@ -212,7 +226,6 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_weights: np.ndarray | None = None
         self._mass_factor: float | None = None
         self.M_particles_trajectory: np.ndarray | None = None
-        self._time_step_counter = 0  # Track current time step for normalization logic
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
         # paths use), set by solve_fp_system instead of mutating the shared problem.sigma.
         # None => use problem.sigma. Explicit init for object-shape stability (CLAUDE.md).
@@ -540,13 +553,12 @@ class FPParticleSolver(BaseFPSolver):
 
         Returns True if normalization should be applied for the current time step.
         """
-        # Two members since #2181, so this is a single question. The time-step counter it used to
-        # consult is kept for the progress/diagnostic paths, not for this decision.
+        # Two members since #2181, so this is a single question and the time-step counter no longer
+        # feeds it. The counter is now write-only -- an AST sweep finds its only load is its own
+        # increment -- so it is an orphan this change created and is removed with it, on the same
+        # ground `_compute_total_mass` was. An earlier version of this comment kept it "for the
+        # progress/diagnostic paths"; there are none.
         return self.kde_normalization == KDENormalization.ALL
-
-    def _increment_time_step(self) -> None:
-        """Increment time step counter for KDE normalization strategy tracking."""
-        self._time_step_counter += 1
 
     def _apply_kde_method_1d(
         self,
@@ -1448,37 +1460,23 @@ class FPParticleSolver(BaseFPSolver):
         drift so that NONE, INITIAL_ONLY and ALL became identical again -- at the caller's mass
         instead of at 1, which is the same defect wearing a better number.
 
-        WHAT `kde_normalization` MEANS, measured. Before this change all three modes meant "the mass
-        is 1", which is not what any of their names say. They now mean what they say. On the three
-        `KDEMethod` values that RUN, the modes are distinguishable (max |M_a - M_b| pointwise over
-        the history, absolute in the density, so every figure below scales with the caller's mass --
-        0.3 on this fixture):
+        WHAT `kde_normalization` MEANS, measured. Before #2181 all three of the then-members meant
+        "the mass is 1", which is not what any of their names said. Two members remain and they are
+        distinguishable on each of the three `KDEMethod` values that run:
 
-            kde_method      ALL-NONE    ALL-INITIAL_ONLY   NONE-INITIAL_ONLY
-            reflection      8.0e-03     7.8e-03            3.1e-04
-            cic             7.7e-03     7.6e-03            6.8e-05
-            standard        4.3e-02     6.1e-03            4.3e-02
+            kde_method      max |ALL - NONE|      (absolute in the density, so it
+            reflection      8.007e-03              scales with the caller's mass;
+            cic             7.694e-03              0.3 on the fixture measured)
+            standard        4.300e-02
 
-        Three of five, and "every method" was the wrong quantifier. `RENORMALIZATION` and `BETA`
-        raise `RuntimeError` on every CPU dispatch path for these fixtures, inside `kde_boundary`
-        and before this method is reached -- pre-existing, untouched here, and unmeasurable rather
-        than indistinguishable. And the GPU path calls `gaussian_kde_gpu_internal` unconditionally
-        and never reads `kde_method` at all, so all five values give identical histories there.
+        `RENORMALIZATION` and `BETA` raise inside `kde_boundary` before this code is reached --
+        pre-existing, and unmeasurable rather than indistinguishable. The GPU path calls
+        `gaussian_kde_gpu_internal` unconditionally and never reads `kde_method`.
 
-        Two earlier versions of this docstring were wrong about this, in opposite directions, and
-        both were measured on too little. The first claimed the modes were separated; the second
-        retracted that on a measurement of ONE of the three pairs and concluded `reflection` and
-        `cic` were "indistinguishable". They were -- but only because of a defect in this method:
-        the pin was to 1 in the rectangle measure while the carried factor was calibrated in the
-        grid measure, and those two conventions agree exactly for reconstructions that already
-        conserve. `INITIAL_ONLY` is where they met in one history, and it came out 5.0% heavy at
-        n=21 on every slice after the first. Both conventions are now the geometry's.
-
-        That is also how CIC's own claim was caught. `KDEMethod.CIC` documents "exact mass
-        conservation"; its raw reconstruction integrates to exactly `n/(n-1)` -- 1.100000 at n=11,
-        1.050000 at n=21, 1.025000 at n=41 -- because it deposits into CELLS and an endpoint-inclusive
-        grid has one more node than cells. It conserves a constant, not 1. The calibration absorbs
-        that constant now; the docstring at `KDEMethod.CIC` is still wrong and is tracked separately.
+        Three earlier versions of this table were wrong, each measured on less than it claimed: the
+        first said the modes were separated, the second retracted that from one of three mode-pairs,
+        and the third kept two columns for `INITIAL_ONLY` after that member was deleted. The column
+        that survives is the one with a member on both sides of it.
 
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
@@ -1495,7 +1493,6 @@ class FPParticleSolver(BaseFPSolver):
         # function of its arguments. A Picard loop reuses one instance, and 131 of 368 call sites
         # pass a callable drift. Round 5 of the PR #2185 review; round 3 saw it and called it
         # latent.
-        self._time_step_counter = 0
         M = self._solve_fp_system_unscaled(
             M_initial=M_initial,
             drift_field=drift_field,
@@ -1688,7 +1685,6 @@ class FPParticleSolver(BaseFPSolver):
         self._effective_sigma_override = effective_sigma if volatility_field is not None else None
 
         # Reset time step counter for normalization logic
-        self._time_step_counter = 0
 
         # Store show_progress and drift_is_precomputed for use in methods
         self._show_progress = show_progress
@@ -1858,7 +1854,6 @@ class FPParticleSolver(BaseFPSolver):
             init_particles = current_M_particles_t[0, :]
 
         M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles)
-        self._increment_time_step()  # Increment after computing density at t=0
 
         if Nt == 1:
             if use_segment_aware_bc:
@@ -1884,7 +1879,6 @@ class FPParticleSolver(BaseFPSolver):
                 if use_segment_aware_bc:
                     particles_list[n_time_idx + 1] = np.array([])
                 M_density_on_grid[n_time_idx + 1, :] = np.zeros(Nx)
-                self._increment_time_step()
                 continue
 
             U_at_tn = U_solution_for_drift[n_time_idx, :]
@@ -1942,7 +1936,6 @@ class FPParticleSolver(BaseFPSolver):
                 current_M_particles_t[n_time_idx + 1, :] = new_particles
 
             M_density_on_grid[n_time_idx + 1, :] = self._estimate_density_from_particles(new_particles)
-            self._increment_time_step()  # Increment after each time step
 
         # Finalize: store trajectory, build history, return result
         trajectory = particles_list if use_segment_aware_bc else current_M_particles_t
@@ -2027,8 +2020,6 @@ class FPParticleSolver(BaseFPSolver):
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
         M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings)
 
-        self._increment_time_step()
-
         if Nt == 1:
             if use_segment_aware_bc:
                 self.M_particles_trajectory = particles_list  # List of arrays
@@ -2057,7 +2048,6 @@ class FPParticleSolver(BaseFPSolver):
                 if use_segment_aware_bc:
                     particles_list[t_idx + 1] = np.array([]).reshape(0, dimension)
                 M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
-                self._increment_time_step()
                 continue
 
             # Check if drift is precomputed or needs to be computed from U
@@ -2121,8 +2111,6 @@ class FPParticleSolver(BaseFPSolver):
 
             # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked (#2181).
             M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
-
-            self._increment_time_step()
 
         # Finalize: store trajectory, build history, return result
         trajectory = particles_list if use_segment_aware_bc else current_particles
@@ -2246,8 +2234,6 @@ class FPParticleSolver(BaseFPSolver):
         # the cost was a 3.63x CPU/GPU disagreement on exactly the quantity this change is about.
         M_density_gpu[0, :] = self._normalize_density(M_density_gpu[0, :], Dx, use_backend=True)
 
-        self._increment_time_step()  # Increment after computing density at t=0
-
         if Nt == 1:
             self.M_particles_trajectory = self.backend.to_numpy(X_particles_gpu)
             return self.backend.to_numpy(M_density_gpu)
@@ -2307,8 +2293,6 @@ class FPParticleSolver(BaseFPSolver):
 
             # Unconditional -- see the note at the t=0 site above.
             M_density_gpu[t + 1, :] = self._normalize_density(M_density_gpu[t + 1, :], Dx, use_backend=True)
-
-            self._increment_time_step()  # Increment after each time step
 
         # Store trajectory and convert to NumPy ONCE at end
         X_particles_np = self.backend.to_numpy(X_particles_gpu)
@@ -2563,7 +2547,6 @@ class FPParticleSolver(BaseFPSolver):
                     preserve_full_history[t_idx + 1] = np.full((self.num_particles, dimension), np.nan)
                 if self.density_mode != "query_only":
                     M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
-                self._increment_time_step()
                 continue
 
             # Estimate density at particle positions for state-dependent drift
@@ -2693,8 +2676,6 @@ class FPParticleSolver(BaseFPSolver):
 
                 # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked.
                 M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
-
-            self._increment_time_step()
 
         # Finalize: store trajectory, build history, return result
         # Note: callable drift uses Nt+1 time points (0 to Nt inclusive)

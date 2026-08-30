@@ -336,7 +336,8 @@ class ParticleConfig(BaseConfig):
     kde_bandwidth : float | Literal["auto"]
         KDE bandwidth parameter (default: auto)
     normalization : Literal["none", "all"]
-        Density normalization strategy (default: initial_only)
+        Density normalization strategy (default: none). INITIAL_ONLY was removed in #2181;
+        passing it now raises. See KDENormalization for what the two remaining members mean.
     mode : Literal["hybrid", "collocation"]
         Particle mode (default: hybrid):
         - hybrid: Sample particles, output to grid via KDE

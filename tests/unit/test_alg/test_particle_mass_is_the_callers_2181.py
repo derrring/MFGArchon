@@ -86,7 +86,7 @@ def _grid(n: int = 21) -> TensorProductGrid:
 
 @pytest.mark.parametrize("mode", [KDENormalization.ALL, KDENormalization.NONE])
 def test_a_sub_probability_density_keeps_its_mass(mode: KDENormalization):
-    """All three modes, because `NONE` is the one that surprises.
+    """Both modes, because `NONE` is the one that surprises.
 
     Mutation: replace `_to_caller_mass` with the identity and every row reads 1.000000 against
     a target of 0.300000 -- including this parametrisation's `NONE`, where nothing normalises
