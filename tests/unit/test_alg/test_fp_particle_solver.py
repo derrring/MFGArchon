@@ -63,7 +63,11 @@ class TestFPParticleSolverInitialization:
         assert solver.fp_method_name == "Particle"
         assert solver.num_particles == 5000
         assert solver.kde_bandwidth == "scott"
-        assert solver.kde_normalization == KDENormalization.ALL
+        # NONE since #2181. ALL pins every slice on the measure SolverResult.mass_conservation_error
+        # reports, making it identically round-off -- conservation by fiat, the shape #1683 removed
+        # from the FDM, GFDM and network FP paths. INITIAL_ONLY was removed in the same change: it
+        # was bitwise identical to NONE, because pinning the calibration slice IS calibrating on it.
+        assert solver.kde_normalization == KDENormalization.NONE
         # Default BC comes from geometry (TensorProductGrid), which is "no_flux"
         assert solver.boundary_conditions.type == "no_flux"
 
@@ -90,14 +94,6 @@ class TestFPParticleSolverInitialization:
         solver = FPParticleSolver(problem, kde_normalization=KDENormalization.NONE)
 
         assert solver.kde_normalization == KDENormalization.NONE
-
-    def test_kde_normalization_initial_only(self):
-        """Test initialization with initial-only KDE normalization."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem, kde_normalization=KDENormalization.INITIAL_ONLY)
-
-        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
 
     def test_kde_normalization_all(self):
         """Test initialization with all-step KDE normalization."""
@@ -131,14 +127,6 @@ class TestFPParticleSolverInitialization:
         with pytest.raises(TypeError, match="unexpected keyword argument 'normalize_only_initial'"):
             FPParticleSolver(problem, normalize_only_initial=True)
 
-    def test_kde_normalization_new_name_initial_only(self):
-        """New name `kde_normalization` covers the INITIAL_ONLY strategy."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-
-        solver = FPParticleSolver(problem, kde_normalization="initial_only")
-        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
-
     def test_custom_boundary_conditions(self):
         """Test initialization with custom boundary conditions."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -165,18 +153,6 @@ class TestFPParticleSolverInitialization:
 
         assert solver.backend is not None
         assert solver.backend.name == "numpy"
-
-    def test_time_step_counter_initialized(self):
-        """Test that time step counter is initialized."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem)
-
-        assert solver._time_step_counter == 0
-
-
-class TestFPParticleSolverSolveFPSystem:
-    """Test the main solve_fp_system method."""
 
     def test_solve_fp_system_initial_condition(self):
         """Test that initial condition center of mass is approximately preserved."""
@@ -253,32 +229,6 @@ class TestFPParticleSolverSolveFPSystem:
         # `if self.current_strategy.name == "cpu"`), and the numpy backend must select the CPU
         # strategy. Measured: "cpu" on every run. Also drops the hasattr duck-typing check.
         assert solver.current_strategy.name == "cpu"
-
-    def test_time_step_counter_reset(self):
-        """Test that time step counter is reset on solve."""
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500)
-
-        solver._time_step_counter = 999  # Set to non-zero
-
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        Nt_points = problem.Nt_points
-
-        m_initial = np.ones(Nx_points) / Nx_points
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        solver.solve_fp_system(m_initial, U_solution)
-
-        # The counter drives the INITIAL_ONLY normalisation branch, so a missing reset silently
-        # disables initial-step normalisation on the second solve of a reused solver. Measured on
-        # this configuration (Nt=15 -> Nt_points=16): the counter reads 16 regardless of the 999
-        # preset. Without the reset it would read 1015.
-        assert solver._time_step_counter == problem.Nt_points, f"counter not reset: {solver._time_step_counter}"
-
-
-class TestFPParticleSolverNumericalProperties:
-    """Test numerical properties of particle FP solutions."""
 
     def test_forward_time_propagation(self):
         """Test that solution is computed for all time steps."""
@@ -365,7 +315,7 @@ class TestFPParticleSolverIntegration:
 
         configs = [
             {"num_particles": 500, "kde_normalization": KDENormalization.NONE},
-            {"num_particles": 1000, "kde_normalization": KDENormalization.INITIAL_ONLY},
+            {"num_particles": 1000, "kde_normalization": KDENormalization.NONE},
             {"num_particles": 2000, "kde_normalization": KDENormalization.ALL, "kde_bandwidth": 0.1},
         ]
 
@@ -516,26 +466,44 @@ class TestFPParticleSolverHelperMethods:
         # Should not normalize (return as-is)
         assert np.allclose(normalized, M_array)
 
-    def test_normalize_density_initial_only(self):
-        """Test density normalization with INITIAL_ONLY strategy."""
+    def test_normalize_density_outside_and_inside_a_solve(self):
+        """The helper is a no-op with no target, and pins to the target with one."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.INITIAL_ONLY)
+        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.NONE)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
         dx = problem.geometry.get_grid_spacing()[0]
 
         M_array = np.random.rand(Nx_points) * 2.0
 
-        # First call (time step 0) - should normalize
+        # Outside a solve there is no target, so the helper is a no-op (#2181). This assertion used
+        # to read `sum(normalized_0) * dx == 1.0, rtol=0.1` and, once the helper stopped normalising
+        # to 1, it was testing `np.random.rand(31) * 2.0` -- which lands outside that band 42% of the
+        # time. `conftest.py`'s `cleanup_numpy_state` reseeds from entropy after every test, and no
+        # marker excludes this file, so it was a 42%-flaky test inside the authoritative gate.
         solver._time_step_counter = 0
         normalized_0 = solver._normalize_density(M_array, dx, use_backend=False)
-        assert np.isclose(np.sum(normalized_0 * dx), 1.0, rtol=0.1)
+        assert solver._mass_target is None, "no solve has run, so there is nothing to scale to"
+        assert np.allclose(normalized_0, M_array)
 
         # Second call (time step 1) - should not normalize
         solver._time_step_counter = 1
         normalized_1 = solver._normalize_density(M_array, dx, use_backend=False)
         assert np.allclose(normalized_1, M_array)
+
+        # Inside a solve the helper scales. The assertion above holds only OUTSIDE one, where there
+        # is no target; asserting that as the whole contract is what made a sibling 42% flaky
+        # (#2185 review, round 4).
+        solver._mass_target = 0.3
+        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_factor = None
+        solver._time_step_counter = 0
+        pinned = solver._normalize_density(M_array, dx, use_backend=False)
+        assert float(geometry.integrate(pinned)) == pytest.approx(0.3, rel=1e-12)
+        solver._time_step_counter = 1
+        carried = solver._normalize_density(M_array, dx, use_backend=False)
+        assert not np.allclose(carried, M_array), "later slices are carried, not left alone"
 
     def test_normalize_density_all(self):
         """Test density normalization with ALL strategy."""
@@ -548,11 +516,32 @@ class TestFPParticleSolverHelperMethods:
 
         M_array = np.random.rand(Nx_points) * 2.0
 
-        # Should normalize at any time step
+        # This test used to assert `sum(normalized) * dx == 1`. That contract is gone (#2181): the
+        # helper no longer normalises to 1, it puts back the CALLER'S mass, and it measures with the
+        # geometry rather than `sum * dx` -- the rectangle rule is not the mass on an
+        # endpoint-inclusive grid (#2145). Two consequences, and both are asserted because the first
+        # alone would pass on a helper that did nothing at all.
+        #
+        # Outside a solve there is no target, so the helper is a no-op. That is deliberate: the
+        # alternative is inventing a target of 1, which is the behaviour this change removes.
+        assert solver._mass_target is None, "no solve has run, so there is nothing to scale to"
+        for t in [0, 1, 5, 10]:
+            solver._time_step_counter = t
+            assert np.allclose(solver._normalize_density(M_array, dx, use_backend=False), M_array)
+
+        # Inside a solve, ALL pins every slice to the target on the geometry's measure. Set the state
+        # `solve_fp_system` sets, rather than running a solve, because this is a helper test.
+        solver._mass_target = 0.3
+        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_factor = None
         for t in [0, 1, 5, 10]:
             solver._time_step_counter = t
             normalized = solver._normalize_density(M_array, dx, use_backend=False)
-            assert np.isclose(np.sum(normalized * dx), 1.0, rtol=0.1)
+            assert float(geometry.integrate(normalized)) == pytest.approx(0.3, rel=1e-12)
+            assert not np.isclose(np.sum(normalized * dx), 0.3, rtol=1e-6), (
+                "the rectangle sum must NOT also be 0.3 -- if it is, the measure is the cell-centred "
+                "one again and #2145 has been reverted here"
+            )
 
 
 class TestFPParticleSolverCallableDrift:

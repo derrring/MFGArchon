@@ -212,9 +212,19 @@ class TestParticleGPUPipeline:
         assert absorbed["no_flux"] == 0
 
         # Positive control that the BC object reaches the torch path at all: wrapping the domain
-        # must produce a different density from reflecting it. Measured max difference 0.147 on
-        # torch (0.144 on numpy); 0.01 is ~15x below that.
-        assert np.max(np.abs(densities["periodic"] - densities["no_flux"])) > 0.01, (
+        # must produce a different density from reflecting it.
+        #
+        # The bound is ABSOLUTE in the density, so it scales with the caller's mass (#2181). This
+        # fixture is `ones(41)/41`, mass 0.024390 on the grid measure, and the solver now returns it
+        # at that mass instead of at 1 -- so the measured difference moves 0.147 -> 0.00364 and the
+        # old 0.01 rejects a correct solver. Rescaled by the same factor: 0.01 * 0.024390 = 2.44e-4,
+        # which keeps the ~15x margin the original claimed.
+        #
+        # This file is `optional_torch`-marked and EVERY marker set deselects it -- ci_markers.txt,
+        # ci.yml, nightly.yml, python-compat.yml -- so `./scripts/local_ci.sh` reported Passed while
+        # this was red. torch is installed here; it is deselected, not skipped for cause. Found by
+        # independent review of PR #2185, after my own sweep used the wrong population twice.
+        assert np.max(np.abs(densities["periodic"] - densities["no_flux"])) > 2.44e-4, (
             "periodic and no-flux are indistinguishable; BC dispatch is not live on this backend"
         )
 

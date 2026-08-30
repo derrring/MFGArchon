@@ -180,9 +180,17 @@ KNOWN_NOT_HONOURED = {
 # reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
     # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
-    # converge. Three converge and three are already at round-off (see above). The one entry that
-    # used to sit here, FPGFDMSolver, never produced a number to converge at all; it has since
-    # stopped declaring PERIODIC (#1822), so this file no longer asks it about periodicity.
+    # converge. The one entry that used to sit here, FPGFDMSolver, never produced a number to
+    # converge at all; it has since stopped declaring PERIODIC (#1822).
+    #
+    # An entry for FPParticleSolver was added and removed inside PR #2185, on a defect that did not
+    # exist. The row had gone red because that branch's INITIAL_ONLY pinned t=0 AND t=1 -- the
+    # carried factor was calibrated after the pin instead of at it -- which re-based the drift on
+    # t=1 and deleted the KDE transient the oracle measures. I read the resulting 8.8e-03 / 9.3e-03
+    # as a solver leak and wrote that this row had "certified nothing" on main, three lines below
+    # the table at :164 recording FPParticleSolver at 5.480e-02 / 3.429e-02, ratio 0.626,
+    # CONVERGES -- and not in the EARLY RETURN group. `strict=True` meant the entry would have
+    # turned red on anyone who fixed the real cause. Found by round 5 of that PR's review.
 }
 
 

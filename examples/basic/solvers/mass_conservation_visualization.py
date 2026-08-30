@@ -60,7 +60,13 @@ def main():
     fp_solver = FPParticleSolver(
         problem,
         num_particles=500,  # Reduced from 1000
-        kde_normalization="all",
+        # NOT "all" (#2181), and this example is the reason the distinction matters. ALL pins every
+        # slice to the caller's mass on the grid's own measure -- the same functional this script
+        # plots -- so the curve below would be a flat line at round-off whatever the solver did.
+        # A mass-conservation visualisation drawing conservation by fiat teaches the opposite of
+        # what it exists to show. NONE is the default; naming it here is documentation, not a
+        # change in behaviour.
+        kde_normalization="none",
         boundary_conditions=bc,
     )
     hjb_solver = HJBFDMSolver(problem)

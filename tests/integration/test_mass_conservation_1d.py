@@ -92,7 +92,7 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=5000,
-            kde_normalization=KDENormalization.INITIAL_ONLY,
+            kde_normalization=KDENormalization.NONE,
             boundary_conditions=boundary_conditions,
         )
 
@@ -142,7 +142,7 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=5000,
-            kde_normalization=KDENormalization.INITIAL_ONLY,
+            kde_normalization=KDENormalization.NONE,
             boundary_conditions=boundary_conditions,
         )
 
@@ -255,7 +255,13 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=num_particles,
-            kde_normalization="all",
+            # NOT "all" (#2181): ALL pins every slice to the caller's mass on the grid
+            # measure -- the same functional `compute_total_mass` uses below -- so the drift
+            # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
+            # fail. Measured. NONE carries one factor calibrated on the first slice, so the
+            # reconstruction's own drift stays in the number. NOTE it is NOT a measure of particle
+            # loss -- the KDE is blind to that (#2188); it is the reconstruction's drift.
+            kde_normalization="none",
             boundary_conditions=boundary_conditions,
         )
 
@@ -275,11 +281,18 @@ class TestMassConservation1D:
         grid = problem.geometry
         Nt_points = problem.Nt + 1
         masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)])
-        max_error = np.max(np.abs(masses - 1.0))
+        # #2181: drift from the INITIAL mass, not deviation from 1. These two lines read
+        # `max|masses - 1.0|` until the particle solver stopped returning mass 1 whatever went in --
+        # a particle method carries no mass, so the KDE reconstruction came back at 1 regardless and
+        # this assertion was pinning the representation's loss. This fixture's density integrates to
+        # 0.546 on the grid measure, so the old form now reads about 0.454 and fails a correct
+        # solver. A ratio is what "conservation" means and is invariant to the caller's choice of
+        # initial mass, which #1887 made the caller's to make.
+        max_error = float(np.max(np.abs(masses / masses[0] - 1.0)))
 
-        print(f"\nParticles: {num_particles}, Max mass error: {max_error:.6e}")
+        print(f"\nParticles: {num_particles}, initial mass {masses[0]:.6f}, max drift: {max_error:.6e}")
 
-        assert max_error < 0.1, f"Mass error too large with {num_particles} particles"
+        assert max_error < 0.1, f"Mass drift too large with {num_particles} particles: {max_error:.6e}"
 
     @pytest.mark.slow
     def test_mass_conservation_different_initial_conditions(self, boundary_conditions):
@@ -318,7 +331,13 @@ class TestMassConservation1D:
             fp_solver = FPParticleSolver(
                 problem,
                 num_particles=5000,
-                kde_normalization="all",
+                # NOT "all" (#2181): ALL pins every slice to the caller's mass on the grid
+                # measure -- the same functional `compute_total_mass` uses below -- so the drift
+                # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
+                # fail. Measured. NONE carries one factor calibrated on the first slice, so the
+                # reconstruction's own drift stays in the number. NOTE it is NOT a measure of
+                # particle loss -- the KDE is blind to that (#2188); it is reconstruction drift.
+                kde_normalization="none",
                 boundary_conditions=boundary_conditions,
             )
             hjb_solver = HJBFDMSolver(problem)
@@ -336,10 +355,11 @@ class TestMassConservation1D:
 
             grid = problem.geometry
             Nt_points = problem.Nt + 1
-            masses = [compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)]
-            max_error = np.max(np.abs(np.array(masses) - 1.0))
+            masses = np.array([compute_total_mass(result.M[t, :], grid) for t in range(Nt_points)])
+            # See the note above: drift from the initial mass, not deviation from 1 (#2181).
+            max_error = float(np.max(np.abs(masses / masses[0] - 1.0)))
 
-            print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max error = {max_error:.6e}")
+            print(f"\n{name}: Initial mass = {masses[0]:.6f}, Max drift = {max_error:.6e}")
 
             assert max_error < 0.1, f"Mass conservation failed for {name}: {max_error:.6e}"
 

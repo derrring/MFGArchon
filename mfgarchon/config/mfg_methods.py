@@ -335,8 +335,9 @@ class ParticleConfig(BaseConfig):
         Number of particles to sample (default: 5000)
     kde_bandwidth : float | Literal["auto"]
         KDE bandwidth parameter (default: auto)
-    normalization : Literal["none", "initial_only", "all"]
-        Density normalization strategy (default: initial_only)
+    normalization : Literal["none", "all"]
+        Density normalization strategy (default: none). INITIAL_ONLY was removed in #2181;
+        passing it now raises. See KDENormalization for what the two remaining members mean.
     mode : Literal["hybrid", "collocation"]
         Particle mode (default: hybrid):
         - hybrid: Sample particles, output to grid via KDE
@@ -348,7 +349,7 @@ class ParticleConfig(BaseConfig):
 
     num_particles: int = Field(default=5000, gt=0)
     kde_bandwidth: float | Literal["auto"] = "auto"
-    normalization: Literal["none", "initial_only", "all"] = "initial_only"
+    normalization: Literal["none", "all"] = "none"  # INITIAL_ONLY removed, #2181
     mode: Literal["hybrid", "collocation"] = "hybrid"
     external_particles: Any = Field(default=None, exclude=True)
 
