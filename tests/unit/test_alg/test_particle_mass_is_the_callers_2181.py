@@ -87,7 +87,7 @@ def _grid(n: int = 21) -> TensorProductGrid:
 def test_a_sub_probability_density_keeps_its_mass(mode: KDENormalization):
     """All three modes, because `NONE` is the one that surprises.
 
-    Mutation: replace `_restore_caller_scale` with the identity and every row reads 1.000000 against
+    Mutation: replace `_to_caller_mass` with the identity and every row reads 1.000000 against
     a target of 0.300000 -- including this parametrisation's `NONE`, where nothing normalises
     anything. (The scaling used to live in `solve_fp_system`; it moved to the reconstruction sites
     when review showed the exit was the wrong place.)

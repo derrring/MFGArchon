@@ -208,7 +208,7 @@ class FPParticleSolver(BaseFPSolver):
         if isinstance(kde_normalization, str):
             kde_normalization = KDENormalization(kde_normalization)
         self.kde_normalization = kde_normalization
-        # Set per solve by `solve_fp_system`, read by `_restore_caller_scale` (#2181). On the
+        # Set per solve by `solve_fp_system`, read by `_to_caller_mass` (#2181). On the
         # instance rather than threaded through six call sites, because every reconstruction site
         # needs it and none of them has the caller's `M_initial` in scope.
         self._mass_target: float | None = None
@@ -786,7 +786,10 @@ class FPParticleSolver(BaseFPSolver):
 
     def _normalize_density(self, M_array, Dx: float, use_backend: bool = False):
         """
-        Normalize density to unit mass.
+        Put the caller's mass on one reconstructed slice; see `_to_caller_mass` (#2181).
+
+        Named "normalize" for its callers' sake. It does not normalise to 1 and has not since #2181;
+        `Dx` is retained for signature compatibility and unused -- the measure is the geometry's.
 
         Backend-agnostic helper to reduce code duplication between CPU and GPU pipelines.
         Respects kde_normalization strategy: NONE, INITIAL_ONLY, or ALL.
@@ -1363,7 +1366,19 @@ class FPParticleSolver(BaseFPSolver):
             return density
         if self._should_normalize_density():
             mass = self._measure(density, use_backend)
-            return density if mass is None else density * (self._mass_target / mass)
+            if mass is None:
+                return density
+            # Record the factor even though this slice is pinned. Without this line INITIAL_ONLY
+            # pins t=0, returns, and then calibrates the carried factor on t=1 -- so slices 0 AND 1
+            # both come out at the target and the t=0 -> t=1 step is deleted from the report. That
+            # is where the KDE transient lives (1.000000 -> 1.047732 on the periodic fixture, 4.8%),
+            # and erasing it re-bases every later drift on t=1. Measured cost of the omission: the
+            # periodic convergence oracle went from ratio 0.626 (passing, as on main) to 1.058
+            # (failing), which I then filed as a solver defect -- #2186, closed as invalid. Found by
+            # round 5 of the PR #2185 review.
+            if self._mass_factor is None:
+                self._mass_factor = self._mass_target / mass
+            return density * (self._mass_target / mass)
         if self._mass_factor is None:
             mass = self._measure(density, use_backend)
             if mass is None:
@@ -1433,7 +1448,7 @@ class FPParticleSolver(BaseFPSolver):
         Independent adversarial review of PR #2185 blocked it for this.
 
         The scale is therefore restored at each reconstruction, before the density reaches the drift,
-        by `_restore_caller_scale`. It is ONE factor, calibrated on the first KDE output of the solve
+        by `_to_caller_mass`. It is ONE factor, calibrated on the first KDE output of the solve
         and reused: recomputing it per slice would be normalisation, and would erase the KDE's own
         drift so that NONE, INITIAL_ONLY and ALL became identical again -- at the caller's mass
         instead of at 1, which is the same defect wearing a better number.
@@ -1476,6 +1491,16 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_target = self._caller_mass(M_initial)
         self._mass_weights = self._quadrature_weights() if self._mass_target is not None else None
         self._mass_factor = None  # calibrated on the first KDE reconstruction of THIS solve
+        # Reset here rather than in the implementation: the callable-drift path returns before the
+        # reset that lives there, so a reused solver carried its counter across solves and
+        # INITIAL_ONLY degenerated to NONE from the second Picard iteration on. That was latent
+        # while ALL was the default (ALL ignores the counter); making INITIAL_ONLY the default made
+        # it decide the branch. Measured: identical inputs and seed, only the pre-existing counter
+        # differing, gave histories differing by 1.576e-03 -- so `solve_fp_system` was not a
+        # function of its arguments. A Picard loop reuses one instance, and 131 of 368 call sites
+        # pass a callable drift. Round 5 of the PR #2185 review; round 3 saw it and called it
+        # latent.
+        self._time_step_counter = 0
         M = self._solve_fp_system_unscaled(
             M_initial=M_initial,
             drift_field=drift_field,
@@ -2112,9 +2137,11 @@ class FPParticleSolver(BaseFPSolver):
 
     def _normalize_density_nd(self, density: np.ndarray, spacings: list[float]) -> np.ndarray:
         """
-        Normalize density to integrate to 1 for nD grids.
+        Put the caller's mass on one reconstructed nD slice; see `_to_caller_mass` (#2181).
 
-        Delegates to unified normalize_density() from fp_particle_density module.
+        It does not normalise to 1, and it no longer delegates to `fp_particle_density`: that helper
+        measured `sum(m) * prod(spacings)`, the rectangle rule, which is not the mass on an
+        endpoint-inclusive grid (#2145). `spacings` is retained for signature compatibility.
 
         Args:
             density: Density array, shape (N1, N2, ..., Nd)

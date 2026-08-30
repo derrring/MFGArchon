@@ -179,18 +179,18 @@ KNOWN_NOT_HONOURED = {
 # saying out loud: three green rows here now assert nothing, and a green row that measured nothing
 # reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # No longer empty. The entry that used to sit here, FPGFDMSolver, never produced a number to
+    # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
+    # converge. The one entry that used to sit here, FPGFDMSolver, never produced a number to
     # converge at all; it has since stopped declaring PERIODIC (#1822).
     #
-    # FPParticleSolver is the first real one, and it was hidden by the early return above rather
-    # than by anything about the solver. Until #2181 the default `kde_normalization=ALL`
-    # renormalised every slice, so this row measured 3.331e-16, took the `drifts[0] < 1e-12`
-    # branch, and certified nothing -- exactly the case that branch's own comment describes and
-    # this file's line 179 warns about. With the default at INITIAL_ONLY the number gets through:
-    # 8.817e-03 at Nx=21 against 9.331e-03 at Nx=41, and flat at ~1e-2 across N = 500 to 32000, so
-    # it converges in neither the grid spacing nor the particle count. A fixed fraction lost per
-    # step is what this test's docstring calls a defect.
-    "FPParticleSolver": ("#2186", AssertionError),
+    # An entry for FPParticleSolver was added and removed inside PR #2185, on a defect that did not
+    # exist. The row had gone red because that branch's INITIAL_ONLY pinned t=0 AND t=1 -- the
+    # carried factor was calibrated after the pin instead of at it -- which re-based the drift on
+    # t=1 and deleted the KDE transient the oracle measures. I read the resulting 8.8e-03 / 9.3e-03
+    # as a solver leak and wrote that this row had "certified nothing" on main, three lines below
+    # the table at :164 recording FPParticleSolver at 5.480e-02 / 3.429e-02, ratio 0.626,
+    # CONVERGES -- and not in the EARLY RETURN group. `strict=True` meant the entry would have
+    # turned red on anyone who fixed the real cause. Found by round 5 of that PR's review.
 }
 
 
