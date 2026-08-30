@@ -148,6 +148,10 @@ class MultiPopulationIterator:
 
         # Picard iteration
         converged = False
+        # Bound before the loop: a diverged HJB breaks out before the convergence block below
+        # assigns it (#1718), and an empty list is the honest value -- no sweep completed, so
+        # there is no per-population error to report.
+        errors: list[float] = []
         for iteration in range(max_iterations):
             M_old = [m.copy() for m in M]
 
@@ -194,18 +198,18 @@ class MultiPopulationIterator:
                 else:
                     U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
 
-                    # Issue #1718: check before the NEXT population is solved, not after the loop. Every
-                    # population's HJB is solved before any FP runs, so one population's NaN would reach
-                    # every other population's coupling source through `m_all` before anything noticed.
-                    # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
-                    # which is why the diverged one is published rather than a restored predecessor.
-                    diverged = diverged_value_function(
-                        U[k], U_terminal_k, site=f"MultiPopulationIterator[population {k}]", iteration=iteration
-                    )
-                    if diverged is not None:
-                        U[k] = diverged
-                        diverged_population = k
-                        break
+                # Issue #1718: check before the NEXT population is solved, not after the loop. Every
+                # population's HJB is solved before any FP runs, so one population's NaN would reach
+                # every other population's coupling source through `m_all` before anything noticed.
+                # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
+                # which is why the diverged one is published rather than a restored predecessor.
+                diverged = diverged_value_function(
+                    U[k], U_terminal_k, site=f"MultiPopulationIterator[population {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    U[k] = diverged
+                    diverged_population = k
+                    break
 
             if diverged_population is not None:
                 converged = False
