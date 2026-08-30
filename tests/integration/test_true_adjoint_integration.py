@@ -117,9 +117,14 @@ class TestTrueAdjointMFGSolve:
         # stronger than what stood here -- it pins #1887's contract rather than a constant.
         x = np.linspace(0.0, 1.0, result.M.shape[1])
         m0 = np.exp(-10 * (x - 0.5) ** 2)
-        # Measured max deviation exactly 0.0; atol 1e-15 on O(1) values leaves a hair of room
-        # for a reassociated normalisation without admitting a changed convention.
-        np.testing.assert_allclose(result.M[0], m0, rtol=0, atol=1e-15)
+        # assert_array_equal, not assert_allclose(atol=1e-15). The contract is that the density is
+        # returned UNTOUCHED, and measured it is bitwise identical, so exact equality is the
+        # assertion that actually states it -- the same form used for U[-1] six lines above, for
+        # the same "untouched" contract. An atol here would also have been quietly WEAKER than the
+        # normalised expectation it replaced: 1e-15 against values peaking at 1.0 admits a 1.83x
+        # larger relative perturbation than 1e-15 against the old target's peak of 1.822. There is
+        # no longer any normalisation to be reassociated, which is what that tolerance was for.
+        np.testing.assert_array_equal(result.M[0], m0)
 
     def test_mass_conservation(self, problem, solvers):
         """Density should conserve total mass under jacobian_transpose mode."""

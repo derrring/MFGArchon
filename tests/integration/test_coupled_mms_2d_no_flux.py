@@ -59,13 +59,23 @@ WHAT THIS STUDY CANNOT SEE
   leg measures discretization order and not the coupling direction analyzed above". Measured on THIS
   pair over the space-time box: ζm has RMS 1.26e-03 — 8.1% of the |∇u|²/2 term (1.55e-02) and 1.1%
   of the whole HJB residual (1.17e-01, dominated by -∂_t u at 1.03e-01). Against that, the
-  discretization error at the finest level is 0.41% relative in u and 6.6% in m. So a *model-side*
+  discretization error at the finest level is 0.41% relative in u and ~~6.6%~~ **0.735%** in m
+  [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2189 -- #2145 cut the m error tenfold and this
+  argument rests on its size, so the figure is restated rather than left standing. It does not
+  reverse the conclusion: 0.735% is still comparable to the 1.1% zeta-m share, so the study
+  still cannot resolve a model-side perturbation of zeta. u is unchanged (measured 0.406%). So a *model-side*
   perturbation of ζ is comparable to or smaller than the error already present, and this study
   cannot resolve it. That is a statement about resolution, not about the fixture: a *solver-side*
   error breaks it decisively, which is what the discrimination measurement below shows.
-- **It cannot resolve a coefficient error below ~10%.** Measured: a 5% error in the diffusion
-  coefficient (k = 1.05) or in the drift scale (lambda = 1.05) passes every assertion in this file.
-  Any order reported here is an order at that sensitivity, not a certificate below it.
+- **It cannot resolve a coefficient error below ~1.5% (diffusion) or ~5% (drift scale).**
+  ~~Measured: a 5% error in the diffusion coefficient (k = 1.05) or in the drift scale
+  (lambda = 1.05) passes every assertion in this file.~~ [SUPERSEDED 2026-08-31]
+  SUPERSEDED-BY: #2189. Both of those now FAIL, and on the m order rather than the u order:
+  k = 1.05 gives EOC(m) 0.606 / 0.636 and lambda = 1.05 gives 0.696 / 0.702, against a bound
+  of 0.70 -- while EOC(u) passes in both (0.915 / 0.909 and 0.868 / 0.827). Removing the
+  rectangle-rule error made em the sensitive column. The surviving floor is measured at the
+  order assertion below. Any order reported here is an order at that sensitivity, not a
+  certificate below it.
 - Only `FDM_UPWIND`. The pair is method-agnostic, but the LIBRARY mostly is not: measured at
   Nx=21 on this exact fixture, 2 of 8 solver pairings run at all.
 
@@ -288,15 +298,24 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     multiplying the constant would pass the EOC assertion. No mutant here exhibits that, so this is
     an unexercised guard and is labelled as one rather than sold as discrimination.
 
-    **The measured detection floor is between 5% and 10%.** A 5% error in either coefficient passes
-    the ENTIRE test (k = 1.05 and lambda = 1.05 both pass both assertions). That is a fact about
-    these resolutions, not about the fixture, and it belongs beside any order this test reports.
+    ~~**The measured detection floor is between 5% and 10%.** A 5% error in either coefficient
+    passes the ENTIRE test (k = 1.05 and lambda = 1.05 both pass both assertions).~~
+    [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2189. **Both of those now fail**, on the m order:
+    k = 1.05 gives EOC(m) 0.606 / 0.636 and lambda = 1.05 gives 0.696 / 0.702 against the 0.70
+    bound, while EOC(u) passes in both (0.915 / 0.909 and 0.868 / 0.827). The floor is now ~1.5%
+    in the diffusion coefficient -- k = 1.015 survives at 0.707 and k = 1.020 fails at 0.691 --
+    and ~5% in the drift scale, where lambda = 1.02 survives at 0.760 and lambda = 1.05 fails by
+    0.004. That is a fact about these resolutions, not about the fixture, and it belongs beside
+    any order this test reports.
 
     ~~`em` is weaker still: at k = 1.21 it moves only 3.383e-03 -> 3.487e-03 with EOC 0.956 / 0.945,
-    inside the band.~~ [SUPERSEDED 2026-08-31 by #2189] Those figures were measured before #2145 and
-    the em column above is stale throughout: em is now ~10x smaller (9.187e-04 / 5.434e-04 /
-    3.800e-04) and its EOC is 0.758 / 0.882. The eu tables are unaffected -- eu moved only in the
-    fourth digit (3.0125e-01 -> 3.0111e-01). The retracted sentence also had the conclusion
+    inside the band.~~ [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2189. Those figures were measured
+    before #2145 and the em column above is stale throughout: em is now ~10x smaller (9.187e-04 /
+    5.434e-04 / 3.800e-04) and its EOC is 0.758 / 0.882. The eu column moved only in the fourth
+    digit ON THE CLEAN ROW (3.0125e-01 -> 3.0111e-01); do not read that as "the eu tables are
+    unaffected", which is a generalisation from one row to ten and false for the mutant rows --
+    lambda = 1.50 moved in the second digit (5.4156e-01 -> 5.2801e-01, 2.5% relative). Their
+    pass/FAIL conclusions all still hold. The retracted sentence also had the conclusion
     backwards: em is now the STRONGER order column, reading 0.339 / 0.308 at k = 1.21 where it once
     read 0.956 / 0.945. See the measured table at the order assertion. No level bound is asserted
     on em.
@@ -323,12 +342,27 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     # The widening costs no kill, and that is measured, not assumed. Re-running the diffusion
     # family against the post-#2145 em (sigma mutated at CONSTRUCTION, source terms untouched):
     #
-    #     k       EOC m            old bound 0.80   new bound 0.70
-    #     1.00    0.758, 0.882     FAIL (spurious)  pass
-    #     1.10    0.495, 0.485     FAIL             FAIL
-    #     1.21    0.339, 0.308     FAIL             FAIL
+    #     mutant          EOC m          min      0.80   0.70
+    #     clean           0.758, 0.882   0.758    FAIL   pass    <- the old bound rejects CLEAN
+    #     sigma k=1.015   0.707, 0.795   0.707    FAIL   pass    <- nearest survivor
+    #     sigma k=1.020   0.691, 0.768   0.691    FAIL   FAIL
+    #     sigma k=1.05    0.606, 0.636   0.606    FAIL   FAIL
+    #     sigma k=1.10    0.495, 0.485   0.485    FAIL   FAIL
+    #     sigma k=1.21    0.339, 0.308   0.308    FAIL   FAIL
+    #     lambda 1.02     0.760, 0.874   0.760    FAIL   pass    <- ABOVE clean
+    #     lambda 1.05     0.696, 0.702   0.696    FAIL   FAIL    <- nearest kill, by 0.004
     #
-    # The clean run sits at 0.758 and the nearest mutant at 0.495, so 0.70 falls in a wide gap.
+    # An earlier version of this comment measured only k = 1.00 / 1.10 / 1.21 and concluded "0.70
+    # falls in a wide gap". It does not. The gap between measured points is not measured, and the
+    # unsampled region is where the mutants are: the nearest survivor sits at 0.707 and the nearest
+    # kill at 0.696, so the live window is 0.011 wide, not 0.263.
+    #
+    # What actually justifies 0.70, and it is a weaker claim than the retracted one: the CLEAN run
+    # is at 0.758, so no admissible bound exists above it and the old 0.80 was not a discriminator
+    # at all -- it rejected the correct solution. Against the tightest admissible bound (~0.75),
+    # 0.70 costs the sigma mutants in 0.5%-1.5%, and buys 0.058 of headroom over clean. That trade
+    # is deliberate: with 0.058 of margin a platform whose EOC shifts by more re-reds this test in
+    # exactly the way #2189 is fixing, and every other assertion here has a floor above 1.5%.
     # This also corrects the docstring: em is no longer the weak column. Before #2145 a 21% error
     # left its EOC at 0.956 / 0.945, inside the band and killing nothing; it now reads 0.339 / 0.308.
     # Removing the rectangle-rule error turned em from an unexercised guard into a working one.
