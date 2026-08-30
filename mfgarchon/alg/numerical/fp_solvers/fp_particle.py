@@ -182,6 +182,12 @@ class FPParticleSolver(BaseFPSolver):
         if isinstance(kde_normalization, str):
             kde_normalization = KDENormalization(kde_normalization)
         self.kde_normalization = kde_normalization
+        # Set per solve by `solve_fp_system`, read by `_restore_caller_scale` (#2181). On the
+        # instance rather than threaded through six call sites, because every reconstruction site
+        # needs it and none of them has the caller's `M_initial` in scope.
+        self._mass_target: float | None = None
+        self._mass_weights: np.ndarray | None = None
+        self._mass_factor: float | None = None
         self.M_particles_trajectory: np.ndarray | None = None
         self._time_step_counter = 0  # Track current time step for normalization logic
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
@@ -811,16 +817,13 @@ class FPParticleSolver(BaseFPSolver):
         -------
         Normalized density array (same type as input)
         """
-        if not self._should_normalize_density():
-            return M_array  # Return raw density without normalization
-
-        # Compute total mass using helper
-        mass_val = self._compute_total_mass(M_array, Dx, use_backend)
-
-        if mass_val > 1e-9:
-            return M_array / mass_val
-        else:
-            return M_array * 0  # Return zeros
+        # Two separable jobs, and #2181 is the second one. `kde_normalization` decides whether the
+        # KDE's OWN mass drift is corrected; the caller's scale is restored either way, because a
+        # particle method carries no mass and NONE must not mean "the mass becomes 1".
+        if self._should_normalize_density():
+            mass_val = self._compute_total_mass(M_array, Dx, use_backend)
+            M_array = M_array / mass_val if mass_val > 1e-9 else M_array * 0
+        return self._restore_caller_scale(M_array, use_backend=use_backend)
 
     # =========================================================================
     # nD Helper Methods
@@ -1300,15 +1303,85 @@ class FPParticleSolver(BaseFPSolver):
                 )
                 raise RuntimeError(error_msg) from e
 
-        # Normalization step (conditional based on kde_normalization strategy)
+        # Normalization step: the KDE-drift correction is conditional, the caller's scale is not
+        # (#2181). This slice is handed to the drift callable, so the scale has to be right HERE and
+        # not on the returned history -- see `_restore_caller_scale`.
         if self._should_normalize_density():
             current_mass = self._compute_total_mass(m_density_estimated, Dx)
-            if current_mass > 1e-9:
-                return m_density_estimated / current_mass
-            else:
-                return np.zeros(Nx)
+            m_density_estimated = m_density_estimated / current_mass if current_mass > 1e-9 else np.zeros(Nx)
+        return self._restore_caller_scale(m_density_estimated)
+
+    def _quadrature_weights(self) -> np.ndarray | None:
+        """The geometry's own measure as an array, so one functional is used everywhere (#2145).
+
+        Built from the per-axis weights rather than from a spacing, because `sum(m) * dx` is the
+        rectangle rule and is not the mass on an endpoint-inclusive grid. Returned as an array so the
+        backend path can weight a tensor with the same numbers the CPU path uses -- an asymmetry here
+        would make the two conserve different quantities, which is the defect #2145 removed.
+        """
+        geom = getattr(self.problem, "geometry", None)
+        weights_fn = getattr(geom, "quadrature_weights", None)
+        if not callable(weights_fn):
+            return None
+        try:
+            axes = [np.asarray(weights_fn(d), dtype=float) for d in range(len(geom.get_grid_shape()))]
+        except (ValueError, NotImplementedError, AttributeError, TypeError):
+            return None
+        w = axes[0]
+        for a in axes[1:]:
+            w = np.multiply.outer(w, a)
+        return w
+
+    def _restore_caller_scale(self, density, use_backend: bool = False):
+        """Put the caller's mass back onto one reconstructed slice (#2181).
+
+        A particle method carries no mass: `sample_from_density` keeps the density's SHAPE, positions
+        have no scale, and the KDE reconstruction returns about 1 whatever went in. This is where the
+        scale is reintroduced, and it is done at EVERY reconstruction rather than to the history at
+        the end, for two reasons that are not stylistic:
+
+        - The drift callable is handed this density (`drift_needs_density=True` is the default). If
+          the scale is restored afterwards, the drift sees mass-1 dynamics and the answer is a scaled
+          solution to a different problem -- measured at 85-102% relative error against a reference
+          driven by the density the caller actually specified.
+        - The callable-drift path writes `M_density_on_grid[0] = M_initial.copy()`, so `M[0]` already
+          carries the caller's mass while `M[1:]` come from the KDE. A single scale calibrated on
+          `M[0]` is therefore exactly 1.0 there, and leaves a 3.33x discontinuity inside one history.
+
+        Both were found by independent adversarial review of PR #2185, which blocked the first
+        version of this fix for exactly this reason.
+        """
+        if self._mass_target is None:
+            return density
+        if self._mass_factor is not None:
+            # Calibrated once and reused. Recomputing it per slice would BE normalisation: it would
+            # pin every step to the target and erase the KDE's own drift, making NONE,
+            # INITIAL_ONLY and ALL identical again -- at the caller's mass instead of at 1, which is
+            # the same defect wearing a better number. Measured when I got this wrong: 1-D drift
+            # 2.22e-16 under NONE, where the honest figure is ~1e-2.
+            return density * self._mass_factor
+        w = self._mass_weights
+        if w is None:
+            return density
+        if use_backend and self.backend is not None:
+            xp = self.backend.array_module
+            # `w` is an ndarray of the grid's shape by construction -- `_quadrature_weights`
+            # returns `np.ndarray | None` and the None case returned above -- so no duck-typing
+            # guard here; a shape that does not match is a bug worth the raise.
+            mass = xp.sum(density * xp.asarray(w))
+            try:
+                mass = mass.item()
+            except AttributeError:
+                mass = float(mass)
         else:
-            return m_density_estimated  # Return raw KDE output on grid
+            arr = np.asarray(density, dtype=float)
+            if arr.shape != w.shape:
+                return density
+            mass = float((arr * w).sum())
+        if not np.isfinite(mass) or mass <= 1e-300:
+            return density
+        self._mass_factor = self._mass_target / mass
+        return density * self._mass_factor
 
     def _caller_mass(self, M_initial: np.ndarray | None) -> float | None:
         """The mass the caller handed in, on the GEOMETRY'S OWN measure (#2145).
@@ -1355,19 +1428,30 @@ class FPParticleSolver(BaseFPSolver):
         by a factor of 3.33 on the fixture above, and fatally for a multi-population share, which is
         carried by the density itself.
 
-        WHY A UNIFORM SCALE IS EXACT, not an approximation. Within one call the drift field is given,
-        so the Fokker-Planck step is linear in `m`; the solution for `c * m_0` is `c` times the
-        solution for `m_0`. Scaling the whole history by one constant is therefore the exact answer
-        for the scaled initial condition, and it is one owner rather than a correction repeated in
-        the 1-D, GPU, nD and callable-drift paths.
+        WHERE THE SCALE IS APPLIED, and why it is not the returned history. The first version of this
+        fix scaled `M` at the exit, on the argument that the FP step is linear in `m` so one constant
+        is exact. **That argument is false where the drift depends on the density**, and
+        `drift_needs_density` defaults to True: the drift callable is handed the reconstructed
+        density, so restoring the scale afterwards means the solver evolves mass-1 dynamics and the
+        answer is a scaled solution to a DIFFERENT problem -- measured at 85-102% relative error.
+        Independent adversarial review of PR #2185 blocked it for this.
+
+        The scale is therefore restored at each reconstruction, before the density reaches the drift,
+        by `_restore_caller_scale`. It is ONE factor, calibrated on the first KDE output of the solve
+        and reused: recomputing it per slice would be normalisation, and would erase the KDE's own
+        drift so that NONE, INITIAL_ONLY and ALL became identical again -- at the caller's mass
+        instead of at 1, which is the same defect wearing a better number.
+
+        `kde_normalization` keeps its own meaning and gains the one it should always have had: NONE
+        leaves the KDE's drift visible at the caller's scale, INITIAL_ONLY pins t=0, ALL pins every
+        step -- rather than all three meaning "the mass is 1".
 
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
-        the same functional the library reports (#2145). `kde_normalization` keeps its own meaning
-        and gains the one it should always have had: NONE leaves the KDE's own drift visible at the
-        caller's scale, INITIAL_ONLY pins t=0, ALL pins every step -- rather than all three meaning
-        "the mass is 1".
+        the same functional the library reports (#2145).
         """
-        target = self._caller_mass(M_initial)
+        self._mass_target = self._caller_mass(M_initial)
+        self._mass_weights = self._quadrature_weights() if self._mass_target is not None else None
+        self._mass_factor = None  # calibrated on the first KDE reconstruction of THIS solve
         M = self._solve_fp_system_unscaled(
             M_initial=M_initial,
             drift_field=drift_field,
@@ -1378,25 +1462,7 @@ class FPParticleSolver(BaseFPSolver):
             drift_needs_density=drift_needs_density,
             potential_field=potential_field,
         )
-        if target is None:
-            return M
-
-        # Two return types: a bare grid array, or an FPParticleResult carrying one in `M_grid`
-        # (#489). Scale the grid in place on the container rather than rebuilding it -- the particle
-        # history beside it is positions, which carry no mass and must not be touched.
-        grid = M.M_grid if isinstance(M, FPParticleResult) else M
-        if grid is None or len(grid) == 0:
-            return M
-        produced = self._caller_mass(grid[0])
-        if produced is None:
-            # The reconstruction has no measurable mass -- say nothing rather than scale by a number
-            # that is not one. Same refusal `_measure_initial_density` makes for the same reason.
-            return M
-        scaled = grid * (target / produced)
-        if isinstance(M, FPParticleResult):
-            M.M_grid = scaled
-            return M
-        return scaled
+        return M
 
     def _solve_fp_system_unscaled(
         self,
@@ -1914,9 +1980,8 @@ class FPParticleSolver(BaseFPSolver):
         # Estimate initial density using KDE
         M_density_on_grid[0] = self._estimate_density_from_particles_nd(init_particles, coordinates, bounds)
 
-        # Normalize if requested
-        if self.kde_normalization != KDENormalization.NONE:
-            M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings)
+        # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
+        M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings)
 
         self._increment_time_step()
 
@@ -2010,9 +2075,8 @@ class FPParticleSolver(BaseFPSolver):
             # Estimate density from particles
             M_density_on_grid[t_idx + 1] = self._estimate_density_from_particles_nd(new_particles, coordinates, bounds)
 
-            # Normalize if requested (respects kde_normalization strategy)
-            if self._should_normalize_density():
-                M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
+            # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked (#2181).
+            M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
 
             self._increment_time_step()
 
@@ -2035,7 +2099,11 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             Normalized density array
         """
-        return _normalize(density, spacings)
+        # As in `_normalize_density`: the KDE-drift correction is what `kde_normalization` controls,
+        # the caller's scale is restored regardless (#2181).
+        if self._should_normalize_density():
+            density = _normalize(density, spacings)
+        return self._restore_caller_scale(density)
 
     def _solve_fp_system_gpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """
@@ -2417,10 +2485,16 @@ class FPParticleSolver(BaseFPSolver):
         # Allocate density array (only used if density_mode != "query_only")
         M_density_on_grid = np.zeros((Nt + 1, *grid_shape))
         if M_initial is not None:
+            # The caller's own array, used as it stands. It is NOT passed through the scale
+            # restoration (which is calibrated on a KDE output, and this is not one), and NOT
+            # normalised either: there is no KDE error here to correct, so dividing by its own mass
+            # would be the rescale #1887 removed, reappearing one layer down. Feeding this slice to
+            # a single exit-scale is what made it read `produced == target` and leave `M[1:]` at
+            # mass 1 (#2185 review); normalising it is what made `M[0]` read 0.999999 under ALL.
+            #
+            # It matters beyond t=0: `m_at_particles` interpolates from `M_density_on_grid[t_idx]`,
+            # so this slice is the density the drift callable sees on the first step.
             M_density_on_grid[0] = M_initial.copy()
-            # Normalize initial if requested
-            if self._should_normalize_density():
-                M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings)
 
         # Progress bar
         from mfgarchon.utils.progress import create_progress_bar, should_show_progress
@@ -2574,9 +2648,8 @@ class FPParticleSolver(BaseFPSolver):
                     new_particles, coordinates, bounds
                 )
 
-                # Normalize if requested (respects kde_normalization strategy)
-                if self._should_normalize_density():
-                    M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
+                # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked.
+                M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
 
             self._increment_time_step()
 
