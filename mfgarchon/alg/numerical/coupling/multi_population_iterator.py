@@ -21,6 +21,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma
+from .fixed_point_utils import diverged_value_function
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -163,6 +164,9 @@ class MultiPopulationIterator:
             m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx)
 
             # Step 1: Solve K HJB equations
+            # `break` inside the loop below leaves only the population loop; this carries the stop
+            # out to the Picard loop (#1718).
+            diverged_population = None
             for k in range(K):
                 solver_k = self.hjb_solvers[k]
                 U_terminal_k = U[k][-1]
@@ -189,6 +193,23 @@ class MultiPopulationIterator:
                     )
                 else:
                     U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
+
+                    # Issue #1718: check before the NEXT population is solved, not after the loop. Every
+                    # population's HJB is solved before any FP runs, so one population's NaN would reach
+                    # every other population's coupling source through `m_all` before anything noticed.
+                    # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
+                    # which is why the diverged one is published rather than a restored predecessor.
+                    diverged = diverged_value_function(
+                        U[k], U_terminal_k, site=f"MultiPopulationIterator[population {k}]", iteration=iteration
+                    )
+                    if diverged is not None:
+                        U[k] = diverged
+                        diverged_population = k
+                        break
+
+            if diverged_population is not None:
+                converged = False
+                break
 
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
             # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population

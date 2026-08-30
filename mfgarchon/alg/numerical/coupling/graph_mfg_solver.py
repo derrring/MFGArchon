@@ -33,6 +33,8 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _problem_hjb_source_terms
 
+from .fixed_point_utils import diverged_value_function
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -211,6 +213,25 @@ class GraphMFGSolver(BaseCouplingIterator):
                     source_term=hjb_source,
                 )
                 Us_new[k] = U_k
+
+                # Issue #1718: check before the next node is solved. Every node's HJB runs before any
+                # FP, so one node's NaN would reach every other node through `compute_fp_source`
+                # before anything noticed, and the FP solver would then report a CFL condition for
+                # what is an HJB failure.
+                diverged = diverged_value_function(
+                    U_k, Us_full[k][-1], site=f"GraphMFGSolver[node {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    Us_new[k] = diverged
+                    self._last_result = GraphMFGResult(
+                        values=Us_new,
+                        densities=Ms,
+                        converged=False,
+                        iterations=iteration + 1,
+                        error_history=error_history,
+                        n_nodes=N,
+                    )
+                    return self._last_result
 
             # --- FP step: solve N forward equations with coupling ---
             for k in range(N):

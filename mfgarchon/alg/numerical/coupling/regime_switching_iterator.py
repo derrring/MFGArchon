@@ -36,6 +36,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_paired_solver_sigma,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    diverged_value_function,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
@@ -450,6 +451,24 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     source_term=hjb_source,
                 )
                 Us_new[k] = U_k
+
+                # Issue #1718: every regime's HJB is solved before any FP runs, and `_make_fp_source`
+                # below reads the whole `Us_new` list, so one regime's NaN would reach every other
+                # regime's mass-transfer source before the FP solver failed and blamed its own CFL.
+                diverged = diverged_value_function(
+                    U_k, Us_full[k][-1], site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    Us_new[k] = diverged
+                    self._last_result = RegimeSwitchingResult(
+                        values=Us_new,
+                        densities=Ms,
+                        converged=False,
+                        iterations=iteration + 1,
+                        error_history=error_history,
+                        regime_config=self._regime,
+                    )
+                    return self._last_result
 
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):

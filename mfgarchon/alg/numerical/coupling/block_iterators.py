@@ -45,10 +45,12 @@ from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, asse
 from .fixed_point_utils import (
     apply_damping,
     check_convergence_criteria,
+    diverged_value_function,
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
     resolve_fp_drift_kwargs,
+    value_function_is_finite,
 )
 
 if TYPE_CHECKING:
@@ -452,6 +454,13 @@ class BlockIterator(BaseCouplingIterator):
         """
         # Both solves use OLD values (can be parallelized)
         U_new = self._solve_hjb(M_old, U_terminal, U_old)
+
+        # Issue #1718: do not hand a non-finite U to FP. It would compose a drift from NaN and
+        # raise "Check CFL condition" -- an FP diagnostic, with actively wrong advice, for an
+        # HJB failure. Only the predicate is asked here; the publishing and the stop belong to
+        # the loop that owns them, and are done there.
+        if not value_function_is_finite(U_new):
+            return U_new, M_old
         M_new = self._solve_fp(M_initial, U_old, M_current=M_old)  # Uses U_old, not U_new
 
         return U_new, M_new
@@ -566,6 +575,19 @@ class BlockIterator(BaseCouplingIterator):
 
             # Perform block iteration step
             U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)
+
+            # Issue #1718: publish the diverged iterate and stop. The Gauss-Seidel step above has
+            # already declined to run FP on it, so `M_new` is the previous density -- which would
+            # otherwise read as zero change and satisfy the convergence test below.
+            diverged = diverged_value_function(
+                U_new, self._U_terminal, site=f"BlockIterator[{method_name}]", iteration=iiter
+            )
+            if diverged is not None:
+                self.U = diverged
+                converged = False
+                convergence_reason = "diverged_nan"
+                self.iterations_run = iiter + 1
+                break
 
             # Apply damping - Issue #719: Per-variable damping
             # Note: apply_damping expects (new, old) order, not (old, new)

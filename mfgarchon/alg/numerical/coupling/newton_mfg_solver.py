@@ -37,6 +37,7 @@ from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
+from .fixed_point_utils import diverged_value_function
 from .mfg_residual import MFGResidual
 
 if TYPE_CHECKING:
@@ -203,6 +204,20 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             # HJB solve: U_new = HJB(M_old)
             U_new = self.mfg_residual.compute_hjb_output(M_old, U_old)
+
+            # Issue #1718: compute_fp_output below builds its drift from U_new, so a non-finite
+            # U_new makes the FP solver raise a CFL diagnostic for an HJB failure. The warmup
+            # stops and hands back what it has; the residual history it returns is the record of
+            # how far it got. `U_terminal` is optional on MFGResidual, which the owner handles.
+            diverged = diverged_value_function(
+                U_new,
+                self.mfg_residual.U_terminal,
+                site="NewtonMFGSolver._run_picard_warmup",
+                iteration=i,
+            )
+            if diverged is not None:
+                U = diverged
+                break
 
             # FP solve: M_new = FP(U_new)
             M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
