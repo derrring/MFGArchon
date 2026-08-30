@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 6740,
-    "commit": "49ea0fa2",
+    "collected": 6750,
+    "commit": "946f64ee",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -66,7 +66,7 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 53,
+      "kill_count": 52,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
@@ -91,13 +91,13 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 40,
+      "kill_count": 39,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
       "status": "ok"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 6,
-      "owner": "The particle FP step measures total mass as `sum(density) * dV` with dV the grid volume element, and the KDE normalisation divides by it so the density on the grid integrates to 1 (`FPParticleSolver._compute_total_mass`, the scalar-spacing branch; consumed by `_normalize_density` at :823 and by the ",
+      "kill_count": 15,
+      "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
@@ -116,7 +116,7 @@
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 74,
+      "kill_count": 77,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
