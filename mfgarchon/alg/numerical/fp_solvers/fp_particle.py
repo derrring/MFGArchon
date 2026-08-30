@@ -1355,24 +1355,30 @@ class FPParticleSolver(BaseFPSolver):
             return density
         if self._mass_factor is not None:
             # Calibrated once and reused. Recomputing it per slice would BE normalisation: it would
-            # pin every step to the target and erase the KDE's own drift, making NONE,
-            # INITIAL_ONLY and ALL identical again -- at the caller's mass instead of at 1, which is
-            # the same defect wearing a better number. Measured when I got this wrong: 1-D drift
-            # 2.22e-16 under NONE, where the honest figure is ~1e-2.
+            # pin every step to the target and erase whatever drift the reconstruction has, which is
+            # the defect this change removes, wearing a better number. Measured when I got this
+            # wrong: the returned history was flat to 2.2e-16 where the honest figure is ~1.2e-2.
+            #
+            # That 2.2e-16 is also, coincidentally, the size of the real gap between ALL and NONE on
+            # the default KDE method -- see `solve_fp_system` -- so do not read it as evidence that
+            # the modes were separated.
             return density * self._mass_factor
         w = self._mass_weights
         if w is None:
             return density
         if use_backend and self.backend is not None:
-            xp = self.backend.array_module
-            # `w` is an ndarray of the grid's shape by construction -- `_quadrature_weights`
-            # returns `np.ndarray | None` and the None case returned above -- so no duck-typing
-            # guard here; a shape that does not match is a bug worth the raise.
-            mass = xp.sum(density * xp.asarray(w))
-            try:
-                mass = mass.item()
-            except AttributeError:
-                mass = float(mass)
+            # Measure on the HOST, not on the device. `torch.asarray(w)` on a numpy array builds a
+            # CPU tensor, and multiplying it by a density living on mps/cuda raises
+            # "Expected all tensors to be on the same device" -- measured on MPS float32, and it is
+            # the device this path exists for. The pre-existing `_compute_total_mass` sidesteps this
+            # by multiplying by a Python float and never by an array.
+            #
+            # One transfer per SOLVE, not per step: the factor is calibrated once and this branch is
+            # only reached while `self._mass_factor is None`.
+            arr = np.asarray(self.backend.to_numpy(density), dtype=float)
+            if arr.shape != w.shape:
+                return density
+            mass = float((arr * w).sum())
         else:
             arr = np.asarray(density, dtype=float)
             if arr.shape != w.shape:
@@ -1442,9 +1448,25 @@ class FPParticleSolver(BaseFPSolver):
         drift so that NONE, INITIAL_ONLY and ALL became identical again -- at the caller's mass
         instead of at 1, which is the same defect wearing a better number.
 
-        `kde_normalization` keeps its own meaning and gains the one it should always have had: NONE
-        leaves the KDE's drift visible at the caller's scale, INITIAL_ONLY pins t=0, ALL pins every
-        step -- rather than all three meaning "the mass is 1".
+        WHAT `kde_normalization` DOES AND DOES NOT MEAN, measured rather than asserted. Before this
+        change all three modes meant "the mass is 1", which is not what any of their names say. They
+        no longer do. But they are **not** thereby made distinguishable, and an earlier version of
+        this docstring claimed they were:
+
+            kde_method=reflection (DEFAULT)   max|ALL - NONE| = 2.2e-16   indistinguishable
+            kde_method=cic                    max|ALL - NONE| = 5.6e-16   indistinguishable
+            kde_method=standard               max|ALL - NONE| = 4.3e-02   separated
+
+        Reflection uses ghost particles and CIC is an exact deposition, so both reconstructions
+        already conserve and there is nothing for the normalisation to correct. Only `standard`,
+        which carries boundary bias, gives the three modes anything to differ about. So the enum is
+        honest again but mostly inert on the default path.
+
+        And ALL does not "pin every step" on the measure the library reports: `_compute_total_mass`
+        pins `sum(M) * dx`, the rectangle rule, so `geometry.integrate(M[t])` still drifts as the
+        profile changes shape. That is #2145's defect surviving inside this solver, pre-existing and
+        tracked separately; it is why the scale restoration measures with the geometry's own weights
+        and the drift correction does not.
 
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
@@ -2198,9 +2220,11 @@ class FPParticleSolver(BaseFPSolver):
             X_particles_gpu[0, :], x_grid_gpu, bandwidth_absolute, self.backend
         )
 
-        # Normalize based on strategy (use helper function)
-        if self.kde_normalization != KDENormalization.NONE:
-            M_density_gpu[0, :] = self._normalize_density(M_density_gpu[0, :], Dx, use_backend=True)
+        # Unconditional: the guard lives inside `_normalize_density` now, because the caller's scale
+        # must be restored even under NONE (#2181). These two GPU sites spell the guard differently
+        # from the CPU ones and were missed by the first sweep -- found by review of PR #2185, and
+        # the cost was a 3.63x CPU/GPU disagreement on exactly the quantity this change is about.
+        M_density_gpu[0, :] = self._normalize_density(M_density_gpu[0, :], Dx, use_backend=True)
 
         self._increment_time_step()  # Increment after computing density at t=0
 
@@ -2261,9 +2285,8 @@ class FPParticleSolver(BaseFPSolver):
                 X_particles_gpu[t + 1, :], x_grid_gpu, bandwidth_absolute, self.backend
             )
 
-            # Normalize based on strategy (use helper function)
-            if self.kde_normalization != KDENormalization.NONE:
-                M_density_gpu[t + 1, :] = self._normalize_density(M_density_gpu[t + 1, :], Dx, use_backend=True)
+            # Unconditional -- see the note at the t=0 site above.
+            M_density_gpu[t + 1, :] = self._normalize_density(M_density_gpu[t + 1, :], Dx, use_backend=True)
 
             self._increment_time_step()  # Increment after each time step
 

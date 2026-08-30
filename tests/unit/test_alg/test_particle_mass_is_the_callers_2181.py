@@ -81,8 +81,10 @@ def _grid(n: int = 21) -> TensorProductGrid:
 def test_a_sub_probability_density_keeps_its_mass(mode: KDENormalization):
     """All three modes, because `NONE` is the one that surprises.
 
-    Mutation: delete the scaling in `solve_fp_system` and every row reads 1.000000 against a target
-    of 0.300000 -- including this parametrisation's `NONE`, where nothing normalises anything.
+    Mutation: replace `_restore_caller_scale` with the identity and every row reads 1.000000 against
+    a target of 0.300000 -- including this parametrisation's `NONE`, where nothing normalises
+    anything. (The scaling used to live in `solve_fp_system`; it moved to the reconstruction sites
+    when review showed the exit was the wrong place.)
     """
     grid = _grid()
     problem = _problem(grid, centre=0.5, share=0.3)
@@ -113,6 +115,48 @@ def test_a_unit_density_is_snapped_to_exactly_one():
     problem = _problem(grid, centre=0.5, share=1.0)
     M = FPParticleSolver(problem, num_particles=2000).solve_fp_system(np.asarray(problem.m_initial, dtype=float))
     assert float(grid.integrate(M[0])) == pytest.approx(1.0, rel=1e-12)
+
+
+def test_a_later_slice_carries_the_mass_too():
+    """The load-bearing property, and the one every other test here misses.
+
+    The factor is calibrated ONCE per solve and reused for every later slice. Every other assertion
+    in this file is on `M[0]`, which proves nothing about that: on the callable-drift path `M[0]` is
+    the caller's own array and the factor is calibrated on `M[1]`, so `M[0]` would be right even if
+    the reuse were broken. Review of PR #2185 named this gap.
+
+    The bound is drift, not equality: the reconstruction has its own error and pinning `M[t]` to the
+    target exactly would be the per-slice renormalisation this design rejects. Measured across five
+    seeds on this fixture: 0.0098 to 0.0146, so 5e-2 is ~3.4x above the observed spread while a lost
+    factor lands at 1/0.3 - 1 = 2.33, two orders up.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=0.3)
+    M = FPParticleSolver(problem, num_particles=2000, seed=7).solve_fp_system(
+        np.asarray(problem.m_initial, dtype=float)
+    )
+    masses = np.array([float(grid.integrate(M[t])) for t in range(M.shape[0])])
+    assert masses.shape[0] > 1, "a one-slice history cannot test reuse"
+    assert np.max(np.abs(masses[1:] / 0.3 - 1.0)) < 5e-2, f"later slices drifted from the caller's mass: {masses}"
+
+
+def test_the_callable_drift_path_calibrates_on_a_KDE_slice_not_the_input():
+    """The path where `M[0]` is the caller's array, so the factor comes from `M[1]`.
+
+    This is the configuration that broke the first design: `M_density_on_grid[0] = M_initial.copy()`
+    made a single exit-calibrated factor read exactly 1.0, leaving `M[1:]` at mass 1 -- 0.300000
+    followed by 0.999790 inside one returned history. Both ends are asserted, because asserting only
+    `M[0]` is what let that pass.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=0.3)
+    M = FPParticleSolver(problem, num_particles=2000, seed=7).solve_fp_system(
+        np.asarray(problem.m_initial, dtype=float),
+        drift_field=lambda t, x, m: np.zeros_like(np.atleast_1d(x)),
+    )
+    masses = np.array([float(grid.integrate(M[t])) for t in range(M.shape[0])])
+    assert masses[0] == pytest.approx(0.3, rel=1e-12)
+    assert np.max(np.abs(masses[1:] / 0.3 - 1.0)) < 5e-2, f"the callable-drift path lost the mass after t=0: {masses}"
 
 
 def test_two_populations_keep_their_shares():
