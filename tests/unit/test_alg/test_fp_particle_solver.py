@@ -63,7 +63,10 @@ class TestFPParticleSolverInitialization:
         assert solver.fp_method_name == "Particle"
         assert solver.num_particles == 5000
         assert solver.kde_bandwidth == "scott"
-        assert solver.kde_normalization == KDENormalization.ALL
+        # INITIAL_ONLY since #2181: pinning every slice makes SolverResult.mass_conservation_error
+        # identically 4.4e-16 -- conservation by fiat, the shape #1683 removed from the FDM, GFDM and
+        # network FP paths, and this solver was the campaign's last instance.
+        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
         # Default BC comes from geometry (TensorProductGrid), which is "no_flux"
         assert solver.boundary_conditions.type == "no_flux"
 

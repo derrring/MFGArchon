@@ -179,10 +179,18 @@ KNOWN_NOT_HONOURED = {
 # saying out loud: three green rows here now assert nothing, and a green row that measured nothing
 # reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
-    # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
-    # converge. Three converge and three are already at round-off (see above). The one entry that
-    # used to sit here, FPGFDMSolver, never produced a number to converge at all; it has since
-    # stopped declaring PERIODIC (#1822), so this file no longer asks it about periodicity.
+    # No longer empty. The entry that used to sit here, FPGFDMSolver, never produced a number to
+    # converge at all; it has since stopped declaring PERIODIC (#1822).
+    #
+    # FPParticleSolver is the first real one, and it was hidden by the early return above rather
+    # than by anything about the solver. Until #2181 the default `kde_normalization=ALL`
+    # renormalised every slice, so this row measured 3.331e-16, took the `drifts[0] < 1e-12`
+    # branch, and certified nothing -- exactly the case that branch's own comment describes and
+    # this file's line 179 warns about. With the default at INITIAL_ONLY the number gets through:
+    # 8.817e-03 at Nx=21 against 9.331e-03 at Nx=41, and flat at ~1e-2 across N = 500 to 32000, so
+    # it converges in neither the grid spacing nor the particle count. A fixed fraction lost per
+    # step is what this test's docstring calls a defect.
+    "FPParticleSolver": ("#2186", AssertionError),
 }
 
 
