@@ -42,38 +42,35 @@ logger = get_logger(__name__)
 
 
 class KDENormalization(StrEnum):
-    """How the caller's mass is put back onto each reconstructed slice.
+    """Whether the reconstruction's own mass drift is corrected. Two members, not three.
 
-    A particle method carries no mass -- positions have no scale -- so the mass is reintroduced at
-    every reconstruction (#2181). This chooses HOW, per slice:
+    A particle method carries no mass -- positions have no scale -- so the caller's mass is
+    reintroduced at every reconstruction (#2181), always. This chooses only whether the
+    reconstruction's per-step drift is ALSO corrected:
 
-    - ``NONE`` -- multiply by one factor calibrated on the first slice. The reconstruction's own
-      drift stays visible.
-    - ``INITIAL_ONLY`` -- pin t=0 to the caller's mass exactly, then carry the same factor. **The
-      default.**
-    - ``ALL`` -- pin every slice. Mass conservation then holds BY FIAT rather than by the scheme.
+    - ``NONE`` -- multiply every slice by one factor, calibrated on the first. The reconstruction's
+      own drift stays visible. **The default.**
+    - ``ALL`` -- pin every slice to the caller's mass. Conservation then holds BY FIAT.
 
-    **Why ALL is no longer the default.** Since #2181 every slice is measured on the geometry's own
-    measure -- the same functional `SolverResult.mass_conservation_error` reports -- so pinning every
-    slice makes that diagnostic identically zero. Measured on a 21-point grid, 2000 particles:
+    **`INITIAL_ONLY` was removed (#2181) because it could not mean anything.** It promised "correct
+    at t=0, then carry" -- but at t=0 there is no accumulated drift to correct, and pinning the
+    calibration slice IS calibrating on it. The two operations are the same arithmetic, so
+    `INITIAL_ONLY` was bitwise identical to `NONE`: measured `np.array_equal` True on reflection,
+    cic and standard, against a control `|ALL - NONE|` of 8.0e-03, 7.7e-03 and 4.3e-02. It appeared
+    to differ only while a defect calibrated the factor one slice late, which deleted the t=0 -> t=1
+    KDE transient from every report.
 
-        ALL           4.441e-16      the renormalisation's property, not the transport's
-        INITIAL_ONLY  1.235e-02
-        NONE          1.239e-02
-
-    A solver whose conservation report is a constant cannot tell a healthy solve from a broken one,
-    which is what #1683 removed from `fp_fdm`, `fp_gfdm` and `network_solvers/fp_network`. This
-    solver was that campaign's surviving instance, named as such in #2181; before #2181 the defect
-    was hidden because ALL pinned `sum(m)*dx` while the diagnostic measured the trapezoid, so the
-    two disagreed and the number looked alive.
-
-    ALL remains available and is the right choice when the KDE's own drift is the thing you do not
-    want; it is simply not a default anyone should get without asking.
+    **Why NONE is the default and ALL is not.** Since #2181 every slice is measured on the
+    geometry's own measure -- the same functional `SolverResult.mass_conservation_error` reports --
+    so pinning every slice makes that diagnostic identically round-off (2.2e-16 to 6.7e-16 across
+    grids and particle counts). A solver whose conservation report is a constant cannot tell a
+    healthy solve from a broken one, which is what #1683 removed from `fp_fdm`, `fp_gfdm` and
+    `network_solvers/fp_network`; this solver was that campaign's surviving instance. ALL remains
+    available and is the right choice when the reconstruction's drift is what you do not want.
     """
 
-    NONE = "none"  # No normalization (raw KDE output)
-    INITIAL_ONLY = "initial_only"  # Pin t=0, carry the rest (DEFAULT since #2181)
-    ALL = "all"  # Normalize at every time step -- FIAT conservation, see the class docstring
+    NONE = "none"  # One calibrated factor; the reconstruction's drift stays visible. DEFAULT.
+    ALL = "all"  # Pin every slice -- conservation by fiat, see the class docstring.
 
 
 class KDEMethod(StrEnum):
@@ -166,7 +163,7 @@ class FPParticleSolver(BaseFPSolver):
         problem: MFGProblem,
         num_particles: int = 5000,
         kde_bandwidth: Any = "scott",
-        kde_normalization: KDENormalization | str = KDENormalization.INITIAL_ONLY,
+        kde_normalization: KDENormalization | str = KDENormalization.NONE,
         kde_method: KDEMethod | str = KDEMethod.REFLECTION,
         kde_boundary_smoothing: bool = True,
         density_mode: Literal["grid_only", "hybrid", "query_only"] = "grid_only",
@@ -543,11 +540,9 @@ class FPParticleSolver(BaseFPSolver):
 
         Returns True if normalization should be applied for the current time step.
         """
-        if self.kde_normalization == KDENormalization.NONE:
-            return False
-        elif self.kde_normalization == KDENormalization.INITIAL_ONLY:
-            return self._time_step_counter == 0
-        return True  # KDENormalization.ALL
+        # Two members since #2181, so this is a single question. The time-step counter it used to
+        # consult is kept for the progress/diagnostic paths, not for this decision.
+        return self.kde_normalization == KDENormalization.ALL
 
     def _increment_time_step(self) -> None:
         """Increment time step counter for KDE normalization strategy tracking."""
@@ -792,7 +787,7 @@ class FPParticleSolver(BaseFPSolver):
         `Dx` is retained for signature compatibility and unused -- the measure is the geometry's.
 
         Backend-agnostic helper to reduce code duplication between CPU and GPU pipelines.
-        Respects kde_normalization strategy: NONE, INITIAL_ONLY, or ALL.
+        Respects the kde_normalization strategy: NONE or ALL.
 
         Parameters
         ----------

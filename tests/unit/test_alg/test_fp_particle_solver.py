@@ -63,10 +63,11 @@ class TestFPParticleSolverInitialization:
         assert solver.fp_method_name == "Particle"
         assert solver.num_particles == 5000
         assert solver.kde_bandwidth == "scott"
-        # INITIAL_ONLY since #2181: pinning every slice makes SolverResult.mass_conservation_error
-        # identically 4.4e-16 -- conservation by fiat, the shape #1683 removed from the FDM, GFDM and
-        # network FP paths, and this solver was the campaign's last instance.
-        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
+        # NONE since #2181. ALL pins every slice on the measure SolverResult.mass_conservation_error
+        # reports, making it identically round-off -- conservation by fiat, the shape #1683 removed
+        # from the FDM, GFDM and network FP paths. INITIAL_ONLY was removed in the same change: it
+        # was bitwise identical to NONE, because pinning the calibration slice IS calibrating on it.
+        assert solver.kde_normalization == KDENormalization.NONE
         # Default BC comes from geometry (TensorProductGrid), which is "no_flux"
         assert solver.boundary_conditions.type == "no_flux"
 
@@ -98,9 +99,9 @@ class TestFPParticleSolverInitialization:
         """Test initialization with initial-only KDE normalization."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
-        solver = FPParticleSolver(problem, kde_normalization=KDENormalization.INITIAL_ONLY)
+        solver = FPParticleSolver(problem, kde_normalization=KDENormalization.NONE)
 
-        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
+        assert solver.kde_normalization == KDENormalization.NONE
 
     def test_kde_normalization_all(self):
         """Test initialization with all-step KDE normalization."""
@@ -139,8 +140,8 @@ class TestFPParticleSolverInitialization:
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, components=_default_components())
 
-        solver = FPParticleSolver(problem, kde_normalization="initial_only")
-        assert solver.kde_normalization == KDENormalization.INITIAL_ONLY
+        solver = FPParticleSolver(problem, kde_normalization="none")
+        assert solver.kde_normalization == KDENormalization.NONE
 
     def test_custom_boundary_conditions(self):
         """Test initialization with custom boundary conditions."""
@@ -368,7 +369,7 @@ class TestFPParticleSolverIntegration:
 
         configs = [
             {"num_particles": 500, "kde_normalization": KDENormalization.NONE},
-            {"num_particles": 1000, "kde_normalization": KDENormalization.INITIAL_ONLY},
+            {"num_particles": 1000, "kde_normalization": KDENormalization.NONE},
             {"num_particles": 2000, "kde_normalization": KDENormalization.ALL, "kde_bandwidth": 0.1},
         ]
 
@@ -523,7 +524,7 @@ class TestFPParticleSolverHelperMethods:
         """Test density normalization with INITIAL_ONLY strategy."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.3, Nt=15, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.INITIAL_ONLY)
+        solver = FPParticleSolver(problem, num_particles=500, kde_normalization=KDENormalization.NONE)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
         dx = problem.geometry.get_grid_spacing()[0]

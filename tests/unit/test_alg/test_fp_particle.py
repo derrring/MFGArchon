@@ -144,7 +144,7 @@ class TestFPParticleSolverBasic:
         )
 
         # Later steps drift, and the tolerance is measured rather than chosen. Four unseeded runs of
-        # this 1000-particle fixture under the default INITIAL_ONLY: 1.11e-03, 2.07e-03, 2.55e-03,
+        # this 1000-particle fixture under the default NONE: 1.11e-03, 2.07e-03, 2.55e-03,
         # 3.52e-03. 1e-2 leaves headroom without admitting a scale error, which would be 5% here
         # (21/20) and an order up.
         #
@@ -169,7 +169,8 @@ class TestKDENormalization:
     def test_kde_normalization_enum(self):
         """Test KDENormalization enum values."""
         assert KDENormalization.NONE == "none"
-        assert KDENormalization.INITIAL_ONLY == "initial_only"
+        # INITIAL_ONLY removed (#2181): it was bitwise identical to NONE.
+        assert not hasattr(KDENormalization, "INITIAL_ONLY")
         assert KDENormalization.ALL == "all"
 
     def test_kde_normalization_string_conversion(self):

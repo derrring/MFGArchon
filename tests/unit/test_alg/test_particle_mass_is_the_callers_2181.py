@@ -22,11 +22,12 @@ accounting. An earlier version of this paragraph said the opposite -- that `sum(
 while the grid measure drifted -- which described a design this branch replaced, and contradicted two
 assertions the same change wrote.
 
-**The default is `INITIAL_ONLY`, not `ALL`.** Pinning every slice makes
+**The default is `NONE`, not `ALL`.** Pinning every slice makes
 `SolverResult.mass_conservation_error` identically 4.4e-16: mass conservation by fiat, which is what
 #1683 removed from the FDM, GFDM and network FP paths and which this solver was the last instance of.
-So t=0 carries the caller's mass exactly and later slices carry one factor, leaving the
-reconstruction's own drift measurable.
+So every slice carries one factor calibrated on the first, leaving the reconstruction's own drift
+measurable. `INITIAL_ONLY` was removed in the same change: pinning the calibration slice is the same
+arithmetic as calibrating on it, so it was bitwise identical to `NONE`.
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def _grid(n: int = 21) -> TensorProductGrid:
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
 
 
-@pytest.mark.parametrize("mode", [KDENormalization.ALL, KDENormalization.INITIAL_ONLY, KDENormalization.NONE])
+@pytest.mark.parametrize("mode", [KDENormalization.ALL, KDENormalization.NONE])
 def test_a_sub_probability_density_keeps_its_mass(mode: KDENormalization):
     """All three modes, because `NONE` is the one that surprises.
 

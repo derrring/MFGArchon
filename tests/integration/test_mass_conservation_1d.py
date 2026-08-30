@@ -92,7 +92,7 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=5000,
-            kde_normalization=KDENormalization.INITIAL_ONLY,
+            kde_normalization=KDENormalization.NONE,
             boundary_conditions=boundary_conditions,
         )
 
@@ -142,7 +142,7 @@ class TestMassConservation1D:
         fp_solver = FPParticleSolver(
             problem,
             num_particles=5000,
-            kde_normalization=KDENormalization.INITIAL_ONLY,
+            kde_normalization=KDENormalization.NONE,
             boundary_conditions=boundary_conditions,
         )
 
@@ -260,7 +260,7 @@ class TestMassConservation1D:
             # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
             # fail. Measured. INITIAL_ONLY pins t=0 and lets the rest drift, which is the
             # quantity a mass-conservation test is for.
-            kde_normalization="initial_only",
+            kde_normalization="none",
             boundary_conditions=boundary_conditions,
         )
 
@@ -335,7 +335,7 @@ class TestMassConservation1D:
                 # this test asserts would be 2.220446e-16 against a bound of 0.1 and could not
                 # fail. Measured. INITIAL_ONLY pins t=0 and lets the rest drift, which is the
                 # quantity a mass-conservation test is for.
-                kde_normalization="initial_only",
+                kde_normalization="none",
                 boundary_conditions=boundary_conditions,
             )
             hjb_solver = HJBFDMSolver(problem)
