@@ -180,6 +180,41 @@ def test_two_populations_keep_their_shares():
     )
 
 
+def test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve():
+    """The design decision the whole change rests on, and which nothing pinned until now.
+
+    The scale is put back two different ways: ALL divides each slice by its own mass and multiplies
+    by the target, so every slice carries it exactly; NONE multiplies by ONE factor calibrated on the
+    first slice, so the reconstruction's own drift stays visible. Recalibrating per slice would look
+    like a harmless simplification and is not: it makes NONE behave like ALL and erases the drift,
+    which is the information `kde_normalization=NONE` exists to expose.
+
+    Round 3 of the PR #2185 review measured that mutation against all 32 test files that reach this
+    solver and it killed **nothing** -- every assertion was an upper bound on drift, and driving the
+    drift to zero sails through an upper bound. This test asserts the gap in the other direction.
+
+    Measured on this fixture, seed 7, default `reflection`: ALL is flat to 2.2e-16 across the
+    history while NONE drifts 8.0e-03. The bound below sits between those by two orders.
+    """
+    grid = _grid()
+    problem = _problem(grid, centre=0.5, share=0.3)
+
+    def masses(mode):
+        M = FPParticleSolver(problem, num_particles=2000, kde_normalization=mode, seed=7).solve_fp_system(
+            np.asarray(problem.m_initial, dtype=float)
+        )
+        return np.array([float(grid.integrate(M[t])) for t in range(M.shape[0])])
+
+    pinned = masses(KDENormalization.ALL)
+    carried = masses(KDENormalization.NONE)
+
+    assert np.max(np.abs(pinned / 0.3 - 1.0)) < 1e-9, f"ALL must pin every slice to the caller's mass, got {pinned}"
+    assert np.max(np.abs(carried / 0.3 - 1.0)) > 1e-4, (
+        "NONE must leave the reconstruction's drift visible. A flat history here means the factor is "
+        f"being recalibrated per slice, which is normalisation by another name. Got {carried}"
+    )
+
+
 def test_particles_without_a_density_are_left_alone():
     """No density in means no target, and the solver must not invent one.
 

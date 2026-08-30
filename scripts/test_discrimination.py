@@ -238,10 +238,21 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="particle_mass_counting_measure",
         path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
-        old="            dV = float(spacing) if spacing > 1e-14 else 1.0",
-        new="            dV = 1.0  # MUTATED: scalar spacing ignored, mass measured with the counting measure",
-        owner="The particle FP step measures total mass as `sum(density) * dV` with dV the grid volume element, and the KDE normalisation divides by it so the density on the grid integrates to 1 (`FPParticleSolver._compute_total_mass`, the scalar-spacing branch; consumed by `_normalize_density` at :823 and by the ",
-        verify="FPParticleSolver(MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=1.0, components=MFGComponents(m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)))), num_particles=10)._compute_total_mass(np.ones(4), 0.25) == 4.0",
+        old="        mass = float((arr * w).sum())",
+        new="        mass = float(arr.sum())  # MUTATED: weights dropped, mass measured with the counting measure",
+        owner=(
+            "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the "
+            "counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an "
+            "endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by "
+            "`_to_caller_mass`, which is the only thing that decides what a reconstructed slice's "
+            "mass is. "
+            "RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured "
+            "`sum(density) * dV` and the KDE normalisation divided by it so the density integrated "
+            "to 1. Both halves of that sentence stopped being true -- the measure is now the "
+            "geometry's, and the target is the caller's mass rather than 1 -- but the convention it "
+            "defended survived and moved here, so the mutation follows it."
+        ),
+        verify=("abs(_measure_probe() - 21.0) < 1e-9"),
     ),
     Mutation(
         name="picard_criterion_reads_as_or",
@@ -546,6 +557,19 @@ from mfgarchon.operators.differential.advection import AdvectionOperator
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 from mfgarchon.operators.stencils.finite_difference import gradient_upwind
 from mfgarchon.types import NumericalScheme
+
+def _measure_probe():
+    # `_measure` needs the weights the solve would have set, so set them the way `solve_fp_system`
+    # does. Returns 1.0 on the geometry's measure and 21.0 under the counting measure.
+    g = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    p = MFGProblem(geometry=g, Nt=4, T=0.2, sigma=1.0, components=MFGComponents(
+        m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
+        u_terminal=lambda x: 0.0,
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))))
+    s = FPParticleSolver(p, num_particles=10)
+    s._mass_weights = s._quadrature_weights()
+    return s._measure(np.ones(21))
+
 
 def _stub_problem(control_cost):
     class P:

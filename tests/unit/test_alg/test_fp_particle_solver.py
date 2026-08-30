@@ -548,11 +548,32 @@ class TestFPParticleSolverHelperMethods:
 
         M_array = np.random.rand(Nx_points) * 2.0
 
-        # Should normalize at any time step
+        # This test used to assert `sum(normalized) * dx == 1`. That contract is gone (#2181): the
+        # helper no longer normalises to 1, it puts back the CALLER'S mass, and it measures with the
+        # geometry rather than `sum * dx` -- the rectangle rule is not the mass on an
+        # endpoint-inclusive grid (#2145). Two consequences, and both are asserted because the first
+        # alone would pass on a helper that did nothing at all.
+        #
+        # Outside a solve there is no target, so the helper is a no-op. That is deliberate: the
+        # alternative is inventing a target of 1, which is the behaviour this change removes.
+        assert solver._mass_target is None, "no solve has run, so there is nothing to scale to"
+        for t in [0, 1, 5, 10]:
+            solver._time_step_counter = t
+            assert np.allclose(solver._normalize_density(M_array, dx, use_backend=False), M_array)
+
+        # Inside a solve, ALL pins every slice to the target on the geometry's measure. Set the state
+        # `solve_fp_system` sets, rather than running a solve, because this is a helper test.
+        solver._mass_target = 0.3
+        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_factor = None
         for t in [0, 1, 5, 10]:
             solver._time_step_counter = t
             normalized = solver._normalize_density(M_array, dx, use_backend=False)
-            assert np.isclose(np.sum(normalized * dx), 1.0, rtol=0.1)
+            assert float(geometry.integrate(normalized)) == pytest.approx(0.3, rel=1e-12)
+            assert not np.isclose(np.sum(normalized * dx), 0.3, rtol=1e-6), (
+                "the rectangle sum must NOT also be 0.3 -- if it is, the measure is the cell-centred "
+                "one again and #2145 has been reverted here"
+            )
 
 
 class TestFPParticleSolverCallableDrift:
