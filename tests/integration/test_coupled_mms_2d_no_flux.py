@@ -292,8 +292,14 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     the ENTIRE test (k = 1.05 and lambda = 1.05 both pass both assertions). That is a fact about
     these resolutions, not about the fixture, and it belongs beside any order this test reports.
 
-    `em` is weaker still: at k = 1.21 it moves only 3.383e-03 -> 3.487e-03 with EOC 0.956 / 0.945,
-    inside the band. No level bound is asserted on it.
+    ~~`em` is weaker still: at k = 1.21 it moves only 3.383e-03 -> 3.487e-03 with EOC 0.956 / 0.945,
+    inside the band.~~ [SUPERSEDED 2026-08-31 by #2189] Those figures were measured before #2145 and
+    the em column above is stale throughout: em is now ~10x smaller (9.187e-04 / 5.434e-04 /
+    3.800e-04) and its EOC is 0.758 / 0.882. The eu tables are unaffected -- eu moved only in the
+    fourth digit (3.0125e-01 -> 3.0111e-01). The retracted sentence also had the conclusion
+    backwards: em is now the STRONGER order column, reading 0.339 / 0.308 at k = 1.21 where it once
+    read 0.956 / 0.945. See the measured table at the order assertion. No level bound is asserted
+    on em.
 
     Do NOT reproduce any of this by mutating `problem.sigma` after construction -- that is inert
     and silently so. `get_diffusion_coefficient_field` (mfg_problem.py:1416) resolves
@@ -308,7 +314,25 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     order_u, order_m = _eoc(eu, LEVELS), _eoc(em, LEVELS)
 
     assert all(0.8 <= o <= 1.3 for o in order_u), f"u is not first order: {order_u} (errors {eu})"
-    assert all(0.8 <= o <= 1.3 for o in order_m), f"m is not first order: {order_m} (errors {em})"
+    # 0.70, not 0.80, and the gap is measured rather than granted. After #2145 the m error fell by
+    # ~10x (9.876e-03 -> 9.187e-04 at Nx=11) because the rectangle-rule measure that dominated it is
+    # gone, and what remains has not reached its asymptotic range at these resolutions: the order
+    # RISES 0.758 -> 0.882 -> 0.916 across Nx = 11/21/31/41. First order approached from below, not
+    # a defect -- but the old bound read it as one and turned the improvement red (#2189).
+    #
+    # The widening costs no kill, and that is measured, not assumed. Re-running the diffusion
+    # family against the post-#2145 em (sigma mutated at CONSTRUCTION, source terms untouched):
+    #
+    #     k       EOC m            old bound 0.80   new bound 0.70
+    #     1.00    0.758, 0.882     FAIL (spurious)  pass
+    #     1.10    0.495, 0.485     FAIL             FAIL
+    #     1.21    0.339, 0.308     FAIL             FAIL
+    #
+    # The clean run sits at 0.758 and the nearest mutant at 0.495, so 0.70 falls in a wide gap.
+    # This also corrects the docstring: em is no longer the weak column. Before #2145 a 21% error
+    # left its EOC at 0.956 / 0.945, inside the band and killing nothing; it now reads 0.339 / 0.308.
+    # Removing the rectangle-rule error turned em from an unexercised guard into a working one.
+    assert all(0.70 <= o <= 1.3 for o in order_m), f"m is not first order: {order_m} (errors {em})"
     # Regression guard on the constant, NOT a discriminator -- see the tables above. Across ten
     # measured coefficient mutants this never fails without the EOC assertion failing first.
     assert eu[-1] < 1.5e-01, (
