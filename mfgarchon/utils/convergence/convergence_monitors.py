@@ -272,12 +272,19 @@ class DistributionConvergenceMonitor:
         u_errors = [d["u_l2_error"] for d in self.convergence_history]
         wasserstein_dists = [d.get("wasserstein_distance", np.nan) for d in self.convergence_history]
 
-        # Convergence detection
+        # Convergence detection. `converged` is the state of the LAST iterate, not whether any
+        # iterate ever satisfied the criteria (#1684 item 3). The old reading was
+        # `len(converged_iterations) > 0`, so a run that converged and then diverged reported
+        # success -- measured, appending diverging entries after a converged one left this
+        # True with a final u error of 5e19. Nothing is lost by the change:
+        # `convergence_iteration` below still records the first iterate that met the criteria,
+        # so "did it ever converge" remains answerable, and is now distinct from "did it end
+        # converged" instead of being reported as it.
         converged_iterations = [i for i, d in enumerate(self.convergence_history) if d["converged"]]
 
         summary = {
             "total_iterations": len(self.convergence_history),
-            "converged": len(converged_iterations) > 0,
+            "converged": bool(self.convergence_history[-1]["converged"]),
             "convergence_iteration": (converged_iterations[0] if converged_iterations else None),
             "final_u_error": u_errors[-1],
             "final_wasserstein": (wasserstein_dists[-1] if not np.isnan(wasserstein_dists[-1]) else None),
