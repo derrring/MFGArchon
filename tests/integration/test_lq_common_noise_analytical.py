@@ -275,7 +275,12 @@ class TestLQCommonNoiseAnalytical:
         # Relaxed tolerance since this is simplified approximate solution
         assert error < 5.0, f"Terminal condition error: {error} (approximate analytical solution)"
 
-    @pytest.mark.skip(reason="Requires conditional MFG solver implementation")
+    @pytest.mark.skip(
+        reason="#2191 implemented the conditional solver, so the ORIGINAL reason is gone; this now "
+        "fails on lambda pickling under the default parallel=True -- AttributeError: Can't get "
+        "local object 'create_lq_common_noise_problem.<locals>.<lambda>'. Un-skipping needs the "
+        "fixture's callables at module level, or parallel=False. Tracked in #2206."
+    )
     def test_full_solution_convergence(self):
         """
         Full convergence test with conditional MFG solver.
