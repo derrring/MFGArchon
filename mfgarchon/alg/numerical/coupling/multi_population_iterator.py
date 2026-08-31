@@ -148,12 +148,26 @@ class MultiPopulationIterator:
 
         # Picard iteration
         converged = False
-        # Bound before the loop so a sweep-0 divergence can still construct a result (#1718).
-        # Every completed sweep re-binds it, so the diverged branch clears it explicitly rather
-        # than relying on this binding -- see the comment there.
+        # Bound before the loop so a zero-sweep solve can still construct a result. The lists are
+        # additionally CLEARED at the start of every sweep, which is what covers an early exit from
+        # a later one -- see the comment there. The diverged-HJB break below also clears `errors`
+        # explicitly; that is now redundant with the per-sweep clearing, and harmless.
         errors: list[float] = []
+        errors_M: list[float] = []
+        errors_U: list[float] = []
         for iteration in range(max_iterations):
+            # Cleared at the START of every sweep, not only before the loop. They are filled in the
+            # convergence block at the END of a sweep, so any exit before that -- #1718's diverged-HJB
+            # break -- would otherwise publish the PREVIOUS completed sweep's values beside an
+            # iteration count for the sweep that measured nothing. That is the #1672 shape: the
+            # best-looking number attached to the worst solve. Pre-loop binding alone is not enough;
+            # it only covers a divergence in sweep 0.
+            errors, errors_M, errors_U = [], [], []
             M_old = [m.copy() for m in M]
+            # The value function is half of the coupled unknown and was never captured, so the
+            # convergence test below could not see it (#1684 item 5). A Picard sweep can settle m
+            # while u is still moving -- #1914 records exactly that shape.
+            U_old = [u.copy() for u in U]
 
             # Validate all populations have hamiltonian_class
             for k in range(K):
@@ -233,6 +247,9 @@ class MultiPopulationIterator:
             # path (FPNetworkSolver extracts rates internally).
             from .fixed_point_utils import resolve_fp_drift_kwargs
 
+            # One slot per population for the FP solver's own output, before damping (#1684 item 6/7).
+            M_map: list = [None] * K
+
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
                 m0_k = M[k][0]
@@ -257,18 +274,42 @@ class MultiPopulationIterator:
                     else:
                         M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs)
 
+                # The UNDAMPED map output is what the convergence test needs; see the block below.
+                M_map[k] = M_new_k
                 M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
-            # Check convergence
-            errors = []
+            # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
+            # step. `errors` keeps its shape and type -- one float per population -- but now means
+            # the larger of the two field changes, which is what a reader of "Final per-population
+            # errors" already assumed it meant.
+            #
+            # `M_map[k] - M_old[k]`, NOT `M[k] - M_old[k]`. The damped update is
+            # `M = (1-r)*M_old + r*M_map`, so `M - M_old` is identically `r * (M_map - M_old)` and
+            # the reported error scales with the relaxation factor. That is #1684 items 6 and 7 --
+            # "turning damping down makes anything converge" -- and this repository has already
+            # fixed and pinned it at `nonlinear_solvers.py` and `fixed_point_iterator.py`. An
+            # earlier version of this block measured the damped step and so reintroduced, in the
+            # multi-population path, the exact defect the issue it cites is about: measured on the
+            # cross-coupled 2-population fixture at relaxation 0.01, it reported converged=True at
+            # sweep 2 with a true residual 45-61x the tolerance. U is never damped here, so its
+            # half was always the map residual.
+            #
+            # Caveat that remains, stated rather than hidden: these are absolute max-norm changes,
+            # so u and m meet one tolerance in their own units, while the single-population
+            # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel`. Aligning the two criteria is
+            # a single-source question and is deliberately not folded in here.
             for k in range(K):
-                err_k = np.max(np.abs(M[k] - M_old[k]))
-                errors.append(err_k)
+                err_M_k = float(np.max(np.abs(M_map[k] - M_old[k])))
+                err_U_k = float(np.max(np.abs(U[k] - U_old[k])))
+                errors_M.append(err_M_k)
+                errors_U.append(err_U_k)
+                errors.append(max(err_M_k, err_U_k))
             max_error = max(errors)
 
             logger.info(
                 f"Multi-pop iter {iteration + 1}/{max_iterations}: "
-                f"max_err={max_error:.4e}, per_pop={[f'{e:.2e}' for e in errors]}"
+                f"max_err={max_error:.4e}, per_pop_m={[f'{e:.2e}' for e in errors_M]}, "
+                f"per_pop_u={[f'{e:.2e}' for e in errors_U]}"
             )
 
             if max_error < tolerance:
@@ -281,6 +322,8 @@ class MultiPopulationIterator:
             iterations=iteration + 1,
             converged=converged,
             errors=errors,
+            errors_M=errors_M,
+            errors_U=errors_U,
             population_names=self.multi_problem.population_names,
         )
 
@@ -299,17 +342,28 @@ class MultiPopulationResult:
     converged : bool
         Whether tolerance was reached.
     errors : list[float]
-        Final per-population errors.
+        Final per-population errors: for each population, the larger of the u and m
+        max-norm changes over the last sweep, both measured on the MAP's output rather
+        than on the damped update -- `max|M_map - M_old|`, not `max|M - M_old|`, which
+        differs from it by a factor of the relaxation (#1684 items 6/7). Before #1684
+        item 5 this was m only, and so was `converged`. Empty when no sweep completed.
+    errors_M, errors_U : list[float] | None
+        The same errors split by field, so a non-converged run says WHICH field
+        failed rather than only that one did. Cleared with `errors` at the start of
+        every sweep, so an early exit publishes empty lists rather than the previous
+        sweep's values.
     population_names : list[str]
         Names of populations.
     """
 
-    def __init__(self, U, M, iterations, converged, errors, population_names):
+    def __init__(self, U, M, iterations, converged, errors, population_names, errors_M=None, errors_U=None):
         self.U = U
         self.M = M
         self.iterations = iterations
         self.converged = converged
         self.errors = errors
+        self.errors_M = errors_M
+        self.errors_U = errors_U
         self.population_names = population_names
 
     def __repr__(self):
