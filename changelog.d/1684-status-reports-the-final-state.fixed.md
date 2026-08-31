@@ -16,9 +16,9 @@
   `M = (1 - r) * M_old + r * M_map`, the damped step is identically `r * (M_map - M_old)`, so an
   error measured on it scales with the relaxation factor -- #1684 items 6 and 7, "turning damping
   down makes anything converge", already fixed and pinned for the single-population path in
-  `nonlinear_solvers.py` and `fixed_point_iterator.py`. Measured on one sweep before the
-  correction: 1.785179e-01 / 8.925895e-02 / 1.785179e-02 / 1.785179e-03 at relaxation
-  1.0 / 0.5 / 0.1 / 0.01, exactly 1/r; after, 1.785179e-01 at all four. `u` is never damped here,
+  `nonlinear_solvers.py` and `fixed_point_iterator.py`. Measured on one sweep of the pinning test's own
+  fixture, before the correction: 4.095006e-01 / 2.047503e-01 / 4.095006e-02 / 4.095006e-03 at
+  relaxation 1.0 / 0.5 / 0.1 / 0.01, exactly 1/r; after, 4.095006e-01 at all four. `u` is never damped here,
   so its half was always the map residual. Pinned by an invariance assertion rather than a value.
 
   The caveat that remains: these are absolute max-norm changes, so `u` and `m` meet one tolerance

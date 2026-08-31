@@ -175,9 +175,17 @@ def test_the_m_error_is_the_map_residual_not_the_damped_step():
     `test_fixed_point_residual_is_undamped_1684.py` and
     `test_coupling_metric_is_the_map_residual_1684.py` already pin for the single-population path.
 
-    Measured on this fixture, one sweep, before the fix: err_M was 1.785179e-01 / 8.925895e-02 /
-    1.785179e-02 / 1.785179e-03 at relaxation 1.0 / 0.5 / 0.1 / 0.01 -- ratios 1.00 / 2.00 / 10.00 /
-    100.00, exactly 1/r. After: 1.785179e-01 at every one of them.
+    Measured on THIS fixture -- `_problem()` below, imported rather than re-typed -- one sweep,
+    before the fix: err_M was 4.095006e-01 / 2.047503e-01 / 4.095006e-02 / 4.095006e-03 at
+    relaxation 1.0 / 0.5 / 0.1 / 0.01, ratios 1.00 / 2.00 / 10.00 / 100.00, exactly 1/r. After:
+    4.095006e-01 at every one of them.
+
+    ~~1.785179e-01 / 8.925895e-02 / 1.785179e-02 / 1.785179e-03~~ [SUPERSEDED 2026-08-31] Those
+    figures were real but came from a different fixture -- an ad-hoc probe with its own grid and
+    sigma -- and were written here as if measured on this one. The 1/r ratio was right; every
+    magnitude was wrong by 2.294x. A reader re-running this fixture to check the damping dependence
+    had not returned would have got 4.095006e-01 against a docstring promising 1.785179e-01, three
+    lines above an assertion message printing the correct value.
 
     This asserts INVARIANCE rather than a value, so it survives any change to the fixture or the
     scheme that does not reintroduce the damping dependence.

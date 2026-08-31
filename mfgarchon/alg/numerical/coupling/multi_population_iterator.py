@@ -159,6 +159,13 @@ class MultiPopulationIterator:
         errors_M: list[float] = []
         errors_U: list[float] = []
         for iteration in range(max_iterations):
+            # Cleared at the START of every sweep, not only before the loop. They are filled in the
+            # convergence block at the END of a sweep, so any exit before that -- #1718's diverged-HJB
+            # break -- would otherwise publish the PREVIOUS completed sweep's values beside an
+            # iteration count for the sweep that measured nothing. That is the #1672 shape: the
+            # best-looking number attached to the worst solve. Pre-loop binding alone is not enough;
+            # it only covers a divergence in sweep 0.
+            errors, errors_M, errors_U = [], [], []
             M_old = [m.copy() for m in M]
             # The value function is half of the coupled unknown and was never captured, so the
             # convergence test below could not see it (#1684 item 5). A Picard sweep can settle m
@@ -267,7 +274,6 @@ class MultiPopulationIterator:
             # so u and m meet one tolerance in their own units, while the single-population
             # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel`. Aligning the two criteria is
             # a single-source question and is deliberately not folded in here.
-            errors_M, errors_U, errors = [], [], []
             for k in range(K):
                 err_M_k = float(np.max(np.abs(M_map[k] - M_old[k])))
                 err_U_k = float(np.max(np.abs(U[k] - U_old[k])))
@@ -313,11 +319,15 @@ class MultiPopulationResult:
         Whether tolerance was reached.
     errors : list[float]
         Final per-population errors: for each population, the larger of the u and m
-        max-norm changes over the last sweep. Before #1684 item 5 this was m only,
-        and so was `converged`.
+        max-norm changes over the last sweep, both measured on the MAP's output rather
+        than on the damped update -- `max|M_map - M_old|`, not `max|M - M_old|`, which
+        differs from it by a factor of the relaxation (#1684 items 6/7). Before #1684
+        item 5 this was m only, and so was `converged`. Empty when no sweep completed.
     errors_M, errors_U : list[float] | None
         The same errors split by field, so a non-converged run says WHICH field
-        failed rather than only that one did.
+        failed rather than only that one did. Cleared with `errors` at the start of
+        every sweep, so an early exit publishes empty lists rather than the previous
+        sweep's values.
     population_names : list[str]
         Names of populations.
     """
