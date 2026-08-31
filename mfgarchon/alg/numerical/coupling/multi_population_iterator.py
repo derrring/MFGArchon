@@ -205,6 +205,9 @@ class MultiPopulationIterator:
             # path (FPNetworkSolver extracts rates internally).
             from .fixed_point_utils import resolve_fp_drift_kwargs
 
+            # One slot per population for the FP solver's own output, before damping (#1684 item 6/7).
+            M_map: list = [None] * K
+
             for k in range(K):
                 prob_k = self.multi_problem.get_population(k)
                 m0_k = M[k][0]
@@ -229,20 +232,33 @@ class MultiPopulationIterator:
                     else:
                         M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs)
 
+                # The UNDAMPED map output is what the convergence test needs; see the block below.
+                M_map[k] = M_new_k
                 M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
-            # Check convergence on BOTH fields. `errors` keeps its shape and type -- one float per
-            # population -- but now means the larger of the two field changes rather than m alone,
-            # which is what a reader of "Final per-population errors" already assumed it meant.
+            # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
+            # step. `errors` keeps its shape and type -- one float per population -- but now means
+            # the larger of the two field changes, which is what a reader of "Final per-population
+            # errors" already assumed it meant.
             #
-            # Caveat stated rather than hidden: these are absolute max-norm changes, so u and m are
-            # compared against one tolerance in their own units. The single-population
-            # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel` instead. Aligning the two is a
-            # single-source question and is deliberately NOT folded in here; this change only stops
-            # the test being blind to u.
+            # `M_map[k] - M_old[k]`, NOT `M[k] - M_old[k]`. The damped update is
+            # `M = (1-r)*M_old + r*M_map`, so `M - M_old` is identically `r * (M_map - M_old)` and
+            # the reported error scales with the relaxation factor. That is #1684 items 6 and 7 --
+            # "turning damping down makes anything converge" -- and this repository has already
+            # fixed and pinned it at `nonlinear_solvers.py` and `fixed_point_iterator.py`. An
+            # earlier version of this block measured the damped step and so reintroduced, in the
+            # multi-population path, the exact defect the issue it cites is about: measured on the
+            # cross-coupled 2-population fixture at relaxation 0.01, it reported converged=True at
+            # sweep 2 with a true residual 45-61x the tolerance. U is never damped here, so its
+            # half was always the map residual.
+            #
+            # Caveat that remains, stated rather than hidden: these are absolute max-norm changes,
+            # so u and m meet one tolerance in their own units, while the single-population
+            # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel`. Aligning the two criteria is
+            # a single-source question and is deliberately not folded in here.
             errors_M, errors_U, errors = [], [], []
             for k in range(K):
-                err_M_k = float(np.max(np.abs(M[k] - M_old[k])))
+                err_M_k = float(np.max(np.abs(M_map[k] - M_old[k])))
                 err_U_k = float(np.max(np.abs(U[k] - U_old[k])))
                 errors_M.append(err_M_k)
                 errors_U.append(err_U_k)

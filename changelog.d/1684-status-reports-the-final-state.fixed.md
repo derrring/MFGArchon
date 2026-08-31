@@ -12,10 +12,18 @@
   documented description ("Final per-population errors") already implied; `errors_M` and `errors_U`
   are added so a non-converged run says which field failed.
 
-  Stated rather than hidden: these remain absolute max-norm changes, so `u` and `m` are compared
-  against one tolerance in their own units, while the single-population `FixedPointIterator` tracks
-  `l2distu_rel` / `l2distm_rel`. Aligning the two criteria is a single-source question and is
-  deliberately not folded in here.
+  The m error is the **map's** residual, `M_map - M_old`, not the damped step `M - M_old`. Since
+  `M = (1 - r) * M_old + r * M_map`, the damped step is identically `r * (M_map - M_old)`, so an
+  error measured on it scales with the relaxation factor -- #1684 items 6 and 7, "turning damping
+  down makes anything converge", already fixed and pinned for the single-population path in
+  `nonlinear_solvers.py` and `fixed_point_iterator.py`. Measured on one sweep before the
+  correction: 1.785179e-01 / 8.925895e-02 / 1.785179e-02 / 1.785179e-03 at relaxation
+  1.0 / 0.5 / 0.1 / 0.01, exactly 1/r; after, 1.785179e-01 at all four. `u` is never damped here,
+  so its half was always the map residual. Pinned by an invariance assertion rather than a value.
+
+  The caveat that remains: these are absolute max-norm changes, so `u` and `m` meet one tolerance
+  in their own units, while `FixedPointIterator` tracks `l2distu_rel` / `l2distm_rel`. Aligning the
+  two criteria is a single-source question and is deliberately not folded in here.
 
   Pinned by `tests/unit/test_alg/test_status_reports_the_final_state_1684.py`, of which 4 of 6 fail
   against the pre-fix source and 2 of those fail behaviourally rather than on a missing attribute.

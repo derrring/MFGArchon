@@ -166,6 +166,38 @@ def test_a_static_m_with_a_moving_u_does_not_converge():
     assert r.errors_U[0] == pytest.approx(1.0), f"u should move by 1.0 per sweep: {r.errors_U}"
 
 
+def test_the_m_error_is_the_map_residual_not_the_damped_step():
+    """#1684 items 6 and 7, in the multi-population path. The counterfactual is the relaxation.
+
+    `M = (1 - r) * M_old + r * M_map`, so `M - M_old` is identically `r * (M_map - M_old)`. An
+    error measured on the damped update therefore shrinks with the relaxation factor and turning
+    damping down makes anything converge -- which is what items 6 and 7 name, and what
+    `test_fixed_point_residual_is_undamped_1684.py` and
+    `test_coupling_metric_is_the_map_residual_1684.py` already pin for the single-population path.
+
+    Measured on this fixture, one sweep, before the fix: err_M was 1.785179e-01 / 8.925895e-02 /
+    1.785179e-02 / 1.785179e-03 at relaxation 1.0 / 0.5 / 0.1 / 0.01 -- ratios 1.00 / 2.00 / 10.00 /
+    100.00, exactly 1/r. After: 1.785179e-01 at every one of them.
+
+    This asserts INVARIANCE rather than a value, so it survives any change to the fixture or the
+    scheme that does not reintroduce the damping dependence.
+    """
+    errs = []
+    for relaxation in (1.0, 0.5, 0.1, 0.01):
+        p = _problem()
+        multi = MultiPopulationProblem(populations=[p], population_names=["P0"])
+        it = MultiPopulationIterator(multi, [HJBFDMSolver(p)], [FPFDMSolver(p)], relaxation=relaxation)
+        errs.append(it.solve(max_iterations=1, tolerance=1e-30).errors_M[0])
+
+    assert errs[0] > 0, "the fixture must actually move m, or this asserts nothing"
+    for r, e in zip((1.0, 0.5, 0.1, 0.01), errs, strict=True):
+        assert e == pytest.approx(errs[0], rel=1e-12), (
+            f"err_M moved with the relaxation factor (r={r}: {e:.6e} vs {errs[0]:.6e}, ratio "
+            f"{errs[0] / e:.2f}). The convergence test is measuring the damped step, so lowering "
+            f"the damping buys the verdict -- #1684 items 6 and 7."
+        )
+
+
 def test_the_reported_error_is_the_larger_of_the_two_fields():
     r = _run()
     assert r.errors == [max(m, u) for m, u in zip(r.errors_M, r.errors_U, strict=True)]
