@@ -38,9 +38,16 @@
     divergence at any sweep after the first, beside an iteration count for the sweep that measured
     nothing -- the #1672 shape. The diverged branch now clears them.
 
-  Pinned by `tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py`, 12 tests. The call-site
-  tests fail behaviourally against the pre-fix tree, reproducing the CFL misattribution, and each of
-  the four fixes above was checked by reverting it alone and confirming the suite reddens.
+  Pinned by `tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py`, 13 tests. The call-site
+  tests fail behaviourally against the pre-fix tree, reproducing the CFL misattribution.
+
+  A second review checked the claim that "each of the four fixes was verified by reverting it alone"
+  and found it false for one of them: removing the `errors = []` clearing left the whole CI-marker
+  suite green (2741 passed). The fix was right and unpinned, and the sentence asserting it had been
+  verified rested on a measurement that did not reproduce. `_LateDivergingHJB` and
+  `test_a_late_divergence_does_not_publish_the_previous_sweeps_errors` close that gap -- the earlier
+  stub diverged on sweep 0, which is the one case where the pre-loop binding already covered it, so
+  the defect lived entirely on the other side of that branch.
 
   The terminal-condition restore -- one of the owner's three invariants -- was previously unpinned:
   the fixture's terminal was zero and the stub returned zeros, so the assertion could not separate

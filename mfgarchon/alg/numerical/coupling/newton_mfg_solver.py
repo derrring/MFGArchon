@@ -183,7 +183,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         U: NDArray,
         M: NDArray,
         num_iterations: int,
-    ) -> tuple[NDArray, NDArray, list[float]]:
+    ) -> tuple[NDArray, NDArray, list[float], int | None]:
         """
         Run Picard fixed-point iterations for warm-up.
 
@@ -193,7 +193,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
             num_iterations: Number of Picard iterations
 
         Returns:
-            (U, M, residuals): Updated state and residual history
+            (U, M, residuals, diverged_at): updated state, residual history, and the 0-based
+            warmup iteration at which the value function went non-finite -- or None if it did
+            not. The caller MUST stop on a non-None value: the statement after the warmup call
+            composes an FP solve from U (#1718).
         """
         residuals = []
         # The warmup's `break` leaves only this loop. Its caller runs compute_residual_norm
@@ -292,6 +295,12 @@ class NewtonMFGSolver(BaseCouplingIterator):
                 # would run on a NaN iterate. Publishing U unchanged keeps the diverged iterate
                 # visible, which is the owner's contract (#1718).
                 self.U, self.M = U, M
+                # `picard_warmup` is the CONFIGURED count and `newton_residuals` may hold a
+                # previous solve's history on this instance, so reporting either unchanged would
+                # publish numbers for iterations this solve never ran -- the #1672 shape, at a
+                # fourth site. Both are set to what actually happened.
+                self.picard_warmup = picard_diverged_at + 1
+                self.newton_residuals = []
                 self.total_iterations = picard_diverged_at + 1
                 self._solution_computed = True
                 return self._create_result(False, "diverged_nan", time.time() - start_time)

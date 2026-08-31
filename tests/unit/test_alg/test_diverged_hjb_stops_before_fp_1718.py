@@ -11,8 +11,9 @@ Structured after `test_paired_solver_sigma_single_source_1603.py`, which pins th
 decorative: that guard was also filed against one iterator, also found live at the others, and the
 list iterators were also the gap.
 
-WHAT THESE CATCH, measured against the pre-#1718 tree: **10 of 10 fail, and the 4 that matter fail
-behaviourally.** All four call-site tests die inside `_run_to_completion` with
+WHAT THESE CATCH, measured against the pre-#1718 tree: **every test in this file fails, and the
+call-site tests fail behaviourally.** (That was 10 of 10 when first written; the file has since
+grown to 13, so the count is stated as a property rather than a number that rots.) All four call-site tests die inside `_run_to_completion` with
 `ValueError: FP solver produced NaN/Inf at timestep 3/5 ... Check CFL condition` -- the exact
 misattribution this issue is about, reproduced. The 6 owner tests die on ImportError, which is
 honest but proves only that a symbol was added.
@@ -25,9 +26,15 @@ whole check degrades to "the symbol is missing".
 would pass the old code by accident wherever the exception is swallowed, and error rather than fail
 where it is not -- so these assert first that the loop RETURNS, then what it returned.
 
-`GraphMFGSolver` is patched by the same commit and is not exercised here: it needs a graph geometry
-this fixture cannot build. Its call site is identical in shape to `RegimeSwitchingIterator`'s --
-they share the wired loop, as the #1603 docstring records -- and that one is covered.
+~~`GraphMFGSolver` is patched by the same commit and is not exercised here: it needs a graph
+geometry this fixture cannot build.~~ [SUPERSEDED 2026-08-31] SUPERSEDED-BY: the review of #2194.
+**Both halves of that were false and it is retracted here, in the sentence that made it, not only
+in the test that refutes it.** There is no graph geometry: `test_graph_mfg_solver.py`'s
+`_make_3node_system` builds the solver from three ordinary 1-D problems and a 3x3 adjacency matrix,
+the shape `_make_problem` above already makes. And the similarity argument did not hold either --
+the regime test read only `values[0]`, so it never covered the part it was being leaned on for.
+`test_graph_solver_stops_and_publishes_a_usable_result` below now covers that site, and the defect
+it found was one the regime site does not have.
 """
 
 from __future__ import annotations
@@ -209,6 +216,52 @@ def test_multi_population_stops_at_the_first_diverged_population():
     )
 
 
+class _LateDivergingHJB(HJBFDMSolver):
+    """Finite on the first sweep, NaN from the second.
+
+    `_DivergingHJB` diverges immediately, which only exercises the sweep-0 path. The stale-error
+    defect lives on the OTHER side of that branch: `errors` is re-bound by every COMPLETED sweep,
+    so it is a divergence at sweep >= 1 that can publish the previous sweep's values.
+    """
+
+    def __init__(self, problem):
+        super().__init__(problem)
+        self._sweep = 0
+
+    def solve_hjb_system(self, *args, source_term=None, volatility_field=None, **kwargs):
+        assert volatility_field is None, "this stub cannot honour a volatility field"
+        self._sweep += 1
+        U = np.full((_NT + 1, _NX), 7.0)
+        if self._sweep > 1:
+            U[_NT // 2, _NX // 2] = np.nan
+        return U
+
+
+def test_a_late_divergence_does_not_publish_the_previous_sweeps_errors():
+    """The #1672 shape: the best-looking number attached to the worst solve.
+
+    `errors` is assigned in the convergence block at the END of a sweep, so a divergence at sweep
+    >= 1 breaks out with the PREVIOUS completed sweep's values still bound. Measured before the
+    clearing line existed: `converged=False, iterations=2, errors=[2.2204e-16, 2.2204e-16]` -- a
+    converged-looking per-population error for a sweep in which nothing was measured and no FP ran.
+
+    This test exists because that clearing was UNPINNED: removing the line left the whole
+    CI-marker suite green (2741 passed), while the PR claimed each fix had been verified by
+    reverting it. It had not been, for this one.
+    """
+    probs = [_make_problem(), _make_problem()]
+    multi = MultiPopulationProblem(populations=probs, population_names=["P0", "P1"])
+    it = MultiPopulationIterator(multi, [_LateDivergingHJB(p) for p in probs], [FPFDMSolver(p) for p in probs])
+    result = _run_to_completion(lambda: it.solve(max_iterations=4, tolerance=1e-30))
+
+    assert result.converged is False
+    assert result.iterations >= 2, "the fixture must reach a sweep beyond the first"
+    assert result.errors == [], (
+        f"a diverged sweep published errors={result.errors} -- the previous completed sweep's "
+        f"values, beside iterations={result.iterations} counting the sweep that measured nothing"
+    )
+
+
 def test_regime_switching_stops_and_attributes():
     from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
     from mfgarchon.core.regime_switching import RegimeSwitchingConfig
@@ -276,6 +329,25 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     assert info["converged"] is False
     assert info["convergence_reason"] == "diverged_nan"
     assert not np.all(np.isfinite(U)), "the diverged iterate must still be published"
+    # The assertion the other call-site tests carry and this one was missing -- at the very site
+    # this commit exists to repair. `mfg_residual.U_terminal` is a real array here, so the
+    # mutation U_terminal -> None is not vacuous: it changes what the solver publishes.
+    (
+        np.testing.assert_array_equal(np.asarray(U)[-1], np.full(_NX, 4.0)),
+        (
+            "the terminal row must be restored from the problem's terminal condition (4.0), not left "
+            "as the diverged solver's own output (7.0)"
+        ),
+    )
+    # The status block must describe THIS solve. `picard_warmup` is the configured count and
+    # `newton_residuals` can hold a previous solve's history on the same instance.
+    assert info["newton_iterations"] == 0, (
+        f"reported {info['newton_iterations']} Newton iterations for a solve that ran none"
+    )
+    assert info["total_iterations"] <= info["picard_iterations"], (
+        f"total_iterations={info['total_iterations']} below picard_iterations="
+        f"{info['picard_iterations']} is self-contradicting"
+    )
 
 
 def test_graph_solver_stops_and_publishes_a_usable_result():
