@@ -223,9 +223,19 @@ class GraphMFGSolver(BaseCouplingIterator):
                 )
                 if diverged is not None:
                     Us_new[k] = diverged
+                    # Nodes after k were never solved this sweep, and `Us_new` initialises to
+                    # `np.empty(0)`. Returning that would break this result's own documented
+                    # contract -- `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and
+                    # `result.values[j][-1]` would raise IndexError for every unsolved node, so a
+                    # consumer looping over values to FIND the NaN crashes before reaching it.
+                    # Carry the previous iterate for those, which is a real value function of the
+                    # right shape and is what "this node did not advance" means. `Ms_expanded`
+                    # rather than `Ms` for the same reason: at iteration 0 `Ms` still holds the
+                    # 1-D initial densities.
+                    values = [Us_new[j] if j <= k else Us_full[j] for j in range(N)]
                     self._last_result = GraphMFGResult(
-                        values=Us_new,
-                        densities=Ms,
+                        values=values,
+                        densities=Ms_expanded,
                         converged=False,
                         iterations=iteration + 1,
                         error_history=error_history,

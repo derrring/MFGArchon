@@ -148,9 +148,9 @@ class MultiPopulationIterator:
 
         # Picard iteration
         converged = False
-        # Bound before the loop: a diverged HJB breaks out before the convergence block below
-        # assigns it (#1718), and an empty list is the honest value -- no sweep completed, so
-        # there is no per-population error to report.
+        # Bound before the loop so a sweep-0 divergence can still construct a result (#1718).
+        # Every completed sweep re-binds it, so the diverged branch clears it explicitly rather
+        # than relying on this binding -- see the comment there.
         errors: list[float] = []
         for iteration in range(max_iterations):
             M_old = [m.copy() for m in M]
@@ -213,6 +213,13 @@ class MultiPopulationIterator:
 
             if diverged_population is not None:
                 converged = False
+                # Clear, do not inherit. The pre-loop binding at the top only takes effect when the
+                # divergence is in sweep 0; `errors` is re-bound by every COMPLETED sweep, so without
+                # this a divergence at sweep >= 1 would report the previous sweep's near-zero errors
+                # beside `iterations` counting the sweep that measured nothing -- the #1672 shape, the
+                # best-looking number attached to the worst solve. Measured before this line: a
+                # divergence at sweep 1 reported errors=[2.2204e-16, 2.2204e-16].
+                errors = []
                 break
 
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced

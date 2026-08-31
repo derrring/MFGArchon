@@ -460,9 +460,24 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 )
                 if diverged is not None:
                     Us_new[k] = diverged
+                    # Regimes after k were never solved this sweep and `Us_new` initialises to
+                    # `None`. Returning that would break this result's own documented contract --
+                    # `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and any consumer looping
+                    # over `values` to find the NaN would hit `None` first. Carry the previous
+                    # iterate for the unsolved regimes: a real value function of the right shape,
+                    # and the honest reading of "this regime did not advance".
+                    values = [Us_new[j] if j <= k else Us_full[j] for j in range(K)]
                     self._last_result = RegimeSwitchingResult(
-                        values=Us_new,
-                        densities=Ms,
+                        values=values,
+                        # Same expansion the HJB step above applies: at iteration 0 `Ms`
+                        # still holds 1-D initial densities, against a docstring promising
+                        # (Nt+1, Nx).
+                        densities=[
+                            Ms[j]
+                            if isinstance(Ms[j], np.ndarray) and Ms[j].ndim == 2
+                            else np.tile(Ms[j], (self._problems[j].Nt + 1, 1))
+                            for j in range(K)
+                        ],
                         converged=False,
                         iterations=iteration + 1,
                         error_history=error_history,

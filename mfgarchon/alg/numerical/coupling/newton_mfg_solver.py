@@ -196,6 +196,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
             (U, M, residuals): Updated state and residual history
         """
         residuals = []
+        # The warmup's `break` leaves only this loop. Its caller runs compute_residual_norm
+        # immediately, which composes an FP solve from U -- so a diverged U escaped the guard
+        # below and reached FP anyway, with the identical CFL misattribution #1718 removes
+        # everywhere else. The flag carries the stop out (#1718 review).
+        diverged_at: int | None = None
 
         for i in range(num_iterations):
             # Store old values
@@ -217,6 +222,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             )
             if diverged is not None:
                 U = diverged
+                diverged_at = i
                 break
 
             # FP solve: M_new = FP(U_new)
@@ -238,7 +244,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             logger.debug(f"Picard iteration {i + 1}: residual = {res_norm:.2e}")
 
-        return U, M, residuals
+        return U, M, residuals, diverged_at
 
     def solve(
         self,
@@ -276,8 +282,19 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if verbose:
                 print(f"Phase 1: Picard warm-up ({self.picard_warmup} iterations)")
 
-            U, M, picard_res = self._run_picard_warmup(U, M, self.picard_warmup)
+            U, M, picard_res, picard_diverged_at = self._run_picard_warmup(U, M, self.picard_warmup)
             self.picard_residuals = picard_res
+
+            if picard_diverged_at is not None:
+                # Stop here. `compute_residual_norm` below composes an FP solve from U, so
+                # continuing would hand the diverged value function to FP and get the CFL
+                # diagnostic this issue exists to eliminate -- and if it did not raise, Newton
+                # would run on a NaN iterate. Publishing U unchanged keeps the diverged iterate
+                # visible, which is the owner's contract (#1718).
+                self.U, self.M = U, M
+                self.total_iterations = picard_diverged_at + 1
+                self._solution_computed = True
+                return self._create_result(False, "diverged_nan", time.time() - start_time)
 
             if verbose and picard_res:
                 print(f"  Final Picard residual: {picard_res[-1]:.2e}")

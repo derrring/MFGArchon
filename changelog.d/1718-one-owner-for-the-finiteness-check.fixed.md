@@ -22,8 +22,31 @@
   `_gauss_seidel_step` needs the question without the answer -- it must skip its FP solve while the
   loop above it publishes and stops.
 
-  Pinned by `tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py`. All 10 fail against the
-  pre-fix tree, and the 4 call-site tests fail behaviourally, reproducing the CFL misattribution.
+  Stopping a coupling loop mid-sweep is not just a `break`, and an adversarial review found three
+  places where it was treated as one:
+
+  - `NewtonMFGSolver`'s warmup `break` left only the warmup loop; `solve()` then called
+    `compute_residual_norm`, which composes an FP solve, so the diverged value function reached FP
+    anyway and the site's behaviour was byte-identical before and after. The warmup now reports
+    where it diverged and `solve()` returns.
+  - `graph_mfg_solver` and `regime_switching_iterator` published `np.empty(0)` / `None` for every
+    node or regime not yet solved that sweep, against their own documented `values: list[NDArray]`
+    of shape `(Nt+1, Nx)` -- so a consumer looping over `values` to FIND the NaN crashed with
+    IndexError before reaching it. Unsolved entries now carry the previous iterate, and densities
+    are expanded, since at sweep 0 they are still the 1-D initial conditions.
+  - `MultiPopulationIterator` reported the previous completed sweep's near-zero errors on a
+    divergence at any sweep after the first, beside an iteration count for the sweep that measured
+    nothing -- the #1672 shape. The diverged branch now clears them.
+
+  Pinned by `tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py`, 12 tests. The call-site
+  tests fail behaviourally against the pre-fix tree, reproducing the CFL misattribution, and each of
+  the four fixes above was checked by reverting it alone and confirming the suite reddens.
+
+  The terminal-condition restore -- one of the owner's three invariants -- was previously unpinned:
+  the fixture's terminal was zero and the stub returned zeros, so the assertion could not separate
+  "restored" from "never written", and replacing `U_terminal` with `None` at every wired site left
+  the suite green. The fixture's terminal is now 4.0 against a stub returning 7.0; that same
+  mutation now reddens three tests.
 
   The warning baseline gains one identity, from the new test file: the legacy-API deprecation,
   which is already recorded for many other test files.
