@@ -144,6 +144,22 @@ class CommonNoiseMFGResult:
         return lower, upper
 
 
+class _DeferredProblemSolve:
+    """Presents `MFGProblem.solve()` through the conditional-solver protocol.
+
+    The factory contract is `problem -> solver` and the caller invokes `.solve()` on the result.
+    `MFGProblem.solve()` builds and runs a solver in one call, so there is no solver object to
+    hand over; this defers the call instead of changing a protocol that user-supplied factories
+    already satisfy.
+    """
+
+    def __init__(self, problem):
+        self._problem = problem
+
+    def solve(self):
+        return self._problem.solve(verbose=False)
+
+
 class CommonNoiseMFGSolver:
     """
     Solver for Mean Field Games with common noise via path-conditional Monte Carlo.
@@ -258,8 +274,17 @@ class CommonNoiseMFGSolver:
 
         # Conditional solver factory
         if conditional_solver_factory is None:
-            # Default: use problem.solve() API
-            self.conditional_solver_factory = lambda prob: prob.solve(verbose=False)
+            # The declared contract is `Callable[[MFGProblem], MFGSolverProtocol]` -- a factory
+            # returning a SOLVER, which `_solve_conditional_mfg` then calls `.solve()` on. This
+            # default returned `prob.solve(verbose=False)`, i.e. a RESULT, so that site raised
+            # `AttributeError: 'SolverResult' object has no attribute 'solve'` (#2191). It was
+            # never observed because `create_conditional_problem` failed first, and no test calls
+            # `solve()` on this class at all.
+            #
+            # `MFGProblem` has no 'build me the solver' entry point -- `solve()` constructs and runs
+            # one internally -- so the default defers the call rather than changing the protocol,
+            # which user-supplied factories already satisfy.
+            self.conditional_solver_factory = _DeferredProblemSolve
         else:
             self.conditional_solver_factory = conditional_solver_factory
 

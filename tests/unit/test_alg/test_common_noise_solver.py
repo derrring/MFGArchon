@@ -572,16 +572,28 @@ class TestCommonNoiseSolverConfiguration:
         assert callable(solver.conditional_solver_factory)
 
         # `callable` is satisfied by any function at all, including the custom-factory branch this
-        # test exists to distinguish itself from. Assert what the default factory DOES -- the
-        # documented "uses problem.solve() API" contract and its verbose suppression -- without
+        # test exists to distinguish itself from. Assert what the default factory DOES -- that it
+        # returns a SOLVER which defers to `problem.solve()` with verbose suppressed -- without
         # running a solve.
+        #
+        # This previously asserted `factory(recorder) == "sentinel"`, i.e. that the factory returns
+        # the RESULT directly. That pinned the defect: the declared type is
+        # `Callable[[MFGProblem], MFGSolverProtocol]` and `_solve_conditional_mfg` calls `.solve()`
+        # on what it gets back, so the old default made that site raise
+        # `AttributeError: 'SolverResult' object has no attribute 'solve'` (#2191). The call was
+        # unreachable at the time, behind a `create_conditional_problem` that failed first.
         class _Recorder:
             def solve(self, **kwargs):
                 self.kwargs = kwargs
                 return "sentinel"
 
         recorder = _Recorder()
-        assert solver.conditional_solver_factory(recorder) == "sentinel"
+        conditional_solver = solver.conditional_solver_factory(recorder)
+        assert hasattr(conditional_solver, "solve"), (
+            "the factory must return a solver, not a result -- the caller invokes .solve() on it"
+        )
+        assert not hasattr(recorder, "kwargs"), "the factory must not solve eagerly"
+        assert conditional_solver.solve() == "sentinel"
         assert recorder.kwargs == {"verbose": False}
 
     def test_mc_config_created_when_not_provided(self):

@@ -26,6 +26,6 @@
   of 6 fail against the pre-fix source. The survivor is the non-converged case, which the old code
   got right by accident.
 
-  The third read site, `stochastic/common_noise_solver.py:438`, would raise `AttributeError`
+  The third read site, in `stochastic/common_noise_solver.py`, would raise `AttributeError`
   rather than report a wrong verdict, and is corrected here too. It has never been reached: that solver
   fails earlier, in `create_conditional_problem` (#2191).
