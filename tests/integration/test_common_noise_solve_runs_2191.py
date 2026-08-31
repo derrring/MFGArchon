@@ -1,5 +1,11 @@
 """`CommonNoiseMFGSolver.solve()` completes a conditional solve, and the noise reaches it (#2191).
 
+NOT MARKED `slow`, deliberately (#2197 review). They were, and `scripts/local_ci.sh` -- the
+authoritative gate -- runs `-m "not slow ..."`, so the only two tests pinning a priority:high
+"cannot run" fix were deselected by it and reached CI only through the nightly. Measured runtimes
+are 11.96 s and 6.22 s, against the marker's own definition in `pytest.ini:32`: "may take >30
+seconds to complete". A pin the gate does not run is not a pin.
+
 Before this, the class could not run at all. Two independent blockers, one behind the other:
 
 1. `StochasticMFGProblem.create_conditional_problem` built an EMPTY `MFGComponents` and then
@@ -24,8 +30,6 @@ theta. So the fixture here makes the Hamiltonian depend on theta and asserts the
 
 from __future__ import annotations
 
-import pytest
-
 import numpy as np
 
 from mfgarchon.alg.numerical.stochastic import CommonNoiseMFGSolver
@@ -38,7 +42,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 _NX, _NT = 22, 11
 
 
-def _problem(conditional_hamiltonian):
+def _problem(conditional_hamiltonian, u_terminal=None):
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: 0.1 * np.asarray(m, dtype=float),
@@ -46,7 +50,7 @@ def _problem(conditional_hamiltonian):
     )
     components = MFGComponents(
         hamiltonian=H,
-        u_terminal=lambda x: np.zeros_like(np.asarray(x, dtype=float)),
+        u_terminal=u_terminal or (lambda x: np.zeros_like(np.asarray(x, dtype=float))),
         m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
     )
     return StochasticMFGProblem(
@@ -59,7 +63,6 @@ def _problem(conditional_hamiltonian):
     )
 
 
-@pytest.mark.slow
 def test_solve_completes_and_returns_a_usable_result():
     """The plain fact the class could not deliver: a solve that finishes."""
     problem = _problem(lambda x, p, m, theta: 0.5 * p**2 + 0.1 * m)
@@ -73,7 +76,6 @@ def test_solve_completes_and_returns_a_usable_result():
         assert np.all(np.isfinite(arr)), f"{name} is not finite"
 
 
-@pytest.mark.slow
 def test_the_noise_actually_reaches_the_conditional_solve():
     """LOAD-BEARING. A theta-independent Hamiltonian cannot distinguish this from a broken one.
 
@@ -92,9 +94,52 @@ def test_the_noise_actually_reaches_the_conditional_solve():
     assert paths.shape[0] == 4
     assert np.ptp(paths) > 0, "the fixture is wrong if every sampled noise path is identical"
 
-    spread = float(np.max(np.asarray(result.u_std)))
-    assert spread > 0, (
-        "every noise sample produced the same value function, so theta never reached the "
-        "conditional solve -- which is what the pre-#2191 code did by attaching the Hamiltonian "
-        "to a field MFGComponents does not have"
+    # Asserted on the SAMPLES, not on their std, and against a physical threshold rather than
+    # zero (#2197 review). `max(u_std) > 0` looked equivalent and was not: it is a float
+    # zero-threshold on a sample standard deviation, and over K bit-identical values np.std is
+    # EXACTLY 0.0 only when the division by K is exact. Measured over identical samples:
+    # K = 2, 4, 5, 8, 9, 10, 11 give 0.0, while K = 3, 6, 7, 12 give ~8e-18. So at K = 4 the old
+    # assertion happened to separate the fixed code from a theta-dropping one, and at K = 3 the
+    # identical test PASSED on the very defect its docstring names. Anyone retuning K for runtime
+    # or Monte-Carlo smoothness would have disarmed the only guard on the noise coupling, silently.
+    #
+    # The pairwise sample separation has no such accident: when theta never reaches the conditional
+    # problem the samples are bit-identical, so this is exactly 0.0. Measured here on the fix,
+    # 0.0357 against 0.0 for a theta-dropping source -- any threshold in (1e-15, 1e-3) separates
+    # them, and 1e-3 is chosen so the test says "the solutions genuinely differ", not "the floats
+    # are not bit-equal".
+    samples = np.asarray(result.u_samples)
+    separation = float(np.max(np.abs(samples - samples[0])))
+    assert separation > 1e-3, (
+        f"the K noise samples produced value functions that differ by at most {separation:.3e}, so "
+        f"theta never reached the conditional solve -- which is what the pre-#2191 code did by "
+        f"attaching the Hamiltonian to a field MFGComponents does not have"
     )
+
+
+def test_the_parent_terminal_condition_reaches_the_conditional_solve():
+    """The conditional problem inherits u_terminal, and #2197 review found it did not.
+
+    `StochasticMFGProblem.__init__` normalised the terminal cost as `terminal_cost or g` --
+    and `MFGProblem` defines NEITHER, measured `hasattr` False for both -- so the chain was
+    unconditionally None and `g_conditional` fell through to a literal `0.0`. Every conditional
+    solve used u_T == 0 whatever the parent said, and because the solve then completed and
+    converged, the result was a confidently wrong number rather than a crash.
+
+    The control is what makes this a defect and not a design choice: `m_initial` propagates from
+    the same `components` object and DOES move the answer.
+    """
+    x = np.linspace(0.0, 1.0, 5)
+
+    def _with_terminal(u_terminal):
+        problem = _problem(lambda x_, p, m, theta: 0.5 * p**2 + theta * m, u_terminal=u_terminal)
+        conditional = problem.create_conditional_problem(np.linspace(0.0, 1.0, problem.Nt + 1))
+        return np.array([float(conditional.components.u_terminal(np.array([xi]))) for xi in x])
+
+    quadratic = _with_terminal(lambda p: 0.5 * float(np.asarray(p).ravel()[0]) ** 2)
+    zero = _with_terminal(lambda p: 0.0)
+
+    np.testing.assert_allclose(quadratic, 0.5 * x**2, rtol=0, atol=1e-12)
+    # CONTROL: a genuinely zero terminal condition must still come through as zero, so the
+    # assertion above is reading the parent's function and not merely finding something non-zero.
+    np.testing.assert_allclose(zero, np.zeros_like(x), rtol=0, atol=1e-12)

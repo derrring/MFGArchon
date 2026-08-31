@@ -156,7 +156,23 @@ class StochasticMFGProblem(MFGProblem):
 
         # Normalize terminal cost attribute names (Issue #543 - eliminate hasattr)
         # Support both 'g' (MFGProblem standard) and 'terminal_cost' (simplified API)
-        self._terminal_cost_normalized = getattr(self, "terminal_cost", None) or getattr(self, "g", None)
+        #
+        # #2197 review: `terminal_cost` and `g` were the WHOLE chain, and `MFGProblem` defines
+        # NEITHER -- measured, `hasattr` is False for both -- so this was unconditionally None and
+        # every conditional solve fell through `g_conditional` to a literal 0.0. The parent's
+        # terminal condition was silently discarded: end-to-end, `u_mean` was bit-identical for
+        # `u_terminal = 0.5x^2` and for no terminal cost at all (0.000e+00), against an `m_initial`
+        # control on the same surface that moves it by 1.988e-03. That is the failure this whole
+        # class of bug is named for -- a broken fallback reaching for an attribute nobody defines,
+        # which reads as a deliberate default.
+        #
+        # `components.u_terminal` is where a terminal condition actually lives on this hierarchy,
+        # and it is the same place `create_conditional_problem` already reads `m_initial` from.
+        self._terminal_cost_normalized = (
+            getattr(self, "terminal_cost", None)
+            or getattr(self, "g", None)
+            or (self.components.u_terminal if self.components is not None else None)
+        )
 
         # Validate configuration
         if noise_process is not None and conditional_hamiltonian is None:
@@ -313,12 +329,38 @@ class StochasticMFGProblem(MFGProblem):
                 # `HamiltonianBase.__call__` is a POINT evaluation: x and p are shape (d,) and the
                 # result is a scalar. A user's `conditional_hamiltonian` is written pointwise but
                 # numpy-broadcasts, so on a 1-D problem it hands back shape (1,) -- and the base
-                # class's finite-difference `dm`/`dp`, which the constructor's derivative-consistency
-                # check calls, then fail with "only 0-dimensional arrays can be converted to Python
-                # scalars". Collapsing a size-1 result honours the contract; anything larger is a
-                # vectorised call and is passed through untouched.
+                # class's finite-difference `dm`/`dp`, which `MFGProblem.__init__`'s
+                # derivative-consistency check calls, then fail with "only 0-dimensional arrays can
+                # be converted to Python scalars". Collapsing a size-1 result honours the contract.
+                #
+                # ~~anything larger is a vectorised call and is passed through untouched~~
+                # [CORRECTED 2026-09-01, #2197 review] That reasoning is false for exactly the
+                # pointwise user functions this class documents. In BATCH, HamiltonianBase supplies
+                # x and p as (N, d) and m as (N,), so a pointwise `0.5*p**2 + theta*m` broadcasts
+                # (N,1) against (N,) to (N, N). Measured on a real conditional solve: `__call__`
+                # returned (21, 21) where (21,) was expected, and `dm` -- the documented FP-coupling
+                # primitive -- returned 441 values with NO exception at all. Only `dp` came back
+                # right, via a defensive try/except in the base class that silently falls back to a
+                # per-point loop; that fallback is the sole reason today's answers are correct.
+                #
+                # So the size is CHECKED rather than assumed. A batch call must return one value per
+                # point; anything else is the user's H not vectorising the way the caller assumed,
+                # and it must say so here rather than hand a consumer N^2 values to index into.
                 array = np.asarray(value)
-                return array.item() if array.size == 1 else value
+                if array.size == 1:
+                    return array.item()
+                expected = np.shape(m)[0] if np.ndim(m) >= 1 else np.shape(x)[0] if np.ndim(x) >= 1 else 1
+                if array.size != expected:
+                    raise ValueError(
+                        f"conditional_hamiltonian returned {array.size} values for a batch of "
+                        f"{expected} points (shape {array.shape}). A pointwise H such as "
+                        f"`0.5*p**2 + theta*m` broadcasts (N,1) against (N,) to (N,N) when the "
+                        f"caller passes x, p as (N, d) and m as (N,). Write it to reduce over the "
+                        f"control axis -- e.g. `0.5*np.sum(p**2, axis=-1) + theta*m` -- or accept "
+                        f"only point evaluations. (#2197: this used to pass through untouched, and "
+                        f"HamiltonianBase.dm then returned N^2 values with no error.)"
+                    )
+                return value
 
             def is_smooth(self) -> bool:
                 # Unknowable: `conditional_hamiltonian` is a user callable. Reporting True would

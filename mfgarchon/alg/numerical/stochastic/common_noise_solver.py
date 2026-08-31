@@ -305,7 +305,16 @@ class CommonNoiseMFGSolver:
             CommonNoiseMFGResult with mean solutions and statistics
 
         Raises:
-            RuntimeError: If conditional solvers fail to converge
+            RuntimeError: If a parallel conditional solve produces no result, which would
+                misalign ``u_samples`` with ``noise_paths``.
+
+        Note:
+            Non-convergence does NOT raise. ~~RuntimeError: If conditional solvers fail to
+            converge~~ [CORRECTED 2026-09-01, #2197 review] -- nothing in this method ever raised
+            on non-convergence; ``all(sol[2] for sol in conditional_solutions)`` is only stored on
+            the result as ``converged``. Callers must READ ``result.converged``; treating a
+            returned result as evidence of convergence is exactly the mistake this docstring
+            invited.
         """
         start_time = time.time()
 
@@ -417,7 +426,16 @@ class CommonNoiseMFGSolver:
 
         num_workers = self.num_workers or mp.cpu_count()
 
-        solutions = []
+        # PLACED BY INDEX, not appended (#2197 review). `as_completed` yields in COMPLETION order
+        # while `noise_paths` is handed to CommonNoiseMFGResult in SAMPLING order, so appending
+        # made `u_samples[k]` correspond to some other realisation than `noise_paths[k]`. The index
+        # was already captured as the dict's value and simply never read. Measured before the fix:
+        # the recovered permutation was non-identity in 4 of 4 trials ([1,0,3,2,4,5], [2,3,4,0,5,1],
+        # ...) against a sequential control that was identity in 2 of 2 with residual exactly 0.
+        # The aggregates hid it -- u_mean, u_std and the MC errors are means and stds OVER samples,
+        # hence permutation-invariant -- so only per-sample analysis was corrupted, and it
+        # re-permuted differently on every run, so it was not reproducible even under a fixed seed.
+        solutions: list[tuple[NDArray, NDArray, bool] | None] = [None] * len(noise_paths)
         completed = 0
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -426,13 +444,19 @@ class CommonNoiseMFGSolver:
 
             # Collect results as they complete
             for future in as_completed(futures):
-                u, m, converged = future.result()
-                solutions.append((u, m, converged))
+                solutions[futures[future]] = future.result()
                 completed += 1
 
                 if verbose and completed % max(1, self.K // 10) == 0:
                     print(f"  Progress: {completed}/{self.K} ({100 * completed / self.K:.0f}%)")
 
+        missing = [k for k, entry in enumerate(solutions) if entry is None]
+        if missing:
+            raise RuntimeError(
+                f"parallel common-noise solve: {len(missing)} of {len(noise_paths)} conditional "
+                f"solves produced no result (indices {missing[:5]}). Returning a partly-filled "
+                f"sample set would silently misalign u_samples with noise_paths."
+            )
         return solutions
 
     def _solve_conditional_mfg(self, noise_path: NDArray) -> tuple[NDArray, NDArray, bool]:
