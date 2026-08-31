@@ -885,8 +885,12 @@ class HJBFDMSolver(BaseHJBSolver):
                         "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
                         "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
                         "correction (Issue #1079). The result is only meaningful when the "
-                        "off-diagonals are physically negligible; pass a scalar or diagonal "
-                        "sigma to avoid the approximation.",
+                        "off-diagonals are physically negligible. Two ways out, and the first "
+                        "keeps your model: HJBSemiLagrangianSolver discretises the "
+                        "cross-derivative explicitly and is measured FIRST ORDER on an "
+                        "off-diagonal Sigma -- EOC 1.040, 1.017, against 0.718, 0.385 with that "
+                        "term dropped (Issue #2198). Otherwise pass a scalar or diagonal sigma "
+                        "and accept the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )
@@ -900,8 +904,12 @@ class HJBFDMSolver(BaseHJBSolver):
                         "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
                         "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
                         "correction (Issue #1079). The result is only meaningful when the "
-                        "off-diagonals are physically negligible; pass a scalar or diagonal "
-                        "sigma to avoid the approximation.",
+                        "off-diagonals are physically negligible. Two ways out, and the first "
+                        "keeps your model: HJBSemiLagrangianSolver discretises the "
+                        "cross-derivative explicitly and is measured FIRST ORDER on an "
+                        "off-diagonal Sigma -- EOC 1.040, 1.017, against 0.718, 0.385 with that "
+                        "term dropped (Issue #2198). Otherwise pass a scalar or diagonal sigma "
+                        "and accept the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )

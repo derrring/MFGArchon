@@ -503,8 +503,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "HJBGFDMSolver does not support full-tensor (d,d) sigma. "
                 "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
                 "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
-                "terms are silently dropped (Issue #1079). Pass scalar sigma or a "
-                "scalar-valued spatial field matching problem.spatial_shape instead."
+                "terms are silently dropped (Issue #1079). HJBSemiLagrangianSolver does "
+                "discretise that term and is measured first order on an off-diagonal Sigma "
+                "(Issue #2198); otherwise pass scalar sigma or a scalar-valued spatial field "
+                "matching problem.spatial_shape."
             )
 
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---

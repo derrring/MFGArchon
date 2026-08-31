@@ -59,7 +59,7 @@ from .hjb_sl_interpolation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
@@ -972,6 +972,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system using semi-Lagrangian method.
@@ -1014,6 +1015,36 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "Use HJBGFDMSolver (which consumes volatility_field) or set problem.sigma to match."
             )
 
+        # `source_term` is honoured by the OPERATOR-SPLITTING path only (Issue #2198). The three
+        # variants below replace that path wholesale rather than adding to it, so there is no
+        # splitting step for a source to enter: canonical_cs and the L-based DPP solve an implicit
+        # fixed point for alpha*, and the stochastic-characteristic path integrates along sampled
+        # Brownian paths. Each would need its own derivation of where the forcing enters, and an
+        # unverified guess in an ORACLE is the one error that cannot be afforded -- a manufactured
+        # source placed wrongly makes the study measure a different equation and converge cleanly
+        # while doing it. Refusing is a behaviour; an absent signature is not (#2020).
+        if source_term is not None:
+            unsupported = (
+                "canonical_cs"
+                if self.diffusion_method == "canonical_cs"
+                else "the L-based DPP path"
+                if self._use_dpp
+                else "stochastic"
+                if self.diffusion_method == "stochastic"
+                else None
+            )
+            if unsupported is not None:
+                raise NotImplementedError(
+                    f"HJBSemiLagrangianSolver: source_term is threaded through the operator-"
+                    f"splitting path only, and this solver is configured for {unsupported}, which "
+                    f"replaces that path rather than adding to it (Issue #2198). Where the forcing "
+                    f"enters an implicit-alpha* fixed point or a sampled characteristic has not "
+                    f"been derived or measured here, and a manufactured source in the wrong place "
+                    f"verifies a different equation while still converging. Use "
+                    f"diffusion_method='crank_nicolson' (the splitting path) for an MMS study, or "
+                    f"extend this solver with the derivation and an order measurement."
+                )
+
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -1034,6 +1065,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "explicitly, e.g. MFGComponents(hamiltonian=SeparableHamiltonian(...)). The solver "
                 "will not silently substitute the LQ default H=0.5*|p|^2 (Issue #1071, fail-fast)."
             )
+
+        # The MMS forcing of ``-u_t + H(x, m, grad u) - tr(D . Hess u) = S``, the same convention
+        # `mfgarchon.utils.manufactured` assembles and `base_hjb` subtracts from its Newton
+        # residual. HJBWENOSolver documents the time-stepping form: the source enters as a RATE,
+        # multiplied by the sub-step and evaluated at that sub-step's own physical time, with the
+        # same sign as k = -u_t. This solver marches backward from the later endpoint, so the clock
+        # starts at (n + 1) * dt and decreases by each sub-step -- matching WENO exactly, so one
+        # manufactured source runs against both time-stepping solvers.
+        # x comes from the geometry, not a locally built linspace: base_hjb documents the contract
+        # as source_term(t, x) with x of shape (N, d), and building the points here would make one
+        # manufactured source unrunnable across solvers, defeating a shared MMS channel.
+        source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
         # Reset gradient clipping statistics for this solve (Issue #583)
         self._reset_gradient_stats()
@@ -1088,6 +1131,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     U_coupling_prev[u_prev_idx],  # u_k^n for coupling terms
                     n,  # time index
                 )
+                if source_term is not None:
+                    U_solution[n] = U_solution[n] + self.dt * self._source_increment(
+                        source_term, source_points, (n + 1) * self.dt, grid_shape
+                    )
             else:
                 # Adaptive substepping: subdivide the time step
                 U_current = U_solution[n + 1].copy()
@@ -1099,6 +1146,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         n,
                         dt_substep,
                     )
+                    if source_term is not None:
+                        # The sub-step's OWN physical time, decreasing from the later endpoint.
+                        U_current = U_current + dt_substep * self._source_increment(
+                            source_term, source_points, (n + 1) * self.dt - substep * dt_substep, grid_shape
+                        )
                     # Check for numerical issues after each substep
                     if np.any(np.isnan(U_current) | np.isinf(U_current)):
                         error_msg = (
@@ -2708,6 +2760,24 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_star = U_star.copy()
             enforce_periodic_value_nd(U_star, axis=0)
         return solve_crank_nicolson_diffusion_1d(U_star, dt, sigma, self.x_grid, bc_type=bc_op)
+
+    def _source_increment(self, source_term, points, t: float, grid_shape) -> np.ndarray:
+        """Evaluate the MMS forcing ``S(t, x)`` on the grid and shape it like the value array.
+
+        Shape is enforced rather than broadcast. An ``(N, 1)`` where an ``(N,)`` is expected
+        broadcasts to ``(N, N)`` with no error, and a source field of the wrong size fed to an
+        oracle is the one failure that cannot be afforded: the study keeps converging and measures
+        a different equation.
+        """
+        values = np.asarray(source_term(t, points), dtype=float).ravel()
+        expected = int(np.prod(grid_shape))
+        if values.size != expected:
+            raise ValueError(
+                f"HJBSemiLagrangianSolver: source_term returned {values.size} values at t={t:.6g} "
+                f"for a grid of {expected} points {tuple(grid_shape)}. The contract is "
+                f"source_term(t, x) -> (N,) with x of shape (N, d) from geometry.get_spatial_grid()."
+            )
+        return values.reshape(grid_shape)
 
     def _get_diffusion_bc_type(self) -> str:
         """Get BC type string for diffusion step ('neumann' or 'periodic')."""
