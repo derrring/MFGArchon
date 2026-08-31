@@ -59,8 +59,10 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   `fp_drift_coefficient(problem)` -- it returns 1/control_cost.lambda_ for such a Hamiltonian and
   never reaches the `coupling_coefficient` fallback (#1420 / G-017). It is NOT a package-wide
   universal, and an earlier draft of this block claimed one: an AST census finds 10 call sites in
-  7 files, and the velocity-channel families (FVM / FEM / meshless-Galerkin, and the network
-  solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times --
+  7 files, and the velocity-channel FP families (FVM / FEM / meshless-Galerkin FP, and the
+  network solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times.
+  The FP scope word is load-bearing: `meshless_galerkin/hjb_solver.py:118` IS one of those 10
+  call sites, so dropping it makes the sentence contradict its own census --
   `utils/pde_coefficients.py:47-50` already says so. Outside the scope above the fallback is live:
   a non-separable Hamiltonian returns `coupling_coefficient` itself.
   Measured at the SOLVE, which is the level the claim is about: at lambda = 1.0, a full coupled
@@ -209,8 +211,9 @@ class CoupledSinusoid1D(ManufacturedSolution):
         # source, or it becomes self-consistent and the study converges cleanly on the wrong
         # equation. Measured on the 2D sibling: mutating lambda on BOTH sides gives EOC u
         # 0.918/0.985 and PASSES, where the one-sided mutant gives 0.253/0.123 and fails.
-        # They must agree on the VALUES, which is what `test_the_source_and_the_solver_agree`
-        # pins -- both read `mfg.lam`, so there is no literal here to drift.
+        # They must agree on the VALUES. Here both read `mfg.lam`, so there is no literal to
+        # drift; the 2D sibling, where one site was a literal, pins it with
+        # `test_the_source_and_the_solver_agree_on_the_coefficients`.
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(lambda_=lam),
             coupling=lambda m: self.c_f * m,
@@ -384,15 +387,21 @@ class TestCoupledMMSConvergence:
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
         # `assert mfg.c > 0.0` stood here and became vacuous at #2201, which removed its only
         # reader: the drift now comes from the Hamiltonian, so `c` constrains nothing this test is
-        # about. The coupling strength this test IS about is c_f.
-        assert mfg.c_f > 0.0
+        # about. It is deleted rather than re-pointed at `c_f`: this test constructs
+        # `CoupledSinusoid1D(c_f=0.3)` above, so `assert mfg.c_f > 0.0` would restate a literal the
+        # test itself supplied and guard only against __init__ dropping it. The substantive
+        # assertion is the allclose on `diff` above -- it fails if the coupling term is missing
+        # from S_HJB, which is what this test is named for.
         assert np.any(np.abs(diff) > 0.0)
 
     def test_the_drift_scale_follows_lambda_not_coupling_coefficient(self):
         """The header used to call `coupling_coefficient` an INDEPENDENT knob set to match 1/lambda.
-        It is inert: `fp_drift_coefficient` -- which every drift resolution site in the package
-        reads -- returns 1/control_cost.lambda_ for a quadratic-MINIMIZE SeparableHamiltonian and
-        never reaches the `coupling_coefficient` fallback.
+        It is inert ON THIS PROBLEM'S SOLVER PATH: the FDM FP/HJB families resolve the drift
+        through `fp_drift_coefficient`, which returns 1/control_cost.lambda_ for a
+        quadratic-MINIMIZE SeparableHamiltonian and never reaches the `coupling_coefficient`
+        fallback. Not a package-wide universal -- the velocity-channel FP solvers (FVM, FEM,
+        meshless-Galerkin FP) and the network solvers resolve the drift through
+        `H.optimal_control` and never call that helper.
 
         This matters for the source, not just the prose: an assembly that scaled the transport by
         `c` would silently manufacture a different equation than the solver integrates the moment

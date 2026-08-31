@@ -10,8 +10,9 @@ Corrects a false claim in `test_coupled_mfg_mms.py`'s header, which described
 inert on that problem's solver path — the FDM FP/HJB families resolve the drift through
 `fp_drift_coefficient`, which returns `1/control_cost.lambda_` for a quadratic-MINIMIZE
 `SeparableHamiltonian` and never reaches the `coupling_coefficient` fallback. This is a scoped
-claim, not a package-wide one: the velocity-channel families (FVM / FEM / meshless-Galerkin, and
-the network solvers) resolve the drift through `H.optimal_control` and never call that helper.
+claim, not a package-wide one: the velocity-channel FP families (FVM / FEM / meshless-Galerkin FP,
+and the network solvers) resolve the drift through `H.optimal_control` and never call that helper.
+The FP scope word matters — `meshless_galerkin/hjb_solver.py` does call it.
 Measured at the solve and pinned there — a full coupled solve is bit-identical for
 `coupling_coefficient` of 1.0 / 7.0 / 0.5 / -3.0, with a sigma control that moves it. The
 agreement the header credited to setting the knob was never contingent on it.
