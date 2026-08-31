@@ -435,10 +435,12 @@ class CommonNoiseMFGSolver:
         # MyPy note: Factory functions return solvers with solve() -> SolverResult
         u = result.U  # type: ignore[union-attr]
         m = result.M  # type: ignore[union-attr]
-        # `SolverResult` names this field `converged`; the attribute read here before did not
-        # exist on any class in the package (#1684 item 4), so this line raised AttributeError
-        # rather than reporting a wrong verdict. It was never reached because
-        # `create_conditional_problem` fails earlier (#2191).
+        # `SolverResult` names this field `converged`. This line is a call site a rename left
+        # behind: it was written 2025-10-07 (`c8edc15e`) against the then-live
+        # `SolverResult.convergence_achieved`, and `da7b8dfc` renamed that field the next day.
+        # The deprecated property carried it until `53a79ddd` (2025-12-06) removed it, after which
+        # this line would raise AttributeError. It never has, because `create_conditional_problem`
+        # fails earlier (#2191) -- which is also why the rename's own test run did not catch it.
         converged = result.converged  # type: ignore[union-attr]
 
         return u, m, converged

@@ -33,8 +33,13 @@ def _verdict(result: Any) -> dict[str, bool]:
     """The solve's own convergence verdict, or `{}` when the result carries none.
 
     One owner for the question both call sites below ask. They used to ask it of the SOLVER, via
-    an attribute no class in this package has ever assigned (#1684 item 4), which reported "did
-    not converge" for every tracked run and recorded nothing at all in the benchmark loop.
+    an attribute nothing in this package carries any more (#1684 item 4), which reported "did not
+    converge" for every tracked run and recorded nothing at all in the benchmark loop.
+
+    It was a real field once: `SolverResult.convergence_achieved` was a declared, assigned dataclass
+    field until `da7b8dfc` (2025-10-08) renamed it to `converged`, leaving a deprecated property that
+    `53a79ddd` (2025-12-06) removed. So these are call sites a rename left behind, not reads of
+    something that never existed -- an earlier version of this comment asserted the latter.
 
     Returning `{}` rather than `{"converged": False}` is the point: absent means the verdict was
     not measured, False means it was measured and negative. A monitoring decorator must not
@@ -235,16 +240,24 @@ class PerformanceMonitor:
 
                     # Extract convergence information
                     convergence_info = {}
+                    # This branch is unreachable for a SolverResult, which is what every in-package solver
+                    # returns: `convergence_info` is not one of its fields (checked against
+                    # `__dataclass_fields__`; control: `converged` is). So the `elif` below is the only path
+                    # that runs, which is why the defect it carried stayed invisible. Left in place rather
+                    # than deleted -- it is a real duck-typed contract for a caller outside this package --
+                    # but a reader should not take it for the live path.
                     if track_convergence and hasattr(result, "convergence_info"):
                         convergence_info = result.convergence_info
                     elif track_convergence and args and hasattr(args[0], "iterations_run"):
-                        # For iterative solvers. The verdict lives on the RESULT, never on the solver: no class
-                        # in this package has ever assigned the attribute this used to read (#1684 item 4 --
-                        # four read sites, zero writes, while its sibling `iterations_run` is real). Read
-                        # through a defaulting getattr it reported "did not converge" for every run, converged
-                        # or not, beside a genuine iteration count. When the result carries no verdict the key
-                        # is now OMITTED rather than defaulted: absent means not measured, False means measured
-                        # and negative, and collapsing those is the defect.
+                        # For iterative solvers. The verdict lives on the RESULT: the attribute this used
+                        # to read off the SOLVER is gone from the package (#1684 item 4). It was a real
+                        # `SolverResult` field until `da7b8dfc` renamed it to `converged`; these two sites
+                        # were always reading it off the wrong object, so the rename simply removed the
+                        # last thing that could have made them work. Read through a defaulting getattr it
+                        # reported "did not converge" for every run, converged or not, beside a genuine
+                        # iteration count. When the result carries no verdict the key is now OMITTED rather
+                        # than defaulted: absent means not measured, False means measured and negative, and
+                        # collapsing those is the defect.
                         solver = args[0]
                         convergence_info = {"iterations": getattr(solver, "iterations_run", 0)}
                         convergence_info.update(_verdict(result))
@@ -499,7 +512,13 @@ def benchmark_solver(
 
             try:
                 solver = solver_class(problem, **config)
-                result = solver.solve()
+                # Read the verdict and DROP the result before the memory measurement below.
+                # `solver.solve()` used to discard its return value, so the result's arrays were
+                # freed before `rss` was read; binding it to a name and holding it across that
+                # read would silently inflate `peak_memory_mb` by the size of U and M -- the
+                # primary product of a benchmarking function, changed as a side effect of
+                # capturing a boolean.
+                verdict = _verdict(solver.solve())
 
                 execution_time = time.time() - start_time
                 end_memory = process.memory_info().rss / 1024 / 1024
@@ -512,12 +531,12 @@ def benchmark_solver(
                     "success": True,
                 }
 
-                # Extract convergence info if available. `solver.solve()` above used to discard its
-                # return value, and the verdict was then read off the SOLVER, which never carried
-                # one (#1684 item 4), so `converged` was never recorded here at all.
+                # Extract convergence info if available. This used to read the verdict off the
+                # SOLVER, via an attribute that no longer exists there (#1684 item 4), so
+                # `converged` was never recorded here at all.
                 if hasattr(solver, "iterations_run"):
                     run_data["iterations"] = solver.iterations_run
-                run_data.update(_verdict(result))
+                run_data.update(verdict)
 
                 config_results["runs"].append(run_data)
                 times.append(execution_time)

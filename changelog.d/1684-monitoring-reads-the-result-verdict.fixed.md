@@ -1,9 +1,14 @@
 - **Performance monitoring reports the solve's actual verdict** (Issue #1684, item 4).
 
   Both convergence read sites in `utils/performance/monitoring.py` read `convergence_achieved`
-  off the solver object. No class in the package has ever assigned that attribute -- four read
-  sites, zero writes, while its sibling `iterations_run` is real and set in `block_iterators.py`
-  and `fictitious_play.py`. It was never a rename; it is the unimplemented half of a pair.
+  off the **solver** object. No solver class has ever carried it, so both were reading the wrong
+  object; and nothing in the package carries it at all today.
+
+  It was a real field once. `SolverResult.convergence_achieved` was a declared, assigned dataclass
+  field until `da7b8dfc` (2025-10-08) renamed it to `converged`, with a deprecated property that
+  `53a79ddd` (2025-12-06) removed. Three logical read sites remain in the package (four grep
+  lines -- #1684 item 4 counts three, and the two numbers are of different things); `common_noise_solver.py` is a call site that rename left behind, written one day before
+  it. Three further reads survive in `examples/` notebooks and are not fixed here.
 
   The decorator read it through a defaulting `getattr`, so every tracked run was recorded as
   `converged: False` beside a genuine iteration count, whatever the solve did. `benchmark_solver`
@@ -21,6 +26,6 @@
   of 6 fail against the pre-fix source. The survivor is the non-converged case, which the old code
   got right by accident.
 
-  The third read site, `stochastic/common_noise_solver.py:438`, raised `AttributeError` rather
-  than reporting a wrong verdict and is corrected here too. It has never been reached: that solver
+  The third read site, `stochastic/common_noise_solver.py:438`, would raise `AttributeError`
+  rather than report a wrong verdict, and is corrected here too. It has never been reached: that solver
   fails earlier, in `create_conditional_problem` (#2191).

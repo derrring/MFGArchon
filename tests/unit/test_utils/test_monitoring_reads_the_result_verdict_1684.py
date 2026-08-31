@@ -1,10 +1,21 @@
 """Performance monitoring reports the solve's actual verdict (#1684 item 4).
 
 Both convergence read sites in `utils/performance/monitoring.py` used to read
-`convergence_achieved` off the SOLVER object. No class in this package has ever assigned that
-attribute -- measured, four read sites and zero writes, while its sibling `iterations_run` is
-real and set in `block_iterators.py` and `fictitious_play.py`. So it was never a rename; it is
-the unimplemented half of a pair.
+`convergence_achieved` off the SOLVER object. Nothing in the package carries that attribute today
+-- measured, zero writes -- while its sibling `iterations_run` is real and set in
+`block_iterators.py`, `fictitious_play.py` and `fixed_point_iterator.py`.
+
+**It WAS a real field, and an earlier version of this docstring said the opposite.**
+`SolverResult.convergence_achieved` was a declared, assigned dataclass field until `da7b8dfc`
+(2025-10-08) renamed it to `converged`; the deprecated property survived until `53a79ddd`
+(2025-12-06). The claim "no class has ever assigned it" came from running the regex over the
+CURRENT tree and then stating the result as a claim about all time -- which is the shape #1684
+itself is about, a report that outruns what was measured.
+
+What the correction does NOT change: these two sites read the attribute off the SOLVER, and no
+solver class ever carried it, so they were wrong before the rename and after it. The third site,
+`common_noise_solver.py:438`, is the one the rename genuinely orphaned -- written 2025-10-07,
+one day before `da7b8dfc`, against the then-live field.
 
 The consequences differed by site and neither surfaced as an error:
 
