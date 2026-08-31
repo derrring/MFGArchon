@@ -147,6 +147,17 @@ class MultiPopulationIterator:
 
         # Picard iteration
         converged = False
+        # All three error lists are bound BEFORE the loop, not only where they are computed.
+        # They are assigned in the convergence block near the end of a sweep, so any early exit
+        # from the loop reaches the result constructor below with them unbound. There is no such
+        # exit on this branch -- but #1718 adds one (a diverged HJB breaks out mid-sweep), the two
+        # changes AUTO-MERGE with no conflict, and the merged result raises UnboundLocalError on
+        # the first-sweep divergence. Neither branch's own gate can see that: each ran on one tree
+        # and never on the pair. Measured on the merged tree before this binding: 1 failed,
+        # 18 passed, `cannot access local variable 'errors_M'`.
+        errors: list[float] = []
+        errors_M: list[float] = []
+        errors_U: list[float] = []
         for iteration in range(max_iterations):
             M_old = [m.copy() for m in M]
             # The value function is half of the coupled unknown and was never captured, so the
