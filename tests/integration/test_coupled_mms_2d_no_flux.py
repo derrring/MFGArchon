@@ -108,6 +108,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.manufactured import ManufacturedPair, check_pair, fp_source, hjb_source
 
 L, T, SIGMA, ZETA = 20.0, 4.0, 1.0, 0.5
 # HALF a period, not the paper's full one. sin(cL) = 0 either way, so the pair stays Neumann
@@ -150,36 +151,75 @@ def m_star(t, x1, x2):
     return (1.0 + _a2(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2)) / L**2
 
 
-def s_hjb(t, x1, x2):
-    """S_HJB = -d_t u + (1/2)|grad u|^2 + zeta*m - (sigma^2/2) Lap u."""
-    du_dt = _a1p(t) * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    grad_sq = (_a1(t) * C) ** 2 * (np.sin(C * x1) ** 2 + BETA**2 * np.sin(C * x2) ** 2)
-    lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    return -du_dt + 0.5 * grad_sq + ZETA * m_star(t, x1, x2) - 0.5 * SIGMA**2 * lap_u
+LAMBDA = 1.0
+
+# The Hamiltonian the SOURCE is assembled from, deliberately SEPARATE from the one `_solve` puts on
+# the problem. Every discrimination table in this file supplies a wrong coefficient at problem
+# CONSTRUCTION while the source stays closed over the true constants; routing both through one
+# object would make each mutant self-consistent and the test unable to fail at all.
+_TRUE_HAMILTONIAN = SeparableHamiltonian(
+    control_cost=QuadraticControlCost(lambda_=LAMBDA),
+    coupling=lambda m: ZETA * m,
+    coupling_dm=lambda _m: ZETA,
+)
+
+# The exact pair and its analytic derivatives. The ASSEMBLY of these into S_HJB / S_FP is owned by
+# `mfgarchon.utils.manufactured` (#2201) and is no longer written here: the sign conventions in this
+# file's header are what that module encodes, and stating them twice is how they drift apart.
+PAIR = ManufacturedPair(
+    u=lambda t, x: u_star(t, x[..., 0], x[..., 1]),
+    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1])),
+    grad_u=lambda t, x: np.stack(
+        [-_a1(t) * C * np.sin(C * x[..., 0]), -BETA * _a1(t) * C * np.sin(C * x[..., 1])], axis=-1
+    ),
+    hess_u=lambda t, x: _diag_hessian(
+        -_a1(t) * C**2 * np.cos(C * x[..., 0]), -BETA * _a1(t) * C**2 * np.cos(C * x[..., 1])
+    ),
+    m=lambda t, x: m_star(t, x[..., 0], x[..., 1]),
+    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+    grad_m=lambda t, x: np.stack(
+        [
+            -2 * C * _a2(t) * np.sin(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+            -4 * C * _a2(t) * np.cos(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2,
+        ],
+        axis=-1,
+    ),
+    hess_m=lambda t, x: _hess_m(t, x),
+    name="coupled_2d_no_flux",
+)
 
 
-def s_fp(t, x1, x2):
-    """S_FP = d_t m - div(m grad u) - (sigma^2/2) Lap m."""
-    dm_dt = _a2p(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    m = m_star(t, x1, x2)
-    gm1 = -2 * C * _a2(t) * np.sin(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    gm2 = -4 * C * _a2(t) * np.cos(2 * C * x1) * np.sin(4 * C * x2) / L**2
-    gu1 = -_a1(t) * C * np.sin(C * x1)
-    gu2 = -BETA * _a1(t) * C * np.sin(C * x2)
-    lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    lap_m = -20 * C**2 * _a2(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    return dm_dt - (gm1 * gu1 + gm2 * gu2 + m * lap_u) - 0.5 * SIGMA**2 * lap_m
+def _diag_hessian(d00, d11):
+    """A ``(N, 2, 2)`` Hessian with zero cross term -- correct for u*, which is a separable SUM."""
+    hess = np.zeros((len(np.atleast_1d(d00)), 2, 2))
+    hess[:, 0, 0], hess[:, 1, 1] = d00, d11
+    return hess
 
 
-def _split(x):
-    """Split the solver's point array into (x1, x2). Raises rather than guessing.
+def _hess_m(t, x):
+    """m* is a PRODUCT, so its cross derivative is non-zero -- the one this file supplies that an
+    isotropic sigma multiplies by exactly zero. `check_pair` is what audits it; see the test below."""
+    hess = np.zeros((len(x), 2, 2))
+    common = _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2
+    hess[:, 0, 0] = -4 * C**2 * common
+    hess[:, 1, 1] = -16 * C**2 * common
+    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
+    return hess
 
-    The previous version fell back to ``(a.ravel(), a.ravel())`` for any other shape, which aliases
-    x2 := x1 and evaluates BOTH manufactured sources on the degenerate diagonal x1 == x2 -- a
-    plausible, wrong source field, silently. In an oracle that is the one failure that cannot be
-    afforded: the test would keep passing while measuring the scheme against the wrong exact
-    solution. Instrumented over a full converged solve, that branch was taken 0 times out of 64, so
-    it bought nothing and risked everything. The repo's own rule is at
+
+s_hjb = hjb_source(PAIR, _TRUE_HAMILTONIAN, SIGMA)
+s_fp = fp_source(PAIR, _TRUE_HAMILTONIAN, SIGMA)
+
+
+def _points(x):
+    """Return the solver's point array as ``(N, 2)``. Raises rather than guessing.
+
+    A previous version split this into ``(x1, x2)`` and fell back to ``(a.ravel(), a.ravel())`` for
+    any other shape, which aliases x2 := x1 and evaluates BOTH manufactured sources on the
+    degenerate diagonal x1 == x2 -- a plausible, wrong source field, silently. In an oracle that is
+    the one failure that cannot be afforded: the test would keep passing while measuring the scheme
+    against the wrong exact solution. Instrumented over a full converged solve, that branch was
+    taken 0 times out of 64, so it bought nothing and risked everything. The repo's own rule is at
     `utils/pde_coefficients.py:114` -- "the prior silent fallback masked a malformed problem".
 
     Note this convention is not universal in the library: `FPFVMSolver` passes
@@ -189,9 +229,9 @@ def _split(x):
     """
     a = np.asarray(x, dtype=float)
     if a.ndim >= 2 and a.shape[-1] == 2:
-        return a[..., 0], a[..., 1]
+        return a.reshape(-1, 2)
     raise TypeError(
-        f"_split expected an (N, 2) point array from the solver, got shape {a.shape}. "
+        f"_points expected an (N, 2) point array from the solver, got shape {a.shape}. "
         "Aliasing x2 := x1 would evaluate the manufactured sources on the diagonal and the test "
         "would pass while measuring the wrong exact solution (see #2019 for the FVM convention)."
     )
@@ -220,8 +260,8 @@ def _solve(nx: int, nt: int):
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
         coupling_coefficient=1.0,
         components=components,
-        source_term_hjb=lambda x, m, v, t: s_hjb(t, *_split(x)).ravel(),
-        source_term_fp=lambda x, m, v, t: s_fp(t, *_split(x)).ravel(),
+        source_term_hjb=lambda x, m, v, t: s_hjb(t, _points(x)),
+        source_term_fp=lambda x, m, v, t: s_fp(t, _points(x)),
     )
     result = FixedPointIterator(
         problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), relaxation=1.0
@@ -374,3 +414,37 @@ def test_coupled_2d_no_flux_converges_at_first_order():
         f"band (order_u={order_u}). EOC is a ratio and cannot see an error scaled uniformly across "
         f"levels; this bound is the only thing that can."
     )
+
+
+@pytest.mark.integration
+def test_the_manufactured_pair_is_its_own_derivatives():
+    """The pair's eight analytic derivatives, audited against a finite difference of u* and m*.
+
+    This is the ONLY check here whose oracle is outside the scheme and outside the assembly. The
+    convergence study above cannot do it: an isotropic sigma contracts `tr(D . Hess)` over the
+    diagonal only, so `hess_m`'s cross term -- the one derivative in this file that no other line
+    states -- is multiplied by exactly zero and a wrong value for it is invisible to every
+    assertion above. Measured: flipping its sign moves s_fp by 0.000e+00 at this sigma.
+
+    It also covers the direction the study is blind to for a different reason: `u*` is a separable
+    SUM, so `hess_u`'s cross term is structurally zero and no choice of sigma can exercise it.
+    """
+    rng = np.random.default_rng(20260831)
+    x = rng.uniform(0.0, L, size=(200, 2))
+    check_pair(PAIR, 0.37 * T, x)
+
+
+@pytest.mark.integration
+def test_the_pair_audit_would_catch_a_wrong_cross_derivative():
+    """Discrimination for the test above: it must FAIL on the defect it claims to catch, and that
+    defect must be invisible to the source assembly -- otherwise the audit is redundant, not the
+    only check."""
+    rng = np.random.default_rng(20260831)
+    x = rng.uniform(0.0, L, size=(200, 2))
+    broken = ManufacturedPair(
+        **{**PAIR.__dict__, "hess_m": lambda t, xx: _hess_m(t, xx) * np.array([[1, -1], [-1, 1]])}
+    )
+
+    assert np.max(np.abs(fp_source(broken, _TRUE_HAMILTONIAN, SIGMA)(0.37 * T, x) - s_fp(0.37 * T, x))) == 0.0
+    with pytest.raises(ValueError, match="hess_m"):
+        check_pair(broken, 0.37 * T, x)

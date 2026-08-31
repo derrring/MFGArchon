@@ -49,12 +49,20 @@ FP RHS (source ADDED): fp_fdm_time_stepping.py, both the explicit and the implic
   MFG-coupled path FPFDMSolver uses; effective continuous equation
   ``d_t m + div(alpha* m) - (sigma^2/2) Lap m = S_FP``.
   => S_FP = d_t m* + div(alpha* m*) - (sigma^2/2) Lap m*.
-FP drift: alpha = -coupling_coefficient * grad(U) (fp_fdm_alg_divergence_upwind.py),
-  coupling_coefficient default 0.5 (MFGProblem). It is an INDEPENDENT knob from lambda;
-  we set coupling_coefficient = 1/lambda = 1.0 so the drift the solver builds agrees with
-  -grad u* / lambda regardless of which drift path is selected (the SeparableHamiltonian +
-  smooth control branch passes potential_field=U_new and the FP solver forms
-  v = -coupling_coefficient * grad U, in fixed_point_iterator).
+FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadratic-MINIMIZE
+  cost, and the source is assembled from that owner rather than from a hand-written scale.
+  ~~It is an INDEPENDENT knob from lambda; we set coupling_coefficient = 1/lambda = 1.0 so the
+  drift the solver builds agrees with -grad u*/lambda.~~ [SUPERSEDED 2026-08-31]
+  SUPERSEDED-BY: #2201. `coupling_coefficient` is INERT for this problem, so the agreement was
+  never contingent on setting it. Every resolution site in the package -- fp_fdm.py:869,
+  fp_fdm_time_stepping.py:803, fp_particle.py:448, hjb_fdm.py:1048/1123 -- reads
+  `fp_drift_coefficient(problem)`, which returns 1/control_cost.lambda_ for a quadratic-MINIMIZE
+  SeparableHamiltonian and never reaches the `coupling_coefficient` fallback (#1420 / G-017).
+  Measured: at lambda = 1.0, `coupling_coefficient` = 1.0 and 7.0 both resolve the drift to 1.0;
+  at lambda = 2.0, `coupling_coefficient` = 0.5 and 1.0 both resolve to 0.5. The knob follows
+  1/lambda in every case. This is the same "wrong source, right number" misattribution that
+  `test_coupled_mms_2d_no_flux.py` had already corrected in itself -- right value, wrong reason,
+  which is exactly why it left no trace.
 sigma vs D: D = sigma^2/2 -- `diffusion_from_volatility` is the one converter. Pass sigma
   via sigma=; the (2*pi^2*sigma^2) coefficients below already encode (sigma^2/2)*k^2.
 
@@ -92,6 +100,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid, periodic_bc
+from mfgarchon.utils.manufactured import ManufacturedPair, check_pair, fp_source, hjb_source
 
 # Reuse the existing MMS base. pytest's default (prepend) import mode puts this
 # test's directory on sys.path, so the sibling module is importable by bare name;
@@ -116,16 +125,19 @@ class CoupledSinusoid1D(ManufacturedSolution):
     m*(t,x) = 1 + a e^{-t} cos(k x)
     f(m)    = c_f m,    H(x,m,p) = |p|^2/(2 lambda) + f(m)
 
-    Drift used by the FP solver: alpha* = -c * grad u*,  c = coupling_coefficient.
-    We set c = 1/lambda so alpha* = -grad u*/lambda = optimal_control(grad u*),
-    making the drift channel robust to the iterator's drift-path selection.
+    Drift used by the FP solver: alpha* = optimal_control(grad u*) = -grad u*/lambda.
+    It is read from the Hamiltonian, not from `coupling_coefficient`, which is inert
+    here -- see the header. `c` is retained only because `_build_problem` passes it to
+    `MFGProblem`, where MFGProblem's own default (0.5) would be equally inert and more
+    confusing.
 
     Source terms (continuous LHS of each equation evaluated on the exact pair):
 
       S_HJB = -d_t u* + |d_x u*|^2/(2 lambda) + c_f m* - (sigma^2/2) d_xx u*
       S_FP  =  d_t m* + d_x(alpha* m*)        - (sigma^2/2) d_xx m*
 
-    with alpha* = -c d_x u*. Both depend only on (t, x).
+    with alpha* = -d_x u*/lambda. Both depend only on (t, x). The assembly itself lives in
+    `mfgarchon.utils.manufactured`; only the pair and its derivatives are written here.
     """
 
     def __init__(
@@ -147,6 +159,7 @@ class CoupledSinusoid1D(ManufacturedSolution):
         self.c = coupling_coefficient  # FP drift coefficient
         self.k = k
         self.D = 0.5 * sigma**2
+        self._build_sources()
 
     # --- exact fields -----------------------------------------------------
     # Shape-preserving (scalar -> scalar, array -> array) so they can serve both
@@ -165,42 +178,39 @@ class CoupledSinusoid1D(ManufacturedSolution):
         return self.m_star(t, x)
 
     # --- source terms (signature the iterator expects: (x, m, v, t)) ------
+    # The ASSEMBLY is owned by `mfgarchon.utils.manufactured` (#2201). What stays here is the pair
+    # and its analytic derivatives; what left is the arithmetic that turned them into S_HJB / S_FP,
+    # which this file used to state alongside the sign conventions in its own header -- two
+    # statements of one convention, which is how they drift apart.
+    def _build_sources(self):
+        k, lam = self.k, self.lam
+        pair = ManufacturedPair(
+            u=lambda t, x: self.u_star(t, x[..., 0]),
+            u_t=lambda t, x: -self.b * np.exp(-t) * np.sin(k * x[..., 0]),
+            grad_u=lambda t, x: (self.b * k * np.exp(-t) * np.cos(k * x[..., 0]))[:, None],
+            hess_u=lambda t, x: (-self.b * k**2 * np.exp(-t) * np.sin(k * x[..., 0]))[:, None, None],
+            m=lambda t, x: self.m_star(t, x[..., 0]),
+            m_t=lambda t, x: -self.a * np.exp(-t) * np.cos(k * x[..., 0]),
+            grad_m=lambda t, x: (-self.a * k * np.exp(-t) * np.sin(k * x[..., 0]))[:, None],
+            hess_m=lambda t, x: (-self.a * k**2 * np.exp(-t) * np.cos(k * x[..., 0]))[:, None, None],
+            name="coupled_sinusoid_1d",
+        )
+        hamiltonian = SeparableHamiltonian(
+            control_cost=QuadraticControlCost(lambda_=lam),
+            coupling=lambda m: self.c_f * m,
+            coupling_dm=lambda _m: self.c_f,
+        )
+        self.pair = pair
+        self._hjb = hjb_source(pair, hamiltonian, self.sigma)
+        self._fp = fp_source(pair, hamiltonian, self.sigma)
+
     def hjb_source(self, x: np.ndarray, m, v, t: float) -> np.ndarray:
         """S_HJB(t,x). Ignores m, v (FixedPointIterator passes v=zeros)."""
-        x = np.atleast_1d(x).ravel()
-        k, a, b, c_f, lam, sigma = self.k, self.a, self.b, self.c_f, self.lam, self.sigma
-        e1 = np.exp(-t)
-        e2 = np.exp(-2.0 * t)
-        sin = np.sin(k * x)
-        cos = np.cos(k * x)
-        # -d_t u* = +b e^{-t} sin(kx)
-        term_dt = b * e1 * sin
-        # |d_x u*|^2/(2 lambda) = (k b e^{-t} cos)^2 / (2 lam) = (k^2 b^2 / (2 lam)) e^{-2t} cos^2
-        term_ctrl = (k**2 * b**2 / (2.0 * lam)) * e2 * cos**2
-        # +f(m*) = c_f (1 + a e^{-t} cos)
-        term_coupling = c_f * (1.0 + a * e1 * cos)
-        # -(sigma^2/2) d_xx u* = -(sigma^2/2)(-k^2 b e^{-t} sin) = (sigma^2/2) k^2 b e^{-t} sin
-        term_diff = 0.5 * sigma**2 * k**2 * b * e1 * sin
-        return term_dt + term_ctrl + term_coupling + term_diff
+        return self._hjb(t, np.atleast_1d(x).reshape(-1, 1))
 
     def fp_source(self, x: np.ndarray, m, v, t: float) -> np.ndarray:
-        """S_FP(t,x). Ignores m, v; uses analytic alpha* = -c d_x u*."""
-        x = np.atleast_1d(x).ravel()
-        k, a, b, c, sigma = self.k, self.a, self.b, self.c, self.sigma
-        e1 = np.exp(-t)
-        e2 = np.exp(-2.0 * t)
-        sin = np.sin(k * x)
-        cos = np.cos(k * x)
-        # d_t m* = -a e^{-t} cos
-        term_dt = -a * e1 * cos
-        # div(alpha* m*) where alpha* = -c d_x u* = -c k b e^{-t} cos:
-        #   d_x(alpha* m*) = (d_x alpha*) m* + alpha* (d_x m*)
-        #   d_x alpha* = +c k^2 b e^{-t} sin ; d_x m* = -a k e^{-t} sin
-        # sum = c k^2 b e^{-t} sin + 2 c k^2 a b e^{-2t} sin cos
-        term_adv = c * k**2 * b * e1 * sin + 2.0 * c * k**2 * a * b * e2 * sin * cos
-        # -(sigma^2/2) d_xx m* = (sigma^2/2) k^2 a e^{-t} cos
-        term_diff = 0.5 * sigma**2 * k**2 * a * e1 * cos
-        return term_dt + term_adv + term_diff
+        """S_FP(t,x). Ignores m, v; the drift comes from the Hamiltonian's own optimal_control."""
+        return self._fp(t, np.atleast_1d(x).reshape(-1, 1))
 
 
 def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGProblem:
@@ -348,6 +358,31 @@ class TestCoupledMMSConvergence:
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
         assert mfg.c > 0.0
         assert np.any(np.abs(diff) > 0.0)
+
+    def test_the_drift_scale_follows_lambda_not_coupling_coefficient(self):
+        """The header used to call `coupling_coefficient` an INDEPENDENT knob set to match 1/lambda.
+        It is inert: `fp_drift_coefficient` -- which every drift resolution site in the package
+        reads -- returns 1/control_cost.lambda_ for a quadratic-MINIMIZE SeparableHamiltonian and
+        never reaches the `coupling_coefficient` fallback.
+
+        This matters for the source, not just the prose: an assembly that scaled the transport by
+        `c` would silently manufacture a different equation than the solver integrates the moment
+        anyone changed that argument, and the EOC study would still converge."""
+        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+
+        for lam, cc, expected in ((1.0, 1.0, 1.0), (1.0, 7.0, 1.0), (2.0, 1.0, 0.5), (2.0, 0.5, 0.5)):
+            problem = _build_problem(CoupledSinusoid1D(lambda_=lam, coupling_coefficient=cc), 21, 10, 0.2)
+            assert fp_drift_coefficient(problem) == pytest.approx(expected), (
+                f"drift at lambda={lam}, coupling_coefficient={cc} resolved to "
+                f"{fp_drift_coefficient(problem)}, expected 1/lambda = {expected}"
+            )
+            assert problem.coupling_coefficient == pytest.approx(cc)  # the argument did arrive
+
+    def test_the_manufactured_pair_is_its_own_derivatives(self):
+        """The pair's analytic derivatives against a finite difference of u* and m*. Non-circular:
+        it never touches the assembled source, so it audits what the assembly takes on trust."""
+        mfg = CoupledSinusoid1D()
+        check_pair(mfg.pair, 0.12, np.linspace(0.05, 0.95, 61).reshape(-1, 1))
 
 
 if __name__ == "__main__":
