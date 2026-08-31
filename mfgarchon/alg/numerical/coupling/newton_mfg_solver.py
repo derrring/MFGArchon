@@ -37,6 +37,7 @@ from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
+from .fixed_point_utils import diverged_value_function
 from .mfg_residual import MFGResidual
 
 if TYPE_CHECKING:
@@ -182,7 +183,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         U: NDArray,
         M: NDArray,
         num_iterations: int,
-    ) -> tuple[NDArray, NDArray, list[float]]:
+    ) -> tuple[NDArray, NDArray, list[float], int | None]:
         """
         Run Picard fixed-point iterations for warm-up.
 
@@ -192,9 +193,17 @@ class NewtonMFGSolver(BaseCouplingIterator):
             num_iterations: Number of Picard iterations
 
         Returns:
-            (U, M, residuals): Updated state and residual history
+            (U, M, residuals, diverged_at): updated state, residual history, and the 0-based
+            warmup iteration at which the value function went non-finite -- or None if it did
+            not. The caller MUST stop on a non-None value: the statement after the warmup call
+            composes an FP solve from U (#1718).
         """
         residuals = []
+        # The warmup's `break` leaves only this loop. Its caller runs compute_residual_norm
+        # immediately, which composes an FP solve from U -- so a diverged U escaped the guard
+        # below and reached FP anyway, with the identical CFL misattribution #1718 removes
+        # everywhere else. The flag carries the stop out (#1718 review).
+        diverged_at: int | None = None
 
         for i in range(num_iterations):
             # Store old values
@@ -203,6 +212,21 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             # HJB solve: U_new = HJB(M_old)
             U_new = self.mfg_residual.compute_hjb_output(M_old, U_old)
+
+            # Issue #1718: compute_fp_output below builds its drift from U_new, so a non-finite
+            # U_new makes the FP solver raise a CFL diagnostic for an HJB failure. The warmup
+            # stops and hands back what it has; the residual history it returns is the record of
+            # how far it got. `U_terminal` is optional on MFGResidual, which the owner handles.
+            diverged = diverged_value_function(
+                U_new,
+                self.mfg_residual.U_terminal,
+                site="NewtonMFGSolver._run_picard_warmup",
+                iteration=i,
+            )
+            if diverged is not None:
+                U = diverged
+                diverged_at = i
+                break
 
             # FP solve: M_new = FP(U_new)
             M_new = self.mfg_residual.compute_fp_output(U_new, M_old)
@@ -223,7 +247,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
             logger.debug(f"Picard iteration {i + 1}: residual = {res_norm:.2e}")
 
-        return U, M, residuals
+        return U, M, residuals, diverged_at
 
     def solve(
         self,
@@ -261,8 +285,25 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if verbose:
                 print(f"Phase 1: Picard warm-up ({self.picard_warmup} iterations)")
 
-            U, M, picard_res = self._run_picard_warmup(U, M, self.picard_warmup)
+            U, M, picard_res, picard_diverged_at = self._run_picard_warmup(U, M, self.picard_warmup)
             self.picard_residuals = picard_res
+
+            if picard_diverged_at is not None:
+                # Stop here. `compute_residual_norm` below composes an FP solve from U, so
+                # continuing would hand the diverged value function to FP and get the CFL
+                # diagnostic this issue exists to eliminate -- and if it did not raise, Newton
+                # would run on a NaN iterate. Publishing U unchanged keeps the diverged iterate
+                # visible, which is the owner's contract (#1718).
+                self.U, self.M = U, M
+                # `picard_warmup` is the CONFIGURED count and `newton_residuals` may hold a
+                # previous solve's history on this instance, so reporting either unchanged would
+                # publish numbers for iterations this solve never ran -- the #1672 shape, at a
+                # fourth site. Both are set to what actually happened.
+                self.picard_warmup = picard_diverged_at + 1
+                self.newton_residuals = []
+                self.total_iterations = picard_diverged_at + 1
+                self._solution_computed = True
+                return self._create_result(False, "diverged_nan", time.time() - start_time)
 
             if verbose and picard_res:
                 print(f"  Final Picard residual: {picard_res[-1]:.2e}")

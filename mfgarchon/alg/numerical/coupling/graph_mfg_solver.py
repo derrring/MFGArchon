@@ -33,6 +33,8 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _problem_hjb_source_terms
 
+from .fixed_point_utils import diverged_value_function
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -211,6 +213,35 @@ class GraphMFGSolver(BaseCouplingIterator):
                     source_term=hjb_source,
                 )
                 Us_new[k] = U_k
+
+                # Issue #1718: check before the next node is solved. Every node's HJB runs before any
+                # FP, so one node's NaN would reach every other node through `compute_fp_source`
+                # before anything noticed, and the FP solver would then report a CFL condition for
+                # what is an HJB failure.
+                diverged = diverged_value_function(
+                    U_k, Us_full[k][-1], site=f"GraphMFGSolver[node {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    Us_new[k] = diverged
+                    # Nodes after k were never solved this sweep, and `Us_new` initialises to
+                    # `np.empty(0)`. Returning that would break this result's own documented
+                    # contract -- `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and
+                    # `result.values[j][-1]` would raise IndexError for every unsolved node, so a
+                    # consumer looping over values to FIND the NaN crashes before reaching it.
+                    # Carry the previous iterate for those, which is a real value function of the
+                    # right shape and is what "this node did not advance" means. `Ms_expanded`
+                    # rather than `Ms` for the same reason: at iteration 0 `Ms` still holds the
+                    # 1-D initial densities.
+                    values = [Us_new[j] if j <= k else Us_full[j] for j in range(N)]
+                    self._last_result = GraphMFGResult(
+                        values=values,
+                        densities=Ms_expanded,
+                        converged=False,
+                        iterations=iteration + 1,
+                        error_history=error_history,
+                        n_nodes=N,
+                    )
+                    return self._last_result
 
             # --- FP step: solve N forward equations with coupling ---
             for k in range(N):

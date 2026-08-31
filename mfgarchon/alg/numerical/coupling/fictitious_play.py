@@ -45,6 +45,7 @@ from mfgarchon.utils.solver_result import SolverResult
 from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
 from .fixed_point_utils import (
     check_convergence_criteria,
+    diverged_value_function,
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
@@ -389,6 +390,17 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # 1. Solve HJB backward — progress handled via context routing (#934)
             hjb_kwargs = self._build_hjb_kwargs(volatility_field=self.volatility_field)
             U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **hjb_kwargs)
+
+            # Issue #1718: the FP call below composes its drift from U_new, so a non-finite U_new
+            # makes the FP solver raise a CFL diagnostic for an HJB failure. One owner for the
+            # check, the terminal-condition restore, and which iterate gets published.
+            diverged = diverged_value_function(U_new, U_terminal, site="FictitiousPlayIterator", iteration=k)
+            if diverged is not None:
+                self.U = diverged
+                converged = False
+                convergence_reason = "diverged_nan"
+                self.iterations_run = k + 1
+                break
 
             # 2. Solve FP forward with new U.
             # Issue #1043 Phase 2: route through single-source convention, same as

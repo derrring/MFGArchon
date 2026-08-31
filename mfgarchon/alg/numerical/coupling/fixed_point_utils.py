@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.utils.mfg_logging import get_logger
+
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.utils.solver_result import SolverResult
@@ -392,6 +396,80 @@ def preserve_terminal_condition(
     """
     U[-1] = U_terminal
     return U
+
+
+def value_function_is_finite(U: np.ndarray) -> bool:
+    """Whether a value function is usable as an FP drift.
+
+    Split out of :func:`diverged_value_function` for the one caller that needs the question
+    without the answer: ``BlockIterator._gauss_seidel_step`` must SKIP its FP solve, while the
+    loop above it publishes and stops. Two sites, two jobs, one predicate -- restating
+    ``np.all(np.isfinite(...))`` at the second one is the shape #1718 exists to remove.
+    """
+    return bool(np.all(np.isfinite(U)))
+
+
+def diverged_value_function(
+    U_new: np.ndarray,
+    U_terminal: np.ndarray | None,
+    *,
+    site: str,
+    iteration: int | None = None,
+) -> np.ndarray | None:
+    """The publishable form of a non-finite value function, or ``None`` when it is finite.
+
+    One owner for the check #1717 wrote inline and #1718 found missing at six more coupling loops.
+    Every one of them has the same shape -- HJB is solved, the result is consumed by an FP solve,
+    and nothing looks in between -- and the same failure: the FP solver composes a drift from NaN
+    and raises ``"Check CFL condition: dt * sigma^2 / dx^2 should be < 0.5"``. That is an FP
+    diagnostic, carrying actively wrong advice, for an HJB failure.
+
+    Returning the array rather than assigning it is deliberate: the seven sites publish to seven
+    different places (``self.U``, ``Us_new[k]``, ``U[k]``, a local), and a helper that assigned
+    would need to know which. The caller keeps that; the three decisions that must not vary live
+    here.
+
+    **Publish the diverged iterate, not the last finite one.** Keeping the last finite iterate
+    leaves the result looking valid to any caller that reads output validation rather than the
+    convergence reason -- trading a misattributed diagnostic for a silent one, which is worse.
+
+    **Restore the terminal row.** ``U[-1]`` is boundary data the solve never had licence to
+    overwrite, and it is restored here for the same reason the normal path restores it. A NaN
+    terminal row would additionally make the published array useless as a diagnostic.
+
+    **Copy before restoring.** ``preserve_terminal_condition`` writes ``U[-1]`` in place, and
+    ``U_new`` is the HJB solver's own return value rather than a freshly damped array the caller
+    owns. Mutating it would reach back into the solver's internals at five of the seven sites.
+
+    Args:
+        U_new: The value function the HJB solve just produced.
+        U_terminal: Terminal condition g(x) at t=T, or ``None`` where the site has no
+            terminal row to restore (see the note in the body).
+        site: Which coupling loop is reporting, named in the log line. The whole point of the
+            check is attribution, so an unnamed one would be half a fix.
+        iteration: Iteration index, 0-based, if the site has one. Reported 1-based.
+
+    Returns:
+        ``None`` when ``U_new`` is finite everywhere. Otherwise a copy with the terminal row
+        restored, which the caller should publish before stopping the iteration.
+    """
+    if value_function_is_finite(U_new):
+        return None
+    where = f" at iteration {iteration + 1}" if iteration is not None else ""
+    logger.warning(
+        "NaN/Inf in the value function%s (source: HJB (Newton divergence)), reported by %s. "
+        "Terminating early; FP was not solved with this iterate.",
+        where,
+        site,
+    )
+    published = np.asarray(U_new).copy()
+    if U_terminal is None:
+        # `NewtonMFGSolver._run_picard_warmup` runs against an `MFGResidual` whose `U_terminal`
+        # is optional, and that path already guards its own restore the same way. Restoring
+        # against None would write None into the last row and destroy the diagnostic this
+        # function exists to publish.
+        return published
+    return preserve_terminal_condition(published, U_terminal)
 
 
 def compute_fp_velocity_field(

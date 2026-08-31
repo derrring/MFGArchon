@@ -36,6 +36,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_paired_solver_sigma,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    diverged_value_function,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
@@ -450,6 +451,39 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     source_term=hjb_source,
                 )
                 Us_new[k] = U_k
+
+                # Issue #1718: every regime's HJB is solved before any FP runs, and `_make_fp_source`
+                # below reads the whole `Us_new` list, so one regime's NaN would reach every other
+                # regime's mass-transfer source before the FP solver failed and blamed its own CFL.
+                diverged = diverged_value_function(
+                    U_k, Us_full[k][-1], site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    Us_new[k] = diverged
+                    # Regimes after k were never solved this sweep and `Us_new` initialises to
+                    # `None`. Returning that would break this result's own documented contract --
+                    # `values: list[NDArray]`, "shape (Nt+1, Nx) each" -- and any consumer looping
+                    # over `values` to find the NaN would hit `None` first. Carry the previous
+                    # iterate for the unsolved regimes: a real value function of the right shape,
+                    # and the honest reading of "this regime did not advance".
+                    values = [Us_new[j] if j <= k else Us_full[j] for j in range(K)]
+                    self._last_result = RegimeSwitchingResult(
+                        values=values,
+                        # Same expansion the HJB step above applies: at iteration 0 `Ms`
+                        # still holds 1-D initial densities, against a docstring promising
+                        # (Nt+1, Nx).
+                        densities=[
+                            Ms[j]
+                            if isinstance(Ms[j], np.ndarray) and Ms[j].ndim == 2
+                            else np.tile(Ms[j], (self._problems[j].Nt + 1, 1))
+                            for j in range(K)
+                        ],
+                        converged=False,
+                        iterations=iteration + 1,
+                        error_history=error_history,
+                        regime_config=self._regime,
+                    )
+                    return self._last_result
 
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):

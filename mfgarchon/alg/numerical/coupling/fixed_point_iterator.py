@@ -24,6 +24,7 @@ from mfgarchon.utils.solver_result import SolverResult
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
 from .fixed_point_utils import (
     check_convergence_criteria,
+    diverged_value_function,
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
@@ -627,27 +628,19 @@ class FixedPointIterator(BaseCouplingIterator):
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
 
-                # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it.
-                # The FP source and drift below are composed from U_new, so a non-finite U_new
-                # makes the FP solver fail first and report a CFL condition -- an FP diagnostic
-                # for an HJB failure. Worse, that exception escapes the loop, so the #1078
-                # HJB-vs-FP attribution further down never runs on this path.
-                if not np.all(np.isfinite(U_new)):
-                    # Publish the diverged U so the end-of-solve output validation still reports
-                    # it. Keeping the last finite iterate instead would leave the result looking
-                    # valid to any caller that reads output_validation rather than
-                    # convergence_reason -- trading a misattributed diagnostic for a silent one.
-                    # preserve_terminal_condition is applied for the same reason the normal path
-                    # applies it: U[-1] is boundary data the solve never had licence to overwrite.
-                    # Copy first: it writes U[-1] in place, and U_new is the HJB solver's own
-                    # return value rather than the freshly damped array the normal path hands it.
-                    self.U = preserve_terminal_condition(U_new.copy(), U_terminal)
+                # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it. The FP source and
+                # drift below are composed from U_new, so a non-finite U_new makes the FP solver fail
+                # first and report a CFL condition -- an FP diagnostic for an HJB failure. Worse, that
+                # exception escapes the loop, so the #1078 HJB-vs-FP attribution further down never runs.
+                #
+                # The check itself moved to `diverged_value_function` (#1718): a pre-merge review of
+                # #1717 found six more coupling loops with this same shape and no check at all, so the
+                # decisions it encodes -- publish the diverged iterate, restore the terminal row, copy
+                # before restoring -- now have one owner instead of being restated seven times.
+                diverged = diverged_value_function(U_new, U_terminal, site="FixedPointIterator", iteration=iiter)
+                if diverged is not None:
+                    self.U = diverged
                     convergence_reason = "diverged_nan"
-                    logger.warning(
-                        "NaN/Inf detected in iteration %d (source: HJB (Newton divergence)). "
-                        "Terminating early; FP was not solved.",
-                        iiter + 1,
-                    )
                     self.iterations_run = iiter + 1
                     break
 

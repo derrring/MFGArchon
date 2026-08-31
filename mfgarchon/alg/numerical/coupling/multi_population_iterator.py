@@ -21,6 +21,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma
+from .fixed_point_utils import diverged_value_function
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -147,14 +148,10 @@ class MultiPopulationIterator:
 
         # Picard iteration
         converged = False
-        # All three error lists are bound BEFORE the loop, not only where they are computed.
-        # They are assigned in the convergence block near the end of a sweep, so any early exit
-        # from the loop reaches the result constructor below with them unbound. There is no such
-        # exit on this branch -- but #1718 adds one (a diverged HJB breaks out mid-sweep), the two
-        # changes AUTO-MERGE with no conflict, and the merged result raises UnboundLocalError on
-        # the first-sweep divergence. Neither branch's own gate can see that: each ran on one tree
-        # and never on the pair. Measured on the merged tree before this binding: 1 failed,
-        # 18 passed, `cannot access local variable 'errors_M'`.
+        # Bound before the loop so a zero-sweep solve can still construct a result. The lists are
+        # additionally CLEARED at the start of every sweep, which is what covers an early exit from
+        # a later one -- see the comment there. The diverged-HJB break below also clears `errors`
+        # explicitly; that is now redundant with the per-sweep clearing, and harmless.
         errors: list[float] = []
         errors_M: list[float] = []
         errors_U: list[float] = []
@@ -185,6 +182,9 @@ class MultiPopulationIterator:
             m_all = np.concatenate(M, axis=-1)  # (Nt+1, K*Nx)
 
             # Step 1: Solve K HJB equations
+            # `break` inside the loop below leaves only the population loop; this carries the stop
+            # out to the Picard loop (#1718).
+            diverged_population = None
             for k in range(K):
                 solver_k = self.hjb_solvers[k]
                 U_terminal_k = U[k][-1]
@@ -211,6 +211,30 @@ class MultiPopulationIterator:
                     )
                 else:
                     U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
+
+                # Issue #1718: check before the NEXT population is solved, not after the loop. Every
+                # population's HJB is solved before any FP runs, so one population's NaN would reach
+                # every other population's coupling source through `m_all` before anything noticed.
+                # `U[k]` is written in place, so there is no last-finite iterate to fall back on --
+                # which is why the diverged one is published rather than a restored predecessor.
+                diverged = diverged_value_function(
+                    U[k], U_terminal_k, site=f"MultiPopulationIterator[population {k}]", iteration=iteration
+                )
+                if diverged is not None:
+                    U[k] = diverged
+                    diverged_population = k
+                    break
+
+            if diverged_population is not None:
+                converged = False
+                # Clear, do not inherit. The pre-loop binding at the top only takes effect when the
+                # divergence is in sweep 0; `errors` is re-bound by every COMPLETED sweep, so without
+                # this a divergence at sweep >= 1 would report the previous sweep's near-zero errors
+                # beside `iterations` counting the sweep that measured nothing -- the #1672 shape, the
+                # best-looking number attached to the worst solve. Measured before this line: a
+                # divergence at sweep 1 reported errors=[2.2204e-16, 2.2204e-16].
+                errors = []
+                break
 
             # Step 2: Solve K FP equations. The FP drift/potential convention is single-sourced
             # through resolve_fp_drift_kwargs (Issue #1043), identical to the single-population
