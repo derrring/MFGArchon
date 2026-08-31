@@ -53,14 +53,20 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   cost, and the source is assembled from that owner rather than from a hand-written scale.
   ~~It is an INDEPENDENT knob from lambda; we set coupling_coefficient = 1/lambda = 1.0 so the
   drift the solver builds agrees with -grad u*/lambda.~~ [SUPERSEDED 2026-08-31]
-  SUPERSEDED-BY: #2201. `coupling_coefficient` is INERT for this problem, so the agreement was
-  never contingent on setting it. Every resolution site in the package -- fp_fdm.py:869,
-  fp_fdm_time_stepping.py:803, fp_particle.py:448, hjb_fdm.py:1048/1123 -- reads
-  `fp_drift_coefficient(problem)`, which returns 1/control_cost.lambda_ for a quadratic-MINIMIZE
-  SeparableHamiltonian and never reaches the `coupling_coefficient` fallback (#1420 / G-017).
-  Measured: at lambda = 1.0, `coupling_coefficient` = 1.0 and 7.0 both resolve the drift to 1.0;
-  at lambda = 2.0, `coupling_coefficient` = 0.5 and 1.0 both resolve to 0.5. The knob follows
-  1/lambda in every case. This is the same "wrong source, right number" misattribution that
+  SUPERSEDED-BY: #2201. `coupling_coefficient` is INERT on THIS PROBLEM'S SOLVER PATH, so the
+  agreement was never contingent on setting it. The scope is the claim: a quadratic-MINIMIZE
+  SeparableHamiltonian solved through the FDM FP/HJB families, which resolve the drift through
+  `fp_drift_coefficient(problem)` -- it returns 1/control_cost.lambda_ for such a Hamiltonian and
+  never reaches the `coupling_coefficient` fallback (#1420 / G-017). It is NOT a package-wide
+  universal, and an earlier draft of this block claimed one: an AST census finds 10 call sites in
+  7 files, and the velocity-channel families (FVM / FEM / meshless-Galerkin, and the network
+  solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times --
+  `utils/pde_coefficients.py:47-50` already says so. Outside the scope above the fallback is live:
+  a non-separable Hamiltonian returns `coupling_coefficient` itself.
+  Measured at the SOLVE, which is the level the claim is about: at lambda = 1.0, a full coupled
+  solve at Nx=21/Nt=40 is bit-identical for `coupling_coefficient` = 1.0 / 7.0 / 0.5 / -3.0,
+  max|dU| = max|dM| = 0.000e+00, against a control where sigma 0.25 -> 0.26 moves the same solve.
+  Pinned by `test_the_drift_scale_is_inert_at_the_solve` below. This is the same "wrong source, right number" misattribution that
   `test_coupled_mms_2d_no_flux.py` had already corrected in itself -- right value, wrong reason,
   which is exactly why it left no trace.
 sigma vs D: D = sigma^2/2 -- `diffusion_from_volatility` is the one converter. Pass sigma
@@ -156,7 +162,10 @@ class CoupledSinusoid1D(ManufacturedSolution):
         self.b = b
         self.c_f = c_f
         self.lam = lambda_
-        self.c = coupling_coefficient  # FP drift coefficient
+        # NOT the FP drift coefficient, despite the argument's name: nothing reads this for the
+        # drift. It reaches `MFGProblem(coupling_coefficient=...)` and stops there -- see the
+        # [SUPERSEDED] block in the header and the solve-level pin below.
+        self.c = coupling_coefficient
         self.k = k
         self.D = 0.5 * sigma**2
         self._build_sources()
@@ -195,6 +204,13 @@ class CoupledSinusoid1D(ManufacturedSolution):
             hess_m=lambda t, x: (-self.a * k**2 * np.exp(-t) * np.cos(k * x[..., 0]))[:, None, None],
             name="coupled_sinusoid_1d",
         )
+        # Deliberately a SEPARATE object from the one `_build_problem` puts on the problem, and it
+        # must stay separate: a mutant that perturbs the problem's Hamiltonian must NOT reach the
+        # source, or it becomes self-consistent and the study converges cleanly on the wrong
+        # equation. Measured on the 2D sibling: mutating lambda on BOTH sides gives EOC u
+        # 0.918/0.985 and PASSES, where the one-sided mutant gives 0.253/0.123 and fails.
+        # They must agree on the VALUES, which is what `test_the_source_and_the_solver_agree`
+        # pins -- both read `mfg.lam`, so there is no literal here to drift.
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(lambda_=lam),
             coupling=lambda m: self.c_f * m,
@@ -230,7 +246,9 @@ def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGPro
         T=T,
         Nt=Nt,
         sigma=mfg.sigma,
-        coupling_coefficient=mfg.c,  # = 1/lambda; aligns FP drift with -grad u*/lambda
+        # INERT on this solver path -- it aligns nothing. Kept only because MFGProblem's own
+        # default (0.5) would be equally inert and more confusing.
+        coupling_coefficient=mfg.c,
         components=components,
         source_term_hjb=mfg.hjb_source,
         source_term_fp=mfg.fp_source,
@@ -291,13 +309,21 @@ class TestCoupledMMSConvergence:
 
     EMPIRICALLY MEASURED (this exact configuration, verified before committing
     the threshold):
-        u: errors [2.873e-2, 1.625e-2] -> ratio 1.768 (order 0.822)
-        m: errors [2.585e-1, 1.469e-1] -> ratio 1.760 (order 0.816)
+        ~~u: errors [2.873e-2, 1.625e-2] -> ratio 1.768 (order 0.822)~~
+        ~~m: errors [2.585e-1, 1.469e-1] -> ratio 1.760 (order 0.816)~~
+        u: errors [4.3479e-03, 2.2531e-03] -> ratio 1.9298 (order 0.948)
+        m: errors [2.2768e-02, 1.2589e-02] -> ratio 1.8085 (order 0.855)
+    [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2201. Re-measured on the current tree; the struck
+    figures were stale by 6.6x in u and 11.4x in m. NOT caused by the #2201 migration -- the
+    pre-migration file measures the same current values -- but this block claims to have been
+    "verified before committing the threshold", and a false measurement is worse than none. The
+    conclusion strengthens rather than reverses: the real ratios are ABOVE the recorded ones, so
+    the margin over the 1.5 threshold is ~21% on the binding field (m), not the ~17% stated below.
     Both Picard iterations converged (14-19 outer iterations).
 
     Threshold: ratios > 1.5 for BOTH u and m -- the precedent set by the
     single-equation source MMS tests (test_mms_validation.py:399 and :796). With
-    the measured 1.76 it leaves ~17% margin. We do NOT assert the naive order-1
+    the measured 1.81 on m (the binding field) it leaves ~21% margin. We do NOT assert the naive order-1
     ratio of 2 (coarse pre-asymptotic regime + upwind numerical diffusion) nor
     2nd order (the upwind drift forbids it; O(h^2) would false-fail).
 
@@ -356,7 +382,10 @@ class TestCoupledMMSConvergence:
         diff = mfg.hjb_source(x, None, None, 0.1) - mfg0.hjb_source(x, None, None, 0.1)
         expected = mfg.c_f * mfg.m_star(0.1, x)
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
-        assert mfg.c > 0.0
+        # `assert mfg.c > 0.0` stood here and became vacuous at #2201, which removed its only
+        # reader: the drift now comes from the Hamiltonian, so `c` constrains nothing this test is
+        # about. The coupling strength this test IS about is c_f.
+        assert mfg.c_f > 0.0
         assert np.any(np.abs(diff) > 0.0)
 
     def test_the_drift_scale_follows_lambda_not_coupling_coefficient(self):
@@ -377,6 +406,36 @@ class TestCoupledMMSConvergence:
                 f"{fp_drift_coefficient(problem)}, expected 1/lambda = {expected}"
             )
             assert problem.coupling_coefficient == pytest.approx(cc)  # the argument did arrive
+
+    def test_the_drift_scale_is_inert_at_the_solve(self):
+        """The claim in the header is about the SOLVE, so it is pinned at the solve.
+
+        `test_the_drift_scale_follows_lambda_not_coupling_coefficient` above pins
+        `fp_drift_coefficient`'s RETURN VALUE, which is one indirection short of the claim: the
+        step from the helper to the solve is "every consuming site routes through the owner", and
+        that is precisely the step the package has already changed twice (#1528 moved three FP
+        families off it). Measured: patching only the CONSUMING module
+        (`fp_fdm_time_stepping.fp_drift_coefficient`) to return `coupling_coefficient` leaves both
+        of those tests green while the converged density moves by max|dM| ~ 1.2e+01.
+
+        So this asserts the thing itself -- bit-identical solves across four values of the argument,
+        including a negative one that would invert any drift that actually read it.
+        """
+        reference = _solve_coupled(CoupledSinusoid1D(coupling_coefficient=1.0), 21, 40, 0.1)
+        for cc in (7.0, 0.5, -3.0):
+            other = _solve_coupled(CoupledSinusoid1D(coupling_coefficient=cc), 21, 40, 0.1)
+            for name, a, b in (("U", reference[0], other[0]), ("M", reference[1], other[1])):
+                delta = float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+                assert delta == 0.0, (
+                    f"coupling_coefficient={cc} moved {name} by {delta:.3e}; it is supposed to be "
+                    f"inert on this solver path, and the manufactured source does not use it."
+                )
+
+        # POSITIVE CONTROL: a coefficient that IS live must move the same measurement, or the
+        # assertions above are satisfied by a solve that never varied for any reason.
+        moved = _solve_coupled(CoupledSinusoid1D(sigma=0.26), 21, 40, 0.1)
+        control = float(np.max(np.abs(np.asarray(reference[1]) - np.asarray(moved[1]))))
+        assert control > 1e-6, f"sigma control moved M by only {control:.3e}; the probe is blind"
 
     def test_the_manufactured_pair_is_its_own_derivatives(self):
         """The pair's analytic derivatives against a finite difference of u* and m*. Non-circular:

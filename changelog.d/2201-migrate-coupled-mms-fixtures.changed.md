@@ -7,11 +7,14 @@ is a velocity-driven FP family that takes a velocity with no `u`, which is a dif
 
 Corrects a false claim in `test_coupled_mfg_mms.py`'s header, which described
 `coupling_coefficient` as "an INDEPENDENT knob from lambda" that the fixture sets to match. It is
-inert for that problem: every drift resolution site in the package reads `fp_drift_coefficient`,
-which returns `1/control_cost.lambda_` for a quadratic-MINIMIZE `SeparableHamiltonian` and never
-reaches the `coupling_coefficient` fallback. Measured and now pinned by a test — at `lambda = 1.0`,
-`coupling_coefficient` of 1.0 and 7.0 both resolve the drift to 1.0. The agreement the header
-credited to setting the knob was never contingent on it.
+inert on that problem's solver path — the FDM FP/HJB families resolve the drift through
+`fp_drift_coefficient`, which returns `1/control_cost.lambda_` for a quadratic-MINIMIZE
+`SeparableHamiltonian` and never reaches the `coupling_coefficient` fallback. This is a scoped
+claim, not a package-wide one: the velocity-channel families (FVM / FEM / meshless-Galerkin, and
+the network solvers) resolve the drift through `H.optimal_control` and never call that helper.
+Measured at the solve and pinned there — a full coupled solve is bit-identical for
+`coupling_coefficient` of 1.0 / 7.0 / 0.5 / -3.0, with a sigma control that moves it. The
+agreement the header credited to setting the knob was never contingent on it.
 
 Both fixtures gain a `check_pair` test: the pair's analytic derivatives audited against a finite
 difference of `u*` and `m*`. This is the only check either fixture has whose oracle is outside both

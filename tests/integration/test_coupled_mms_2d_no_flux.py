@@ -237,13 +237,18 @@ def _points(x):
     )
 
 
-def _solve(nx: int, nt: int):
+def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
         m_initial=lambda p: float(m_star(0.0, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
         u_terminal=lambda p: float(u_star(T, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
         hamiltonian=SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=1.0),
+            # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
+            # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source
+            # manufactures a different equation than the solver integrates. `control_cost=` and
+            # `lambda_=` are aliases for the same parameter, so the divergence was invisible by
+            # eye. The documented mutation protocol still works: replace this with 1.05 * LAMBDA.
+            control_cost=QuadraticControlCost(control_cost=LAMBDA),
             coupling=lambda m: ZETA * m,
             coupling_dm=lambda _m: ZETA,
         ),
@@ -263,6 +268,11 @@ def _solve(nx: int, nt: int):
         source_term_hjb=lambda x, m, v, t: s_hjb(t, _points(x)),
         source_term_fp=lambda x, m, v, t: s_fp(t, _points(x)),
     )
+    return problem
+
+
+def _solve(nx: int, nt: int):
+    problem = _build_problem(nx, nt)
     result = FixedPointIterator(
         problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), relaxation=1.0
     ).solve(max_iterations=200, tolerance=1e-6, verbose=False)
@@ -309,7 +319,13 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     Family 1, wrong diffusion (sigma at construction, so D = k*sigma^2/2):
 
         k       eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
-        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.00    ~~3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993~~ pass    pass
+                3.0111e-01  1.5775e-01  1.0549e-01   0.933,  0.992  pass        pass
+        # [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2201. The CLEAN row is the reference row of
+        # BOTH tables below and had gone stale at #2145; re-measured on the current tree. Every
+        # pass/FAIL verdict in both tables is unaffected. The mutant rows are NOT re-measured
+        # here and remain pre-#2145 -- lambda=1.50's eu(11) reads 5.4156e-01 against a measured
+        # 5.2801e-01, so read the mutant columns as ordinal, not as current levels.
         1.05    3.0241e-01  1.6042e-01  1.1106e-01   0.915,  0.907  pass        pass
         1.10    3.1101e-01  1.7715e-01  1.3559e-01   0.812,  0.659  FAIL        pass
         1.15    3.2640e-01  2.0434e-01  1.7092e-01   0.676,  0.440  FAIL        FAIL
@@ -448,3 +464,30 @@ def test_the_pair_audit_would_catch_a_wrong_cross_derivative():
     assert np.max(np.abs(fp_source(broken, _TRUE_HAMILTONIAN, SIGMA)(0.37 * T, x) - s_fp(0.37 * T, x))) == 0.0
     with pytest.raises(ValueError, match="hess_m"):
         check_pair(broken, 0.37 * T, x)
+
+
+@pytest.mark.integration
+def test_the_source_and_the_solver_agree_on_the_coefficients():
+    """The two Hamiltonians are separate OBJECTS on purpose; they must agree on the VALUES.
+
+    `_TRUE_HAMILTONIAN` must not be the problem's Hamiltonian -- every mutant in the tables above
+    perturbs the problem while the source stays closed over the true constants, and one object would
+    make each mutant self-consistent and this whole file unable to fail. But separateness is exactly
+    what lets the two drift: `control_cost=` and `lambda_=` are aliases for one parameter, so a
+    literal at one site and a named constant at the other look identical by eye.
+
+    Detection belonged only to the slow tier before this test existed. Measured: with the source at
+    LAMBDA = 1.0 and the solver at a literal 1.0, changing LAMBDA alone left the CI-selected tests
+    green (2 passed, 1 deselected) while moving the manufactured source by 1.888e-02 against a scale
+    of 2.314e-01 -- the scheme verified against an equation nobody solves, which is the failure
+    `mfgarchon.utils.manufactured` exists to prevent.
+    """
+    problem = _build_problem(*LEVELS[0])
+    solver_side = problem.components.hamiltonian.control_cost.lambda_
+    source_side = _TRUE_HAMILTONIAN.control_cost.lambda_
+    assert solver_side == source_side, (
+        f"the solver integrates lambda={solver_side} while the manufactured source was assembled "
+        f"with lambda={source_side}; the study would measure the scheme against an equation nobody "
+        f"solves, and converge cleanly doing it."
+    )
+    assert problem.sigma == SIGMA, f"solver sigma={problem.sigma} vs source sigma={SIGMA}"
