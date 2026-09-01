@@ -18,7 +18,9 @@ Verbatim from the GFDM paper, `eq:mms_reference` / `eq:mms_system`, on Ω = (0,L
 
 The pair actually used here is NOT the paper's verbatim one -- see C and BETA below for why and for
 what each change buys. The sources were re-derived for THIS pair symbolically (sympy, from the
-definitions of u and m) and cross-checked against the hand-written vectorised forms in this file to
+definitions of u and m) and cross-checked against the hand-written vectorised forms this file used to carry (#2201 replaced
+them with the shared assembly in `mfgarchon.utils.manufactured`; the cross-check stands as the
+provenance of the pair, not as a description of code still here) to
 5.6e-17 / 1.1e-19 over 400 random (t,x), against residual scales 2.3e-01 / 4.5e-04. That comparison
 can fail: perturbing s_fp by 1e-7 relative registers as 4.5e-11.
 

@@ -72,7 +72,9 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   `test_coupled_mms_2d_no_flux.py` had already corrected in itself -- right value, wrong reason,
   which is exactly why it left no trace.
 sigma vs D: D = sigma^2/2 -- `diffusion_from_volatility` is the one converter. Pass sigma
-  via sigma=; the (2*pi^2*sigma^2) coefficients below already encode (sigma^2/2)*k^2.
+  via sigma=; the (2*pi^2*sigma^2) coefficients this file used to spell out
+  already encoded (sigma^2/2)*k^2 -- they are gone since #2201, and the diffusion term now comes
+  from the shared assembly, which resolves sigma through `diffusion_from_volatility`.
 
 FALSE-SAFETY GUARDS encoded here
 --------------------------------
@@ -262,7 +264,7 @@ def _solve_coupled(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float):
     problem = _build_problem(mfg, Nx, Nt, T)
     hjb_solver = HJBFDMSolver(problem)
     fp_solver = FPFDMSolver(problem)
-    # relaxation=1.0 (undamped Picard): empirically converges in ~14-19 outer
+    # relaxation=1.0 (undamped Picard): empirically converges in 10 outer
     # iterations for the parameters used here. relaxation=0.5/0.8 reach the SAME
     # fixed point but take far more iterations (>100), making the test
     # impractically slow; the converged (u_h, m_h) is relaxation-independent
@@ -302,7 +304,7 @@ class TestCoupledMMSConvergence:
     Parameters (validated, not guessed): a=0.2, b=0.15, c_f=0.3, sigma=0.25,
     lambda=1.0, coupling_coefficient=1.0 (=1/lambda), T=0.2. These keep the
     advective drift modest relative to diffusion so the undamped Picard converges
-    in ~14-19 iterations and the FP density stays well-behaved, while still
+    in 10 iterations and the FP density stays well-behaved, while still
     exercising an ACTIVE bidirectional coupling (c_f>0 and a non-zero grad-u
     drift cross term).
 
@@ -322,7 +324,13 @@ class TestCoupledMMSConvergence:
     "verified before committing the threshold", and a false measurement is worse than none. The
     conclusion strengthens rather than reverses: the real ratios are ABOVE the recorded ones, so
     the margin over the 1.5 threshold is ~21% on the binding field (m), not the ~17% stated below.
-    Both Picard iterations converged (14-19 outer iterations).
+    Both Picard iterations converged (~~14-19~~ **10** outer iterations).
+    [SUPERSEDED 2026-09-01] SUPERSEDED-BY: #2201. Re-measured: 10 at Nx = 21, 31 and 61, with a
+    control that fires -- the same probe gives 4 / 10 / 16 at tolerance 1e-3 / 1e-6 / 1e-9, so the
+    instrument is not pinned at 10. Also stale at base d1a4c473, so not caused by the #2201
+    migration -- but it sat inside the block whose note says "re-measured on the current tree",
+    which had re-measured the error rows above it and not this line. Two further copies at :265
+    and :305 carried the same figure and are corrected.
 
     Threshold: ratios > 1.5 for BOTH u and m -- the precedent set by the
     single-equation source MMS tests (test_mms_validation.py:399 and :796). With
