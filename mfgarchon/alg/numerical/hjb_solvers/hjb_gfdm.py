@@ -504,9 +504,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
                 "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
                 "terms are silently dropped (Issue #1079). HJBSemiLagrangianSolver does "
-                "discretise that term and is measured first order on an off-diagonal Sigma "
-                "(Issue #2198); otherwise pass scalar sigma or a scalar-valued spatial field "
-                "matching problem.spatial_shape."
+                "discretise that term, measured first order on an off-diagonal Sigma (Issue "
+                "#2198) -- but it reads `problem.sigma`, NOT the `volatility_field` you would "
+                "have passed here, so switching solvers without also setting `problem.sigma` to "
+                "the tensor gives a silently ISOTROPIC solve. There is no constructor route for a "
+                "(d, d) `problem.sigma` either (Issue #2204). Otherwise pass scalar sigma or a "
+                "scalar-valued spatial field matching problem.spatial_shape."
             )
 
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---

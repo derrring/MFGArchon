@@ -1041,7 +1041,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     f"enters an implicit-alpha* fixed point or a sampled characteristic has not "
                     f"been derived or measured here, and a manufactured source in the wrong place "
                     f"verifies a different equation while still converging. Use "
-                    f"diffusion_method='crank_nicolson' (the splitting path) for an MMS study, or "
+                    f"diffusion_method='adi' (the default, and the splitting path) for an MMS study, or "
                     f"extend this solver with the derivation and an order measurement."
                 )
 

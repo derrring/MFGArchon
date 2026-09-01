@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""First MMS order measurement of the Semi-Lagrangian family, and the first anisotropic one
-anywhere in this repository (Issue #2198).
+"""First MMS order measurement of the Semi-Lagrangian family's HJB half, and the first anisotropic
+ORDER measurement anywhere in this repository (Issue #2198).
 
 WHY THIS FIXTURE EXISTS
 
@@ -17,12 +17,13 @@ WHAT IT CATCHES, MEASURED BY MUTATION
 Disabling ``apply_cross_diffusion_explicit`` -- the #1079 O(1) drop, injected:
 
     sigma            clean EOC        cross-derivative dropped
-    scalar 0.3       1.039, 1.017     1.039, 1.017      <- UNCHANGED, the built-in control
+    scalar 0.3       1.039, 1.017     1.039, 1.017      <- UNCHANGED (see below)
     tensor S         1.040, 1.017     0.718, 0.385      <- collapses; e(31) 1.2999e-02 -> 2.1544e-02
 
 The scalar row is not decoration: a diagonal ``Sigma`` has no cross term to drop, so it must be
 bit-unchanged by that mutation. It failing would mean the mutation reached something else and the
-tensor row proves nothing.
+tensor row proves nothing. That is ALL it establishes -- it is not evidence that the tensor row
+measures the stencil correctly, and calling the pair a "built-in control" overstated it.
 
 WHAT IT CANNOT SEE
 
@@ -44,6 +45,8 @@ calling ``adi_diffusion_step`` directly. Filed separately.
 """
 
 from __future__ import annotations
+
+from unittest import mock
 
 import pytest
 
@@ -83,7 +86,8 @@ def _hess_u(t, x):
 
     This is the whole design constraint. `test_coupled_mms_2d_no_flux.py`'s u* is a SUM
     (cos(c x1) + beta cos(c x2)), so d2u/dx1dx2 == 0 identically and no choice of Sigma can make
-    that fixture exercise the HJB cross term. Measured here: max|d2u/dx1dx2| = 1.33e+01 over the box.
+    that fixture exercise the HJB cross term. Measured on this test's own
+    200-point sample at t = 0.3T: max|d2u/dx1dx2| = 1.33e+01 -- a sample maximum, not a bound.
     """
     hess = np.zeros((len(x), 2, 2))
     c1, c2 = np.cos(C * x[..., 0]), np.cos(C * x[..., 1])
@@ -175,6 +179,16 @@ def test_the_three_other_sl_variants_refuse_the_source():
         # source and not about the configuration being broken.
         solver.solve_hjb_system(**kwargs)
 
+    # The THIRD variant. `_use_dpp` is a derived property -- it needs a lagrangian_class plus a
+    # non-smooth Hamiltonian -- so the branch is reached by patching the dispatch condition the
+    # refusal itself reads. An earlier version of this test asserted only the two above while three
+    # separate artifacts claimed three were asserted.
+    dpp_solver = HJBSemiLagrangianSolver(problem)
+    with mock.patch.object(type(dpp_solver), "_use_dpp", property(lambda _self: True)):
+        assert dpp_solver._use_dpp is True, "the patch did not take; the assertion below proves nothing"
+        with pytest.raises(NotImplementedError, match="operator-splitting path only"):
+            dpp_solver.solve_hjb_system(**kwargs, source_term=lambda t, x: np.zeros(len(x)))
+
 
 @pytest.mark.integration
 def test_sl_is_first_order_with_an_isotropic_sigma():
@@ -183,6 +197,15 @@ def test_sl_is_first_order_with_an_isotropic_sigma():
     errors = [_solve(nx, nt, SIGMA_SCALAR, None) for nx, nt in LEVELS]
     order = _eoc(errors)
     assert all(0.85 <= o <= 1.3 for o in order), f"scalar-sigma order {order} (errors {errors})"
+    # An ERROR CEILING beside the order, because EOC is a ratio and is blind to an error scaled
+    # uniformly across levels. Review measured that a source displaced by one grid cell inflates
+    # the error 6.1x and still passes the order assertion. Clean finest-level error is 1.32e-02
+    # (scalar) and 1.30e-02 (tensor); 2.0e-02 sits above both and well under a 6x inflation.
+    assert errors[-1] < 2.0e-02, (
+        f"scalar-sigma error level {errors[-1]:.4e} at the finest grid, with the order still in band "
+        f"({order}). A misplaced or mis-scaled source converges at the right ORDER with the wrong "
+        f"constant, and only a level bound can see that."
+    )
 
 
 @pytest.mark.integration
@@ -198,3 +221,12 @@ def test_sl_is_first_order_with_an_off_diagonal_sigma():
     errors = [_solve(nx, nt, S_ANISOTROPIC, "tensor") for nx, nt in LEVELS]
     order = _eoc(errors)
     assert all(0.85 <= o <= 1.3 for o in order), f"tensor-sigma order {order} (errors {errors})"
+    # An ERROR CEILING beside the order, because EOC is a ratio and is blind to an error scaled
+    # uniformly across levels. Review measured that a source displaced by one grid cell inflates
+    # the error 6.1x and still passes the order assertion. Clean finest-level error is 1.32e-02
+    # (scalar) and 1.30e-02 (tensor); 2.0e-02 sits above both and well under a 6x inflation.
+    assert errors[-1] < 2.0e-02, (
+        f"tensor-sigma error level {errors[-1]:.4e} at the finest grid, with the order still in band "
+        f"({order}). A misplaced or mis-scaled source converges at the right ORDER with the wrong "
+        f"constant, and only a level bound can see that."
+    )
