@@ -254,9 +254,17 @@ def test_the_strict_adjoint_path_refuses_an_fp_source(loop_cls):
     equations.
 
     Three arms, and the last two are the controls without which the first proves nothing about
-    over-firing: an FP source must raise; no source at all must still run; and an HJB source, which
-    this path CAN carry (it enters through `build_linearized_operator`, not the FP transport
-    operator), must also still run.
+    over-firing: an FP source must raise; no source at all must still run; and an HJB source must
+    also still run, because the guard's predicate is `source_term_fp` and nothing else.
+
+    That last reason is stated as the traced fact and not as a story about routing. An earlier draft
+    of this docstring said the HJB source "enters through `build_linearized_operator`, not the FP
+    transport operator" -- invented, and false in both halves: that method's signature is
+    `(self, U, M, time)` and the string `source` does not occur in its body or in either of its
+    dimensional helpers. The HJB source actually travels `_build_hjb_kwargs` -> `compose_hjb_source`
+    -> `solve_hjb_system(source_term=...)` from `_solve_hjb`, the other half of the block step, which
+    never reaches the FP operator this path assembles. What makes THIS arm pass is narrower and is
+    what the mutation proves: point the guard at `source_term_hjb` and both parametrisations raise.
 
     This test exists because three review rounds passed over the branch's only user-visible
     behaviour change with no oracle named -- AGENTS.md makes naming one mandatory, and "verified by
@@ -270,8 +278,16 @@ def test_the_strict_adjoint_path_refuses_an_fp_source(loop_cls):
     for label, fields in (("no source", {}), ("hjb source only", {"source_term_hjb": _CountingSource()})):
         q = _problem(**fields)
         loop = loop_cls(q, HJBFDMSolver(q), FPFDMSolver(q), adjoint_mode="jacobian_transpose")
-        u, _ = (loop.solve(max_iterations=2, tolerance=_TOLERANCE), None)
-        assert u is not None, f"the guard over-fired on {label}: this configuration must still run"
+        # try/except, not `assert result is not None`: the solve returns a SolverResult, so that
+        # assertion can never fire and the authored diagnostic below never printed. The arm
+        # discriminates by "did not raise", so the raise is what has to be caught.
+        try:
+            loop.solve(max_iterations=2, tolerance=_TOLERANCE)
+        except NotImplementedError as exc:
+            pytest.fail(
+                f"the guard over-fired on '{label}': this configuration carries no FP source and "
+                f"must still run, but the strict-adjoint path refused it -- {exc}"
+            )
 
 
 if __name__ == "__main__":

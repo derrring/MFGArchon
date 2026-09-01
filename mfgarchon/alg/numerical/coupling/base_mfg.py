@@ -282,8 +282,9 @@ class BaseCouplingIterator(ABC):
         "the single site" named ``block_iterators.py``'s strict-adjoint guard as a third caller --
         and the commit that wrote that sentence had, in the same diff, replaced that call with a
         direct field read. A correcting sentence is a new claim and gets no credit from the
-        correction it makes; three drafts of this one paragraph were each falsified by their own
-        commit.
+        correction it makes. Three drafts of this one paragraph were wrong in three different ways:
+        the first was false when written, the second cited a method that has never existed, and only
+        the third was falsified by its own diff.
 
         Progress is handled automatically via context routing (Issue #934).
         """
