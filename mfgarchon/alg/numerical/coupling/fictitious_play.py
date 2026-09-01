@@ -408,7 +408,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
 
             # 2. Solve FP forward with new U.
             # Issue #1043 Phase 2: route through single-source convention, same as
-            # FixedPointIterator.solve() (fixed_point_iterator.py:720-728).
+            # FixedPointIterator.solve().
             # Previously FictitiousPlay called _build_fp_kwargs(drift_field=U_new) which
             # silently passed the value function U as the velocity alpha* to FPFDMSolver
             # (wrong physics: FPFDMSolver treats drift_field as alpha, not potential).

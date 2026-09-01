@@ -52,7 +52,6 @@ from .fixed_point_utils import (
     resolve_fp_drift_kwargs,
     value_function_is_finite,
 )
-from .source_composition import compose_fp_source
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -340,7 +339,10 @@ class BlockIterator(BaseCouplingIterator):
                 through the builder is worse than either, because the two halves of one problem
                 would then be solved from different equations (#2207).
         """
-        if compose_fp_source(self.problem, M_initial, U) is not None:
+        # The predicate `compose_fp_source` itself uses, read directly: it returns non-None iff
+        # this field is set and never evaluates the closure. Calling it here would read as an
+        # evaluation and would bind a 1-D `M_initial` that `_get_time_slice` freezes in time.
+        if self.problem.source_term_fp is not None:
             raise NotImplementedError(
                 f"{type(self).__name__}.adjoint_mode={self.adjoint_mode!r} cannot carry an FP "
                 f"source term, but the problem defines source_term_fp. The strict-adjoint path "

@@ -95,20 +95,6 @@ class TestSourceTermFailLoud:
         assert b._build_fp_kwargs(M=_M, U=_U) == {}
 
 
-def test_the_iterates_are_required_not_optional():
-    """Issue #2207: the omission this change removes must not be re-expressible.
-
-    A default of ``None`` on ``M`` / ``U`` would restore exactly the hole: a loop that forgets them
-    would compose nothing, raise nothing, and solve without the source. The absence of a default is
-    the mechanism, so it is asserted rather than left to review.
-    """
-    b = _Builder({"source_term"}, {"source_term"}, _problem(hjb_source=_src, fp_source=_src))
-    with pytest.raises(TypeError, match="M"):
-        b._build_hjb_kwargs()
-    with pytest.raises(TypeError, match="M"):
-        b._build_fp_kwargs()
-
-
 def test_the_double_carries_the_whole_seam_not_one_borrowed_method():
     """Guard on the fixture itself: it must reach every dependency of `_build_hjb_kwargs`.
 

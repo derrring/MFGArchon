@@ -260,12 +260,23 @@ class BaseCouplingIterator(ABC):
 
         **Which value iterate to hand over is the CALLER's, and this docstring must not universalise
         it.** The HJB source binds the previous iterate, so the nonlocal term reads ``J[v_old]``
-        (#1259). The FP source binds whichever iterate the FP solve itself consumes -- ``U_new``
-        under Picard and Gauss-Seidel, ``U_old`` under Jacobi, which updates both fields from the
-        same old state by construction (``block_iterators.py``, ``BlockJacobiIterator._iterate``).
-        An earlier draft of this line said "the FP source binds the NEW one", which is false of an
-        exported public class; since this method is now the single site where the composition
-        happens, a false universal here is what the next coupling loop would be written against.
+        (#1259). The FP source binds whichever iterate the FP solve itself consumes, which is
+        ``U_new`` for three of the four builder-routed loops -- ``FixedPointIterator``,
+        ``FictitiousPlayIterator`` and ``BlockIterator._gauss_seidel_step`` -- and ``U_old`` for
+        ``BlockIterator._jacobi_step``, inherited by ``BlockJacobiIterator``, which updates both
+        fields from the same old state by construction.
+
+        Two corrections are recorded here rather than silently applied, because both were introduced
+        while fixing this same class of defect. An earlier draft said "the FP source binds the NEW
+        one", false of an exported public class; the draft that replaced it cited
+        ``BlockJacobiIterator._iterate``, **a method that does not exist** -- the real one is
+        ``BlockIterator._jacobi_step`` -- which is the hallucinated-symbol defect this branch also
+        fixed in ``core/mfg_problem.py``, reintroduced in the line asserting the correction.
+
+        This method is where every BUILDER-ROUTED loop composes, and that is not the same as the
+        only site: ``compose_fp_source`` also has direct callers in ``mfg_residual.py`` (the Newton
+        path) and in ``block_iterators.py``'s strict-adjoint guard. The single owner is
+        ``source_composition``, the module, exactly as its own docstring says.
 
         Progress is handled automatically via context routing (Issue #934).
         """

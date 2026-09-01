@@ -97,8 +97,13 @@ class _CountingSource:
 def _nonlocal_operator():
     """A dense ASYMMETRIC (N, N) kernel, applied as ``K @ v_t`` (#1259).
 
-    Asymmetric on purpose: a symmetric kernel cannot express a defect that transposes the operator,
-    the same reason AGENTS.md gives for breaking the symmetry of the 2-D MMS pair (#2016).
+    Asymmetric because a symmetric kernel could not express a transpose defect at all -- a necessary
+    condition, and AGENTS.md's reason for breaking the symmetry of the 2-D MMS pair (#2016). It is
+    NOT sufficient and this file does not exploit it: every assertion here is ``|delta| > 0`` against
+    a no-kernel baseline, which a transposed kernel satisfies too. Measured -- mutating
+    ``nonlocal_operator @ v_t`` to ``.T @ v_t`` leaves this file at 17 passed. The asymmetry is kept
+    so a future provenance pin (#2211) has a fixture that can separate the two; claiming it buys
+    discrimination here would be the "necessary read as sufficient" error.
     """
     i = np.arange(_N)[:, None]
     j = np.arange(_N)[None, :]
@@ -119,8 +124,12 @@ def _u_terminal(x):
 
 
 def _m_initial(x):
-    """Mass exactly 1 on this node-centred grid: the cosine sums to 0 over a whole period, so the
-    trapezoid (#2145) gives 1 with no normalising constant to keep in step."""
+    """Mass 1 on this node-centred grid to within a ulp, with no normalising constant to keep in
+    step with #2145: the cosine sums to 0 over a whole period, so the trapezoid carries the whole
+    mass. ``np.trapezoid`` returns exactly ``1.0``; the library's own ``_measure_initial_density()``
+    returns ``0.9999999999999999``, which is what matters because that is the value its warning
+    tests. An earlier draft of this line said "exactly 1", which is true of one of those two
+    measures and was written without running the other."""
     return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x, dtype=float))
 
 
