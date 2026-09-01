@@ -587,7 +587,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # For a repulsive congestion coupling F[m] (penalize crowding), write
         #     source_term_hjb = +gamma * dF/dm   (positive where crowded).
         # The callback receives the density SLICE m(t, .) at time t (Issue
-        # #1285; see fixed_point_iterator._compose_hjb_source), not the full
+        # #1285; see coupling/source_composition.compose_hjb_source), not the full
         # (Nt+1, Nx) trajectory. See the MFGProblem class docstring
         # "Sign conventions" note (G-003) for the unified picture.
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)

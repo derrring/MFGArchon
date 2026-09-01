@@ -1,4 +1,10 @@
-"""Issue #1259: FixedPointIterator._compose_hjb_source silently dropped nonlocal_operator.
+"""Issue #1259: the HJB source composition silently dropped nonlocal_operator.
+
+Retargeted at ``source_composition.compose_hjb_source`` by #2207. The delegate this used to
+call, ``FixedPointIterator._compose_hjb_source``, was a one-line forward to that function and
+is gone -- composition now happens inside ``BaseCouplingIterator._build_hjb_kwargs``, so every
+coupling loop gets it rather than the one loop that remembered to call the delegate. The
+convention under test is unchanged and still has exactly one owner.
 
 The `has_nonlocal` flag was computed but never used inside the `composed`
 closure.  This test builds a tiny problem with a known LinearOperator
@@ -14,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -71,7 +78,7 @@ def test_nonlocal_term_present_in_hjb_source():
 
     # The composed source at t=0 with x_grid irrelevant to the nonlocal term
     x_grid = np.linspace(0.0, 1.0, Nx).reshape(-1, 1)
-    source_fn = iterator._compose_hjb_source(m_current, u_current)
+    source_fn = compose_hjb_source(iterator.problem, m_current, u_current)
 
     assert source_fn is not None, "source_fn must not be None when nonlocal_operator is set"
 
@@ -107,7 +114,7 @@ def test_nonlocal_term_present_at_interior_time():
     u_current = rng.standard_normal((Nt + 1, Nx))
 
     x_grid = np.linspace(0.0, 1.0, Nx).reshape(-1, 1)
-    source_fn = iterator._compose_hjb_source(m_current, u_current)
+    source_fn = compose_hjb_source(iterator.problem, m_current, u_current)
 
     # t = T/2 -> time index n = round(t / dt) = round(Nt/2)
     dt = problem.dt

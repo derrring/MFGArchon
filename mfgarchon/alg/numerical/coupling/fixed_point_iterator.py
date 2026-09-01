@@ -30,7 +30,6 @@ from .fixed_point_utils import (
     preserve_terminal_condition,
     resolve_fp_drift_kwargs,
 )
-from .source_composition import compose_fp_source, compose_hjb_source
 
 logger = get_logger(__name__)
 
@@ -254,33 +253,6 @@ class FixedPointIterator(BaseCouplingIterator):
 
         # Cache solver signatures via base class (Issue #934)
         self._init_solver_signatures(self.hjb_solver, self.fp_solver)
-
-    def _compose_hjb_source(self, m_current: np.ndarray, u_current: np.ndarray) -> Callable | None:
-        """Compose problem-level HJB source terms into a solver-level callable.
-
-        Issue #1361: thin delegate to the single-source
-        :func:`source_composition.compose_hjb_source`, shared verbatim with the
-        coupled-Newton ``MFGResidual`` path so the source/nonlocal/obstacle
-        convention lives in exactly one place (the bug class behind #1259 and
-        #1285 was a private second copy). Bridges the problem-level signature
-        ``(x, m, v, t)`` to the solver-level ``(t, x)`` by closure binding.
-
-        Returns:
-            Callable or None if no HJB source terms are active.
-        """
-        return compose_hjb_source(self.problem, m_current, u_current)
-
-    def _compose_fp_source(self, m_current: np.ndarray, v_current: np.ndarray) -> Callable | None:
-        """Compose problem-level FP source terms into a solver-level callable.
-
-        Issue #1361: thin delegate to the single-source
-        :func:`source_composition.compose_fp_source`, shared with the
-        coupled-Newton ``MFGResidual`` path.
-
-        Returns:
-            Callable or None if no FP source terms are active.
-        """
-        return compose_fp_source(self.problem, m_current, v_current)
 
     def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -616,15 +588,20 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Issue #614: Use hierarchical subtask for inner solver visibility
                 # Issue #625: Resolve BC providers before HJB solve
                 # Issue #922: Compose source terms from problem fields
-                # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate
-                hjb_source = self._compose_hjb_source(M_old, U_old)
-
+                # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate.
+                # Issue #2207: the composition itself moved into _build_hjb_kwargs. Passing the
+                # iterates is now the only way to call the builder, which closes the two loops that
+                # went through it and composed nothing (FictitiousPlay, Block). It does NOT reach
+                # RegimeSwitchingIterator or GraphMFGSolver: both are BaseCouplingIterator
+                # subclasses that call solve_*_system directly and never touch the builders, so a
+                # required parameter cannot bind them. #2207 names that as out of scope.
                 # Issue #934: Context routing handles progress automatically —
                 # solver's create_progress_bar detects parent HierarchicalProgress
                 with self.problem.using_resolved_bc(bc_resolution_state):
                     kwargs = self._build_hjb_kwargs(
+                        M=M_old,
+                        U=U_old,
                         volatility_field=self.volatility_field,
-                        source_term=hjb_source,
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
 
@@ -646,13 +623,14 @@ class FixedPointIterator(BaseCouplingIterator):
 
                 # 2. Solve FP forward with new U (transient subtask)
                 # Issue #614: Use hierarchical subtask for inner solver visibility
-                # Issue #922: Compose FP source terms from problem fields
-                fp_source = self._compose_fp_source(M_old, U_new)
-
+                # Issue #922 / #2207: the FP source is composed inside the builder, from the
+                # iterates handed in -- M_old and the NEW U, which is the pairing this side has
+                # always used and differs from the HJB side's (U_old).
                 # Issue #934: Context routing handles progress automatically
                 kwargs = self._build_fp_kwargs(
+                    M=M_old,
+                    U=U_new,
                     volatility_field=self.volatility_field,
-                    source_term=fp_source,
                 )
 
                 # Drift/potential logic (FP-specific, not in _build_fp_kwargs).

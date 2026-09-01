@@ -12,6 +12,7 @@ the only kind that can tell them apart.
 """
 
 import warnings
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,7 +44,10 @@ class _HJBKwargBuilder(BaseCouplingIterator):
     def __init__(self):
         self._hjb_sig_params = {"volatility_field"}
         self._hjb_solver_name = "HJBGFDMSolver"
-        self.problem = None  # no problem: a scalar can never be shown equivalent to sigma
+        # No `sigma` attribute: a scalar can never be shown equivalent to one that is not
+        # there. The two source fields are what `_build_hjb_kwargs` composes from (#2207);
+        # both None, so this double exercises the volatility branch and nothing else.
+        self.problem = SimpleNamespace(source_term_hjb=None, nonlocal_operator=None)
 
     def solve(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
         raise NotImplementedError
@@ -183,7 +187,8 @@ def test_coupling_builder_forwards_the_nonconstant_field_unchanged():
     """The public coupling seam must not replace the array before GFDM sees it."""
     field = np.linspace(_SIGMA_LO, _SIGMA_HI, _N)
 
-    forwarded = _HJBKwargBuilder()._build_hjb_kwargs(volatility_field=field)["volatility_field"]
+    zeros = np.zeros((2, _N))
+    forwarded = _HJBKwargBuilder()._build_hjb_kwargs(M=zeros, U=zeros, volatility_field=field)["volatility_field"]
 
     assert forwarded is field
     assert not np.array_equal(_solve(forwarded), _solve(float(field.mean())))

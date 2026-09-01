@@ -1,6 +1,6 @@
 """Issue #1285 (secondary bug): time-dependent source terms must see the time-t density slice.
 
-``FixedPointIterator._compose_hjb_source`` / ``_compose_fp_source`` bind the current density
+``source_composition.compose_hjb_source`` / ``compose_fp_source`` bind the current density
 iterate ``M_old`` (full ``(Nt+1, Nx)`` array) into a ``(t, x)`` closure handed to the solver's
 ``source_term``. Before this fix the closure passed the WHOLE array to the problem-level
 ``source_term_hjb/fp(x, m, v, t)`` without slicing by ``t``, so a time-dependent source — e.g.
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.source_composition import compose_fp_source, compose_hjb_source
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -25,13 +25,6 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 _NX = 5
 _NT = 4
-
-
-class _Stub:
-    """Minimal stand-in carrying only ``.problem`` — the only attribute the compose methods read."""
-
-    def __init__(self, problem: MFGProblem) -> None:
-        self.problem = problem
 
 
 def _problem_with_source(captured: list, *, kind: str) -> MFGProblem:
@@ -61,7 +54,7 @@ def test_hjb_source_receives_time_slice_not_full_array():
     problem = _problem_with_source(captured, kind="hjb")
     M_full = _row_indexed_field()
     U_full = np.zeros((_NT + 1, _NX))
-    closure = FixedPointIterator._compose_hjb_source(_Stub(problem), M_full, U_full)
+    closure = compose_hjb_source(problem, M_full, U_full)
     assert closure is not None
     x = np.linspace(0.0, 1.0, _NX)
     dt = problem.dt
@@ -79,7 +72,7 @@ def test_fp_source_receives_time_slice_not_full_array():
     problem = _problem_with_source(captured, kind="fp")
     M_full = _row_indexed_field()
     V_full = np.zeros((_NT + 1, _NX))
-    closure = FixedPointIterator._compose_fp_source(_Stub(problem), M_full, V_full)
+    closure = compose_fp_source(problem, M_full, V_full)
     assert closure is not None
     x = np.linspace(0.0, 1.0, _NX)
     dt = problem.dt
