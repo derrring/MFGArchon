@@ -157,6 +157,23 @@ def compose_hjb_source(
     return composed
 
 
+def fp_source_is_active(problem: MFGProblem) -> bool:
+    """Whether this problem has an FP source at all, without composing one.
+
+    Exists so a caller that only needs the PREDICATE does not restate it. The strict-adjoint FP
+    path in ``block_iterators.py`` needs exactly that -- it refuses a source it has no route for
+    (#2207) -- and its first version restated ``problem.source_term_fp is not None`` inline, which
+    put a second owner on the predicate inside the change whose whole thesis is that composition
+    has one. The risk is not hypothetical: the sibling :func:`compose_hjb_source` reads three
+    fields today and read a fourth (``obstacle``) until #2002, so a second copy drifts the day this
+    one grows a field.
+
+    Calling :func:`compose_fp_source` instead would work and says the wrong thing: it reads as an
+    evaluation, and it would bind an ``M_initial`` that ``_get_time_slice`` freezes in time.
+    """
+    return problem.source_term_fp is not None
+
+
 def compose_fp_source(
     problem: MFGProblem,
     m_current: NDArray,

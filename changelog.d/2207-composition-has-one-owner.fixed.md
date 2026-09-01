@@ -9,8 +9,10 @@ parameters — the omission is no longer expressible — and `FixedPointIterator
 delegates are deleted rather than left beside the new owner. (#2207)
 
 Consequence, and it is a behaviour change beyond the two loops: pairing either of those loops with
-an FP or HJB solver that does not accept `source_term` — six of the nine FP solvers, and
-`HJBHowardSolver` — and a problem that defines a source now raises `NotImplementedError` where it
+an FP or HJB solver that does not accept `source_term` — six of the eleven concrete `BaseFPSolver`
+subclasses (`FPGFDMSolver`, `FPNetworkSolver`, `FPParticleSolver`, `FPSLSolver`, `FPSLAdjointSolver`,
+`FPSLJacobianSolver`, measured by signature introspection), and `HJBHowardSolver` — and a problem
+that defines a source now raises `NotImplementedError` where it
 previously ran and silently solved a different equation. That is #1424's contract reaching the
 loops it could not reach before. `BlockIterator`'s strict-adjoint FP path (`adjoint_mode != "off"`)
 assembles and steps its own operator instead of calling the FP solver, so it has no route for a

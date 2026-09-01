@@ -273,10 +273,17 @@ class BaseCouplingIterator(ABC):
         ``BlockIterator._jacobi_step`` -- which is the hallucinated-symbol defect this branch also
         fixed in ``core/mfg_problem.py``, reintroduced in the line asserting the correction.
 
-        This method is where every BUILDER-ROUTED loop composes, and that is not the same as the
-        only site: ``compose_fp_source`` also has direct callers in ``mfg_residual.py`` (the Newton
-        path) and in ``block_iterators.py``'s strict-adjoint guard. The single owner is
+        This method is where every BUILDER-ROUTED loop composes, which is not the same as the only
+        site: ``compose_fp_source`` has one other caller, ``mfg_residual.py`` (the Newton path),
+        which is not a ``BaseCouplingIterator`` and cannot use these builders. The single owner is
         ``source_composition``, the module, exactly as its own docstring says.
+
+        Third correction, recorded for the same reason as the two above: the draft that replaced
+        "the single site" named ``block_iterators.py``'s strict-adjoint guard as a third caller --
+        and the commit that wrote that sentence had, in the same diff, replaced that call with a
+        direct field read. A correcting sentence is a new claim and gets no credit from the
+        correction it makes; three drafts of this one paragraph were each falsified by their own
+        commit.
 
         Progress is handled automatically via context routing (Issue #934).
         """

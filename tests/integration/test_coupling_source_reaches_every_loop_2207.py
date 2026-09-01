@@ -125,8 +125,10 @@ def _u_terminal(x):
 
 def _m_initial(x):
     """Mass 1 on this node-centred grid to within a ulp, with no normalising constant to keep in
-    step with #2145: the cosine sums to 0 over a whole period, so the trapezoid carries the whole
-    mass. ``np.trapezoid`` returns exactly ``1.0``; the library's own ``_measure_initial_density()``
+    step with #2145: under TRAPEZOID weights the cosine contributes 0 over a whole period, so the
+    constant carries the whole mass. Under the plain node sum it does not -- `np.sum(m) * dx` is
+    1.075 here, a 7.5% error -- and which measure is meant is the whole subject of #2145, so the
+    weighting is stated rather than left to "sums to 0". ``np.trapezoid`` returns exactly ``1.0``; the library's own ``_measure_initial_density()``
     returns ``0.9999999999999999``, which is what matters because that is the value its warning
     tests. An earlier draft of this line said "exactly 1", which is true of one of those two
     measures and was written without running the other."""
@@ -238,6 +240,38 @@ def test_both_iterates_are_required_not_optional(builder, name):
         f"by omission, which is exactly the #2207 hole one level up."
     )
     assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.parametrize("loop_cls", [BlockGaussSeidelIterator, BlockJacobiIterator], ids=lambda c: c.__name__)
+def test_the_strict_adjoint_path_refuses_an_fp_source(loop_cls):
+    """#2207: the one path that has no route for a source must refuse it, not drop it.
+
+    `BlockIterator._solve_fp` returns to `_solve_fp_strict_adjoint` BEFORE reaching the builders,
+    so the owner is unreachable from `adjoint_mode != "off"` and the source has nowhere to go --
+    that path assembles and steps its own FP operator instead of calling the FP solver. Dropping it
+    silently is #1424; dropping it HERE while the HJB source still arrives through the builder is
+    worse than either, because the two halves of one problem would then be solved from different
+    equations.
+
+    Three arms, and the last two are the controls without which the first proves nothing about
+    over-firing: an FP source must raise; no source at all must still run; and an HJB source, which
+    this path CAN carry (it enters through `build_linearized_operator`, not the FP transport
+    operator), must also still run.
+
+    This test exists because three review rounds passed over the branch's only user-visible
+    behaviour change with no oracle named -- AGENTS.md makes naming one mandatory, and "verified by
+    a probe I ran" corresponds to no committed artifact.
+    """
+    p_src = _problem(source_term_fp=_CountingSource())
+    solver = loop_cls(p_src, HJBFDMSolver(p_src), FPFDMSolver(p_src), adjoint_mode="jacobian_transpose")
+    with pytest.raises(NotImplementedError, match="cannot carry an FP source term"):
+        solver.solve(max_iterations=2, tolerance=_TOLERANCE)
+
+    for label, fields in (("no source", {}), ("hjb source only", {"source_term_hjb": _CountingSource()})):
+        q = _problem(**fields)
+        loop = loop_cls(q, HJBFDMSolver(q), FPFDMSolver(q), adjoint_mode="jacobian_transpose")
+        u, _ = (loop.solve(max_iterations=2, tolerance=_TOLERANCE), None)
+        assert u is not None, f"the guard over-fired on {label}: this configuration must still run"
 
 
 if __name__ == "__main__":
