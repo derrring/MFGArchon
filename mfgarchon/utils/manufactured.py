@@ -342,7 +342,9 @@ def pair_derivative_errors(pair: ManufacturedPair, t: float, x: NDArray) -> dict
     This is the pair's only NON-CIRCULAR check. A residual built from the pair's own derivatives is
     an algebraic identity -- the source is DEFINED as that residual, so it returns zero whatever the
     convention, including a deliberately sign-flipped one. Differencing ``u`` and ``m`` themselves
-    does not share the assembly, so it audits the eight callables the assembly takes on trust.
+    does not share the assembly, so it audits the six DERIVATIVE callables the assembly takes on
+    trust. Six, not eight: ``ManufacturedPair`` carries eight callables, but ``u`` and ``m`` are the
+    finite-difference ORACLE here rather than things being audited.
 
     What it catches: a wrong analytic derivative, including the off-diagonal Hessian entries that an
     isotropic ``Sigma`` multiplies by exactly zero and that no assembled source can see.

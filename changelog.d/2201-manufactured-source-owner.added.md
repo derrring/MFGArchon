@@ -9,7 +9,7 @@ argument and its refusal to guess a `(d, d)` tensor from a spatially varying fie
 term is written `tr(D . Hess)` rather than `(sigma^2/2) Lap`, so an anisotropic `Sigma` can express
 the cross-derivative term (#2198), which a Laplacian-shaped source cannot.
 
-`check_pair` audits a pair's eight analytic derivative callables against a finite difference of `u`
+`check_pair` audits a pair's six analytic derivative callables against a finite difference of `u`
 and `m`. This is the pair's only non-circular check — a residual built from the pair's own
 derivatives is an algebraic identity that returns zero under a deliberately sign-flipped convention
 — and it is the only check that sees a wrong cross-derivative, which an isotropic `Sigma`

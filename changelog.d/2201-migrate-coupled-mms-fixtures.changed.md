@@ -1,7 +1,7 @@
 The two coupled-MMS integration fixtures (`test_coupled_mms_2d_no_flux.py`,
 `test_coupled_mfg_mms.py`) now assemble their source terms through
 `mfgarchon.utils.manufactured` instead of each deriving `S_HJB` / `S_FP` by hand. Hand-written
-assembly terms across the two files go 11 to 0; what remains in each is the exact pair and its
+assembly arithmetic is now ZERO in both files; what remains in each is the exact pair and its
 analytic derivatives. `test_mms_validation.ManufacturedSolution` is deliberately NOT subsumed — it
 is a velocity-driven FP family that takes a velocity with no `u`, which is a different quantity.
 

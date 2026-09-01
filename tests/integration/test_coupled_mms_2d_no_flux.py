@@ -322,7 +322,10 @@ def test_coupled_2d_no_flux_converges_at_first_order():
         1.00    ~~3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993~~ pass    pass
                 3.0111e-01  1.5775e-01  1.0549e-01   0.933,  0.992  pass        pass
         # [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2201. The CLEAN row is the reference row of
-        # BOTH tables below and had gone stale at #2145; re-measured on the current tree. Every
+        # BOTH tables below and had gone stale at #2145; re-measured on the current tree and
+        # updated in BOTH -- an earlier revision of this note said 'both' while updating only
+        # Family 1, leaving Family 2's clean row byte-identical to the string struck above it.
+        # Every
         # pass/FAIL verdict in both tables is unaffected. The mutant rows are NOT re-measured
         # here and remain pre-#2145 -- lambda=1.50's eu(11) reads 5.4156e-01 against a measured
         # 5.2801e-01, so read the mutant columns as ordinal, not as current levels.
@@ -335,7 +338,7 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     Family 2, wrong drift scale (control_cost lambda, so alpha = -grad U / lambda):
 
         lambda  eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
-        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.00    3.0111e-01  1.5775e-01  1.0549e-01   0.933,  0.992  pass        pass
         1.05    3.1276e-01  1.7232e-01  1.2388e-01   0.860,  0.814  pass        pass
         1.20    3.8375e-01  2.6818e-01  2.3543e-01   0.517,  0.321  FAIL        FAIL
         1.50    5.4156e-01  4.5111e-01  4.2713e-01   0.264,  0.135  FAIL        FAIL
@@ -434,7 +437,7 @@ def test_coupled_2d_no_flux_converges_at_first_order():
 
 @pytest.mark.integration
 def test_the_manufactured_pair_is_its_own_derivatives():
-    """The pair's eight analytic derivatives, audited against a finite difference of u* and m*.
+    """The pair's six analytic derivatives, audited against a finite difference of u* and m*.
 
     This is the ONLY check here whose oracle is outside the scheme and outside the assembly. The
     convergence study above cannot do it: an isotropic sigma contracts `tr(D . Hess)` over the
