@@ -24,7 +24,9 @@ WHAT THESE CATCH, and why the second test is the load-bearing one. A test that o
 `solve()` returns would pass on a conditional problem whose Hamiltonian ignores the noise entirely
 -- and that is not hypothetical: the obvious fixture, `lambda x, p, m, theta: 0.5 * p**2 + 0.1 * m`,
 has no theta in it, runs clean, and reports an `mc_error_u` indistinguishable from zero (exactly
-0.0 for some (K, values) pairs and ~1e-17 for others -- see the note at the assertion) because every sample
+0.0 for some (K, values) pairs and below 1.2e-18 for the rest -- mc_error_u averages over the grid
+and divides by sqrt(K), so it sits two orders under the per-point std the ~1e-17 figure belongs to;
+see the note at the assertion) because every sample
 produces the same solve. It would certify a `create_conditional_problem` that silently dropped
 theta. So the fixture here makes the Hamiltonian depend on theta and asserts the samples DIFFER.
 """
