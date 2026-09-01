@@ -11,7 +11,9 @@ delegates are deleted rather than left beside the new owner. (#2207)
 Consequence, and it is a behaviour change beyond the two loops: pairing either of those loops with
 an FP or HJB solver that does not accept `source_term` — six of the eleven concrete `BaseFPSolver`
 subclasses (`FPGFDMSolver`, `FPNetworkSolver`, `FPParticleSolver`, `FPSLSolver`, `FPSLAdjointSolver`,
-`FPSLJacobianSolver`, measured by signature introspection), and `HJBHowardSolver` — and a problem
+`FPSLJacobianSolver`), plus two of the ten concrete `BaseHJBSolver` subclasses (`NetworkHJBSolver`,
+`NetworkPolicyIterationHJBSolver`) and `HJBHowardSolver`, which is not a `BaseHJBSolver` subclass at
+all and so is missed by a subclass sweep — all measured by signature introspection — and a problem
 that defines a source now raises `NotImplementedError` where it
 previously ran and silently solved a different equation. That is #1424's contract reaching the
 loops it could not reach before. `BlockIterator`'s strict-adjoint FP path (`adjoint_mode != "off"`)

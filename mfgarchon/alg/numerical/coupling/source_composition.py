@@ -3,7 +3,11 @@
 Issue #1361: lift ``_compose_hjb_source`` / ``_compose_fp_source`` out of
 ``FixedPointIterator`` so the Picard coupler (``FixedPointIterator``) and the
 coupled-Newton path (``MFGResidual`` behind ``NewtonMFGSolver``) consume **one**
-copy of the convention. A second private copy is the "parallel physics paths
+copy of the convention. [The consumer set above is #1361's and is no longer current:
+since #2207 every ``BaseCouplingIterator`` consumes this module through
+``_build_hjb_kwargs`` / ``_build_fp_kwargs``, which compose from the iterates rather
+than receiving a composed source, and ``MFGResidual`` remains the one direct caller
+outside them. The reason for one copy is unchanged.] A second private copy is the "parallel physics paths
 with private convention copies" bug class that already produced two silent
 divergences in the Picard copy alone:
 
