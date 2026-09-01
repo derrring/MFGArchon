@@ -344,6 +344,36 @@ def high_order_ghost_neumann(
     )
 
 
+def normal_frame_coefficients(
+    drift_velocity: float,
+    diffusion_coeff: float,
+    outward_normal_sign: float,
+) -> tuple[float, float]:
+    """The Robin pair ``(alpha, beta)`` for ``J . n = 0``, from AXIS-frame ``v`` and ``D``.
+
+    The Fokker-Planck no-flux condition is ``J . n = 0`` with ``J = v*rho - D*grad(rho)``. Written
+    as a Robin condition ``alpha*rho + beta*drho/dn = 0`` it is ``alpha = v`` and
+    ``beta = -outward_normal_sign * D``.
+
+    WHY THIS HAS A NAME. ``ghost_cell_robin`` takes coefficients that are ALREADY in the normal
+    frame, which is why it correctly has no sign argument -- ``du/dn`` carries the wall's direction,
+    and #2063 removed a sign from it after measuring it unused at cell-centring and applied
+    BACKWARDS at vertex-centring. ``ghost_cell_fp_no_flux`` takes axis-frame physical quantities, so
+    something has to do the projection. That something was a second copy of Robin's algebra (#2128).
+    It is one step, it belongs to neither caller, and a second caller holding ``v`` and ``D`` would
+    otherwise write the copy again -- which is the failure this package has now measured twice
+    (#2214, and ``applicator_implicit`` in #1936).
+
+    ``outward_normal_sign`` is the factor converting ``drift_velocity`` to ``v . n``, NOT "which wall
+    this is": a caller already holding ``v . n`` passes ``+1.0`` at BOTH walls. Reading it as a wall
+    identifier is what produced #2063.
+
+    Verified against the pre-#2128 closed form on 12 configurations -- two centrings x two wall
+    directions x three parameter sets -- with three deliberately wrong conversions rejected.
+    """
+    return drift_velocity, -outward_normal_sign * diffusion_coeff
+
+
 def ghost_cell_fp_no_flux(
     interior_value: float,
     drift_velocity: float,
@@ -383,10 +413,22 @@ def ghost_cell_fp_no_flux(
 
         THE TWO ARE NOT THE SAME ORDER. The exact zero-flux profile is
         rho(s) = rho(wall)*exp(v_n*s/D) along the outward normal, so each form is a rational
-        approximation to exp(z), z = v_n*dx/D: the cell-centered one is its Pade[1/1] and
-        imposes the condition to SECOND order; the vertex one is the truncated series 1 + z
-        and imposes it to FIRST. A second-order vertex ghost needs two interior values and
-        this signature carries one.
+        approximation to exp(z), z = v_n*dx/D. Measured against it (#2068):
+
+            old vertex   (1+z)/(1-z) = 1 + 2z + ...   O(dx),    rate 1.06   [CORRECTED AWAY]
+            vertex       1 + z                        O(dx^2),  rate 2.01
+            cell-centred (1+z/2)/(1-z/2)              O(dx^3),  rate 3.04   <- Pade(1,1) of exp
+
+        A second-order vertex ghost needs two interior values and this signature carries one; that
+        is a property of the interface, not something to fix here.
+
+        The struck row is kept because it is the evidence for the current one, not a description of
+        live code. Its leading term is 2z where the condition requires z -- inconsistent rather than
+        merely coarse -- and it carried a pole at dx = D/v_n, HALF the cell-centred limit 2D/v_n
+        because the wrong geometry doubles the effective step: at D = 0.125, rho = 1, v_x = +0.5 it
+        returned 499 at dx = 0.249 and -501 at dx = 0.251. The current vertex form is linear in dx
+        and has no pole. #2128 moved this function's algebra into `ghost_cell_robin`; these
+        measurements are about the SCHEME and outlive the implementation that carried them.
 
         Physical interpretation:
             - When v_n > 0 (outflow): rho_ghost > rho_interior (diffusion opposes outflow)
@@ -429,62 +471,26 @@ def ghost_cell_fp_no_flux(
         - Achdou & Lauriere (2020): Mean Field Games and Applications, Section on FP BCs
         - LeVeque (2002): Finite Volume Methods for Hyperbolic Problems
     """
-    D = diffusion_coeff
-    v_n = drift_velocity * outward_normal_sign  # Normal velocity (positive = outward)
+    alpha, beta = normal_frame_coefficients(drift_velocity, diffusion_coeff, outward_normal_sign)
 
-    if grid_type == GridType.VERTEX_CENTERED:
-        # Vertex-centred: the wall IS the interior node, which is why `ghost_cell_dirichlet`
-        # returns `g` there unmodified. So the wall density is rho_interior -- not a face average
-        # between ghost and interior -- and the separation is dx, the geometry #1972 settled for
-        # this module:
-        #     v_n * rho_interior = D * (rho_ghost - rho_interior) / dx
-        #     => rho_ghost = rho_interior * (D + v_n*dx) / D
-        #
-        # ~~(D + v_n*dx) / (D - v_n*dx)~~ [CORRECTED, #2068]. That form is consistent only with
-        # rho_face = (rho_g + rho_i)/2 AND drho/dn = (rho_g - rho_i)/(2*dx) -- a wall midway
-        # between ghost and interior at separation 2*dx, which is the cell-centred geometry, not
-        # this one. It is the #1972 pathology in a second function: self-consistent with a wrong
-        # wall position, so it satisfies its own stencil while leaving a flux residual that does
-        # NOT converge. Measured at D = 0.125, rho = 1, v_x = +0.5, max wall, the residual froze
-        # at -0.5 = -v_x*rho across dx from 0.1 down to 0.00625 while the cell-centred branch was
-        # machine zero at every one. The corrected form is exact in this geometry and O(dx) if
-        # evaluated with a face average.
-        #
-        # It also removes a pole. The old form is singular at dx = D/v_n -- HALF the cell-centred
-        # limit 2D/v_n, because the wrong geometry doubles the effective step -- and returns a
-        # NEGATIVE density past it: 499 at dx = 0.249 and -501 at dx = 0.251 for the numbers
-        # above. The corrected form is linear in dx and has no pole; it still goes negative under
-        # strong inward drift at dx > D/|v_n|, which is a resolution requirement rather than a
-        # blow-up.
-        #
-        # ORDER, stated because the correction does not equalise the two centrings. The exact
-        # no-flux profile is rho(x) = rho_i*exp(v_n*x/D), so the exact ghost is rho_i*exp(v_n*dx/D)
-        # and each form is a rational approximation to exp(z), z = v_n*dx/D. Measured against it:
-        #
-        #     old vertex   (1+z)/(1-z) = 1 + 2z + ...   O(dx),   rate 1.06
-        #     this branch  1 + z                        O(dx^2), rate 2.01
-        #     cell-centred (1+z/2)/(1-z/2)              O(dx^3), rate 3.04   <- Pade(1,1) of exp
-        #
-        # The old form's leading term is 2z where it must be z, which is the "flux exactly twice
-        # what the condition requires" this issue reports -- it is inconsistent, not merely coarse.
-        # This branch is consistent and still one order below the cell-centred one, because a
-        # signature carrying only `interior_value` admits no centred difference at the node. That
-        # is a property of the interface, not something to fix here.
-        numerator = D + v_n * dx
-        denominator = D
-    else:
-        # Cell-centered: boundary at cell face
-        # rho_ghost = rho_interior * (2*D + v_n*dx) / (2*D - v_n*dx)
-        numerator = 2.0 * D + v_n * dx
-        denominator = 2.0 * D - v_n * dx
-
-    # Handle edge case where denominator is near zero
-    # This happens when diffusion is very small and drift is large
-    if abs(denominator) < 1e-12:
-        # Fall back to pure advection limit: reflect density
+    # VERTEX-CENTRED, D ~ 0: old behaviour preserved DELIBERATELY, and it is not obviously right.
+    # `J . n = v_n * rho_wall = 0` with `v_n != 0` forces `rho_wall = 0`, and on a vertex grid the
+    # wall IS the interior node -- so the condition constrains the INTERIOR value and says nothing
+    # about the ghost. The pre-#2128 code returned `interior_value` here (a silent reflection it
+    # called "the pure advection limit") and `ghost_cell_robin`'s beta==0 branch returns the implied
+    # Dirichlet value 0.0 instead. Both put a number where the condition determines none. Which one
+    # belongs here is a physics decision about sigma = 0 problems, and #2128 is a consolidation, so
+    # it does not get to make that decision by side effect: the old value stays until #2215 settles
+    # it. The threshold is the pre-#2128 one, unchanged.
+    if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value
 
-    return interior_value * (numerator / denominator)
+    # CELL-CENTRED at `alpha/2 + beta/dx = 0`, i.e. `2D = v_n*dx`: this now RAISES, where the
+    # pre-#2128 code returned `interior_value`. That change is intended. The ghost's own coefficient
+    # vanishes there, so the boundary condition does not determine it, and returning the interior
+    # value is a fabricated answer of exactly the shape this package's fail-fast ratchet exists to
+    # remove. `ghost_cell_robin` says so in its own message.
+    return ghost_cell_robin(interior_value, 0.0, alpha, beta, dx, grid_type)
 
 
 def ghost_cell_advection_diffusion_no_flux(
