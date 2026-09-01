@@ -3,43 +3,56 @@
 
 WHAT THIS PINS, AND WHY IT IS NOT A HAPPY-PATH ASSERTION
 --------------------------------------------------------
-The mutation is ``source_term_hjb = None``: solve the same problem with and without the source and
+The mutation is "the problem field is absent": solve the same problem with and without it and
 compare. A loop that composes and forwards moves; a loop that drops it returns a bit-identical
-``U``. That is the whole discrimination, and before #2207 it separated the three loops here into
-two groups -- measured on this fixture, ``FixedPointIterator`` moved ``max|U|`` by 8.75 having
-called the source 15 times, while ``FictitiousPlayIterator`` and ``BlockGaussSeidelIterator`` both
-returned ``0.000000e+00`` having called it **0 times**. Both were solving a different equation than
-the one posed, with no error and no warning.
+answer. Before #2207 that separated the loops here into two groups -- measured, ``FixedPointIterator``
+moved ``max|U|`` by 8.75 having called the source 15 times, while ``FictitiousPlayIterator`` and
+``BlockGaussSeidelIterator`` both returned ``0.000000e+00`` having called it **0 times**. Both were
+solving a different equation than the one posed, with no error and no warning.
+
+THREE FIELDS, NOT ONE -- AND WHY
+--------------------------------
+``MFGProblem`` carries three composable source fields and they travel different channels:
+``source_term_hjb`` and ``nonlocal_operator`` through ``compose_hjb_source``, ``source_term_fp``
+through ``compose_fp_source``. The first version of this file exercised only ``source_term_hjb``,
+and an adversarial review measured what that cost: disabling the FP composition entirely
+(``compose_fp_source(...)`` -> ``None`` inside the owner) left this file **4 passed**. Half of what
+the change claims was unpinned by the test written to pin it. Each field now has a row, and each is
+measured on the array it actually moves -- an HJB source on ``U``, an FP source on ``M``.
 
 The call counter is the second half and is not redundant with the norm. A norm of zero has two
 causes -- the source never arrived, or it arrived and cancelled -- and only the counter separates
-them. It is also what would catch a future regression that composes the source, forwards it, and
-has the solver discard it downstream: the norm would go to zero and look exactly like the defect
-this file was written for, while the counter would stay non-zero and say where to look.
+them. It is also what would catch a regression that composes and forwards correctly while the
+solver discards downstream: the norm would go to zero and look exactly like the defect this file
+exists for, while the counter would stay non-zero and say where to look.
 
 WHY d = 1
 ---------
 The property is source-term plumbing -- named in AGENTS.md as fully expressed in one dimension.
-Nothing here is directional: there is no normal/tangential split, no axis pairing, no corner. A 2-D
-fixture would buy runtime and no discrimination.
+Nothing here is directional: no normal/tangential split, no axis pairing, no corner. A 2-D fixture
+would buy runtime and no discrimination.
 
 NOT COVERED, AND NAMED RATHER THAN IMPLIED
 ------------------------------------------
 ``RegimeSwitchingIterator`` and ``GraphMFGSolver`` also reach a solver's ``source_term``, and are
 NOT rows here. Both compose a cross-regime / cross-node term of their own into the same channel, so
-for them the question is how a problem-level source COMBINES with it -- addition or replacement,
-and with which sign -- which #2207 deliberately left open (cf. #1681, #1803).
-``MultiPopulationIterator`` is not a ``BaseCouplingIterator`` subclass at all and is folded into
-``MFGProblem`` by #2173.
+for them the question is how a problem-level source COMBINES with it -- addition or replacement, and
+with which sign -- which #2207 deliberately left open (cf. #1681, #1803). Neither routes through
+``_build_*_kwargs``, so the required-iterate mechanism cannot reach them either.
+``MultiPopulationIterator`` is not a ``BaseCouplingIterator`` subclass at all; #2173 proposes
+folding ``MultiPopulationProblem`` into ``MFGProblem``, which is the related but distinct question.
 """
 
 from __future__ import annotations
+
+import inspect
 
 import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator
+from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
+from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator, BlockJacobiIterator
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
@@ -53,26 +66,24 @@ from mfgarchon.geometry.boundary import no_flux_bc
 _N = 21
 _ITERATIONS = 3
 
-#: Looser than the inner Newton's own default. A tighter outer tolerance makes the solver warn
-#: that the outer loop asks for more than the inner one delivers -- true, and not this file's
-#: subject.
+#: Large against every field this fixture produces, so a solver that receives it cannot return an
+#: answer within rounding of the sourceless one. A small source would make a real drop and a real
+#: forward differ by an amount no threshold could separate.
+_MAGNITUDE = 50.0
+
+#: Looser than the inner Newton's own default. A tighter outer tolerance makes the solver warn that
+#: the outer loop asks for more than the inner one delivers -- true, and not this file's subject.
 _TOLERANCE = 1e-6
 
-#: Large against every field this fixture produces, so a solver that receives it cannot return a
-#: value function within rounding of the sourceless one. A small source would make a real drop and
-#: a real forward differ by an amount the assertion could not name a threshold for.
-_SOURCE_MAGNITUDE = 50.0
+_LOOPS = [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator, BlockJacobiIterator]
 
-_LOOPS = [FixedPointIterator, FictitiousPlayIterator, BlockGaussSeidelIterator]
-
-#: The loop whose row must move for any other row to mean anything. Without it, a fixture that
-#: never delivers a source at all reports every loop as dropping one, and the file passes while
-#: measuring nothing.
+#: The loop whose row must move for any other row to mean anything. It has composed and forwarded a
+#: source since #1424, so a zero here indicts the fixture, not the library.
 _POSITIVE_CONTROL = FixedPointIterator
 
 
 class _CountingSource:
-    """The problem-level ``(x, m, v, t)`` source, counting its own invocations."""
+    """The problem-level ``(x, m, v, t)`` callback, counting its own invocations."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -80,7 +91,31 @@ class _CountingSource:
     def __call__(self, x, m, v, t):
         self.calls += 1
         a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, _SOURCE_MAGNITUDE)
+        return np.full(a.shape[0] if a.ndim == 2 else a.size, _MAGNITUDE)
+
+
+def _nonlocal_operator():
+    """A dense ASYMMETRIC (N, N) kernel, applied as ``K @ v_t`` (#1259).
+
+    Asymmetric on purpose: a symmetric kernel cannot express a defect that transposes the operator,
+    the same reason AGENTS.md gives for breaking the symmetry of the 2-D MMS pair (#2016).
+    """
+    i = np.arange(_N)[:, None]
+    j = np.arange(_N)[None, :]
+    return (_MAGNITUDE / _N) * np.exp(-0.5 * np.abs(i - 2 * j) / _N)
+
+
+def _u_terminal(x):
+    """NOT identically zero, and that is load-bearing rather than decoration.
+
+    The nonlocal term is ``K @ v_t`` (#1259). With a zero terminal cost and zero coupling this
+    problem has ``U == 0`` everywhere, so ``K @ v_t == 0`` for EVERY kernel and the nonlocal row
+    cannot fail -- measured: ``max|U| = 0.0`` on the first draft of this fixture, which failed the
+    nonlocal row on all four loops INCLUDING the positive control. That is the file's own control
+    doing its job: when the control row fails, the fixture is wrong and not the library.
+    """
+    a = np.asarray(x, dtype=float)
+    return (a - 0.5) ** 2
 
 
 def _m_initial(x):
@@ -89,11 +124,10 @@ def _m_initial(x):
     return 1.0 + 0.5 * np.cos(2.0 * np.pi * np.asarray(x, dtype=float))
 
 
-def _problem(source=None):
+def _problem(**source_fields):
     """Built through the v1.0 API on purpose: the legacy keyword form warns, and #2203 is already
     open against the two fixtures that still use it. A third would be a third."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
-    extra = {"source_term_hjb": source} if source is not None else {}
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(
@@ -104,65 +138,97 @@ def _problem(source=None):
             sigma=0.3,
         ),
         domain=grid,
-        conditions=Conditions(m_initial=_m_initial, u_terminal=lambda x: np.asarray(x, dtype=float) * 0.0, T=0.2),
+        conditions=Conditions(m_initial=_m_initial, u_terminal=_u_terminal, T=0.2),
         Nt=5,
         coupling_coefficient=0.0,
-        **extra,
+        **source_fields,
     )
 
 
-def _solve(loop_cls, source):
-    problem = _problem(source)
+def _solve(loop_cls, **source_fields):
+    """``(U, M)`` from one coupling loop."""
+    problem = _problem(**source_fields)
     loop = loop_cls(problem, HJBFDMSolver(problem), FPFDMSolver(problem))
-    try:
-        result = loop.solve(max_iterations=_ITERATIONS, tolerance=_TOLERANCE)
-    except TypeError:  # BlockIterator.solve has no `tolerance=` keyword
-        result = loop.solve(max_iterations=_ITERATIONS)
-    U = result[0] if isinstance(result, tuple) else getattr(result, "U", loop.U)
-    return np.asarray(U, dtype=float)
+    result = loop.solve(max_iterations=_ITERATIONS, tolerance=_TOLERANCE)
+    if isinstance(result, tuple):
+        return np.asarray(result[0], dtype=float), np.asarray(result[1], dtype=float)
+    return np.asarray(loop.U, dtype=float), np.asarray(loop.M, dtype=float)
 
 
-def _measure(loop_cls):
-    """``(max|U_with - U_without|, number of source invocations)`` for one coupling loop."""
-    without = _solve(loop_cls, None)
-    source = _CountingSource()
-    with_source = _solve(loop_cls, source)
-    return float(np.nanmax(np.abs(with_source - without))), source.calls
+#: (field name, factory, which array the field moves). The pairing matters: an FP source leaves U
+#: untouched at this coupling strength, so measuring it on U would report a correct forward as a
+#: drop -- the same fixture mistake in the opposite direction.
+_FIELDS = [
+    ("source_term_hjb", _CountingSource, "U"),
+    ("source_term_fp", _CountingSource, "M"),
+    ("nonlocal_operator", _nonlocal_operator, "U"),
+]
 
 
+def _measure(loop_cls, field, factory, which):
+    """``(max|Δ| on the array this field moves, invocation count or None)``."""
+    u0, m0 = _solve(loop_cls)
+    obj = factory()
+    u1, m1 = _solve(loop_cls, **{field: obj})
+    a, b = (u0, u1) if which == "U" else (m0, m1)
+    calls = getattr(obj, "calls", None)  # a nonlocal_operator is a matrix and counts nothing
+    return float(np.nanmax(np.abs(b - a))), calls
+
+
+@pytest.mark.parametrize(("field", "factory", "which"), _FIELDS, ids=[f[0] for f in _FIELDS])
 @pytest.mark.parametrize("loop_cls", _LOOPS, ids=lambda c: c.__name__)
-def test_the_problems_source_reaches_the_solver(loop_cls):
-    delta, calls = _measure(loop_cls)
+def test_the_problems_source_reaches_the_solver(loop_cls, field, factory, which):
+    delta, calls = _measure(loop_cls, field, factory, which)
 
-    assert calls > 0, (
-        f"{loop_cls.__name__} never invoked the problem's source_term_hjb. The coupling loop did "
-        f"not compose it (Issue #2207): pass the iterates to _build_hjb_kwargs / _build_fp_kwargs "
-        f"rather than calling the solver directly."
-    )
+    if calls is not None:
+        assert calls > 0, (
+            f"{loop_cls.__name__} never invoked the problem's {field}. The coupling loop did not "
+            f"compose it (Issue #2207): pass the iterates to _build_hjb_kwargs / _build_fp_kwargs "
+            f"rather than calling the solver directly."
+        )
     assert delta > 0.0, (
-        f"{loop_cls.__name__} invoked the source {calls} times and the value function did not "
-        f"move (max|dU| = {delta:.6e}). The source was composed but did not reach the "
-        f"discretisation -- look downstream of the coupling layer, not at it."
+        f"{loop_cls.__name__}: {field} left {which} bit-identical (max|d{which}| = {delta:.6e}"
+        + (f", callback invoked {calls} times" if calls is not None else "")
+        + "). The problem posed and the problem solved are different."
     )
 
 
 def test_the_measurement_can_distinguish_a_drop_from_a_forward():
     """Control on the instrument, in the same run as the rows above.
 
-    ``_measure`` compares two solves of a problem this file builds. If the fixture were mis-built
-    -- a source too small to move the answer, a solver that ignores it, ``_ITERATIONS`` too low for
-    the source to propagate -- every row above would report a drop, and the file would fail for a
-    reason having nothing to do with the coupling loops. This asserts the positive direction on the
-    one loop that has composed and forwarded a source since #1424.
+    If the fixture were mis-built -- a source too small to move the answer, ``_ITERATIONS`` too low
+    for it to propagate, the wrong array compared -- every row above would report a drop and the
+    file would fail for a reason having nothing to do with the coupling loops.
     """
-    delta, calls = _measure(_POSITIVE_CONTROL)
-    broken = (
-        f"The instrument is broken, not the library: {_POSITIVE_CONTROL.__name__} has forwarded a "
-        f"composed source since #1424 and this fixture measured max|dU| = {delta:.6e} over "
-        f"{calls} invocations. Every other row in this file is uninterpretable until this passes."
+    for field, factory, which in _FIELDS:
+        delta, calls = _measure(_POSITIVE_CONTROL, field, factory, which)
+        broken = (
+            f"The instrument is broken, not the library: {_POSITIVE_CONTROL.__name__} has forwarded "
+            f"a composed source since #1424, and this fixture measured {field} -> "
+            f"max|d{which}| = {delta:.6e}. Every other row in this file is uninterpretable."
+        )
+        assert delta > 0.0, broken
+        if calls is not None:
+            assert calls > 0, broken
+
+
+@pytest.mark.parametrize("builder", ["_build_hjb_kwargs", "_build_fp_kwargs"])
+@pytest.mark.parametrize("name", ["M", "U"])
+def test_both_iterates_are_required_not_optional(builder, name):
+    """Issue #2207: the omission this change removes must not be re-expressible.
+
+    A default of ``None`` on EITHER iterate restores the hole -- a loop that forgets it composes
+    nothing, raises nothing, and solves without the source. Asserted on the signature rather than
+    through a ``pytest.raises(TypeError, match=...)``, because an adversarial review measured that
+    ``match="M"`` is satisfied by the message for a missing ``M`` alone: giving ``U`` a default left
+    the whole file green, so half the mechanism was unpinned by the test that named it.
+    """
+    param = inspect.signature(getattr(BaseCouplingIterator, builder)).parameters[name]
+    assert param.default is inspect.Parameter.empty, (
+        f"BaseCouplingIterator.{builder} gave '{name}' a default. The composition is then skippable "
+        f"by omission, which is exactly the #2207 hole one level up."
     )
-    assert calls > 0, broken
-    assert delta > 0.0, broken
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 if __name__ == "__main__":

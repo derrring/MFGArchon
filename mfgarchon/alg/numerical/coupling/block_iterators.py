@@ -52,6 +52,7 @@ from .fixed_point_utils import (
     resolve_fp_drift_kwargs,
     value_function_is_finite,
 )
+from .source_composition import compose_fp_source
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -298,7 +299,7 @@ class BlockIterator(BaseCouplingIterator):
         if self._fp_sig_params is not None:
             kwargs = self._build_fp_kwargs(M=_M_curr, U=U, volatility_field=self.volatility_field)
             # Issue #1043 Phase 2: route through single-source convention, same as
-            # FixedPointIterator.solve() (fixed_point_iterator.py:720-728).
+            # FixedPointIterator.solve().
             # Previously used a sig-probe heuristic (Issue #919) that put U directly
             # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
             # incorrect for solvers where drift_field is alpha* (e.g. FPGFDMSolver).
@@ -328,7 +329,27 @@ class BlockIterator(BaseCouplingIterator):
 
         Returns:
             M_solution: Full density trajectory, shape (Nt+1, *spatial_shape)
+
+        Raises:
+            NotImplementedError: the problem carries an FP source. This path does not call
+                ``fp_solver.solve_fp_system`` at all -- it assembles its own operator and steps it
+                here -- so there is no ``source_term=`` to thread and no owner to route through.
+                Adding one means adding ``+ dt * s`` to this timestep, which is a numerical change
+                to the adjoint scheme and not this issue's. Until then it must refuse: dropping the
+                source silently is #1424, and dropping it on THIS path while the HJB source arrives
+                through the builder is worse than either, because the two halves of one problem
+                would then be solved from different equations (#2207).
         """
+        if compose_fp_source(self.problem, M_initial, U) is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__}.adjoint_mode={self.adjoint_mode!r} cannot carry an FP "
+                f"source term, but the problem defines source_term_fp. The strict-adjoint path "
+                f"assembles and steps its own FP operator instead of calling "
+                f"{type(self.fp_solver).__name__}.solve_fp_system, so the source has no route in "
+                f"(Issues #1424, #2207). Set adjoint_mode='off' to use the ordinary FP solve, which "
+                f"does carry it, or remove source_term_fp from the problem."
+            )
+
         num_time_steps = U.shape[0]
         spatial_shape = U.shape[1:]
 

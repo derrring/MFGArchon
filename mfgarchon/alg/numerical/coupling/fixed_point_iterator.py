@@ -589,9 +589,12 @@ class FixedPointIterator(BaseCouplingIterator):
                 # Issue #625: Resolve BC providers before HJB solve
                 # Issue #922: Compose source terms from problem fields
                 # Issue #1259: Pass U_old so nonlocal_operator J[v] uses previous iterate.
-                # Issue #2207: the composition itself moved into _build_hjb_kwargs. This loop was
-                # the only one that always did it; passing the iterates is now the only way to
-                # call the builder, so the three loops that never composed cannot stay silent.
+                # Issue #2207: the composition itself moved into _build_hjb_kwargs. Passing the
+                # iterates is now the only way to call the builder, which closes the two loops that
+                # went through it and composed nothing (FictitiousPlay, Block). It does NOT reach
+                # RegimeSwitchingIterator or GraphMFGSolver: both are BaseCouplingIterator
+                # subclasses that call solve_*_system directly and never touch the builders, so a
+                # required parameter cannot bind them. #2207 names that as out of scope.
                 # Issue #934: Context routing handles progress automatically —
                 # solver's create_progress_bar detects parent HierarchicalProgress
                 with self.problem.using_resolved_bc(bc_resolution_state):

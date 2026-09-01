@@ -256,9 +256,16 @@ class BaseCouplingIterator(ABC):
         """Build kwargs for solve_fp_system, respecting solver capabilities.
 
         ``M`` and ``U`` are required and are the iterates the FP source is composed from; see
-        :meth:`_build_hjb_kwargs` for why they are not optional (Issue #2207). Note the pairing
-        differs by side: the HJB source binds the PREVIOUS value iterate (Issue #1259, so the
-        nonlocal term reads ``J[v_old]``), the FP source binds the NEW one.
+        :meth:`_build_hjb_kwargs` for why they are not optional (Issue #2207).
+
+        **Which value iterate to hand over is the CALLER's, and this docstring must not universalise
+        it.** The HJB source binds the previous iterate, so the nonlocal term reads ``J[v_old]``
+        (#1259). The FP source binds whichever iterate the FP solve itself consumes -- ``U_new``
+        under Picard and Gauss-Seidel, ``U_old`` under Jacobi, which updates both fields from the
+        same old state by construction (``block_iterators.py``, ``BlockJacobiIterator._iterate``).
+        An earlier draft of this line said "the FP source binds the NEW one", which is false of an
+        exported public class; since this method is now the single site where the composition
+        happens, a false universal here is what the next coupling loop would be written against.
 
         Progress is handled automatically via context routing (Issue #934).
         """
